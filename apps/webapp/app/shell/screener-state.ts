@@ -135,6 +135,15 @@ export interface ScreenerState {
    */
   suggestedCount: number;
   /**
+   * The distinct piles those rows would be filed into, in {@link APPLY_PILE_ORDER}.
+   *
+   * The apply control's label is built from this and from {@link suggestedCount} together: a
+   * button that says only how MANY is a bulk action whose consequence is invisible until it has
+   * happened. Never contains `screener` or `spam` — the two the bulk refuses to act on — because
+   * it is derived from the same rows the count is.
+   */
+  suggestedDests: DecisionDestination[];
+  /**
    * The waiting senders with no suggestion yet, in the queue's own order — the batch a
    * purchase would be composed from.
    *
@@ -143,6 +152,26 @@ export interface ScreenerState {
    * padding a batch the user was charged nothing for but had counted.
    */
   unsuggestedSenders: string[];
+  /**
+   * HOW FAR A BULK IS THROUGH ITS OWN QUEUE — `null` unless one is running.
+   *
+   * `applyAll` and `markAllSpam` do not decide forty rows in one frame. Every row is dispatched
+   * on its own `BULK_STEP_MS` timer, so a forty-sender press is ten seconds of work, and until
+   * this field existed the only evidence any of it was happening was rows sliding away one at a
+   * time. A person who pressed "Apply 40" and saw the first three move had no way to tell a
+   * stagger from a stall, and the summary toast — the one thing that states a number — does not
+   * arrive until the LAST row has been dispatched.
+   *
+   * `done` counts rows whose `decide` has actually run, not rows whose timer has been scheduled:
+   * scheduling is instantaneous for the whole set and would report 40 of 40 in the first frame.
+   * `total` is the set the press acted on, which is `waiting` minus what was already pending —
+   * the same filter `bulk` itself applies, read from the same array, so the denominator can never
+   * name rows the run will not touch.
+   *
+   * Cleared when the run ends, on the same timer that raises the summary toast: a bar left full
+   * is a claim that work is still in flight, and the toast is what says the work is finished.
+   */
+  applying: { done: number; total: number } | null;
   screenedOut: ScreenerSenderDTO[];
   spam: SpamRow[];
   isExiting: (id: string) => boolean;
@@ -215,6 +244,21 @@ const BULK_STEP_MS = 240;
 /** `PATCH /messages` takes at most 200 ids (413 above it) — `routes/messages.ts:52`. */
 const MARK_SEEN_MAX = 200;
 
+/**
+ * The piles the apply control may name, in the order it names them.
+ *
+ * The four `applyAll` can actually file into, and no more: `screener` is the model declining to
+ * place a sender and `spam` is a judgement the bulk deliberately refuses to make forty at a time
+ * (`applyAll`'s predicate states both). A fifth member here would put a pile in the label that
+ * the press does not deliver, which is the "Apply all (83)" lie one control over.
+ *
+ * Ohbox first, then the two automated piles, then the demotion — least to most consequential, so
+ * a reader scanning "Apply 12 — Ohbox, Reads & Receipts" meets the admission before the filing.
+ */
+export const APPLY_PILE_ORDER: readonly DecisionDestination[] = [
+  "ohbox", "reads", "receipts", "screened",
+];
+
 export function useScreenerState(
   engine: OhmailEngine,
   version: number,
@@ -265,6 +309,8 @@ export function useScreenerState(
     overrides: new Set<string>(),
     hidden: new Set<string>(),
     bulkBusy: false,
+    /** See {@link ScreenerState.applying}. Guarded by `bulkBusy`, so only one run ever owns it. */
+    applying: null as { done: number; total: number } | null,
   });
 
   /**
@@ -499,9 +545,25 @@ export function useScreenerState(
   // inert-button lie `ScreenerView.tsx` already refuses.
   // Spam is excluded here for the same reason it is excluded there — see `applyAll`. Counting it
   // would put a number on the button that the press does not deliver.
-  const suggestedCount = undecided.filter(
+  const suggestedRows = undecided.filter(
     (x) => x.ai != null && x.ai.dest !== "screener" && x.ai.dest !== "spam",
-  ).length;
+  );
+  const suggestedCount = suggestedRows.length;
+  /**
+   * WHICH PILES the press would file into, deduped, in the surface's own reading order.
+   *
+   * Derived from `suggestedRows` and not from a second filter, because the label and the number
+   * beside it have to describe one set. "Apply 5" over rows that turn out to be three Reads and
+   * two Receipts is a control whose consequence a person cannot picture before pressing it —
+   * they see a count, press, and find five senders filed into piles nobody named.
+   *
+   * The order is DECLARED here rather than taken from the queue, so the label is stable: read
+   * off row order it would reshuffle every time a suggestion landed, and a control whose text
+   * changes while you look at it reads as a different control.
+   */
+  const suggestedDests = APPLY_PILE_ORDER.filter(
+    (d) => suggestedRows.some((x) => x.ai!.dest === d),
+  );
   /**
    * The buy list, from the SAME set and in the SAME order.
    *
@@ -553,16 +615,32 @@ export function useScreenerState(
     const items = waiting.filter((x) => !s.pending.has(x.id) && (only ? only(x) : true));
     if (!items.length || s.bulkBusy) return;
     s.bulkBusy = true;
+    const total = items.length;
+    // PUBLISHED BEFORE THE FIRST TIMER, so the first frame after the press already says how big
+    // this is. `bump()` because the store is a ref: nothing else in this function schedules a
+    // render until the first `decide` fires `BULK_STEP_MS` later, which is the blank window the
+    // field exists to close.
+    s.applying = { done: 0, total };
+    bump();
     const snaps: Array<{ id: string; dest: DecisionDestination }> = [];
     items.forEach((item, i) => {
       setTimeout(() => {
         const dest = destOf(item);
         decide(item, dest, { read: false, scope: scopeOf(item), quiet: true });
         snaps.push({ id: item.id, dest });
+        // `i + 1` and not `snaps.length`: they agree here, and the index is the one that stays
+        // true if a `decide` is ever allowed to decline a row — `done` counts rows this run has
+        // WALKED, which is what the denominator was taken from.
+        s.applying = { done: i + 1, total };
+        bump();
       }, i * BULK_STEP_MS);
     });
     setTimeout(() => {
       s.bulkBusy = false;
+      // Cleared on the same timer that raises the summary — the toast is what states the
+      // finished numbers, and a bar still on screen beside it would claim work is in flight.
+      s.applying = null;
+      bump();
       // The bulk summary appears only after the last row's `decide`, and every row runs its own
       // `COMMIT_MS` clock from its own start — so over a long bulk the earliest rows can commit
       // while this capsule is still up, and this Undo is genuinely PARTIAL. That is stated
@@ -763,7 +841,9 @@ export function useScreenerState(
     waiting: visibleWaiting,
     waitingCount,
     suggestedCount,
+    suggestedDests,
     unsuggestedSenders,
+    applying: s.applying,
     screenedOut: segments.screenedOut,
     spam,
     isExiting: (id) => s.pending.has(id),

@@ -44,6 +44,40 @@ import type { RemoteImagesChrome } from "../shell/remote-images";
 import { MessageBody } from "../components/MessageBody";
 
 /**
+ * The copy key that NAMES each pile, so the apply control can say where mail is about to go.
+ *
+ * A table and not `t(\`pile${dest}\`)`: the destinations are a union, and an interpolated key is
+ * a lookup a compiler cannot check — a sixth destination would render the literal string
+ * `screener.pileWhatever` into a button rather than failing to build.
+ */
+const PILE_KEY: Record<DecisionDestination, string> = {
+  ohbox: "pileOhbox",
+  reads: "pileReads",
+  receipts: "pileReceipts",
+  screened: "pileScreened",
+  spam: "pileSpam",
+};
+
+/**
+ * "Reads & Receipts" — the piles an apply would file into, as one phrase.
+ *
+ * The final conjunction goes through `pileJoin` rather than a hard-coded `" & "` because it is
+ * the one part of this that is not a list separator: several languages join the last pair with a
+ * word, and a literal ampersand here would be untranslatable punctuation baked into a component.
+ * Everything before the last pair is a plain comma, which every locale this ships in agrees on.
+ *
+ * Never empty: the control that calls it is rendered only when `suggestedCount > 0`, and those
+ * rows are where the list comes from.
+ */
+function pileList(dests: DecisionDestination[], t: (k: string, v?: Record<string, string>) => string): string {
+  const names = dests.map((d) => t(PILE_KEY[d]));
+  if (names.length <= 1) return names[0] ?? "";
+  const last = names[names.length - 1]!;
+  const head = names.slice(0, -1);
+  return t("pileJoin", { a: head.join(", "), b: last });
+}
+
+/**
  * ASKING FOR SUGGESTIONS — the control that names the cost before it spends.
  *
  * Every part of this is the same rule stated once: nothing here moves a credit until a person
@@ -107,7 +141,11 @@ function SuggestControl({ control }: { control: SuggestBatchControl }) {
         disabled={busy || !control.quote || control.quote.senders === 0}
         onClick={control.confirm}
       >
-        {t("suggest.confirm")}
+        {/* THE SERVER'S COUNT WHEN THERE IS ONE, the chosen size only while the price is still
+            unknown — and the button is unpressable in exactly that window. A label built from
+            `size` alone would say "Suggest for 25 senders" over a quote of 12, which is the
+            control naming one number and spending against another. */}
+        {t("suggest.confirm", { n: control.quote?.senders ?? control.size })}
       </Button>
       <Button variant="ghost" disabled={control.phase === "running"} onClick={control.cancel}>
         {t("suggest.cancel")}
@@ -594,7 +632,10 @@ export function ScreenerView({
                     does and needs no such gate. */}
                 {state.suggestedCount > 0 ? (
                   <Button kbdHint="a" onClick={() => state.applyAll(scopeOf)}>
-                    {t("applyAll", { count: state.suggestedCount })}
+                    {t("applyAll", {
+                      count: state.suggestedCount,
+                      piles: pileList(state.suggestedDests, t),
+                    })}
                   </Button>
                 ) : null}
                 {/* Its own control and not a branch of the one above, because the two are

@@ -120,6 +120,25 @@ export interface SuggestBatchControl {
   quote: { senders: number; credits: number } | null;
   /** One sentence about the current state, already translated, or null when there is none. */
   notice: string | null;
+  /**
+   * HOW FAR A RUNNING PURCHASE HAS GOT, as two numbers rather than as a sentence.
+   *
+   * `notice` already carries "3 of 40 suggested…", and that string is where this fact lived
+   * until now. A translated sentence is the wrong shape for a progress bar: a surface that
+   * wanted a track had to parse English back out of it, and a locale that ordered the numbers
+   * differently would break the parse rather than the sentence. So the numbers are published
+   * beside the sentence, from the same two sources, and neither is derived from the other.
+   *
+   * `null` in every phase but `running`, and cleared — not left at `{done: total}` — when the
+   * run finishes: a filled track that never goes away claims work is still in flight. It is
+   * set at the same two points the notice is (before the first chunk leaves, and after each
+   * chunk lands) so the two can never disagree about a frame.
+   *
+   * `total` is the SET the user consented to, not the number of chunks and not the number of
+   * senders the server ended up quoting — a purchase that halts part-way must still show what
+   * it was aiming at, or "8 of 8" would report a stopped run as a complete one.
+   */
+  progress: { done: number; total: number } | null;
   open: () => void;
   choose: (size: number) => void;
   confirm: () => void;
@@ -301,6 +320,8 @@ export function useScreenerSuggestions(opts: {
   const [size, setSize] = useState(0);
   const [quote, setQuote] = useState<{ senders: number; credits: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** See {@link SuggestBatchControl.progress}. Written beside `notice`, never derived from it. */
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [maxPerRequest, setMaxPerRequest] = useState(ASSUMED_MAX_PER_REQUEST);
   /**
    * The opt-in confirm's state, held apart from the manual control's three fields above.
@@ -662,6 +683,7 @@ export function useScreenerSuggestions(opts: {
       phase,
       quote,
       notice,
+      progress,
       open: () => {
         const start = sizes.includes(size) ? size : cap;
         setSize(start);
@@ -676,6 +698,7 @@ export function useScreenerSuggestions(opts: {
         setPhase("closed");
         setQuote(null);
         setNotice(null);
+        setProgress(null);
       },
       /**
        * Buy the chosen set — in REQUEST-SIZED chunks, halting on the first that stops or fails.
@@ -704,6 +727,9 @@ export function useScreenerSuggestions(opts: {
         const total = set.length;
         setPhase("running");
         setNotice(t("suggest.progress", { done: 0, total }));
+        // The same fact as the sentence above, in the shape a track can render. Written HERE and
+        // not derived from `notice`, so a locale that reorders the numbers cannot change it.
+        setProgress({ done: 0, total });
         void (async () => {
           const gotSuggestions: ScreenerSuggestWire["suggestions"] = [];
           const gotSkipped: Array<{ reason: string }> = [];
@@ -719,6 +745,10 @@ export function useScreenerSuggestions(opts: {
               // HALT on the first chunk that threw. Keep what earlier chunks bought (money moved
               // for them and their chips are already on screen) and show the server's sentence.
               setPhase("ready");
+              // A HALTED RUN IS NOT AN IN-FLIGHT ONE. Leaving the track at "8 of 40" under a
+              // sentence that says the run stopped would be two surfaces disagreeing about the
+              // same event, with the moving one winning the reader's attention.
+              setProgress(null);
               const why = messageFor(err, t("suggest.failed"));
               if (gotSuggestions.length > 0) {
                 setNotice(t("suggest.stoppedAt", { done: gotSuggestions.length, total, reason: why }));
@@ -740,6 +770,7 @@ export function useScreenerSuggestions(opts: {
             charged += res.charged;
             stopped ??= res.stopped;
             setNotice(t("suggest.progress", { done: gotSuggestions.length, total }));
+            setProgress({ done: gotSuggestions.length, total });
             // HALT on the first chunk the gate stopped part-way: the balance is exhausted, so
             // every later chunk would stop too. What this chunk bought stays; the summary says so.
             if (res.stopped) break;
@@ -747,6 +778,9 @@ export function useScreenerSuggestions(opts: {
           if (io.current.run !== run) return;
           setPhase("closed");
           setNotice(null);
+          // CLEARED, not left at `{done: total}`. A full track that never goes away is a claim
+          // that work is still in flight; the completed run's numbers are in the toast.
+          setProgress(null);
           toast(summarize(
             { suggestions: gotSuggestions, charged, ...(stopped ? { stopped } : {}), skipped: gotSkipped },
             t,
