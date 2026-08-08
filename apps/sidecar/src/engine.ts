@@ -45,6 +45,7 @@ import { createLocalAi, type LocalAi } from "./ai-provider.js";
 import { localAiRoutes } from "./ai-routes.js";
 import { openLocalDb, type LocalDb, type OpenLocalDb } from "./db.js";
 import { ensureLocalWorld, mintLaunchSession, type LocalWorld } from "./identity.js";
+import { stampSynced } from "./sync-stamp.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -1025,6 +1026,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     /** The drain itself, ALREADY GATED. Never called from outside this closure. */
     const drain = async (maxCycles: number): Promise<number> => {
       let cycles = 0;
+      /** Did a cycle report an empty backlog, or did the loop simply run out of cycles? */
+      let drained = false;
       // ── ONCE PER DRAIN, BESIDE THE LEASE AND FOR THE SAME REASON ───────────────────────────
       //
       // A drain is one logical pass over a backlog the adapter hands over in bounded batches, and
@@ -1050,10 +1053,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           ...syncDeps, ...screening, classifier: ai.classifierForCycle(),
         });
         cycles++;
-        if (!hasBacklog) break;
+        if (!hasBacklog) { drained = true; break; }
         // Yield, so a backlog drain cannot starve the request handler sharing this event loop.
         await new Promise((r) => setTimeout(r, 0));
       }
+      /* HOW FAR THIS MAILBOX HAS GOT, WRITTEN DOWN. On a hosted account these two columns are the
+         worker's; here this process IS the worker, and the window's sync line reads them to tell a
+         first import apart from a settled mailbox. `drained` is the distinction that matters for
+         the second stamp: a drain that ran out of CYCLES has not finished the import, and saying it
+         had would tell somebody their mailbox was complete with half of it still on its way. See
+         `sync-stamp.ts`. */
+      if (cycles > 0) await stampSynced(db, world.mailboxId, new Date(), drained);
       return cycles;
     };
 

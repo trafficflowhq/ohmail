@@ -1,6 +1,6 @@
 import {
   messageService, threadService, searchService, mailboxService, tagsService, rulesService,
-  type SearchFilters, type ServiceContext,
+  syncService, type SearchFilters, type ServiceContext,
 } from "@trafficflow/services/mail";
 
 /**
@@ -59,6 +59,41 @@ function boolParam(v: string | null): boolean | undefined {
  * for `/messages/bodies` can never bind `id = "bodies"`.
  */
 export const READ_ROUTES: ReadRoute[] = [
+  /**
+   * THE COLD-START READ, AND THE ONE ROUTE WHERE FORWARDING IS WRONG RATHER THAN SLOW.
+   *
+   * `GET /sync/snapshot` answers with the account's current state — newest first — plus `asOfSeq`,
+   * the point it was read at, which the client commits as its `/sync` cursor. Two sequences exist
+   * in a mirrored install and they are unrelated numbers: the hosted account's, which the mirror's
+   * own pull is counted in, and this database's local `change_log`, which is what `GET /sync` is
+   * answered from. Forwarding this route returns a cursor in the first and hands it to a client
+   * whose next request is answered in the second, so the mailbox bootstraps once, looks complete,
+   * and never receives another change.
+   *
+   * It was forwarded, and the desktop client compensated by refusing to use the route at all —
+   * which is why a cold start filled OLDEST first, a page of the change log at a time, instead of
+   * painting the newest mail immediately. Serving it here is what let that capability come back.
+   *
+   * `syncService` is a read service like every other one in this table: it selects rows for the
+   * caller's own account and writes nothing, and it is already in the Cloud engine's graph, so the
+   * census over this module is unchanged.
+   */
+  {
+    method: "GET",
+    pattern: "/sync/snapshot",
+    handler: async (req, ctx) => {
+      const url = new URL(req.url);
+      const cursor = url.searchParams.get("cursor");
+      const limitRaw = url.searchParams.get("limit");
+      const limit = num(limitRaw);
+      return json(
+        await syncService.getSnapshot(ctx, {
+          ...(cursor ? { cursor } : {}),
+          ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
+        }),
+      );
+    },
+  },
   {
     method: "GET",
     pattern: "/messages",

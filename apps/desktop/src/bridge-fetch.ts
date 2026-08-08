@@ -390,27 +390,29 @@ export function createEngineAdapter(): HttpAdapter {
  * a process on the same machine, not a network round trip, so re-reading it costs a few seconds of
  * local IPC rather than a bootstrap over somebody's connection.
  *
- * ── AND ONE CAPABILITY IS WITHHELD ──────────────────────────────────────────────────────────
+ * ── AND THE BOOTSTRAP IS THE SNAPSHOT, WHICH IT DID NOT USED TO BE ──────────────────────────
  *
- * `OhmailEngine` reaches for an optional `snapshot` method on the adapter it is given, and takes
- * `GET /sync/snapshot` instead of replaying the change log whenever the mirror is cold. That is
- * the right trade against a server across the internet and the wrong one here, for a reason that
- * has nothing to do with speed: the two doors this app can come in by do not both serve that route
- * from the same place. One answers it locally; the other has no local handler for it and relays it
- * onward, which returns a cursor counted in a different sequence from the one the very next `/sync`
- * request is answered in — and a cursor from the wrong sequence is a mailbox that bootstraps once,
- * looks complete, and then never receives another change.
+ * `OhmailEngine` reaches for an optional `snapshot` method on the adapter it is given and takes
+ * `GET /sync/snapshot` — the account's current state, newest first — instead of replaying the
+ * change log from the beginning whenever the mirror is cold. This window used to withhold that
+ * method, and the cost was visible on every cold start: the mail arrived OLDEST first, a page at a
+ * time, so the first thing painted was the least interesting mail in the mailbox and the message
+ * somebody opened the app to read appeared last.
  *
- * So the bootstrap here is the one every client used before that route existed: `since=0`, paged,
- * over the pipe. It is cheap because the pipe is local, and it is the same path in both doors.
- * Withheld as an own property rather than by wrapping the adapter, because a wrapper that rebuilds
- * the adapter's surface as an object literal is how the other optional capabilities have been
- * dropped by accident before — this drops exactly one, in one line, visibly.
+ * The withholding was not arbitrary. A snapshot's answer carries `asOfSeq`, the point it was read
+ * at, which the client commits as its `/sync` cursor — and the hosted door had no local handler
+ * for the route, so it relayed the request onward and returned a cursor counted in the hosted
+ * account's sequence, while the very next `/sync` was answered from the local mirror's own. A
+ * cursor from the wrong sequence is a mailbox that bootstraps once, looks complete, and then never
+ * receives another change. Withholding the method was the correct response to that, and the wrong
+ * layer to fix it at.
+ *
+ * Both doors now answer the route from the database the deltas come from — the standalone engine
+ * always did, and `cloud-engine.ts` serves it out of the mirror rather than forwarding it — so
+ * there is one sequence per door and the capability is simply passed through.
  */
 export function createLocalEngine(): OhmailEngine {
-  const adapter = createEngineAdapter();
-  Object.defineProperty(adapter, "snapshot", { value: undefined, configurable: true });
-  return new OhmailEngine({ adapter });
+  return new OhmailEngine({ adapter: createEngineAdapter() });
 }
 
 /**

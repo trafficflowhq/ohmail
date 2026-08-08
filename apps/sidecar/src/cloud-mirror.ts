@@ -12,6 +12,7 @@ import type {
 import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";
 import type { CloudAuth } from "./cloud-auth.js";
+import { stampSynced } from "./sync-stamp.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -761,6 +762,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         writeCursor(cfg.cursorPath, cursor);
       }
       await backfillBodies();
+      /* THE TWO STAMPS THE PROGRESS SURFACE READS. See {@link stampSynced} — on a mirrored
+         install this process is the only thing that could write them, and without them the
+         window's sync line has no way to tell a first import from a settled mailbox. `bodies`
+         being exhausted is part of "drained": the mail list is complete before its bodies are,
+         and a first import that claims to be finished while messages still open blank has
+         claimed too early. */
+      await stampSynced(cfg.db, cfg.world.mailboxId, now(), cursor.bodies === null);
       // A completed pull is the definition of reachable: the local database keeps serving what it
       // holds either way, but the proxy needs to know it can forward a write again.
       reachable = true;

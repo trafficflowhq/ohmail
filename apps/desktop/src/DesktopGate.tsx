@@ -42,6 +42,7 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 import { AppShell } from "../../webapp/app/shell/AppShell";
 import { go } from "../../webapp/app/shell/routing";
 import { DoorChooser } from "./DoorChooser.js";
+import { DesktopMailboxes, readMailboxFacts } from "./DesktopMailboxes.js";
 import { GateNotice } from "./GateNotice.js";
 import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
 import { gateFor, mailMount, readShell, type Shell } from "./doors.js";
@@ -211,6 +212,18 @@ export function DesktopGate() {
            because every one of those things would be a lie about somebody's own mail. */
         demo={engine === null}
         {...(engine ? { engine } : {})}
+        /* WHAT THE SYNC LINE IS ALLOWED TO SAY. Its ladder begins with "can we see this account's
+           mailboxes?" and stays silent when it cannot — which is what this window used to be,
+           silent, through the whole of a first sync. `GET /mailboxes` is served by both doors out
+           of the database on this machine, so the answer costs one call down the pipe. Withheld
+           while there is no engine: the invented mailbox is nobody's account and has nothing to
+           report. See `DesktopMailboxes.tsx` for why the probe must reject rather than answer
+           with an empty list. */
+        {...(engine ? { mailboxFacts: readMailboxFacts } : {})}
+        /* SETTINGS → MAILBOXES. The shared pane's own list is drawn from the mirror's `mailbox`
+           entities, which only the invented world has — so on a real install it was an empty
+           pane. This one reads the same facts the sync line does. */
+        {...(engine ? { mailboxSection: <DesktopMailboxes /> } : {})}
         /* The pane the web client cannot have. Present only when the shell answered — outside
            the app there is no install to describe, and an empty one would be a pane about
            nothing. */

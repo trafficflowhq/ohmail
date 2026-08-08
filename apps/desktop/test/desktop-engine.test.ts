@@ -71,6 +71,40 @@ const EMPTY_PAGE = JSON.stringify({
 });
 
 /**
+ * An empty, settled SNAPSHOT: the cold-start read, with nothing in it.
+ *
+ * `asOfSeq: 0` is the honest answer for a mailbox with no change log yet, and the client commits
+ * `"0"` from it — so a snapshot that answers this is indistinguishable, in cursor terms, from the
+ * `since=0` bootstrap it replaces. Which of the two was TAKEN is the thing under test, and that is
+ * read off the recorded URLs rather than off the mirror.
+ */
+const EMPTY_SNAPSHOT = JSON.stringify({
+  asOfSeq: 0,
+  changes: [],
+  nextCursor: null,
+  window: { days: 90, minRows: 500 },
+});
+
+/**
+ * `GET /mailboxes`, as the engine answers it — one connected mailbox that has finished its first
+ * import. The window reads this to decide what its sync line is entitled to say.
+ */
+const MAILBOX_LIST = JSON.stringify({
+  items: [{
+    id: "mbx-1",
+    address: "someone@example.test",
+    status: "connected",
+    errorCode: null,
+    disabledReason: null,
+    syncBlockedReason: null,
+    syncBlockedSince: null,
+    lastSyncAt: "2026-01-01T00:00:00.000Z",
+    initialImportCompletedAt: "2026-01-01T00:00:00.000Z",
+    createdAt: "2025-12-01T00:00:00.000Z",
+  }],
+});
+
+/**
  * A shell that reports one serving mailbox and records every URL the bridge is asked for.
  *
  * `null` for `status` is the case the render check and a development server are in: the runtime's
@@ -89,6 +123,8 @@ function shell(status: EngineStatus | null): string[] {
       if (command === "engine_request") {
         const url = String(payload?.url ?? "");
         urls.push(url);
+        if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
+        if (url.startsWith("/mailboxes")) return encode(200, MAILBOX_LIST);
         return encode(200, EMPTY_PAGE);
       }
       // `plugin:event|listen`, `set_badge`, `notify` — granted, and nothing to answer with.
@@ -185,14 +221,42 @@ describe("the window against a serving engine", () => {
     expect(urls.filter((u) => u.startsWith("/sync"))).not.toHaveLength(0);
   });
 
-  it("bootstraps from the beginning of the log, and asks for no snapshot route", async () => {
+  /**
+   * THE COLD START TAKES THE SNAPSHOT, WHICH IS WHAT PUTS THE NEWEST MAIL ON SCREEN FIRST.
+   *
+   * This used to assert the opposite, and correctly: the capability was withheld on this
+   * transport because the hosted door forwarded `GET /sync/snapshot` to the account and answered
+   * with a cursor counted in a sequence the next `/sync` knows nothing about. Both doors now
+   * answer the route from the database their deltas come from, so the withholding is gone and the
+   * bootstrap is the newest-first one every other client takes.
+   *
+   * Asserted on the ORDER, not merely on the presence: a snapshot that ran after a `since=0`
+   * replay would be a second bootstrap rather than a faster one, and the whole benefit — the
+   * first paint being the mail somebody opened the app to read — depends on it going first.
+   */
+  it("bootstraps from the snapshot, newest first, rather than replaying the log", async () => {
     const urls = shell(SERVING);
     await render();
-    // The cold-start read the hosted client takes is withheld on this transport — see
-    // `createLocalEngine`. What is left is the path every client used before that route existed,
-    // and it has to be the one actually taken rather than the one a comment claims.
-    expect(urls.some((u) => u.startsWith("/sync?since=0"))).toBe(true);
-    expect(urls.filter((u) => u.startsWith("/sync/snapshot"))).toEqual([]);
+    const snapshotAt = urls.findIndex((u) => u.startsWith("/sync/snapshot"));
+    expect(snapshotAt, "the cold-start read was never asked for").toBeGreaterThanOrEqual(0);
+    const replayAt = urls.findIndex((u) => u.startsWith("/sync?since=0"));
+    if (replayAt >= 0) expect(snapshotAt).toBeLessThan(replayAt);
+  });
+
+  /**
+   * THE SYNC LINE'S FIRST QUESTION, ASKED AT LAST.
+   *
+   * The shared shell decides what to say about a sync from a ladder whose first step is "can we see
+   * this account's mailboxes?", and its honest answer to "no" is to say nothing at all. This window
+   * used to supply no way to ask, so the answer was permanently "no" and a first sync ran to
+   * completion in silence — no progress, no counts, nothing between the door chooser and a full
+   * mailbox. Both doors serve this read out of the database on this machine, so the only thing that
+   * was missing was the asking.
+   */
+  it("asks which mailbox it opens, so the sync line has something to say", async () => {
+    const urls = shell(SERVING);
+    await render();
+    expect(urls.some((u) => u.startsWith("/mailboxes"))).toBe(true);
   });
 
   it("says nothing about invented mail while it is showing somebody's own", async () => {
