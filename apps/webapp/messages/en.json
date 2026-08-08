@@ -1488,6 +1488,7 @@
     "downloadAll": "Download all",
     "downloadingAll": "Fetching…",
     "preview": "Preview {name}",
+    "download": "Download {name}",
     "idle": "{size} · in your mailbox",
     "loading": "Fetching from your mailbox…",
     "failed": "Couldn't fetch — try again",

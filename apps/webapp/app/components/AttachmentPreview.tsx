@@ -1,14 +1,18 @@
 "use client";
 
 /**
- * ═══ QUICK LOOK: THE SECOND VERB ══════════════════════════════════════════════════════════
+ * ═══ QUICK LOOK: WHAT A PRESS DOES ════════════════════════════════════════════════════════
  *
- * The macOS gesture, brought to the web client. Pressing an attachment SAVES it — that is the
- * primary act and the strip's whole tile is it. This is the smaller one beside it: the eye in
- * a tile's corner opens the file over the current view without downloading anything,
- * dismissed with Space or Esc, moved through with ←/→, a PDF paged with ↑/↓. The bytes are
- * the same on-demand IMAP fetch the strip already makes; the overlay opens at once and fills
- * in when they land, and carries a Download of its own for the reader who now wants the file.
+ * The macOS gesture, brought to the web client. Pressing an attachment this app can draw opens
+ * it HERE — over the current view, downloading nothing — dismissed with Space or Esc, moved
+ * through with ←/→, a PDF paged with ↑/↓. Saving is the smaller control in the tile's corner,
+ * and this overlay carries a Download of its own for the reader who has looked and now wants
+ * the file. The bytes are the same on-demand IMAP fetch the strip already makes; the overlay
+ * opens at once and fills in when they land.
+ *
+ * The two verbs used to be the other way round, and the header of `AttachmentStrip`'s `Tile`
+ * records why they swapped. A file this app CANNOT draw is unaffected either way: its tile
+ * saves, and it never reaches this surface at all.
  *
  * ── THE ONE SECURITY RULE, STATED ONCE: ATTACHMENT BYTES NEVER BECOME A DOCUMENT ─────────
  *

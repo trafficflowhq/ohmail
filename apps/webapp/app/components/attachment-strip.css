@@ -155,12 +155,13 @@
    wrapper is what lets the two sit in one rectangle regardless. */
 .att-item { position: relative; display: flex; min-width: 0; }
 .att-item > .att-tile { flex: 1; min-width: 0; }
-/* Room for the eye, so a long filename never runs underneath it. Only when there IS one. */
-.att-item[data-peek] > .att-tile { padding-right: 42px; }
+/* Room for the Download control, so a long filename never runs underneath it. Only when
+   there IS one — a tile that saves has the whole rectangle to itself. */
+.att-item[data-side] > .att-tile { padding-right: 42px; }
 
 /* Quieter than the tile it sits on: no ground of its own until it is pointed at, because the
-   tile is the verb and this is the aside. */
-.att-peek {
+   tile is the primary verb — a preview — and this is the second one. */
+.att-side {
   position: absolute;
   top: 50%;
   right: 7px;
@@ -177,12 +178,12 @@
   background: transparent;
   transition: background .15s var(--swift), color .15s var(--swift);
 }
-.att-peek:hover { color: var(--ink); background: var(--tint2); }
-.att-peek:active { transform: translateY(-50%) scale(.94); }
-.att-tile[data-state="ready"] + .att-peek:hover { background: var(--tint); }
+.att-side:hover { color: var(--ink); background: var(--tint2); }
+.att-side:active { transform: translateY(-50%) scale(.94); }
+.att-tile[data-state="ready"] + .att-side:hover { background: var(--tint); }
 /* Mid-fetch the tile is inert and so is this — guarded in the component, not `disabled`. */
-.att-item[data-peek] > .att-tile[data-state="loading"] + .att-peek { color: var(--ink3); cursor: default; }
-.att-item[data-peek] > .att-tile[data-state="loading"] + .att-peek:hover { background: transparent; }
+.att-item[data-side] > .att-tile[data-state="loading"] + .att-side { color: var(--ink3); cursor: default; }
+.att-item[data-side] > .att-tile[data-state="loading"] + .att-side:hover { background: transparent; }
 
 .att-tile {
   display: flex;

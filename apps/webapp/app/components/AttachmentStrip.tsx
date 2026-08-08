@@ -110,19 +110,26 @@ export interface AttachmentStripProps {
    */
   items: AttachmentsView;
   /**
-   * PRESSING A TILE SAVES THE FILE. That is what a person reaches for an attachment to do,
-   * and it is one press whatever the type — no viewer stands between them and the bytes.
+   * SAVE THE FILE. The corner control on a tile that can be looked at, and the WHOLE TILE on one
+   * that cannot — an SVG, a docx, a zip, or any file whose bytes failed. Never absent: every
+   * attachment can be saved, whatever else it can or cannot do.
    */
   onOpen(id: string): void;
   /**
-   * Look at it instead — the small control in the tile's corner, and never the whole tile.
-   * Optional: without it no tile grows one, which is what a surface that can only save wants.
+   * LOOK AT IT — and where this is supplied it is what the whole tile does.
+   *
+   * Optional: without it no tile previews and every tile saves, which is what a surface with no
+   * viewer wants. It is filtered by {@link canPreview} before it reaches a tile, so a tile that
+   * has one may always use it.
    */
   onPreview?(id: string): void;
   /**
    * Can THIS file be shown without leaving the page? The strip does not know and must not
-   * guess: the answer decides whether a file is rendered or only saved, and that is a
-   * security question with one owner. Absent, or `false`, means the tile offers saving alone.
+   * guess: the answer decides whether bytes from a stranger get rendered, and that is a security
+   * question with one owner. Absent, or `false`, means the tile saves and offers nothing else.
+   *
+   * Unchanged by the swap of the two verbs. What moved is which control is the big one; which
+   * FILES may be drawn at all is the same question with the same owner and the same answer.
    */
   canPreview?(item: AttachmentItem): boolean;
   onDownloadAll(): void;
@@ -138,6 +145,11 @@ const COPY = {
   downloadingAll: "Fetching…",
   /** en.json: "Preview {name}" — the file is named because a strip may hold five of these. */
   preview: (name: string) => `Preview ${name}`,
+  /**
+   * en.json: "Download {name}". The corner control's label, and the TILE's title on a file this
+   * app cannot draw — the same sentence in both places, because it is the same act.
+   */
+  download: (name: string) => `Download ${name}`,
   /** en.json: "{size} · in your mailbox" — the true thing: not fetched yet. */
   idle: (size: string) => `${size} · in your mailbox`,
   loading: "Fetching from your mailbox…",
@@ -245,11 +257,17 @@ const GLYPH_TRAY = (
   </svg>
 );
 
-/* An eye: the one shape that reads as "look, don't take" without a word beside it. */
-const GLYPH_EYE = (
+/**
+ * An arrow into a tray: the one shape that reads as "put this on my disk" without a word beside
+ * it, and the same shape the Download-all button carries — one verb, one glyph, two sizes.
+ *
+ * It replaced the eye that used to sit here when the two verbs swapped places. The eye is gone
+ * rather than kept for something else: a tile whose press LOOKS does not need a control saying
+ * "look", and an eye beside it would have been a second name for the thing already happening.
+ */
+const GLYPH_SAVE = (
   <svg className="ic" viewBox="0 0 16 16" aria-hidden="true" style={{ width: 14, height: 14 }}>
-    <path d="M1.6 8s2.4-4 6.4-4 6.4 4 6.4 4-2.4 4-6.4 4S1.6 8 1.6 8Z" />
-    <circle cx="8" cy="8" r="1.9" />
+    <path d="M8 2.6v7.2M5.2 7.1 8 9.9l2.8-2.8M3.2 13.2h9.6" />
   </svg>
 );
 
@@ -283,13 +301,30 @@ function Leaf({ item }: { item: AttachmentItem }) {
 /**
  * ── TWO VERBS, AND ONLY ONE OF THEM IS THE TILE ──────────────────────────────────────────
  *
- * The tile is SAVE. It is the whole rectangle, it is what a press does whatever the file is,
- * and it is the same act for a PDF as for a zip — the reader does not have to know which
- * types this app happens to be able to draw before they can have their file.
+ * ── THE TWO VERBS, AND THEY TRADED PLACES ────────────────────────────────────────────────
  *
- * LOOK is a second, smaller control in the corner, offered only where looking is possible.
- * It is a separate `<button>` beside the tile rather than inside it: a button within a button
- * is invalid, and the browser would give the press to whichever it felt like.
+ * The tile is LOOK, wherever looking is possible: a press opens the PDF, the picture or the text
+ * part in the overlay, and the reader decides from what they can see whether they want it on
+ * their disk. SAVE is the smaller control in the corner.
+ *
+ * They used to be the other way round, on the argument that saving is what people come to an
+ * attachment for and nobody should have to learn which types this app can draw first. The
+ * argument was half right and the half it got wrong is the expensive one: an attachment is
+ * usually opened to be READ, once, and a press that puts a file in ~/Downloads instead of on the
+ * screen makes the reader do the work — find the file, open it in another app, and then delete
+ * it. Where this app can draw the file, drawing it is the answer to the press. Where it cannot,
+ * the tile still saves, so the rule "a press does the useful thing" holds for every type; what
+ * changes is what useful means for the types that can be shown.
+ *
+ * ── WHAT DID NOT MOVE: WHICH FILES MAY BE DRAWN AT ALL ──────────────────────────────────
+ *
+ * `canPreview` is still asked and still owned one layer up (`isPreviewable`, which refuses SVG
+ * for being a document that executes script, and everything else this app cannot render). An SVG,
+ * a docx and a zip have no viewer and their tile saves, exactly as before. The security
+ * judgement is untouched by the swap — only the geometry of the two controls is.
+ *
+ * The corner control is a separate `<button>` beside the tile rather than inside it: a button
+ * within a button is invalid, and the browser would give the press to whichever it felt like.
  */
 function Tile({
   item,
@@ -353,32 +388,45 @@ function Tile({
      started. While loading the press is inert (guarded, not `disabled` — `disabled`
      would drop that focus mid-wait). */
   const loading = item.state === "loading";
-  /* Not over a `failed` tile: the whole tile is the retry there, and a second control
-     beside it would offer a look at bytes that are not here. */
-  const peek = item.state === "failed" ? undefined : onPreview;
+  /**
+   * CAN THIS TILE'S PRESS SHOW SOMETHING? `onPreview` arrives already filtered by `canPreview`
+   * (`ReadyStrip` does that, so the security judgement stays in one place), and a `failed` tile is
+   * excluded here: the whole tile is the retry there, and a press that opened an overlay over
+   * bytes that are not present would be a viewer of nothing.
+   *
+   * When it is false the tile SAVES and there is no corner control — a docx, a zip, an SVG, and
+   * any tile whose bytes failed. One verb, no second name for it.
+   */
+  const canLook = item.state !== "failed" && onPreview != null;
   return (
-    <div className="att-item" data-peek={peek ? "" : undefined}>
+    <div className="att-item" data-side={canLook ? "" : undefined}>
       <button
         type="button"
         className="att-tile"
         data-state={item.state}
         aria-busy={loading || undefined}
         aria-disabled={loading || undefined}
-        title={item.state === "failed" ? item.error : undefined}
-        onClick={loading ? undefined : () => onOpen(item.id)}
+        title={
+          item.state === "failed"
+            ? item.error
+            : canLook
+              ? COPY.preview(item.filename)
+              : COPY.download(item.filename)
+        }
+        onClick={loading ? undefined : () => (canLook ? onPreview!(item.id) : onOpen(item.id))}
       >
         {body}
       </button>
-      {peek ? (
+      {canLook ? (
         <button
           type="button"
-          className="att-peek"
-          aria-label={COPY.preview(item.filename)}
-          title={COPY.preview(item.filename)}
+          className="att-side"
+          aria-label={COPY.download(item.filename)}
+          title={COPY.download(item.filename)}
           aria-disabled={loading || undefined}
-          onClick={loading ? undefined : () => peek(item.id)}
+          onClick={loading ? undefined : () => onOpen(item.id)}
         >
-          {GLYPH_EYE}
+          {GLYPH_SAVE}
         </button>
       ) : null}
     </div>

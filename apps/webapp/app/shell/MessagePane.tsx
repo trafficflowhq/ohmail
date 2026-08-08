@@ -852,17 +852,22 @@ export function MessagePane({
       {attachments ? (
         <AttachmentStrip
           items={attachments.itemsOf(message.id)}
-          /* A PRESS SAVES THE FILE — every type, one act. Nothing stands between a reader and
-             the bytes they asked for, and nobody has to learn which formats this app can draw
-             before they can get their attachment onto their disk. */
+          /* SAVING IS THE SECOND VERB NOW — the corner control on a tile that can be looked at,
+             and the whole tile on one that cannot. Every attachment can be saved, whatever else
+             it can do, so this is never withheld. */
           onOpen={(attachmentId) => attachments.open(message.id, attachmentId)}
-          /* LOOKING IS THE SECOND, SMALLER VERB, and WHICH FILES OFFER IT IS DECIDED HERE
-             rather than in the strip — the strip stays a pure component that asks no
-             questions, and the answer is a security judgement with one owner. A type this app
-             can draw inline (image, PDF, text) opens the Quick-Look overlay; everything else —
-             a docx, a zip, and an SVG, which is a document that executes script — has no eye
-             on its tile and can only ever be saved. The metadata carries the type whatever the
-             item's byte state, so the decision needs no fetch. */
+          /* LOOKING IS WHAT A PRESS DOES, and WHICH FILES OFFER IT IS DECIDED HERE rather than
+             in the strip — the strip stays a pure component that asks no questions, and the
+             answer is a security judgement with one owner. A type this app can draw inline
+             (image, PDF, text) opens the Quick-Look overlay; everything else — a docx, a zip,
+             and an SVG, which is a document that executes script — cannot be previewed at all
+             and its tile saves. The metadata carries the type whatever the item's byte state, so
+             the decision needs no fetch.
+
+             THE SWAP CHANGED THE GEOMETRY, NOT THIS LINE. `isPreviewable` is the same predicate
+             with the same owner and the same refusals; what moved is which control is the big
+             one. An attachment is usually opened to be read once, and a press that put the file
+             in ~/Downloads made the reader find it, open it elsewhere and then delete it. */
           onPreview={(attachmentId) => chrome.openAttachmentPreview(message.id, attachmentId)}
           canPreview={(item) => isPreviewable(item.mimeType)}
           onDownloadAll={() => attachments.downloadAll(message.id)}

@@ -95,7 +95,11 @@ export interface AttachmentsChrome {
    * never `fetch`es the object URL, which `connect-src 'self'` refuses on the live host.
    */
   blobOf(messageId: string, attachmentId: string): Blob | undefined;
-  /** Fetch the whole set as one server-assembled zip and save it. */
+  /**
+   * Fetch every attachment on the message and save them as N DISCRETE FILES, under their own
+   * names. Not a zip — see the implementation for why the server's archive route is still
+   * mounted and no longer called from here.
+   */
   downloadAll(messageId: string): void;
   downloadingAll(messageId: string): boolean;
 }
@@ -285,25 +289,79 @@ export function useMessageAttachments(
     [engine],
   );
 
+  /**
+   * ── DOWNLOAD ALL — N FILES, NOT ONE ARCHIVE ──────────────────────────────────────────────
+   *
+   * This used to fetch the server-assembled zip and save it under the server's own name. The
+   * route still exists and `engine.downloadAllAttachments` still calls it; what changed is that
+   * the webapp no longer uses it, and the reason is what the reader is left holding.
+   *
+   * A zip is a container somebody now has to deal with. Pressing "Download all" on three PDFs
+   * and getting `attachments-<uuid>.zip` means finding it, expanding it, and then dealing with
+   * three PDFs anyway — plus a folder named after a message id that means nothing to anybody.
+   * What the press asked for was the FILES, so that is what it produces: three downloads, under
+   * their own names, in the same place every other download goes.
+   *
+   * It also removes the archive's one dishonesty. The zip may legitimately be missing parts —
+   * the server skips what it cannot fetch and names them in an `_errors.txt` INSIDE the archive
+   * — so the saved file looked complete and the explanation was hidden in it. Per file, a part
+   * that could not be fetched is a `failed` tile in the strip, in front of the reader, with the
+   * server's own sentence on it.
+   *
+   * ── THE COST, STATED RATHER THAN DISCOVERED ────────────────────────────────────────────
+   *
+   * One IMAP fetch per file instead of one for the set. `engine.downloadAllAttachments`'s own
+   * comment is right that N files can mean N conversations with the user's mail server, and
+   * providers throttle exactly that pattern. Two things make it affordable here: the prefetch is
+   * SEQUENTIAL, so the server sees one request at a time rather than a burst; and a message
+   * carries a handful of attachments, not hundreds. An attachment already fetched is skipped
+   * entirely — `openAttachment` returns early on a `ready` item — so pressing this after opening
+   * two of three files costs one request.
+   *
+   * ── THE SAVES ARE ONE SYNCHRONOUS LOOP, AND THAT IS NOT A STYLE CHOICE ─────────────────
+   *
+   * Every anchor click happens in the same task, with no `await` between them. Browsers treat a
+   * run of programmatic downloads as one act and ask about it once; spacing them across tasks
+   * turns one "Download multiple files?" prompt into several, or gets the later ones dropped
+   * silently. So all the waiting happens first, and then nothing waits.
+   */
   const downloadAll = useCallback(
     (id: string): void => {
       void (async () => {
         setDownloadingAll(id);
         try {
-          const zip = await engine.downloadAllAttachments(id);
-          if (!zip) {
-            // The engine returns `null` rather than writing over the message's list — the
-            // metadata is still good and blanking the strip would drop every object URL in
-            // it. So the report belongs here, beside the button that was pressed.
+          const held = engine.attachmentsOf(id);
+          if (held.state !== "ready" || held.items.length === 0) {
+            // No metadata means nothing to enumerate. The strip is already saying why — the
+            // list carries its own failure state — so this is the one case the toast would only
+            // repeat. It is still reported, because the press did nothing, and a press that
+            // does nothing without saying so is the failure this callback exists for.
             onFailed.current();
             return;
           }
-          // The SERVER'S own name for this archive (`attachments-service.ts`
-          // `downloadAll`), so the file on disk is the one the API says it sent. The zip may
-          // legitimately be missing parts — the server skips what it cannot fetch and names
-          // them in `_errors.txt` inside the archive — so a saved file is not a promise that
-          // everything is in it.
-          saveBlob(zip, `attachments-${id}.zip`, document);
+
+          // `too_large` is permanent — the server refused at its ceiling — so it is not asked
+          // for. `failed` IS re-asked: a press of the group verb is a human act, which is the
+          // only thing that may re-drive a `cost:"connection"` fetch the server already refused.
+          const wanted = held.items.filter((i) => i.state !== "too_large");
+          for (const item of wanted) {
+            await engine.openAttachment(id, item.id, item.state === "failed" ? { retry: true } : {});
+          }
+
+          // RE-READ, never the pre-fetch snapshot: `wanted` holds the states as they were before
+          // any of this ran, and saving from it would mean saving a stale `objectUrl` — or none.
+          const after = engine.attachmentsOf(id);
+          const saved = after.state === "ready"
+            ? after.items.filter((i) => i.state === "ready" && i.objectUrl)
+            : [];
+
+          // ── the synchronous half. No `await` may appear inside this loop. ──
+          for (const item of saved) saveObjectUrl(item.objectUrl!, item.filename, document);
+
+          // Reported only when NOTHING could be saved. A partial result needs no toast: every
+          // file that could not be fetched is a `failed` tile carrying the server's own sentence,
+          // which is more than a toast could say and is attached to the file it is about.
+          if (saved.length === 0) onFailed.current();
         } finally {
           // Guarded: a second message's download may have started while this one was in
           // flight, and clearing unconditionally would take its spinner away.
