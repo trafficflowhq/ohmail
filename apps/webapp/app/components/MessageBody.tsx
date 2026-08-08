@@ -887,6 +887,77 @@ function widthAttrPx(v: string | null): number | null {
  * Exported so the classification can be watched directly against real mail rather than
  * inferred from a rendered frame — see the reflow guards in `message-body.test.ts`.
  */
+/**
+ * ── THE PROSE CLASS: MAIL THAT IS A LETTER, AND HAS NOTHING TO RENDER BUT WORDS ───────────
+ *
+ * A third reading of the same document, beside {@link SanitizedMail.light} and
+ * {@link SanitizedMail.reflow}, and it answers a bigger question than either: does this message
+ * need a frame at all?
+ *
+ * Most mail between people is a paragraph and a sign-off. It arrives as html because every
+ * client sends html, not because anything about it is designed — and putting it in a sandboxed
+ * iframe costs a document, a stylesheet, a measurement pass and a resize observer to draw
+ * something the app can set in its own type. Worse, it draws it in the SENDER's type: their font
+ * stack, their line height, their idea of a link colour, inside a product that has its own.
+ *
+ * So a message that declares no layout, shows no picture and carries no meaningful stylesheet is
+ * rendered as {@link BodyText} over the message's TEXT part, exactly as a message with no html at
+ * all has always been. That is not a new renderer; it is the fallback this component has always
+ * had, reached deliberately instead of only by accident.
+ *
+ * ── THE FOUR TESTS, AND WHY EACH ONE IS DISQUALIFYING ────────────────────────────────────
+ *
+ *   1. NOT RIGID. A declared canvas ({@link isRigidLayout}) is a design, and a design is
+ *      precisely what the frame exists to render faithfully.
+ *   2. NO PICTURE. Any `<img>` that is not a classified beacon — including a `data:` image and an
+ *      inline `cid:` reference this build cannot resolve — means the sender put something on the
+ *      screen that the text part does not contain. A BEACON is not a picture and is deliberately
+ *      allowed here: it renders as nothing, it is never fetched, and excluding it would drop most
+ *      ordinary mail out of this class for a thing the reader cannot see.
+ *   3. NO BACKGROUND IMAGE. The same fact under a different spelling — `data-ohmail-bgimg` on an
+ *      element, or a surviving `url()` in the neutralised sheet.
+ *   4. TRIVIAL STYLE TEXT. A sender who wrote a stylesheet was styling something. The threshold is
+ *      generous enough for the boilerplate a desktop client emits about its own paragraph class
+ *      and tight enough that a template's sheet fails it. Crossing it costs nothing but the frame
+ *      the message would have had anyway, which is why the cut can be blunt.
+ *
+ * Every test is read from the FINAL, sanitized document and the NEUTRALISED sheet, for the reason
+ * {@link SanitizedMail.light} is: the answer has to be about the document the frame would build.
+ *
+ * ── THE ONE THING THIS MUST NEVER BECOME ────────────────────────────────────────────────
+ *
+ * **The sanitized HTML is never rendered into the app's own DOM, in this class or any other.**
+ * The `srcdoc` sandbox — `default-src 'none'`, no scripts, no same-origin — is the XSS boundary
+ * this whole file is arranged around, and "the sanitizer said it was fine, so we can inline it"
+ * is the sentence that removes it. What this class does is render the message's TEXT part
+ * instead, through the same component a message with no html has always used. There is no path
+ * from `prose` to markup in the app document, and `message-body-prose.test.ts` holds it there.
+ */
+const PROSE_MAX_STYLE_CHARS = 1024;
+
+/**
+ * Is this document a letter rather than a layout? See {@link PROSE_MAX_STYLE_CHARS} for the four
+ * tests and for why the sanitized html is still never inlined.
+ *
+ * Exported so the classification can be watched directly against real mail rather than inferred
+ * from what happened to render.
+ */
+export function isProseDocument(root: Element, styleText: string): boolean {
+  // A picture, in either spelling. `data-ohmail-pixel` is written by the post-pass on the images
+  // it classified as beacons, and a sender's copy of it cannot survive `ALLOW_DATA_ATTR: false` —
+  // which is the same single gate `data-ohmail-host` depends on, named here so it is not two
+  // unwatched flags.
+  for (const img of root.querySelectorAll("img")) {
+    if (img.getAttribute("data-ohmail-pixel") !== "1") return false;
+  }
+  if (root.querySelector("[data-ohmail-bgimg]")) return false;
+  // A surviving `url()` in the sheet: `data:`, or a proxied remote image under the auto mode.
+  // Every REMOTE one that is not admitted is already `none` by this point, so what is left here
+  // is something that will actually paint.
+  if (/url\(/i.test(styleText)) return false;
+  return styleText.trim().length <= PROSE_MAX_STYLE_CHARS;
+}
+
 export function isRigidLayout(root: Element, styleText: string): boolean {
   if (widestFixedWidthPx(styleText) >= RIGID_MIN_PX) return true;
   for (const el of root.querySelectorAll(CANVAS_TAGS)) {
@@ -944,6 +1015,19 @@ export interface SanitizedMail {
    * reading of THIS document, and the component would otherwise have to re-parse the html.
    */
   reflow: boolean;
+  /**
+   * IS THIS A LETTER RATHER THAN A LAYOUT? The one input to the frameless path — see
+   * {@link isProseDocument} for the four tests.
+   *
+   * `true` means the component may render the message's TEXT part in the app's own type and skip
+   * the iframe entirely. It NEVER means the sanitized html may be inlined: the srcdoc sandbox is
+   * the XSS boundary, and this flag decides which of two SAFE renderings is used, not whether the
+   * boundary applies.
+   *
+   * Implies {@link reflow} — a rigid document is a design and can never be prose — but the two are
+   * carried separately because a reflowable mail with a picture in it is common and is not prose.
+   */
+  prose: boolean;
   /**
    * The paper {@link light} was decided from, or `null` when the mail declared none. Carried
    * for the tests and for anyone debugging a message that inverted when it should not have;
@@ -1023,14 +1107,16 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   const sheets: string[] = [];
   const proxy = opts.imageProxy ?? null;
 
-  // `light: true` and `reflow: false` on both refusals are not readings of anything — neither
-  // path renders a frame, so nothing consults either. They are stated rather than left optional
-  // so the fields are total.
+  // `light: true`, `reflow: false` and `prose: false` on both refusals are not readings of
+  // anything — neither path renders a frame, so nothing consults any of them. They are stated
+  // rather than left optional so the fields are total. `prose: false` in particular is the
+  // conservative side: these branches produce no document to have read, and a `true` here would
+  // send an unparseable message down the frameless path on the strength of nothing.
   if (!sanitizerAvailable()) {
-    return { html: "", blocked, sheets, light: true, reflow: false, background: null };
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, background: null };
   }
   if (html.length > MAX_HTML_CHARS) {
-    return { html: "", blocked, sheets, light: true, reflow: false, background: null, oversize: true };
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, background: null, oversize: true };
   }
 
   const seen = new Set<string>();
@@ -1163,6 +1249,14 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
           node.setAttribute("src", BLANK_GIF);
           node.setAttribute("data-ohmail-blocked", "1");
         }
+        // WHAT THIS IMAGE WAS JUDGED TO BE, kept on the element because a later reading of the
+        // document has to be able to ask. `data-ohmail-blocked` cannot answer it: under the
+        // manual mode a picture and a beacon are both blanked and both carry that marker, so a
+        // reader of the final document could not tell "this message shows nothing" from "this
+        // message shows a photograph the reader has not asked for yet". {@link isProseDocument}
+        // needs exactly that distinction. A sender's own copy of this attribute cannot survive
+        // `ALLOW_DATA_ATTR: false` — the same single gate the anti-phishing markers rely on.
+        if (pixel) node.setAttribute("data-ohmail-pixel", "1");
       } else if (!src.startsWith("data:")) {
         // `cid:` and anything relative. Neither can be resolved from here, and a browser
         // renders an unresolvable src as a broken-image glyph in the middle of the mail.
@@ -1275,7 +1369,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     }) as unknown as HTMLElement | null;
 
   // `IS_EMPTY_INPUT` returns null under `RETURN_DOM`, which is a message with no html left.
-  if (!sanitized) return { html: "", blocked, sheets, light: true, reflow: false, background: null };
+  if (!sanitized) return { html: "", blocked, sheets, light: true, reflow: false, prose: false, background: null };
 
   // ── THE POST-PASS. Over the document the frame will have, not the one we handed over. ──
   for (const node of sanitized.querySelectorAll("*")) onAttributes(node);
@@ -1285,12 +1379,16 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // post-pass above is the last thing that writes, and it writes attributes only, which is the
   // rule this whole function is arranged around.
   const background = effectiveBackground(parsed.body, sanitized, styleText);
+  // ONE READING OF `isRigidLayout`, SHARED. `prose` implies `reflow`, and computing the rigidity
+  // twice is how the two answers get to disagree about one document.
+  const rigid = isRigidLayout(sanitized, styleText);
   return {
     html: sanitized.innerHTML,
     blocked,
     sheets,
     light: mailIsLight(background),
-    reflow: !isRigidLayout(sanitized, styleText),
+    reflow: !rigid,
+    prose: !rigid && isProseDocument(sanitized, styleText),
     background,
   };
 }
@@ -1761,10 +1859,8 @@ export function MessageBody({
   const mail = useMemo(() => {
     if (!html) return null;
     if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const };
-    const { html: clean, blocked, sheets, oversize, light, reflow, background } = sanitizeMailHtml(
-      html,
-      { imageProxy: proxy },
-    );
+    const { html: clean, blocked, sheets, oversize, light, reflow, prose, background } =
+      sanitizeMailHtml(html, { imageProxy: proxy });
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
     // frame, and never by taking however long the neutralising would have taken.
     if (oversize) return { state: "oversize" as const };
@@ -1778,6 +1874,14 @@ export function MessageBody({
        * component would otherwise have to re-parse the html to ask.
        */
       light,
+      /**
+       * IS THIS A LETTER? Decided in the same pass as `light` and `reflow` and carried the same
+       * way — see {@link isProseDocument}. The RENDER branch that reads it is at the bottom of
+       * this component, and it also requires a non-empty text part: a message classified prose
+       * whose text part is empty has nothing to render frameless, and its frame is the only place
+       * the words are.
+       */
+      prose,
       // `darkWanted && light` is baked in for the FIRST paint (no flash), then never rebuilt:
       // every later flip goes through the toggleAttribute effect below. It is deliberately NOT
       // a dep — rebuilding the srcdoc on a theme change would re-parse and re-measure the whole
@@ -1997,7 +2101,38 @@ export function MessageBody({
   // to offer, so the button would toggle an attribute that changes nothing on screen. A control
   // that visibly does nothing is worse than an absent one, and an empty bar carrying only that
   // control is worse still — hence both this and the button below read the same term.
-  const canAdapt = themeDark && adaptable;
+  /**
+   * ── THE FRAMELESS PATH — A LETTER, SET IN THE APP'S OWN TYPE ────────────────────────────
+   *
+   * `mail.prose` is the document's answer (see {@link isProseDocument}); the second term is this
+   * component's. A message classified prose whose TEXT part is empty has nothing to render
+   * frameless — the words exist only inside the html — so it keeps its frame. That is the whole
+   * of the fallback, and it is checked here rather than in the classifier because `text` is a
+   * prop and the classifier reads a document.
+   *
+   * ── WHAT IS RENDERED, AND THE LINE THAT MUST NOT MOVE ──────────────────────────────────
+   *
+   * The TEXT PART, through the same {@link BodyText} a message with no html has always used.
+   * **The sanitized html is never put into the app's document, here or anywhere.** The srcdoc
+   * sandbox is the XSS boundary; this flag chooses between two safe renderings and has no power
+   * to relax it. `message-body-prose.test.ts` plants markup in a prose-classified message and
+   * asserts that not one element of it reaches the app's DOM.
+   *
+   * ── THE BAR STAYS ─────────────────────────────────────────────────────────────────────
+   *
+   * A prose message can still have named a beacon, a background image or a remote stylesheet —
+   * none of which paints anything, which is why the message qualifies — and the bar is the only
+   * place the product says so. Dropping it to render "just the text" would delete a privacy
+   * disclosure the site makes in as many words, for a message where the disclosure is the ONLY
+   * thing there was to report. So the frame is what this path replaces, not the chrome.
+   *
+   * The dark toggle is the exception and is suppressed below: the transform is a filter on the
+   * FRAME's document, and there is no frame here. `BodyText` is app-native and already themed, so
+   * the control would be a button that visibly does nothing — the same rule `canAdapt` applies to
+   * a mail the sender already drew dark.
+   */
+  const proseView = mail.prose && text.trim().length > 0;
+  const canAdapt = themeDark && adaptable && !proseView;
   const showBar = hasBlocked || canAdapt;
   /**
    * IS WHAT THE READER IS LOOKING AT DARK? Not the same question as `dark`, which is only
@@ -2069,20 +2204,26 @@ export function MessageBody({
         </div>
       ) : null}
 
-      {/* `data-dark` themes the sheet the frame sits on — the chrome this file owns — to match
-          the transform inside the frame, so a short mail's surround does not read as a light
-          hole in a dark panel. It follows the per-message override, not just the theme. */}
-      <div className="mb-sheet" data-dark={surfaceDark ? "1" : undefined}>
-        <iframe
-          ref={frameRef}
-          className="mb-frame"
-          title={COPY.frameTitle}
-          sandbox={FRAME_SANDBOX}
-          referrerPolicy="no-referrer"
-          srcDoc={mail.doc}
-          onLoad={() => { setReady(true); measure(); }}
-        />
-      </div>
+      {proseView ? (
+        /* A LETTER. The message's text part, in the app's own type — no frame, no sheet, no
+           measurement pass, and NEVER the sanitized html. See `proseView` above. */
+        <BodyText text={text} />
+      ) : (
+        /* `data-dark` themes the sheet the frame sits on — the chrome this file owns — to match
+           the transform inside the frame, so a short mail's surround does not read as a light
+           hole in a dark panel. It follows the per-message override, not just the theme. */
+        <div className="mb-sheet" data-dark={surfaceDark ? "1" : undefined}>
+          <iframe
+            ref={frameRef}
+            className="mb-frame"
+            title={COPY.frameTitle}
+            sandbox={FRAME_SANDBOX}
+            referrerPolicy="no-referrer"
+            srcDoc={mail.doc}
+            onLoad={() => { setReady(true); measure(); }}
+          />
+        </div>
+      )}
     </div>
   );
 }
