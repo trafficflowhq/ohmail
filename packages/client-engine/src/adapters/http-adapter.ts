@@ -1059,6 +1059,127 @@ export class HttpAdapter implements EngineAdapter {
         };
       }
 
+      /**
+       * AUTOSAVE — `POST /drafts` on a create, `PUT /drafts/:id` on an update.
+       *
+       * Both routes have been mounted since the drafts backend landed; `POST` had exactly one
+       * caller ({@link HttpAdapter.mailSend}, on its way to sending) and `PUT` had none at all —
+       * the "built, tested, unreachable" shape this file keeps finding. A compose that saves
+       * itself is what they were for.
+       *
+       * ── THE CREATE RETURNS ITS ID, AND THAT IS THE POINT ────────────────────────────────
+       *
+       * `entityId` carries the server's id back so the surface can adopt it: the next autosave
+       * PUTs the same row, and the send sends it. Without it, every two seconds of typing would
+       * be a new `drafts` row and pressing Send would leave a heap of abandoned twins behind.
+       * The echo also goes into `changes` so the mirror holds the real row immediately, under
+       * the real id — the optimistic overlay was under a client-local one and is dropped at the
+       * same moment.
+       *
+       * ── ONE OF `body` / `html`, NEVER BOTH ─────────────────────────────────────────────
+       *
+       * Identical to the send path and for the identical reason: `DraftsService` derives the
+       * text/plain alternative from the sanitized markup and refuses a request carrying a `body`
+       * beside it, so a client that sent both would be asserting what plaintext readers see.
+       *
+       * ── NO `Idempotency-Key` REPLAY IS RELIED ON ───────────────────────────────────────
+       *
+       * The key is forwarded (both routes are unmarked, so the middleware returns early), and a
+       * retry of an autosave is harmless either way: a PUT is set-to-a-value, and a duplicated
+       * POST would leave one extra empty-ish draft rather than a duplicated effect. Nothing here
+       * sends anything.
+       */
+      case "draft_save": {
+        const fields = {
+          subject: m.subject,
+          ...(m.html ? { html: m.html } : { body: m.body }),
+          to: m.to,
+          cc: m.cc,
+          bcc: m.bcc,
+        };
+        if (m.draftId === null) {
+          const res = await this.request("POST", "/drafts", {
+            body: {
+              mailboxId: m.mailboxId,
+              threadId: m.threadId ?? null,
+              inReplyToMessageId: m.inReplyToMessageId ?? null,
+              ...fields,
+            },
+            idempotencyKey: opts.idempotencyKey,
+          });
+          if (!res.ok) throw await this.rejectionOf(res);
+          const seq = this.noteSeq(res);
+          const dto = (await res.json()) as { id?: string; updatedAt?: string; createdAt?: string };
+          if (!dto.id) {
+            throw new MutationRejectedError("draft create returned no id", { code: "draft_save_failed" });
+          }
+          return {
+            changes: seq === null ? [] : [{
+              type: "draft", op: "create", id: dto.id, seq,
+              updatedAt: dto.updatedAt ?? dto.createdAt ?? "",
+              entity: dto as unknown as Record<string, unknown>,
+            }],
+            seq,
+            entityId: dto.id,
+          };
+        }
+        const res = await this.request("PUT", `/drafts/${encodeURIComponent(m.draftId)}`, {
+          body: fields,
+          idempotencyKey: opts.idempotencyKey,
+        });
+        if (!res.ok) throw await this.rejectionOf(res);
+        const seq = this.noteSeq(res);
+        const dto = (await res.json()) as { id?: string; updatedAt?: string };
+        return {
+          changes: seq === null || !dto.id ? [] : [{
+            type: "draft", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? "",
+            entity: dto as unknown as Record<string, unknown>,
+          }],
+          seq,
+          entityId: dto.id ?? m.draftId,
+        };
+      }
+
+      /**
+       * DISCARD — `DELETE /drafts/:id`.
+       *
+       * A 404 is SWALLOWED, on `rule_delete`'s reasoning one entity over: the user asked for this
+       * draft to be gone and it is gone. Reporting a failure would leave a rolled-back tombstone
+       * and the draft back on screen, which is the one outcome nobody wants from a Discard.
+       * Nothing else is swallowed — a 403 or a 500 means the row may well still be there.
+       */
+      case "draft_discard": {
+        const res = await this.request("DELETE", `/drafts/${encodeURIComponent(m.draftId)}`, {
+          idempotencyKey: opts.idempotencyKey,
+        });
+        if (res.status === 404) return { changes: [], seq: null };
+        if (!res.ok) throw await this.rejectionOf(res);
+        const seq = this.noteSeq(res);
+        /**
+         * THE TOMBSTONE IS ECHOED, and `rule_delete` next door deliberately does not do this —
+         * so the difference is worth the paragraph.
+         *
+         * An empty `changes` sends the engine to the authoritative drain, which is correct
+         * whenever the drain can express what happened. A BOOTSTRAP cannot: `GET /sync/snapshot`
+         * emits every live row as `op: "create"` and has no way to say "and this one is gone",
+         * and it fixes the delta cursor at the CURRENT high water — so a delete that happened
+         * before the snapshot is skipped by the delta that follows it. Any drain that bootstraps
+         * therefore loses the tombstone, the optimistic overlay is dropped when this resolves,
+         * and the draft the reader just discarded comes back on screen and stays.
+         *
+         * Echoing it makes the removal a read-your-writes fact that does not depend on which
+         * path the next drain takes. Measured, not reasoned: the mirror really did keep the row
+         * (`mail-send.test.ts`, "draft_discard removes the row"), and the delete really was in
+         * `change_log` the whole time.
+         */
+        return {
+          changes: seq === null ? [] : [{
+            type: "draft", op: "delete", id: m.draftId, seq, updatedAt: "", entity: null,
+          }],
+          seq,
+        };
+      }
+
       // Draft-accept is a pure client-side editor action — it moves an AI draft into the
       // editor and touches no server state. No wire mapping, by design.
       case "draft_accept":
@@ -1103,7 +1224,61 @@ export class HttpAdapter implements EngineAdapter {
     m: Extract<EngineMutation, { kind: "mail_send" }>,
     idempotencyKey: string,
   ): Promise<MutationOutcome> {
-    let draftId = this.draftForKey.get(idempotencyKey);
+    /**
+     * ── THE MESSAGE MAY ALREADY BE A ROW ──────────────────────────────────────────────────
+     *
+     * A compose autosaves through `draft_save`, so by the time Send is pressed the account
+     * usually already holds this message. `m.draftId` names it, and then this method PUTs the
+     * final text and sends THAT row — one draft from the first keystroke to delivery, instead of
+     * an abandoned twin left behind by every send.
+     *
+     * The PUT is not optional and the reason is the debounce: autosave settles two seconds after
+     * the last keystroke, so the last thing typed may not have reached the row. Sending without
+     * writing the mutation's own fields first would deliver a message that is not the one on
+     * screen — the kind of defect nobody finds twice, because they stop trusting the product.
+     *
+     * A FAILED PUT DOES NOT STOP THE SEND. The row is already there and its stored text is at
+     * most a couple of seconds stale; refusing to send somebody's message because a settings-
+     * shaped write blipped would be the worse failure, and the send route reads the row it finds.
+     * The staleness is bounded by the debounce and by the fact that the composer wrote on every
+     * pause; a network that cannot take a PUT is unlikely to take the send either, and that
+     * failure IS reported.
+     */
+    let draftId = this.draftForKey.get(idempotencyKey) ?? m.draftId;
+    if (draftId && !this.draftForKey.has(idempotencyKey)) {
+      this.draftForKey.set(idempotencyKey, draftId);
+      const wantsBcc = (m.bcc?.length ?? 0) > 0;
+      let echoed: { bcc?: unknown } | null = null;
+      try {
+        const put = await this.request("PUT", `/drafts/${encodeURIComponent(draftId)}`, {
+          body: {
+            subject: m.subject ?? "",
+            ...(m.html ? { html: m.html } : { body: m.body }),
+            to: m.to ?? [],
+            cc: m.cc ?? [],
+            bcc: m.bcc ?? [],
+          },
+        });
+        if (put.ok) echoed = (await put.json()) as { bcc?: unknown };
+      } catch { /* see above — the row stands, and the send is what matters */ }
+
+      // ── THE VERSION-SKEW GUARD, ON THIS PATH TOO ────────────────────────────────────────
+      //
+      // The create path below refuses to send when blind recipients were asked for and the
+      // server did not echo them, because an API that predates the field stores the draft
+      // WITHOUT them and the mail leaves addressed to To/Cc only — a wrong delivery the sender
+      // cannot see. Reusing an existing row skips that POST, so the same check runs here, and it
+      // is the one thing on this path that is NOT swallowed: an unverified Bcc is exactly the
+      // failure the guard exists for, and "the PUT did not answer" is not proof that it was
+      // stored. A send with no Bcc is unaffected and still tolerates a blipped PUT.
+      if (wantsBcc && !Array.isArray(echoed?.bcc)) {
+        this.draftForKey.delete(idempotencyKey);
+        throw new MutationRejectedError(
+          "This message was not sent: the server did not confirm the Bcc recipients. Reload to update, then try again.",
+          { code: "bcc_unsupported", retryable: false },
+        );
+      }
+    }
     if (!draftId) {
       const created = await this.request("POST", "/drafts", {
         body: {

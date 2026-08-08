@@ -2,6 +2,7 @@ import type { EntityReader } from "./store.js";
 import {
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
+  type EngineDraft,
   type EngineMessage,
   type Folder,
   type MessageBody,
@@ -708,6 +709,35 @@ export function rulesList(reader: EntityReader): RuleDTO[] {
     if (ta !== tb) return tb - ta;
     return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
   });
+}
+
+/**
+ * EVERY UNSENT DRAFT ON THE ACCOUNT, newest first — the Drafts list.
+ *
+ * ── `status === "draft"` IS THE WHOLE FILTER, AND IT IS NOT A CONVENIENCE ────────────────
+ *
+ * `drafts` rows do not disappear when they are sent: `SendService` moves the row to `sent`, and
+ * `sending` / `unverified` are the two states in between. All four are the same entity in the
+ * mirror. Listing anything but `draft` would put a message that has already left the account in a
+ * list whose every row invites you to keep writing it — and, on `unverified`, would invite a
+ * second delivery of a mail that may well have gone.
+ *
+ * `accepted` is not filtered on. It is a client-local flag meaning "the user took an AI draft
+ * into the editor", and a draft somebody has started editing is exactly a draft.
+ *
+ * Sorted by `updatedAt` and not `createdAt`, because the question a Drafts list answers is "what
+ * was I last writing" — a reply started a week ago and touched this morning belongs at the top.
+ * The id breaks ties so the order is stable across renders rather than dependent on insertion.
+ */
+export function draftsList(reader: EntityReader): EngineDraft[] {
+  return reader.list<EngineDraft>("draft")
+    .filter((d) => d.status === "draft")
+    .sort((a, b) => {
+      const ta = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+      const tb = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+      if (ta !== tb) return tb - ta;
+      return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+    });
 }
 
 // ── Counts ─────────────────────────────────────────────────────────────────

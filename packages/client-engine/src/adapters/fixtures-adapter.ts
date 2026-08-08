@@ -371,7 +371,23 @@ export class FixturesAdapter implements EngineAdapter {
       throw new MutationRejectedError(`mutation target not found (${m.kind})`, { status: 404, code: "not_found" });
     }
     const changes = effects.map((e: MutationEffect) => this.emit(e.type, e.id, e.entity, e.move));
-    const outcome: MutationOutcome = { changes, seq: changes[changes.length - 1]!.seq };
+    const outcome: MutationOutcome = {
+      changes,
+      seq: changes[changes.length - 1]!.seq,
+      /**
+       * THE CREATED ROW'S ID, for the one mutation whose caller has to keep using it.
+       *
+       * In the demo there is no server, so the effect's own client-minted id IS the row's id —
+       * `emit` writes it into the fixture store under exactly that id. Answering `undefined` here
+       * would leave the compose surface adopting nothing, and it would then CREATE a fresh draft
+       * every two seconds for as long as somebody was typing. The demo would look correct
+       * throughout, because a fixture store shows whatever it was last told; the cost would land
+       * only where there is a database to fill with abandoned rows.
+       */
+      ...(m.kind === "draft_save" && m.draftId === null && effects[0]
+        ? { entityId: effects[0].id }
+        : {}),
+    };
     this.replays.set(opts.idempotencyKey, outcome);
     return outcome;
   }

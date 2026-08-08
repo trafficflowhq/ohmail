@@ -28,6 +28,14 @@ export const VIEWS = [
   "history",
   "search",
   "compose",
+  /**
+   * DRAFTS — the messages you started and have not sent.
+   *
+   * Beside Compose rather than among the piles, because it is not a place mail ARRIVED: every
+   * row is something this account wrote. It is deliberately not one of `PILE_IDS`, so the number
+   * keys skip it, for the same reason History is not.
+   */
+  "drafts",
   "settings",
 ] as const;
 export type ViewId = (typeof VIEWS)[number] | "tag";

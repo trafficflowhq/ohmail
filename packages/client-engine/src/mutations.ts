@@ -445,6 +445,71 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       return [{ type: "draft", id: draft.id, entity: draft }];
     }
 
+    /**
+     * ── AUTOSAVE ─────────────────────────────────────────────────────────────────────────
+     *
+     * CREATE (`draftId: null`) mints a client-local id for the overlay, exactly as `rule_create`
+     * and `tag_create` do and for the same reason: the server's row does not exist yet, the
+     * overlay is dropped the moment the mutation confirms, and the server's own row arrives in
+     * the echo — so the two ids never coexist. What is different here is that the caller then
+     * ADOPTS the server's id (`MutationResult.entityId`), because the next autosave has to reach
+     * the same row.
+     *
+     * UPDATE patches the row already in the mirror. An unknown id yields [] ⇒ the engine rejects
+     * locally with `not_found` and nothing goes on the wire, which is right for a draft another
+     * device deleted while this tab was typing.
+     *
+     * `status` is never written here: a draft is created at `draft` and only the send route may
+     * move it. `mailboxId` is required for the create and refused when absent — the server would
+     * 400 it, and a row written without one cannot be sent from anywhere.
+     */
+    case "draft_save": {
+      if (m.draftId === null) {
+        if (!m.mailboxId) return [];
+        const draft: EngineDraft = {
+          id: ctx.uuid(),
+          mailboxId: m.mailboxId,
+          threadId: m.threadId ?? null,
+          inReplyToMessageId: m.inReplyToMessageId ?? null,
+          subject: m.subject,
+          body: m.body,
+          to: m.to,
+          cc: m.cc,
+          bcc: m.bcc,
+          rationale: null,
+          status: "draft",
+          createdAt: iso,
+          updatedAt: iso,
+        };
+        return [{ type: "draft", id: draft.id, entity: draft }];
+      }
+      const existing = reader.get<EngineDraft>("draft", m.draftId);
+      if (!existing) return [];
+      return [{
+        type: "draft",
+        id: existing.id,
+        entity: {
+          ...existing,
+          // The FIELDS the form owns, and nothing else. `status`, `mailboxId`, `threadId` and
+          // `inReplyToMessageId` are settled at create and are not the form's to move: changing
+          // the mailbox of a draft mid-write would change which address it goes out from without
+          // saying so, and the server refuses it anyway (the column is immutable after create).
+          subject: m.subject,
+          body: m.body,
+          to: m.to,
+          cc: m.cc,
+          bcc: m.bcc,
+          updatedAt: iso,
+        } satisfies EngineDraft,
+      }];
+    }
+
+    case "draft_discard": {
+      const draft = reader.get<EngineDraft>("draft", m.draftId);
+      if (!draft) return [];
+      return [{ type: "draft", id: draft.id, entity: null }];
+    }
+
     case "draft_accept": {
       const draft = reader.get<EngineDraft>("draft", m.draftId);
       if (!draft) return [];

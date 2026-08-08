@@ -961,6 +961,25 @@ export type EngineMutation =
        */
       inReplyTo: string | null;
       /**
+       * THE DRAFT ROW THIS MESSAGE ALREADY IS, when there is one.
+       *
+       * A compose autosaves through `draft_save`, so by the time Send is pressed the account
+       * usually already holds this message as a `drafts` row. Naming it here is what makes the
+       * send USE that row: the adapter skips its `POST /drafts` and goes straight to
+       * `POST /drafts/:id/send`, so a message is one row from the first keystroke to delivery
+       * instead of leaving an abandoned twin behind on every send.
+       *
+       * Absent for a reply and for any surface that does not autosave, which is the path this
+       * had before autosave existed and still works unchanged: the adapter creates the row and
+       * sends it in two requests.
+       *
+       * The final field values still travel on the mutation and the adapter PUTs them before
+       * sending — the debounce means the last two seconds of typing may not have reached the
+       * row, and "the message I sent is not the message on screen" is not a defect anybody would
+       * find twice.
+       */
+      draftId?: string;
+      /**
        * Exactly what the user typed, as plain text. No quoted original: see the http adapter.
        *
        * When {@link html} is set this is the LOCAL plain rendering of it, used for the
@@ -989,6 +1008,64 @@ export type EngineMutation =
       bcc?: EmailAddress[];
     }
   | { kind: "draft_accept"; draftId: string }
+  /**
+   * ── AUTOSAVE: THE COMPOSE FORM BECOMES A ROW, AND STAYS THE SAME ROW ────────────────────
+   *
+   * A message somebody is writing used to live in one place — `localStorage`, under one key, in
+   * this browser. That is enough to survive navigating away and a reload, and it is not enough
+   * for anything else: close the tab on a phone and the draft is on the laptop's disk, not in
+   * the account; clear site data and it is gone; and nothing on the mailbox ever knew about it.
+   *
+   * This writes it to the account instead. `draftId: null` CREATES (`POST /drafts`), and the
+   * server's id comes back on {@link MutationResult.entityId} so the surface can adopt it. A
+   * non-null id UPDATES that row (`PUT /drafts/:id`). One row from the first meaningful keystroke
+   * to delivery: `mail_send` takes the same id rather than creating a second.
+   *
+   * ── WHY THIS IS AN ENGINE MUTATION AND NOT AN `app/api-client` CALL ─────────────────────
+   *
+   * The same argument `rule_delete` makes: the surface lives in `apps/webapp/app/views`, which is
+   * copied into the public desktop mirror, and that mirror does not contain `app/api-client` at
+   * all. The engine is the only wire a shared-shell view has. It also buys the two things a
+   * hand-rolled fetch would not: the overlay, so the Drafts list shows what was just typed before
+   * the server has answered, and `/sync`, which is what makes the draft appear on another device.
+   *
+   * ── WHAT IT DELIBERATELY DOES NOT CARRY ────────────────────────────────────────────────
+   *
+   * No `status`. A draft row is created at `draft` and only `POST /drafts/:id/send` may move it —
+   * a client that could set the column would be a second path to "this was sent", written by the
+   * side of the wire that cannot know whether it was.
+   */
+  | {
+      kind: "draft_save";
+      /** `null` ⇒ create. A server id ⇒ update THAT row. Never a client-minted id. */
+      draftId: string | null;
+      /** Required on create (the account's own address); ignored by an update. */
+      mailboxId?: string;
+      threadId?: string | null;
+      inReplyToMessageId?: string | null;
+      subject: string;
+      /**
+       * The plain rendering, always. It is what the Drafts list shows and what decides there is
+       * anything worth saving; when {@link html} is set the server derives the delivered
+       * plaintext from the markup instead, exactly as it does for `mail_send`.
+       */
+      body: string;
+      /** The markup, or absent for a plain-text draft. Never sent beside `body` on the wire. */
+      html?: string;
+      to: EmailAddress[];
+      cc: EmailAddress[];
+      bcc: EmailAddress[];
+    }
+  /**
+   * THROW THE DRAFT AWAY — `DELETE /drafts/:id`, and a tombstone in the mirror.
+   *
+   * Discard is a real verb here in a way it was not when a draft was a `localStorage` key: the
+   * row is on the account and on every device, so "I do not want this any more" has to be said
+   * out loud rather than by clearing a form. An unknown id yields no effects, which the engine
+   * reports as `not_found` without going near the wire — the right answer for a draft a
+   * concurrent drain already removed.
+   */
+  | { kind: "draft_discard"; draftId: string }
   /**
    * REVOKE A RULE, AND CHANGE WHERE ONE FILES — the undo for the consent gate.
    *

@@ -154,6 +154,7 @@
     "tagNew": "New tag",
     "tagEmpty": "No tags yet.",
     "history": "History",
+    "drafts": "Drafts",
     "historyTitle": "Old mail from senders you never screened",
     "search": "Search",
     "settings": "Settings",
@@ -1467,6 +1468,21 @@
     "toastRetargeted": "New mail matching this rule will go to {place}.",
     "toastRetargetQueued": "Change queued — it'll go through when you're back online.",
     "toastRetargetFailed": "Couldn't change that rule. Nothing has changed."
+  },
+  "drafts": {
+    "title": "Drafts",
+    "metaCount": "{count, plural, one {# draft} other {# drafts}}",
+    "explainer": "Messages you started and haven't sent. They're saved to your account, so they're here on every device you read your mail on.",
+    "openTitle": "Open this draft",
+    "noSubject": "(no subject)",
+    "noRecipient": "No recipient yet",
+    "isReply": "Reply",
+    "discard": "Discard",
+    "discardWhat": "This deletes the draft. It isn't recoverable, and it's the only copy.",
+    "discardConfirm": "Discard draft",
+    "discardCancel": "Keep it",
+    "emptyTitle": "Nothing half-written",
+    "emptyHint": "Start a message and it's saved here after a moment — on this device and every other one."
   },
   "mailBody": {
     "blockedOne": "1 remote image blocked.",

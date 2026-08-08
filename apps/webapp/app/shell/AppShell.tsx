@@ -27,6 +27,7 @@ import {
   presentationReader,
   readsPartition,
   receiptsByDay,
+  draftsList,
   rulesList,
   senderKey,
   sendingMailboxId,
@@ -34,6 +35,7 @@ import {
   threadOf,
   triagePiles,
   type ConsentPartition,
+  type EmailAddress,
   type EngineDraft,
   type EngineMessage,
   type EngineMutation,
@@ -80,6 +82,7 @@ import { useScreenerSuggestions, type SenderSuggestion } from "./screener-sugges
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
+import { useComposeAutosave } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
@@ -131,6 +134,7 @@ import { SettingsView, type MailboxEntity, type NotificationsMeta } from "../vie
 import { TagView } from "../views/TagView";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
+import { DraftsView } from "../views/DraftsView";
 import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
 
 interface ReadsAiChipEntity {
@@ -1340,9 +1344,27 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * itself is cleared by `settle` in `mail-send.ts`, which is now the only rule
    * that clears one.
    */
+  /**
+   * THE AUTOSAVE HOOK'S `release`, THROUGH A REF, AND THE REF IS NOT DECORATION.
+   *
+   * `onSendSettled` is declared here and `useComposeAutosave` is called two hundred lines below
+   * it — it needs `composeMailbox`, which needs the resolved From options, which need the
+   * mailboxes. Naming `autosave` directly in the callback body would be a temporal-dead-zone
+   * reference that TypeScript accepts (it is inside a closure) and that cannot be put in the
+   * dependency array without throwing at render. The ref is assigned once the hook exists, which
+   * is the shape `attachments.ts` uses for the same reason.
+   */
+  const releaseDraft = useRef<() => void>(() => {});
+  /** Late-bound for the same reason as {@link releaseDraft} — see below where it is assigned. */
+  const openMessageRef = useRef<(m: EngineMessage) => void>(() => {});
+
   const onSendSettled = useCallback((key: string) => {
     if (key === COMPOSE_SEND_KEY) {
       setCompose(EMPTY_COMPOSE);
+      /* RELEASED, NOT DISCARDED. The row is the message that was just sent — `SendService` moved
+         it to `sent`, which is what takes it out of the Drafts list — so deleting it here would
+         destroy the account's record of an outgoing mail. The next compose starts a new row. */
+      releaseDraft.current();
       return;
     }
     setReplyTo((cur) => (cur === key ? null : cur));
@@ -1470,7 +1492,106 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     [fromOptions, compose.fromMailboxId],
   );
   const composeMailbox = composeFrom.mailboxId ?? sendingMailboxId(reader);
-  const plan = useMemo(() => composePlan(compose, composeMailbox), [compose, composeMailbox]);
+  /**
+   * THE COMPOSE FORM IS A ROW ON THE ACCOUNT — see `compose-autosave.ts`.
+   *
+   * `active` is the route, so a timer armed by the last keystroke cannot write a draft after the
+   * user has left. It stays armed while Compose is open and nowhere else; leaving mid-sentence
+   * loses at most the last two seconds to the account, and nothing at all to the local buffer,
+   * which is written on every keystroke and is what a reload restores from.
+   */
+  const autosave = useComposeAutosave({
+    engine,
+    fields: compose,
+    mailboxId: composeMailbox,
+    active: route.view === "compose",
+  });
+  releaseDraft.current = autosave.release;
+
+  /**
+   * THE DRAFTS LIST, and the two things a row can do.
+   *
+   * `draftsList` filters to `status: "draft"` — a row that has been sent is the same entity in a
+   * later state, and listing one would invite somebody to keep writing a message that has gone.
+   *
+   * ── OPENING ONE ────────────────────────────────────────────────────────────────────────
+   *
+   * A draft that answers a message THIS DEVICE HOLDS opens in that message's own inline editor,
+   * where the conversation it belongs to is on screen. Anything else — a compose, or a reply
+   * whose parent has not synced here — opens in Compose. `repliesHere` is the same predicate the
+   * row is labelled from, so the badge and the destination cannot disagree.
+   *
+   * Opening a compose draft ADOPTS its id, so the very next autosave PATCHes the row that was
+   * opened rather than creating a second one beside it.
+   *
+   * ── AND OPENING A REPLY DOES NOT ADOPT ─────────────────────────────────────────────────
+   *
+   * The inline reply editor has no autosave — it is a per-message scratch buffer — so there is
+   * nothing to adopt the id INTO, and adopting it into the COMPOSE hook would point the next
+   * compose at a reply row. The draft's text seeds the editor and the row stays as it is; sending
+   * the reply creates its own row, exactly as it did before. Stated because it is the one place
+   * the "one row birth-to-sent" rule does not yet reach, and a reader will otherwise assume it
+   * was an oversight.
+   */
+  const drafts = useMemo(() => draftsList(reader), [reader, version]);
+  const draftRepliesHere = useCallback(
+    (d: EngineDraft): boolean =>
+      d.inReplyToMessageId != null && reader.get<EngineMessage>("message", d.inReplyToMessageId) != null,
+    [reader, version],
+  );
+  const openDraft = useCallback(
+    (d: EngineDraft) => {
+      const line = (xs: readonly EmailAddress[]): string =>
+        xs.map((a) => (a.name ? `${a.name} <${a.address}>` : a.address)).join(", ");
+      const parent = d.inReplyToMessageId
+        ? reader.get<EngineMessage>("message", d.inReplyToMessageId)
+        : null;
+      if (parent) {
+        /* The message's own inline editor, seeded with what was written. `openMessageRef` and
+           not `openMessage` directly: that callback needs the screener row map and the consent
+           partition and is therefore declared far below this one, so the reference is late-bound
+           for the same reason `releaseDraft` is. */
+        setReplyBody({ text: d.body, html: "" });
+        setReplyTo(parent.id);
+        openMessageRef.current(parent);
+        return;
+      }
+      const seeded: ComposeFields = {
+        to: line(d.to),
+        cc: line(d.cc),
+        bcc: line(d.bcc),
+        subject: d.subject,
+        body: d.body,
+        // NO `html`. The row stores the markup the server derived its plain part FROM, and the
+        // mirror's `EngineDraft` does not carry it — seeding the rich editor from `body` would
+        // silently flatten a formatted draft to text and then save the flattening back over it.
+        // Plain text is the honest reading of what this client holds.
+        html: "",
+        fromMailboxId: d.mailboxId,
+      };
+      setCompose(seeded);
+      writeComposeDraft(seeded);
+      autosave.adopt(d.id, seeded);
+      go("compose");
+    },
+    [draftRepliesHere, autosave, go, reader, version],
+  );
+  const discardDraft = useCallback(
+    (draftId: string) => {
+      void engine.mutate({ kind: "draft_discard", draftId });
+      // The compose form may be holding the very row that was just deleted — discarding from the
+      // list while it is open would otherwise leave autosave PATCHing a row that is gone, and the
+      // next pause would report a 404 nobody could act on.
+      if (autosave.draftId === draftId) autosave.release();
+    },
+    [engine, autosave],
+  );
+  /* `autosave.draftId` goes on the mutation, so Send uses the row autosave already wrote instead
+     of creating a second one — the whole point of one draft from first keystroke to delivery. */
+  const plan = useMemo(
+    () => composePlan(compose, composeMailbox, autosave.draftId),
+    [compose, composeMailbox, autosave.draftId],
+  );
   const onComposeFields = useCallback((next: ComposeFields) => {
     setCompose(next);
     writeComposeDraft(next);
@@ -2106,6 +2227,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     },
     [readColumnHidden, screenerRowFor, consentView?.placeOf],
   );
+  /* Assigned here so `openDraft`, which is declared several hundred lines above this, can open a
+     reply draft in its own conversation. See {@link openMessageRef}. */
+  openMessageRef.current = openMessage;
 
   /**
    * ═══ LOCATE THE ROW, IN WHICHEVER VIEW IT LANDED ══════════════════════════════════════
@@ -2597,6 +2721,13 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
            */
           { id: "history", label: t("rail.history"), title: t("rail.historyTitle") },
           { id: "search", label: t("rail.search"), kbdHint: "/" },
+          /* DRAFTS CARRIES A COUNT and History deliberately does not, and the difference is what
+             the number would mean. History's count would be the size of the past — always there,
+             never a call to act. A draft is an unfinished thing this account started, so the
+             count is exactly a call to act, and zero of them is a row worth having anyway: it is
+             how somebody learns their half-written mail is on the account rather than in one
+             browser. `count` is therefore present even at zero, unlike History's absent key. */
+          { id: "drafts", label: t("rail.drafts"), count: drafts.length },
           { id: "settings", label: t("rail.settings") },
         ],
       },
@@ -2708,6 +2839,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     history: t("rail.history"),
     search: t("rail.search"),
     compose: t("rail.compose"),
+    drafts: t("rail.drafts"),
     settings: t("rail.settings"),
   };
   const mobileTitle =
@@ -3238,6 +3370,16 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 plan={plan}
                 send={mailSend.stateOf(COMPOSE_SEND_KEY)}
                 onSend={sendCompose}
+              />
+            ) : null}
+
+            {effectiveView === "drafts" ? (
+              <DraftsView
+                drafts={drafts}
+                now={now}
+                onOpen={openDraft}
+                onDiscard={discardDraft}
+                repliesHere={draftRepliesHere}
               />
             ) : null}
 

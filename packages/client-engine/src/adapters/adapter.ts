@@ -26,6 +26,21 @@ export interface MutationOutcome {
   changes: SyncChange[];
   /** The X-Sync-Seq of the mutation (null when the endpoint does not echo one). */
   seq: number | null;
+  /**
+   * THE SERVER'S OWN ID FOR A ROW THIS MUTATION CREATED, when the caller has to keep using it.
+   *
+   * Absent for every mutation that acts on something already named — which is nearly all of them —
+   * and for a creation whose id the caller never needs again: `tag_create` mints a client-local id
+   * for its overlay, the server's row arrives in {@link changes}, the two never coexist, and
+   * nothing asks which is which afterwards.
+   *
+   * `draft_save` is the exception, and it is a real one rather than a convenience. A compose that
+   * autosaves must go on PATCHing THE SAME ROW, and must then SEND that row — one draft from first
+   * keystroke to delivery. Without the id here the surface would have to invent one and hope, or
+   * hunt the mirror for a row that looks like what it just wrote, which is the sort of matching
+   * that eventually sends the wrong message.
+   */
+  entityId?: string;
 }
 
 /**

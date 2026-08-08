@@ -285,7 +285,15 @@ export interface ComposePlan extends RecipientParse {
  * this resolution removes wearing a different hat: a pick stored days ago against a mailbox since
  * disconnected would go out and collect a 409 nobody could act on.
  */
-export function composePlan(fields: ComposeFields, mailboxId: string | null): ComposePlan {
+/**
+ * @param draftId THE ROW THIS MESSAGE ALREADY IS, when autosave has written one. It goes on the
+ * mutation so the send uses that row instead of creating a second — one draft from the first
+ * keystroke to delivery. Absent for any caller that does not autosave (a test, a surface without
+ * an engine), which is exactly the behaviour this had before autosave existed.
+ */
+export function composePlan(
+  fields: ComposeFields, mailboxId: string | null, draftId?: string | null,
+): ComposePlan {
   const parsed = parseRecipients(fields.to);
   // `?? ""` because `composePlan` is called directly by tests with a bare `{to,subject,body,html}`
   // form, and by a scratch buffer written before these fields existed — both reach here with `cc`
@@ -320,6 +328,7 @@ export function composePlan(fields: ComposeFields, mailboxId: string | null): Co
       cc: anyInvalid ? [] : cc.addresses,
       bcc: anyInvalid ? [] : bcc.addresses,
       ...(mailboxId ? { mailboxId } : {}),
+      ...(draftId ? { draftId } : {}),
       threadId: null,
     },
   };

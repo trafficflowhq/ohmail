@@ -39,6 +39,15 @@ export interface MutationResult {
   status: MutationStatus;
   seq: number | null;
   error?: MutationRejectedError;
+  /**
+   * The SERVER's id for a row this mutation created — see {@link MutationOutcome.entityId}.
+   *
+   * Present only where the caller has to keep using it, which today means `draft_save`'s create:
+   * the compose surface adopts it, PATCHes it on every later autosave and sends THAT row, so one
+   * draft exists from the first keystroke to delivery. Absent on every rejection, because a row
+   * that was refused has no id to adopt.
+   */
+  entityId?: string;
 }
 
 interface PendingMutation {
@@ -1807,7 +1816,14 @@ export class OhmailEngine {
       this.overlays.delete(p.id);
       this.overlayRev++;
       this.notify();
-      return { id: p.id, key: p.key, status: "confirmed", seq: outcome.seq };
+      // `entityId` rides only on the CONFIRMED result. A queued or rolled-back mutation has no
+      // server row to name, and handing back an id for one would be the worst kind of wrong
+      // answer here — a compose surface would adopt it and go on PATCHing a draft that is not
+      // there, or send it.
+      return {
+        id: p.id, key: p.key, status: "confirmed", seq: outcome.seq,
+        ...(outcome.entityId ? { entityId: outcome.entityId } : {}),
+      };
     } catch (err) {
       const rejection = err instanceof MutationRejectedError
         ? err

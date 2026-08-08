@@ -3239,3 +3239,98 @@ body.reading .shell {
     padding: 18px 18px 16px;
   }
 }
+
+/* ── Drafts ─────────────────────────────────────────────────────────────────────────────
+   A row is TWO controls, not one: the whole rectangle opens the draft, and Discard sits at the
+   end of it. They are siblings rather than nested for the reason `AttachmentStrip` gives — a
+   button inside a button is invalid markup and the browser picks the target for you. */
+.draft-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--hair-soft);
+}
+.draft-row:last-child { border-bottom: 0; }
+.draft-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+  border-radius: 12px;
+  background: transparent;
+  transition: background .15s var(--swift);
+}
+.draft-open:hover { background: var(--tint); }
+.draft-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.draft-subject {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.draft-when {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+.draft-to {
+  font-size: 11.5px;
+  color: var(--ink2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.draft-badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 650;
+  padding: 1px 8px;
+  border-radius: 99px;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+.draft-preview {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.draft-discard {
+  flex: none;
+  align-self: center;
+  margin-right: 4px;
+  padding: 5px 11px;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--ink3);
+  border-radius: 99px;
+  background: transparent;
+  transition: background .15s var(--swift), color .15s var(--swift);
+}
+.draft-discard:hover { color: var(--accent-ink); background: var(--accent-soft); }
+/* The confirm takes the whole row's width so the sentence above the buttons is readable —
+   a two-press delete whose explanation is squeezed into a corner is a one-press delete. */
+.draft-confirm {
+  flex: 1 0 100%;
+  padding: 10px 12px 12px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+}

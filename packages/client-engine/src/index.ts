@@ -97,6 +97,7 @@ export {
   ohboxView,
   readsPartition,
   receiptsByDay,
+  draftsList,
   rulesList,
   screenerSegments,
   senderKey,
