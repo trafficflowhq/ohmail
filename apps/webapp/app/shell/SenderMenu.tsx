@@ -54,7 +54,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { DECISION_DONE_LABEL } from "@ohmail/ui";
-import { Avatar } from "@ohmail/ui";
+import { Avatar, InfoNote } from "@ohmail/ui";
 import { avatarHue, initialsOf } from "./format";
 import "./sender-sheet.css";
 import {
@@ -236,7 +236,19 @@ export function SenderMenu({
                 })
               : t("unsubSender", { sender: sender.address, place: DECISION_DONE_LABEL[confirm] })}
           </p>
-          <p className="sm-confirm-fine">{t("unsubFine")}</p>
+          {/* THE FINE PRINT, SPLIT ON WHAT A PERSON MUST READ BEFORE PRESSING.
+              "Once, and there is no undo" is the irreversible part and it stays on screen with
+              the disclosure shut. HOW the request travels — from our servers rather than the
+              browser, and what happens to a sender with no unsubscribe link — is mechanism: it
+              is worth having and it is worth having HERE, but it was three lines of 10.5px
+              type between the sentence that says what will happen and the button that does it. */}
+          <InfoNote
+            className="sm-confirm-fine"
+            lead={t("unsubFine")}
+            moreLabel={t("unsubFineMoreLabel")}
+          >
+            {t("unsubFineMore")}
+          </InfoNote>
           <span className="sm-confirm-row">
             <button type="button" className="go" onClick={() => { setConfirm(null); onChoose(confirm, scope, makeRule); }}>
               {t("unsubCommit")}

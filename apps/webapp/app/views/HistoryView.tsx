@@ -54,7 +54,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { physicalFolderOf, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
-import { ListPane, ListRows, MessageRow, ReadColumn } from "@ohmail/ui";
+import { InfoNote, ListPane, ListRows, MessageRow, ReadColumn } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useListWindow } from "../shell/list-window";
 import { avatarOf, displayTime, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
@@ -124,8 +124,20 @@ export function HistoryView({
             list of a thousand old messages under an unexplained heading is a list somebody has
             to guess the meaning of. It is not a dismissible first-run tip: the explanation is
             as true on the hundredth visit as the first, and a hint that disappears is a hint
-            nobody can go back to. */}
-        <p className="view-note">{t("explainer")}</p>
+            nobody can go back to.
+
+            The other two sentences — that it is all read, and that nothing has moved on the
+            mail server — are behind the (i). They answer the second and third questions, not
+            the first, and as a block of three they pushed the first row of the list off a short
+            window. Collapsed, not deleted: "a hint that disappears" above is still the rule,
+            and a disclosure that is always in the same place is not a hint that disappears. */}
+        <InfoNote
+          className="view-note"
+          lead={t("explainer")}
+          moreLabel={t("explainerMoreLabel")}
+        >
+          {t("explainerMore")}
+        </InfoNote>
         <ListRows>
           {messages.length ? (
             <>

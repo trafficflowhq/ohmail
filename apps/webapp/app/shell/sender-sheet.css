@@ -86,9 +86,12 @@
   line-height: 1.5;
   color: var(--ink);
 }
+/* The fine print is an `InfoNote` (a `<details>`), not the `<p>` above it, so it takes no
+   styling from `.sm-confirm p` and states its own line-height. */
 .sm-confirm .sm-confirm-fine {
   margin-top: 7px;
   font-size: 10.5px;
+  line-height: 1.5;
   color: var(--ink2);
 }
 .sm-confirm-row {

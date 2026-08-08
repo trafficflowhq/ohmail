@@ -52,6 +52,8 @@ export { Card } from "./primitives/Card.js";
 export type { CardProps, CardLift } from "./primitives/Card.js";
 export { Waterline } from "./primitives/Waterline.js";
 export type { WaterlineProps } from "./primitives/Waterline.js";
+export { InfoNote } from "./primitives/InfoNote.js";
+export type { InfoNoteProps } from "./primitives/InfoNote.js";
 
 /* composites */
 export { RailNav } from "./composites/RailNav.js";

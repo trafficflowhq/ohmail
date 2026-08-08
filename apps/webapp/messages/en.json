@@ -453,7 +453,9 @@
   "history": {
     "title": "History",
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
-    "explainer": "Mail from people you never screened, who haven't written in a while. It's all read, so nothing here is waiting on you. It hasn't moved — each message is still where your mail server keeps it.",
+    "explainer": "Mail from people you never screened, who haven't written in a while.",
+    "explainerMore": "It's all read, so nothing here is waiting on you. It hasn't moved — each message is still where your mail server keeps it.",
+    "explainerMoreLabel": "What History holds, and where it lives",
     "emptyTitle": "Nothing has settled here yet.",
     "emptyHint": "History holds old mail from senders you never made a decision about. If one of them writes again, they go to the Screener and bring this mail with them.",
     "placeChip": "History"
@@ -1414,7 +1416,9 @@
     "footRuleDomain": "Waiting in the Screener, so this becomes a rule: future mail from anyone at {domain} files there too.",
     "unsubSender": "{place}. {sender} is still waiting, so this makes a rule — and ohmail will also send them a one-click unsubscribe request on your behalf.",
     "unsubDomain": "{place}. {senders, plural, one {1 sender} other {# senders}} at {domain} are still waiting, so this makes a rule for the whole domain — and ohmail will also send each of them a one-click unsubscribe request on your behalf.",
-    "unsubFine": "One request per list, once, from our servers — never from your browser, so your address and reading times stay out of their logs. Senders with no unsubscribe link are simply filed. There is no undo for a request that has been sent.",
+    "unsubFine": "One request per list, once, and there is no undo for a request that has been sent.",
+    "unsubFineMore": "It goes from our servers, never from your browser, so your address and reading times stay out of their logs. Senders with no unsubscribe link are filed and nothing is sent for them.",
+    "unsubFineMoreLabel": "How the request is sent",
     "unsubCommit": "Screen out and unsubscribe",
     "ruleToggle": "Make a rule, so future mail follows",
     "ruleToggleAria": "Also make a rule for future mail",
@@ -1499,7 +1503,9 @@
   "drafts": {
     "title": "Drafts",
     "metaCount": "{count, plural, one {# draft} other {# drafts}}",
-    "explainer": "Messages you started and haven't sent. They're saved to your account, so they're here on every device you read your mail on.",
+    "explainer": "Messages you started and haven't sent.",
+    "explainerMore": "They're saved to your account, so they're here on every device you read your mail on.",
+    "explainerMoreLabel": "Where drafts are kept",
     "openTitle": "Open this draft",
     "noSubject": "(no subject)",
     "noRecipient": "No recipient yet",

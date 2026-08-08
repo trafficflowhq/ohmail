@@ -1,0 +1,30 @@
+/* The compact (i) disclosure. Furniture, not content: it inherits its colour and size from
+   whatever note class it is given, so `.view-note .infonote` and `.d-note .infonote` each keep
+   the type they already had rather than introducing a third. */
+.infonote{min-width:0}
+
+/* The default triangle is removed in both dialects — `list-style` covers Firefox and the
+   modern engines, the pseudo-element covers older WebKit, and neither alone is enough. */
+.infonote > .infonote-sum{list-style:none;display:flex;align-items:baseline;gap:6px;cursor:pointer;
+  min-width:0}
+.infonote > .infonote-sum::-webkit-details-marker{display:none}
+
+.infonote-lead{min-width:0}
+
+/* The (i) sits ON the line it belongs to rather than at the end of the paragraph: `baseline`
+   above plus a fixed box here, so a lead that wraps to two lines keeps the glyph beside the
+   first one and the rows below it stay flush. */
+.infonote-i{flex:none;display:inline-flex;align-items:center;justify-content:center;
+  width:15px;height:15px;border-radius:50%;color:var(--ink3);opacity:.7;
+  transition:opacity .12s ease,color .12s ease;transform:translateY(2px)}
+.infonote-sum:hover .infonote-i,.infonote[open] .infonote-i{opacity:1;color:var(--ink2)}
+
+/* Keyboard focus lands on the summary, and the ring has to be visible on a control this small. */
+.infonote > .infonote-sum:focus-visible{outline:2px solid var(--focus,var(--ink2));
+  outline-offset:2px;border-radius:4px}
+
+.infonote-more{margin-top:5px;line-height:1.45;color:inherit;opacity:.92}
+
+/* The toggle's accessible name, for the reader that gets no glyph. */
+.infonote-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0}

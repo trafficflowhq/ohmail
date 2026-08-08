@@ -40,7 +40,7 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineDraft } from "@ohmail/client-engine";
-import { Button, ListPane, ListRows } from "@ohmail/ui";
+import { Button, InfoNote, ListPane, ListRows } from "@ohmail/ui";
 
 /** "you, and two others" — the recipients, as a line, or the empty-string for none. */
 function recipientLine(d: EngineDraft): string {
@@ -78,7 +78,15 @@ export function DraftsView({
         title={t("title")}
         meta={drafts.length ? t("metaCount", { count: drafts.length }) : undefined}
       >
-        <p className="view-note">{t("explainer")}</p>
+        {/* Same idiom as History: the sentence that says what the list IS stays on screen,
+            the one that says where the drafts live is behind the (i). */}
+        <InfoNote
+          className="view-note"
+          lead={t("explainer")}
+          moreLabel={t("explainerMoreLabel")}
+        >
+          {t("explainerMore")}
+        </InfoNote>
         <ListRows>
           {drafts.length ? (
             drafts.map((d) => {
