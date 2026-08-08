@@ -227,144 +227,181 @@ export function ComposeView({
       </div>
       <div className="scroller">
         <div className="compose-wrap">
-          {/* FROM. Before To, because it is the question the reader asks first and
-              because the answer used to be nowhere on this screen at all — compose resolved
-              its sender from whichever mailbox had received the newest message, and said
-              nothing, so on an account with two addresses the From flipped with the post.
+          {/* ═══ THE HEADER BLOCK ═══════════════════════════════════════════════════════════
+              From, To, Cc/Bcc and Subject as ONE compact block, then the editor, then the
+              actions at the panel's bottom edge — the inline reply's proportions, which is
+              the composition this form should have had from the start.
 
-              A CONTROL ONLY WHEN THERE IS SOMETHING TO CHOOSE. One address renders as static
-              text: a select with a single option is a decision nobody has, and the point of
-              this line with one mailbox is that a stranger can see what they are writing
-              from. Nothing renders when the account's mailboxes cannot be named at all —
-              `from.address` is null — because a From line is a claim and there is nothing to
-              claim yet.
+              What it replaces: five equally-weighted rows, each with its own 56px label
+              gutter and its own hairline, a standalone Cc/Bcc strip between To and Subject,
+              and a 150px editor sitting fourth among them. The message was the smallest
+              thing on a screen whose entire purpose is writing one, and the addressing —
+              which is answered in seconds and then never looked at again — took the top
+              half. The reply editor gets this right (`InlineReply`): a recessed head, a
+              dominant surface, one action row under it.
 
-              THE VALUE IS A MAILBOX ID. `from.choices` holds sendable mailboxes only, so a
-              disconnected address is never offered; the server refuses it too
-              (`drafts-service.ts` → `validMailbox`), and a control that offers what the server
-              refuses is an inert affordance with extra steps. */}
-          {from.address !== null ? (
+              The rows keep their `.c-field` chrome, because that is the product's form-field
+              rule and this pass is about proportion, not a new field language. */}
+          <div className="compose-head">
+            {/* FROM. Before To, because it is the question the reader asks first and
+                because the answer used to be nowhere on this screen at all — compose resolved
+                its sender from whichever mailbox had received the newest message, and said
+                nothing, so on an account with two addresses the From flipped with the post.
+
+                A CONTROL ONLY WHEN THERE IS SOMETHING TO CHOOSE. One address renders as static
+                text: a select with a single option is a decision nobody has, and the point of
+                this line with one mailbox is that a stranger can see what they are writing
+                from. Nothing renders when the account's mailboxes cannot be named at all —
+                `from.address` is null — because a From line is a claim and there is nothing to
+                claim yet.
+
+                THE VALUE IS A MAILBOX ID. `from.choices` holds sendable mailboxes only, so a
+                disconnected address is never offered; the server refuses it too
+                (`drafts-service.ts` → `validMailbox`), and a control that offers what the server
+                refuses is an inert affordance with extra steps. */}
+            {from.address !== null ? (
+              <div className="c-field">
+                <label htmlFor="compose-from">{t("from")}</label>
+                {from.choices.length > 1 ? (
+                  <span className="c-select">
+                    <select
+                      id="compose-from"
+                      className="c-input"
+                      value={from.mailboxId ?? ""}
+                      disabled={inFlight}
+                      onChange={(e) => onFields({ ...fields, fromMailboxId: e.target.value })}
+                    >
+                      {from.choices.map((o) => (
+                        <option key={o.id} value={o.id}>{o.address}</option>
+                      ))}
+                    </select>
+                  </span>
+                ) : (
+                  <output id="compose-from" className="c-static">{from.address}</output>
+                )}
+              </div>
+            ) : null}
+
             <div className="c-field">
-              <label htmlFor="compose-from">{t("from")}</label>
-              {from.choices.length > 1 ? (
-                <span className="c-select">
-                  <select
-                    id="compose-from"
-                    className="c-input"
-                    value={from.mailboxId ?? ""}
+              <label htmlFor="compose-to">{t("to")}</label>
+              {/* The addresses this mailbox already knows, matched as you type. `book` is a
+                  pure selector over the local mirror — no request per keystroke, and nothing
+                  about what is being typed leaves the tab. See `RecipientField`. */}
+              <RecipientField
+                id="compose-to"
+                value={fields.to}
+                onChange={(next) => onFields({ ...fields, to: next })}
+                book={book}
+                disabled={inFlight}
+                placeholder={t("toPlaceholder")}
+                /* The error line below is the accessible name's partner: a field that is wrong
+                   must SAY which entry is wrong, not merely refuse to enable Send. */
+                invalid={shownInvalid.length > 0}
+                describedBy={shownInvalid.length > 0 ? "compose-to-error" : undefined}
+                onFocusChange={setToFocused}
+              />
+              {/* THE AFFORDANCE IS IN THE ROW IT ACTS ON, at its right edge.
+                  It had a strip of its own between To and Subject — a full-width row whose
+                  entire content was one 11.5px word, which cost the form a band of vertical
+                  space and read as a fourth field rather than as a control on the third.
+                  Cc and Bcc ARE recipients, so the way to more recipients belongs on the
+                  recipient row; this is the same reasoning that keeps Move's destinations on
+                  the bar rather than in a strip beneath it.
+
+                  Still a button and not a checkbox, because it does one thing: show two more
+                  inputs. `aria-expanded` names the state, and it vanishes once the rows are
+                  open — there is nothing left to reveal.
+
+                  IT MUST STAY INSIDE THIS `.c-field`. Lifted back out, the row's own
+                  `:focus-within` hairline stops covering it and the toggle is once again a
+                  control floating between two fields. `compose-composition.test.ts` asserts the
+                  CONTAINMENT (`#compose-to`'s `.c-field` holds the button), not merely that a
+                  Cc/Bcc button exists somewhere — the weaker assertion passes against the
+                  layout this replaces. */}
+              {!ccBccOpen ? (
+                <button
+                  type="button"
+                  className="c-ccbcc-toggle"
+                  aria-expanded={false}
+                  aria-controls="compose-cc compose-bcc"
+                  onClick={() => setShowCcBcc(true)}
+                >
+                  {t("ccBcc")}
+                </button>
+              ) : null}
+            </div>
+            {shownInvalid.length > 0 ? (
+              <p className="c-error" id="compose-to-error">
+                {t("toInvalid", { entries: shownInvalid.join(", ") })}
+              </p>
+            ) : null}
+
+            {ccBccOpen ? (
+              <>
+                <div className="c-field">
+                  <label htmlFor="compose-cc">{t("cc")}</label>
+                  <RecipientField
+                    id="compose-cc"
+                    value={fields.cc}
+                    onChange={(next) => onFields({ ...fields, cc: next })}
+                    book={book}
                     disabled={inFlight}
-                    onChange={(e) => onFields({ ...fields, fromMailboxId: e.target.value })}
-                  >
-                    {from.choices.map((o) => (
-                      <option key={o.id} value={o.id}>{o.address}</option>
-                    ))}
-                  </select>
-                </span>
-              ) : (
-                <output id="compose-from" className="c-static">{from.address}</output>
-              )}
+                    placeholder={t("ccPlaceholder")}
+                    invalid={ccShownInvalid.length > 0}
+                    describedBy={ccShownInvalid.length > 0 ? "compose-cc-error" : undefined}
+                    onFocusChange={setCcFocused}
+                  />
+                </div>
+                {ccShownInvalid.length > 0 ? (
+                  <p className="c-error" id="compose-cc-error">
+                    {t("toInvalid", { entries: ccShownInvalid.join(", ") })}
+                  </p>
+                ) : null}
+
+                <div className="c-field">
+                  {/* Bcc says out loud what "blind" means, because a recipient who assumes a Cc is
+                      a privacy incident. Delivered on the envelope, never a header — see `compose.ts`. */}
+                  <label htmlFor="compose-bcc">{t("bcc")}</label>
+                  <RecipientField
+                    id="compose-bcc"
+                    value={fields.bcc}
+                    onChange={(next) => onFields({ ...fields, bcc: next })}
+                    book={book}
+                    disabled={inFlight}
+                    placeholder={t("bccPlaceholder")}
+                    invalid={bccShownInvalid.length > 0}
+                    describedBy={bccShownInvalid.length > 0 ? "compose-bcc-error" : undefined}
+                    onFocusChange={setBccFocused}
+                  />
+                </div>
+                {bccShownInvalid.length > 0 ? (
+                  <p className="c-error" id="compose-bcc-error">
+                    {t("toInvalid", { entries: bccShownInvalid.join(", ") })}
+                  </p>
+                ) : null}
+                <p className="c-hint">{t("bccHint")}</p>
+              </>
+            ) : null}
+
+            {/* SUBJECT, BARE — no label gutter, the message's own type size.
+                It is the last header row and the only one whose value is prose rather than an
+                address, so a 56px "Subject" column beside it spent a sixth of the row's width
+                restating what the placeholder already says. The label is not lost: `aria-label`
+                carries the accessible name, which is what a screen reader reads, and the
+                placeholder carries it for everyone else. Sized between the address rows and the
+                body, because that is where a subject sits in the message it heads. */}
+            <div className="c-field c-subject">
+              <input
+                id="compose-subject"
+                className="c-input"
+                type="text"
+                aria-label={t("subject")}
+                placeholder={t("subject")}
+                value={fields.subject}
+                readOnly={inFlight}
+                onChange={(e) => onFields({ ...fields, subject: e.target.value })}
+              />
             </div>
-          ) : null}
-
-          <div className="c-field">
-            <label htmlFor="compose-to">{t("to")}</label>
-            {/* The addresses this mailbox already knows, matched as you type. `book` is a
-                pure selector over the local mirror — no request per keystroke, and nothing
-                about what is being typed leaves the tab. See `RecipientField`. */}
-            <RecipientField
-              id="compose-to"
-              value={fields.to}
-              onChange={(next) => onFields({ ...fields, to: next })}
-              book={book}
-              disabled={inFlight}
-              placeholder={t("toPlaceholder")}
-              /* The error line below is the accessible name's partner: a field that is wrong
-                 must SAY which entry is wrong, not merely refuse to enable Send. */
-              invalid={shownInvalid.length > 0}
-              describedBy={shownInvalid.length > 0 ? "compose-to-error" : undefined}
-              onFocusChange={setToFocused}
-            />
-          </div>
-          {shownInvalid.length > 0 ? (
-            <p className="c-error" id="compose-to-error">
-              {t("toInvalid", { entries: shownInvalid.join(", ") })}
-            </p>
-          ) : null}
-
-          {/* The affordance, not the fields. It vanishes once the rows are open (there is nothing
-              left to reveal), and it is a button rather than a checkbox because it does one thing:
-              show two more inputs. `aria-expanded` names the state for a screen reader. */}
-          {!ccBccOpen ? (
-            <div className="c-ccbcc-row">
-              <button
-                type="button"
-                className="c-ccbcc-toggle"
-                aria-expanded={false}
-                aria-controls="compose-cc compose-bcc"
-                onClick={() => setShowCcBcc(true)}
-              >
-                {t("ccBcc")}
-              </button>
-            </div>
-          ) : null}
-
-          {ccBccOpen ? (
-            <>
-              <div className="c-field">
-                <label htmlFor="compose-cc">{t("cc")}</label>
-                <RecipientField
-                  id="compose-cc"
-                  value={fields.cc}
-                  onChange={(next) => onFields({ ...fields, cc: next })}
-                  book={book}
-                  disabled={inFlight}
-                  placeholder={t("ccPlaceholder")}
-                  invalid={ccShownInvalid.length > 0}
-                  describedBy={ccShownInvalid.length > 0 ? "compose-cc-error" : undefined}
-                  onFocusChange={setCcFocused}
-                />
-              </div>
-              {ccShownInvalid.length > 0 ? (
-                <p className="c-error" id="compose-cc-error">
-                  {t("toInvalid", { entries: ccShownInvalid.join(", ") })}
-                </p>
-              ) : null}
-
-              <div className="c-field">
-                {/* Bcc says out loud what "blind" means, because a recipient who assumes a Cc is
-                    a privacy incident. Delivered on the envelope, never a header — see `compose.ts`. */}
-                <label htmlFor="compose-bcc">{t("bcc")}</label>
-                <RecipientField
-                  id="compose-bcc"
-                  value={fields.bcc}
-                  onChange={(next) => onFields({ ...fields, bcc: next })}
-                  book={book}
-                  disabled={inFlight}
-                  placeholder={t("bccPlaceholder")}
-                  invalid={bccShownInvalid.length > 0}
-                  describedBy={bccShownInvalid.length > 0 ? "compose-bcc-error" : undefined}
-                  onFocusChange={setBccFocused}
-                />
-              </div>
-              {bccShownInvalid.length > 0 ? (
-                <p className="c-error" id="compose-bcc-error">
-                  {t("toInvalid", { entries: bccShownInvalid.join(", ") })}
-                </p>
-              ) : null}
-              <p className="c-hint">{t("bccHint")}</p>
-            </>
-          ) : null}
-
-          <div className="c-field">
-            <label htmlFor="compose-subject">{t("subject")}</label>
-            <input
-              id="compose-subject"
-              className="c-input"
-              type="text"
-              value={fields.subject}
-              readOnly={inFlight}
-              onChange={(e) => onFields({ ...fields, subject: e.target.value })}
-            />
           </div>
 
           {cardVisible ? (
@@ -420,26 +457,33 @@ export function ComposeView({
             onChange={(v) => onFields({ ...fields, body: v.text, html: v.html })}
           />
 
-          <div className="send-row">
-            <Button
-              variant="primary"
-              disabled={locked}
-              aria-busy={send.phase === "sending" || undefined}
-              onClick={() => onSend()}
-            >
-              {send.phase === "sending" ? t("sending") : t("send")}
-            </Button>
-            {/* AN EMPTY SUBJECT SENDS — see `composePlan`. Said here, before the press, rather
-                than as a modal after it. */}
-            {plan.noSubject && !inFlight ? (
-              <span className="send-note">{t("noSubject")}</span>
-            ) : null}
-            {/* The scratch buffer, stated exactly as strongly as it is true: this browser, not
-                the mailbox. Drafts kept on the server are not built yet. */}
-            <span className="send-note">{t("draftNote")}</span>
-          </div>
+          {/* THE ACTIONS, AT THE PANEL'S BOTTOM EDGE — `.reply-actions`' place in the reply.
+              `.compose-foot` is what `margin-top: auto` acts on, so Send stays put whether the
+              editor is holding two lines or twenty and the status line keeps its position under
+              it. Grouped rather than left as two siblings because the pair is one region: the
+              button and the sentence that explains what pressing it will do. */}
+          <div className="compose-foot">
+            <div className="send-row">
+              <Button
+                variant="primary"
+                disabled={locked}
+                aria-busy={send.phase === "sending" || undefined}
+                onClick={() => onSend()}
+              >
+                {send.phase === "sending" ? t("sending") : t("send")}
+              </Button>
+              {/* AN EMPTY SUBJECT SENDS — see `composePlan`. Said here, before the press, rather
+                  than as a modal after it. */}
+              {plan.noSubject && !inFlight ? (
+                <span className="send-note">{t("noSubject")}</span>
+              ) : null}
+              {/* The scratch buffer, stated exactly as strongly as it is true: this browser, not
+                  the mailbox. Drafts kept on the server are not built yet. */}
+              <span className="send-note">{t("draftNote")}</span>
+            </div>
 
-          <SendStatus send={send} scope="compose" />
+            <SendStatus send={send} scope="compose" />
+          </div>
         </div>
       </div>
     </section>

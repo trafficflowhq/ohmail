@@ -1061,21 +1061,47 @@ body.reading .shell {
   gap: 28px;
 }
 
-/* ================= compose ================= */
+/* ================= compose =================
+   THE PANEL IS A COLUMN, AND THE EDITOR IS WHAT GROWS IN IT.
+
+   Compose used to be a stack of five equal rows with a 150px editor fourth among them: on a
+   1440×900 window the addressing occupied the top third of a 660px panel and the message —
+   the only thing this view exists for — was the smallest surface on it, with Send floating
+   wherever the stack happened to end. The inline reply has always had the right proportions
+   (`.reply` → head, dominant editor, `.reply-actions`), so this borrows them.
+
+   The mechanism is three rules and nothing cleverer: the scroller becomes a column, the panel
+   takes `flex: 1 0 auto` so it fills the column without ever shrinking below its own content,
+   and `.compose-editor` takes the slack. `1 0 auto` and not `1 1 auto` is load-bearing — a
+   shrinkable panel would compress the header rows on a short window instead of letting the
+   scroller scroll, which is what the scroller is for. */
+.view-compose .scroller {
+  display: flex;
+  flex-direction: column;
+}
 .compose-wrap {
   max-width: 660px;
   margin: 0 auto 26px;
-  padding: 10px 28px 24px;
+  padding: 10px 28px 20px;
   width: calc(100% - 60px);
   background: var(--panel);
   border-radius: 20px;
   box-shadow: var(--lift-1);
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+}
+/* The header block: From · To · Subject as ONE region, closed off from the editor by a single
+   rule rather than by each row carrying its own hairline into the message. */
+.compose-head {
+  flex: none;
+  padding-bottom: 10px;
 }
 .c-field {
   display: flex;
   gap: 10px;
   align-items: baseline;
-  padding: 10px 2px;
+  padding: 8px 2px;
   border-bottom: 1px solid var(--hair-soft); /* form-field rule — kept */
   font-size: 13px;
 }
@@ -1175,14 +1201,16 @@ body.reading .shell {
   padding: 7px 11px;
   margin: 8px 0 0;
 }
-/* The Cc/Bcc affordance sits in the 56px label gutter's own column so it lines up under the To
-   field's addresses rather than under its label — it is an action ON the recipients, not a field. */
-.c-ccbcc-row {
-  display: flex;
-  justify-content: flex-end;
-  padding: 6px 2px 0;
-}
+/* THE CC/BCC AFFORDANCE, ON THE RIGHT EDGE OF THE ROW IT ACTS ON.
+   `.c-ccbcc-row` — a full-width strip between To and Subject holding one 11.5px word — is
+   deleted with the markup that used it. It read as a fourth field and cost the form a band of
+   vertical space to say something that belongs to the recipient row. `flex: none` so it never
+   takes width from the addresses beside it, and the row's own `:focus-within` hairline now runs
+   under both, which is what makes it read as part of the field rather than as a control between
+   two of them. */
 .c-ccbcc-toggle {
+  flex: none;
+  align-self: center;
   border: 0;
   background: none;
   padding: 2px 4px;
@@ -1198,6 +1226,22 @@ body.reading .shell {
 .c-ccbcc-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+/* SUBJECT, BARE. No label gutter (the markup renders no `<label>`; `aria-label` carries the
+   name), and one step up in size from the address rows above it — a subject is the message's
+   own heading, so it is typed at something nearer the body's scale than the envelope's. The
+   placeholder is the visible label, at `--ink3` like every other placeholder here. */
+.c-subject {
+  padding: 10px 2px;
+}
+.c-subject .c-input {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.c-subject .c-input::placeholder {
+  font-weight: 500;
+  letter-spacing: 0;
 }
 /* The one-line note under Bcc. Quieter than an error, and it is a statement of fact about how Bcc
    behaves rather than a problem with what was typed. */
@@ -1273,12 +1317,26 @@ body.reading .shell {
   border-radius: 18px;
   background: var(--canvas);
   margin-top: 4px;
+  /* THE DOMINANT SURFACE. `.rte` is already a flex column, so this takes the panel's slack and
+     the surface inside takes the box's. The 220px floor is what a short window falls back to;
+     the old fixed 150px is gone, because on a tall window it left the message a letterbox with
+     empty panel underneath it. */
+  flex: 1 1 auto;
+  min-height: 220px;
 }
 .compose-editor .rte-surface {
-  min-height: 150px;
+  flex: 1;
+  min-height: 0;
   padding: 4px 16px 14px;
   font-size: 13.5px;
   line-height: 1.65;
+}
+/* Send and the status line, at the panel's bottom edge. `margin-top: auto` is what pins them:
+   with the editor already taking the slack it is normally a no-op, and it is what holds the
+   foot down in the one case the editor cannot — a draft card open above a short editor. */
+.compose-foot {
+  flex: none;
+  margin-top: auto;
 }
 .compose-editor:focus-within {
   outline: 1.5px solid var(--accent);
@@ -1289,11 +1347,10 @@ body.reading .shell {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 18px;
+  margin-top: 14px;
   /* Two notes can sit beside Send on a narrow window; they wrap under it rather than
      compressing the button they explain. */
   flex-wrap: wrap;
-  padding-bottom: 20px;
 }
 .send-note {
   font-size: 11.5px;
@@ -2301,7 +2358,17 @@ body.reading .shell {
   }
   .compose-wrap {
     width: calc(100% - 28px);
-    padding: 8px 16px 18px;
+    padding: 8px 16px 16px;
+  }
+  /* A phone's viewport is the constraint, not the panel's. A 220px floor plus the header plus
+     the foot overflows a 390×844 screen, which puts Send below the fold on the one device where
+     scrolling to it costs the most — so the editor's floor drops and the surface still takes
+     whatever slack the column has. */
+  .compose-editor {
+    min-height: 160px;
+  }
+  .c-subject .c-input {
+    font-size: 14.5px;
   }
   .set-layout {
     width: calc(100% - 28px);
