@@ -35,11 +35,14 @@ import { providerById } from "../../webapp/app/shell/providers";
 import {
   EMPTY_LOCAL,
   enterCloudDoor,
+  enterCloudDoorWithCode,
   enterLocalDoor,
   signInToCloud,
+  signInToCloudWithCode,
   type DoorResult,
   type LocalDoorFields,
 } from "./doors.js";
+import { openWeb } from "./native.js";
 
 /** Which of the three cards is on screen. `doors` is where a fresh install starts. */
 type Step = "doors" | "local" | "cloud";
@@ -117,6 +120,21 @@ export function DoorChooser({
                 cloudAction === "signIn"
                   ? signInToCloud(address, password, totp)
                   : enterCloudDoor(address, password, totp),
+              )
+            }
+            onSubmitCode={(address, code) =>
+              attempt(() =>
+                cloudAction === "signIn"
+                  ? signInToCloudWithCode(address, code)
+                  : enterCloudDoorWithCode(address, code),
+              )
+            }
+            onOpenBrowser={() =>
+              /* Same shape and same sentence style as Settings' `NO_BROWSER`: a refusal from the
+                 shell is reported here, with the address, because a person who cannot be sent to
+                 the page can still walk to it. */
+              void openWeb("link-desktop").catch(() =>
+                setProblem("This Mac would not open a browser. The page is at ohmail.app/link-desktop."),
               )
             }
           />
@@ -310,7 +328,21 @@ function LocalDoor({
   );
 }
 
-/** Door two: a hosted ohmail account, mirrored onto this machine. */
+/**
+ * Door two: a hosted ohmail account, mirrored onto this machine.
+ *
+ * ── TWO WAYS IN, AND THE PASSWORD ONE IS STILL THE DEFAULT ──────────────────────────────────
+ *
+ * The form asks for a password and a six-digit code, which means typing a password into a native
+ * window — the one place a person cannot check an address bar. So there is a second way: the
+ * browser, where the account may already be signed in and where a password manager and a URL both
+ * work, hands over a code that is worth a session for two minutes and once.
+ *
+ * The password form stays first because the browser path needs a browser signed in to the
+ * account, and that is not always where somebody is standing — a fresh Mac, a borrowed machine,
+ * a person who has just installed this and has never opened ohmail.app. Offering the alternative
+ * as the default would make the common case the one with an extra step in it.
+ */
 function CloudDoor({
   busy,
   problem,
@@ -318,6 +350,8 @@ function CloudDoor({
   onBack,
   onCancel,
   onSubmit,
+  onSubmitCode,
+  onOpenBrowser,
 }: {
   busy: boolean;
   problem: string | null;
@@ -326,16 +360,21 @@ function CloudDoor({
   onBack: () => void;
   onCancel?: () => void;
   onSubmit: (address: string, password: string, totp: string) => void;
+  onSubmitCode: (address: string, code: string) => void;
+  onOpenBrowser: () => void;
 }) {
   const [address, setAddress] = useState("");
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
+  const [handoff, setHandoff] = useState("");
+  const [viaBrowser, setViaBrowser] = useState(false);
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit(address, password, totp);
+        if (viaBrowser) onSubmitCode(address, handoff);
+        else onSubmit(address, password, totp);
       }}
     >
       <h1>Sign in to ohmail Cloud</h1>
@@ -362,30 +401,75 @@ function CloudDoor({
         onChange={(e) => setAddress(e.target.value)}
       />
 
-      <label className="join-label" htmlFor="cloud-password">Password</label>
-      <input
-        id="cloud-password"
-        className="join-input"
-        type="password"
-        autoComplete="current-password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-      />
+      {viaBrowser ? (
+        <>
+          <p className="join-hint">
+            Open ohmail.app in your browser, sign in there if you are not already, and it will
+            show you a short code. Type it here. The code works once and lasts a couple of
+            minutes.
+          </p>
+          <div className="join-actions">
+            <Button type="button" onClick={onOpenBrowser} disabled={busy}>
+              Open ohmail.app
+            </Button>
+          </div>
 
-      <label className="join-label" htmlFor="cloud-totp">Code from your authenticator app</label>
-      <input
-        id="cloud-totp"
-        className="join-input join-code"
-        inputMode="numeric"
-        autoComplete="one-time-code"
-        maxLength={6}
-        value={totp}
-        onChange={(e) => setTotp(e.target.value)}
-      />
+          <label className="join-label" htmlFor="cloud-handoff">Code from the browser</label>
+          <input
+            id="cloud-handoff"
+            className="join-input join-code"
+            /* NOT `one-time-code`: that is the authenticator field's autofill and offering an
+               SMS or TOTP value here is a suggestion that cannot be right. */
+            autoComplete="off"
+            spellCheck={false}
+            value={handoff}
+            onChange={(e) => setHandoff(e.target.value)}
+          />
+        </>
+      ) : (
+        <>
+          <label className="join-label" htmlFor="cloud-password">Password</label>
+          <input
+            id="cloud-password"
+            className="join-input"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+
+          <label className="join-label" htmlFor="cloud-totp">Code from your authenticator app</label>
+          <input
+            id="cloud-totp"
+            className="join-input join-code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={6}
+            value={totp}
+            onChange={(e) => setTotp(e.target.value)}
+          />
+        </>
+      )}
 
       <div className="join-actions">
         <Button variant="primary" type="submit" disabled={busy}>
           {busy ? "Signing in…" : "Sign in"}
+        </Button>
+        {/* The switch CLEARS the fields of the form being left. Otherwise a password typed and
+            then abandoned sits in this component's state for as long as the window is open, and
+            the whole argument for the browser path is that it never holds one. */}
+        <Button
+          variant="ghost"
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            setPassword("");
+            setTotp("");
+            setHandoff("");
+            setViaBrowser((v) => !v);
+          }}
+        >
+          {viaBrowser ? "Use my password instead" : "Sign in with browser"}
         </Button>
         <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>Back</Button>
         {onCancel ? (

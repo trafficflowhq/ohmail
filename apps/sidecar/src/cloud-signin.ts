@@ -11,6 +11,16 @@ import type { Diagnostic } from "./log.js";
  * A person who installs the app and picks the hosted door has an email address, a password and a
  * six-digit code, and this module is what turns those three into the pair the mirror pulls with.
  *
+ * ── AND THE OTHER WAY IN: A CODE FROM THE BROWSER ─────────────────────────────────────────────
+ *
+ * Typing a password into a native window is the one place a person cannot check an address bar,
+ * so there is a second path and it is one request: the browser signs in at `ohmail.app`, mints a
+ * one-use handoff code (`POST /auth/desktop-link`, behind a step-up gate), and this exchanges it
+ * at `POST /auth/desktop-claim` for the same pair the password path ends with. The code is worth
+ * a session for about two minutes and only once. The password path stays the default; this is
+ * the alternative, not the replacement, because it needs a browser signed in to the account and
+ * that is not always where somebody is standing.
+ *
  * ── THE TWO STEPS, AND THE FIELD NAME THAT IS NOT THE ONE YOU EXPECT ──────────────────────────
  *
  *  1. `POST /auth/login` `{email, password}` → **200** `{status: "twofa_required", loginToken}`.
@@ -59,11 +69,26 @@ export class CloudSignInError extends Error {
   }
 }
 
+/**
+ * TWO SHAPES, and `handoffCode` is what selects between them.
+ *
+ *  · **the password path** — `{email, password, totp}`, the two-step hosted sign-in described
+ *    above. Still the default the app offers.
+ *  · **the browser path** — `{handoffCode}` alone. The person signed in on ohmail.app, that page
+ *    minted a one-use code, and they retyped it here. One request, no password in this process
+ *    at any point.
+ *
+ * Every field is optional because this arrives as JSON over the bridge and a type is not a
+ * validation. {@link cloudSignIn} decides which branch it is on and refuses a request that
+ * satisfies neither, rather than trusting the shape it was handed.
+ */
 export interface CloudSignInRequest {
-  email: string;
-  password: string;
+  email?: string;
+  password?: string;
   /** The six digits from the authenticator app. */
-  totp: string;
+  totp?: string;
+  /** The code shown by `ohmail.app/link-desktop`. Present ⇒ the other three are not read. */
+  handoffCode?: string;
 }
 
 export interface CloudSignInOptions {
@@ -132,16 +157,7 @@ export async function cloudSignIn(
   const email = trimmed(req.email);
   const password = typeof req.password === "string" ? req.password : "";
   const code = trimmed(req.totp);
-
-  // Refused HERE rather than by the hosted service, because an empty password is a login attempt
-  // that counts against a lockout on some deployments and buys nothing.
-  if (!email || !password || !code) {
-    throw new CloudSignInError(
-      "invalid_request",
-      400,
-      "signing in needs the address, the password and the current six-digit code",
-    );
-  }
+  const handoff = trimmed(req.handoffCode);
 
   const post = async (path: string, body: unknown, step: string): Promise<Response> => {
     try {
@@ -155,6 +171,55 @@ export async function cloudSignIn(
       throw new CloudSignInError("cloud_unreachable", 502, "the hosted service could not be reached");
     }
   };
+
+  // ── THE BROWSER PATH — one request, and no password in this process at any point ──────────
+  //
+  // Taken FIRST, so a body carrying a handoff code is never also treated as a password attempt.
+  // The code is worth a session for about two minutes and only once, so there is nothing here
+  // to seal, retry or remember: the pair comes back in the body, exactly as the native branch
+  // of `POST /auth/refresh` answers, and the caller seals it the way it seals every other pair.
+  if (handoff) {
+    const res = await post("/auth/desktop-claim", { code: handoff }, "claim");
+    const body = await readJson(res);
+    if (!res.ok) {
+      opts.log?.("cloud_signin_refused", { status: res.status, reason: "the hosted service refused the code" });
+      // 429 is kept as 429 rather than folded into the refusal: "too many tries, wait a bit" and
+      // "that code is not valid" are different things to do next, and a person who has just
+      // retyped a code four times is precisely the person who needs to be told which.
+      if (res.status === 429) {
+        throw new CloudSignInError(
+          "rate_limited", 429,
+          "too many attempts from this connection; give it a few minutes and try again",
+        );
+      }
+      throw new CloudSignInError(
+        res.status === 400 || res.status === 401 ? "invalid_handoff_code" : "hosted_refused",
+        res.status === 400 || res.status === 401 ? 401 : 502,
+        res.status === 400 || res.status === 401
+          ? "that code was not accepted; codes work once and expire after a couple of minutes, " +
+            "so ask the browser for a fresh one"
+          : `the hosted service answered HTTP ${res.status} to the code`,
+      );
+    }
+    const tokens = tokensFromResponse(body, res);
+    if (!tokens) {
+      throw new CloudSignInError(
+        "no_session_returned", 502,
+        "the hosted service accepted the code and returned no session",
+      );
+    }
+    return tokens;
+  }
+
+  // Refused HERE rather than by the hosted service, because an empty password is a login attempt
+  // that counts against a lockout on some deployments and buys nothing.
+  if (!email || !password || !code) {
+    throw new CloudSignInError(
+      "invalid_request",
+      400,
+      "signing in needs the address, the password and the current six-digit code",
+    );
+  }
 
   const loginRes = await post("/auth/login", { email, password }, "login");
   const loginBody = await readJson(loginRes);

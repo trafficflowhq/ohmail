@@ -82,7 +82,15 @@ const OPEN_COMMAND = "open_link";
  * what keeps this bundle free of any host name at all, which is the claim the preview artifact is
  * built on.
  */
-export const WEB_PLACES = ["account", "security", "billing", "privacy", "subprocessors"] as const;
+export const WEB_PLACES = [
+  "account", "security", "billing",
+  // `link-desktop` is the odd one and worth naming: every other place here administers an
+  // account this app is already serving, and this one is opened BEFORE there is a session — it
+  // is the browser half of signing in, where the page mints a one-use code the person retypes
+  // into the app. Same mechanism, same table, no exception to the no-URL rule.
+  "link-desktop",
+  "privacy", "subprocessors",
+] as const;
 
 export type WebPlace = (typeof WEB_PLACES)[number];
 

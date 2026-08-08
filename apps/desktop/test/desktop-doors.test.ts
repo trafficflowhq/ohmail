@@ -4,14 +4,17 @@ import {
   CLOUD_URL,
   EMPTY_LOCAL,
   enterCloudDoor,
+  enterCloudDoorWithCode,
   enterLocalDoor,
   gateFor,
+  handoffProblem,
   implicitTls,
   localProblem,
   cloudProblem,
   portOr,
   settle,
   signInToCloud,
+  signInToCloudWithCode,
 } from "../src/doors.js";
 import { providerById } from "../../webapp/app/shell/providers.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
@@ -290,6 +293,82 @@ describe("the cloud door", () => {
   it("re-signs in without touching the configuration", async () => {
     const asked = shellThatWorks({ ...SERVING, mode: "cloud" });
     const result = await signInToCloud("mila@ohmail.app", "pw", "123456");
+    expect(result.problem).toBeNull();
+    expect(asked.some((a) => a.command === "engine_configure")).toBe(false);
+    expect(asked.find((a) => a.command === "engine_request")!.payload!.url).toBe("/cloud/signin");
+  });
+});
+
+/**
+ * THE BROWSER HANDOFF — the same door, entered with a code instead of a password.
+ *
+ * The point of the path is what is NOT in it, so that is what these assert: no password anywhere
+ * in the traffic, and the code carried in the one field the engine branches on. A body that also
+ * sent empty `password`/`totp` keys would still work and would still be wrong — the engine would
+ * be reading a shape nobody meant to send.
+ */
+describe("door two, entered with a code from the browser", () => {
+  it("configures the engine for the address and sends ONLY the code over the bridge", async () => {
+    const asked = shellThatWorks({ ...SERVING, mode: "cloud" });
+    const result = await enterCloudDoorWithCode("mila@ohmail.app", "  handoff-code-9  ");
+    expect(result.problem).toBeNull();
+
+    const configure = asked.find((a) => a.command === "engine_configure")!;
+    expect(configure.payload!.config).toEqual({
+      mode: "cloud", cloudUrl: CLOUD_URL, address: "mila@ohmail.app",
+    });
+
+    const request = asked.find((a) => a.command === "engine_request")!;
+    expect(request.payload!.url).toBe("/cloud/signin");
+    const body = new TextDecoder().decode(Uint8Array.from(request.payload!.body as number[]));
+    // Trimmed, because a code read off a screen and retyped picks up whitespace — and the exact
+    // object, because a stray `password: ""` beside it would send the engine down neither branch
+    // cleanly.
+    expect(JSON.parse(body)).toEqual({ handoffCode: "handoff-code-9" });
+  });
+
+  it("NO PASSWORD FIELD LEAVES THIS PROCESS ON THIS PATH — over the DECODED bytes", async () => {
+    const asked = shellThatWorks({ ...SERVING, mode: "cloud" });
+    await enterCloudDoorWithCode("mila@ohmail.app", "handoff-code-9");
+
+    // DECODED, and the reason is worth the extra line: `engine_request` carries its body as a
+    // NUMBER ARRAY, so a string search over `JSON.stringify(payload)` finds nothing whatever the
+    // body contains — the assertion would pass while a password sat in the request. Watched: a
+    // planted `password: ""` on the handoff body left the stringified payload untouched.
+    const wire = asked.map((a) => {
+      const p = (a.payload ?? {}) as Record<string, unknown>;
+      const body = Array.isArray(p.body)
+        ? new TextDecoder().decode(Uint8Array.from(p.body as number[]))
+        : "";
+      return `${JSON.stringify({ ...p, body: undefined })}${body}`;
+    }).join("|");
+
+    for (const secretish of ["password", "totp", "hunter2"]) {
+      expect(wire, `"${secretish}" reached the shell on the handoff path`).not.toContain(secretish);
+    }
+  });
+
+  it("refuses a missing address or a blank code before spending an attempt", async () => {
+    const asked = shellThatWorks({ ...SERVING, mode: "cloud" });
+    expect((await enterCloudDoorWithCode("", "code")).problem).toMatch(/address is missing/);
+    expect((await enterCloudDoorWithCode("not-an-address", "code")).problem).toMatch(/does not look like/);
+    expect((await enterCloudDoorWithCode("mila@ohmail.app", "   ")).problem).toMatch(/code the browser showed/);
+    expect(asked).toHaveLength(0);
+  });
+
+  it("does not second-guess the SHAPE of a code the server minted", () => {
+    // The tempting extra check, and the reason it is absent: a length or character-class rule
+    // here is a quieter second definition of what `POST /auth/desktop-link` issues, and it keeps
+    // working until the issuer changes — at which point every valid code is refused locally with
+    // a sentence about a format nobody can see.
+    expect(handoffProblem("mila@ohmail.app", "short")).toBeNull();
+    expect(handoffProblem("mila@ohmail.app", "a".repeat(200))).toBeNull();
+    expect(handoffProblem("mila@ohmail.app", "has-dashes_and_underscores")).toBeNull();
+  });
+
+  it("re-signs in with a code without touching the configuration", async () => {
+    const asked = shellThatWorks({ ...SERVING, mode: "cloud" });
+    const result = await signInToCloudWithCode("mila@ohmail.app", "handoff-code-9");
     expect(result.problem).toBeNull();
     expect(asked.some((a) => a.command === "engine_configure")).toBe(false);
     expect(asked.find((a) => a.command === "engine_request")!.payload!.url).toBe("/cloud/signin");

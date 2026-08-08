@@ -2796,10 +2796,16 @@ fn set_badge<R: tauri::Runtime>(app: tauri::AppHandle<R>, count: u32) -> Result<
 /// The table is also why the addresses live HERE rather than in the frontend: the bundle is
 /// asserted to name no host at all, which is the claim the whole preview artifact rests on.
 #[cfg(feature = "local-engine")]
-const LINKS: [(&str, &str); 5] = [
+const LINKS: [(&str, &str); 6] = [
     ("account", "https://ohmail.app/mailbox#/settings"),
     ("security", "https://ohmail.app/mailbox#/settings"),
     ("billing", "https://ohmail.app/mailbox#/settings"),
+    // The browser half of signing in to a hosted account: the page mints a one-use code and the
+    // person types it into the window that opened it. It is the ONE entry here the app opens
+    // BEFORE it has a session — the rest are administration of an account it is already serving
+    // — and it carries no query for the same reason none of the others does: everything about
+    // this address is fixed here, so no value from the page can shape where the browser goes.
+    ("link-desktop", "https://ohmail.app/link-desktop"),
     ("privacy", "https://ohmail.app/privacy"),
     ("subprocessors", "https://ohmail.app/subprocessors"),
 ];

@@ -244,6 +244,25 @@ export function cloudProblem(address: string, password: string, totp: string): s
 }
 
 /**
+ * The same, for the browser handoff — an address and a code, and no password anywhere.
+ *
+ * The ADDRESS is still asked for, and it is not a credential: it is what this install configures
+ * its engine for and what the window shows in Settings afterwards. The handoff proves who you
+ * are; it does not tell this machine which mailbox it is mirroring.
+ *
+ * The code is NOT pattern-checked beyond being present. It is a server-minted opaque value, and a
+ * shape assertion here would be a second, quieter definition of what the server issues — the kind
+ * that keeps working until the day the issuer changes and then refuses every valid code with a
+ * sentence about a format nobody can see.
+ */
+export function handoffProblem(address: string, code: string): string | null {
+  if (!address.trim()) return "Your ohmail address is missing.";
+  if (!address.includes("@")) return "That does not look like a mailbox address.";
+  if (!code.trim()) return "Paste the code the browser showed you.";
+  return null;
+}
+
+/**
  * How long the window waits for a reconfigured engine to announce itself.
  *
  * A first launch on a new door has a database to create and a data directory to take an
@@ -400,6 +419,59 @@ export async function signInToCloud(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: address.trim(), password, totp: totp.trim() }),
+    });
+    if (!res.ok) return { status: known ?? null, problem: await refusal(res) };
+  } catch (err) {
+    return { status: known ?? null, problem: sentence(err) };
+  }
+  return { status: await engineStatus(), problem: null };
+}
+
+/**
+ * Door two, entered with a code from the browser instead of a password.
+ *
+ * The SAME two steps `enterCloudDoor` takes — configure the engine for the address, wait for it
+ * to serve, then one request over the bridge — with the third argument swapped. It is written as
+ * its own pair of functions rather than as a flag on the password ones because the two forms
+ * validate different fields and read differently at the call site, and it costs one delegation:
+ * both end at `POST /cloud/signin`, which is where the engine decides what it was handed.
+ *
+ * Nothing about the code is stored here or anywhere else in this process. It is worth a session
+ * for about two minutes and only once, and by the time this returns it has been spent.
+ */
+export async function enterCloudDoorWithCode(address: string, code: string): Promise<DoorResult> {
+  const problem = handoffProblem(address, code);
+  if (problem) return { status: null, problem };
+
+  let status: EngineStatus;
+  try {
+    status = await engineConfigure({ mode: "cloud", cloudUrl: CLOUD_URL, address: address.trim() });
+  } catch (err) {
+    return { status: null, problem: sentence(err) };
+  }
+
+  const settled = await settle();
+  if (settled.state !== "serving") return { status: settled, problem: stalled(settled) };
+
+  return signInToCloudWithCode(address, code, settled);
+}
+
+/** The handoff sign-in on its own, for the door that is already chosen. */
+export async function signInToCloudWithCode(
+  address: string,
+  code: string,
+  known?: EngineStatus,
+): Promise<DoorResult> {
+  const problem = handoffProblem(address, code);
+  if (problem) return { status: known ?? null, problem };
+  try {
+    const res = await bridgeFetch("/cloud/signin", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // ONLY the code. Not an empty `password` and an empty `totp` alongside it: the engine
+      // branches on this field's presence, and sending the other two blank would make a future
+      // reader think either shape might be in play here.
+      body: JSON.stringify({ handoffCode: code.trim() }),
     });
     if (!res.ok) return { status: known ?? null, problem: await refusal(res) };
   } catch (err) {
