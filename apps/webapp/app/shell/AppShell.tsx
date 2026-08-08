@@ -3101,27 +3101,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 onPile={goTriage}
                 frDone={frDone}
                 onStartFR={startFR}
-                /**
-                 * THE MESSAGE BEHIND A PILE ENTRY, read from the SAME reader the piles came
-                 * from.
-                 *
-                 * `presented` and not `reader`: the piles are built over the presentation
-                 * projection, so resolving an entry through the raw mirror would answer with a
-                 * message sitting in a different place than the row the user clicked — the one
-                 * discrepancy a two-pane view makes visible. `null` for a `triage_item` with no
-                 * backing message, which the view renders as a static row.
-                 */
-                messageOf={(id) => presented.get<EngineMessage>("message", id) ?? null}
-                tags={tags}
-                now={now}
-                /* The reader sheet, in place — the narrow width, where there is no column.
-                   `setReaderFor` and not `openMessage`, for History's reason: a parked message
-                   presents in no pile, so "open it where it lives" would navigate away from the
-                   view that was showing it. */
-                onOpen={(m) => setReaderFor(m.id)}
-                hydrateBody={hydrateBody}
-                onAction={onMessageAction}
-                onAddTag={openTagPicker}
               />
             ) : null}
 
