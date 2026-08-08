@@ -205,6 +205,10 @@ export const auth: {
         loginToken: string;
         code: string;
     }) => Promise<AuthenticatedSession>;
+    desktopLink: () => Promise<{
+        code: string;
+        expiresIn: number;
+    }>;
     recoveryVerify: (b: {
         loginToken: string;
         code: string;
