@@ -450,6 +450,155 @@ body.reading .shell {
   background: oklch(0 0 0 / 0.2);
 }
 
+/* ================= the same sentence, in the rail =================
+   The rail's own copy of the sync line — `SyncBar variant="rail"`, rendered into the slot
+   above the dock. Exactly one of the two shapes is ever on screen: the rail form wherever the
+   rail is standing, the strip and the corner pill wherever it is not. `display:none` and not a
+   width test in JS, so the hidden copy leaves the accessibility tree with it and two
+   `role="status"` regions never announce the same sentence twice.
+
+   Written in the rail's vocabulary rather than the strip's: a compact stack — icon and label on
+   one line, the volatile half under it, the progress line under that — because a 200px column
+   cannot hold a centred row and an address on the same line without ellipsising away the part
+   that moves. Flat fills, no backdrop-filter, no decorative gradient; the tones are the strip's
+   own, unchanged, so the two shapes cannot disagree about how loud a state is. */
+@media (min-width: 901px) {
+  .sync-bar {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .rail-sync-slot {
+    display: none;
+  }
+}
+.rail-sync {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 10px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+.rail-sync .rs-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.rail-sync .rs-line b {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rail-sync .glyph {
+  font-size: 12px;
+  line-height: 1;
+  flex: none;
+}
+.rail-sync .mbx-spin {
+  flex: none;
+}
+.rail-sync .rs-num {
+  font-size: 10.5px;
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+.rail-sync a {
+  align-self: flex-start;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 99px;
+  padding: 1px 9px;
+  background: oklch(1 0 0 / 0.5);
+}
+.rail-sync a:hover {
+  background: oklch(1 0 0 / 0.75);
+}
+[data-theme="dark"] .rail-sync a {
+  background: oklch(1 0 0 / 0.08);
+}
+[data-theme="dark"] .rail-sync a:hover {
+  background: oklch(1 0 0 / 0.14);
+}
+/* BUSY is the quietest thing the rail says. `importing` and `awaiting` report work the server
+   does on its own and can sit for six minutes; painting them in the accent would train a reader
+   to read the foot of the rail as a problem. */
+.rail-sync.busy {
+  color: var(--ink2);
+  background: var(--tint);
+}
+.rail-sync.busy b {
+  color: var(--ink);
+}
+.rail-sync.warn {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+.rail-sync.stopped {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+.rail-sync.stopped a {
+  background: oklch(1 0 0 / 0.18);
+}
+.rail-sync.stopped a:hover {
+  background: oklch(1 0 0 / 0.3);
+}
+[data-theme="dark"] .rail-sync.stopped a {
+  background: oklch(0 0 0 / 0.12);
+}
+[data-theme="dark"] .rail-sync.stopped a:hover {
+  background: oklch(0 0 0 / 0.2);
+}
+/* The progress line. INDETERMINATE, and it has to be: `/sync` answers `hasMore` as a boolean,
+   so the total is unknowable until the drain ends and a filled track would be an invention. A
+   travelling sliver carries exactly the knowledge available — a process is running — which is
+   the spinner's claim in the shape a compact row has room for. */
+.rail-sync .rs-track {
+  position: relative;
+  display: block;
+  height: 2px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--hair);
+}
+.rail-sync .rs-track i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 38%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: rs-travel 1.5s var(--swift) infinite;
+}
+@keyframes rs-travel {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(363%);
+  }
+}
+/* The track survives without the travel, the same answer `.mbx-spin` gives: the affordance is
+   the thing, the motion is how it is drawn. */
+@media (prefers-reduced-motion: reduce) {
+  .rail-sync .rs-track i {
+    animation: none;
+    width: 100%;
+    opacity: 0.45;
+  }
+}
+
 /* ================= reads pending-AI chip row ================= */
 .reads-chip-row {
   padding: 2px 18px 14px;

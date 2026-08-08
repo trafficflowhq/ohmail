@@ -2812,7 +2812,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             and nothing at all in the demo or on the desktop. A sibling of the deck rather
             than a child of any view, so it is outside every list's scroller and no view can
             forget it — see `SyncBar.tsx` for why that placement is the fix and the sentence
-            is not. */}
+            is not.
+
+            THE NARROW-WIDTH COPY. Above 900px the rail is standing and carries this line
+            itself (`sync` on the rail below); this one is hidden there by `app.css`. Under
+            900px the rail is a drawer that is closed most of the time, so the strip and the
+            corner pill are the only way the mailbox can speak, and they keep the job. */}
         <SyncBar />
 
         <div className="topbar">
@@ -2861,6 +2866,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               hint: (m as { railHint?: string }).railHint ?? m.provider,
             }))}
             dock={railDock}
+            /* THE MAILBOX'S OWN LINE, at the foot of the rail and above the dock. The same
+               component and the same derivation as the strip below the topbar — one of the two
+               is showing at any width, never both (see `SyncBar.tsx`). */
+            sync={<SyncBar variant="rail" />}
             footer={account?.email}
             ariaLabel={t("rail.ariaMain")}
           />

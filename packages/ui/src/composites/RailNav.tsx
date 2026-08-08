@@ -120,6 +120,25 @@ export interface RailNavProps {
    * broken one.
    */
   dock?: ReactNode;
+  /**
+   * WHAT THE MAILBOX IS DOING, immediately above the dock.
+   *
+   * The host's sync line — a first import running, a drain that keeps failing, a mailbox that
+   * needs its password again. It used to be a full-width strip across the top of every view (or,
+   * for the progress states, a pill floating over the bottom-left corner of the mail), which put
+   * app-level chrome on top of somebody's reading. It is app-level chrome, so it belongs where
+   * the rest of it already lives.
+   *
+   * Above the dock rather than below it: the dock is a pair of controls that are always there,
+   * and this appears and disappears. A row that comes and goes must not push the two fixed
+   * controls around, and it does not — `.rail-sync-slot` takes the rail's slack instead of the
+   * dock (`rail.css`), so the dock and the account line stay welded to the bottom edge whether
+   * this is present or not.
+   *
+   * `ReactNode` and default-absent for the same reason `dock` is: the desktop shell renders this
+   * rail without one.
+   */
+  sync?: ReactNode;
   /** Bottom line — the account address. */
   footer?: ReactNode;
   ariaLabel?: string;
@@ -166,6 +185,7 @@ export function RailNav({
   mailboxesLabel = "Mailboxes",
   mailboxes,
   dock,
+  sync,
   footer,
   ariaLabel = "Main",
   className,
@@ -283,6 +303,7 @@ export function RailNav({
         </div>
       ) : null}
 
+      {sync ? <div className="rail-sync-slot">{sync}</div> : null}
       {dock ? <div className="rail-dock">{dock}</div> : null}
       {footer ? <div className="rail-mail">{footer}</div> : null}
     </nav>

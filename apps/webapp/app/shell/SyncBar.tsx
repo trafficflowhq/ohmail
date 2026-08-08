@@ -68,11 +68,40 @@
  * `aria-hidden`: the count is the information, and removing it from the accessibility tree
  * would be a second defect dressed as a fix for the first.
  */
+import type { ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useMailState } from "./MailStateProvider";
-import { stripSpeaks } from "./mail-state";
+import { stripSpeaks, type MailState } from "./mail-state";
 
-export function SyncBar() {
+/**
+ * ── AND WHY IT IS RENDERED TWICE, IN TWO SHAPES ─────────────────────────────────────────
+ *
+ * The strip's placement above the deck was right about WHOSE chrome this is and wrong about
+ * where that chrome lives now. The rail already carries everything that acts on the app rather
+ * than on mail — the palette, the theme, the account — so a line about the mailbox belongs at
+ * the foot of it, not across the top of somebody's reading. The `busy` states were worse still:
+ * a pill floating over the bottom-left corner of every view, which is chrome ON the mail.
+ *
+ * So the shell renders `variant="rail"` into the rail's own slot and keeps `variant="shell"`
+ * where it always was, and `app.css` shows exactly one of them: the rail form wherever the rail
+ * is standing, the strip and the corner pill wherever it is not (under 900px the rail collapses
+ * into a drawer, and a sync line inside a closed drawer is a sync line nobody is told about).
+ *
+ * `display:none` and not a JS width test, deliberately. The hidden copy leaves the accessibility
+ * tree with it, so two `role="status"` regions never announce the same sentence twice, and there
+ * is no render that disagrees with the media query it is trying to predict.
+ *
+ * ── ONE DESCRIPTION, TWO RENDERERS ──────────────────────────────────────────────────────
+ *
+ * `speech()` below is the switch this file used to BE. Both shapes read it, so the sentence, the
+ * tone and the remedy for a given state are decided once. Two independent switches over the same
+ * seven states is the drift this file's header spends forty lines arguing against, and adding a
+ * second placement would have been the exact way to reintroduce it.
+ */
+/* No default VALUE on the parameter, only on the field. A `= {}` there types the component as
+   `(props?: …)`, which is not a `FunctionComponent<P>`, and `createElement(SyncBar, { variant })`
+   then resolves to the propless overload and rejects the prop it was given. */
+export function SyncBar({ variant = "shell" }: { variant?: "shell" | "rail" }) {
   const t = useTranslations("sync");
   // The error TAXONOMY lives with the Settings rows that already own it (`mailboxes.err_*`,
   // mail 0023). Two copies of seven sentences is how they drift, and one of them then describes
@@ -81,112 +110,164 @@ export function SyncBar() {
   const { state } = useMailState();
 
   if (!stripSpeaks(state.key)) return null;
+  const s = speech(state, t, tm);
 
+  if (variant === "rail") {
+    return (
+      <div
+        className={s.tone ? `rail-sync ${s.tone}` : "rail-sync"}
+        role={s.role}
+        aria-live={s.role === "status" ? "polite" : undefined}
+      >
+        <div className="rs-line">
+          <Glyph warn={s.warn} busy={s.busy} />
+          <b>{s.title}</b>
+        </div>
+        {/* The volatile half, on its own line at rail width: an address plus an elapsed count
+            has nowhere to go beside a label in 200px, and the alternative — ellipsising it — is
+            hiding the one part of the sentence that MOVES. */}
+        {s.detail ? (
+          <span className="rs-num num" aria-live="off">
+            {s.detail}
+          </span>
+        ) : null}
+        {/* THE PROGRESS LINE, and it is indeterminate on purpose. `/sync` answers `hasMore` as a
+            boolean, so the total is unknowable until the drain ends; a filled track or a
+            percentage would be invented. A travelling sliver says a process is running and
+            claims nothing about how far along it is — the same knowledge the spinner carries,
+            in the shape a compact row has space for. `aria-hidden`: the region already says it
+            in words. `prefers-reduced-motion` stops the travel and leaves the track (app.css). */}
+        {s.busy ? (
+          <span className="rs-track" aria-hidden="true">
+            <i />
+          </span>
+        ) : null}
+        {s.link ? <a href={s.link.href}>{s.link.label}</a> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={s.tone ? `sync-bar ${s.tone}` : "sync-bar"}
+      role={s.role}
+      aria-live={s.role === "status" ? "polite" : undefined}
+    >
+      <Glyph warn={s.warn} busy={s.busy} />
+      <b>{s.title}</b>
+      {s.detail ? (
+        <span className="num" aria-live="off">
+          {s.detail}
+        </span>
+      ) : null}
+      {s.link ? <a href={s.link.href}>{s.link.label}</a> : null}
+    </div>
+  );
+}
+
+type Translate = (key: string, values?: Record<string, string | number>) => string;
+
+/** Everything either shape needs to know, for one state. */
+interface Speech {
+  /** The modifier the tone classes hang off — `""` is the plain accent ground. */
+  tone: "" | "stopped" | "warn" | "busy";
+  /**
+   * `alert` for `stopped` and `status` for the rest. The loop has ENDED in that one state and
+   * will not restart itself, which is the only sync fact worth interrupting a screen reader
+   * for; everything else is still being retried and says so calmly. `terminal` is not set-once —
+   * a wake issues one bounded probe and a drain that succeeds withdraws the claim — so this can
+   * appear, go and reappear, and re-announcing on a re-latch is correct: the server re-made it.
+   */
+  role: "alert" | "status";
+  warn: boolean;
+  busy: boolean;
+  title: string;
+  /** The volatile half — a climbing count, an elapsed minute, an address. Never announced. */
+  detail: ReactNode | null;
+  link: { href: string; label: string } | null;
+}
+
+function speech(state: MailState, t: Translate, tm: Translate): Speech {
+  const settings = { href: "#/settings", label: t("settings") };
   switch (state.key) {
     case "stopped":
-      return (
-        // `role="alert"` and not `status`: the loop has stopped and will not restart itself,
-        // so this is the one sync state that is worth interrupting a screen reader for. It is
-        // `terminal` is NO LONGER set-once. A wake now issues one bounded probe, and a
-        // drain that succeeds withdraws the claim, so this bar can appear, disappear and reappear.
-        // `role="alert"` re-announcing on a re-latch is correct: the server re-made the claim.
-        <div className="sync-bar stopped" role="alert">
-          <Glyph warn />
-          <b>{t("stopped")}</b>
-          {/* Cloud-only by construction: a fixtures engine is permanently settled, so the
-              desktop bundle compiles this branch and can never reach it. */}
-          <a href="/login">{t("signIn")}</a>
-        </div>
-      );
+      return {
+        tone: "stopped", role: "alert", warn: true, busy: false,
+        title: t("stopped"),
+        detail: null,
+        // Cloud-only by construction: a fixtures engine is permanently settled, so the desktop
+        // bundle compiles this branch and can never reach it.
+        link: { href: "/login", label: t("signIn") },
+      };
 
     case "failing":
-      return (
-        // Polite, and deliberately not re-announced: the text is constant for as long as the
-        // outage lasts, so the region updates once when it appears and once when it goes.
-        <div className="sync-bar" role="status" aria-live="polite">
-          <Glyph warn />
-          <b>{t("failing")}</b>
-        </div>
-      );
+      // Polite, and deliberately not re-announced: the text is constant for as long as the
+      // outage lasts, so the region updates once when it appears and once when it goes.
+      return { tone: "", role: "status", warn: true, busy: false, title: t("failing"), detail: null, link: null };
 
     case "blocked":
-      return (
-        <div className="sync-bar warn" role="status" aria-live="polite">
-          <Glyph warn />
-          {/* A reason this build does not recognise still gets a sentence. The server owns a
-              CLOSED set (mail 0029) and this client re-declares it, so a fourth member is a
-              real possibility during a deploy — and answering it with silence would restore
-              precisely the invisibility that migration exists to end. */}
-          <b>{state.reason ? t(`blocked_${state.reason}`) : t("blockedUnknown")}</b>
-          <span className="num" aria-live="off">
+      return {
+        tone: "warn", role: "status", warn: true, busy: false,
+        // A reason this build does not recognise still gets a sentence. The server owns a
+        // CLOSED set (mail 0029) and this client re-declares it, so a fourth member is a real
+        // possibility during a deploy — and answering it with silence would restore precisely
+        // the invisibility that migration exists to end.
+        title: state.reason ? t(`blocked_${state.reason}`) : t("blockedUnknown"),
+        detail: (
+          <>
             {state.address}
             <Since minutes={state.minutes} t={t} />
-          </span>
-          {/* `awaiting_credentials` is the one arm a user can act on — the mailbox needs its
-              password stored again. The other two are ours, and the link is still right: that
-              pane is where the mailbox and its state live. */}
-          <a href="#/settings">{t("settings")}</a>
-        </div>
-      );
+          </>
+        ),
+        // `awaiting_credentials` is the one arm a user can act on — the mailbox needs its
+        // password stored again. The other two are ours, and the link is still right: that pane
+        // is where the mailbox and its state live.
+        link: settings,
+      };
 
     case "mailboxError":
-      return (
-        <div className="sync-bar warn" role="status" aria-live="polite">
-          <Glyph warn />
-          <b>{tm(`err_${state.errorCode}`)}</b>
-          <span className="num" aria-live="off">{state.address}</span>
-          <a href="#/settings">{t("settings")}</a>
-        </div>
-      );
+      return {
+        tone: "warn", role: "status", warn: true, busy: false,
+        title: tm(`err_${state.errorCode}`),
+        detail: state.address,
+        link: settings,
+      };
 
     case "noMailbox":
-      return (
-        // Reachable only when `GET /mailboxes` ANSWERED and answered zero. A probe that failed
-        // leaves the facts unknown and this strip silent — see `MailStateProvider`.
-        <div className="sync-bar" role="status" aria-live="polite">
-          <Glyph />
-          <b>{t("noMailbox")}</b>
-          <a href="#/settings">{t("settings")}</a>
-        </div>
-      );
+      // Reachable only when `GET /mailboxes` ANSWERED and answered zero. A probe that failed
+      // leaves the facts unknown and this strip silent — see `MailStateProvider`.
+      return { tone: "", role: "status", warn: false, busy: false, title: t("noMailbox"), detail: null, link: settings };
 
     case "importing":
-      return (
-        <div className="sync-bar busy" role="status" aria-live="polite">
-          <Glyph busy />
-          {/* "Syncing", not "Importing your mailbox". The client can see its own mirror
-              growing; it cannot see a worker, so a sentence that claims one is asserting
-              something this code does not know. The count is the largest TRUE thing here. */}
-          <b>{t("importing")}</b>
-          {/* Never a percentage: `/sync` answers `hasMore` as a boolean, so the TOTAL is
-              unknowable until the drain ends. A count is available, and it MOVES, which is the
-              part that distinguishes working from hung. */}
-          <span className="num" aria-live="off">
-            {t("importingCount", { count: state.count })}
-          </span>
-        </div>
-      );
+      return {
+        tone: "busy", role: "status", warn: false, busy: true,
+        // "Syncing", not "Importing your mailbox". The client can see its own mirror growing;
+        // it cannot see a worker, so a sentence that claims one is asserting something this
+        // code does not know. The count is the largest TRUE thing here.
+        title: t("importing"),
+        // Never a percentage: `/sync` answers `hasMore` as a boolean, so the TOTAL is unknowable
+        // until the drain ends. A count is available, and it MOVES, which is the part that
+        // distinguishes working from hung.
+        detail: t("importingCount", { count: state.count }),
+        link: null,
+      };
 
     default:
       // `awaiting` — connected, no cycle has completed, and the mirror is empty. Often the
       // CORRECT thing to say: a first attach was measured at ~6 minutes. What was wrong before
       // was saying it alone, for ever, with no elapsed time and while the mirror grew.
-      return (
-        <div className="sync-bar busy" role="status" aria-live="polite">
-          <Glyph busy />
-          {/* Two sentences rather than one with a clause: "a first sync takes a few minutes" is
-              true and useful at four minutes and misleading at forty. The escalated one drops
-              the explanation and states the elapsed time — and claims no failure, because at
-              this point nothing has failed. */}
-          <b>{state.slow ? t("awaitingSlow") : t("awaiting")}</b>
-          <span className="num" aria-live="off">
-            {state.address
-              ? t("awaitingWhere", { address: state.address, minutes: state.minutes ?? 0 })
-              : t("awaitingFor", { minutes: state.minutes ?? 0 })}
-          </span>
-          {state.slow ? <a href="#/settings">{t("settings")}</a> : null}
-        </div>
-      );
+      return {
+        tone: "busy", role: "status", warn: false, busy: true,
+        // Two sentences rather than one with a clause: "a first sync takes a few minutes" is
+        // true and useful at four minutes and misleading at forty. The escalated one drops the
+        // explanation and states the elapsed time — and claims no failure, because at this
+        // point nothing has failed.
+        title: state.slow ? t("awaitingSlow") : t("awaiting"),
+        detail: state.address
+          ? t("awaitingWhere", { address: state.address, minutes: state.minutes ?? 0 })
+          : t("awaitingFor", { minutes: state.minutes ?? 0 }),
+        link: state.slow ? settings : null,
+      };
   }
 }
 

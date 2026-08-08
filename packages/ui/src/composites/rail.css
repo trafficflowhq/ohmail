@@ -104,6 +104,16 @@
  * definition rather than the outcome. `min-width:0` lets that row shrink past its own content
  * width — a flex item's floor is `min-content` otherwise, so a long label would push the icon off
  * the end of the rail rather than the row giving way. */
+/* THE SYNC LINE'S PLACE — see `sync` in `RailNav.tsx`.
+ *
+ * It takes `margin-top:auto` and the dock gives it up, which is the same "only the first one
+ * takes the slack" rule the dock and the account line already follow. That ordering is what
+ * makes a row that appears and disappears harmless: with the auto margin on THIS element, the
+ * dock and the account line are welded to the rail's bottom edge and the sync line grows
+ * upwards from them. Put the auto back on `.rail-dock` and a sync starting mid-session would
+ * shove both controls down by its own height. */
+.rail-sync-slot{margin-top:auto;padding-bottom:10px}
+.rail-sync-slot + .rail-dock{margin-top:0}
 .rail-dock{margin-top:auto;padding-top:10px;box-shadow:inset 0 1px 0 var(--hair-soft);
   display:flex;align-items:stretch;gap:4px}
 .rail-dock .ritem{width:auto}
