@@ -5,11 +5,15 @@ import { createRoot, type Root } from "react-dom/client";
 
 import {
   MENU_NAVIGATE_EVENT,
+  MENU_COMMANDS,
+  MENU_COMMAND_EVENT,
   MENU_VIEWS,
   badgeCount,
   notify,
+  onMenuCommand,
   onMenuNavigate,
   setBadge,
+  commandOfMenuPayload,
   viewOfMenuPayload,
 } from "../src/native.js";
 import { DesktopSettings } from "../src/DesktopSettings.js";
@@ -284,5 +288,50 @@ describe("Settings → this install", () => {
   it("says what a door switch costs before it is taken", async () => {
     await mount(SERVING);
     expect(hostEl.textContent).toMatch(/frozen where it is rather than deleted/);
+  });
+});
+
+/**
+ * THE MENU'S COMMANDS — the second channel, and why it is a second one.
+ *
+ * A view id and a command id name different kinds of thing, and the two unions are closed
+ * separately so a shell one version ahead cannot turn a command this bundle has never heard of
+ * into a navigation to a route it does not have. The two channels therefore have to stay apart at
+ * the wire as well as in the parser, which is what the first test here is about.
+ */
+describe("the menu's commands", () => {
+  it("listens on its own event and delivers only the names it knows", async () => {
+    const shell = shellAnswering();
+    const ran: string[] = [];
+    await onMenuCommand((command) => ran.push(command));
+
+    const listen = shell.asked.find((a) => a.command === "plugin:event|listen")!;
+    expect(listen.payload!.event).toBe(MENU_COMMAND_EVENT);
+    expect(listen.payload!.target).toEqual({ kind: "Any" });
+
+    shell.emit(MENU_COMMAND_EVENT, "compose");
+    shell.emit(MENU_COMMAND_EVENT, "palette");
+    // Not a command, whatever else it is. `ohbox` is a VIEW, and that is the case worth pinning:
+    // the two channels carry different vocabularies and neither may accept the other's.
+    shell.emit(MENU_COMMAND_EVENT, "ohbox");
+    shell.emit(MENU_COMMAND_EVENT, "");
+    shell.emit(MENU_COMMAND_EVENT, null);
+    expect(ran).toEqual(["compose", "palette"]);
+  });
+
+  it("knows the five commands the bar offers and no more", () => {
+    expect([...MENU_COMMANDS]).toEqual([
+      "compose", "settings", "search", "palette", "shortcuts",
+    ]);
+    // Both payload shapes the runtime delivers, read directly rather than through the envelope.
+    expect(commandOfMenuPayload("settings")).toBe("settings");
+    expect(commandOfMenuPayload({ payload: "settings" })).toBe("settings");
+    expect(commandOfMenuPayload({ payload: "nope" })).toBeNull();
+    for (const view of MENU_VIEWS) expect(commandOfMenuPayload(view)).toBeNull();
+    for (const command of MENU_COMMANDS) expect(viewOfMenuPayload(command)).toBeNull();
+  });
+
+  it("is silent when there is no shell to listen to", async () => {
+    await expect(onMenuCommand(() => undefined)).resolves.toBeUndefined();
   });
 });

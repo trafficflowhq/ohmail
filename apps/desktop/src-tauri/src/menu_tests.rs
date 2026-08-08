@@ -75,3 +75,69 @@ fn every_view_survives_the_round_trip_through_a_menu_id() {
 fn the_event_is_named_for_what_it_does() {
     assert_eq!(MENU_NAVIGATE_EVENT, "menu:navigate");
 }
+
+/// A command id is a command and a view id is not, in both directions.
+///
+/// The two prefixes are the whole discrimination — `attach` asks `navigate_target` first and
+/// `command_target` second — so an id that satisfied both would emit on the navigation channel
+/// and never on the command one, which is a menu item that quietly goes to the wrong place.
+#[test]
+fn commands_and_views_cannot_be_mistaken_for_each_other() {
+    assert_eq!(command_target("cmd:compose"), Some("compose"));
+    assert_eq!(command_target("view:ohbox"), None);
+    assert_eq!(navigate_target("cmd:compose"), None);
+    assert_eq!(command_target("cmd:"), None);
+    assert_eq!(command_target(""), None);
+    assert_eq!(command_target(crate::updater::CHECK_FOR_UPDATES_ID), None);
+    assert_ne!(NAVIGATE_PREFIX, COMMAND_PREFIX);
+}
+
+#[test]
+fn the_command_event_is_named_for_what_it_does() {
+    assert_eq!(MENU_COMMAND_EVENT, "menu:command");
+    assert_ne!(MENU_COMMAND_EVENT, MENU_NAVIGATE_EVENT);
+}
+
+/// The bar's own accelerators, and the platform's, may not collide.
+///
+/// Two items on one key is a key that does whichever the platform registered last. The view items
+/// already hold ⌘1…⌘5; these five hold the letters, and the ones the platform's own items claim
+/// (⌘Q, ⌘W, ⌘M, ⌘C, ⌘V, ⌘X, ⌘A, ⌘Z) are named here so a new command cannot take one back.
+#[cfg(feature = "local-engine")]
+#[test]
+fn every_command_has_its_own_key_and_none_of_the_platforms() {
+    const PLATFORM: [&str; 8] = [
+        "CmdOrCtrl+Q", "CmdOrCtrl+W", "CmdOrCtrl+M",
+        "CmdOrCtrl+C", "CmdOrCtrl+V", "CmdOrCtrl+X", "CmdOrCtrl+A", "CmdOrCtrl+Z",
+    ];
+
+    let mut keys: Vec<&str> = COMMANDS.iter().map(|(_, _, key)| *key).collect();
+    keys.extend(VIEWS.iter().map(|(_, _, key)| *key));
+    for key in &keys {
+        assert!(!PLATFORM.contains(key), "{key} is the platform's own");
+    }
+    let before = keys.len();
+    keys.sort_unstable();
+    keys.dedup();
+    assert_eq!(keys.len(), before, "two menu items share one accelerator");
+
+    let mut ids: Vec<&str> = COMMANDS.iter().map(|(id, _, _)| *id).collect();
+    assert_eq!(ids, ["compose", "settings", "search", "palette", "shortcuts"]);
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), COMMANDS.len());
+
+    for (id, label, _) in COMMANDS {
+        assert_eq!(command_target(&format!("{COMMAND_PREFIX}{id}")), Some(id));
+        assert!(!label.is_empty(), "{id} has no label to render");
+    }
+}
+
+/// The two conventions a Mac user does not think of as ours.
+#[cfg(feature = "local-engine")]
+#[test]
+fn the_platform_conventions_are_where_a_mac_user_expects_them() {
+    let key = |want: &str| COMMANDS.iter().find(|(id, _, _)| *id == want).unwrap().2;
+    assert_eq!(key("compose"), "CmdOrCtrl+N");
+    assert_eq!(key("settings"), "CmdOrCtrl+,");
+}

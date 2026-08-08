@@ -111,15 +111,37 @@ const MAILBOX_LIST = JSON.stringify({
  * command channel is not there at all, so the window has no shell to ask.
  */
 function shell(status: EngineStatus | null): string[] {
+  return shellWithMenu(status).urls;
+}
+
+/**
+ * The same fake, plus the half the menu needs: a callback registry, so a test can deliver a menu
+ * event the way the runtime does and watch what the window does with it.
+ */
+function shellWithMenu(status: EngineStatus | null): {
+  urls: string[];
+  emit(event: string, payload: unknown): void;
+} {
   const urls: string[] = [];
+  const callbacks = new Map<number, (payload: unknown) => void>();
+  const listeners = new Map<string, number>();
+  let next = 1;
   if (status === null) {
     delete host.__TAURI_INTERNALS__;
-    return urls;
+    return { urls, emit: () => undefined };
   }
   host.__TAURI_INTERNALS__ = {
-    transformCallback: () => 1,
+    transformCallback: (cb: unknown) => {
+      const id = next++;
+      callbacks.set(id, cb as (payload: unknown) => void);
+      return id;
+    },
     invoke: async (command, payload) => {
       if (command === "engine_status") return status;
+      if (command === "plugin:event|listen") {
+        listeners.set(String(payload?.event ?? ""), payload?.handler as number);
+        return null;
+      }
       if (command === "engine_request") {
         const url = String(payload?.url ?? "");
         urls.push(url);
@@ -127,11 +149,18 @@ function shell(status: EngineStatus | null): string[] {
         if (url.startsWith("/mailboxes")) return encode(200, MAILBOX_LIST);
         return encode(200, EMPTY_PAGE);
       }
-      // `plugin:event|listen`, `set_badge`, `notify` — granted, and nothing to answer with.
+      // `set_badge` and `notify` — granted, and nothing to answer with.
       return null;
     },
   };
-  return urls;
+  return {
+    urls,
+    emit(event, payload) {
+      const handler = listeners.get(event);
+      if (handler === undefined) throw new Error(`nothing is listening for ${event}`);
+      callbacks.get(handler)!({ event, id: 1, payload });
+    },
+  };
 }
 
 let root: Root | null = null;
@@ -257,6 +286,31 @@ describe("the window against a serving engine", () => {
     const urls = shell(SERVING);
     await render();
     expect(urls.some((u) => u.startsWith("/mailboxes"))).toBe(true);
+  });
+
+  /**
+   * ⌘N REACHES THE CLIENT, which is the half a unit test of the parser cannot show.
+   *
+   * The menu emits a command id and this window maps it onto something the client already does.
+   * Between those two there is a switch, and a switch that names a route the client does not have
+   * fails exactly like a menu item that was never wired: silently. So the assertion is made on the
+   * screen, after the event, rather than on the mapping.
+   */
+  it("opens the compose view when the menu asks for a new message", async () => {
+    const shell = shellWithMenu(SERVING);
+    const el = await render();
+    try {
+      await act(async () => {
+        shell.emit("menu:command", "compose");
+        // `go` writes the location hash and the shell routes off `hashchange`, which is a TASK
+        // rather than a microtask — so the render that answers it is one turn of the loop away.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(el.textContent ?? "").toMatch(/Kept in this browser until you send it/i);
+    } finally {
+      // The hash is per-document and this file renders more than once into it.
+      window.location.hash = "";
+    }
   });
 
   it("says nothing about invented mail while it is showing somebody's own", async () => {

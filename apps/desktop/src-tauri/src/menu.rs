@@ -16,27 +16,45 @@
 //!
 //! ── WHAT IS IN THE BAR, AND WHY EACH PART IS THERE ─────────────────────────────────────────
 //!
-//!   * **ohmail** — "Check for Updates…" and Quit. Unchanged; the updater's only trigger.
+//!   * **ohmail** — About, Settings (⌘,), "Check for Updates…", the platform's hide items, and
+//!     Quit. This is where a Mac user looks for an application's own commands, and a bar whose
+//!     first menu held two items was the clearest sign this app had no menu worth opening.
+//!   * **File** — "New Message" on ⌘N, and Close Window. ⌘N is the shortcut every mail client on
+//!     the platform has; the shared client binds `c` for the same thing, and both now work.
 //!   * **Edit** — the platform's own undo/cut/copy/paste/select-all items. These are not
 //!     decoration. On macOS a webview gets ⌘C and ⌘V from the menu bar, so an app with no Edit
 //!     menu is an app where you cannot copy a line out of your own mail. They are the system's
 //!     items rather than commands of ours: the webview is never told about them.
-//!   * **View** — the five places mail lives, on ⌘1…⌘5. Compiled only into the engine-bearing
-//!     build, because it is the only one whose window is permitted to hear the event: the
-//!     published preview grants the webview nothing, so a View menu there would be five items
-//!     that do nothing.
+//!   * **View** — the five places mail lives on ⌘1…⌘5, plus Search and the command palette.
+//!   * **Window** — minimize, zoom and full screen, the platform's own.
+//!   * **Help** — the keyboard shortcut sheet the client already draws for `?`.
 //!
-//! ── HOW A MENU ITEM BECOMES A NAVIGATION ───────────────────────────────────────────────────
+//! Everything that reaches the WEBVIEW is compiled only into the engine-bearing build, because
+//! it is the only one whose window is permitted to hear an event: the published preview grants
+//! the webview nothing, so those items there would be items that do nothing. What is left in the
+//! preview is the platform's own — About, Quit, Edit, Window — every one of which works without
+//! the page being told anything.
 //!
-//! It does not navigate. It EMITS — one event carrying a view id — and the frontend listens and
-//! calls the same navigation function its rail, its command palette and its bare number keys
-//! call. That is the whole reason the payload is a view id rather than a position or a route:
-//! the shell knows the names of the places, and the client knows what going to one means.
+//! ── HOW A MENU ITEM REACHES THE CLIENT ─────────────────────────────────────────────────────
 //!
-//! The alternative — the shell driving the webview's location — would be a second implementation
-//! of routing, in a language that cannot see the client's own rules about where a view lives.
+//! It does not act. It EMITS, on one of two events, and the frontend does the rest:
+//!
+//!   * `menu:navigate` carries a VIEW ID, and the frontend calls the same navigation function
+//!     its rail, its command palette and its bare number keys call;
+//!   * `menu:command` carries a COMMAND ID — compose, settings, search, the palette, the
+//!     shortcut sheet — and the frontend runs whatever it already runs for that command.
+//!
+//! Two events rather than one union, because the two payloads are different KINDS of name and
+//! the frontend closes each union separately: a shell one version ahead can name a view this
+//! bundle does not have, or a command it does not have, and in both cases the honest response is
+//! to do nothing rather than to guess. Sharing one event would make an unknown view and an
+//! unknown command indistinguishable.
+//!
+//! The alternative — the shell driving the webview's location, or synthesising key events — would
+//! be a second implementation of routing and of the keymap, in a language that cannot see the
+//! client's own rules about either.
 
-use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+use tauri::menu::{AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Runtime};
 
 /// The event a chosen navigation item emits. The frontend's `native.ts` listens for this name.
@@ -44,6 +62,12 @@ pub const MENU_NAVIGATE_EVENT: &str = "menu:navigate";
 
 /// What a navigation item's id starts with, so one prefix test tells them from every other item.
 pub const NAVIGATE_PREFIX: &str = "view:";
+
+/// The event a chosen COMMAND item emits. Distinct from navigation — see the module header.
+pub const MENU_COMMAND_EVENT: &str = "menu:command";
+
+/// What a command item's id starts with. A different prefix, so one test tells the two apart.
+pub const COMMAND_PREFIX: &str = "cmd:";
 
 /// The navigable places, in menu order — id, label, accelerator.
 ///
@@ -76,6 +100,49 @@ pub fn navigate_target(id: &str) -> Option<&str> {
     id.strip_prefix(NAVIGATE_PREFIX).filter(|view| !view.is_empty())
 }
 
+/// The command a menu id names, or `None` for every other item in the bar.
+///
+/// The same shape as [`navigate_target`] and separate from it on purpose: the two payloads name
+/// different kinds of thing and the frontend closes a different union for each.
+pub fn command_target(id: &str) -> Option<&str> {
+    id.strip_prefix(COMMAND_PREFIX).filter(|cmd| !cmd.is_empty())
+}
+
+/// The commands the bar can ask the client to run — id, label, accelerator.
+///
+/// Every one of them is something the client ALREADY does, reached by a key or by the palette.
+/// The menu is a second way to the one implementation, never a second implementation: an id here
+/// with no handler in `src/native.ts` is an item that does nothing, which is why the frontend
+/// refuses a payload it does not recognise rather than falling back to something plausible.
+///
+/// ⌘, and ⌘N are the platform's conventions and are not negotiable on a Mac. ⌘F and ⌘K are the
+/// client's own — the search view and the command palette — given menu entries because a command
+/// nobody can find is a command that does not exist. The shortcut sheet is on ⌘/ beside the `?`
+/// the client already binds.
+#[cfg(feature = "local-engine")]
+pub const COMMANDS: [(&str, &str, &str); 5] = [
+    ("compose", "New Message", "CmdOrCtrl+N"),
+    ("settings", "Settings…", "CmdOrCtrl+,"),
+    ("search", "Search Mail…", "CmdOrCtrl+F"),
+    ("palette", "Command Palette…", "CmdOrCtrl+K"),
+    ("shortcuts", "Keyboard Shortcuts", "CmdOrCtrl+/"),
+];
+
+/// One command item, by id, built from [`COMMANDS`].
+///
+/// Looked up rather than positional: the menus below place these in four different submenus, and
+/// an index would make a reordering of the table silently move Settings into the File menu.
+#[cfg(feature = "local-engine")]
+fn command_item<R: Runtime>(app: &AppHandle<R>, id: &str) -> tauri::Result<tauri::menu::MenuItem<R>> {
+    let (_, label, accelerator) = COMMANDS
+        .iter()
+        .find(|(cmd, _, _)| *cmd == id)
+        .expect("ohmail: a menu asked for a command that is not in COMMANDS");
+    MenuItemBuilder::with_id(format!("{COMMAND_PREFIX}{id}"), label)
+        .accelerator(accelerator)
+        .build(app)
+}
+
 /// Install the menu, and route the items this module owns.
 ///
 /// Called from `main.rs` in EVERY build. `on_menu_event` appends rather than replaces, so this
@@ -84,10 +151,13 @@ pub fn navigate_target(id: &str) -> Option<&str> {
 pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
         .on_menu_event(|app, event| {
-            if let Some(view) = navigate_target(event.id().as_ref()) {
-                // A failed emit is not worth taking the app down for: the window may be closing,
-                // and the cost is one menu item that did not navigate.
+            let id = event.id().as_ref();
+            // A failed emit is not worth taking the app down for: the window may be closing,
+            // and the cost is one menu item that did nothing.
+            if let Some(view) = navigate_target(id) {
                 let _ = app.emit(MENU_NAVIGATE_EVENT, view);
+            } else if let Some(command) = command_target(id) {
+                let _ = app.emit(MENU_COMMAND_EVENT, command);
             }
         })
         .setup(|app| {
@@ -97,14 +167,45 @@ pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
 }
 
 /// Build and install the bar.
+///
+/// Two halves, and the split is the artifact boundary rather than a preference. Everything the
+/// PLATFORM performs — About, Quit, Hide, the Edit items, the Window items — is built in every
+/// build, because none of it needs the page to be told anything. Everything that reaches the
+/// WEBVIEW is behind the feature, because only that build's window is granted the permission to
+/// hear an event.
 fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let check_item =
         MenuItemBuilder::with_id(crate::updater::CHECK_FOR_UPDATES_ID, "Check for Updates…")
             .build(app)?;
-    let app_menu = SubmenuBuilder::new(app, "ohmail")
+
+    /* THE PLATFORM'S OWN ABOUT PANEL, not a screen of ours. It reads the bundle's name, version
+       and copyright, which is exactly the set of facts an About box is for, and it is drawn by
+       the operating system — so it is correct in every build including the one whose webview is
+       granted nothing. The fuller "About ohmail" — who publishes this, which build, where the
+       privacy pages are — lives in Settings, where a person can copy out of it. */
+    let about = AboutMetadataBuilder::new()
+        .name(Some("ohmail"))
+        .version(Some(env!("CARGO_PKG_VERSION")))
+        .copyright(Some("Copyright (c) 2026 TrafficFlow GmbH"))
+        .build();
+
+    // Shadowed rather than mutated, for the reason the View menu below is: the preview build
+    // has no Settings item to add, and a `mut` it never writes to is a warning in that build.
+    let app_menu = SubmenuBuilder::new(app, "ohmail").about(Some(about));
+    #[cfg(feature = "local-engine")]
+    let app_menu = {
+        let settings = command_item(app, "settings")?;
+        app_menu.separator().item(&settings)
+    };
+    let app_menu = app_menu
+        .separator()
         .item(&check_item)
         .separator()
-        .item(&PredefinedMenuItem::quit(app, None)?)
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .quit()
         .build()?;
 
     // The system's own editing items. Nothing here is a command of ours and nothing reaches the
@@ -119,7 +220,34 @@ fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .select_all()
         .build()?;
 
-    let menu = MenuBuilder::new(app).item(&app_menu).item(&edit_menu);
+    /* WINDOW. The platform's items, and the reason they are worth the four lines: without a
+       Window menu ⌘M does not minimise and there is no way to full-screen the app from the bar —
+       two things every Mac user expects to find and neither of which the page can provide. */
+    let window_menu = SubmenuBuilder::new(app, "Window")
+        .minimize()
+        .maximize()
+        .separator()
+        .fullscreen()
+        .build()?;
+
+    let menu = MenuBuilder::new(app).item(&app_menu);
+
+    /* FILE, and it exists for one item. ⌘N is what a mail client is expected to answer with a
+       new message, on every platform; the shared client binds `c` for the same action and both
+       reach the same place. Close Window is beside it because a File menu with one item in it
+       reads as unfinished, and because ⌘W is the other key a window is expected to answer. */
+    #[cfg(feature = "local-engine")]
+    let menu = {
+        let compose = command_item(app, "compose")?;
+        let file = SubmenuBuilder::new(app, "File")
+            .item(&compose)
+            .separator()
+            .close_window()
+            .build()?;
+        menu.item(&file)
+    };
+
+    let menu = menu.item(&edit_menu);
 
     // Shadowed rather than mutated, so the default build declares no `mut` it never uses — the
     // View submenu exists only where a window is permitted to hear about a chosen item.
@@ -132,7 +260,21 @@ fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 .build(app)?;
             view = view.item(&item);
         }
+        let search = command_item(app, "search")?;
+        let palette = command_item(app, "palette")?;
+        view = view.separator().item(&search).item(&palette);
         menu.item(&view.build()?)
+    };
+
+    let menu = menu.item(&window_menu);
+
+    /* HELP holds the shortcut sheet and nothing else. It is the sheet the client already draws
+       for `?`, given a home in the bar because a keyboard-first product whose key list can only
+       be found with a key is a product whose key list is not found. */
+    #[cfg(feature = "local-engine")]
+    let menu = {
+        let sheet = command_item(app, "shortcuts")?;
+        menu.item(&SubmenuBuilder::new(app, "Help").item(&sheet).build()?)
     };
 
     app.set_menu(menu.build()?)?;

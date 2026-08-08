@@ -35,6 +35,9 @@
 /** The event the shell emits when a navigation item is chosen from the menu. */
 export const MENU_NAVIGATE_EVENT = "menu:navigate";
 
+/** The event the shell emits when a COMMAND item is chosen — compose, settings, search, … */
+export const MENU_COMMAND_EVENT = "menu:command";
+
 /**
  * The views the menu can reach, in the order it lists them — and therefore the order their
  * ⌘1…⌘5 accelerators run in.
@@ -47,6 +50,18 @@ export const MENU_NAVIGATE_EVENT = "menu:navigate";
 export const MENU_VIEWS = ["ohbox", "reads", "receipts", "screener", "triage"] as const;
 
 export type MenuView = (typeof MENU_VIEWS)[number];
+
+/**
+ * The commands the menu can ask for, and therefore what its ⌘N / ⌘, / ⌘F / ⌘K / ⌘/ items do.
+ *
+ * Every one is something the client already does. The menu is a second WAY to one implementation
+ * and never a second implementation: `DesktopGate` maps each id onto the same call the key or the
+ * palette entry makes. The Rust side names the same list; `menu.rs` carries the reasoning for why
+ * the two are written down twice and what keeps them in step.
+ */
+export const MENU_COMMANDS = ["compose", "settings", "search", "palette", "shortcuts"] as const;
+
+export type MenuCommand = (typeof MENU_COMMANDS)[number];
 
 /** The commands the shell registers for this file. Named once so a typo is one place. */
 const NOTIFY_COMMAND = "notify";
@@ -75,6 +90,23 @@ function internals(): TauriInternals | null {
  * Null is "this window does not know that one", and the caller does nothing.
  */
 export function viewOfMenuPayload(payload: unknown): MenuView | null {
+  return oneOf(payload, MENU_VIEWS);
+}
+
+/**
+ * Which command a `menu:command` payload names, or null when it names none.
+ *
+ * The same closed-union rule as {@link viewOfMenuPayload} and separate from it for the reason
+ * `menu.rs` gives: an unknown VIEW and an unknown COMMAND are different facts, and folding both
+ * into one union would let a shell one version ahead turn a command this bundle has never heard
+ * of into a navigation to a route it does not have.
+ */
+export function commandOfMenuPayload(payload: unknown): MenuCommand | null {
+  return oneOf(payload, MENU_COMMANDS);
+}
+
+/** The string a menu event carried, if it is one of `allowed`. */
+function oneOf<T extends string>(payload: unknown, allowed: readonly T[]): T | null {
   const raw =
     typeof payload === "string"
       ? payload
@@ -82,7 +114,7 @@ export function viewOfMenuPayload(payload: unknown): MenuView | null {
         ? ((payload as { payload: string }).payload)
         : null;
   if (raw === null) return null;
-  return (MENU_VIEWS as readonly string[]).includes(raw) ? (raw as MenuView) : null;
+  return (allowed as readonly string[]).includes(raw) ? (raw as T) : null;
 }
 
 /**
@@ -94,14 +126,30 @@ export function viewOfMenuPayload(payload: unknown): MenuView | null {
  * is a capability that was not granted and the app is quietly missing half its menu.
  */
 export async function onMenuNavigate(go: (view: MenuView) => void): Promise<void> {
+  await listen(MENU_NAVIGATE_EVENT, viewOfMenuPayload, go);
+}
+
+/**
+ * Run `run` whenever the menu asks for a command. Same contract as {@link onMenuNavigate}.
+ */
+export async function onMenuCommand(run: (command: MenuCommand) => void): Promise<void> {
+  await listen(MENU_COMMAND_EVENT, commandOfMenuPayload, run);
+}
+
+/** One `plugin:event|listen`, shared by the two menu channels. */
+async function listen<T>(
+  event: string,
+  parse: (payload: unknown) => T | null,
+  run: (value: T) => void,
+): Promise<void> {
   const shell = internals();
   if (!shell) return;
   const handler = shell.transformCallback((payload: unknown) => {
-    const view = viewOfMenuPayload(payload);
-    if (view) go(view);
+    const value = parse(payload);
+    if (value !== null) run(value);
   });
   await shell.invoke("plugin:event|listen", {
-    event: MENU_NAVIGATE_EVENT,
+    event,
     // Every target: the shell emits to the app, and this window is the only one there is.
     target: { kind: "Any" },
     handler,

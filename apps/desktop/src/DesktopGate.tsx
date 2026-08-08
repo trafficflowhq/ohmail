@@ -48,7 +48,7 @@ import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
 import { gateFor, mailMount, readShell, type Shell } from "./doors.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
 import { LocalSuggest } from "./local-suggest.js";
-import { notify, onMenuNavigate, setBadge } from "./native.js";
+import { notify, onMenuCommand, onMenuNavigate, setBadge, type MenuCommand } from "./native.js";
 import { createLocalEngine, type EngineStatus } from "./bridge-fetch.js";
 
 /** How often the window re-asks while the engine is on its way up. */
@@ -84,6 +84,7 @@ export function DesktopGate() {
      one route rather than a second routing implementation. */
   useEffect(() => {
     void onMenuNavigate((view) => go(view));
+    void onMenuCommand(runMenuCommand);
   }, []);
 
   const onStatus = useCallback((next: EngineStatus) => {
@@ -329,4 +330,50 @@ function useUnreadSink(): (unread: number) => void {
       /* Notifications are off for ohmail, or this platform has none. Not a reason to fail. */
     });
   }, []);
+}
+
+/**
+ * WHAT A MENU COMMAND DOES — and every one of them is something the client already does.
+ *
+ * Three of the five are routes, so they take `go`, exactly as the navigation items do. The other
+ * two — the command palette and the shortcut sheet — are state inside `AppShell`, which this file
+ * is outside of and must stay outside of: the alternative is two more props threaded down through
+ * a component that is also compiled into a browser tab, for two menu items that exist only here.
+ *
+ * ── SO THEY ARE DELIVERED AS THE KEYSTROKE THE CLIENT ALREADY BINDS ─────────────────────────
+ *
+ * The shared keymap is ONE `keydown` listener on `document`, and a dispatched event reaches it
+ * exactly as a typed one does. So ⌘K from the menu runs the same binding ⌘K from the keyboard
+ * runs — not a copy of it, and not a second way to open the palette that could drift from the
+ * first. It also means an accelerator the platform swallowed on its way to the menu bar is handed
+ * back to the page rather than lost, which is the actual problem: a menu item with ⌘K on it
+ * PREVENTS the webview from ever seeing ⌘K.
+ *
+ * `bubbles` is true because the listener is on `document` and the event is dispatched on it;
+ * `cancelable` is true because the binding calls `preventDefault()`, and an uncancelable event
+ * makes that a silent no-op rather than an error.
+ */
+function runMenuCommand(command: MenuCommand): void {
+  switch (command) {
+    case "compose":
+      go("compose");
+      return;
+    case "settings":
+      go("settings");
+      return;
+    case "search":
+      go("search");
+      return;
+    case "palette":
+      typeKey({ key: "k", metaKey: true });
+      return;
+    case "shortcuts":
+      typeKey({ key: "?", shiftKey: true });
+      return;
+  }
+}
+
+function typeKey(init: KeyboardEventInit): void {
+  if (typeof document === "undefined") return;
+  document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
 }
