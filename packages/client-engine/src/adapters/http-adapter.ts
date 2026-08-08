@@ -5,6 +5,7 @@ import {
   UnsupportedMutationError,
   type EngineMessage,
   type EngineMutation,
+  type MessageBodyBatchWire,
   type MessageBodyWire,
   type OhmailView,
   type RuleDTO,
@@ -167,6 +168,53 @@ export const ATTACHMENT_LIST_TIMEOUT_MS = 12_000;
  * difference resting on a premise gzip erases.
  */
 export const BODY_FETCH_TIMEOUT_MS = 12_000;
+
+/**
+ * NARROW ONE BODY OFF THE WIRE — shared by `GET /messages/:id/body` and by the batch route,
+ * because they serve the same stored row and a second narrowing is a second place for it to be
+ * wrong. (It already was: this adapter returned `{ text }` and dropped the rest, which is where
+ * the html part of every message died — see {@link MessageBodyWire}.)
+ *
+ * Forward-compatible parsing (§8): a body row that was never ingested answers `text: ""`, and a
+ * server that one day stops sending a field must never become `undefined` rendered into the page.
+ *
+ * ── THE ABSENT `html` CASE IS `null`, NOT `""` ─────────────────────────────────────────────
+ *
+ * The type test is the whole parse: the endpoint answers `string | null`, an older or partial
+ * server answers `undefined`, and all three mean "there is no html to render" to a caller that
+ * checks for null. Coercing to `""` instead would make an html-less message indistinguishable
+ * from one whose html is an empty document, and the renderer's "fall back to text" branch would
+ * then be chosen by a falsy check rather than by a stated absence.
+ *
+ * NOTHING IS VALIDATED BEYOND THE TYPE, deliberately. The html is hostile bytes and this is the
+ * wrong place to decide what is safe in them: a partial sanitization at the adapter would be a
+ * second, weaker gate that makes the real one (`MessageBody.tsx`, DOMPurify + a sandboxed frame)
+ * impossible to prove on its own. What arrives here is what the sender wrote, and it is treated
+ * as such all the way to the one component that knows how.
+ *
+ * ── AND THE UNSUBSCRIBE POSTURE, NARROWED THE SAME WAY ─────────────────────────────────────
+ *
+ * The server DERIVES it from the raw headers (which never cross the wire) and sends the enum plus,
+ * for `not_one_click` only, the sender's https page. An OLDER server sends neither field, and the
+ * correct reading of "the server said nothing" is `"no_header"` (offers no route) and `null` (no
+ * link) — never a claim that some route exists. The value is trusted only if it is one of the four
+ * known strings; anything else, including a future state this build does not know, reads as
+ * `"no_header"`.
+ */
+function narrowBody(wire: Partial<MessageBodyWire>): MessageBodyWire {
+  return {
+    text: typeof wire.text === "string" ? wire.text : "",
+    html: typeof wire.html === "string" ? wire.html : null,
+    loadedRemoteContent: wire.loadedRemoteContent === true,
+    unsubscribe:
+      wire.unsubscribe === "one_click" ||
+      wire.unsubscribe === "mailto_only" ||
+      wire.unsubscribe === "not_one_click"
+        ? wire.unsubscribe
+        : "no_header",
+    unsubscribeUrl: typeof wire.unsubscribeUrl === "string" ? wire.unsubscribeUrl : null,
+  };
+}
 
 /** `POST /drafts/:id/send` answers this shape at 200 AND at 409 — never the error envelope. */
 interface SendWire {
@@ -455,49 +503,49 @@ export class HttpAdapter implements EngineAdapter {
   private async readBody(messageId: string, signal: AbortSignal | undefined): Promise<MessageBodyWire> {
     const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}/body`, { signal });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as Partial<MessageBodyWire>;
-    // Forward-compatible parsing (§8): a body row that was never ingested answers
-    // `text: ""`, and a server that one day stops sending the field must not become
-    // `undefined` rendered into the page.
-    //
-    // ── `html` IS READ NOW, AND THE ABSENT CASE IS `null`, NOT `""` ───────────────────
-    //
-    // This method used to return `{ text }` and drop the rest, which is where the html
-    // part of every message died — see {@link MessageBodyWire}. The type test is the whole
-    // parse: the endpoint answers `string | null`, an older or partial server answers
-    // `undefined`, and all three of those mean "there is no html to render" to a caller
-    // that checks for null. Coercing to `""` instead would make an html-less message
-    // indistinguishable from one whose html is an empty document, and the renderer's
-    // "fall back to text" branch would then be chosen by a falsy check rather than by a
-    // stated absence.
-    //
-    // NOTHING IS VALIDATED HERE BEYOND THE TYPE, deliberately. The html is hostile bytes
-    // and this is the wrong place to decide what is safe in them: a partial sanitization
-    // at the adapter would be a second, weaker gate that makes the real one
-    // (`MessageBody.tsx`, DOMPurify + a sandboxed frame) impossible to prove on its own.
-    // What arrives here is what the sender wrote, and it is treated as such all the way
-    // to the one component that knows how.
-    return {
-      text: typeof wire.text === "string" ? wire.text : "",
-      html: typeof wire.html === "string" ? wire.html : null,
-      loadedRemoteContent: wire.loadedRemoteContent === true,
-      // ── C: the unsubscribe posture, narrowed the same forward-compatible way ────────────
-      //
-      // The server DERIVES this from the raw headers (which never cross the wire) and sends the
-      // enum plus, for `not_one_click` only, the sender's https page. An OLDER server sends
-      // neither field, and the correct reading of "the server said nothing" is `"no_header"`
-      // (offers no route) and `null` (no link) — never a claim that some route exists (contract
-      // §8). The value is trusted only if it is one of the four known strings; anything else,
-      // including a future state this build does not know, reads as `"no_header"`.
-      unsubscribe:
-        wire.unsubscribe === "one_click" ||
-        wire.unsubscribe === "mailto_only" ||
-        wire.unsubscribe === "not_one_click"
-          ? wire.unsubscribe
-          : "no_header",
-      unsubscribeUrl: typeof wire.unsubscribeUrl === "string" ? wire.unsubscribeUrl : null,
-    };
+    return narrowBody((await res.json()) as Partial<MessageBodyWire>);
   }
+
+  /**
+   * `GET /messages/bodies?ids=…` — every body a conversation needs, in ONE request.
+   *
+   * SAME ROUTE as the mirror's keyset page and the same `cost: "read"`; the `ids` parameter is
+   * what selects the mode. The server answers ONLY ids this account owns and omits the rest
+   * silently, so the response is not an existence oracle — which is why the rows carry their own
+   * `messageId` and the engine matches on it rather than on position.
+   *
+   * UNDER THE SAME DEADLINE AS `fetchBody`, and for the same reason: this call is what a thread
+   * IS, the engine writes `loading` markers before it, and a request the server accepts and never
+   * answers would leave every one of those markers as a permanent spinner
+   * ({@link BODY_FETCH_TIMEOUT_MS} — the state is only recoverable because the deadline exists).
+   * One batch is one round trip, so it earns the same twelve seconds one body does rather than a
+   * multiple of it.
+   *
+   * A non-2xx THROWS, through the same `rejectionOf` reader everything else uses; the engine turns
+   * that into a `failed` record for each id in the batch. An unrecognised payload narrows to an
+   * empty list rather than throwing, so the engine's per-id fallback covers a server that does not
+   * understand the parameter — the old behaviour, not an empty thread.
+   */
+  async fetchBodies(messageIds: string[]): Promise<MessageBodyBatchWire[]> {
+    const ids = messageIds.map((id) => encodeURIComponent(id)).join(",");
+    return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
+      const res = await this.request("GET", `/messages/bodies?ids=${ids}`, { signal });
+      if (!res.ok) throw await this.rejectionOf(res);
+      const page = (await res.json()) as { items?: unknown };
+      if (!Array.isArray(page.items)) return [];
+      const out: MessageBodyBatchWire[] = [];
+      for (const raw of page.items) {
+        const row = raw as Partial<MessageBodyBatchWire>;
+        // A row with no id is unusable — it cannot be matched to a message, and guessing by
+        // position is exactly what the omission rule above forbids. Dropped, so the id it was
+        // meant for falls to the per-message path rather than onto the wrong message.
+        if (typeof row.messageId !== "string") continue;
+        out.push({ messageId: row.messageId, ...narrowBody(row) });
+      }
+      return out;
+    });
+  }
+
 
   /**
    * `POST /messages/:id/unsubscribe` — one-click, performed by the SERVER (invariant: the

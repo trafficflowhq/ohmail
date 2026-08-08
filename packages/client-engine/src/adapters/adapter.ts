@@ -1,5 +1,7 @@
 import type { ServerSearchWire } from "../engine.js";
-import type { EngineMutation, MessageBodyWire, SyncChange, SyncResponse, UnsubscribeResult } from "../types.js";
+import type {
+  EngineMutation, MessageBodyBatchWire, MessageBodyWire, SyncChange, SyncResponse, UnsubscribeResult,
+} from "../types.js";
 
 /**
  * ONE interface, two implementations (FixturesAdapter for ?demo/UI tests,
@@ -76,6 +78,31 @@ export interface EngineAdapter {
    * an empty message as though that were the mail.
    */
   fetchBody(messageId: string): Promise<MessageBodyWire | null>;
+
+  /**
+   * `GET /messages/bodies?ids=…` — EVERY body a thread needs, in ONE request.
+   *
+   * Opening a conversation asks for the opened message and each of its siblings, and until this
+   * existed that was N calls issued from one effect: a thread of eight opened eight requests
+   * through a four-wide limiter, so the last two siblings waited for a whole round trip before
+   * their fetch even started, and the reader watched the stack fill in in visible steps.
+   *
+   * OPTIONAL, for the reason `searchServer` and `listMessages` are: absence is a real answer, not
+   * a broken adapter. The FixturesAdapter has no server — the demo is self-contained and must
+   * issue zero requests — so it keeps NOT having this, and {@link OhmailEngine.hydrateThread}
+   * falls back to asking per message rather than pretending the capability is there.
+   *
+   * ── WHAT IT MAY AND MAY NOT ANSWER ────────────────────────────────────────────────────────
+   *
+   * Rows come back keyed by `messageId` and in ANY order. An id the server does not own is simply
+   * absent — not `null`, not an error — so the caller matches on the id and falls back per message
+   * for anything unanswered. That fallback is what makes a server which ignores the parameter
+   * (an older deploy) merely slower rather than a thread of empty messages.
+   *
+   * A rejection THROWS, exactly as `fetchBody` does, and the engine turns it into a `failed`
+   * record for every id in the batch — the same state each of them would have reached alone.
+   */
+  fetchBodies?(messageIds: string[]): Promise<MessageBodyBatchWire[] | null>;
 
   /**
    * `GET /search` — the full-corpus archive, or absent when this client has no archive

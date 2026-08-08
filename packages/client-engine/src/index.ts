@@ -36,6 +36,7 @@ export {
   type BodyState,
   type MessageBody,
   type MessageBodyRecord,
+  type MessageBodyBatchWire,
   type MessageBodyWire,
   type MessageStateDTO,
   type MirrorEntityType,
@@ -146,6 +147,10 @@ export {
 // The engine.
 export {
   OhmailEngine,
+  // The id-list cap the batch body read is split on. Exported for the same reason
+  // `RENDERED_PINS` is: a guard that hand-copies a policy number goes green against a shipped
+  // value it has never seen.
+  BODIES_IDS_MAX,
   // How many on-screen messages the windowed prune holds. Exported so the guard reads the
   // shipped number rather than a hand-copied one — see `RENDERED_PINS` in engine.ts.
   RENDERED_PINS,
@@ -158,6 +163,7 @@ export {
   type ListOlderFn,
   type ListOlderOutcome,
   type ListOlderWire,
+  type FetchBodiesFn,
   type ServerSearchOutcome,
   type SnapshotFn,
   type StorePolicy,

@@ -375,6 +375,23 @@ export interface MessageBodyWire {
 }
 
 /**
+ * ONE ROW of the batch body read — `GET /messages/bodies?ids=…`, the thread-open call.
+ *
+ * Exactly a {@link MessageBodyWire} plus the id it answers for, because the batch route serves the
+ * same stored row the single-message route does and there must be no second shape for a body: the
+ * engine writes the same `message_body` record from either, so a field carried by one and not the
+ * other would make a message render differently depending on how it happened to be opened.
+ *
+ * The id is on the ROW rather than positional. The server answers only the ids it owns — a
+ * cross-account or vanished id is silently ABSENT, never a null placeholder and never an error, so
+ * that the response cannot be used as an existence oracle for another account's ids. Position is
+ * therefore meaningless and the caller must match on this field.
+ */
+export interface MessageBodyBatchWire extends MessageBodyWire {
+  messageId: string;
+}
+
+/**
  * THE HYDRATED BODY, AS A CLIENT-LOCAL RECORD — and why it is not on the message.
  *
  * `message_body` is in {@link MirrorEntityType} and deliberately NOT in
@@ -442,6 +459,34 @@ export interface MessageBodyRecord {
   unsubscribeUrl?: string | null;
   /** Why the fetch failed, for the console — never rendered to the user. */
   error?: string;
+  /**
+   * WHEN the fetch failed, as an epoch millisecond — the field that makes a failure survivable
+   * across a reload instead of permanent.
+   *
+   * `hydrateBody` deliberately does NOT re-ask a `failed` record on an automatic trigger: a React
+   * effect whose inputs change on every mirror bump would otherwise poll a server that is already
+   * refusing, billed per attempt, with nobody behind it. That rule was written for a SESSION and
+   * silently applied for ever, because these records are PERSISTED (`IndexedDbMirrorStore`). A
+   * body that failed once — a 500 during a deploy, a lost connection, a lambda cold-starting past
+   * the 12 s deadline — therefore stayed failed in that browser until the reader happened to press
+   * Retry on that exact message. Reloading the tab, which is what everyone does, changed nothing.
+   *
+   * So the rule is narrowed to what it was always arguing for: never re-ask WITHIN the session
+   * that already asked. A record whose `failedAt` predates this engine's boot is from a previous
+   * one — a different network, a different deploy, possibly a different day — and is re-asked
+   * exactly once, on the next explicit intent.
+   *
+   * ── ABSENT MEANS STALE ────────────────────────────────────────────────────────────────────
+   *
+   * Optional for the reason `html` is, and read the same way (`engine.ts` — the `html !==
+   * undefined` re-read): every browser that ran a build from before this field already holds
+   * `failed` records without it, and those are by construction from an earlier session. `undefined`
+   * therefore reads as "older than this boot" and heals, rather than as "just now" and sticking.
+   *
+   * IT TERMINATES because the engine also remembers, in memory, which ids it has already healed
+   * this session — so even a mirror that refuses the new record cannot turn the heal into a loop.
+   */
+  failedAt?: number;
 }
 
 /**
