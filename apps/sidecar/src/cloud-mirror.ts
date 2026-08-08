@@ -2,12 +2,12 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { recordChange } from "@trafficflow/db";
 import {
-  approvals, drafts, folderState, messageBodies, messageStates, messages, routingDecisions,
-  rules, threads,
+  approvals, drafts, folderState, messageBodies, messageStates, messages, messageTags,
+  routingDecisions, rules, tags, threads,
 } from "@trafficflow/db/mail";
 import type {
   ApprovalDTO, ChangeOp, DraftDTO, EntityType, MessageBodyBatchItem, MessageDTO, MessageStateDTO,
-  Page, RoutingDecisionDTO, RuleDTO, SyncChange, SyncResponse, ThreadDTO,
+  Page, RoutingDecisionDTO, RuleDTO, SyncChange, SyncResponse, TagDTO, ThreadDTO,
 } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";
@@ -58,19 +58,31 @@ import type { Diagnostic } from "./log.js";
  * them separately), so they are upserted without a change-log row.
  */
 
-/** The eight `/sync` entity types the hosted feed carries (`packages/api/src/routes/sync.ts`). */
+/**
+ * The nine `/sync` entity types the hosted feed carries (`packages/api/src/routes/sync.ts`).
+ *
+ * `"tag"` IS ONE OF THEM, and its absence here is why a hosted account's tags did not reach the
+ * desktop. This list is sent as `?types=`, so it is a request as well as a description: leaving a
+ * type out asks the server not to send it. Tag ASSIGNMENTS are not a type of their own — they ride
+ * `message`, as `MessageDTO.labels`, which is why {@link applyUpsert} writes both from one change.
+ */
 export const CLOUD_SYNC_TYPES: readonly EntityType[] = [
   "message", "thread", "routing_decision", "approval",
-  "draft", "rule", "message_state", "folder",
+  "draft", "rule", "message_state", "folder", "tag",
 ];
 
 /**
  * FK-safe application order for a page's non-deletes. A message references its thread, a triage
  * state / routing decision references its message, so parents land first and a message upserts a
  * thread stub for a thread that has not arrived yet. Deletes run in the reverse of this order.
+ *
+ * `tag` is FIRST, ahead of `message`, and that ordering is what makes the label writes work: a
+ * message's `labels` are foreign keys into `tags`, and the tag they name is always created before
+ * it can be assigned — so within a page ordered by seq the tag's own change is already in hand by
+ * the time the message carrying the assignment is applied.
  */
 const APPLY_ORDER: readonly EntityType[] = [
-  "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
+  "tag", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
 ];
 
 const DEFAULT_PAGE_LIMIT = 500;
@@ -191,12 +203,13 @@ interface BootstrapGen {
   draft: Set<string>;
   approval: Set<string>;
   routing_decision: Set<string>;
+  tag: Set<string>;
 }
 
 function newBootstrapGen(): BootstrapGen {
   return {
     thread: new Set(), message: new Set(), message_state: new Set(), rule: new Set(),
-    draft: new Set(), approval: new Set(), routing_decision: new Set(),
+    draft: new Set(), approval: new Set(), routing_decision: new Set(), tag: new Set(),
   };
 }
 
@@ -211,6 +224,39 @@ async function messagePresent(tx: Tx, id: string): Promise<boolean> {
 async function threadPresent(tx: Tx, id: string): Promise<boolean> {
   const rows = await tx.select({ id: threads.id }).from(threads).where(eq(threads.id, id)).limit(1);
   return rows.length > 0;
+}
+
+/**
+ * REPLACE a message's tag assignments with exactly the ones its DTO carries.
+ *
+ * ── WHY IT IS A REPLACE AND NOT AN UPSERT ───────────────────────────────────────────────────
+ *
+ * `labels` is the whole set, not a delta: an UNassign is delivered as the same `message` change
+ * with one fewer id in it. An insert-only apply would therefore add tags and never remove one, so
+ * a tag taken off a message in the browser would stay on it here for ever. Delete-then-insert
+ * inside the page transaction gives the set semantics the wire actually has, and it is idempotent
+ * on replay for the same reason every other write here is.
+ *
+ * ── AN ID NAMING A TAG WE HAVE NOT GOT IS SKIPPED, NOT STUBBED ──────────────────────────────
+ *
+ * `message_tags.tag_id` has a foreign key, so an assignment can only be written for a tag that is
+ * already mirrored. The ordinary case is covered by {@link APPLY_ORDER}: a tag exists before it can
+ * be assigned, so its change carries a lower seq and lands first. What is left is the case where
+ * the tag's create has fallen below the feed's retention horizon while the message's own change has
+ * not — and there the honest answer is to skip the assignment rather than invent a nameless tag to
+ * hang it on. The client filters its tag list against each message's labels, so a label it cannot
+ * resolve would draw nothing anyway; a stub would draw an empty chip.
+ */
+async function applyLabels(tx: Tx, world: LocalWorld, messageId: string, labels: readonly string[] | undefined): Promise<void> {
+  await tx.delete(messageTags).where(eq(messageTags.messageId, messageId));
+  if (!labels || labels.length === 0) return;
+  for (const tagId of new Set(labels)) {
+    const known = await tx.select({ id: tags.id }).from(tags).where(eq(tags.id, tagId)).limit(1);
+    if (known.length === 0) continue;
+    await tx.insert(messageTags)
+      .values({ accountId: world.accountId, messageId, tagId })
+      .onConflictDoNothing();
+  }
 }
 
 /**
@@ -296,10 +342,30 @@ async function applyUpsert(tx: Tx, world: LocalWorld, ch: SyncChange, now: Date,
         target: folderState.messageId,
         set: { desiredFolder: m.folder, observedFolder: m.folder, updatedAt: now },
       });
+      // The tag assignments this message carries. Written from the message change because that is
+      // how the wire delivers them — see {@link applyLabels}.
+      await applyLabels(tx, world, m.id, m.labels);
       gen?.message.add(m.id);
       // Mark the thread STUB too: a surviving message pins its thread via the FK, so the sweep must
       // not treat that thread as a phantom even when the thread's own change never arrives.
       if (m.threadId) gen?.thread.add(m.threadId);
+      return true;
+    }
+    case "tag": {
+      const t = ch.entity as TagDTO | undefined;
+      if (!t) return false;
+      const body = {
+        accountId: world.accountId,
+        name: t.name,
+        hue: t.hue ?? "moss",
+        updatedAt: asDate(t.updatedAt) ?? now,
+      };
+      /* ON CONFLICT on the ID, not on the account/name unique index. Two tags cannot share a name
+         on the hosted account either, so the index is satisfied by the source; targeting the id is
+         what makes a RENAME land as a rename instead of colliding with the row it is renaming. */
+      await tx.insert(tags).values({ id: t.id, createdAt: asDate(t.createdAt) ?? now, ...body })
+        .onConflictDoUpdate({ target: tags.id, set: body });
+      gen?.tag.add(t.id);
       return true;
     }
     case "message_state": {
@@ -437,9 +503,17 @@ async function applyDelete(tx: Tx, ch: SyncChange): Promise<boolean> {
       await tx.delete(messageStates).where(eq(messageStates.messageId, ch.id));
       await tx.delete(messageBodies).where(eq(messageBodies.messageId, ch.id));
       await tx.delete(routingDecisions).where(eq(routingDecisions.messageId, ch.id));
+      // The assignments hang off the message by FK, so they go before it.
+      await tx.delete(messageTags).where(eq(messageTags.messageId, ch.id));
       await tx.delete(messages).where(eq(messages.id, ch.id));
       return true;
     }
+    case "tag":
+      // Assignments first, for the same FK reason, and this is also what a deleted tag MEANS: the
+      // messages stay, they simply stop carrying it.
+      await tx.delete(messageTags).where(eq(messageTags.tagId, ch.id));
+      await tx.delete(tags).where(eq(tags.id, ch.id));
+      return true;
     case "thread": {
       if (!(await threadPresent(tx, ch.id))) return false;
       await tx.delete(drafts).where(eq(drafts.threadId, ch.id));
@@ -553,6 +627,11 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
       if (!gen.message.has(r.id)) await sweepOne("message", r.id);
     for (const r of await tx.select({ id: threads.id }).from(threads).where(eq(threads.accountId, world.accountId)))
       if (!gen.thread.has(r.id)) await sweepOne("thread", r.id);
+    /* Tags LAST. A tag deleted on Cloud is a tag whose messages survive and stop carrying it, so
+       sweeping one has to happen after the messages it might still be attached to have settled —
+       `applyDelete` clears the assignments with it. */
+    for (const r of await tx.select({ id: tags.id }).from(tags).where(eq(tags.accountId, world.accountId)))
+      if (!gen.tag.has(r.id)) await sweepOne("tag", r.id);
 
     return swept;
   });

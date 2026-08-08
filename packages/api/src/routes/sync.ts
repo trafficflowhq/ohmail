@@ -4,10 +4,23 @@ import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { sync } from "./shared.js";
 
-/** The EntityType values a `?types=` CSV may name; unknown tokens are dropped. */
+/**
+ * The EntityType values a `?types=` CSV may name; unknown tokens are dropped.
+ *
+ * `"tag"` HAS TO BE HERE, and its absence was invisible in exactly the way this filter makes
+ * things invisible: an unknown token is dropped rather than refused, so a caller asking for
+ * `types=message,tag` was silently answered with messages alone and had no way to tell that from
+ * an account with no tags. A client draining without `?types=` never noticed, because no filter
+ * is applied at all in that case — which is why every browser tab was fine and the one caller
+ * that DOES name its types (the desktop's Cloud mirror) drained a feed with no vocabulary for a
+ * tag, and rendered an empty rail over an account that had several.
+ *
+ * Kept as a literal set rather than derived from `EntityType`: a union is erased at runtime, and
+ * the point of the set is to reject a token the reader has no materializer for.
+ */
 const VALID_TYPES = new Set<EntityType>([
   "message", "thread", "routing_decision", "approval",
-  "draft", "rule", "message_state", "folder",
+  "draft", "rule", "message_state", "folder", "tag",
 ]);
 
 /** Parse `?types=a,b,c` → EntityType[], silently ignoring unknown tokens. */
