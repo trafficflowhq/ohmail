@@ -1063,7 +1063,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          the second stamp: a drain that ran out of CYCLES has not finished the import, and saying it
          had would tell somebody their mailbox was complete with half of it still on its way. See
          `sync-stamp.ts`. */
-      if (cycles > 0) await stampSynced(db, world.mailboxId, new Date(), drained);
+      if (cycles > 0) await stampSynced(db, world.mailboxId, now(), drained);
       return cycles;
     };
 
