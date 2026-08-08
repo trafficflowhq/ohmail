@@ -415,7 +415,7 @@ describe("the Rust side", () => {
    * naming its `allow-…` permission cannot be resolved — so neither `cargo check` nor `cargo test`
    * can see it. The set equality below is the only thing that does.
    */
-  it("declares and registers its six commands only in the local build", () => {
+  it("declares and registers its seven commands only in the local build", () => {
     const build = read("src-tauri/build.rs");
     const engine = read("src-tauri/src/engine.rs");
     const COMMANDS = [
@@ -427,6 +427,11 @@ describe("the Rust side", () => {
       // notification centre, and the count on the dock icon.
       "notify",
       "set_badge",
+      // The one place the window may reach the web, and it may not name it: the command takes a
+      // KEY and the shell's own table decides which ohmail.app page that is. A URL argument would
+      // mean anything that got a string into the page could open an arbitrary address in the
+      // user's real browser.
+      "open_link",
     ];
 
     expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
@@ -457,6 +462,13 @@ describe("the Rust side", () => {
         `allow-${command.replace(/_/g, "-")}`,
       );
     }
+
+    /* AND `open_link` TAKES A KEY. The parameter's type is the whole of the safety argument —
+       a `url: String` here would be a way out of the webview into the user's browser with an
+       address the page chose. The table it resolves against lives in Rust, which is also what
+       keeps the bundle free of any host name at all. */
+    expect(engine).toMatch(/fn open_link\(key: String\)/);
+    expect(engine).not.toMatch(/fn open_link\([^)]*url/);
 
     /* THE ONE RUNTIME PERMISSION, AND ONLY THE ONE. The window may HEAR the shell's events —
        which is how a chosen menu item reaches the frontend's navigation — and has no matching

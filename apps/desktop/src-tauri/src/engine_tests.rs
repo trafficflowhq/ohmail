@@ -1800,3 +1800,22 @@ fn a_local_child_still_inherits_what_the_environment_says() {
         "the child inherited nothing: {reported:?}"
     );
 }
+
+/// THE ONLY WAY THIS WINDOW CAN NAME A PLACE ON THE WEB, and it cannot name one that is not here.
+///
+/// The command takes a KEY, not a URL, and this is the reason: a URL argument would mean anything
+/// that ever got a string into the page could open an arbitrary address in the user's real
+/// browser, signed in to everything they are signed in to. So the table is the boundary, and an
+/// unknown key has to be a refusal rather than a fallback.
+#[test]
+fn the_browser_can_only_be_sent_where_this_table_says() {
+    for (key, url) in LINKS {
+        assert_eq!(link_for(key), Some(url));
+        // Every destination is ours, over TLS, and carries no query a caller could have shaped.
+        assert!(url.starts_with("https://ohmail.app/"), "{key} points at {url}");
+        assert!(!url.contains('?'), "{key} carries a query string");
+    }
+    assert_eq!(link_for("https://elsewhere.test"), None);
+    assert_eq!(link_for(""), None);
+    assert_eq!(link_for("Account"), None);
+}

@@ -35,6 +35,12 @@ fn main() {
             // capability to reference and the app panics on launch rather than at compile time.
             "notify",
             "set_badge",
+            // The one place this window may reach the WEB, and it may not name it: the command
+            // takes a key and `engine.rs`'s table decides which of a handful of ohmail.app pages
+            // that means. Declared here for the same reason as the six above — an undeclared
+            // command has no permission to grant, and the app panics on launch rather than at
+            // compile time.
+            "open_link",
         ]));
     }
     tauri_build::try_build(attributes).expect("ohmail: failed to build the Tauri context");

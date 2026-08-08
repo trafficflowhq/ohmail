@@ -2778,6 +2778,78 @@ fn set_badge<R: tauri::Runtime>(app: tauri::AppHandle<R>, count: u32) -> Result<
     }
 }
 
+/// THE FEW PLACES ON THE WEB THIS APP MAY OPEN, AND THE ONLY WAY IT CAN NAME ONE.
+///
+/// A hosted account is administered on the web — the plan, the password, the authenticator, the
+/// recovery codes — and every one of those is a step-up ceremony against a server this window
+/// cannot reach. Settings had no way to say so beyond a sentence, which leaves somebody reading
+/// "manage this on the web" with no way to get there but retyping an address.
+///
+/// ── THE WINDOW NAMES A PLACE, NEVER A URL ───────────────────────────────────────────────────
+///
+/// This is the whole of the care, and it is why the argument is a KEY. If the page could pass a
+/// URL, then anything that ever got a string into the page — a mail body, a sender's display name,
+/// a bug in the sanitizer — could open an arbitrary address in the user's real browser, signed in
+/// to everything they are signed in to. So the page passes `"account"` and this table decides what
+/// that means. There is no path from a value in the webview to a host in the browser.
+///
+/// The table is also why the addresses live HERE rather than in the frontend: the bundle is
+/// asserted to name no host at all, which is the claim the whole preview artifact rests on.
+#[cfg(feature = "local-engine")]
+const LINKS: [(&str, &str); 5] = [
+    ("account", "https://ohmail.app/mailbox#/settings"),
+    ("security", "https://ohmail.app/mailbox#/settings"),
+    ("billing", "https://ohmail.app/mailbox#/settings"),
+    ("privacy", "https://ohmail.app/privacy"),
+    ("subprocessors", "https://ohmail.app/subprocessors"),
+];
+
+/// The address a key names, or `None`. Split out so the rule is testable without a browser.
+#[cfg(feature = "local-engine")]
+pub fn link_for(key: &str) -> Option<&'static str> {
+    LINKS.iter().find(|(name, _)| *name == key).map(|(_, url)| *url)
+}
+
+/// Open one of [`LINKS`] in the user's own browser.
+///
+/// The platform's own opener, by process rather than by a plugin: `open` on macOS, `xdg-open` on
+/// the desktop Unixes, and `cmd /c start` on Windows. That is one fewer dependency to audit for a
+/// three-line call, and it opens no socket in this process — the browser makes the request, as
+/// itself, with its own cookies. The engine-bearing build already spawns a process (the engine),
+/// so this adds no capability to the artifact that was not already there; the PREVIEW compiles
+/// none of it.
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn open_link(key: String) -> Result<(), String> {
+    let url = link_for(&key).ok_or_else(|| format!("ohmail: {key} is not a place this app opens"))?;
+
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut c = std::process::Command::new("/usr/bin/open");
+        c.arg(url);
+        c
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut c = std::process::Command::new("cmd");
+        // The empty string is the window TITLE argument `start` takes; without it a URL
+        // containing a space would be read as the title and nothing would open.
+        c.args(["/c", "start", "", url]);
+        c
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let mut command = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(url);
+        c
+    };
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("ohmail: this computer would not open a browser ({err})"))
+}
+
 /// The window's grant, and the whole of it.
 ///
 /// Added at runtime rather than as a file in `capabilities/`, because a file there is compiled into
@@ -2793,12 +2865,12 @@ fn set_badge<R: tauri::Runtime>(app: tauri::AppHandle<R>, count: u32) -> Result<
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, and listen for the shell's own events. Nothing else: no filesystem, no shell, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, open one of a fixed list of ohmail.app pages in the user's own browser, and listen for the shell's own events. Nothing else: no filesystem, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-open-link", "core:event:allow-listen"]
 }"#;
 
-/// Register the six commands. Called from `main.rs` under the same feature.
+/// Register the seven commands. Called from `main.rs` under the same feature.
 ///
 /// It lives here rather than there so that `main.rs` contains no `invoke_handler` at all — the
 /// published shell's "registers no commands" is then a property of a file that is always compiled,
@@ -2820,11 +2892,12 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             engine_configure,
             engine_logout,
             notify,
-            set_badge
+            set_badge,
+            open_link
         ])
 }
 
-/// Hand the shell to the window, and grant the window the six commands.
+/// Hand the shell to the window, and grant the window the seven commands.
 #[cfg(feature = "local-engine")]
 pub fn manage(app: &tauri::App, shell: Arc<Shell>) {
     use tauri::Manager;

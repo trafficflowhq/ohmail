@@ -66,6 +66,38 @@ export type MenuCommand = (typeof MENU_COMMANDS)[number];
 /** The commands the shell registers for this file. Named once so a typo is one place. */
 const NOTIFY_COMMAND = "notify";
 const BADGE_COMMAND = "set_badge";
+const OPEN_COMMAND = "open_link";
+
+/**
+ * The places on the web this app can open, named as PLACES and never as addresses.
+ *
+ * A hosted account is administered on the web — the plan, the password, the authenticator — and
+ * every one of those is a ceremony against a server this window cannot reach. So Settings needs a
+ * way OUT to the browser, and the way out is deliberately not a URL.
+ *
+ * The window passes one of these keys and the shell's own table decides what it means. That is the
+ * whole of the safety argument: were a URL the argument, anything that ever got a string into this
+ * page — a mail body, a sender's display name, a hole in the sanitizer — could open an arbitrary
+ * address in the user's real browser, signed in to everything they are signed in to. It is also
+ * what keeps this bundle free of any host name at all, which is the claim the preview artifact is
+ * built on.
+ */
+export const WEB_PLACES = ["account", "security", "billing", "privacy", "subprocessors"] as const;
+
+export type WebPlace = (typeof WEB_PLACES)[number];
+
+/**
+ * Open one of {@link WEB_PLACES} in the user's own browser.
+ *
+ * Nothing is fetched here and nothing is fetched by the shell: the browser makes the request, as
+ * itself, with its own session. A refusal — no browser, a platform that would not spawn one —
+ * comes back as a rejection for the caller to show.
+ */
+export async function openWeb(place: WebPlace): Promise<void> {
+  const shell = internals();
+  if (!shell) return;
+  await shell.invoke(OPEN_COMMAND, { key: place });
+}
 
 interface TauriInternals {
   invoke(command: string, payload?: Record<string, unknown>, options?: unknown): Promise<unknown>;
