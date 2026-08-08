@@ -264,6 +264,50 @@ function syncPage() {
   };
 }
 
+/**
+ * `GET /mailboxes` — THE SECOND ROUTE THE ENGINE-BEARING WINDOW ASKS FOR AT BOOT.
+ *
+ * `DesktopMailboxes.tsx` reads it twice over: the sync line at the foot of the rail starts its
+ * ladder with "can we see this account's mailboxes at all?", and Settings → Mailboxes lists what
+ * this install is connected to. Both doors serve it out of the database on this machine, so a
+ * window that asks for it is behaving correctly and a stub that 404s it is simply out of date —
+ * which is the sentence the `unmodelled` list exists to say, and it said it: the check went red
+ * the moment that surface landed, with `GET /mailboxes` named.
+ *
+ * The answer is deliberately a HEALTHY, SETTLED mailbox rather than a bare `{ items: [] }`:
+ *
+ *  · an EMPTY list is a fact of its own — the ladder renders "No mailbox connected, so nothing can
+ *    arrive" over it — and that sentence across a window the rest of these checks assert is full
+ *    of somebody's mail would be a contradiction the run could not read;
+ *  · `lastSyncAt` set and `initialImportCompletedAt` set is what makes the line settle instead of
+ *    holding "Syncing your mail" over a mailbox with nothing left to fetch. The distinction is
+ *    load-bearing in the component — an ABSENT `initialImportCompletedAt` means "this engine
+ *    predates the column", a null means "not known to have finished" — so the field is present.
+ *
+ * The identity matches the world the rest of the stub serves: {@link MAILBOX_ID}, the account the
+ * `engine_status` answer names, and the address the served messages were sent to.
+ */
+function mailboxList() {
+  const at = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
+  return {
+    items: [
+      {
+        id: MAILBOX_ID,
+        accountId: "acc_smoke",
+        address: "you@ohmail.invalid",
+        status: "active",
+        errorCode: null,
+        disabledReason: null,
+        syncBlockedReason: null,
+        syncBlockedSince: null,
+        lastSyncAt: at(1),
+        initialImportCompletedAt: at(90),
+        createdAt: at(60 * 24 * 7),
+      },
+    ],
+  };
+}
+
 function installShellStub(window) {
   /* Four platform globals a webview has and jsdom does not, borrowed from this
      Node process. The bridge builds a `Response` out of the frame it was handed
@@ -297,6 +341,13 @@ function installShellStub(window) {
       if (command === "engine_request") {
         const url = String(payload?.url ?? "");
         if (url.startsWith("/sync")) return Promise.resolve(frame(200, "OK", syncPage()));
+        /* Exact, or with a query — and NOT a `startsWith("/mailboxes")`, which would also swallow
+           `/mailboxes/:id` and the organizer, takeover and resync routes under it. Those are
+           mutations this window has no business making at boot, and a prefix match would answer
+           them 200 instead of naming them here. */
+        if (url === "/mailboxes" || url.startsWith("/mailboxes?")) {
+          return Promise.resolve(frame(200, "OK", mailboxList()));
+        }
         /* RECORDED, not silently 404'd into a console error the checks would then
            report as a product defect. A surface that starts calling a second route
            at boot has to be modelled here; until it is, this says so by name. */
@@ -530,6 +581,18 @@ if (!ENGINE) {
     "the client engine reached the bridge",
     asked.some((i) => String(i.payload?.url ?? "").startsWith("/sync")),
     commands.join(", "),
+  );
+
+  /* THE MODEL ABOVE IS ASSERTED TO HAVE A CONSUMER, not merely to exist. A stub route nobody
+     asks for is a 404 that stopped being reported, and the difference between the two is
+     invisible in `unmodelled` — an empty list means both "everything was modelled" and "nothing
+     was asked". So the mailbox read is named: it is what the rail's sync line and Settings →
+     Mailboxes both start from, and a bundle that stopped making it would draw a window that can
+     no longer say which mailbox it is opening. */
+  check(
+    "the window asked the engine which mailboxes this install opens",
+    asked.some((i) => String(i.payload?.url ?? "") === "/mailboxes"),
+    asked.map((i) => i.payload?.url).join(", "),
   );
 
   /* A route the stub does not model would be answered 404 and would surface as a
