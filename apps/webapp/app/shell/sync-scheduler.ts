@@ -328,6 +328,31 @@ export function createSyncGate(): SyncGate {
         fetchBody: (messageId: string): Promise<MessageBodyWire | null> => adapter.fetchBody(messageId),
 
         /*
+         * ── THE THREAD OPEN — FORWARDED, NOT GATED, AND SPREAD ────────────────────────────
+         *
+         * `GET /messages/bodies?ids=…`: every sibling of the conversation being opened, in one
+         * request instead of one per message.
+         *
+         * NOT GATED, on `fetchBody`'s own argument — it fires because somebody opened a thread,
+         * in a tab they are looking at, and it is bounded by that act. It is in fact the LEAST
+         * speculative call on this list: one request for what used to be N.
+         *
+         * SPREAD, and this is the line that decides whether the batch ever happens outside the
+         * demo. `OhmailEngine.hydrateThread` reads the capability structurally and falls back
+         * to asking per message when it is absent — a fallback that works, converges, and renders
+         * correctly, which is exactly what would make the omission invisible. The demo is never
+         * wrapped, so a missing line here is N requests per thread on the LIVE PATH ONLY, with
+         * the whole suite green. Sixth capability, same trap, same shape of guard:
+         * `thread-bodies-wired.test.ts` builds the real engine through `createEngine` and counts
+         * the requests.
+         *
+         * Unconditionally would be the opposite failure: a `FixturesAdapter` behind this gate
+         * claiming a batch endpoint it has no server for, and `?demo=1` issuing a request on the
+         * first thread anybody opens.
+         */
+        ...(adapter.fetchBodies ? { fetchBodies: adapter.fetchBodies.bind(adapter) } : {}),
+
+        /*
          * FORWARDED, NOT GATED — the same rule as `fetchBody` above: one request per settled
          * query, from a tab the user is looking at, bounded by the act of typing. The rule
          * against API cost with nobody behind it is about a HIDDEN tab paging through a

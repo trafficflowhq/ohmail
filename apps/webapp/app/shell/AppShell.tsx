@@ -282,10 +282,26 @@ export function openTargetFor(
  * named unit now, with `hydrate-body-retry.test.ts` watching the forward.
  */
 export function makeHydrateBody(
-  engine: { hydrateBody: (messageId: string, opts?: { retry?: boolean }) => unknown },
-): (messageId: string, opts?: { retry?: boolean }) => void {
+  engine: { hydrateBody: (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => unknown },
+): (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => void {
   return (messageId, opts) => {
     void engine.hydrateBody(messageId, opts);
+  };
+}
+
+/**
+ * The THREAD-hydration callback, a named unit for the same reason `makeHydrateBody` is.
+ *
+ * The forward that matters here is the ARRAY: an inline `(ids) => engine.hydrateThread(ids)` is
+ * the same shape that once silently dropped `{ retry }`, and the failure mode is quieter — a
+ * dropped or truncated id list produces a thread whose last siblings sit on a loading note for
+ * ever, with nothing on screen or in the suite to say which call was short.
+ */
+export function makeHydrateThread(
+  engine: { hydrateThread: (messageIds: string[]) => unknown },
+): (messageIds: string[]) => void {
+  return (messageIds) => {
+    void engine.hydrateThread(messageIds);
   };
 }
 
@@ -1028,6 +1044,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * `void` inside the factory states there is no promise worth awaiting, not a discarded error.
    */
   const hydrateBody = useMemo(() => makeHydrateBody(engine), [engine]);
+  const hydrateThread = useMemo(() => makeHydrateThread(engine), [engine]);
   const bodyOfMessage = useCallback(
     (m: EngineMessage) => bodyOf(engine.read(), m),
     [engine],
@@ -1082,9 +1099,15 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * mounts the view with no `EngineProvider`, and the dwell machinery in that view is not
    * something this slice may reach into. The reader sheet shows the same message, so opening
    * it needs no second trigger.
+   *
+   * `urgent`, AND ONLY THE TWO SELECTION EFFECTS PASS IT. This is the one message that IS the
+   * screen, so it must not queue behind the four-wide body limiter while a Screener preview's
+   * backlog — bodies nobody is looking at — drains ahead of it. It is deliberately not `retry`:
+   * that flag would also re-ask a server that already refused, on an effect that re-runs, which
+   * is the billed poll `hydrateBody`'s failed-guard exists to prevent.
    */
   useEffect(() => {
-    if (selectedOhbox) hydrateBody(selectedOhbox.id);
+    if (selectedOhbox) hydrateBody(selectedOhbox.id, { urgent: true });
   }, [selectedOhbox?.id, hydrateBody]);
 
   /**
@@ -1101,7 +1124,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * nothing.
    */
   useEffect(() => {
-    if (readerFor) hydrateBody(readerFor);
+    if (readerFor) hydrateBody(readerFor, { urgent: true });
   }, [readerFor, hydrateBody]);
 
   // The engine's `unread` IS the answer now — the client-side overlay that used to sit on top of
@@ -2758,12 +2781,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       openAttachmentPreview: (messageId: string, attachmentId: string) =>
         setPreviewFor({ messageId, attachmentId }),
       conversationOf,
-      bodyOf: bodyOfMessage, hydrateBody,
+      bodyOf: bodyOfMessage, hydrateBody, hydrateThread,
       attachments, remoteImages,
     }),
     [replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       openSenderMenu,
-      conversationOf, bodyOfMessage, hydrateBody, attachments, remoteImages],
+      conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just
@@ -3078,6 +3101,27 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 onPile={goTriage}
                 frDone={frDone}
                 onStartFR={startFR}
+                /**
+                 * THE MESSAGE BEHIND A PILE ENTRY, read from the SAME reader the piles came
+                 * from.
+                 *
+                 * `presented` and not `reader`: the piles are built over the presentation
+                 * projection, so resolving an entry through the raw mirror would answer with a
+                 * message sitting in a different place than the row the user clicked — the one
+                 * discrepancy a two-pane view makes visible. `null` for a `triage_item` with no
+                 * backing message, which the view renders as a static row.
+                 */
+                messageOf={(id) => presented.get<EngineMessage>("message", id) ?? null}
+                tags={tags}
+                now={now}
+                /* The reader sheet, in place — the narrow width, where there is no column.
+                   `setReaderFor` and not `openMessage`, for History's reason: a parked message
+                   presents in no pile, so "open it where it lives" would navigate away from the
+                   view that was showing it. */
+                onOpen={(m) => setReaderFor(m.id)}
+                hydrateBody={hydrateBody}
+                onAction={onMessageAction}
+                onAddTag={openTagPicker}
               />
             ) : null}
 

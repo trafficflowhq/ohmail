@@ -100,7 +100,21 @@ export interface MessageChrome {
    * It goes through the chrome for the same reason `bodyOf` does: the pane must not hold an
    * engine hook.
    */
-  hydrateBody: (messageId: string, opts?: { retry?: boolean }) => void;
+  hydrateBody: (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => void;
+  /**
+   * ASK FOR A WHOLE CONVERSATION AT ONCE — one request, not one per sibling.
+   *
+   * `ConversationEntries` used to loop `hydrateBody` over the sibling ids from a single effect,
+   * which is N requests through a four-wide limiter: the tail of an eight-message thread did not
+   * start until a full round trip had finished. The engine's batch call replaces the loop, and it
+   * has to arrive through the chrome for the same reason `hydrateBody` does — the entries render
+   * inside `MessagePane`, which may not hold an engine hook.
+   *
+   * The DEFAULT IS INERT (a mount with no engine has nothing to ask), and the engine's own
+   * fallback covers a client whose adapter serves no batch route, so a caller never has to choose
+   * between this and the single-message call.
+   */
+  hydrateThread: (messageIds: string[]) => void;
   /**
    * THE FILES ON THIS MESSAGE, or ABSENT when this client cannot open attachments.
    *
@@ -178,6 +192,7 @@ const MessageChromeContext = createContext<MessageChrome>({
       ? { text: message.body, state: "full", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }
       : { text: message.snippet, state: "snippet", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null },
   hydrateBody: noop,
+  hydrateThread: noop,
 });
 
 export function MessageChromeProvider({

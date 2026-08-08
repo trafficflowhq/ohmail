@@ -77,7 +77,6 @@
  * PROTECTED MAIL IS UNMOVED. A protected sibling renders its label and no content, decided by
  * the same expression as before and BEFORE any body is consulted — see {@link ConversationEntries}.
  */
-import { useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 import type { EngineMessage } from "@ohmail/client-engine";
@@ -130,28 +129,18 @@ export function ConversationEntries({
   const { hydrateBody } = chrome;
 
   /**
-   * ── ASK FOR EVERY SIBLING'S BODY, ONCE ─────────────────────────────────────────────────
+   * ── THE HYDRATION EFFECT USED TO LIVE HERE, AND THAT IS WHY IT WAS TWO REQUESTS ─────────
    *
-   * Keyed on the joined id list rather than on `messages`, which is a fresh array on every
-   * render (`MessagePane` filters it inline, deliberately — see there). An array dep would
-   * re-fire this on every mirror version bump, and every bump is caused by the very writes
-   * these calls produce.
+   * It was a loop calling `hydrateBody` per sibling from this component's own `useEffect`, and
+   * it was wrong twice over. A loop is N requests through a four-wide limiter, so the tail of a
+   * thread did not begin loading until a whole round trip had finished. And THIS COMPONENT IS
+   * MOUNTED TWICE per thread — `MessagePane` renders the siblings above the opened message and
+   * the siblings below it as two lists — so even the batched form asked twice, once for each
+   * half, for one act of opening one conversation.
    *
-   * NO BOUNDING HERE, AND THAT IS NOT AN OVERSIGHT. `OhmailEngine.hydrateBody` single-flights
-   * per message, returns immediately for anything already held or protected, and gates the rest
-   * through `bodySlot` at `MAX_CONCURRENT_BODIES`. A second limiter in this file would be the
-   * shape this repo keeps warning about: two guards read as belt-and-braces and behave as
-   * neither, because deleting either leaves the suite green.
-   *
-   * PROTECTED SIBLINGS ARE ASKED FOR TOO, on purpose. `hydrateBody` performs no fetch for one —
-   * it notes the message as rendered, which is true, and PURGES any body an older build cached
-   * before the message became sensitive. Filtering them out here would skip that purge for
-   * exactly the messages it exists for.
+   * The ask therefore belongs where the whole conversation is known, which is `MessagePane`.
+   * This component renders what it is given and asks for nothing.
    */
-  const key = messages.map((m) => m.id).join(",");
-  useEffect(() => {
-    for (const id of key ? key.split(",") : []) hydrateBody(id);
-  }, [key, hydrateBody]);
 
   if (messages.length === 0) return null;
   const alreadySaid = threadSubject ? subjectKey(threadSubject) : null;
@@ -202,13 +191,21 @@ export function ConversationEntries({
                     }
                   />
                 </div>
-                {/* WHAT THE TEXT ABOVE IS, whenever it is not the mail. `snippet` says nothing,
-                    for the same reason it says nothing in the pane: the effect above has already
-                    asked, so it is a sub-frame state, and a sentence that appears and vanishes
-                    within one frame is noise. `loading` and `failed` are real states a reader
-                    can sit in, and the failure carries the way out — the pane's own dead end,
-                    reached from the other side. */}
-                {body.state === "loading" ? <p className="hm-state">{tb("loading")}</p> : null}
+                {/* WHAT THE TEXT ABOVE IS, whenever it is not the mail — AND `snippet` IS ONE OF
+                    THOSE. It used to say nothing here, on the argument that the effect above has
+                    already asked so it is a sub-frame state and a sentence that flashes for one
+                    frame is noise. The premise was false where it mattered: the loading marker
+                    was written when a fetch DEPARTED, departures are capped at four, and every
+                    sibling past the cap therefore rendered a mid-word truncation of the mail with
+                    nothing saying more was coming. The engine writes the marker at enqueue now,
+                    and this branch is the half of the fix that does not depend on that: this
+                    component hydrates exactly what it renders, so a snippet at rest here is a
+                    defect, and "still coming" is the honest thing to say about it.
+                    `failed` carries the way out — the pane's own dead end, reached from the
+                    other side. */}
+                {body.state === "loading" || body.state === "snippet" ? (
+                  <p className="hm-state">{tb("loading")}</p>
+                ) : null}
                 {body.state === "failed" ? (
                   <p className="hm-state warn">
                     {tb("failed")}{" "}

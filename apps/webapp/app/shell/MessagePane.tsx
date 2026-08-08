@@ -609,6 +609,39 @@ export function MessagePane({
   const showConversation = conversation.length > 0;
 
   /**
+   * ── ASK FOR THE WHOLE CONVERSATION'S BODIES, ONCE, IN ONE REQUEST ───────────────────────
+   *
+   * Keyed on the joined id list rather than on `conversation`, which is a fresh array on every
+   * render (see above — it is computed inline on purpose). An array dep would re-fire this on
+   * every mirror version bump, and every bump is caused by the very writes this call produces.
+   *
+   * IT LIVES HERE RATHER THAN IN `ConversationEntries`, WHICH IS WHERE IT USED TO LIVE, because
+   * that component is mounted TWICE per thread — the siblings above the opened message and the
+   * siblings below it are two lists — so an effect inside it asked twice for one act of opening
+   * one conversation. This is the only place that holds the whole thread.
+   *
+   * THE OPENED MESSAGE IS NOT IN THE LIST. The shell hydrates the selected id itself, and
+   * urgently (`AppShell`, keyed on `readerFor`/`selectedOhbox`), so that the body which IS the
+   * screen jumps the queue rather than riding a batch behind it.
+   *
+   * NO BOUNDING HERE, AND THAT IS NOT AN OVERSIGHT. `OhmailEngine.hydrateThread` single-flights
+   * per message, skips anything already held or already in the air, splits the id list at the
+   * route's cap, and takes ONE slot from the body limiter. A second limiter in this file would
+   * be the shape this repo keeps warning about: two guards read as belt-and-braces and behave as
+   * neither, because deleting either leaves the suite green.
+   *
+   * PROTECTED SIBLINGS ARE PASSED IN TOO, on purpose. The engine performs no fetch for one — it
+   * notes the message as rendered, which is true, and PURGES any body an older build cached
+   * before the message became sensitive. Filtering them out here would skip that purge for
+   * exactly the messages it exists for.
+   */
+  const { hydrateThread } = chrome;
+  const siblingKey = conversation.filter((m) => m.id !== message.id).map((m) => m.id).join(",");
+  useEffect(() => {
+    if (siblingKey) hydrateThread(siblingKey.split(","));
+  }, [siblingKey, hydrateThread]);
+
+  /**
    * OPEN A THREAD AT ITS LATEST MESSAGE — instant, no animation.
    *
    * A conversation renders oldest→newest (`ConversationEntries` above/below the focused
@@ -825,9 +858,21 @@ export function MessagePane({
   );
 
   /**
-   * Said only for the two states that are not the mail. `snippet` — asked for nothing yet —
-   * is a sub-frame state in this pane, because the shell hydrates on selection; and a
-   * protected message has no body to be waiting for.
+   * Said for everything that is not the mail — and `snippet` IS one of those things here.
+   *
+   * This used to exempt `snippet` alongside `full`, on the argument that the shell hydrates on
+   * selection so a snippet is a sub-frame state and a sentence that appears and vanishes within
+   * one frame is noise. The premise was false in the case that matters. `hydrateBody` writes its
+   * `loading` marker at ENQUEUE now, but before that it wrote it only once a fetch DEPARTED, and
+   * departures are capped at four — so the fifth message opened during a busy tick had no
+   * `message_body` record at all, `bodyOf` answered `snippet`, and this pane rendered 200
+   * characters of the mail cut mid-word inside full message anatomy with NOTHING saying more was
+   * coming. Silent, indistinguishable from a short email, and worst exactly when the app is busy.
+   *
+   * The engine's marker closes that window; this line is the second half of the same fix, and it
+   * is the half that does not depend on getting the enqueue right. Both panes hydrate what they
+   * render, so a snippet AT REST in this pane is a defect by construction — the honest thing to
+   * say about it is that the message is still coming, which is what a reader can act on.
    *
    * THE FAILURE CARRIES A CONTROL, not only a sentence. The stream cards recover on their
    * own (re-expand, or scroll back and become current again); this pane's hydration is keyed
@@ -835,10 +880,7 @@ export function MessagePane({
    * the user selects away and returns — a dead end nobody would guess the exit from.
    */
   const bodyNote =
-    isProtected || body.state === "full" || body.state === "snippet" ? undefined : body.state ===
-      "loading" ? (
-      tb("loading")
-    ) : (
+    isProtected || body.state === "full" ? undefined : body.state === "failed" ? (
       <>
         {tb("failed")}{" "}
         {/* `retry` because this IS a human asking again. An automatic trigger deliberately
@@ -847,6 +889,8 @@ export function MessagePane({
           {tb("retry")}
         </Button>
       </>
+    ) : (
+      tb("loading")
     );
 
   return (
