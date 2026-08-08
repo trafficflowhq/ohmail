@@ -721,7 +721,18 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
   const ohbox = useMemo(() => ohboxView(presented), [presented, version]);
   const partition = useMemo(() => readsPartition(presented), [presented, version]);
-  const receiptGroups = useMemo(() => receiptsByDay(presented, now), [presented, version, now]);
+  /**
+   * Receipts is a FLAT list, exactly as Reads is — no day headings.
+   *
+   * `receiptsByDay` stays the source because it is the ordering: newest day first, and newest
+   * within a day. Flattening it here preserves that order exactly and leaves the view with no
+   * grouping concept at all. The selector's `label` is no longer rendered anywhere; it is the
+   * boundary the sort is defined by, not a heading.
+   */
+  const receipts = useMemo(
+    () => receiptsByDay(presented, now).flatMap((g) => g.items),
+    [presented, version, now],
+  );
   const piles = useMemo(() => triagePiles(presented), [presented, version]);
   const tagGroups = useMemo(() => tagsCrossView(presented), [presented, version]);
   /**
@@ -1163,8 +1174,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   // it is gone. The optimistic overlay already makes the flip instant, and unlike the `Set` it
   // survives a reload, because it is backed by a row.
   const receiptsIsUnread = useCallback((m: EngineMessage) => m.unread, []);
-  const receiptsUnread =
-    receiptGroups.flatMap((g) => g.items).filter(receiptsIsUnread).length;
+  const receiptsUnread = receipts.filter(receiptsIsUnread).length;
   const readsUnread = [...partition.fresh, ...partition.seen].filter((m) => m.unread).length;
 
   /* ── route transitions: overlays close, pending screener work lands ── */
@@ -3186,7 +3196,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
             {effectiveView === "receipts" ? (
               <ReceiptsView
-                groups={receiptGroups}
+                messages={receipts}
                 tags={tags}
                 now={now}
                 cur={receiptsCur}

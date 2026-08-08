@@ -1,16 +1,22 @@
 "use client";
 
 /**
- * Receipts — the same two-pane pattern as Reads with amounts on the
- * right and day-grouped rows over the engine's receiptsByDay selector.
- * Seen-marking goes through the shell's `mark_seen` mutation,
- * so it reaches `\Seen` on the user's own IMAP server; the local
- * `justSeen` set below is only the fade, not the state.
+ * Receipts — the same two-pane pattern as Reads, with amounts on the right and ONE FLAT LIST
+ * of rows. The day headings this view used to draw are gone: they split a short list into
+ * one-row sections whose heading was taller than the row under it, and each row already carries
+ * its own time stamp, so the heading restated what the row said. Reads never had them, and the
+ * two views are meant to read as the same thing.
+ *
+ * Order still comes from the shell's `receiptsByDay` flatten — newest day first, newest within
+ * a day — so nothing about the sequence changed, only what is drawn between the rows.
+ *
+ * Seen-marking goes through the shell's `mark_seen` mutation, so it reaches `\Seen` on the
+ * user's own IMAP server; the local `justSeen` set below is only the fade, not the state.
  */
-import { useEffect, useMemo, useRef, useState, Fragment } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import type { EngineMessage, MessageBody, ReceiptsDayGroup, TagDTO } from "@ohmail/client-engine";
-import { Kbd, ListGroupLabel, ListPane, ListRows, MessageRow, StreamCard } from "@ohmail/ui";
+import type { EngineMessage, MessageBody, TagDTO } from "@ohmail/client-engine";
+import { Kbd, ListPane, ListRows, MessageRow, StreamCard } from "@ohmail/ui";
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { MessageActionBar, type MessageAction } from "../shell/MessagePane";
@@ -19,7 +25,7 @@ import { StreamShell, type StreamHandle } from "../shell/StreamShell";
 import { MessageBody as MessageBodyView } from "../components/MessageBody";
 
 export function ReceiptsView({
-  groups,
+  messages,
   tags,
   now,
   cur,
@@ -33,7 +39,8 @@ export function ReceiptsView({
   onJumped,
   onAction,
 }: {
-  groups: ReceiptsDayGroup[];
+  /** Every receipt, already in display order. Flat — the shell flattens `receiptsByDay`. */
+  messages: EngineMessage[];
   tags: TagDTO[];
   now: Date;
   cur: string | null;
@@ -57,7 +64,7 @@ export function ReceiptsView({
   const streamRef = useRef<StreamHandle>(null);
   const [justSeen, setJustSeen] = useState<Set<string>>(() => new Set());
 
-  const all = useMemo(() => groups.flatMap((g) => g.items), [groups]);
+  const all = messages;
   const current = cur ?? all.find(isUnread)?.id ?? all[0]?.id ?? null;
 
   const seenMark = (id: string) => {
@@ -173,19 +180,7 @@ export function ReceiptsView({
           </>
         }
       >
-        {groups.map((g) => (
-          <Fragment key={g.label}>
-            <ListGroupLabel>{g.label}</ListGroupLabel>
-            <ListRows>
-              {g.items.map((m, i) => (
-                <Fragment key={m.id}>
-                  {i > 0 ? <div className="receipts-rule" /> : null}
-                  {row(m)}
-                </Fragment>
-              ))}
-            </ListRows>
-          </Fragment>
-        ))}
+        <ListRows>{all.map(row)}</ListRows>
         {/* No-collapse rule: every receipt is a real row above. */}
         <div className="tail-row">{t("tail")}</div>
       </ListPane>
