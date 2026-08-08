@@ -105,27 +105,16 @@ body.reading .shell {
   justify-content: center;
 }
 
-/* The reading-layout toggle above a solo/split list (History, Tag). It sits in the ListPane
-   header slot, right-aligned and quiet — a preference, not a primary control, so it lines up
-   under the meta rather than competing with the heading. Padding matches `.vhead`'s horizontal
-   so the capsule aligns with the title above it. */
-.view-mode {
-  display: flex;
-  justify-content: flex-end;
-  padding: 0 30px 10px;
-}
-
-/* The Tag page's header slot: manage on the left, the reading-layout toggle pushed to the
-   right. Padding matches `.vhead`'s horizontal so both line up under the tag name above. */
+/* The Tag page's header slot — Rename and Delete. It used to carry a reading-layout toggle
+   pushed to the right of them; History and Tag are the Ohbox's two-pane shape unconditionally
+   now, so there is no toggle and `.view-mode` went with it. Padding matches `.vhead`'s
+   horizontal so the row lines up under the tag name above. */
 .tag-head {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 0 30px 12px;
   flex-wrap: wrap;
-}
-.tag-head .seg {
-  margin-left: auto;
 }
 .tag-manage {
   display: flex;
@@ -2210,8 +2199,7 @@ body.reading .shell {
   .view-tag .read-col {
     display: none;
   }
-  /* …and the header slots keep the list's horizontal padding on a phone. */
-  .view-mode,
+  /* …and the header slot keeps the list's horizontal padding on a phone. */
   .tag-head {
     padding-left: 20px;
     padding-right: 20px;

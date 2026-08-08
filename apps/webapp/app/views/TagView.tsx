@@ -8,10 +8,15 @@
  * This used to open a row with `openMessage`, which navigates to the message's HOME view and
  * selects it there — so clicking a tagged Receipt threw you out of the tag and into Receipts,
  * an aliasing that defeats the lens: a tag is a lens over everything, and following a row
- * out of it leaves the tag behind. It reads in place now, the way History does: the solo list raises
- * the reader sheet over itself, and the `Split` toggle gives the Ohbox's two-pane composition —
- * a list beside a reading column. The message is read where the tag shows it and the tag stays
- * on screen either way.
+ * out of it leaves the tag behind. It reads in place now, the way History does: the Ohbox's
+ * two-pane composition — a list beside a reading column — with a click selecting into the
+ * column. The message is read where the tag shows it and the tag never leaves the screen.
+ *
+ * The `List` / `Split` segmented control that used to sit above the rows is gone, along with the
+ * solo mode it defaulted to. It offered a choice between the two-pane shape and a centred list
+ * that raised a reader sheet per message, defaulted to the slower one, and reset on every visit,
+ * so the choice was re-made every arrival. Under 900px the reading column is `display:none` and
+ * a click still raises the shell's sheet — which is why `readColumnHidden()` outlives the modes.
  *
  * ── AND THE TAG IS MANAGED FROM ITS OWN PAGE ────────────────────────────────────────────────
  *
@@ -24,11 +29,9 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { type EngineMessage, type TagDTO } from "@ohmail/client-engine";
-import { Button, Kbd, ListPane, ListRows, MessageRow, ReadColumn, SegmentedControl, TagDot } from "@ohmail/ui";
+import { Button, Kbd, ListPane, ListRows, MessageRow, ReadColumn, TagDot } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, displayTime, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
-
-type Layout = "list" | "split";
 
 /** Below this the reading column is `display:none` (app.css), so a tap must open the sheet. */
 function readColumnHidden(): boolean {
@@ -57,7 +60,7 @@ export function TagView({
   messages: EngineMessage[];
   tags: TagDTO[];
   now: Date;
-  /** The reader sheet, in place — solo mode, and the mobile tap in split mode. */
+  /** The reader sheet, in place — the narrow-width tap, where there is no reading column. */
   onOpen: (m: EngineMessage) => void;
   /** Hydrate the split reading column's message, the way ReadsView hydrates `current`. */
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
@@ -70,7 +73,6 @@ export function TagView({
   admin?: TagAdmin;
 }) {
   const t = useTranslations("tag");
-  const [layout, setLayout] = useState<Layout>("list");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   /**
@@ -78,38 +80,28 @@ export function TagView({
    * never blank beside a list that has rows. Safe here as it is in History: the list does not
    * re-partition under the fallback, so it cannot re-point at a message nobody chose.
    */
-  const shown =
-    layout === "split" ? (messages.find((m) => m.id === selectedId) ?? messages[0] ?? null) : null;
+  const shown = messages.find((m) => m.id === selectedId) ?? messages[0] ?? null;
 
   useEffect(() => {
     if (shown) hydrateBody(shown.id);
   }, [shown?.id, hydrateBody]);
 
   const openRow = (m: EngineMessage) => {
-    if (layout === "split" && !readColumnHidden()) setSelectedId(m.id);
-    else onOpen(m);
+    if (readColumnHidden()) onOpen(m);
+    else setSelectedId(m.id);
   };
 
   return (
-    <section className={layout === "split" ? "view split view-tag" : "view center view-tag"}>
+    <section className="view split view-tag">
       <ListPane
-        solo={layout === "list"}
         title={tag.name}
         meta={t("metaCount", { count: messages.length })}
         header={
-          <div className="tag-head">
-            {admin ? <TagManage tag={tag} count={messages.length} admin={admin} /> : <span />}
-            <SegmentedControl<Layout>
-              role="group"
-              ariaLabel={t("layoutAria")}
-              value={layout}
-              onChange={setLayout}
-              options={[
-                { id: "list", label: t("layoutList") },
-                { id: "split", label: t("layoutSplit") },
-              ]}
-            />
-          </div>
+          admin ? (
+            <div className="tag-head">
+              <TagManage tag={tag} count={messages.length} admin={admin} />
+            </div>
+          ) : undefined
         }
       >
         <ListRows>
@@ -148,19 +140,17 @@ export function TagView({
       {/* THE READING COLUMN — the Ohbox's own. No `onEnterReader` on the pane, for the reason
           the Ohbox omits it: the "open reading mode" button would sit at exactly the widths
           where the sheet duplicates this column. */}
-      {layout === "split" ? (
-        <ReadColumn>
-          {shown ? (
-            <MessagePane
-              message={shown}
-              tags={tags}
-              now={now}
-              onAction={(a) => onAction(a, shown)}
-              onAddTag={onAddTag}
-            />
-          ) : null}
-        </ReadColumn>
-      ) : null}
+      <ReadColumn>
+        {shown ? (
+          <MessagePane
+            message={shown}
+            tags={tags}
+            now={now}
+            onAction={(a) => onAction(a, shown)}
+            onAddTag={onAddTag}
+          />
+        ) : null}
+      </ReadColumn>
     </section>
   );
 }

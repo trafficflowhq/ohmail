@@ -444,10 +444,7 @@
     "explainer": "Mail from people you never screened, who haven't written in a while. It's all read, so nothing here is waiting on you. It hasn't moved — each message is still where your mail server keeps it.",
     "emptyTitle": "Nothing has settled here yet.",
     "emptyHint": "History holds old mail from senders you never made a decision about. If one of them writes again, they go to the Screener and bring this mail with them.",
-    "placeChip": "History",
-    "layoutAria": "Reading layout",
-    "layoutList": "List",
-    "layoutSplit": "Split"
+    "placeChip": "History"
   },
   "tag": {
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
@@ -468,9 +465,6 @@
     "notOnServer": "Tags are stored by ohmail, not in your mailbox. Your folders are real IMAP folders and survive if you leave; tags don’t — erasing your account erases them.",
     "toastTaggedMany": "Tagged {count, plural, one {1 message} other {# messages}} “{name}”.",
     "toastUntaggedMany": "Untagged {count, plural, one {1 message} other {# messages}} “{name}”.",
-    "layoutAria": "Reading layout",
-    "layoutList": "List",
-    "layoutSplit": "Split",
     "manageAria": "Manage this tag",
     "rename": "Rename",
     "delete": "Delete",

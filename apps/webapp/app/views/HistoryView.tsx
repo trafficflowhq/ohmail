@@ -19,24 +19,27 @@
  * still shows it there. The row states the server folder for that reason: a place the product
  * invented must not be mistaken for a place mail was put.
  *
- * ── TWO WAYS TO READ IT ─────────────────────────────────────────────────────────────────────
+ * ── ONE WAY TO READ IT: THE OHBOX'S ─────────────────────────────────────────────────────────
  *
- * The solo list is the resting shape and stays the default: a centred column, and opening a
- * message raises the reader sheet over it (the shell's `onOpen`, which hydrates the body
- * through the same `readerFor`-keyed effect every sheet uses). The `Split` toggle swaps that
- * for the Ohbox's own composition — a list beside a reading column — so a long look through
- * old mail does not cost a sheet per message. The two are the same rows and the same reader;
- * only WHERE the message renders changes, so the toggle is a preference and never a mode with
- * its own rules. It resets to the list each visit, because "default = the list" is the claim.
+ * A list beside a reading column, which is the composition every other pile in the product
+ * already uses. There used to be a `List` / `Split` segmented control above the rows, defaulting
+ * to a solo centred list that raised a reader sheet per message — and it was a control offering
+ * a choice nobody wants to make twice: going through old mail one sheet at a time is the slower
+ * half of a pair, it was the DEFAULT half, and the toggle reset on every visit, so the cost was
+ * paid again on each arrival. The choice is gone and the better shape is simply the shape.
+ *
+ * READING IN PLACE IS UNCHANGED, and it was the point of the toggle rather than of the modes.
+ * A click selects into the column and the message renders where History shows it; the tag or
+ * the pile never leaves the screen. Under 900px the reading column is `display:none`, so there
+ * a click still raises the shell's reader sheet (`onOpen`) — the same rule the Ohbox keeps, and
+ * the reason `readColumnHidden()` survives the deletion.
  */
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { physicalFolderOf, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
-import { ListPane, ListRows, MessageRow, ReadColumn, SegmentedControl } from "@ohmail/ui";
+import { ListPane, ListRows, MessageRow, ReadColumn } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, displayTime, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
-
-type Layout = "list" | "split";
 
 /** Below this the reading column is `display:none` (app.css), so a tap must open the sheet. */
 function readColumnHidden(): boolean {
@@ -57,7 +60,7 @@ export function HistoryView({
   messages: readonly EngineMessage[];
   tags: TagDTO[];
   now: Date;
-  /** The reader sheet, in place — solo mode, and the mobile tap in split mode. */
+  /** The reader sheet, in place — the narrow-width tap, where there is no reading column. */
   onOpen: (m: EngineMessage) => void;
   /** Hydrate the split reading column's message, exactly as ReadsView hydrates `current`. */
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
@@ -66,7 +69,6 @@ export function HistoryView({
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
 }) {
   const t = useTranslations("history");
-  const [layout, setLayout] = useState<Layout>("list");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   /**
@@ -75,40 +77,24 @@ export function HistoryView({
    * the Ohbox: History is all-read and static, so the list never re-partitions under the
    * fallback and it cannot silently re-point at a message nobody chose.
    */
-  const shown =
-    layout === "split" ? (messages.find((m) => m.id === selectedId) ?? messages[0] ?? null) : null;
+  const shown = messages.find((m) => m.id === selectedId) ?? messages[0] ?? null;
 
   useEffect(() => {
     if (shown) hydrateBody(shown.id);
   }, [shown?.id, hydrateBody]);
 
   const openRow = (m: EngineMessage) => {
-    // Solo, or the mobile split where the column is hidden: the sheet is the only reading
-    // surface. A desktop split reads in the column, so a click is a selection there.
-    if (layout === "split" && !readColumnHidden()) setSelectedId(m.id);
-    else onOpen(m);
+    // Where the column is hidden the sheet is the only reading surface; where it is standing a
+    // click is a selection into it, and nothing leaves the screen.
+    if (readColumnHidden()) onOpen(m);
+    else setSelectedId(m.id);
   };
 
   return (
-    <section className={layout === "split" ? "view split view-history" : "view center view-history"}>
+    <section className="view split view-history">
       <ListPane
-        solo={layout === "list"}
         title={t("title")}
         meta={messages.length ? t("metaCount", { count: messages.length }) : undefined}
-        header={
-          <div className="view-mode">
-            <SegmentedControl<Layout>
-              role="group"
-              ariaLabel={t("layoutAria")}
-              value={layout}
-              onChange={setLayout}
-              options={[
-                { id: "list", label: t("layoutList") },
-                { id: "split", label: t("layoutSplit") },
-              ]}
-            />
-          </div>
-        }
       >
         {/* ONE SENTENCE, ALWAYS PRESENT, AND ABOVE THE LIST.
             "History" is a word this product is using in a way no other mail client does, and a
@@ -134,8 +120,6 @@ export function HistoryView({
                    regression in the cutline shows up here as mail that stops looking read. */
                 unread={false}
                 seen
-                /* Only in the split, where a reading column makes "which one is open" a real
-                   question. The solo list has no such column and highlights nothing. */
                 selected={shown?.id === m.id}
                 threadCount={m.threadCount}
                 hasAttachment={m.hasAttachments}
@@ -163,19 +147,17 @@ export function HistoryView({
           `onEnterReader` on the pane, for the reason the Ohbox omits it — the "open reading
           mode" button it renders would sit at exactly the widths where the sheet duplicates
           this column. */}
-      {layout === "split" ? (
-        <ReadColumn>
-          {shown ? (
-            <MessagePane
-              message={shown}
-              tags={tags}
-              now={now}
-              onAction={(a) => onAction(a, shown)}
-              onAddTag={onAddTag}
-            />
-          ) : null}
-        </ReadColumn>
-      ) : null}
+      <ReadColumn>
+        {shown ? (
+          <MessagePane
+            message={shown}
+            tags={tags}
+            now={now}
+            onAction={(a) => onAction(a, shown)}
+            onAddTag={onAddTag}
+          />
+        ) : null}
+      </ReadColumn>
     </section>
   );
 }
