@@ -497,6 +497,49 @@ function ProtectedPolicy({ text }: { text: string }) {
  */
 const HANDOVER = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
 
+/**
+ * THE MESSAGE'S VERBS, FOR A SURFACE THAT IS NOT THE READING PANE.
+ *
+ * Reads and Receipts are skim streams: the mail is read in the card, in place, and there is no
+ * `ReadingPane` anywhere in either view. So the message being read there had NO verbs at all —
+ * no Later, no Set aside, no Reply, no Move — while the identical message in the Ohbox had all
+ * of them a click away. Two answers were available and one of them is wrong: give those views
+ * their own bar (a second set of verbs, drifting from the first by construction), or hand them
+ * the bar that already exists.
+ *
+ * This is the second. `ActionBar` is unchanged and stays private; what is exported is the small
+ * amount of state the reading pane was holding on its behalf — the open destination panel, and
+ * the screening popover's anchor, which comes off the same chrome context the pane uses. So
+ * "Later" means precisely what it means in the Ohbox, because it IS the Ohbox's button.
+ *
+ * The panel is cleared when the message changes, exactly as the pane clears it: a half-open
+ * Move row belongs to the message it was opened on, and a stream re-pointing at the next card
+ * must not carry it over.
+ */
+export function MessageActionBar({
+  message,
+  now,
+  onAction,
+}: {
+  message: EngineMessage;
+  now: Date;
+  onAction: (action: MessageAction) => void;
+}) {
+  const chrome = useMessageChrome();
+  const [panel, setPanel] = useState<BarPanel | null>(null);
+  useEffect(() => setPanel(null), [message.id]);
+  return (
+    <ActionBar
+      message={message}
+      now={now}
+      panel={panel}
+      onPanel={setPanel}
+      onAction={onAction}
+      onScreen={(anchor) => chrome.openSenderMenu(message.id, anchor)}
+    />
+  );
+}
+
 export function MessagePane({
   message,
   tags,

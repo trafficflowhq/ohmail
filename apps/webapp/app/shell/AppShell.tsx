@@ -114,6 +114,7 @@ import {
   type ScreeningDest,
   type ScreeningScope,
 } from "./sender-screening";
+import { senderHitOf } from "./sender-hit";
 import {
   go, goScreener, goTag, goTriage, useHashRoute,
   type ScreenerSegmentId, type TriagePileId,
@@ -1488,24 +1489,38 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   }, []);
 
   /**
-   * Clicking a sender's circle or address, in ANY list.
+   * Clicking a sender's circle or address, on ANY surface that shows one.
    *
    * ONE capture-phase handler on the stage rather than one per view: `MessageRow` renders a
    * `<button>`, so a second interactive control cannot be nested inside it, and every list
    * in the product already stamps `data-id` with a message id. Capture runs before the
    * row's own click, so this opens the screening popover INSTEAD of moving the cursor.
    * Shift is left alone — that gesture belongs to the Ohbox's range selection.
+   *
+   * ── AND THE READING SURFACES, NOT ONLY THE LISTS ────────────────────────────────────────
+   *
+   * The selector used to be `.row`-only, so screening a sender was reachable from every LIST
+   * and from the reading pane (which wires `onSender` itself), and from nowhere in Reads or
+   * Receipts — the two views whose whole content is mail from senders you might want to stop
+   * hearing from. The address was right there on every card, rendered in the same grey as the
+   * rows', and clicking it selected the card. A gesture that works on four surfaces and
+   * silently does nothing on the fifth is worse than one that does not exist.
+   *
+   * `.scast` stamps `data-sid` where a row stamps `data-id`; the anchor handed to `placePicker`
+   * is the card, exactly as it is the row. `stopPropagation` here is what keeps the card's own
+   * `onSelect` from also firing, which is the same reason it is here for rows.
+   *
+   * The hit test itself is `sender-hit.ts` — a pure function of one element, so which elements
+   * count as "the sender" can be asserted without standing up an engine and a router.
    */
   const onStageClickCapture = useCallback(
     (e: ReactMouseEvent<HTMLElement>) => {
       if (e.shiftKey) return;
-      const el = e.target as HTMLElement;
-      if (!el.closest?.(".row .av, .row .addr")) return;
-      const id = el.closest<HTMLElement>(".row[data-id]")?.dataset.id;
-      if (!id) return;
+      const hit = senderHitOf(e.target as HTMLElement);
+      if (!hit) return;
       e.preventDefault();
       e.stopPropagation();
-      openSenderMenu(id, el.closest<HTMLElement>(".row"));
+      openSenderMenu(hit.id, hit.anchor);
     },
     [openSenderMenu],
   );
@@ -1733,6 +1748,31 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       }
     },
     [engine, toast, t, piles.replyLater.length, now, openReply, markSeen, draftReply],
+  );
+
+  /**
+   * THE SAME VERBS, PRESSED FROM A STREAM CARD.
+   *
+   * Reads and Receipts read in the card and mount no `ReadingPane` at all, which is exactly why
+   * they had no verbs; they have the Ohbox's bar now (`MessageActionBar`), and every action on
+   * it means here what it means there — this delegates and invents nothing.
+   *
+   * The ONE thing it has to add is a place for an answer to be written. `reply` and `draft` open
+   * the inline editor, and that editor renders inside a message pane; a stream has none, so
+   * pressing Reply on a card would set a draft nobody can see and look like a dead button. The
+   * reader sheet IS a message pane over the current message, so it is raised first and the
+   * editor lands in it. Ordering does not matter — both are state setters, batched into one
+   * render — but it reads in the order it happens.
+   *
+   * Every other action is a mutation with a toast and needs no surface, so it is passed straight
+   * through and the card the reader is on stays where it is.
+   */
+  const onStreamAction = useCallback(
+    (action: MessageAction, m: EngineMessage) => {
+      if (action === "reply" || action === "draft") setReaderFor(m.id);
+      onMessageAction(action, m);
+    },
+    [onMessageAction],
   );
 
   /**
@@ -2957,6 +2997,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 hydrateBody={hydrateBody}
                 jumpTo={jump?.view === "reads" ? jump.id : null}
                 onJumped={() => setJump(null)}
+                onAction={onStreamAction}
               />
             ) : null}
 
@@ -2974,6 +3015,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 hydrateBody={hydrateBody}
                 jumpTo={jump?.view === "receipts" ? jump.id : null}
                 onJumped={() => setJump(null)}
+                onAction={onStreamAction}
               />
             ) : null}
 

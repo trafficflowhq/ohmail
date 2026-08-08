@@ -13,6 +13,7 @@ import type { EngineMessage, MessageBody, ReceiptsDayGroup, TagDTO } from "@ohma
 import { Kbd, ListGroupLabel, ListPane, ListRows, MessageRow, StreamCard } from "@ohmail/ui";
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { MessageActionBar, type MessageAction } from "../shell/MessagePane";
 import { StreamShell, type StreamHandle } from "../shell/StreamShell";
 // Aliased: `MessageBody` is already imported above as the engine's body DTO type.
 import { MessageBody as MessageBodyView } from "../components/MessageBody";
@@ -30,6 +31,7 @@ export function ReceiptsView({
   hydrateBody,
   jumpTo,
   onJumped,
+  onAction,
 }: {
   groups: ReceiptsDayGroup[];
   tags: TagDTO[];
@@ -46,6 +48,8 @@ export function ReceiptsView({
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   jumpTo: string | null;
   onJumped: () => void;
+  /** The message verbs — the shell's `onMessageAction`. Optional, exactly as in `ReadsView`. */
+  onAction?: (action: MessageAction, message: EngineMessage) => void;
 }) {
   const t = useTranslations("receipts");
   const tr = useTranslations("reads");
@@ -235,6 +239,13 @@ export function ReceiptsView({
               onSelect={(id) => onCur(id)}
               /* Expanding is the request for the rest of the receipt, and the retry. */
               onToggle={(open) => open && hydrateBody(m.id, { retry: true })}
+              /* THE VERBS, on the receipt being read and on no other — the Ohbox's own bar.
+                 See `ReadsView` for why it is gated on `current`. */
+              actions={
+                onAction && current === m.id ? (
+                  <MessageActionBar message={m} now={now} onAction={(a) => onAction(a, m)} />
+                ) : undefined
+              }
             />
           );
         })}

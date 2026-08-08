@@ -73,6 +73,17 @@ export interface StreamCardProps {
    * asking for.
    */
   onToggle?: (open: boolean) => void;
+  /**
+   * THE MESSAGE'S VERBS, at the foot of the card.
+   *
+   * Optional and default-absent: a card with no bar is exactly the card that shipped before.
+   * The caller decides WHICH card gets one — in practice the current one, so a stream of two
+   * hundred cards renders one bar and not two hundred — and the caller decides what is IN it,
+   * because a composite that named the verbs would be a second, drifting copy of the reading
+   * pane's. `.msg-actions` is the host class the bar's own container queries measure, so the
+   * node passed here behaves as it does everywhere else in the product.
+   */
+  actions?: ReactNode;
 }
 
 /**
@@ -101,6 +112,7 @@ export function StreamCard({
   bodySlot,
   onSelect,
   onToggle,
+  actions,
 }: StreamCardProps) {
   const [open, setOpen] = useState(false);
   const [short, setShort] = useState(false);
@@ -268,6 +280,14 @@ export function StreamCard({
         <span>{open ? collapseLabel : expandLabel}</span>
         <Icon name="chev" className="chev" />
       </button>
+      {/* The verbs, below the expand pill — the end of the message, which is where the reading
+          pane puts them too. `onClick` stops here: pressing Later must not also re-select the
+          card underneath it. */}
+      {actions ? (
+        <div className="msg-actions sc-actions" onClick={(e) => e.stopPropagation()}>
+          {actions}
+        </div>
+      ) : null}
     </article>
   );
 }

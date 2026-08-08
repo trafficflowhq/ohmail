@@ -26,6 +26,7 @@ import {
 } from "@ohmail/ui";
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { MessageActionBar, type MessageAction } from "../shell/MessagePane";
 import { FoldTableArt, StreamShell, type StreamHandle } from "../shell/StreamShell";
 // Aliased: `MessageBody` is already imported above as the engine's body DTO type.
 import { MessageBody as MessageBodyView } from "../components/MessageBody";
@@ -54,6 +55,7 @@ export function ReadsView({
   hydrateBody,
   jumpTo,
   onJumped,
+  onAction,
 }: {
   partition: ReadsPartition;
   tags: TagDTO[];
@@ -75,6 +77,13 @@ export function ReadsView({
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   jumpTo: string | null;
   onJumped: () => void;
+  /**
+   * The message verbs — the shell's `onMessageAction`, the same one the Ohbox reader is given.
+   * OPTIONAL, and absent leaves the cards with no bar rather than a bar that does nothing: this
+   * view is mounted without a shell in several tests, and a control with nothing behind it is
+   * the one thing a reading surface must never show.
+   */
+  onAction?: (action: MessageAction, message: EngineMessage) => void;
 }) {
   const t = useTranslations("reads");
   const tb = useTranslations("body");
@@ -247,6 +256,14 @@ export function ReadsView({
       /* Expanding a card that holds only a snippet IS the request for the rest of it — and
          the retry after a failure, which is why the failed copy says to expand again. */
       onToggle={(open) => open && hydrateBody(m.id, { retry: true })}
+      /* THE VERBS, on the card being read and on no other. The Ohbox's bar, not a second one
+         written for this view — see `MessageActionBar`. Gated on `current` so a stream of two
+         hundred cards mounts one bar rather than two hundred, each with its own panel state. */
+      actions={
+        onAction && current === m.id ? (
+          <MessageActionBar message={m} now={now} onAction={(a) => onAction(a, m)} />
+        ) : undefined
+      }
       art={
         m.art ? (
           <StreamArt ariaLabel={m.art.ariaLabel} caption={m.art.caption}>
