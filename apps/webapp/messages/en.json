@@ -1076,6 +1076,23 @@
     "unavailableBody": "This copy of ohmail has no server attached, so there is nothing to confirm against.",
     "footer": "Passkeys, two-factor, and no password to leak."
   },
+  "linkDesktop": {
+    "title": "Link the desktop app",
+    "lead": "The app on your Mac needs a code from here. Press the button, then type the code into the app window that sent you.",
+    "mint": "Show me a code",
+    "again": "Show me another code",
+    "working": "Working…",
+    "expiresIn": "This code works once, and stops working in {seconds} seconds.",
+    "step1": "Go back to ohmail on your Mac.",
+    "step2": "Type the code above into “Code from the browser” and press Sign in.",
+    "safety": "Nobody from ohmail will ever ask you for this code. If somebody did, close this page — the code is a way into your mail.",
+    "signInTitle": "Sign in first",
+    "signInBody": "Linking a new machine needs a fresh sign-in on this browser, even if you were signed in a moment ago. Sign in and come back to this page.",
+    "signIn": "Sign in",
+    "unavailableTitle": "Not available here",
+    "unavailableBody": "This copy of ohmail has no server attached, so there is no account to link.",
+    "footer": "The code works once, and only for a couple of minutes."
+  },
   "account": {
     "title": "Delete your account",
     "lead": "This cannot be undone.",
