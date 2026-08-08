@@ -110,6 +110,14 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // genuinely reachable there: without it the pane shows `rules.revokeExplain` where a
   // sentence about not moving somebody's mail belongs.
   "rules",
+  // `drafts` is the list of messages somebody started and has not sent. The desktop shell
+  // renders it — `DraftsView` is published, and the rail carries its entry — and unlike `body`
+  // or `sync` it is genuinely reachable there: the FixturesAdapter serves `draft_save` and
+  // `draft_discard` out of `mutationEffects` like every other verb, so a preview build can
+  // create a draft, list it and throw it away. Without the namespace the pane would render
+  // `drafts.discardWhat` where the sentence explaining that a discard is not recoverable
+  // belongs — which is the one string in it that must not arrive as a raw key.
+  "drafts",
   "shortcuts", "sync", "tag", "triage",
 ] as const;
 
