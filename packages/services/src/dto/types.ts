@@ -170,6 +170,24 @@ export interface MessageBodyBatchItem {
   text: string;
   html: string | null;
   loadedRemoteContent: boolean;
+  /**
+   * The sender's unsubscribe posture — `?ids=` MODE ONLY, and absent in the keyset mode.
+   *
+   * The two modes of `GET /messages/bodies` serve two different consumers and the difference is
+   * the point. The keyset page feeds the macOS local text mirror and joins the body row and
+   * NOTHING else; that absence is its no-rehydrate guarantee, and it is pinned structurally by a
+   * test that asserts the item's exact key set. The `?ids=` page feeds a READER opening a thread
+   * — the same surface {@link MessageBodyDTO} feeds — so its rows carry the same derived posture
+   * the single-message route carries, or a conversation's siblings would silently offer no way
+   * out where the message above them does.
+   *
+   * Optional rather than a second interface because it is one row shape with one field the
+   * mirror mode does not populate; two types would mean two places for the redaction contract
+   * above to be restated. Raw headers cross the wire in NEITHER mode.
+   */
+  unsubscribe?: UnsubscribeHeaderState;
+  /** The sender's own https unsubscribe page, `?ids=` mode and `not_one_click` only; else null. */
+  unsubscribeUrl?: string | null;
 }
 
 export interface ThreadDTO {

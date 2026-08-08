@@ -34,8 +34,19 @@ export const messageRoutes: Route[] = [
     },
   },
   {
-    // The batch text pull — the foundation of the macOS Cloud-local text mirror.
-    // Keyset-pages the account's message bodies by `messages.id`; `?after=<cursor>&limit=`.
+    // The batch body read, in TWO MODES over one route.
+    //
+    //  · `?after=<cursor>&limit=` — the keyset text pull, the foundation of the macOS
+    //    Cloud-local text mirror. Pages the account's bodies by `messages.id`, body row only.
+    //  · `?ids=a,b,c`             — the THREAD OPEN: exactly these messages, capped at 20, with
+    //    the unsubscribe posture derived per row. Ids the account does not own are silently
+    //    absent — never a 404, which would make the route an existence oracle for other
+    //    accounts' ids. `after`/`limit` are ignored when `ids` is present.
+    //
+    // ONE ROUTE because it is one read of the same rows under the same ownership proof and the
+    // same cost class; only the row selection differs, and a second route would have been a
+    // second place to write the account scoping.
+    //
     // `read`: it reads rows already stored for the caller's own account and writes nothing.
     //
     // STATIC-BEATS-PARAM, verified against `router.ts#tryMatch`/`cmpSpec` and not assumed:
@@ -52,7 +63,14 @@ export const messageRoutes: Route[] = [
       const after = url.searchParams.get("after") ?? undefined;
       const limitRaw = url.searchParams.get("limit");
       const limit = limitRaw != null ? Number(limitRaw) : undefined;
-      const page = await message(deps).getBodies(serviceContext(deps, req), { after, limit });
+      // Split on the wire rather than validated here: the service owns the cap and the id shape,
+      // for the same reason it owns the cursor's — one place decides what this route accepts.
+      // A present-but-empty `ids=` is still the ids MODE (an empty answer), never a silent
+      // fall-through to the keyset page, which would send a client asking for nothing the
+      // account's first fifty bodies.
+      const idsRaw = url.searchParams.get("ids");
+      const ids = idsRaw === null ? undefined : idsRaw.split(",").map((s) => s.trim()).filter((s) => s !== "");
+      const page = await message(deps).getBodies(serviceContext(deps, req), { after, limit, ids });
       return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
     },
   },

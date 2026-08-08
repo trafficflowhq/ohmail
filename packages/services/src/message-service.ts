@@ -129,6 +129,19 @@ export interface GetBodiesOptions {
   /** Opaque keyset cursor — the last `messages.id` a previous page returned. */
   after?: string;
   limit?: number;
+  /**
+   * THE OTHER MODE: name the messages instead of paging through them.
+   *
+   * Present ⇒ `after`/`limit` are ignored and exactly these ids are answered, capped at
+   * {@link BODIES_IDS_MAX}. It exists for the thread open — a conversation needs its siblings'
+   * bodies at once, and asking per message is N requests through the client's own concurrency
+   * limiter, so the tail of a thread does not begin loading until a whole round trip has finished.
+   *
+   * The two modes are the SAME ROUTE because they are the same read of the same rows under the
+   * same `cost: "read"` and the same ownership proof; only the row selection differs. A second
+   * route would have been a second place for the account scoping to be written.
+   */
+  ids?: string[];
 }
 
 /**
@@ -148,6 +161,21 @@ export interface GetBodiesOptions {
  */
 export const BODIES_DEFAULT_LIMIT = 50;
 export const BODIES_MAX_LIMIT = 100;
+
+/**
+ * How many ids `?ids=` may name.
+ *
+ * Twenty rather than the keyset mode's hundred, because this mode is INTERACTIVE — a reader is
+ * waiting for it with a thread half-drawn — and because the id list is a client-chosen set rather
+ * than a page the server controls. It is well past any conversation a reader scrolls.
+ *
+ * OVER THE CAP IS A REFUSAL, NOT A TRUNCATION, and that asymmetry with `limit` (which clamps) is
+ * deliberate: a clamped page is honest because it carries a cursor for the rest, while a truncated
+ * id list is indistinguishable from "those messages have no body" and the caller cannot tell which
+ * of the two it got. The client splits its own list — see `BODIES_IDS_MAX` in the engine — so this
+ * is a contract guard rather than a state the product reaches.
+ */
+export const BODIES_IDS_MAX = 20;
 export const BODIES_BYTE_BUDGET = 4 * 1024 * 1024;
 
 /**
@@ -243,6 +271,7 @@ export class MessageService {
    * That absence IS the no-rehydrate guarantee, so there is deliberately no rehydrate path here.
    */
   async getBodies(ctx: ServiceContext, opts: GetBodiesOptions): Promise<Page<MessageBodyBatchItem>> {
+    if (opts.ids !== undefined) return this.getBodiesByIds(ctx, opts.ids);
     const limit = Math.min(Math.max(1, opts.limit ?? BODIES_DEFAULT_LIMIT), BODIES_MAX_LIMIT);
 
     const filters = [eq(messages.accountId, ctx.accountId)];
@@ -283,6 +312,93 @@ export class MessageService {
     const last = items[items.length - 1];
     const nextCursor = last && items.length < rows.length ? encodeListCursor(last.messageId) : null;
     return { items, nextCursor };
+  }
+
+  /**
+   * `GET /messages/bodies?ids=…` — the NAMED-IDS mode of the same route. The thread open.
+   *
+   * ── AN ID THIS ACCOUNT DOES NOT OWN IS SIMPLY ABSENT ──────────────────────────────────────
+   *
+   * Ownership is proven the same way {@link getBody} and the keyset mode prove it —
+   * `message_bodies` has no `account_id`, so the join through `messages` with
+   * `eq(messages.accountId, …)` IS the authorization — but the RESPONSE to a foreign id differs
+   * from the batch read-state route's, and the difference is deliberate on both sides.
+   * `PATCH /messages` REJECTS the whole request on a foreign id because it is a write and a
+   * partial batch would be unrepresentable. This is a read, and a read that answered 404 for
+   * "you do not own this" would be an existence oracle: a probe could walk ids and learn which
+   * exist in someone else's account from the status code. Absent is the only answer that
+   * distinguishes nothing — an unknown id, another account's id and a deleted id are one outcome.
+   *
+   * The caller therefore matches rows by `messageId` and must treat a short answer as normal.
+   *
+   * ── AND THIS MODE JOINS THE HEADERS, WHICH THE KEYSET MODE MUST NOT ───────────────────────
+   *
+   * The keyset mode feeds the macOS local text mirror and joins NOTHING but the body row: that
+   * absence IS its no-rehydrate guarantee, and it is asserted structurally (the wire item's key
+   * set is pinned). This mode feeds a READER — the same surface `getBody` feeds — so it owes the
+   * same unsubscribe posture, or a thread's siblings would silently lose a control the message
+   * above them has. The raw headers still never cross the wire: what leaves is the derived enum
+   * plus, for `not_one_click` only, the sender's own https page, exactly as `getBody` does it.
+   * Deriving it here rather than re-deriving it in the client keeps one implementation of the
+   * rule.
+   *
+   * NO BYTE BUDGET SHORTCUT AND NO CURSOR. The budget still applies — a thread of twenty
+   * newsletters is real — but there is no cursor to resume from, so a truncated answer is simply
+   * a short one and the client asks for what is missing per message. `nextCursor` is `null`
+   * always: this mode does not page.
+   */
+  private async getBodiesByIds(
+    ctx: ServiceContext,
+    ids: string[],
+  ): Promise<Page<MessageBodyBatchItem>> {
+    if (ids.length === 0) return { items: [], nextCursor: null };
+    if (ids.length > BODIES_IDS_MAX) {
+      throw new ServiceError(
+        "validation_failed", 400, `at most ${BODIES_IDS_MAX} ids may be requested at once`,
+      );
+    }
+    // A malformed id would reach Postgres and raise 22P02 — a 500 for a plainly bad request. The
+    // same guard the cursor gets above, and it leaks nothing: whether a string is a uuid is
+    // decidable without the database.
+    for (const id of ids) {
+      if (typeof id !== "string" || !UUID_RE.test(id)) {
+        throw new ServiceError("validation_failed", 400, "invalid message id");
+      }
+    }
+
+    const rows = await ctx.db.select({
+      messageId: messages.id,
+      text: messageBodies.text,
+      html: messageBodies.html,
+      headers: messageBodies.headers,
+      loadedRemoteContent: messageBodies.loadedRemoteContent,
+    }).from(messages)
+      .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+      .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, ids)))
+      .orderBy(asc(messages.id))
+      .limit(BODIES_IDS_MAX);
+
+    const items: MessageBodyBatchItem[] = [];
+    let bytes = 0;
+    for (const r of rows) {
+      const text = r.text ?? "";
+      const html = r.html ?? null;
+      const headers = (r.headers as Record<string, unknown>) ?? {};
+      const unsubscribe = unsubscribeHeaderState(headers);
+      items.push({
+        messageId: r.messageId,
+        text,
+        html,
+        loadedRemoteContent: r.loadedRemoteContent ?? false,
+        unsubscribe,
+        unsubscribeUrl: unsubscribe === "not_one_click" ? httpsUnsubscribeUri(headers) : null,
+      });
+      bytes += Buffer.byteLength(text, "utf8") + (html ? Buffer.byteLength(html, "utf8") : 0);
+      // Stop AFTER the row that crossed the budget, so one oversized body cannot starve the
+      // answer entirely. What is left out is asked for per message by the client.
+      if (bytes >= BODIES_BYTE_BUDGET) break;
+    }
+    return { items, nextCursor: null };
   }
 
   async patch(ctx: ServiceContext, id: string, body: MessagePatchBody): Promise<PatchResult> {
