@@ -15,7 +15,18 @@
 .rows{padding:0 16px} /* wide enough that a raised row's shadow isn't sheared at the pane edge */
 /* No-collapse rule: mail is never hidden behind a "+n more" affordance, so
    there is no collapse row to style. The tail-row only points at the server. */
-.list-hints{padding:10px 30px 14px;font-size:11px;color:var(--ink3);display:flex;gap:14px;align-items:center;flex:none;flex-wrap:wrap}
+/* THE HINT ROW IS ONE LINE, AT EVERY WIDTH.
+   It was `flex-wrap:wrap`, so a narrow list pane — the split layout's, or a phone — broke
+   "j k move · ↵ read · t tag" onto two and sometimes three lines of chrome above the mail, which
+   is more of the pane spent on instructions than on the list they describe. Now it never wraps
+   and never scrolls: the row clips, and the hints give way from the RIGHT, which is the order
+   they are written in — the movement keys first, the incidental note last. `flex-shrink:999` on
+   the trailing hint is what makes it yield before any of the keyed ones; each item ellipsises
+   rather than truncating mid-glyph. */
+.list-hints{padding:10px 30px 14px;font-size:11px;color:var(--ink3);display:flex;gap:12px;align-items:center;flex:none;
+  flex-wrap:nowrap;overflow:hidden;white-space:nowrap}
+.list-hints > *{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.list-hints > :last-child{flex-shrink:999}
 .tail-row{padding:14px 30px 20px;font-size:12px;color:var(--ink3)}
 /* receipts trail day rules — table scanability, kept */
 .receipts-rule{height:1px;background:var(--hair-soft);margin:2px 14px}
