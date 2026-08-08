@@ -106,6 +106,15 @@ export interface AuthConfig {
   loginTokenTtlMs: number;
   webauthnChallengeTtlMs: number;
   oauthCodeTtlMs: number;
+  /**
+   * How long a `POST /auth/desktop-link` code stays claimable.
+   *
+   * It is the ONE bound that is not about an attacker's search space: 128 bits of entropy
+   * cannot be guessed, so what this limits is the window in which a code that has been SEEN —
+   * over a shoulder, in a screen share, in a screenshot somebody kept — is still worth
+   * anything. See `config.ts` for why two minutes and not less.
+   */
+  desktopLinkTtlMs: number;
   stepUpWindowMs: number;      // 5 min
   /** Hard ceiling on a sliding session, from `sessions.created_at`. 90 d — see config.ts. */
   sessionAbsoluteTtlMs: number;
@@ -133,6 +142,19 @@ export interface AuthConfig {
    * ~480 addresses a day, which is the difference between a nuisance and a bulk mailer.
    */
   maxPublicRegistrationsPerWindow: number;
+  /**
+   * How many `POST /auth/desktop-claim` attempts one client may make per `failureWindowMs`.
+   *
+   * A SLOT CLAIM answering 429 `rate_limited`, never the 423 lockout: the claim names no
+   * account until the code has already been read, so there is nothing to lock, and a counter
+   * keyed on a value the caller chooses is a denial of service handed to whoever is attacking.
+   *
+   * Ten, because this is a value a person RETYPES: a mistyped code, a code that expired while
+   * they looked for the window, and a second attempt after each is four before anything has
+   * gone wrong. It is not the guess bound — the code's own 128 bits are — it is the bound on
+   * an anonymous caller's ability to make this endpoint do database work.
+   */
+  maxDesktopClaimsPerWindow: number;
   // TOTP
   totpIssuer: string;
   totpWindow: number;          // ± steps of clock-skew tolerance

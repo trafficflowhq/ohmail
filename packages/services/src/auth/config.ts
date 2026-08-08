@@ -25,12 +25,19 @@ export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin">
   loginTokenTtlMs: 5 * MIN,
   webauthnChallengeTtlMs: 5 * MIN,
   oauthCodeTtlMs: 60_000,           // short-TTL single-use code
+  // TWO MINUTES, and it is short because the code is READ OFF A SCREEN. It exists only for the
+  // seconds between a browser printing it and a person typing it into the app beside them, so
+  // its window is that walk and not a session. Shorter than the OAuth code's sibling ceremony
+  // is not possible — a human has to retype this one — and longer turns a shoulder-surfed or
+  // screen-shared value into something worth going back for.
+  desktopLinkTtlMs: 2 * MIN,
   stepUpWindowMs: 5 * MIN,          // step-up window
   maxFailures: 5,
   lockoutMs: 15 * MIN,
   failureWindowMs: 15 * MIN,
   maxRegistrationsPerWindow: 20,
   maxPublicRegistrationsPerWindow: 5,
+  maxDesktopClaimsPerWindow: 10,
   // THE NAME A PERSON SEES IN THEIR AUTHENTICATOR APP, for ever. "TrafficFlow Mail" is the
   // pre-rename product name and appears nowhere else in the product; the company is
   // TrafficFlow GmbH but the thing being signed into is ohmail — the brand is "ohmail", never
