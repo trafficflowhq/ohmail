@@ -156,6 +156,17 @@ body.reading .shell {
   border-bottom: 1px solid var(--hair-soft);
 }
 
+/* HISTORY IS THE ONE WINDOWED LIST, AND SCROLL ANCHORING IS THE BROWSER FEATURE THAT FIGHTS ONE.
+   Rows above the viewport are unmounted into a spacer as you scroll, and anchoring exists
+   precisely to adjust `scrollTop` when the content above the viewport changes — which here is
+   every frame of a fast scroll, and the correction it would apply is against a total height that
+   never actually moved (`useListWindow` reserves exactly what it unmounts). Turning it off for
+   this subtree costs nothing anywhere else: no other list swaps its own content out from under
+   the scroll position. */
+.view-history .rows {
+  overflow-anchor: none;
+}
+
 /* ================= the sent-mail seed review ================= */
 /* One column, scrollable, on the panel — the same furniture the gate cards use, sized for a
    list that may hold four hundred people. Nothing here is a modal: the screen replaces the

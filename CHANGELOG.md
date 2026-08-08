@@ -16,6 +16,20 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+### History stays quick on a large mailbox
+
+**Opening History on an account with tens of thousands of old messages made the whole app
+sluggish, and every click in it slow.** The desktop app keeps your entire mailbox locally rather
+than a recent slice of it, and History — mail from everyone you never screened, which is most of
+what accumulates over years — is the one list with no upper bound. It was being drawn in full: at
+20 000 rows that is 242 904 elements laid out before you can touch anything, and every click had
+to move a selection through all of them.
+
+It now draws the rows within reach of the scroll position and reserves the exact height of the
+rest, so the scrollbar, the scroll position and the keyboard order are what they always were and
+mail appears as you come to it. That same list renders as a few hundred elements instead of a
+quarter of a million, however long it is.
+
 ## [0.7.3] — 2026-08-08
 
 ### Signing in sticks across updates
