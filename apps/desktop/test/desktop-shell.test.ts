@@ -1038,9 +1038,54 @@ describe("the UI bundle's build config", () => {
    * The scan marker is asserted from both ends for the reason `ai-gate.ts` taught this repository:
    * a guard that points at a string nothing contains passes for ever while checking nothing.
    */
+  /**
+   * THE SETTINGS SCREEN IS THE SHARED ONE, WITH THE PANES A DESKTOP INSTALL CAN ANSWER FOR.
+   *
+   * Four panes were absent or blank here and each for the same shape of reason: the shared shell
+   * builds them out of a hosted API client that is not part of this build, so they were either
+   * withheld or rendered nothing. Mailboxes was the worst of them — present in the nav, and empty
+   * on every real install, because its fallback list draws entities the change feed never carries.
+   *
+   * Source-level, like the suggest control below and for the same reason: the WIRING between two
+   * files in two applications has no single place to render, and deleting it left every suite in
+   * both of them green.
+   */
+  it("hands the shared settings screen the panes only this shell can fill", () => {
+    const gate = read("src/DesktopGate.tsx");
+    expect(gate).toMatch(/mailboxSection: <DesktopMailboxes \/>/);
+    expect(gate).toMatch(/aboutSection: <DesktopAbout status=/);
+    expect(gate).toMatch(/mailboxFacts: readMailboxFacts/);
+
+    // The mailbox list is read from the ENGINE, over the pipe — never from the mirror, which has
+    // no such entity and is what made the shared fallback empty.
+    const mailboxes = read("src/DesktopMailboxes.tsx");
+    expect(mailboxes).toMatch(/bridgeFetch\("\/mailboxes"\)/);
+    // A FAILED read is not an empty account. The ladder renders "No mailbox connected" for the
+    // second, so collapsing the first into it would say that to somebody whose mailbox works.
+    expect(mailboxes).toMatch(/throw new Error/);
+
+    // The pane names a THING, like every other entry beside it in that list.
+    expect(read("src/DesktopSettings.tsx")).toMatch(/DESKTOP_PANE_LABEL = "Desktop"/);
+    // …and the copy that sends somebody to it says the same word. A pointer at a pane that no
+    // longer has that name is a wrong instruction, not a stale comment.
+    expect(read("src/local-suggest.tsx")).toMatch(/Settings, Desktop/);
+  });
+
   it("edits the Ohbox bar with the SHARED control, over the bridge and not through the sync client", () => {
-    const pane = read("src/DesktopSettings.tsx");
+    /* IT MOVED, from the install pane to Settings → Screener, where the rest of the screening
+       controls now live. The assertion follows it rather than being relaxed: what is being pinned
+       is that the editor is REACHABLE from a pane the shell renders, and naming which pane is what
+       makes that a check instead of a search. */
+    const pane = read("src/DesktopScreening.tsx");
     expect(pane).toMatch(/<DesktopScreeningWords door=/);
+    expect(read("src/DesktopGate.tsx")).toMatch(/screeningSection: <DesktopScreening door=/);
+
+    /* AND THE SHARED SHELL HAS TO PREFER IT. Handing a node in is half a wiring; the other half
+       is the shell choosing it over its own, and that half fails silently — the pane still
+       renders, from a section that reaches an API client this build does not have, and draws
+       nothing. Both ends, for the reason this file states about the suggest control below. */
+    const shell = fs.readFileSync(path.resolve(APP, "../webapp/app/shell/AppShell.tsx"), "utf8");
+    expect(shell).toMatch(/screeningSection=\{demo \? undefined : \(screeningSection \?\? <ScreeningSection \/>\)\}/);
 
     const words = read("src/DesktopScreeningWords.tsx");
     expect(words).toMatch(/from "\.\.\/\.\.\/webapp\/app\/shell\/OhboxWords"/);

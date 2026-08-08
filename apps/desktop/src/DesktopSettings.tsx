@@ -27,11 +27,16 @@ import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } f
 
 import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
-import { DesktopScreeningWords } from "./DesktopScreeningWords.js";
 import type { LocalAiStatus } from "./local-ai.js";
 
-/** The label the Settings nav shows for this pane. Supplied with the node; see `SettingsView`. */
-export const DESKTOP_PANE_LABEL = "This install";
+/**
+ * The label the Settings nav shows for this pane. Supplied with the node; see `SettingsView`.
+ *
+ * "Desktop", not "This install". Every other entry in that list names a THING — Mailboxes, Tags,
+ * Rules, Screener — and this one named a relationship, which reads as jargon beside them and gives
+ * no clue that it is where the app itself is configured.
+ */
+export const DESKTOP_PANE_LABEL = "Desktop";
 
 const DOOR_NAME: Record<string, string> = {
   local: "On this Mac",
@@ -213,11 +218,10 @@ export function DesktopSettings({
         to the mail engine, which seals it under a key held in this computer's keychain.
       </SettingsNote>
 
-      {/* What belongs in this mailbox's Ohbox, in the words of the person who reads it. Above the
-          model rather than below it, because it is a property of the MAILBOX and not of the model:
-          it is worth writing on an install that will never set one up, and it is still there,
-          unchanged, the day one is chosen. */}
-      <DesktopScreeningWords door={status.mode ?? null} />
+      {/* WHAT BELONGS IN THIS MAILBOX'S OHBOX HAS MOVED, to Settings → Screener, where the rest
+          of the screening controls are and where somebody looking for it would look first. It was
+          here because this pane was the only one on the desktop with a working transport; it is
+          not any more. `DesktopScreening.tsx` is the same editor over the same column. */}
 
       {/* The model, last, because it is the one part of this install that is optional. Everything
           above describes a mailbox that has to work; this describes something you may never turn

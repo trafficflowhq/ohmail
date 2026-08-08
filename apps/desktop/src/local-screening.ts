@@ -23,18 +23,19 @@
  *
  * ── IT READS AND WRITES ONE AXIS ────────────────────────────────────────────────────────────
  *
- * The route takes three (`ohboxPolicy`, `ohboxBar`, `screenerAutoApply`) and this module names one.
- * That is deliberate and not an oversight of the other two:
+ * The route takes three (`ohboxPolicy`, `ohboxBar`, `screenerAutoApply`) and this module now writes
+ * all three — through one patching function, because a PATCH that names one axis leaves the others
+ * untouched. Which of them a SURFACE offers is a different question, and the answer differs by door:
  *
- *  · the POSTURE is honoured on both doors — each host resolves it per account and files against
- *    it — so it could be offered, and is simply not part of this surface yet. **It genuinely was
- *    not honoured on the standalone door when this sentence was first written, and the sentence
- *    was wrong rather than early**: the local engine passed no posture at all, so its pipeline
- *    resolved the lenient default for every install. That is fixed at the loop rather than
- *    described away here, and this note stays as the reminder that a claim in a comment is a claim.
- *  · AUTO-APPLY is NOT. Its only consumer is the hosted worker's scheduled pass, which no
- *    standalone install runs. A switch for it in this window would be a control that does nothing,
- *    which is worse than an absent one.
+ *  · the POSTURE is honoured on BOTH doors — each host resolves it per account and files against
+ *    it — so it is offered on both. **It genuinely was not honoured on the standalone door when an
+ *    earlier version of this note was written, and the note was wrong rather than early**: the
+ *    local engine passed no posture at all, so its pipeline resolved the lenient default for every
+ *    install. That was fixed at the loop, and this line stays as the reminder that a claim in a
+ *    comment is a claim.
+ *  · AUTO-APPLY is offered on the HOSTED door only. Its consumer is the hosted worker's scheduled
+ *    pass, which no standalone install runs, so a switch for it on that door would be a control
+ *    that does nothing — worse than an absent one.
  *
  * A PATCH body that names one axis leaves the others untouched — the route tests presence with
  * `in`, so an omitted key is "leave this alone" and an explicit `null` is "revert this one". On the
@@ -124,17 +125,29 @@ export async function readScreening(): Promise<ScreeningRead> {
 }
 
 /**
- * Write the bar, and nothing else. `null` reverts it to the product default.
+ * Write one or more axes of the preference, leaving the others exactly as they are.
  *
- * Answers with the preference now in force, so the editor renders what was stored rather than what
- * was typed — the same discipline the hosted client's copy of this control follows.
+ * The route tests presence with `in`, so an omitted key means "leave this alone" and an explicit
+ * `null` means "revert this one". That is what lets two controls over the same row — the bar here
+ * and the posture switch beside it — write independently without either clobbering the other, and
+ * on the hosted door it is what stops this window overwriting a posture set in the web client.
+ *
+ * Answers with the preference now in force, so every control renders what was STORED rather than
+ * what was asked for — the same discipline the hosted client's copy of these controls follows.
  */
-export async function saveOhboxBar(bar: string | null): Promise<ScreeningPreference> {
+export async function saveScreening(
+  patch: Partial<Pick<ScreeningPreference, "ohboxPolicy" | "ohboxBar" | "screenerAutoApply">>,
+): Promise<ScreeningPreference> {
   return readPreference(
     await bridgeFetch(SCREENING_PATH, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ohboxBar: bar }),
+      body: JSON.stringify(patch),
     }),
   );
+}
+
+/** The bar, and nothing else. `null` reverts it to the product default. */
+export async function saveOhboxBar(bar: string | null): Promise<ScreeningPreference> {
+  return saveScreening({ ohboxBar: bar });
 }

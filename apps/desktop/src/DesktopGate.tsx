@@ -42,7 +42,9 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 import { AppShell } from "../../webapp/app/shell/AppShell";
 import { go } from "../../webapp/app/shell/routing";
 import { DoorChooser } from "./DoorChooser.js";
+import { DesktopAbout } from "./DesktopAbout.js";
 import { DesktopMailboxes, readMailboxFacts } from "./DesktopMailboxes.js";
+import { DesktopScreening } from "./DesktopScreening.js";
 import { GateNotice } from "./GateNotice.js";
 import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
 import { gateFor, mailMount, readShell, type Shell } from "./doors.js";
@@ -225,6 +227,13 @@ export function DesktopGate() {
            entities, which only the invented world has — so on a real install it was an empty
            pane. This one reads the same facts the sync line does. */
         {...(engine ? { mailboxSection: <DesktopMailboxes /> } : {})}
+        /* SETTINGS → SCREENER. The shared shell's own section reaches an API client that is not
+           in this build, so it drew nothing and the pane was blank. This is the same three
+           controls over the same three columns, over the pipe. */
+        {...(status ? { screeningSection: <DesktopScreening door={status.mode ?? null} /> } : {})}
+        /* SETTINGS → ABOUT. Injected everywhere, because the facts differ by surface — and the
+           facts a standalone install has to answer are not the hosted service's. */
+        {...(status ? { aboutSection: <DesktopAbout status={status} /> } : {})}
         /* The pane the web client cannot have. Present only when the shell answered — outside
            the app there is no install to describe, and an empty one would be a pane about
            nothing. */

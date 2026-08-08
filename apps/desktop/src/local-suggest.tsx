@@ -130,7 +130,7 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
           // The ENGINE'S OWN SENTENCE, whatever it is — never a class of failure composed here.
           setNotice(
             out.refusal.noModel
-              ? `${out.refusal.message} Set one up under Settings, This install.`
+              ? `${out.refusal.message} Set one up under Settings, Desktop.`
               : out.done > 0
                 ? `Stopped after ${out.done} of ${out.total}. ${out.refusal.message}`
                 : out.refusal.message,

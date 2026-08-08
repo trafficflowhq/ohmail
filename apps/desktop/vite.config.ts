@@ -235,6 +235,13 @@ export default defineConfig({
        a dormant bridge and the engine build does not carry a dead stub. See
        `src/build-flags.d.ts` for the declaration the type checker reads. */
     __OHMAIL_LOCAL_ENGINE__: JSON.stringify(LOCAL_ENGINE),
+    /* The version the installer is stamped with, for the About pane. Read from the manifest
+       here rather than imported by the module that shows it: an import would compile the whole
+       manifest — scripts, dependency ranges, the prose above them — into the artifact for one
+       field. `tauri.conf.json` carries the same number and CI holds the two together. */
+    __OHMAIL_VERSION__: JSON.stringify(
+      (JSON.parse(fs.readFileSync(r("./package.json"), "utf8")) as { version: string }).version,
+    ),
   },
 
   resolve: {

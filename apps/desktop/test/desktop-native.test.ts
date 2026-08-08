@@ -256,12 +256,13 @@ describe("Settings → this install", () => {
        bare length check would have made this test go red for a pane that was behaving correctly,
        and the way out of that is to name the traffic, not to stop looking at it.
 
-       ONE → TWO with the bar editor. Both are GETs, both are reads of this install's own settings,
-       and the order is the render order. The claim this list carries is unchanged and is the
-       reason it is spelled out: NOTHING here is a write, so the pane opening cannot change
-       anything, and the sign-out below is still the only command that crosses. */
+       TWO → ONE when the bar editor moved to Settings → Screener, where the rest of the screening
+       controls are. What is left is the model read, which is this pane's own. The claim the list
+       carries is unchanged and is the reason it is spelled out rather than counted: NOTHING here
+       is a write, so the pane opening cannot change anything, and the sign-out below is still the
+       only command that crosses. */
     expect(shell.asked.map((a) => `${String(a.payload?.method ?? a.command)} ${String(a.payload?.url ?? "")}`))
-      .toEqual(["GET /account/screening", "GET /local/ai"]);
+      .toEqual(["GET /local/ai"]);
     expect(hostEl.textContent).toContain("Sign out of this mailbox?");
     // …and it says what stays, which is the thing somebody is actually asking.
     expect(hostEl.textContent).toMatch(/copy of your mail already on this Mac stays/);
@@ -278,10 +279,10 @@ describe("Settings → this install", () => {
     await mount(SERVING);
     await click("Sign out");
     await click("Cancel");
-    // Same shape as above: the pane's own two settings reads are named, so declining is still
-    // proved to have asked the shell for nothing else.
+    // Same shape as above: the pane's own settings read is named, so declining is still proved to
+    // have asked the shell for nothing else.
     expect(shell.asked.map((a) => `${String(a.payload?.method ?? a.command)} ${String(a.payload?.url ?? "")}`))
-      .toEqual(["GET /account/screening", "GET /local/ai"]);
+      .toEqual(["GET /local/ai"]);
     expect(hostEl.textContent).not.toContain("Sign out of this mailbox?");
   });
 

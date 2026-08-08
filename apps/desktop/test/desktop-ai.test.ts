@@ -310,6 +310,6 @@ describe("the Screener's suggest control on a standalone install", () => {
     // Verbatim, and pointed at the one place that fixes it. A second taxonomy composed here is how
     // somebody with a stopped model server gets told their mail is broken.
     expect(el.textContent).toMatch(/did not answer its last verification/);
-    expect(el.textContent).toMatch(/This install/);
+    expect(el.textContent).toMatch(/Settings, Desktop/);
   });
 });

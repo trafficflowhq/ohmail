@@ -373,6 +373,7 @@ export function AppShell({
   securitySection,
   aboutSection,
   desktopSection,
+  screeningSection,
   screenerSuggest,
   onUnread,
 }: {
@@ -437,6 +438,18 @@ export function AppShell({
    */
   desktopSection?: { label: string; node: ReactNode };
   /**
+   * THE SCREENER PANE'S OWN CONTROLS, WHEN THE HOST HAS ITS OWN — the desktop's, and nobody else's.
+   *
+   * The same seam as {@link screenerSuggest} and for the same reason. This shell builds
+   * `ScreeningSection` for the Screener pane, and every control in it reads and writes through
+   * `app/api-client` — which is not part of the desktop build. There the section renders NOTHING:
+   * each control asks for its value, is refused, and draws nothing, so the pane existed in the nav
+   * and was blank when opened. A host with its own transport hands in its own section instead.
+   *
+   * Present ⇒ this shell's own section is not built. Never both.
+   */
+  screeningSection?: ReactNode;
+  /**
    * THE SCREENER'S SUGGEST CONTROL, WHEN THE HOST HAS ITS OWN — the desktop's, and nobody else's.
    *
    * The control this shell builds asks a server what a set of senders would cost and shows the
@@ -485,6 +498,7 @@ export function AppShell({
             securitySection={securitySection}
             aboutSection={aboutSection}
             desktopSection={desktopSection}
+            screeningSection={screeningSection}
             screenerSuggest={screenerSuggest}
             onUnread={onUnread}
           />
@@ -530,13 +544,14 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screenerSuggest, onUnread }: {
+function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, onUnread }: {
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
   billingSection?: ReactNode;
   securitySection?: ReactNode;
   aboutSection?: ReactNode;
   desktopSection?: { label: string; node: ReactNode };
+  screeningSection?: ReactNode;
   screenerSuggest?: (ctx: {
     senders: string[];
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
@@ -3298,7 +3313,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                     />
                   )
                 }
-                screeningSection={demo ? undefined : <ScreeningSection />}
+                /* The host's own section wins where there is one. On the desktop this shell's
+                   `ScreeningSection` reaches an API client that is not in that build and renders
+                   nothing at all, which is a Screener pane present in the nav and blank when
+                   opened. See `AppShell`'s prop. */
+                screeningSection={demo ? undefined : (screeningSection ?? <ScreeningSection />)}
                 /* THE DORMANCY DIAL. Like `autoSuggestSection`, built here rather than injected from
                    `CloudShell` because it must write through the SAME `useConsentState` the
                    partition memo reads (`consentPartition` above is keyed on `consent.dormancyDays`),
