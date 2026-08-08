@@ -491,6 +491,12 @@ function ProtectedPolicy({ text }: { text: string }) {
   );
 }
 
+/**
+ * Every gesture that means "I am reading this now" — see `release` in the thread anchor below.
+ * Module scope so the effect that installs them has no changing dependency to declare.
+ */
+const HANDOVER = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
+
 export function MessagePane({
   message,
   tags,
@@ -580,34 +586,96 @@ export function MessagePane({
    * `scrollAncestors`) rather than imported, to keep this pane off the sanitizer module.
    *
    * `useLayoutEffect` so the position is set before first paint; keyed on
-   * `[message.id, showConversation]` ONLY — the conversation list is complete at first render,
-   * and a dependency on body-state or contents would re-anchor on every hydration delta and
-   * yank a reader who had scrolled up.
+   * `[message.id, showConversation]` ONLY — a dependency on body-state or contents would
+   * re-anchor on every hydration delta, for as long as the pane is open, and yank a reader who
+   * had scrolled up.
+   *
+   * ── AND ONE PASS IS NOT ENOUGH ANY MORE ─────────────────────────────────────────────────
+   *
+   * This used to run exactly once and stop, on the premise stated above it: *"the conversation
+   * list is complete at first render"*. That premise was true when a sibling rendered its
+   * snippet — two lines, final height, at first paint. It stopped being true when siblings
+   * started hydrating: `Conversation` asks for every sibling's body in a mount effect, the
+   * answers land over the following moments, and each one replaces two lines of snippet with a
+   * whole message. So the stack this pass measured is not the stack the reader ends up looking
+   * at, and the newest message walks back off the bottom of the screen as its older siblings
+   * grow above it — a thread opening at its OLDEST message, which is the exact defect this
+   * anchor exists to prevent, restored through a door that did not exist when it was written.
+   *
+   * There is a second, sharper arm of the same fault. The walk below requires an ancestor that
+   * is ALREADY overflowing; before the bodies land there may be nothing to scroll at all, the
+   * walk falls off the top and returns, and no later event brings it back. That case anchors
+   * nothing whatsoever rather than anchoring imprecisely.
+   *
+   * So the anchor is re-applied while the conversation's own box keeps changing size, and
+   * handed over to the reader the moment they touch it — a wheel, a drag, a key, a press.
+   * Bounded by that handover and by a timeout, so a thread that never settles cannot hold the
+   * scroller for ever. `ResizeObserver` and not a hydration dependency: it fires on the thing
+   * that actually invalidates the position (the stack got taller), so a body that arrives
+   * without changing the height costs nothing, and it is guarded for environments without one.
    */
   useLayoutEffect(() => {
     if (!showConversation) return;
     const conv = convRef.current;
     if (!conv) return;
-    const entries = conv.querySelectorAll<HTMLElement>("[data-conv-id]");
-    const last = entries[entries.length - 1];
-    if (!last) return;
-    let scroller: HTMLElement | null = last.parentElement;
-    while (scroller) {
-      const oy = getComputedStyle(scroller).overflowY;
-      if (
-        (oy === "auto" || oy === "scroll" || oy === "overlay") &&
-        scroller.scrollHeight > scroller.clientHeight
-      ) {
-        break;
+
+    const anchor = (): void => {
+      const entries = conv.querySelectorAll<HTMLElement>("[data-conv-id]");
+      const last = entries[entries.length - 1];
+      if (!last) return;
+      let scroller: HTMLElement | null = last.parentElement;
+      while (scroller) {
+        const oy = getComputedStyle(scroller).overflowY;
+        if (
+          (oy === "auto" || oy === "scroll" || oy === "overlay") &&
+          scroller.scrollHeight > scroller.clientHeight
+        ) {
+          break;
+        }
+        scroller = scroller.parentElement;
       }
-      scroller = scroller.parentElement;
-    }
-    if (!scroller) return;
-    scroller.scrollTop =
-      last.getBoundingClientRect().top -
-      scroller.getBoundingClientRect().top +
-      scroller.scrollTop -
-      14;
+      if (!scroller) return;
+      scroller.scrollTop =
+        last.getBoundingClientRect().top -
+        scroller.getBoundingClientRect().top +
+        scroller.scrollTop -
+        14;
+    };
+
+    anchor();
+
+    let live = true;
+    let timer = 0;
+    /**
+     * THE READER TAKES OVER, and after that nothing here moves the scroller again.
+     *
+     * Capture phase and on `window`, so it catches the gesture wherever it lands — including
+     * inside the message body's own scrollers — and catches it before any handler can stop it
+     * propagating. Anything that could be a person's intent counts: a wheel, a touch drag, a
+     * key, a press on a button. Re-anchoring under somebody who has started reading the oldest
+     * message would be a worse bug than the one this fixes, because it would be unfixable from
+     * the reader's side.
+     */
+    const release = (): void => {
+      if (!live) return;
+      live = false;
+      observer?.disconnect();
+      window.clearTimeout(timer);
+      for (const ev of HANDOVER) window.removeEventListener(ev, release, true);
+    };
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            if (live) anchor();
+          });
+    observer?.observe(conv);
+    // A ceiling, not a schedule. Sibling bodies are fetched under a concurrency cap and a slow
+    // one can be seconds out; a thread whose stack is STILL resizing after this has something
+    // else wrong with it, and holding the scroller longer would only make that worse.
+    timer = window.setTimeout(release, 6000);
+    for (const ev of HANDOVER) window.addEventListener(ev, release, true);
+    return release;
   }, [message.id, showConversation]);
 
   /**
