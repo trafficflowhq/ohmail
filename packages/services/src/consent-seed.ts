@@ -583,6 +583,7 @@ export async function consentSettings(
   dormancyDays: number | null;
   screeningResetAt: string | null;
   autoSuggestAt: string | null;
+  blockRemoteImagesAt: string | null;
 }> {
   const [row] = await ctx.db.select().from(accountSettings)
     .where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
@@ -594,6 +595,14 @@ export async function consentSettings(
     // NULL is OFF, and so is an absent row. This `?? null` is the whole default: there is no
     // branch anywhere that turns a missing value into ON, because ON authorises spending.
     autoSuggestAt: row?.autoSuggestAt ? row.autoSuggestAt.toISOString() : null,
+    // NULL and an absent row both mean "images load automatically" — the product default, and
+    // the opposite direction from every other flag on this row. That is safe HERE because this
+    // is a server that read the row and found no opt-out. The unsafe case is a client that could
+    // not ask at all, and the defaulting for it lives on the client (`consent-state.ts`), where
+    // the difference between "no opt-out" and "no answer" is actually visible.
+    blockRemoteImagesAt: row?.blockRemoteImagesAt
+      ? row.blockRemoteImagesAt.toISOString()
+      : null,
   };
 }
 
@@ -703,6 +712,50 @@ export async function setDormancyDays(
       set: { dormancyDays: stored, updatedAt: ctx.now() },
     });
   return { dormancyDays: stored ?? DEFAULT_DORMANCY_DAYS };
+}
+
+/**
+ * KEEP THE PER-MESSAGE "SHOW IMAGES" FLOW, OR LET REMOTE IMAGES LOAD — the third knob on
+ * `account_settings`, and the only one on the row that stores an OPT-OUT.
+ *
+ * `blocked === true` stamps the instant: this account asked to keep the consent flow. `false`
+ * NULLs the column: the product default, which is that a message's remote images load through
+ * `GET /img` without a press. See `0048_remote_images_default.sql` for why the column is spelled
+ * as the opt-out rather than as an opt-in — an opt-in leaves every existing account on the old
+ * behaviour, which is a default nobody is on.
+ *
+ * ── WHAT THIS FLAG DOES NOT AUTHORISE ──────────────────────────────────────────────────────
+ *
+ * It spends nothing and moves no mail. It changes exactly one thing: whether the reading pane
+ * offers "Show images" per message or renders the pictures. Beacons are unaffected — the
+ * sanitizer classifies a 1×1 or a beacon-shaped url as a pixel and refuses it the proxy in BOTH
+ * modes — and so are remote stylesheets, which cannot travel through an image proxy at all. The
+ * reader's address is protected by the proxy's url-only signature, not by the flag, which is why
+ * turning the flag off is affordable in the first place.
+ *
+ * ── THE UPSERT, COLUMN-SCOPED ──────────────────────────────────────────────────────────────
+ *
+ * Same shape and reason as {@link setAutoSuggest} and {@link setDormancyDays}: rows are created
+ * lazily by whichever feature writes first, so this races `confirmSeed`, `resetScreeningState` and
+ * both other knobs on one primary key. Touching only `block_remote_images_at` + `updated_at` means
+ * a concurrent seed confirmation keeps its `seed_confirmed_at`.
+ *
+ * Returns the stored instant so the caller echoes the database rather than the argument — the same
+ * rule the other two follow, and the one that stops a refused write from being drawn as a move.
+ */
+export async function setBlockRemoteImages(
+  ctx: ServiceContext, blocked: boolean,
+): Promise<{ blockRemoteImagesAt: string | null }> {
+  // The context clock, not the database's — every other consent timestamp is written this way,
+  // and a settings row whose columns come from two clocks cannot be ordered.
+  const at = blocked ? ctx.now() : null;
+  await ctx.db.insert(accountSettings)
+    .values({ accountId: ctx.accountId, blockRemoteImagesAt: at })
+    .onConflictDoUpdate({
+      target: accountSettings.accountId,
+      set: { blockRemoteImagesAt: at, updatedAt: ctx.now() },
+    });
+  return { blockRemoteImagesAt: at ? at.toISOString() : null };
 }
 
 /* `assertNotConfirmed` used to live here: a helper that turned a non-null `seed_confirmed_at`

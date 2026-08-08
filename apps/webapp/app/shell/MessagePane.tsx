@@ -805,20 +805,35 @@ export function MessagePane({
           has no proxy (`?demo=1`, the desktop shell, a test with no API), and `MessageBody`
           answers that by offering no button at all rather than a dead one.
 
-          `remoteLoaded` is the OR of two facts that mean the same thing to a reader and are
+          `remoteLoaded` is the OR of THREE facts that mean the same thing to a reader and are
           stored in different places: the server's `loadedRemoteContent`, which is why images
-          stay loaded across a reload, and this session's press, which is why they appear at
-          the moment it happens. The mirror's body record is not re-fetched on consent —
+          stay loaded across a reload; this session's press, which is why they appear at
+          the moment it happens; and the ACCOUNT's own setting, which is why most readers never
+          see the button at all. The mirror's body record is not re-fetched on consent —
           `hydrateBody` returns early on a `ready` record — so without the second term the
-          button would write a row and change nothing on screen. */}
+          button would write a row and change nothing on screen.
+
+          `auto` is the product default (mail 0048). It admits PICTURES through the proxy; the
+          sanitizer still refuses the proxy to a beacon or a 1×1 in both modes, so a tracking
+          pixel is no more loaded here than it was before.
+
+          `onLoadRemote` is withheld in auto mode, which is what removes the button: `MessageBody`
+          offers no control it cannot honour, and "Show images" over images that are already
+          showing is a control whose press does nothing. */}
       <MessageBody
         messageId={message.id}
         text={body.text}
         html={body.html}
-        remoteLoaded={body.loadedRemoteContent || (chrome.remoteImages?.consented(message.id) ?? false)}
+        remoteLoaded={
+          body.loadedRemoteContent ||
+          (chrome.remoteImages?.auto ?? false) ||
+          (chrome.remoteImages?.consented(message.id) ?? false)
+        }
         imageProxy={chrome.remoteImages ? chrome.remoteImages.proxyFor(message.id) : null}
         onLoadRemote={
-          chrome.remoteImages ? () => chrome.remoteImages!.consent(message.id) : undefined
+          chrome.remoteImages && !chrome.remoteImages.auto
+            ? () => chrome.remoteImages!.consent(message.id)
+            : undefined
         }
       />
     </div>

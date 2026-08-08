@@ -178,16 +178,24 @@ export function ConversationEntries({
                     column narrower than the one the same mail gets when it is the message you
                     opened. */}
                 <div className="hm-body hm-rich">
+                  {/* `remoteLoaded` is the same three-term OR the focused message uses, and it
+                      has to be the same one: a sibling that kept the "Show images" button while
+                      the message above it rendered its pictures would be two answers to one
+                      account setting, on one screen. See `MessagePane`. */}
                   <MessageBody
                     messageId={m.id}
                     text={body.text}
                     html={body.html}
                     remoteLoaded={
-                      body.loadedRemoteContent || (chrome.remoteImages?.consented(m.id) ?? false)
+                      body.loadedRemoteContent ||
+                      (chrome.remoteImages?.auto ?? false) ||
+                      (chrome.remoteImages?.consented(m.id) ?? false)
                     }
                     imageProxy={chrome.remoteImages ? chrome.remoteImages.proxyFor(m.id) : null}
                     onLoadRemote={
-                      chrome.remoteImages ? () => chrome.remoteImages!.consent(m.id) : undefined
+                      chrome.remoteImages && !chrome.remoteImages.auto
+                        ? () => chrome.remoteImages!.consent(m.id)
+                        : undefined
                     }
                   />
                 </div>

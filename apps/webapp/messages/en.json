@@ -602,6 +602,13 @@
       "saved": "Saved.",
       "failed": "Couldn't save that — try again."
     },
+    "images": {
+      "title": "Load images in messages",
+      "on": "Pictures in a message load when you open it, through ohmail's proxy.",
+      "off": "Each message asks first. Press Show images to load them.",
+      "microcopy": "Either way, images come through our proxy, so a sender never sees your address — and a tracking pixel is never fetched at all.",
+      "failed": "Couldn't save that — try again."
+    },
     "dormancy": {
       "title": "When a sender goes quiet",
       "description": "Days of quiet before a sender you've never decided about waits in History instead of the Screener.",
@@ -738,7 +745,7 @@
     "calloutWhyTitle": "Every mail says why",
     "calloutWhy": "The rule that filed it, in plain words.",
     "calloutTrackerTitle": "Spy pixels, blocked",
-    "calloutTracker": "Remote images never load when you read a message, so a tracking pixel cannot fire. When you ask for them, they come through our proxy — the sender learns nothing about you, not even your address.",
+    "calloutTracker": "A tracking pixel is never fetched — not on open, not on request, not ever. Ordinary pictures load through our proxy, so the sender learns nothing about you, not even your address.",
     "calloutsLabel": "Things to notice in the demo",
     "hintsLabel": "Inside the demo",
     "hintCmdk": "everything, by name",
@@ -846,7 +853,7 @@
     "attachmentsTerm": "Attachments",
     "attachmentsBody": "Open a PDF or an image inside the message. Everything else downloads, and nothing renders itself.",
     "trackersTerm": "Trackers",
-    "trackersBody": "Remote images never load on their own, so a spy pixel cannot fire. Ask for them and they come through a proxy.",
+    "trackersBody": "A spy pixel is never fetched, so it cannot fire. Ordinary pictures load through our proxy, which hides your address from the sender.",
     "darkTerm": "Dark mail",
     "darkBody": "HTML mail adapted to a dark screen, with the sender's original one click away.",
     "laterTerm": "Later",
@@ -988,7 +995,7 @@
     "q4": "What exactly is an AI action?",
     "a4": "One unit of AI work: a Screener suggestion for a new sender, a summary, a drafted reply. When your monthly actions run out, mail keeps flowing rules-only until the next cycle. There are no overage charges — ever.",
     "q5": "Do you read my mail?",
-    "a5": "Not as a matter of practice, and our admin tools do not display message content — every response the console can produce is checked by a test that writes a marker into every text column of every table and fails if any of it reaches a staff response. The database itself does not yet refuse those columns to staff tooling: the column-restricted role that would enforce this below the application is built and tested but not yet live, and we will not claim it until it is. The honest fine print: Cloud mail is stored unencrypted at the application level and is not end-to-end encrypted, so someone with production database access could technically read it; that access is held by very few people, and the product privacy policy will spell out who and under what conditions when it publishes, before the first real mailbox connects. On Desktop the question doesn't arise — your mail never reaches our servers at all: the app runs as a real mail client against your own server, on macOS, Windows and Linux alike. Separately, nobody else gets to watch you read either: remote images never load on their own, so a spy pixel cannot fire, and ohmail records who tried.",
+    "a5": "Not as a matter of practice, and our admin tools do not display message content — every response the console can produce is checked by a test that writes a marker into every text column of every table and fails if any of it reaches a staff response. The database itself does not yet refuse those columns to staff tooling: the column-restricted role that would enforce this below the application is built and tested but not yet live, and we will not claim it until it is. The honest fine print: Cloud mail is stored unencrypted at the application level and is not end-to-end encrypted, so someone with production database access could technically read it; that access is held by very few people, and the product privacy policy will spell out who and under what conditions when it publishes, before the first real mailbox connects. On Desktop the question doesn't arise — your mail never reaches our servers at all: the app runs as a real mail client against your own server, on macOS, Windows and Linux alike. Separately, nobody else gets to watch you read either: a spy pixel is never fetched, so it cannot report that you opened anything, and ohmail records who tried. Ordinary pictures do load, through our own proxy, which means the sender's server sees us and never your address.",
     "q6": "Which providers work?",
     "a6": "Any IMAP mailbox: your own domain at Metanet or Infomaniak, iCloud, Gmail, Outlook, a self-hosted server. If it speaks IMAP, ohmail organizes it in place. Native Exchange sync over Microsoft Graph is on the roadmap; today Microsoft 365 connects over IMAP like everything else.",
     "q7": "Is there a trial for Cloud?",

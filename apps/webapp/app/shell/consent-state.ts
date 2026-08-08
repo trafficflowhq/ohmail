@@ -55,6 +55,22 @@ export interface ConsentState {
    * derivation of "is it on" is how the two get to disagree.
    */
   autoSuggestAt: string | null;
+  /**
+   * DOES THIS ACCOUNT KEEP THE PER-MESSAGE "SHOW IMAGES" FLOW? True = manual, the old behaviour.
+   * False = the product default: a message's remote images load through the proxy on open.
+   *
+   * **It starts TRUE, and that direction is the opposite of every other flag on this object and
+   * is deliberate.** {@link autoSuggest} starts false because ON authorises spending, so "I do not
+   * know" must not buy anything. Here the dangerous direction is reversed: "I do not know" must
+   * not LOAD anything, because the account may have opted out and this build cannot see it. So a
+   * failed `GET /consent`, an API too old to carry the field, and a build with no API at all
+   * (`apiConfigured()` false — the desktop) all leave this true and keep today's per-message
+   * button. Only a successful read that carried `blockRemoteImagesAt: null` moves it to false, and
+   * that null is a server saying it read the row and found no opt-out.
+   */
+  blockRemoteImages: boolean;
+  /** When they opted out, for the settings row that says so. Null whenever images load. */
+  blockRemoteImagesAt: string | null;
   /** False until the first answer lands — an onboarding step must not flash before then. */
   known: boolean;
   /**
@@ -92,6 +108,11 @@ const RESTING: ConsentState = {
   activeUndecidedSenders: 0,
   autoSuggest: false,
   autoSuggestAt: null,
+  // MANUAL AT REST. See {@link ConsentState.blockRemoteImages}: this is the one field whose safe
+  // resting value is the non-default one, because the failure it guards against is loading a
+  // sender's content for somebody who asked us not to.
+  blockRemoteImages: true,
+  blockRemoteImagesAt: null,
   known: false,
   standalone: false,
 };
@@ -122,6 +143,15 @@ export function useConsentState(active: boolean): ConsentState & {
    * leave the open tab counting with the stale window.
    */
   setDormancyDays: (days: number | null) => Promise<number>;
+  /**
+   * Keep the per-message "Show images" flow, or let images load, and keep the local answer in step
+   * with the stored one.
+   *
+   * Resolves to what the DATABASE holds, set from the echo rather than from the argument, for the
+   * same reason as the two above and one sharper one: a write that FAILED must never leave this
+   * tab believing images may load. It rethrows so the caller can say so.
+   */
+  setBlockRemoteImages: (blocked: boolean) => Promise<boolean>;
 } {
   const [state, setState] = useState<ConsentState>(RESTING);
 
@@ -153,6 +183,15 @@ export function useConsentState(active: boolean): ConsentState & {
           autoSuggest: wire.autoSuggestAt != null,
           // Normalised to null so `undefined` (an API from before mail 0040) cannot reach a view.
           autoSuggestAt: wire.autoSuggestAt ?? null,
+          // `=== undefined` and NOT `== null`, which is the opposite of the line four above it and
+          // is the whole point. `null` means the server read the row and found no opt-out ⇒ images
+          // load. `undefined` means this API predates mail 0048 and never looked ⇒ keep the button.
+          // Writing this as `!= null` would collapse the two and load remote content on behalf of
+          // an account whose stored preference this build cannot see.
+          blockRemoteImages: wire.blockRemoteImagesAt === undefined
+            ? true
+            : wire.blockRemoteImagesAt !== null,
+          blockRemoteImagesAt: wire.blockRemoteImagesAt ?? null,
           known: true,
           standalone: false,
         });
@@ -181,8 +220,24 @@ export function useConsentState(active: boolean): ConsentState & {
     return res.dormancyDays;
   }, []);
 
+  const setBlockRemoteImages = useCallback(async (blocked: boolean): Promise<boolean> => {
+    const res = await consentApi.setBlockRemoteImages(blocked);
+    const on = res.blockRemoteImagesAt != null;
+    // BOTH FIELDS FROM THE SAME ECHO, as with auto-suggest — a row reading "Off since <yesterday>"
+    // about a refused write is the failure that rule exists to prevent, and here the refused write
+    // is the one that would start loading a sender's images.
+    setState((prev) => ({ ...prev, blockRemoteImages: on, blockRemoteImagesAt: res.blockRemoteImagesAt ?? null }));
+    return on;
+  }, []);
+
   // Derived rather than stored, so it cannot be left behind by a `setState` that forgot it: it
   // is a fact about the BUILD and the mode, and both are settled before the first render.
   // `active` is `!demo`; see {@link ConsentState.standalone}.
-  return { ...state, standalone: active && !apiConfigured(), setAutoSuggest, setDormancyDays };
+  return {
+    ...state,
+    standalone: active && !apiConfigured(),
+    setAutoSuggest,
+    setDormancyDays,
+    setBlockRemoteImages,
+  };
 }

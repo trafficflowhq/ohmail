@@ -80,6 +80,7 @@ import { useScreenerSuggestions, type SenderSuggestion } from "./screener-sugges
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
+import { RemoteImagesRow } from "./RemoteImagesRow";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
   composePlan,
@@ -1070,7 +1071,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * the client is how somebody is told the wrong reason, and a consent write can fail for
    * reasons this shell has no way to enumerate.
    */
-  const remoteImages = useRemoteImages({ onFailed: (message) => toast(message) });
+  /*
+   * `mode` is resolved from the SAME `useConsentState` the Settings toggle writes through, so
+   * flipping the setting re-renders the open message with the new mode instead of leaving this
+   * tab on the value it started with — the argument `dormancySection` makes about the dial.
+   *
+   * `blockRemoteImages` is TRUE at rest, so everything that is not a successful read of a server
+   * that reported no opt-out — a failed fetch, an API older than mail 0048, the demo, a build with
+   * no API — arrives here as `"manual"` and keeps the per-message button. See `consent-state.ts`.
+   */
+  const remoteImages = useRemoteImages({
+    onFailed: (message) => toast(message),
+    mode: consent.blockRemoteImages ? "manual" : "auto",
+  });
 
   /**
    * The Screener's unsubscribe passthrough (C) — `engine.unsubscribe`, or ABSENT on the demo.
@@ -3296,6 +3309,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    on the demo (`useConsentState(!demo)` never fetches, so `known` stays false). */
                 dormancySection={demo || !consent.known ? undefined : (
                   <DormancyRow days={consent.dormancyDays} setDormancyDays={consent.setDormancyDays} />
+                )}
+                /* REMOTE IMAGES. Gated on `consent.known` for a sharper version of the dial's
+                   reason: the resting value is MANUAL, so drawing the row before the server has
+                   answered would show a switch in the OFF position to an account whose stored
+                   setting is ON — and somebody who then left it alone would believe they had
+                   chosen the state they were merely shown. Absent on the demo (no server) and on a
+                   standalone install (`known` never becomes true), both of which keep the
+                   per-message flow that `useRemoteImages` gives them anyway. */
+                remoteImagesSection={demo || !consent.known ? undefined : (
+                  <RemoteImagesRow
+                    blocked={consent.blockRemoteImages}
+                    setBlockRemoteImages={consent.setBlockRemoteImages}
+                  />
                 )}
                 billingSection={demo ? undefined : billingSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has

@@ -1,0 +1,62 @@
+-- REMOTE IMAGES BY DEFAULT — and the column stores the OPT-OUT, not the opt-in.
+--
+-- Until now every remote reference in every message was blocked until the reader pressed "Show
+-- images", once per message, for ever. That is the correct default for a tracking pixel and the
+-- wrong one for a photograph: the great majority of remote images in real mail are the mail, and
+-- a product that makes somebody press a button to see the picture their sister sent has charged
+-- them for a protection they were already getting elsewhere. The proxy is what makes the change
+-- affordable — an image loads through `GET /img`, server-side, from a port whose signature takes
+-- only a url, so the sender never learns the reader's address whether or not a button was pressed.
+--
+-- ══ NULL IS THE NEW DEFAULT, AND THAT IS WHY THE COLUMN IS SPELLED THIS WAY ═════════════════
+--
+-- `block_remote_images_at` NULL means "images load automatically". NOT NULL means "this account
+-- asked to keep the per-message consent flow", and the instant is when they asked.
+--
+-- The alternative spelling — `auto_load_remote_images_at`, an opt-IN — was rejected for a reason
+-- that is specific rather than stylistic: it would leave every existing account, and every account
+-- created before they find the setting, on the old behaviour, and a default nobody is on is not a
+-- default. Storing the opt-OUT means the product's answer moves with the product, and the only
+-- rows in this column belong to people who deliberately chose otherwise. `dormancy_days` makes the
+-- same argument one column over ("never store the default").
+--
+-- The direction is also the one that fails safe under a bad read. A row that is absent, or a value
+-- that is NULL, is genuinely "this account never chose" ⇒ the product default. But a settings READ
+-- that FAILED is not that: the client cannot distinguish "no opt-out stored" from "I could not
+-- ask", and loading trackers for somebody who did opt out is the one outcome this product may not
+-- produce. So the client's resting value is MANUAL and only a successful read can move it to auto
+-- (`consent-state.ts`), which is the mirror of `auto_suggest_at`'s rule that a failed read must
+-- never authorise spending.
+--
+-- ══ WHAT DOES NOT CHANGE, IN EITHER MODE ═══════════════════════════════════════════════════
+--
+-- A TRACKING PIXEL IS STILL NEVER FETCHED. The sanitizer classifies a 1×1, a zero-dimension and a
+-- beacon-shaped url as `pixel` and overrides the proxy for it — auto mode changes which *pictures*
+-- load, and nothing whatsoever about beacons. Remote STYLESHEETS stay blocked in both modes too:
+-- a sheet cannot travel through an image proxy, so there is no version of it that is private.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO CHECK ═════════════════════════════════════════════════════════
+--
+-- `ADD COLUMN IF NOT EXISTS`, nullable, no default: a catalog-only change on a table with one row
+-- per account, so a replay is a no-op and a partially-applied window costs nothing. No CHECK —
+-- 0030's rule, a timestamp closes no set. `ADD COLUMN` inherits the table's grants.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → API. `consentSettings` selects whole `account_settings` rows, so an API deployed
+-- ahead of this answers Postgres 42703 on `GET /consent` and on `PATCH /consent/settings` — the
+-- consent surface, not just this feature. The health marker
+-- `["account_settings","block_remote_images_at"]` turns that into a `503 schema_incomplete` naming
+-- this file. No worker half: nothing in the sync worker reads or writes it.
+--
+-- A CLIENT older than the API ignores a field it does not know and keeps its per-message flow. A
+-- client NEWER than the API reads `undefined`, which its resting value treats as MANUAL — the same
+-- safe direction as a failed read. Neither needs the other to ship first.
+--
+-- ROLLBACK is `ALTER TABLE account_settings DROP COLUMN block_remote_images_at`, which costs the
+-- stored opt-outs and returns every account to auto-load. That is the one rollback in this schema
+-- whose safe direction is NOT simply dropping the column, so if it is ever taken, the API has to
+-- go back first: an API without the field reads no opt-out and would load images for the people
+-- who asked it not to.
+
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "block_remote_images_at" timestamp with time zone;

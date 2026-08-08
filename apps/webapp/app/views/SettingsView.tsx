@@ -215,6 +215,7 @@ export function SettingsView({
   autoSuggestSection,
   screeningSection,
   dormancySection,
+  remoteImagesSection,
   desktopSection,
 }: {
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
@@ -360,6 +361,22 @@ export function SettingsView({
    */
   dormancySection?: ReactNode;
   /**
+   * REMOTE IMAGES — the reading preference, injected, and it belongs to GENERAL rather than to any
+   * of the Screener's controls.
+   *
+   * Everything in the Screener pane is about which mail is SHOWN to you and when. This is about how
+   * a message you have already opened is drawn, which is the same class of question as the theme
+   * it sits under. Filing it with the Screener would put a reading preference behind a pane a
+   * reader only visits to deal with strangers.
+   *
+   * The same injection seam as {@link autoSuggestSection}: it writes `PATCH /consent/settings`
+   * through `app/api-client` and through the shell's `useConsentState` (so the open message
+   * re-renders in the new mode), neither of which this shared, desktop-mirrored file may name.
+   * Absent ⇒ no row — the demo, and a standalone install, which has no server to store the
+   * preference on and therefore keeps the per-message flow.
+   */
+  remoteImagesSection?: ReactNode;
+  /**
    * WHICH DOOR THIS INSTALL CAME IN BY — the desktop app's own pane, injected.
    *
    * The mirror image of {@link accountSection}. That one is absent on the desktop because a
@@ -468,6 +485,10 @@ export function SettingsView({
                   />
                 }
               />
+              {/* HOW AN OPENED MESSAGE IS DRAWN — the same class of question as the theme above
+                  it, which is why it is here and not in the Screener pane. Absent on the demo and
+                  on a standalone install; see {@link remoteImagesSection}. */}
+              {remoteImagesSection}
             </SettingsSection>
           ) : null}
 

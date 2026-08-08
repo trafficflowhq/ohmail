@@ -46,6 +46,21 @@
  * server flag decides what the NEXT one does. Flipping locally on a POST that then fails
  * gives a reader images now and no images after a reload, with nothing said in between. So
  * the click awaits the write, and a refusal is reported and loads nothing.
+ *
+ * ── AND THE BUTTON IS NOW THE MINORITY CASE ─────────────────────────────────────────────
+ *
+ * The product default moved: a message's remote images load on open, through the proxy, and the
+ * per-message consent flow above is what an account gets when it OPTS OUT (mail 0048,
+ * `account_settings.block_remote_images_at`). Everything in this file still exists and still runs
+ * unchanged in that mode — the module did not become dead code, it became the second branch.
+ *
+ * What did not move: **a tracking pixel is never fetched in either mode.** That refusal lives in
+ * the sanitizer, where a 1×1, a zero-dimension image and a beacon-shaped url override the proxy
+ * outright (`MessageBody.tsx`), and it is not reachable from this file at all. Nor did remote
+ * stylesheets, which have no proxied form to load. The default that changed is which PICTURES a
+ * reader has to ask for, and it is affordable precisely because of the paragraph above it: the
+ * proxy's port takes a url and nothing else, so an image the reader never pressed a button for
+ * still tells the sender nothing about them.
  */
 
 import { useCallback, useMemo, useState } from "react";
@@ -73,6 +88,24 @@ export interface RemoteImagesChrome {
   consented: (messageId: string) => boolean;
   /** The reader pressed "Show images". Awaits the server, then admits the images. */
   consent: (messageId: string) => void;
+  /**
+   * DOES THIS ACCOUNT LOAD REMOTE IMAGES WITHOUT BEING ASKED? The account setting, carried on the
+   * chrome so the two surfaces that render a message (`MessagePane`, `Conversation`) read one
+   * answer instead of each reaching for the consent state themselves.
+   *
+   * `true` ⇒ every message's pictures come through the proxy on open and there is no per-message
+   * button, because there is nothing left for it to do. `false` ⇒ exactly today's behaviour: the
+   * bar counts what was blocked and offers "Show images".
+   *
+   * **It changes NOTHING about pixels.** A beacon or a 1×1 is refused the proxy in both modes,
+   * inside the sanitizer, and remote stylesheets are blocked in both modes because a sheet cannot
+   * be proxied at all. What moves is which PICTURES load.
+   *
+   * It is deliberately not folded into {@link consented}: that function answers "did this person
+   * press the button for this message", which is a per-message fact the auto mode does not make
+   * true, and a caller that needed to tell the two apart would have no way left to.
+   */
+  auto: boolean;
 }
 
 /**
@@ -101,6 +134,17 @@ export function imageProxyUrl(
 export interface RemoteImagesOptions {
   /** Say why the consent could not be recorded. The server's own sentence, never a guess. */
   onFailed: (message: string) => void;
+  /**
+   * THE ACCOUNT'S OWN ANSWER — `"auto"` (the product default: pictures load through the proxy on
+   * open) or `"manual"` (the per-message consent flow, which this product shipped with).
+   *
+   * REQUIRED, with no default, and that is the point. A caller that forgot it would get whichever
+   * value read better in this file, and the wrong one loads a sender's content for somebody who
+   * asked us not to. The one caller resolves it from `useConsentState().blockRemoteImages`, whose
+   * resting value is manual — so a failed settings read, an API too old to have the field, and a
+   * build with no API all arrive here as `"manual"`.
+   */
+  mode: "auto" | "manual";
 }
 
 /**
@@ -150,8 +194,10 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
     [allowed, pending, onFailed],
   );
 
+  const auto = opts.mode === "auto";
+
   return useMemo(
-    () => (apiConfigured() ? { proxyFor, consented, consent } : undefined),
-    [proxyFor, consented, consent],
+    () => (apiConfigured() ? { proxyFor, consented, consent, auto } : undefined),
+    [proxyFor, consented, consent, auto],
   );
 }

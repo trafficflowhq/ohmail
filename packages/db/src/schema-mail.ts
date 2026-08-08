@@ -1506,6 +1506,30 @@ export const accountSettings = pgTable("account_settings", {
    * never as a deadline.
    */
   screenerAutoApplyAt: timestamp("screener_auto_apply_at", { withTimezone: true }),
+  /**
+   * REMOTE IMAGES — the OPT-OUT, and the direction is the whole design (mail 0048).
+   *
+   * NULL (and no row) = the product default: a message's remote images load automatically,
+   * through `GET /img`, which fetches server-side so the sender never learns the reader's
+   * address. NOT NULL = this account asked to keep the per-message "Show images" consent flow,
+   * and the instant is when they asked.
+   *
+   * Stored as the opt-out rather than as an opt-in so the default moves with the product: an
+   * opt-in column would leave every existing account, and everyone who never finds the setting,
+   * on the old behaviour — which is a default nobody is on. Same argument as `dormancyDays`'
+   * "never store the default", one column over.
+   *
+   * **This is the ONE flag on this row whose failed read must default to the NON-null branch.**
+   * `autoSuggestAt` and `screenerAutoApplyAt` read a failed fetch as OFF because ON spends money
+   * or moves mail. Here, "off" is what loads remote content, so an unknown answer resolves to
+   * MANUAL (`consent-state.ts`'s resting value) — a client that could not ask must never load
+   * trackers for somebody who opted out. Row-absent is NOT that case: it is a real answer from a
+   * server that read the row, and it means auto.
+   *
+   * A TRACKING PIXEL IS UNAFFECTED IN EITHER MODE. The sanitizer classifies beacons and 1×1s
+   * separately and overrides the proxy for them; this flag governs pictures only.
+   */
+  blockRemoteImagesAt: timestamp("block_remote_images_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

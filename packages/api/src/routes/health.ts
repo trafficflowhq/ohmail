@@ -505,8 +505,21 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // and stated here rather than left to be inferred. Nothing filters or pages on the column: the
   // sort runs on the client over the window it already holds, and the server's keyset stays
   // `(date, id)`. A permanent index maintained by every read of every message, serving no query,
-  // is a write cost with no reader. It is the NEWEST entry in the mail journal.
+  // is a write cost with no reader.
   ["messages", "last_read_at"],
+  // mail 0048_remote_images_default — the remote-images OPT-OUT. One additive nullable column on
+  // `account_settings`, and it earns a marker for the same whole-row-select reason as
+  // `auto_suggest_at` (0040) and `screener_auto_apply_at` (0046): `consentSettings` does
+  // `select().from(accountSettings)`, so an API deployed ahead of the migration answers Postgres
+  // 42703 on `GET /consent` AND on `PATCH /consent/settings` — the whole consent surface, which
+  // onboarding runs through, not just this feature.
+  //
+  // No worker half: nothing in the sync worker reads or writes it. Deploy order: migration → API.
+  //
+  // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker — the column is
+  // read off a row fetched by primary key and nothing filters on it. It is the NEWEST entry in the
+  // mail journal.
+  ["account_settings", "block_remote_images_at"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -811,8 +824,17 @@ export const MAIL_EXPECTED_MARKERS =
  * read, the delta feed and the snapshot — not a panel, the mail. No CHECK marker (a timestamp
  * closes no set) and no INDEX marker, because nothing filters or pages on the column; the sort it
  * feeds runs on the client. No worker half, so the order is migration → API.
+ *
+ * `0048_remote_images_default` is probed ONCE, by `account_settings.block_remote_images_at` — the
+ * third `account_settings` marker, on the same whole-row-select argument as `auto_suggest_at` and
+ * `screener_auto_apply_at`. It is slightly sharper than either: this column is written through
+ * `PATCH /consent/settings` as well as read through `GET /consent`, so an API ahead of the
+ * migration 42703s both directions of the consent surface. No worker half, no CHECK marker, no
+ * INDEX marker. The order is migration → API — and note that this is the one column here whose
+ * ROLLBACK is not safe in the usual direction: dropping it returns every opted-out account to
+ * auto-loading, so the API goes back before the column does. See the migration.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0047_read_order";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0048_remote_images_default";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
