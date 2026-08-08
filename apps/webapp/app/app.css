@@ -1031,9 +1031,13 @@ body.reading .shell {
   padding-top: 96px;
 }
 
-/* ================= triage ================= */
+/* ================= triage =================
+   The pile switcher and the Reply Run are `ListPane.header` furniture now, above the scroller
+   instead of inside it — which is what keeps the run reachable on a pile longer than the pane.
+   The 30px gutter is the header's (`.vhead`, `.tag-head`), so the segments line up with the
+   title above them and the rows below. */
 .triage-cta {
-  padding: 2px 30px 30px;
+  padding: 0 30px 12px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1042,6 +1046,25 @@ body.reading .shell {
 .triage-cta span {
   font-size: 11.5px;
   color: var(--ink3);
+  min-width: 0;
+}
+/* THE REPLY RUN'S SESSION MARK. It replaces `style={{ opacity: 0.38 }}` on the tile stack —
+   the same purely visual dim, on the row language, so nothing about what it signals changed.
+   A message answered in a run is on its way out of the pile; this is what it looks like in the
+   moment between the send settling and the pile losing the row. */
+.row.fr-done {
+  opacity: 0.38;
+}
+/* A pile entry with no message behind it (the demo world's `triage_item` rows). Same `.row`
+   chrome, rendered as a div — see `TriageView`: there is nothing to open, so there is no
+   button. `.row` is styled for a `<button>`, and these two are what a div does not inherit. */
+.view-triage .row:not(button) {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+.view-triage .row .prev {
+  display: block;
 }
 
 /* ================= search ================= */
@@ -1519,8 +1542,10 @@ body.reading .shell {
 }
 
 /* Triage: the three horizons as one control, above the open pile. */
+/* In the header slot, so its own gutter rather than the scroller's. The bottom margin is gone
+   with the stack it used to sit above — `.triage-cta` follows it now and carries the spacing. */
 .triage-seg {
-  margin: 0 0 18px;
+  margin: 0 30px 10px;
 }
 
 /* Settings → Tags: the rename field and the delete confirmation take the row's place. */
@@ -2250,10 +2275,14 @@ body.reading .shell {
   .view-ohbox .read-col {
     display: none;
   }
-  /* History + Tag in the split layout: same rule as the Ohbox — the reading column is hidden
-     and a tap opens the reader sheet, so the split degrades to the list on a phone. */
+  /* History + Tag + Triage in the split layout: same rule as the Ohbox — the reading column is
+     hidden and a tap opens the reader sheet, so the split degrades to the list on a phone.
+     `TriageView.readColumnHidden()` asks the SAME 900px question before deciding whether a row
+     click selects or opens; the two must not disagree, or a tap would select a message into a
+     column that is not on screen. */
   .view-history .read-col,
-  .view-tag .read-col {
+  .view-tag .read-col,
+  .view-triage .read-col {
     display: none;
   }
   /* …and the header slot keeps the list's horizontal padding on a phone. */
@@ -2391,7 +2420,10 @@ body.reading .shell {
     width: auto;
   }
   .triage-cta {
-    padding: 2px 14px 26px;
+    padding: 0 14px 10px;
+  }
+  .triage-seg {
+    margin: 0 14px 8px;
   }
   .view .msg {
     padding: 20px 20px 40px;

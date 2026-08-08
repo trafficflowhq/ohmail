@@ -1,33 +1,68 @@
 "use client";
 
 /**
- * Triage — the three piles as stacked sheets over the engine's
- * triagePiles selector, plus the Reply Run entry point. Completing
- * a message in a Reply Run clears its reply_later state through the
- * engine, so pile counts stay live everywhere.
+ * ═══ TRIAGE IS A PILE OF MAIL, SO IT LOOKS LIKE ONE ═══════════════════════════════════════
+ *
+ * ── WHAT IT WAS ─────────────────────────────────────────────────────────────────────────
+ *
+ * Three horizons rendered as `PilesStack` — a stack of tiles, one per entry, showing a title,
+ * a subtitle and nothing else. Answer Later, Parked and Resurface are piles of the user's own
+ * mail, and they were the only piles in the product a reader could not READ from: no sender
+ * avatar, no time, no unread state, no tags, no attachment badge, and above all no way to open
+ * the message. To answer something parked you had to remember where it was and find it again
+ * in the Ohbox or in Search.
+ *
+ * ── WHAT IT IS ──────────────────────────────────────────────────────────────────────────
+ *
+ * The Ohbox's own composition: `ListPane` + `MessageRow` on the left, `ReadColumn` +
+ * `MessagePane` on the right. Reading a triage message is now the same act, with the same
+ * verbs, as reading an Ohbox message — because it IS the same components.
+ *
+ * NO THIRD WRAPPER. `TagView` and `HistoryView` already compose these two by hand; a
+ * "pile view" abstraction extracted from three callers would be a guess about the fourth, and
+ * each of the three differs in exactly the part such a wrapper would have to own (Tag has an
+ * admin header, History has a place badge, this has a pile switcher and a run). Two
+ * abstractions — the list pane and the message pane — are the ones that exist.
+ *
+ * ── THE SWITCHER AND THE RUN ARE HEADER FURNITURE ───────────────────────────────────────
+ *
+ * `ListPane.header` is documented for exactly this ("doorbell, segmented control, bulk bar"),
+ * and putting them there is what keeps them on screen while the list scrolls. The Reply Run
+ * button had been under the stack, which meant that on a pile of any length it was below the
+ * fold — a primary action reachable only by scrolling past everything it operates on.
+ *
+ * The segmented control keeps its own argument: Answer Later, Park and Resurface are ONE idea
+ * at three horizons, so they read as one control with three positions rather than three
+ * siblings, and the counts are in the labels because "which of these has anything in it" is the
+ * question somebody is asking when they open this screen.
+ *
+ * THE RUN'S WIRING IS UNTOUCHED. `onStartFR` is the same callback the `f` key has always
+ * called; the shell fills it from `piles.replyLater` and a completed reply clears `reply_later`
+ * through `reply-send.ts`'s settle. This slice moved where the button is, not what it does —
+ * see `triage-split.test.ts`, which pins both ends.
  */
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import type { TriagePiles } from "@ohmail/client-engine";
-import { Button, PilesStack, SegmentedControl } from "@ohmail/ui";
-import { resurfaceLabel } from "../shell/format";
+import type { EngineMessage, TagDTO, TriagePileEntry, TriagePiles } from "@ohmail/client-engine";
+import {
+  Button,
+  ListPane,
+  ListRows,
+  MessageRow,
+  ReadColumn,
+  SegmentedControl,
+} from "@ohmail/ui";
+import { avatarOf, displayTime, hueOf, resurfaceLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useKeyBindings } from "../shell/keymap";
+import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { TRIAGE_PILES, type TriagePileId } from "../shell/routing";
 
-/**
- * ONE HORIZON AT A TIME, SELECTED BY THE ROUTE.
- *
- * Reported as: the triage horizons cannot be selected individually, only Answer Later opens,
- * on all three. This view rendered all three stacks unconditionally as equal peers, and the
- * three rail rows all navigated to the same pile-less `#/triage`, so there was nothing for it
- * to select — see `routing.ts` for the half of the defect that was in the URL.
- *
- * The control is a `SegmentedControl` and not three tabs, for the reason the action bar gives
- * about the same three verbs: Answer Later, Park and Resurface are ONE idea at three horizons,
- * so they read as one control with three positions rather than three siblings. The counts are
- * in the segment labels because "which of these has anything in it" is the question somebody
- * is asking when they look at this screen.
- */
-type T = ReturnType<typeof useTranslations<"triage">>;
+/** Below this the reading column is `display:none` (app.css), so a tap must open the sheet. */
+function readColumnHidden(): boolean {
+  return (
+    typeof window !== "undefined" && window.matchMedia?.("(max-width: 900px)").matches === true
+  );
+}
 
 /** The pile's own name, for the segment label. */
 const PILE_KEY: Record<TriagePileId, "replyLater" | "setAside" | "resurface"> = {
@@ -36,53 +71,29 @@ const PILE_KEY: Record<TriagePileId, "replyLater" | "setAside" | "resurface"> = 
   resurface: "resurface",
 };
 
-const PILE_COUNT: Record<TriagePileId, (p: TriagePiles) => number> = {
-  reply: (p) => p.replyLater.length,
-  aside: (p) => p.setAside.length,
-  resurface: (p) => p.resurface.length,
+/**
+ * The pile's entries, its count and its one-line explanation, as ONE table.
+ *
+ * A table rather than a switch so the segment list, the counts and the rendered rows are three
+ * reads of the SAME three-member union — adding a horizon fails to compile in all of them at
+ * once rather than in one.
+ */
+const PILE_ENTRIES: Record<TriagePileId, (p: TriagePiles) => TriagePileEntry[]> = {
+  reply: (p) => p.replyLater,
+  aside: (p) => p.setAside,
+  resurface: (p) => p.resurface,
 };
 
-/**
- * The one open pile, as `PilesStack` wants it. A table rather than a switch so the segment
- * list, the counts and the rendered stack are three reads of the SAME three-member union —
- * adding a horizon would fail to compile in all three places at once rather than in one.
- */
-const PILE_OF: Record<
-  TriagePileId,
-  (p: TriagePiles, t: T, frDone: Set<string>) => Parameters<typeof PilesStack>[0]["piles"][number]
-> = {
-  reply: (p, t, frDone) => ({
-    id: "reply",
-    icon: "clock",
-    title: t("replyLater"),
-    count: p.replyLater.length,
-    items: p.replyLater.map((item) => ({
-      title: item.title,
-      subtitle: item.subtitle,
-      done: frDone.has(item.messageId ?? item.title),
-    })),
-    hint: t("hintReply"),
-  }),
-  aside: (p, t) => ({
-    id: "aside",
-    icon: "pause",
-    title: t("setAside"),
-    count: p.setAside.length,
-    items: p.setAside.map((item) => ({ title: item.title, subtitle: item.subtitle })),
-    hint: t("hintAside"),
-  }),
-  resurface: (p, t) => ({
-    id: "resurface",
-    icon: "up",
-    title: t("resurface"),
-    count: p.resurface.length,
-    items: p.resurface.map((item) => ({
-      title: item.title,
-      subtitle: item.subtitle,
-      when: item.resurfaceAt ? resurfaceLabel(item.resurfaceAt) : undefined,
-    })),
-    hint: t("hintResurface"),
-  }),
+const PILE_HINT: Record<TriagePileId, "hintReply" | "hintAside" | "hintResurface"> = {
+  reply: "hintReply",
+  aside: "hintAside",
+  resurface: "hintResurface",
+};
+
+const PILE_EMPTY: Record<TriagePileId, "emptyReply" | "emptyAside" | "emptyResurface"> = {
+  reply: "emptyReply",
+  aside: "emptyAside",
+  resurface: "emptyResurface",
 };
 
 export function TriageView({
@@ -91,6 +102,13 @@ export function TriageView({
   onPile,
   frDone,
   onStartFR,
+  messageOf,
+  tags,
+  now,
+  onOpen,
+  hydrateBody,
+  onAction,
+  onAddTag,
 }: {
   piles: TriagePiles;
   /** Which horizon is open — `route.triagePile`. */
@@ -99,10 +117,48 @@ export function TriageView({
   /** Message ids / titles completed in the Reply Run this session. */
   frDone: Set<string>;
   onStartFR: () => void;
+  /**
+   * THE MESSAGE BEHIND A PILE ENTRY, or null.
+   *
+   * A resolver rather than a message array, because the piles are already a projection and
+   * re-deriving them here would be a second answer to "what is in Answer Later". Null is a real
+   * case and not a defect: the demo world carries `triage_item` rows with no backing message
+   * (`fixtures-adapter.ts`), and those cannot be opened by anything.
+   */
+  messageOf: (messageId: string) => EngineMessage | null;
+  tags: TagDTO[];
+  now: Date;
+  /** The reader sheet — the narrow-width tap, where there is no reading column. */
+  onOpen: (m: EngineMessage) => void;
+  /** Hydrate the reading column's message, the way Tag and History hydrate theirs. */
+  hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
+  onAction: (action: MessageAction, message: EngineMessage) => void;
+  onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
 }) {
   const t = useTranslations("triage");
   const total =
     piles.replyLater.length + piles.setAside.length + piles.resurface.length;
+  const entries = PILE_ENTRIES[pile](piles);
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  /**
+   * The message the reading column shows — the user's pick, or the pile's first OPENABLE entry
+   * so the column is never blank beside a list that has rows. Safe here as it is in Tag and
+   * History: this list does not re-partition under the fallback (a pile's membership changes
+   * only when the user files something), so it cannot re-point at a message nobody chose.
+   */
+  const openable = entries
+    .map((e) => (e.messageId ? messageOf(e.messageId) : null))
+    .filter((m): m is EngineMessage => m !== null);
+  const shown = openable.find((m) => m.id === selectedId) ?? openable[0] ?? null;
+
+  /** The cursor is per-pile. Switching horizons must not leave the reader on the last pile's mail. */
+  useEffect(() => setSelectedId(null), [pile]);
+
+  useEffect(() => {
+    if (shown) hydrateBody(shown.id);
+  }, [shown?.id, hydrateBody]);
 
   // `f` starts the Reply Run from here without the shell's "go to Triage first" hop.
   useKeyBindings([
@@ -115,42 +171,142 @@ export function TriageView({
     },
   ]);
 
+  const openRow = (m: EngineMessage) => {
+    if (readColumnHidden()) onOpen(m);
+    else setSelectedId(m.id);
+  };
+
+  /**
+   * One entry, as a row.
+   *
+   * `time` is the RESURFACE INSTANT on the resurface pile and the message's own date
+   * everywhere else. That is the pile's whole subject — a resurfacing message is defined by
+   * when it comes back, and its arrival date is the one fact about it nobody is asking for.
+   *
+   * `fr-done` is the Reply Run's session mark, and it is a class rather than a `MessageRow`
+   * prop for two reasons: the pane is shared with the desktop shell and knows nothing about
+   * runs, and the mark it replaces was `style={{ opacity: 0.38 }}` on a tile — a purely visual
+   * dim with no accessible signal, so nothing is lost by keeping it purely visual here.
+   */
+  const row = (entry: TriagePileEntry, index: number) => {
+    const m = entry.messageId ? messageOf(entry.messageId) : null;
+    const done = frDone.has(entry.messageId ?? entry.title);
+    const when = entry.resurfaceAt ? resurfaceLabel(entry.resurfaceAt) : undefined;
+
+    if (!m) {
+      /* AN ENTRY WITH NO MESSAGE BEHIND IT IS NOT A BUTTON. The demo world's `triage_item`
+         rows have nothing to open, and rendering them through `MessageRow` would put a
+         focusable control on screen whose press does nothing — the inert affordance the
+         product removes wherever it finds one. Same `.row` chrome, no interaction. */
+      return (
+        <div className={done ? "row seen fr-done" : "row seen"} key={`orphan-${index}`}>
+          <span className="row-top">
+            <span className="who">{entry.title}</span>
+            {when ? <span className="t num">{when}</span> : null}
+          </span>
+          <span className="row-mid">
+            <span className="subj">{entry.subtitle ?? ""}</span>
+          </span>
+          {entry.preview ? <span className="prev">{entry.preview}</span> : null}
+        </div>
+      );
+    }
+
+    return (
+      <MessageRow
+        key={m.id}
+        id={m.id}
+        from={senderName(m)}
+        address={rowAddress(m)}
+        {...avatarOf(m)}
+        time={pile === "resurface" ? when : displayTime(m, now)}
+        subject={m.subject}
+        preview={m.protected ? undefined : m.snippet}
+        unread={m.unread}
+        seen={!m.unread}
+        selected={shown?.id === m.id}
+        threadCount={m.threadCount}
+        hasAttachment={m.hasAttachments}
+        protected={m.protected != null}
+        tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
+        {...(done ? { className: "fr-done" } : {})}
+        onClick={() => openRow(m)}
+      />
+    );
+  };
+
   return (
-    <section className="view col view-triage">
-      <div className="vhead">
-        <h1>{t("title")}</h1>
-        <span className="meta num">{t("meta", { count: total })}</span>
-      </div>
-      <div className="scroller">
-        <SegmentedControl<TriagePileId>
-          ariaLabel={t("pilesAria")}
-          value={pile}
-          onChange={onPile}
-          className="triage-seg"
-          options={TRIAGE_PILES.map((id) => ({
-            id,
-            label: t("segLabel", { name: t(PILE_KEY[id]), count: PILE_COUNT[id](piles) }),
-          }))}
-        />
-        {/* ONE pile. `PilesStack` takes a list and this hands it a list of one — no change in
-            `packages/ui`, which is shared with the desktop shell and has no business knowing
-            that this host routes by pile. */}
-        <PilesStack piles={[PILE_OF[pile](piles, t, frDone)]} />
-        {/* THE REPLY RUN BELONGS TO ONE PILE, SO IT IS ON ONE PANE.
-            It was under all three, saying "Steps through the Answer Later pile, one message
-            per screen" while Parked was on screen — a primary action that operates on a
-            different pile than the one being looked at reads as misplacement, and it is: the
-            run's items are `piles.replyLater` whichever pane you start it from. Scoped rather
-            than re-worded, because no wording makes a button that acts elsewhere belong here. */}
-        {pile === "reply" ? (
-          <div className="triage-cta">
-            <Button variant="primary" icon="spark" kbdHint="f" onClick={onStartFR}>
-              {t("cta")}
-            </Button>
-            <span>{t("ctaNote")}</span>
-          </div>
+    <section className="view split view-triage">
+      <ListPane
+        title={t("title")}
+        meta={t("meta", { count: total })}
+        header={
+          <>
+            <SegmentedControl<TriagePileId>
+              ariaLabel={t("pilesAria")}
+              value={pile}
+              onChange={onPile}
+              className="triage-seg"
+              options={TRIAGE_PILES.map((id) => ({
+                id,
+                label: t("segLabel", { name: t(PILE_KEY[id]), count: PILE_ENTRIES[id](piles).length }),
+              }))}
+            />
+            {/* THE REPLY RUN BELONGS TO ONE PILE, SO IT IS ON ONE PANE.
+                It was under all three, saying "Steps through the Answer Later pile, one message
+                per screen" while Parked was on screen — a primary action that operates on a
+                different pile than the one being looked at reads as misplacement, and it is:
+                the run's items are `piles.replyLater` whichever pane you start it from. Scoped
+                rather than re-worded, because no wording makes a button that acts elsewhere
+                belong here.
+
+                The other two piles keep the same row and put their own one-line explanation in
+                it, so the header is one shape at three horizons rather than a band that appears
+                and disappears as the segments change. */}
+            <div className="triage-cta">
+              {pile === "reply" ? (
+                <Button variant="primary" icon="spark" kbdHint="f" onClick={onStartFR}>
+                  {t("cta")}
+                </Button>
+              ) : null}
+              <span>{pile === "reply" ? t("ctaNote") : t(PILE_HINT[pile])}</span>
+            </div>
+          </>
+        }
+        /* NO `hints` STRIP. The Ohbox's lists it because the Ohbox binds j, k, ↵, t, x and u;
+           this view binds one chord, `f`, and it is already printed on the Reply Run button by
+           `kbdHint`. A hints row here would have to invent rows for keys that are not bound —
+           a legend for a keyboard that does not exist. */
+      >
+        <ListRows>
+          {entries.length ? (
+            entries.map(row)
+          ) : (
+            /* THE PILE'S OWN EMPTINESS, in the `.empty` shape every other pile uses. It states
+               what the pile is FOR, which is the only useful thing to say about an empty one —
+               the same job the tile stack's hint line did, one layer up. */
+            <div className="empty">
+              <span className="glyph" aria-hidden="true">◷</span>
+              <b>{t(PILE_EMPTY[pile])}</b>
+              {t(PILE_HINT[pile])}
+            </div>
+          )}
+        </ListRows>
+      </ListPane>
+      {/* THE READING COLUMN — the Ohbox's own. No `onEnterReader` on the pane, for the reason
+          the Ohbox and Tag omit it: the "open reading mode" button would sit at exactly the
+          widths where the sheet duplicates this column. */}
+      <ReadColumn>
+        {shown ? (
+          <MessagePane
+            message={shown}
+            tags={tags}
+            now={now}
+            onAction={(a) => onAction(a, shown)}
+            onAddTag={onAddTag}
+          />
         ) : null}
-      </div>
+      </ReadColumn>
     </section>
   );
 }
