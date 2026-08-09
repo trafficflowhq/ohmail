@@ -316,6 +316,17 @@ export interface AttachmentItem {
   sizeBytes: number;
   state: "idle" | "loading" | "ready" | "failed" | "too_large";
   /**
+   * Is this part one the html body REFERENCES (`cid:`) rather than one the sender attached as a
+   * file — a signature logo, an embedded screenshot, a newsletter's header image.
+   *
+   * Carried rather than filtered away, because whether it is a "file" depends on something this
+   * layer cannot see: HOW THE MESSAGE IS BEING DRAWN. In a framed rendering the html paints it
+   * and listing it too would name the same picture twice. In the app's own frameless typography
+   * no image is drawn at all, so an inline picture is unreachable unless something lists it —
+   * which is what {@link OhmailEngine.attachmentsOf}'s `includeInlineImages` is for.
+   */
+  inline: boolean;
+  /**
    * A `blob:` URL for the fetched bytes, valid ONLY in the document that minted it.
    *
    * SAFE FOR `<img src>` AND `<a download>`. NOT safe to navigate to top-level: a `blob:` URL
@@ -351,10 +362,10 @@ export interface AttachmentItem {
  * and `ready` with an EMPTY `items` is a different, also-true answer that the surface must render
  * differently. The second one is COMMON rather than an edge case, and structurally so: a great
  * many messages carry `inline` parts and nothing else — an embedded logo in an HTML mail is one —
- * and {@link toAttachmentItem}'s caller filters those out. The paperclip is painted from
- * `hasAttachments`, which COUNTS them. So a paperclip over an empty strip is not a rare
- * inconsistency to be tidied away; it is a state the UI has to be able to say something honest
- * about.
+ * and {@link OhmailEngine.attachmentsOf} withholds those from a caller that did not ask for them.
+ * The paperclip is painted from `hasAttachments`, which COUNTS them. So a paperclip over an empty
+ * strip is not a rare inconsistency to be tidied away; it is a state the UI has to be able to say
+ * something honest about.
  */
 export type AttachmentsOutcome =
   | { state: "unavailable" }
@@ -426,7 +437,21 @@ function toAttachmentItem(wire: AttachmentWire): AttachmentItem {
     mimeType: wire.contentType || "application/octet-stream",
     sizeBytes: wire.sizeBytes,
     state: "idle",
+    inline: wire.inline === true,
   };
+}
+
+/**
+ * Is this part a PICTURE — the only kind of inline part a surface may promote to the strip.
+ *
+ * `image/*` and nothing wider. An inline `text/calendar` or a `cid:`-referenced stylesheet is not
+ * something a reader looking at a frameless rendering is missing, so promoting it would be adding
+ * a row nobody asked about. SVG is deliberately included here and refused one layer up by the
+ * surface's own preview gate — the same posture every other SVG attachment gets, rather than a
+ * second, differently-shaped refusal in this file.
+ */
+function isPictureItem(item: AttachmentItem): boolean {
+  return item.mimeType.startsWith("image/");
 }
 
 export interface EngineOptions {
@@ -2066,10 +2091,35 @@ export class OhmailEngine {
    * Separate from {@link OhmailEngine.loadAttachments} on purpose: React renders far more often
    * than it should fetch, so the render path reads state and the effect path asks for it. A method
    * that fetched on read would issue a request per render, billed with nobody behind it.
+   *
+   * ── `includeInlineImages` — THE PICTURES, FOR A SURFACE THAT DRAWS NONE ──────────────────
+   *
+   * The default answer is FILES ONLY, which is what every caller has always got and what both
+   * `GET /files` and the server's `download-all` mean by "attachment". A `cid:` logo listed beside
+   * a real invoice, in a rendering that already paints that logo, is the same picture named twice.
+   *
+   * The exception is the rendering that paints NO pictures. Mail that declares no layout canvas is
+   * drawn in the app's own typography over the message's TEXT part — deliberately, and the sender's
+   * own rendering is one press away — and on that path an inline image is drawn nowhere at all. It
+   * was in the message, the reader cannot see it, and before this flag there was no surface in the
+   * product that could reach it. A caller that knows it is drawing the frameless rendering asks for
+   * them and gets them as ordinary items: same fetch, same size ceiling, same preview gate, same
+   * download. The flag widens WHAT IS LISTED and nothing else.
+   *
+   * Filtering here rather than at ingest is what keeps the two answers available at once: the pane
+   * asks one way while its own "Download all" asks the same way, and every other caller is
+   * untouched by a message being drawn one way rather than the other.
    */
-  attachmentsOf(messageId: string): AttachmentsOutcome {
+  attachmentsOf(messageId: string, opts: { includeInlineImages?: boolean } = {}): AttachmentsOutcome {
     if (!this.attachmentsAvailable()) return { state: "unavailable" };
-    return this.attachmentLists.get(messageId) ?? { state: "loading" };
+    const held = this.attachmentLists.get(messageId) ?? { state: "loading" as const };
+    if (held.state !== "ready") return held;
+    const shown = held.items.filter(
+      (item) => !item.inline || (opts.includeInlineImages === true && isPictureItem(item)),
+    );
+    // Identity preserved when nothing is withheld — the common case is a message with no inline
+    // parts at all, and a fresh object per render for it would be churn with no reader.
+    return shown.length === held.items.length ? held : { state: "ready", items: shown };
   }
 
   /**
@@ -2091,20 +2141,29 @@ export class OhmailEngine {
    * nothing here reaches the mail server, which is what makes it acceptable to call when a message
    * is opened. The bytes are a separate, deliberate act.
    *
-   * ## INLINE PARTS ARE FILTERED OUT, AND THE PAPERCLIP DOES NOT KNOW
+   * ## INLINE PARTS ARE KEPT HERE AND WITHHELD AT THE READ
    *
    * `inline` parts are `cid:` images the HTML body already references — a newsletter's logo, a
    * signature graphic. They are not files a person means when they say "attachment", and the server
-   * agrees: both `GET /files` and per-message `download-all` exclude them. Filtering here keeps the
-   * strip consistent with the zip.
+   * agrees: both `GET /files` and per-message `download-all` exclude them.
    *
-   * It also exposes a real inconsistency rather than hiding one. `hasAttachments` is derived from
-   * ALL parts (`mime.ts` — `attachments.length > 0`), so 755 of 1,766 flagged messages in production
-   * (43%, measured 2026-08-04) are flagged for inline parts ONLY and will render a paperclip over an
-   * EMPTY strip. That is honest about the data and wrong about the mail. The fix belongs where the
-   * flag is computed, and is deliberately NOT done here: filtering this list to match the flag would
-   * mean listing tracking pixels and signature logos as files, and widening the flag's definition is
-   * an ingest change plus a backfill of every affected row. Filed as its own gap.
+   * They used to be dropped in this method, on that argument, and the argument is right about what
+   * a FILE is and wrong about what a picture is. It is only true that an inline image is already
+   * on screen while the message is drawn from its html; the app's own frameless rendering draws no
+   * images at all, and against that rendering the drop made a picture the sender sent unreachable
+   * from anywhere in the product. So the list keeps every part and {@link OhmailEngine.attachmentsOf}
+   * decides — files only by default, pictures too for a caller that says it is drawing none.
+   *
+   * The paperclip's own inconsistency is untouched and still real. `hasAttachments` is derived from
+   * ALL parts (`mime.ts` — `attachments.length > 0`), so a message flagged for inline parts only
+   * still renders a paperclip over an empty strip anywhere the frameless rendering is not in use.
+   * The fix belongs where the flag is computed — an ingest change plus a backfill — and is filed as
+   * its own gap rather than papered over by listing tracking pixels as files.
+   *
+   * WHAT THIS METHOD ANSWERS IS STILL FILES, whatever the record holds. Every return below goes
+   * through {@link OhmailEngine.attachmentsOf} with no options, so an awaiting caller gets exactly
+   * the list it got before — the widened one is something a surface has to ASK for, and a caller
+   * that did not ask cannot be handed a strip that grew rows it never accounted for.
    *
    * Never rejects: single-flight per message, and the failure is a value the UI can render.
    */
@@ -2113,12 +2172,12 @@ export class OhmailEngine {
     if (!list || !this.attachmentsAvailable()) return { state: "unavailable" };
 
     const inFlight = this.attachmentListRequests.get(messageId);
-    if (inFlight) return inFlight;
+    if (inFlight) return inFlight.then(() => this.attachmentsOf(messageId));
 
     const held = this.attachmentLists.get(messageId);
     // Already answered. Re-reading would discard the per-item byte state (`ready` object URLs and
     // all) for a list that cannot have changed — attachments are immutable parts of a stored message.
-    if (held && held.state === "ready") return held;
+    if (held && held.state === "ready") return this.attachmentsOf(messageId);
     // See `hydrateBody`'s `retry` note: an automatic trigger must not re-ask a server that refused,
     // or a React effect whose identity changes per render loops against it for as long as the view
     // is open. A human pressing Retry passes `retry`.
@@ -2133,8 +2192,7 @@ export class OhmailEngine {
 
     const request = list.call(this.adapter, messageId)
       .then((wire): AttachmentsOutcome => {
-        const items = wire.filter((a) => !a.inline).map(toAttachmentItem);
-        return { state: "ready", items };
+        return { state: "ready", items: wire.map(toAttachmentItem) };
       })
       // The adapter's own classification, kept. `MutationRejectedError` is the one thing
       // `HttpAdapter` throws, and it throws it for THREE reasons: a non-2xx (`rejectionOf`: the
@@ -2163,7 +2221,8 @@ export class OhmailEngine {
       });
 
     this.attachmentListRequests.set(messageId, request);
-    return request;
+    // The RECORD keeps every part (`request` resolves to it); what this returns is the files view.
+    return request.then(() => this.attachmentsOf(messageId));
   }
 
   /**

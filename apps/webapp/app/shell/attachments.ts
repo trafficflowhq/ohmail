@@ -70,8 +70,16 @@ export interface AttachmentsChrome {
    * React effect cannot loop against a server that refused. What was missing was here: the seam
    * threw the answer away. It no longer does, and {@link AttachmentsView} is the strip's own
    * type, so the wire `MessagePane` already passes carries the state without that file changing.
+   *
+   * ## `includeInlineImages` — WHAT THE READER CAN SEE DECIDES WHAT THE LIST HOLDS
+   *
+   * Files only, unless the caller says it is drawing the frameless rendering. The engine's own
+   * note on {@link OhmailEngine.attachmentsOf} carries the argument; the reason it is a PARAMETER
+   * here rather than a setting is that the answer changes per message and per press — a reader can
+   * put any prose message back into its sender's own rendering, and the moment they do, its
+   * pictures are on screen again and listing them would name each one twice.
    */
-  itemsOf(messageId: string): AttachmentsView;
+  itemsOf(messageId: string, opts?: { includeInlineImages?: boolean }): AttachmentsView;
   /**
    * Fetch (if needed) and SAVE one attachment — the DOWNLOAD path, and the primary one. It
    * backs every tile press in the strip and the overlay's own Download button. The preview
@@ -99,8 +107,13 @@ export interface AttachmentsChrome {
    * Fetch every attachment on the message and save them as N DISCRETE FILES, under their own
    * names. Not a zip — see the implementation for why the server's archive route is still
    * mounted and no longer called from here.
+   *
+   * TAKES THE SAME `includeInlineImages` AS {@link itemsOf}, and must be passed the same value.
+   * "Download all" is a promise about the strip standing in front of the reader — the head even
+   * counts it — so a press that enumerated a different list than the one on screen would save a
+   * different number of files than the sentence beside the button just claimed.
    */
-  downloadAll(messageId: string): void;
+  downloadAll(messageId: string, opts?: { includeInlineImages?: boolean }): void;
   downloadingAll(messageId: string): boolean;
 }
 
@@ -137,9 +150,16 @@ export function saveBlob(blob: Blob, filename: string, doc: Document): void {
   setTimeout(() => U.revokeObjectURL?.(url), 30_000);
 }
 
-/** One item out of the engine's per-message list, or `undefined`. */
+/**
+ * One item out of the engine's per-message list, or `undefined`.
+ *
+ * `includeInlineImages` unconditionally, and that is not the same decision the LIST makes. This
+ * resolves an id the caller already holds — it came from a tile the strip drew — so the question
+ * is "which part is this", not "what should be shown". Asking the filtered way would make a press
+ * on a picture in a frameless rendering find nothing and silently do nothing.
+ */
 function itemOf(engine: OhmailEngine, messageId: string, attachmentId: string): AttachmentItem | undefined {
-  const held = engine.attachmentsOf(messageId);
+  const held = engine.attachmentsOf(messageId, { includeInlineImages: true });
   if (held.state !== "ready") return undefined;
   return held.items.find((i) => i.id === attachmentId);
 }
@@ -217,8 +237,8 @@ export function useMessageAttachments(
    * was written to avoid.
    */
   const itemsOf = useCallback(
-    (id: string): AttachmentsView => {
-      const held = engine.attachmentsOf(id);
+    (id: string, opts: { includeInlineImages?: boolean } = {}): AttachmentsView => {
+      const held = engine.attachmentsOf(id, opts);
       switch (held.state) {
         case "unavailable":
           return { state: "unavailable" };
@@ -326,11 +346,11 @@ export function useMessageAttachments(
    * silently. So all the waiting happens first, and then nothing waits.
    */
   const downloadAll = useCallback(
-    (id: string): void => {
+    (id: string, opts: { includeInlineImages?: boolean } = {}): void => {
       void (async () => {
         setDownloadingAll(id);
         try {
-          const held = engine.attachmentsOf(id);
+          const held = engine.attachmentsOf(id, opts);
           if (held.state !== "ready" || held.items.length === 0) {
             // No metadata means nothing to enumerate. The strip is already saying why — the
             // list carries its own failure state — so this is the one case the toast would only
@@ -350,7 +370,9 @@ export function useMessageAttachments(
 
           // RE-READ, never the pre-fetch snapshot: `wanted` holds the states as they were before
           // any of this ran, and saving from it would mean saving a stale `objectUrl` — or none.
-          const after = engine.attachmentsOf(id);
+          // Same `opts` as the enumerate above: a re-read that widened the list would save a file
+          // this press never fetched, and one that narrowed it would drop one it did.
+          const after = engine.attachmentsOf(id, opts);
           const saved = after.state === "ready"
             ? after.items.filter((i) => i.state === "ready" && i.objectUrl)
             : [];

@@ -5,7 +5,7 @@
  * from-line, subject, chips (routing rationale, tracker shield, tags,
  * add-affordance), body or the protected-OTP block, attachment, actions.
  */
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, isProtectedMessage, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, Icon, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
@@ -806,6 +806,33 @@ export function MessagePane({
    * message renders the block with the product's own copy and no policy line, rather than
    * throwing on `message.protected!` the moment this branch became reachable for real mail.
    */
+  /**
+   * ── WHICH RENDERING IS ON SCREEN, BECAUSE THE STRIP BELOW DEPENDS ON IT ──────────────────
+   *
+   * Mail that declares no layout canvas is drawn in the app's own typography over the TEXT part,
+   * and that rendering draws NO IMAGES. So a picture the sender embedded with `cid:` — a photo
+   * pasted into a reply, a scanned page, a chart — is painted nowhere, while the strip beside it
+   * has always withheld exactly those parts on the grounds that the body already showed them. Two
+   * defensible rules that between them made a picture in somebody's mailbox unreachable from the
+   * whole product.
+   *
+   * The strip therefore lists the message's pictures WHEN, AND ONLY WHEN, nothing else is drawing
+   * them. In the framed rendering the html paints them and the filter stands, because a strip that
+   * listed them there would be naming each picture a second time.
+   *
+   * ONE STRING, KEYED BY MESSAGE, AND BOTH HALVES MATTER. Keyed, so the answer for the last
+   * message cannot decide this one's strip for the frame between selecting it and its body
+   * reporting; a primitive, so `setState` with an unchanged value hits React's bail-out and a
+   * child effect that reports on every render cannot become a render loop. Unknown reads as
+   * FRAMED — today's behaviour — so the widened list is something a positive signal turns on.
+   */
+  const [bodyRendering, setBodyRendering] = useState("");
+  const onRenderMode = useCallback(
+    (mode: "prose" | "framed") => setBodyRendering(`${message.id}:${mode}`),
+    [message.id],
+  );
+  const nativeBody = bodyRendering === `${message.id}:prose`;
+
   const extra = message.protected;
   const focusedBody = isProtected ? (
     <ProtectedBlock
@@ -853,6 +880,7 @@ export function MessagePane({
             ? () => chrome.remoteImages!.consent(message.id)
             : undefined
         }
+        onRenderMode={onRenderMode}
       />
     </div>
   );
@@ -869,7 +897,10 @@ export function MessagePane({
       {focusedBody}
       {attachments ? (
         <AttachmentStrip
-          items={attachments.itemsOf(message.id)}
+          /* THE MESSAGE'S PICTURES ARE PART OF THE LIST WHERE NOTHING ELSE DRAWS THEM — see
+             `nativeBody` above. The same value goes to `onDownloadAll`, because the head counts
+             what this list holds and the button beneath that count must save the same set. */
+          items={attachments.itemsOf(message.id, { includeInlineImages: nativeBody })}
           /* SAVING IS THE SECOND VERB NOW — the corner control on a tile that can be looked at,
              and the whole tile on one that cannot. Every attachment can be saved, whatever else
              it can do, so this is never withheld. */
@@ -888,7 +919,7 @@ export function MessagePane({
              in ~/Downloads made the reader find it, open it elsewhere and then delete it. */
           onPreview={(attachmentId) => chrome.openAttachmentPreview(message.id, attachmentId)}
           canPreview={(item) => isPreviewable(item.mimeType)}
-          onDownloadAll={() => attachments.downloadAll(message.id)}
+          onDownloadAll={() => attachments.downloadAll(message.id, { includeInlineImages: nativeBody })}
           downloadingAll={attachments.downloadingAll(message.id)}
         />
       ) : null}

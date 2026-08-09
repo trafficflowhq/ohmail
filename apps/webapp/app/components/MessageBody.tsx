@@ -1827,6 +1827,27 @@ export interface MessageBodyProps {
   imageProxy?: ((url: string) => string) | null;
   /** Called when the reader asks for images. Absent ⇒ no button. */
   onLoadRemote?: () => void;
+  /**
+   * HOW THIS MESSAGE IS ACTUALLY BEING DRAWN, reported to whoever mounted the component.
+   *
+   * `"prose"` is the frameless path — {@link BodyText} over the text part, in the app's own type,
+   * which draws **no images at all**. `"framed"` is the sandboxed `srcdoc`, where the sender's
+   * html paints its own pictures.
+   *
+   * A CALLBACK AND NOT A PROP THE CALLER COMPUTES, because the caller cannot compute it. The
+   * classification is a field of `sanitizeMailHtml`'s result (`prose`), a pass this component
+   * already runs and memoizes; running it a second time in the pane to ask one boolean would
+   * sanitize every message twice per render. Two of the three terms are this component's own
+   * anyway — an empty text part, and the reader's "Show original" press, which is per mount.
+   *
+   * It exists for the attachment strip. The frameless rendering drawing no images means a `cid:`
+   * picture the sender embedded is on screen NOWHERE unless the strip lists it, and the strip is
+   * a sibling of this component rather than a child of it. Optional, and every surface that does
+   * not have that problem omits it and is unchanged.
+   *
+   * Fired after mount and on every change, never during render.
+   */
+  onRenderMode?: (mode: "prose" | "framed") => void;
 }
 
 /**
@@ -1842,6 +1863,7 @@ export function MessageBody({
   remoteLoaded = false,
   imageProxy = null,
   onLoadRemote,
+  onRenderMode,
 }: MessageBodyProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -2130,6 +2152,36 @@ export function MessageBody({
     return () => ro.disconnect();
   }, [ready, measure, mail]);
 
+  /**
+   * ── IS THERE A FRAME ON SCREEN, OR IS THIS THE APP'S OWN TYPE? ────────────────────────────
+   *
+   * Computed HERE, above the three early returns below, because it is read by a hook and a hook
+   * may not sit behind a return. That placement is also what makes it total: `!mail` (no html, or
+   * nothing left after sanitizing), `unsupported` and `oversize` all render {@link BodyText} and
+   * therefore all draw NO IMAGES — the same fact the `ok` branch's `proseView` states, reached by
+   * a different road. Answering only for the `ok` branch would have left three renderings this
+   * component treats identically reported as though they carried a frame.
+   *
+   * The `ok` branch's own `proseView` is this value; see its note below for the three terms.
+   */
+  const framelessView =
+    mail?.state !== "ok" ? true : mail.prose && text.trim().length > 0 && !showOriginal;
+  /**
+   * REPORT IT — see {@link MessageBodyProps.onRenderMode}.
+   *
+   * In an effect, so nothing is announced for a render React may discard, and so a listener that
+   * sets state is never doing it during this component's render. The reported value is derived
+   * from a BOOLEAN, so a listener that maps it to a primitive gets React's own bail-out on an
+   * unchanged value and this cannot become a loop however unstable the callback's identity is.
+   *
+   * It follows the reader's "Show original" press, which is the point: that press brings the frame
+   * back and with it every picture the html paints, and a signal that ignored it would leave a
+   * strip listing pictures that are already on screen.
+   */
+  useEffect(() => {
+    onRenderMode?.(framelessView ? "prose" : "framed");
+  }, [framelessView, onRenderMode]);
+
   // ── no html, or nothing left after sanitizing: the text part, unchanged ──
   if (!mail) return <BodyText text={text} />;
 
@@ -2207,7 +2259,10 @@ export function MessageBody({
    * that offers the sender's own rendering may only appear where there is one to go back TO.
    */
   const proseable = mail.prose && text.trim().length > 0;
-  const proseView = proseable && !showOriginal;
+  /* The same three terms as {@link framelessView} above, and deliberately that value rather than a
+     second spelling of it: two copies of this expression would be two things to keep in step, and
+     the one the strip reads is the one computed above. */
+  const proseView = framelessView;
   const canAdapt = themeDark && adaptable && !proseView;
   const showBar = hasBlocked || canAdapt || proseable;
   /**
