@@ -68,6 +68,29 @@ export interface MessageRowProps {
   heldCount?: number;
   /** Spam variant: detection badge text. */
   detection?: string;
+  /**
+   * A TRAILING CONTROL SLOT — rendered BESIDE the row, never inside it.
+   *
+   * The row is a `<button>`, and a button may not contain another one: nested interactive
+   * content is a parse error, so the browser HOISTS the inner control out of the row and the
+   * two end up siblings anyway — with the DOM no longer matching the tree React thinks it
+   * rendered. It would also break the `role="option"` contract stated on {@link picked}, which
+   * requires the row to have no interactive descendants.
+   *
+   * So a row with actions renders as a flex pair inside one presentational wrapper: the row
+   * button, which keeps every class, `data-id` and role it has always had, and this slot
+   * beside it. `role="presentation"` on the wrapper is what keeps a `listbox`'s ownership of
+   * its `option` rows intact across the extra element.
+   *
+   * ABSENT BY DEFAULT, and absent means the row renders exactly as it always did — the bare
+   * button, no wrapper. Every list but the one that opts in is untouched, byte for byte.
+   *
+   * A caller that wants the slot to come and go DURING a row's exit animation should pass a
+   * component that returns null rather than dropping the prop: changing the prop from present
+   * to absent changes the element tree around the button, which remounts it and kills the
+   * transition mid-flight.
+   */
+  actions?: ReactNode;
   onClick?: () => void;
   className?: string;
 }
@@ -101,6 +124,7 @@ export function MessageRow(props: MessageRowProps) {
     aiSuggestion,
     heldCount,
     detection,
+    actions,
     onClick,
     className,
   } = props;
@@ -178,7 +202,7 @@ export function MessageRow(props: MessageRowProps) {
     </>
   );
 
-  return (
+  const rowButton = (
     <button
       type="button"
       className={cls}
@@ -197,5 +221,14 @@ export function MessageRow(props: MessageRowProps) {
         body
       )}
     </button>
+  );
+
+  // See `actions`: no slot ⇒ the row IS the button, unchanged.
+  if (actions === undefined) return rowButton;
+  return (
+    <div className="row-slot" role="presentation">
+      {rowButton}
+      <span className="row-actions">{actions}</span>
+    </div>
   );
 }

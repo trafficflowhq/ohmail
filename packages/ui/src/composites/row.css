@@ -39,3 +39,11 @@
   height:0 !important;padding-top:0;padding-bottom:0;
   transition:opacity .2s var(--swift), transform .25s var(--swift),
              height .3s var(--spring), padding .3s var(--spring)}
+
+/* the trailing action slot — MessageRow's `actions`, a SIBLING of the row button.
+   The wrapper adds no height of its own, so a row mid-exit still collapses to nothing:
+   `.row.out` shrinks the button and the slot's own contents are gone by then. */
+.row-slot{display:flex;align-items:center;gap:6px}
+.row-slot>.row{flex:1 1 auto;min-width:0;width:auto}
+.row-actions{flex:none;position:relative;display:flex;align-items:center;gap:4px}
+.row-actions:empty{display:none}
