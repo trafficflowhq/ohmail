@@ -91,6 +91,13 @@ export function ReadsView({
   const streamRef = useRef<StreamHandle>(null);
   const listScrollerRef = useRef<HTMLDivElement>(null);
   const [justSeen, setJustSeen] = useState<Set<string>>(() => new Set());
+  /**
+   * THE CARD WHOSE VERBS ARE SHOWING — the one the reader has EXPANDED, not the scroll-spy's
+   * `current`. Gating the bar on `current` made it pop in on every card a scroll settled on; it
+   * now follows expansion, and a click select-AND-expands (see `StreamCard`). Single, so the
+   * stream still mounts one bar, not two hundred.
+   */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const all = useMemo(
     () => [...partition.fresh, ...partition.seen],
@@ -272,13 +279,18 @@ export function ReadsView({
       current={current === m.id}
       onSelect={(id) => onCur(id)}
       /* Expanding a card that holds only a snippet IS the request for the rest of it — and
-         the retry after a failure, which is why the failed copy says to expand again. */
-      onToggle={(open) => open && hydrateBody(m.id, { retry: true })}
-      /* THE VERBS, on the card being read and on no other. The Ohbox's bar, not a second one
-         written for this view — see `MessageActionBar`. Gated on `current` so a stream of two
-         hundred cards mounts one bar rather than two hundred, each with its own panel state. */
+         the retry after a failure, which is why the failed copy says to expand again. It is
+         also what raises the verbs, so record which card is open. */
+      onToggle={(open) => {
+        setExpandedId(open ? m.id : null);
+        if (open) hydrateBody(m.id, { retry: true });
+      }}
+      /* THE VERBS, on the card the reader EXPANDED and on no other. The Ohbox's bar, not a
+         second one written for this view — see `MessageActionBar`. Gated on the expanded card
+         (never on `current`, which a scroll moves) so a stream of two hundred cards mounts one
+         bar, and only when the reader opens a card, not when they scroll past it. */
       actions={
-        onAction && current === m.id ? (
+        onAction && expandedId === m.id ? (
           <MessageActionBar message={m} now={now} onAction={(a) => onAction(a, m)} />
         ) : undefined
       }

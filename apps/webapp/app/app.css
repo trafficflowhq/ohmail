@@ -105,6 +105,26 @@ body.reading .shell {
   justify-content: center;
 }
 
+/* The per-view error fallback (`ViewBoundary`) — a plain, centred card that stands in for a
+   view whose render threw, with the rail still beside it. Deliberately spare: it is the one
+   surface a reader should never spend time on. */
+.view-fail {
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+}
+.view-fail-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  text-align: center;
+}
+.view-fail-card p {
+  color: var(--ink3);
+}
+
 /* The Tag page's header slot — Rename and Delete. It used to carry a reading-layout toggle
    pushed to the right of them; History and Tag are the Ohbox's two-pane shape unconditionally
    now, so there is no toggle and `.view-mode` went with it. Padding matches `.vhead`'s

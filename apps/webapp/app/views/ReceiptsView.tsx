@@ -65,6 +65,14 @@ export function ReceiptsView({
   const streamRef = useRef<StreamHandle>(null);
   const listScrollerRef = useRef<HTMLDivElement>(null);
   const [justSeen, setJustSeen] = useState<Set<string>>(() => new Set());
+  /**
+   * THE CARD WHOSE VERBS ARE SHOWING — the one the reader has EXPANDED, and never the one the
+   * scroll-spy happens to have made `current`. Scrolling moves `current` (selection, the dwell
+   * seen-authority), and gating the reply bar on it made the bar pop in on every card a reader
+   * scrolled past. The bar now follows expansion: a click select-AND-expands (see `StreamCard`),
+   * which is the one gesture that surfaces it. Single, so the stream still mounts one bar.
+   */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const all = messages;
   /**
@@ -252,12 +260,16 @@ export function ReceiptsView({
               justSeen={justSeen.has(m.id)}
               current={current === m.id}
               onSelect={(id) => onCur(id)}
-              /* Expanding is the request for the rest of the receipt, and the retry. */
-              onToggle={(open) => open && hydrateBody(m.id, { retry: true })}
-              /* THE VERBS, on the receipt being read and on no other — the Ohbox's own bar.
-                 See `ReadsView` for why it is gated on `current`. */
+              /* Expanding is the request for the rest of the receipt, and the retry — and it is
+                 what raises the verbs, so record which card is open. */
+              onToggle={(open) => {
+                setExpandedId(open ? m.id : null);
+                if (open) hydrateBody(m.id, { retry: true });
+              }}
+              /* THE VERBS, on the receipt the reader EXPANDED and on no other — the Ohbox's own
+                 bar. Gated on the expanded card, never on `current`, so a scroll cannot raise it. */
               actions={
-                onAction && current === m.id ? (
+                onAction && expandedId === m.id ? (
                   <MessageActionBar message={m} now={now} onAction={(a) => onAction(a, m)} />
                 ) : undefined
               }

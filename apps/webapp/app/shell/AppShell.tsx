@@ -100,6 +100,7 @@ import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
 import { MailStateProvider, useMailState, type MailboxProbe } from "./MailStateProvider";
+import { ViewBoundary } from "./ViewBoundary";
 import {
   optionsFromFacts,
   optionsFromMirror,
@@ -3142,6 +3143,29 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               />
             ) : null}
 
+            {/* THE VIEW, INSIDE A BOUNDARY. A render throw in any pile degrades to an in-pane
+                failure card with the rail and the sync strip still standing, rather than Next's
+                whole-tab "Application error". Keyed on `effectiveView` so navigating to another
+                pile — still reachable, because the rail survived — clears a failed view. */}
+            <ViewBoundary
+              key={effectiveView}
+              onError={(error) => console.error("[view] render failed", effectiveView, error)}
+              fallback={
+                <section className="view view-fail">
+                  <div className="view-fail-card">
+                    <h1>{t("viewError.title")}</h1>
+                    <p>{t("viewError.body")}</p>
+                    <Button
+                      onClick={() => {
+                        if (typeof window !== "undefined") window.location.reload();
+                      }}
+                    >
+                      {t("viewError.action")}
+                    </Button>
+                  </div>
+                </section>
+              }
+            >
             {effectiveView === "ohbox" ? (
               <OhboxView
                 demo={demo}
@@ -3534,6 +3558,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 }
               />
             ) : null}
+            </ViewBoundary>
           </main>
         </div>
       </div>

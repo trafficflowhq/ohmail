@@ -134,24 +134,44 @@ export function useListWindow({
     };
   }, [scrollerRef, sample]);
 
-  /**
-   * The real row height, off the first rendered row. `useLayoutEffect` so the corrected spacers
-   * are in place before the browser paints — a frame of the estimate's geometry followed by a
-   * frame of the measured one is a visible jump of the whole list.
-   */
-  useLayoutEffect(() => {
-    const el = scrollerRef.current;
-    const row = el?.querySelector<HTMLElement>(".row");
-    const h = row?.offsetHeight ?? 0;
-    if (h > 0 && Math.abs(h - measured) >= 1) setMeasured(h);
-  });
-
   const rowHeight = measured > 0 ? measured : estimate;
   const height = viewport > 0 ? viewport : FALLBACK_VIEWPORT_PX;
   const visible = Math.ceil(height / rowHeight);
 
   const start = Math.max(0, Math.min(count, Math.floor(scrollTop / rowHeight) - overscan));
   const end = Math.min(count, start + visible + overscan * 2);
+
+  /**
+   * The real row height, off the first rendered row. `useLayoutEffect` so the corrected spacers
+   * are in place before the browser paints — a frame of the estimate's geometry followed by a
+   * frame of the measured one is a visible jump of the whole list.
+   *
+   * ── MEASURE ONLY A ROW WHOSE IDENTITY DOES NOT DEPEND ON `rowHeight` ─────────────────────────
+   *
+   * The leading rendered row is `all[start]`, and `start` is `floor(scrollTop / rowHeight)`. So
+   * measuring whichever row happens to lead a SCROLLED window couples the measurement to its own
+   * output: two adjacent leading rows differing by even 1px make `rowHeight → start → leading row
+   * → rowHeight` bounce between two values and never settle. React counts that as a runaway and
+   * throws "Maximum update depth exceeded", which Next renders as the client-side "Application
+   * error" page — reported live from the Receipts view, whose rows carry an amount and so are the
+   * likeliest to differ by a pixel from their neighbours. The old guard rejected a no-op set but
+   * not this two-value oscillation, and jsdom (offsetHeight always 0) never exercised it.
+   *
+   * The `start === 0` gate breaks the cycle: at the top the leading row is deterministically the
+   * list's first row, whose height is fixed, so a measurement there converges in one step and
+   * cannot slide the window off itself. `measured === 0` additionally lets a list that opens
+   * already scrolled take exactly ONE first measurement — it cannot loop, because on the very
+   * next render `measured` is non-zero and `start` is non-zero, so the guard is false. Equal-
+   * height rows are this module's stated premise (see the header), so freezing the height taken
+   * at the top while scrolled is that premise made explicit, not a new limitation — and it errs
+   * toward reserving slightly too much height, never toward hiding mail.
+   */
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    const row = el?.querySelector<HTMLElement>(".row");
+    const h = row?.offsetHeight ?? 0;
+    if (h > 0 && Math.abs(h - measured) >= 1 && (measured === 0 || start === 0)) setMeasured(h);
+  });
 
   return {
     start,
