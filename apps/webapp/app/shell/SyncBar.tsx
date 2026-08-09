@@ -70,6 +70,7 @@
  */
 import type { ReactNode } from "react";
 import { useTranslations } from "next-intl";
+import { apiConfigured } from "../api-client";
 import { useMailState } from "./MailStateProvider";
 import { stripSpeaks, type MailState } from "./mail-state";
 
@@ -110,7 +111,11 @@ export function SyncBar({ variant = "shell" }: { variant?: "shell" | "rail" }) {
   const { state } = useMailState();
 
   if (!stripSpeaks(state.key)) return null;
-  const s = speech(state, t, tm);
+  // WHICH DOOR this install came in by. `apiConfigured()` is false exactly on the build with no
+  // Cloud behind it — the standalone desktop, which folds `NEXT_PUBLIC_API_BASE` away at build
+  // time — so it is the seam the `stopped` sentence branches on. See `speech()`'s `stopped` arm.
+  const cloud = apiConfigured();
+  const s = speech(state, t, tm, cloud);
 
   if (variant === "rail") {
     return (
@@ -187,17 +192,24 @@ interface Speech {
   link: { href: string; label: string } | null;
 }
 
-function speech(state: MailState, t: Translate, tm: Translate): Speech {
+function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): Speech {
   const settings = { href: "#/settings", label: t("settings") };
   switch (state.key) {
     case "stopped":
       return {
         tone: "stopped", role: "alert", warn: true, busy: false,
-        title: t("stopped"),
+        // TWO DOORS, ONE STATE. `terminal` means our API refused this session and re-made the
+        // refusal — a revoked Cloud session on the web, or a local engine whose injected bearer
+        // skewed (it rotates on sidecar restart) on the standalone desktop. The remedy is not the
+        // same sentence in both: a signed-in Cloud user signs in again, but a standalone install
+        // has NO Cloud account and no `/login`, so sending it there is a dead end. It relaunches
+        // instead. An earlier note here claimed this branch was "Cloud-only by construction"
+        // because "a fixtures engine is permanently settled" — true of the demo and the desktop
+        // PREVIEW, false of the local-engine desktop, which runs the real HttpAdapter over its
+        // bridge and reaches `terminal` on exactly that bearer skew.
+        title: cloud ? t("stopped") : t("stoppedLocal"),
         detail: null,
-        // Cloud-only by construction: a fixtures engine is permanently settled, so the desktop
-        // bundle compiles this branch and can never reach it.
-        link: { href: "/login", label: t("signIn") },
+        link: cloud ? { href: "/login", label: t("signIn") } : null,
       };
 
     case "failing":

@@ -76,16 +76,16 @@ export interface SyncStatus {
    * 2026-08-03 happened. Mutually exclusive with `terminal` by construction — confirmation moves
    * the fact from one field to the other. See {@link REFUSAL_CONFIRM_MS}.
    *
-   * ── AN INVARIANT THIS FIELD DEPENDS ON, AND CANNOT ENFORCE ──────────────────────────────
+   * ── AN INVARIANT THIS FIELD ONCE DEPENDED ON, NOW ENFORCED ──────────────────────────────
    *
-   * **Every publish that changes `refused` must also change `failures` or `terminal`.**
-   * `engine.tsx`'s status dedup compares `bootstrapping`, `failures` and `terminal` and CANNOT
-   * see this field, so a transition that moved only `refused` would be swallowed and the strip
-   * would never appear. It holds today for the same reason the comment there says `terminal`
-   * held before it was compared: `refused` is only ever set in the publish that increments
-   * `failures`, and only ever cleared in one that zeroes `failures` or sets `terminal`. That is a
-   * coincidence until something enforces it — `sync-liveness.test.ts` asserts it over adjacent
-   * published pairs, and the real fix is to widen that dedup, which is owed.
+   * `engine.tsx`'s status dedup used to compare `bootstrapping`, `failures` and `terminal` only,
+   * and could not see this field, so a transition that moved ONLY `refused` would have been
+   * swallowed and the strip would never appear. That was safe by coincidence alone: `refused` is
+   * only ever set in the publish that increments `failures`, and only ever cleared in one that
+   * zeroes `failures` or sets `terminal`. The dedup now compares all four fields through
+   * {@link sameSyncStatus}, so a `refused`-only transition is no longer dropped and that
+   * coincidence no longer has to hold. `sync-liveness.test.ts` guards both halves — the
+   * comparator over a `refused`-only pair, and the scheduler's own adjacent published pairs.
    */
   refused: boolean;
 }
@@ -97,6 +97,23 @@ export const SYNC_SETTLED: SyncStatus = {
 export const SYNC_BOOTSTRAPPING: SyncStatus = {
   bootstrapping: true, failures: 0, terminal: false, refused: false,
 };
+
+/**
+ * Do two published statuses say the SAME thing to the shell? This is the dedup `engine.tsx`
+ * uses to bail out of re-rendering the whole shell every eight seconds on a healthy tab, which
+ * publishes an identical status on every settled drain.
+ *
+ * ALL FOUR FIELDS, deliberately. Comparing only `bootstrapping`, `failures` and `terminal` — as
+ * `engine.tsx` once did inline — swallows a transition that moves only {@link SyncStatus.refused},
+ * and the strip that reports an unconfirmed refusal would never appear. See that field's doc for
+ * why the safety of the narrower comparison was a coincidence rather than a guarantee.
+ */
+export function sameSyncStatus(a: SyncStatus, b: SyncStatus): boolean {
+  return a.bootstrapping === b.bootstrapping
+    && a.failures === b.failures
+    && a.terminal === b.terminal
+    && a.refused === b.refused;
+}
 
 /**
  * How many consecutive failures the user hears about.

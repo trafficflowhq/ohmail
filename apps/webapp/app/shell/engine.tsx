@@ -26,6 +26,7 @@ import { createEngine, EngineUnarmedError } from "./engine-config";
 import { useLoadingGrace } from "./loading-grace";
 import { readOwner } from "./owner-cookie";
 import {
+  sameSyncStatus,
   startSyncScheduler,
   SYNC_BOOTSTRAPPING,
   SYNC_SETTLED,
@@ -396,21 +397,17 @@ export function EngineProvider({
    * without it every one of those would re-render the whole shell to publish a value
    * identical to the one already on screen.
    *
-   * ALL THREE FIELDS ARE COMPARED. `terminal` was missing, and it survived only by luck:
-   * the scheduler happens to increment `failures` in the same publish that sets it, so the
-   * value did get through. Nothing enforced that coincidence, and the field exists precisely
-   * so a surface can render "this session has stopped" differently from "still retrying" —
-   * a dedup that cannot see the difference is one refactor away from swallowing it.
+   * ALL FOUR FIELDS ARE COMPARED, through {@link sameSyncStatus}. Two of them — `terminal` and
+   * `refused` — were once left out of an inline comparison here and survived only by luck: the
+   * scheduler happens to move `failures` in the same publish that changes either. Nothing
+   * enforced that coincidence, and both fields exist precisely so a surface can render "this
+   * session has stopped" or "still retrying, briefly" differently from a healthy tick — a dedup
+   * blind to one of them is one refactor away from swallowing the transition. The comparator
+   * names all four, and `sync-liveness.test.ts` guards it.
    */
   const [sync, setSync] = useState<SyncStatus>(SYNC_BOOTSTRAPPING);
   const onSyncStatus = useCallback((next: SyncStatus) => {
-    setSync((prev) =>
-      prev.bootstrapping === next.bootstrapping
-      && prev.failures === next.failures
-      && prev.terminal === next.terminal
-        ? prev
-        : next,
-    );
+    setSync((prev) => (sameSyncStatus(prev, next) ? prev : next));
   }, []);
 
   /**
