@@ -872,9 +872,10 @@ export const RIGID_MIN_PX = 520;
  * ── AND THE UPPER BOUND, WHICH IS THE HALF REAL MAIL FORCED ─────────────────────────────
  *
  * A canvas is a READING COLUMN somebody designed, and designed reading columns have a range.
- * Measured across a live mailbox: every genuine newsletter in the sample declares between 560
- * and 800 px — `<table width="600">` twelve times over, 624, 640, 700, 800. Nothing designed
- * for mail is wider than that, because nothing designed for mail can assume a wider window.
+ * Mail templates declare theirs in a narrow, well-known range: `<table width="600">` above all,
+ * with 624, 640, 700 and 800 making up nearly all of the rest. Nothing designed for mail is
+ * wider, because nothing designed for mail can assume a wider window — a reading column that
+ * did would be side-scrolled in every client that renders it.
  *
  * What IS wider is markup that was never a mail design at all. The case that found this: two
  * ordinary business replies — German prose, a quoted thread, a sign-off — classified rigid on a
@@ -953,11 +954,12 @@ function widthAttrPx(v: string | null): number | null {
  *
  * This used to be four tests: not rigid, no picture, no background image, and a stylesheet under
  * a length threshold. The last three were calibrated against fixtures and they do not survive
- * real mail. Measured on a live mailbox: an ordinary German business reply — a table for the
- * quoted thread, a signature logo, and the `<style>` block Outlook emits about its own paragraph
- * classes — failed the picture test and the style-length test, and so was rendered in a frame,
- * in the sender's type, for no design that existed. The tests were answering "did the sender's
- * client emit markup?", which is always yes, rather than "did the sender lay something out?".
+ * real mail. The shape that breaks them is the commonest message there is: a business reply
+ * carrying a table for the quoted thread, a signature logo, and the `<style>` block a desktop
+ * client emits about its own paragraph classes. That fails the picture test and the style-length
+ * test, and was therefore rendered in a frame, in the sender's type, for no design that existed.
+ * The tests were answering "did the sender's client emit markup?", which is always yes, rather
+ * than "did the sender lay something out?".
  *
  * A DECLARED CANVAS is the only evidence of the second question. `isRigidLayout` finds a fixed
  * width at or past {@link RIGID_MIN_PX} — the newsletter's 600 px table, the template's
@@ -2172,11 +2174,11 @@ export function MessageBody({
    *     `remoteLoaded && remote.some((b) => !b.pixel)` — "the reader has consented to this
    *     message's pictures, so they must want the design" — which is true of a press and false
    *     of the account-wide setting that loads remote images by default, because that setting
-   *     makes `remoteLoaded` true from the first paint. Measured against a live account with
-   *     that default on: every message of a four-message business thread came back FRAMED, i.e.
-   *     the flip this component was rearranged to make had no effect at all for exactly the
-   *     readers it was for. A decision about one message cannot be read out of a setting someone
-   *     made once about something else.
+   *     makes `remoteLoaded` true from the first paint. With that setting on, every message of
+   *     a business thread that carries any picture comes back FRAMED — i.e. the flip this
+   *     component was rearranged to make has no effect at all for exactly the readers it is for.
+   *     A decision about one message cannot be read out of a setting someone made once about
+   *     something else.
    *
    * ── WHAT IS RENDERED, AND THE LINE THAT MUST NOT MOVE ──────────────────────────────────
    *
