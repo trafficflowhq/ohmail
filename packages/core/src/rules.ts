@@ -1,3 +1,4 @@
+import { parseMessageIds } from "./threading.js";
 import type { NormalizedMessage, Destination } from "./types.js";
 
 export type RuleKind = "sender" | "domain" | "header";
@@ -1129,6 +1130,168 @@ function isMoneySubject(subject: string): boolean {
  * "invoice question". Only the conjunction is evidence, and everything the conjunction misses
  * stays `unclear` for the AI layer to propose on later (rules first, ~80%, not 100%).
  */
+/**
+ * ═══ A BOUNCE OF THE READER'S OWN MAIL, AND THE BACKSCATTER THAT IMPERSONATES ONE ═════════
+ *
+ * ── THE FAILURE ─────────────────────────────────────────────────────────────────────────
+ *
+ * You send a message; the recipient's server refuses it; the delivery report comes back from
+ * `MAILER-DAEMON@their-host`, whom you have never corresponded with. `evaluateRules` sees a
+ * first-contact sender and does exactly what the consent gate is for: it files the report in
+ * `ohmail/Screener` and waits for you to decide about the daemon. So the one message that says
+ * "the mail you sent did not arrive" is the one message held back from you — and held back at
+ * precisely the moment it is most actionable, because a bounce is only useful before you have
+ * assumed the mail landed.
+ *
+ * ── AND WHY THE OBVIOUS FIX IS A CONSENT-GATE BYPASS ────────────────────────────────────
+ *
+ * "File anything that looks like a delivery report into the Ohbox" is one line, and it hands
+ * every spammer on earth a way past the gate: `Content-Type: multipart/report;
+ * report-type=delivery-status` is a string anybody can type. This module already carries a
+ * scar of that exact shape — `pipeline.ts` records `sensitivity.sensitive ? "INBOX" : …` as a
+ * remote, unauthenticated, one-message defeat of the consent boundary — and the rule it
+ * learned is the rule here: **a signal the SENDER chooses may refine placement and may never
+ * establish consent.** Shape is chosen by the sender. Shape alone can therefore prove nothing.
+ *
+ * That is also the whole of BACKSCATTER, which is not a hypothetical: a spammer forges YOUR
+ * address as the envelope sender, some real MTA rejects the mail, and its genuine, correctly
+ * formed delivery report arrives in your mailbox. It has the right Content-Type, it comes from
+ * a real daemon, and it carries a real `X-Failed-Recipients`. Every property of "shape" is
+ * satisfied by mail you had nothing to do with.
+ *
+ * ── SO THE VERDICT IS SHAPE **AND** OWN-SEND EVIDENCE, AND OWN-SEND MEANS A LOOKUP ──────
+ *
+ * This function answers the half that is pure — is this DSN-shaped, and what does it claim
+ * about the original message — and it deliberately does NOT answer "is that original ours".
+ * Both of the answers to that require data this module does not have and must not fetch:
+ *
+ *  · {@link DsnEvidence.originalMessageIds} — the Message-IDs the report quotes. The caller
+ *    matches them against the account's own `messages.message_id_header`
+ *    (`messages_account_message_id_header_idx`, mail 0026 — the index already exists, so this
+ *    slice adds no migration). A backscatter report quotes the SPAMMER's Message-ID, which the
+ *    account has never held, so the lookup misses and the message takes the ordinary path.
+ *  · {@link DsnEvidence.failedRecipients} — the addresses `X-Failed-Recipients` names. The
+ *    caller checks them against the account's known correspondents. The header on its own is
+ *    NOT evidence and must never be treated as any: it is a string the sender writes, so
+ *    accepting its mere presence would reinstate the bypass this docblock exists to refuse.
+ *    What makes it evidence is that the failed recipient is somebody this account actually
+ *    corresponds with — a fact about our data, which a stranger cannot forge into existence.
+ *
+ * Neither answer available ⇒ ordinary path, which for a stranger's daemon is the Screener. The
+ * report is not deleted, not quarantined and not hidden; it waits, exactly like any other
+ * first-contact sender, and the user can admit it in one press. Failing toward the gate is the
+ * correct direction for a signal that cannot be corroborated.
+ *
+ * ── THE RESIDUAL, NAMED ────────────────────────────────────────────────────────────────
+ *
+ * A genuine bounce for a brand-new recipient — first mail to an address that is not yet a
+ * contact — whose report also quotes no Message-ID this account holds, still lands in the
+ * Screener. That is a miss, and it is the direction to miss in: one extra press versus a
+ * standing hole in the consent gate.
+ */
+export interface DsnEvidence {
+  /**
+   * The Message-IDs this report quotes as the ORIGINAL message, best-effort, in the order the
+   * caller should probe them: the report's own `In-Reply-To`/`References` first (structured,
+   * and what a well-behaved DSN sets), then whatever the quoted headers in the body yield.
+   *
+   * Bounded — see {@link MAX_DSN_MESSAGE_IDS} and {@link DSN_BODY_SCAN_LIMIT}. An unbounded
+   * scan over a body a stranger controls is a way to make one `IN (…)` lookup arbitrarily
+   * large, on the ingest hot path, for free.
+   */
+  originalMessageIds: string[];
+  /**
+   * The addresses `X-Failed-Recipients` names, lower-cased. EMPTY when the header is absent or
+   * carries nothing address-shaped.
+   *
+   * Deliberately the ADDRESSES and not a boolean. A boolean would be the presence of a header
+   * a stranger writes, which is worth nothing; these are values the caller can check against
+   * the account's own correspondents, which is worth everything. Returning the wrong shape here
+   * is how the bypass gets reintroduced by somebody being helpful.
+   */
+  failedRecipients: string[];
+}
+
+/** How many quoted Message-IDs one report may contribute to the lookup. */
+const MAX_DSN_MESSAGE_IDS = 10;
+/** How much of a report body is scanned for the quoted original headers. */
+const DSN_BODY_SCAN_LIMIT = 8_000;
+
+/** `multipart/report` carrying a delivery-status part — the RFC 3462 shape. */
+const DELIVERY_REPORT_CONTENT_TYPE = /multipart\/report/i;
+const DELIVERY_STATUS_REPORT_TYPE = /report-type\s*=\s*"?delivery-status"?/i;
+/** The two local-parts every MTA on earth bounces from (RFC 5321 §4.5.1 names `postmaster`). */
+const DAEMON_LOCAL_PARTS = /^(mailer-daemon|postmaster)$/i;
+/** `<...>` with an `@` in it, which is all a Message-ID is guaranteed to be. */
+const MESSAGE_ID_TOKEN = /<[^<>@\s]+@[^<>@\s]+>/g;
+
+/**
+ * Is this message DSN-SHAPED, and what does it claim? `null` when it is not a delivery report.
+ *
+ * Pure and read-only — see the docblock above for why the OWN-SEND half is the caller's job and
+ * why this function returning a verdict rather than evidence would be the bug.
+ */
+export function dsnVerdict(msg: NormalizedMessage, raw?: Uint8Array): DsnEvidence | null {
+  const contentType = (msg.headers["content-type"] ?? []).join(" ");
+  const shaped =
+    (DELIVERY_REPORT_CONTENT_TYPE.test(contentType) && DELIVERY_STATUS_REPORT_TYPE.test(contentType)) ||
+    DAEMON_LOCAL_PARTS.test(msg.from.address.split("@")[0] ?? "");
+  if (!shaped) return null;
+
+  // STRUCTURED FIRST. A DSN that sets `In-Reply-To` to the original's Message-ID has told us
+  // outright; the scans below are the fallback for the many that do not.
+  //
+  // `parseMessageIds` and NOT a second regex of our own, because these strings are about to be
+  // compared against `messages.message_id_header` and that function IS the definition of how
+  // that column is written — bracket-free, lower-cased, over-long tokens dropped. A local
+  // normaliser here would agree with it right up to the first id with an unusual shape, and
+  // then miss silently, which on this path looks exactly like "the account never sent that".
+  const ids: string[] = [];
+  const push = (...values: string[]): void => {
+    for (const id of parseMessageIds(values)) {
+      if (ids.length >= MAX_DSN_MESSAGE_IDS) return;
+      if (!ids.includes(id)) ids.push(id);
+    }
+  };
+  push(...(msg.headers["in-reply-to"] ?? []), ...(msg.headers["references"] ?? []));
+  // Then the human-readable part, which is where several MTAs restate the original's id.
+  push(...(msg.textBody.slice(0, DSN_BODY_SCAN_LIMIT).match(MESSAGE_ID_TOKEN) ?? []));
+  // ── AND THEN THE RAW BYTES, WHICH IS THE ONLY PLACE THE QUOTED HEADERS EXIST ──────────
+  //
+  // RFC 3462 puts the original in a `message/rfc822-headers` (or `message/rfc822`) part, and
+  // the parser does NOT flatten those into `textBody` — measured, not assumed: a Gmail-shaped
+  // three-part report normalises to a `textBody` holding only the human-readable paragraph, so
+  // a scan of the parsed message finds nothing and the corroboration never fires. That is the
+  // silent-degrade version of this feature: shape recognised, evidence unreachable, every real
+  // bounce held at the gate exactly as before.
+  //
+  // OPTIONAL, so a caller that has only the parsed form still gets the structured ids. Bounded
+  // by the same {@link DSN_BODY_SCAN_LIMIT} for the same reason — these are a stranger's bytes
+  // and they feed an `IN (…)` on the ingest path.
+  if (raw) push(...(decodeAscii(raw.subarray(0, DSN_BODY_SCAN_LIMIT)).match(MESSAGE_ID_TOKEN) ?? []));
+
+  // THE REPORT'S OWN ID IS NOT A CLAIM ABOUT AN ORIGINAL. It sits in the raw bytes above and
+  // would otherwise consume one of the ten lookup slots on a value that can never match — and,
+  // worse, would make a self-referential report look like corroboration the moment the report
+  // itself had been ingested.
+  const self = msg.canonical.messageIdHeader;
+  const originalMessageIds = self ? ids.filter((id) => id !== self) : ids;
+
+  const failedRecipients = (msg.headers["x-failed-recipients"] ?? [])
+    .flatMap((v) => v.split(","))
+    .map((v) => v.trim().replace(/^<|>$/g, "").toLowerCase())
+    .filter((v) => v.includes("@") && !v.includes(" "));
+
+  return { originalMessageIds, failedRecipients };
+}
+
+/** Latin-1 is enough: a Message-ID is ASCII by RFC, and this only ever feeds a `<...@...>` match. */
+function decodeAscii(bytes: Uint8Array): string {
+  let out = "";
+  for (const b of bytes) out += String.fromCharCode(b);
+  return out;
+}
+
 function headerHeuristic(msg: NormalizedMessage): RuleDecision | null {
   if (machineSent(msg) && isMoneySubject(msg.subject)) {
     return { destination: "ohmail/Receipts", matchedRuleId: null, source: "header" };

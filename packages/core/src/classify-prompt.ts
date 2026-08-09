@@ -67,6 +67,17 @@ export const TAXONOMY_PREFIX = [
   "and the automated piles (Reads/Receipts). It never carries a first-contact sender past the",
   "Screener gate and never changes how sensitive mail is handled.",
   "",
+  // ONE CLAUSE, AND IT DECIDES NOTHING ON ITS OWN. `pipeline.ts` already routes a corroborated
+  // bounce of the reader's own mail to INBOX before the model is ever consulted (see
+  // `rules.ts#dsnVerdict` for why corroboration, not shape, is what earns that). This sentence
+  // is for the residue that reaches the model anyway — a report the lookups could not
+  // corroborate, or a human-written "your message could not be delivered" that carries no DSN
+  // structure at all. It is written as RELEVANCE, in the taxonomy's own vocabulary, because the
+  // model's answer is a proposal: it cannot carry a first-contact sender past the Screener, and
+  // adding a rule here that tried to would be a prompt overruling the consent gate.
+  "A delivery-status report for the reader's own outgoing mail is actionable: it says something",
+  "they sent did not arrive, so it belongs in INBOX rather than in the automated piles.",
+  "",
   "Return confidence in [0,1], a one-line rationale (never echo secrets/OTP codes),",
   "and whether the message is spam. Respond ONLY with the structured JSON object.",
 ].join("\n");

@@ -5,8 +5,8 @@ import {
 } from "./identity.js";
 import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
 import {
-  NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, effectForDestination,
-  evaluateRules, type AuthVerdict, type OhboxPolicy,
+  NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, dsnVerdict,
+  effectForDestination, evaluateRules, type AuthVerdict, type OhboxPolicy,
 } from "./rules.js";
 import { classifyDedup, type DedupOutcome } from "./dedup.js";
 import { reconcile, type ReconcileAction } from "./reconciler.js";
@@ -563,9 +563,68 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     // goes straight to them and never sits behind the gate. And NOTHING here touches the
     // sensitive-mail guarantees — `no_ai`, no-forward, no-KB and the redacted body are properties of
     // `p.sensitivity`, applied at persist below, and are independent of the folder.
+    // ── A BOUNCE OF THE READER'S OWN MAIL IS ACTIONABLE, AND ONLY IF IT IS THEIRS ─────────
+    //
+    // `rules.ts#dsnVerdict` answers the pure half — is this DSN-shaped, and what does it claim
+    // about the original — and refuses to answer the half that decides, because that half is a
+    // lookup against OUR data and shape alone is a string a stranger types. Read that docblock
+    // before touching anything here: the whole design is that a delivery report reaches the
+    // Ohbox on evidence the sender cannot manufacture, and never on the report looking right.
+    //
+    // Two corroborations, either of which is enough, and both of which are facts about this
+    // account rather than about the message:
+    //
+    //  · the report quotes a Message-ID this account HOLDS. `findThreadParent` is the existing
+    //    account-scoped probe over `messages_account_message_id_header_idx` (mail 0026) — the
+    //    same index, the same isolation argument, and no new column or migration. Backscatter
+    //    quotes the spammer's Message-ID, which we have never held, so it misses;
+    //  · `X-Failed-Recipients` names somebody this account already corresponds with. `known` is
+    //    already in hand two lines above, so this costs nothing, and the point is that it is
+    //    OUR contact list: a stranger can write any address into that header and cannot make it
+    //    be one of the reader's correspondents.
+    //
+    // Neither ⇒ nothing happens here at all and the message takes the ordinary path, which for
+    // an unknown daemon is the Screener. Not deleted, not quarantined — held, like any other
+    // first-contact sender, one press from being admitted.
+    //
+    // ── IT MAY PASS THE GATE, AND IT MAY NOT OVERRULE THE USER — WHICH ARE DIFFERENT TESTS ──
+    //
+    // This is the one place the bounce arm differs from `sensitive`, and getting it wrong in
+    // either direction is a real defect, so both are written out.
+    //
+    // `sensitive` is subordinate to `deniedByConsent`, which covers all three deny folders and
+    // therefore includes the GATE's own `ohmail/Screener`. That is exactly right there: nothing
+    // about the shape of a stranger's mail may admit the stranger. Reusing it here would make
+    // this whole arm dead code, because a bounce from an unknown daemon IS a first-contact
+    // sender and the gate's verdict is precisely what has to be overridden.
+    //
+    // The distinction that does the work is WHO decided. A gate fall-through carries
+    // `matchedRuleId === null`: the account has never said anything about this daemon, and the
+    // corroboration above is a fact about our own data that answers the gate's question. A
+    // decision carrying a rule id is the USER's, and it stands — a sender they screened out or
+    // quarantined must not be able to free themselves by sending a well-formed report, even one
+    // that quotes a Message-ID we really do hold. `deniedByConsent` stays as the second half of
+    // the test so an unmatched deny (there is no such source today, and this is what keeps a
+    // future one from being a bypass) also refuses.
+    //
+    // `await` only when the shape matched, so ordinary mail costs no extra round trip.
+    // `change.raw` as well as the parsed form: the quoted original lives in a
+    // `message/rfc822-headers` part, which the parser does not flatten into `textBody`.
+    const dsn = dsnVerdict(normalized, change.raw);
+    let ownBounce = false;
+    if (dsn) {
+      ownBounce =
+        dsn.failedRecipients.some((a) => known.has(a)) ||
+        (dsn.originalMessageIds.length > 0 &&
+          (await repo.findThreadParent(accountId, dsn.originalMessageIds)) !== null);
+    }
+
     const deniedByConsent =
       decision.destination !== null && effectForDestination(decision.destination) === "deny";
-    let desired: string = sensitivity.sensitive && !deniedByConsent
+    /** A corroborated bounce the account has expressed no opinion about. */
+    const admitBounce = ownBounce && decision.matchedRuleId === null
+      && (!deniedByConsent || decision.source === "screener");
+    let desired: string = (sensitivity.sensitive && !deniedByConsent) || admitBounce
       ? "INBOX"
       : decision.destination ?? change.locator.folder;
 
