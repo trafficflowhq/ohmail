@@ -149,7 +149,7 @@ export function DesktopAiSettings({
             "This install is pointed at a hosted ohmail account, and the AI that account has is " +
             "part of it. Set up your own model on an install that opens your mail server directly."
           }
-          value="Part of your account"
+          value="latest Frontier Models"
         />
       </>
     );
