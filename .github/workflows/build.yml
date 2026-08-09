@@ -492,9 +492,30 @@ jobs:
           #   it exactly keeps `api.ohmail.app.example.com` a failure. If a real
           #   path is ever appended in the bundle this check goes red and the new
           #   endpoint gets named here too — which is the intended behaviour.
+          #
+          # 3 · THE BROWSER LINK TABLE. `engine.rs` holds the only addresses the
+          #   app may hand to the user's own browser, as a fixed table the window
+          #   selects from BY KEY — it can never name an address itself. Those
+          #   addresses are therefore compiled in, and each is listed here one by
+          #   one: a page added to that table without being named here fails the
+          #   build, which is the point of spelling them out.
+          #
+          #   Prefix match, for the same reason as the feed: they are Rust string
+          #   literals with no terminator, sitting next to each other in read-only
+          #   data, so grep returns whatever follows glued on.
+          #
+          # THE LIST IS RE-SPLIT ON THE SCHEME FIRST. Adjacent literals come back
+          # from grep as ONE match — `…/privacy` immediately followed by
+          # `https://…/subprocessors` — and a single glued string would be judged
+          # against the allow-list as though it were one address, so a page that
+          # is not on the list could ride in behind one that is. Splitting on
+          # `http` puts every address back on its own line before anything is
+          # judged, which makes the prefix match answer for exactly one URL.
           FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
           CLOUD_URL='https://api.ohmail.app'
-          FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$ALL_URLS" || true)"
+          SPLIT_URLS="$(printf '%s\n' "$ALL_URLS" \
+            | awk '{ gsub(/https?:\/\//, "\n&"); print }' | grep -E '^https?://' || true)"
+          FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$SPLIT_URLS" | sort -u || true)"
           if [ -z "$FIRST_PARTY" ]; then
             echo "the pinned update feed URL is missing from the binary" >&2
             exit 1
@@ -505,11 +526,15 @@ jobs:
             case "$u" in
               "$FEED_PREFIX"*) : ;;
               "$CLOUD_URL") : ;;
+              'https://ohmail.app/mailbox#/settings'*) : ;;
+              'https://ohmail.app/link-desktop'*) : ;;
+              'https://ohmail.app/privacy'*) : ;;
+              'https://ohmail.app/subprocessors'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
             esac
           done <<< "$FIRST_PARTY"
           if [ "$BAD" -ne 0 ]; then
-            echo "first-party URLs other than the two named endpoints are present" >&2
+            echo "first-party URLs other than the named endpoints are present" >&2
             exit 1
           fi
           echo "unique URL strings (reconcile with the README enumeration): $(grep -c . <<< "$ALL_URLS" || true)"
@@ -713,10 +738,14 @@ jobs:
           ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
           printf '%s\n' "$ALL_URLS"
           # Identical rule to the Windows job — the update feed by prefix, the
-          # Cloud API by equality; see the reasoning there.
+          # Cloud API by equality, the browser link table page by page, and the
+          # scheme split that keeps adjacent Rust literals from being judged as
+          # one address; see the reasoning there.
           FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
           CLOUD_URL='https://api.ohmail.app'
-          FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$ALL_URLS" || true)"
+          SPLIT_URLS="$(printf '%s\n' "$ALL_URLS" \
+            | awk '{ gsub(/https?:\/\//, "\n&"); print }' | grep -E '^https?://' || true)"
+          FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$SPLIT_URLS" | sort -u || true)"
           if [ -z "$FIRST_PARTY" ]; then
             echo "the pinned update feed URL is missing from the binary" >&2
             exit 1
@@ -727,11 +756,15 @@ jobs:
             case "$u" in
               "$FEED_PREFIX"*) : ;;
               "$CLOUD_URL") : ;;
+              'https://ohmail.app/mailbox#/settings'*) : ;;
+              'https://ohmail.app/link-desktop'*) : ;;
+              'https://ohmail.app/privacy'*) : ;;
+              'https://ohmail.app/subprocessors'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
             esac
           done <<< "$FIRST_PARTY"
           if [ "$BAD" -ne 0 ]; then
-            echo "first-party URLs other than the two named endpoints are present" >&2
+            echo "first-party URLs other than the named endpoints are present" >&2
             exit 1
           fi
           echo "unique URL strings (reconcile with the README enumeration): $(grep -c . <<< "$ALL_URLS" || true)"

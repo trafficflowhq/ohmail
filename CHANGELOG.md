@@ -16,19 +16,177 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
-### History stays quick on a large mailbox
+## [0.8.0] — 2026-08-09
 
-**Opening History on an account with tens of thousands of old messages made the whole app
-sluggish, and every click in it slow.** The desktop app keeps your entire mailbox locally rather
-than a recent slice of it, and History — mail from everyone you never screened, which is most of
-what accumulates over years — is the one list with no upper bound. It was being drawn in full: at
-20 000 rows that is 242 904 elements laid out before you can touch anything, and every click had
-to move a selection through all of them.
+The largest release since every platform became a working mail client. Sign-in, the first minutes
+after you connect a mailbox, the reading surface, attachments, drafts and the Screener all changed.
 
-It now draws the rows within reach of the scroll position and reserves the exact height of the
-rest, so the scrollbar, the scroll position and the keyboard order are what they always were and
-mail appears as you come to it. That same list renders as a few hundred elements instead of a
-quarter of a million, however long it is.
+### Signing in
+
+**You can sign in to a hosted account from your browser instead of typing a password into the
+app.** The app opens a page on the website, where you are already signed in; the page hands you a
+short code, and the app takes the code and your address. Nothing else. The code is good once, for
+two minutes, and it cannot be used as a password anywhere — a code shown on a web page and a token
+mailed to an inbox are separate things that cannot be exchanged for each other.
+
+The password form is still there and still works. Switching between the two clears the fields of
+the one you are leaving, so a password you started typing and abandoned is not left sitting in the
+window.
+
+**Your key survives this update.** From 0.7.3 the per-install key that seals your stored mailbox
+password is kept in a file beside the app's data as well as in your computer's keystore, so an
+update no longer costs you the key. If you are updating from **0.7.2 or earlier** this launch asks
+for your mailbox password once — the key an older version wrote cannot be read back — and remembers
+it from then on. From 0.7.3 it asks for nothing.
+
+### The first minutes on a new mailbox
+
+**A cold start now paints your newest mail first, and says what it is doing.** Connecting a mailbox
+used to give you an empty screen, then mail filling in from the oldest message forwards, with
+nothing anywhere saying a first import was running — so the message you opened the app to read
+arrived last. The app now reads the mailbox's current state, newest first, and the line at the foot
+of the sidebar reports the import while it runs and stops when it finishes.
+
+**Settings, Mailboxes lists the mailbox you are actually connected to** — what it is doing and when
+it last checked. That pane had been reliably empty on every real install.
+
+**A filing that has not reached your mail server yet says so.** Screening a sender, a bulk apply and
+a move are recorded immediately and carried out on your server on the next sync pass. While your
+mail host is refusing connections that gap does not close, and nothing said so: the mailbox still
+read as connected while a backlog of your decisions built up unapplied. The sidebar now names the
+count and points at the mailbox.
+
+### Tags
+
+**Tags made in the browser now appear in the desktop app.** The tag rail was empty and no message
+carried a chip, which looks exactly like an account that has never made a tag. Assignments arrive as
+the whole set for a message, so removing a tag in the browser removes the chip here too, and
+deleting a tag takes its assignments with it.
+
+### Reading
+
+**A plain letter is rendered as text, at the app's own reading size.** Most mail between people is a
+paragraph and a sign-off that happens to arrive as HTML. Drawing it inside a sandboxed frame renders
+it in the sender's font, their line height and their idea of a link colour. A message that declares
+no layout of its own — no canvas, no picture, no background, no stylesheet beyond the boilerplate a
+desktop mail client emits — is now rendered as its text part, in the app's typography. Anything with
+a design of its own is unchanged, and the sanitized HTML is still never placed in the app's own
+document.
+
+**A conversation opens on its latest message and keeps it there.** The thread used to jump as its
+other messages arrived. Every message in a thread is now fetched in a single request rather than one
+per message throttled behind the others, so a long conversation opens in one go.
+
+**A message that has not arrived yet says so.** Body fetches are limited to a few at a time, and a
+message opened while that limit was full was drawn from its snippet — about two hundred characters,
+cut mid-word, under a real from-line and subject, with nothing indicating there was more. The record
+that says "this is loading" is now written the moment a fetch is decided rather than when it
+departs, and both the reading pane and the conversation entries say what they are showing. A body
+that failed to load can be asked for again, and reloading the app re-asks by itself rather than
+waiting for you to find the one message and press Retry.
+
+### Pictures and attachments
+
+**A message's pictures load when you open it, and a tracking pixel still never does.** Remote images
+were blocked behind a press, once per message, for ever — the right default for a beacon and the
+wrong one for a photograph. Every image loads through the product's own proxy, which fetches it
+server-side, so the sender never learns your address whether or not you pressed anything. Automatic
+loading is now the default and there is a switch in Settings to turn it off, which restores the
+per-message press. What does not move in either mode: a one-pixel image, a zero-dimension image and
+a beacon-shaped url are never fetched at all, and remote stylesheets stay blocked.
+
+**Pressing an attachment opens it; the icon in its corner saves it.** It was the other way round,
+which meant reading a PDF once cost you a file in your downloads folder to find, open elsewhere and
+then delete. A file the app cannot draw — an SVG, a docx, a zip — still saves on a press, because
+there is nothing to show.
+
+**Download all now gives you the files, not an archive of them.** A zip is a container somebody has
+to deal with, and it hid its own failures: a part the server could not fetch was named in a text
+file inside the archive, so the saved file looked complete. Each file is fetched in turn and saved
+individually, and one that fails is a failed tile in front of you with the reason on it.
+
+### Drafts
+
+**A half-written message is saved to your account, not to one browser.** A draft lived in local
+storage, in whichever browser you happened to be in: close the tab on one machine and it was on
+another machine's disk, and it was nowhere at all if you cleared site data. Compose now saves to a
+real draft two seconds after you stop typing, and there is a Drafts list beside it that is the same
+list everywhere you read your mail.
+
+One draft, from the first keystroke to delivery: the first meaningful edit creates it, every later
+save updates it, Send sends that draft rather than a copy of it, and Discard deletes it. Sending
+keeps the row — it becomes the sent message. Opening Compose writes nothing; a draft is text
+somebody typed.
+
+### The Screener
+
+**A large waiting queue can be worked from the list itself.** A backlogged mailbox puts dozens of
+first-time senders at the gate, and the only way through them was to select each one and decide it
+in the pane alongside.
+
+- **Filter chips.** "Apply 12" over a queue of nineteen is a true sentence that leaves seven senders
+  unaccounted for, because the bulk deliberately steps over junk and over senders the model held or
+  was never asked about. The queue now shows its groups with counts and narrows to one on a press,
+  so the remainder is on screen instead of implied by a gap.
+- **One press files a sender.** Each waiting row carries an accept for its suggestion and a menu of
+  the five destinations, and every one of them goes through the same decision the bar and the
+  keyboard make — the same undo window, the same rule, the same route past the gate for a sender
+  whose mail is already in your inbox. A row with no suggestion gets the destinations and no accept.
+- **Progress you can see.** Asking for suggestions and applying them are both several seconds of
+  work dispatched a piece at a time, and neither published anything but a sentence. Both now draw a
+  real track from the numbers behind that sentence, and it disappears when the work does.
+- **What is left of your AI budget** is on the summary, read from the server after the run rather
+  than worked out from what the run cost — a figure derived here would be wrong after a renewal, a
+  refund or a run in another window, and wrong in the direction that promises budget you do not
+  have.
+- **It stops calling suggestions a purchase.** The control spoke in the vocabulary of a shop for a
+  feature that spends an allowance you have already paid for.
+
+### Bounces
+
+**A bounce of your own mail reaches you.** You send a message, the recipient's server refuses it,
+and the delivery report comes back from a daemon you have never corresponded with — so the consent
+gate held the one message that says your mail did not arrive, at the moment it was still worth
+acting on. A report is now admitted when the app can corroborate it against your own account: a
+message id it quotes that you actually sent, or a failed recipient you already correspond with.
+Neither of those, and the report takes the ordinary path to the Screener, which is what keeps a
+forged report from being a way past the gate. A sender you screened out or quarantined stays where
+you put them.
+
+### Triage, History and the rest
+
+**Answer Later, Parked and Resurface are lists you can read from.** They were a stack of tiles with a
+name and a subject and nothing else — no time, no unread state, no tags, no attachments, and no way
+to open the message. They are the Ohbox's own two-pane composition now, with the same rows, the same
+reading pane and the same verbs, and the Reply Run sits at the top of the list rather than below
+everything it operates on.
+
+**History stays quick on a large mailbox.** History — mail from everyone you never screened, which
+is most of what accumulates over years — is the one list with no upper bound, and it was drawn in
+full: at 20 000 rows that is 242 904 elements laid out before you can touch anything, and every
+click had to move a selection through all of them. It now draws the rows within reach of the scroll
+position and reserves the exact height of the rest, so the scrollbar, the scroll position and the
+keyboard order are what they always were. That list renders as a few hundred elements however long
+it is.
+
+**A real menu bar.** File, View, Window and Help, plus an app menu with About and Settings on the
+platform's own shortcut. New Message is on the shortcut every mail client on the platform uses, the
+five places mail lives keep their number keys, Window gets minimize, zoom and full screen — none of
+which had an entry before — and Help holds the keyboard sheet, because a key list you can only reach
+with a key is a key list nobody finds.
+
+**Settings is a whole screen.** Mailboxes and Screener were present in the navigation and blank when
+opened; both work now, over the transport this app actually has. There is an About pane with who
+publishes this, which build is running, under what licence, which mailbox it opens and where your
+mail lives. On a hosted account, a button opens your account pages in your own browser rather than
+leaving you to retype an address — the window names a place and never an address, so nothing that
+gets a string into a page can send your browser somewhere else.
+
+**Smaller things.** The macOS icon sits on the system's grid, so the Dock draws it at the same size
+as everything beside it. Receipts is one flat list, the same as Reads. Long explanations fold behind
+a compact information control, with the sentence that has to be read left on screen. Compose gives
+the message the room the reply editor has always had. Nothing claims to be empty while it is still
+loading.
 
 ## [0.7.3] — 2026-08-08
 

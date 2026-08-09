@@ -1,20 +1,31 @@
-# ohmail for Windows and Linux
+# ohmail for macOS, Windows and Linux
 
-The **Tauri v2 shell** — Tier 1 on the two platforms SwiftUI does not reach. Same
-tier as `apps/macos`, same honest maturity: it renders the complete ohmail
-interface on Mila's fixture world. The **webview reaches nothing**; the only
-network this app makes is the auto-updater's one HTTPS request to its own release
-feed, Rust-side and only when the user asks (see "The auto-updater" below).
+The **Tauri v2 shell**, and the only desktop client there is — a native Rust
+window, a locked-down webview, and a static bundle of the *same* client the web
+app renders. There is no desktop fork of the interface.
 
-A native Rust window, a locked-down webview, and a static bundle of the *same*
-client the web app renders. The frontend calls zero Tauri commands and is granted
-zero capabilities; the Rust side adds exactly two plugins, both for the updater
-and neither reachable from the webview.
+**Two artifacts come out of this one directory, and the difference is the whole
+of the reading below.**
+
+- **The interface preview.** The shell over a fictional mailbox that ships inside
+  it, with no engine, the sync client aliased to a stub and the webview granted
+  nothing. This is the artifact "it opens no connection" is asserted against, and
+  every lock in the next section is literally true of it.
+- **The engine-bearing app**, which is what the releases ship on all three
+  platforms. It carries the mail engine and its own Node runtime as resources,
+  speaks IMAP to your own server, and grants the window a small, named set of
+  commands over a bridge — the engine, one notification, the badge, and a fixed
+  table of pages it may hand to your browser. The webview still reaches the
+  network through nothing of its own.
+
+Set the halves together or they disagree; `npm run app:build:engine` is the one
+command that selects all three (the Cargo feature, the UI flag and the resource
+config) and is what CI runs.
 
 ```bash
 npm install                 # in apps/desktop (pnpm install at the monorepo root works too)
 npm run ui:build            # → dist/  (the bundle Tauri embeds)
-npm run smoke               # → SMOKE OK (31 checks)
+npm run smoke               # → SMOKE OK (33 checks)
 npx tauri build --debug     # → src-tauri/target/debug/bundle/…
 ```
 
@@ -65,14 +76,21 @@ That is stated plainly in "The auto-updater" below rather than softened here.
 Three of the four are about the running app. The fourth is about the installer,
 because an installer that phones home makes the other three beside the point.
 
-**1 · The Cloud sync client is not in the module graph.**
+**1 · The sync client is not in the PREVIEW's module graph.**
 `@ohmail/client-engine`'s barrel re-exports `HttpAdapter`, the `/sync` protocol
-client. Vite aliases that module to [`src/no-http-adapter.ts`](src/no-http-adapter.ts),
-whose constructor throws. The consequence is not cosmetic: `publish-desktop.mjs`
-therefore does not publish `packages/client-engine/src/adapters/http-adapter.ts`
-at all, so the public repository does not contain the Cloud protocol either. In
-the emitted bundle, `x-csrf-token`, `idempotency-key`, `X-Sync-Seq` and `/sync?`
-all return **zero** matches.
+client. In the preview build Vite aliases that module to
+[`src/no-http-adapter.ts`](src/no-http-adapter.ts), whose constructor throws, and
+in that bundle `x-csrf-token`, `idempotency-key`, `X-Sync-Seq` and `/sync?` all
+return **zero** matches.
+
+**In the engine-bearing build the real adapter is there, deliberately**, and it
+is what the window speaks to its own engine over: `src/bridge-fetch.ts` hands it
+a transport that goes to the local process rather than to a socket. That is why
+`packages/client-engine/src/adapters/http-adapter.ts` is published in this
+repository whole — the shipped binary conveys it, so it has to be offerable.
+Publishing a throwing stub at its path instead is exactly what once blanked every
+engine build's window the moment a mailbox was ready, and the alias above is now
+scoped to the artifact whose claim it belongs to.
 
 **2 · The CSP forbids connections, including to itself.**
 
@@ -172,10 +190,10 @@ endpoint this build is allowed to reach —
 and the transitive HTTP client it fetches through (`reqwest`/`hyper`/`rustls`)
 brings its own rodata strings. The exact enumeration and the count assertions are
 re-established against the updater release binary in CI; the audit rule is
-unchanged in spirit and sharpened in one place — the check no longer fails on
-*any* `ohmail`/`trafficflow` URL but allows exactly that one pinned feed and
-still fails on any other infrastructure string. The pre-updater table, unchanged
-and still every bit of it real, is below:
+unchanged in spirit and sharpened rather than relaxed — instead of failing on
+*any* `ohmail`/`trafficflow` URL it now names every allowed one, and still fails
+on anything else. The full allow-list is at the end of this section. The
+pre-updater table, unchanged and still every bit of it real, is below:
 
 | string | what it is |
 |---|---|
@@ -197,15 +215,25 @@ not fetch the runtime for you.
 
 Drop the `| sort -u` and read the whole lines if you want to check the three
 adjacency claims yourself — that is the point of shipping uncompressed. CI prints
-the list on every run and **asserts the count** — a toolchain bump that changes
-it turns the job red, which is the only way a number in a README stays true (it
-did exactly that when the editor arrived and brought ProseMirror's link, and
-again when the updater arrived and brought its feed URL and HTTP client). The
-allow-list **fails** on any binary URL that names `ohmail` or `trafficflow`
-**except** the single pinned update feed above — so a second piece of
-infrastructure sneaking into the binary is still red. And `strings … | grep Ohbox`
-finds the interface, so you can see that the binary contains the app you were
-promised without running it. With brotli on, all of that is an opaque blob.
+the complete list on every run and reports its size beside it, so the number in a
+README can be reconciled against a run rather than remembered.
+
+**What CI actually fails on is the allow-list, and it is spelled out one entry at
+a time.** Every URL in the binary naming `ohmail` or `trafficflow` must be one of:
+
+| allowed | why it is there |
+|---|---|
+| `https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json` | the pinned update feed — the one endpoint this build reaches on its own. Prefix match, because a Rust literal has no terminator in rodata. |
+| `https://api.ohmail.app` | the hosted service, reached only after somebody signs in to it. Exact match, because it comes from a quote-terminated JavaScript literal. |
+| `https://ohmail.app/mailbox#/settings`, `…/link-desktop`, `…/privacy`, `…/subprocessors` | the fixed table in `src-tauri/src/engine.rs` of pages the app may hand to **your own browser**. The window selects one by key and can never name an address itself, so these are compiled in. Prefix match, same rodata reason. |
+
+Anything else naming this project fails the job. The extracted list is re-split on
+`http` before it is judged, because adjacent Rust literals come back from `grep`
+glued into one string and a glued pair would otherwise be read as a single
+address — which is how an unlisted page could ride in behind a listed one. And
+`strings … | grep Ohbox` finds the interface, so you can see that the binary
+contains the app you were promised without running it. With brotli on, all of
+that is an opaque blob.
 
 ## The auto-updater
 
@@ -266,7 +294,7 @@ verification; the cost was a second data directory for the same mailbox and an
 update path that could never hand over between them, which is a permanent fork in
 every path the app touches in exchange for a convenience while testing.
 
-The version is **`0.7.3`**, bare, in every place it is written: `tauri.conf.json`,
+The version is **`0.8.0`**, bare, in every place it is written: `tauri.conf.json`,
 `Cargo.toml`, `Cargo.lock`, `package.json`, and the macOS `Info.plist`. The
 `-preview` suffix earlier builds carried is retired — it marked "this build
 cannot update itself yet", and this build ships the auto-updater, so the claim is
@@ -282,10 +310,10 @@ four of five is red in the monorepo suite.
 is deliberate. `src-tauri/Info.plist` pins it to a constant far above any build
 number the earlier macOS client published. That client shared this bundle
 identifier and updated through Sparkle, which compares a feed's version against
-the installed `CFBundleVersion` — so a bundle announcing `0.7.3` there would be
+the installed `CFBundleVersion` — so a bundle announcing `0.8.0` there would be
 read as a downgrade from a four-digit build number, and every installed copy
 would report itself up to date for ever. Nothing a person sees uses it:
-`CFBundleShortVersionString` is `0.7.3` and is what the app and every download
+`CFBundleShortVersionString` is `0.8.0` and is what the app and every download
 page show. The floor is asserted in `release-feeds.yml`, so a plist that loses
 the key fails the release instead of stranding the installs it protects.
 
@@ -330,8 +358,9 @@ every other test green. The Rust-side signature and downgrade proofs run under
 `cargo test` (`src-tauri/src/updater_tests.rs`).
 
 `scripts/smoke.mjs` is mutation-tested by hand the way the Swift harness is:
-deleting the `installOfflineGuard()` call fails 5 of its 31 checks, and replacing
-`<AppShell/>` with an empty `<div>` fails 17.
+deleting the `installOfflineGuard()` call fails 5 of its 33 checks, and replacing
+`<AppShell/>` with an empty `<div>` fails 19. Both were watched failing at this
+release rather than carried over.
 
 ## Layout
 

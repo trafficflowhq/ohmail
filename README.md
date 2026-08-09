@@ -10,7 +10,7 @@ One app, on macOS, Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.7.3-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.3)
+[![latest release](https://img.shields.io/badge/download-v0.8.0-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.8.0)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -44,9 +44,9 @@ push. It is a commercial service with a codebase of its own, built by the same
 people, and the desktop app neither asks for it nor needs it.
 [Desktop or Cloud](#desktop-or-cloud) is the full comparison, prices included.
 
-## The current release — v0.7.3
+## The current release — v0.8.0
 
-**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.3)**
+**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.8.0)**
 `ohmail.dmg` for macOS, an NSIS `-setup.exe` for Windows, an `.AppImage` and a
 `.deb` for Linux. Every file was built by GitHub Actions from the tree this tag
 points at, and the run that made them prints the SHA-256 of each one. Nothing is
@@ -79,20 +79,43 @@ nodejs.org's own published checksums by the run that made your installer — so
 there is nothing to install first and nothing on your `PATH` for the app to
 depend on.
 
-**What is new since v0.7.2: signing in sticks.** Every update used to cost you
-your stored mailbox password, because an unsigned app is refused its own keystore
-item once its binary changes — and on macOS a keystore lookup could put up a login
-prompt before the app had a window, hanging the launch for minutes. The key now
-lives in a file beside the app's data as well, written while it is still readable,
-and the app never lets the keystore ask you anything. **This update itself asks for
-your mailbox password once**, because the key an earlier version wrote cannot be
-read back; from then on it is remembered.
+**What is new since v0.7.3.** This is the largest release since every platform
+became a working mail client.
 
-**The command palette and theme control moved into the sidebar**, and the message
-actions are a floating pill at the bottom of the reader instead of an opaque strip
-across the mail. Your Ohbox no longer says it is empty while it is still loading,
-and a large mailbox now finishes importing rather than reporting a backlog for
-ever. See the [changelog](CHANGELOG.md) for the rest.
+- **Sign in from your browser.** A hosted account can be reached without typing a
+  password into the app: the website hands you a short code, good once, for two
+  minutes, and the app takes that instead. The password form still works.
+- **Your first minutes on a new mailbox make sense.** A cold start paints your
+  newest mail first and the sidebar says what the import is doing while it runs.
+  Settings, Mailboxes lists the mailbox you are actually connected to, and a
+  filing that has not reached your mail server yet says so instead of looking done.
+- **Tags made in the browser reach the desktop app.**
+- **Reading.** A plain letter is drawn as text in the app's own typography rather
+  than in the sender's; a conversation opens on its latest message and fetches the
+  whole thread in one request; a message that has not arrived yet says so instead
+  of showing its first two hundred characters as though they were the mail.
+- **Pictures load when you open a message,** through a proxy that fetches them
+  server-side so the sender never learns your address. There is a switch to turn
+  that off. A tracking pixel is never fetched in either mode.
+- **Attachments open on a press** and save from the icon in the corner; Download
+  all gives you the files rather than a zip.
+- **Drafts are saved to your account,** two seconds after you stop typing, with a
+  Drafts list beside Compose.
+- **The Screener can be worked from the list itself** — filter chips over the
+  waiting queue, one press to file a sender from its row, a real progress track on
+  both staged operations, and what is left of your AI budget on the summary.
+- **A bounce of your own mail reaches you** when the app can corroborate it against
+  something you sent; forged reports still wait at the gate.
+- **Answer Later, Parked and Resurface are readable lists,** not tiles.
+- **History stays quick** on a mailbox of any size, and there is a full menu bar
+  with the keyboard shortcuts a desktop mail client is expected to have.
+
+See the [changelog](CHANGELOG.md) for the rest.
+
+**Updating from v0.7.2 or earlier asks for your mailbox password once.** From
+v0.7.3 the per-install key that seals it is kept in a file beside the app's data as
+well as in the keystore, so it now survives an update; a key written by an older
+version cannot be read back. From v0.7.3 this update asks for nothing.
 
 **If you are on macOS and already have ohmail installed**, the update is a
 handover: the app you have is a different program — a native client that shared
@@ -276,20 +299,30 @@ strings -a ohmail.exe | grep -oE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' | s
 strings -a ohmail.exe | grep -c Ohbox      # the interface really is in there
 ```
 
-The first command prints **14 strings on Linux, 15 on Windows**, and every one
-of them is one of four things: an XML namespace constant React compares against,
-a documentation link inside a panic or error message, Microsoft's own WebView2
-download page (see the Windows note above), or — three of them — an artifact of
-grepping a Rust binary, where `"http://"` is a string literal that sits in
-read-only data with no terminator between it and whatever was placed next to it.
-`apps/desktop/README.md` lists all fifteen, one by one, with the full
-surrounding line for the three that are not URLs at all.
+Almost everything the first command prints is one of four things: an XML
+namespace constant React compares against, a documentation link inside a panic or
+error message, Microsoft's own WebView2 download page (see the Windows note
+above), or an artifact of grepping a Rust binary, where `"http://"` is a string
+literal that sits in read-only data with no terminator between it and whatever
+was placed next to it. `apps/desktop/README.md` goes through them one by one,
+with the full surrounding line for the ones that are not URLs at all.
 
-CI runs exactly these greps on every build, prints the complete list in the job
-log, and **fails the run** if any URL in the binary points at ohmail or
-TrafficFlow infrastructure other than the one pinned update feed. Your own mail
-server never appears in this list and cannot: it is not compiled in, it is
-whatever you typed, held in your own configuration file.
+The rest — every string that names ohmail or TrafficFlow — is a short list CI
+spells out entry by entry and **fails the run** on anything outside it:
+
+- the pinned update feed, `…/releases/latest/download/latest.json`;
+- `https://api.ohmail.app`, the hosted service, which the app contacts only after
+  you have signed in to it;
+- four `ohmail.app` pages the app may hand to **your own browser** — your account
+  settings, the page that hands the app a sign-in code, the privacy notice and the
+  subprocessor list. The window picks one of them by name and cannot express an
+  address at all, so nothing that gets a string into a page can send your browser
+  somewhere else.
+
+CI runs exactly these greps on every build and prints the complete list in the job
+log, so you can compare a download against what the run saw. Your own mail server
+never appears in this list and cannot: it is not compiled in, it is whatever you
+typed, held in your own configuration file.
 
 ## Build it yourself
 
@@ -315,7 +348,7 @@ no network at all.
 cd apps/desktop
 npm install
 npm run ui:build      # → dist/, the bundle the app embeds
-npm run smoke         # → SMOKE OK (31 checks) — renders, and proves it is offline
+npm run smoke         # → SMOKE OK (33 checks) — renders, and proves it is offline
 npx tauri build       # → src-tauri/target/release/bundle/…
 ```
 
