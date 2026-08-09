@@ -3,9 +3,10 @@
 /**
  * Settings, grouped so the nav reads top-to-bottom as client basics -> mail plumbing -> account
  * administration -> facts: General (language + theme, wired to the ThemeProvider), Notifications
- * (only-what-matters defaults + VIP + the learned suggestion), Mailboxes (the mirror's mailbox
- * entities), Screener (the posture, the dormancy dial, the auto-suggest opt-in, and the door back to
- * the sent-mail review), Rules, Tags, Subscription, Security, Account, and About (last).
+ * (only-what-matters defaults + VIP + the learned suggestion), Mailboxes (host-supplied on every
+ * surface — see {@link mailboxSection}), Screener (the posture, the dormancy dial, the auto-suggest
+ * opt-in, and the door back to the sent-mail review), Rules, Tags, Subscription, Security, Account,
+ * and About (last).
  *
  * ── AND A FIFTH PANE THIS FILE DELIBERATELY KNOWS NOTHING ABOUT ─────────────────────────
  *
@@ -28,10 +29,12 @@ import {
   SettingsSection,
   SettingsSubhead,
   Switch,
+  TAG_HUES,
   TagDot,
   useTheme,
   useToast,
   VipChip,
+  type TagHueName,
   type ThemePreference,
 } from "@ohmail/ui";
 import { hueOf } from "../shell/format";
@@ -82,6 +85,12 @@ export interface NotificationsMeta {
   };
 }
 
+/**
+ * The MIRROR's `mailbox` entity shape. This pane no longer reads it — the Mailboxes pane is
+ * host-supplied now (see {@link mailboxSection}) — but the shell still lists these for the rail
+ * and the compose from-selector's fixture fallback, so the type stays here and `AppShell` imports
+ * it. `"mailbox"` is not a `/sync` entity, so only the fixture world ever holds one.
+ */
 export interface MailboxEntity {
   id: string;
   address: string;
@@ -107,7 +116,20 @@ export interface MailboxEntity {
  * regardless of the number: `TagsService.remove` deletes the assignment rows and never
  * touches `folder_state`.
  */
-type RowMode = { kind: "rest" } | { kind: "rename"; draft: string } | { kind: "confirm" };
+type RowMode =
+  | { kind: "rest" }
+  | { kind: "rename"; draft: string }
+  | { kind: "recolor" }
+  | { kind: "confirm" };
+
+/** The verbs the admin surface wires. `onCreate` lives on the pane, not the row; a row does the
+ *  other three. See {@link SettingsView.tagAdmin}. */
+interface TagAdminVerbs {
+  onCreate: (name: string) => void;
+  onRename: (tagId: string, name: string) => void;
+  onRecolor: (tagId: string, hue: TagHueName) => void;
+  onDelete: (tagId: string) => void;
+}
 
 function TagRow({
   tag,
@@ -117,10 +139,11 @@ function TagRow({
 }: {
   tag: TagDTO;
   count: number;
-  admin?: { onRename: (tagId: string, name: string) => void; onDelete: (tagId: string) => void };
+  admin?: Pick<TagAdminVerbs, "onRename" | "onRecolor" | "onDelete">;
   t: ReturnType<typeof useTranslations<"settings">>;
 }) {
   const [mode, setMode] = useState<RowMode>({ kind: "rest" });
+  const hue = hueOf(tag);
 
   if (mode.kind === "rename") {
     const next = mode.draft.trim();
@@ -156,10 +179,37 @@ function TagRow({
     );
   }
 
+  if (mode.kind === "recolor") {
+    // The picker offers exactly the hues the Blanc system paints (`TAG_HUES`), so every swatch is
+    // one the server accepts AND `chip.css` can draw — the reconciliation the recolour verb waited
+    // on. Each swatch is a button (Tab/Enter reach it); the current hue is pressed and marked.
+    return (
+      <div className="set-row set-tag-edit">
+        <TagDot hue={hue} />
+        <div className="lab"><b>{tag.name}</b></div>
+        <span className="set-tag-hues" role="group" aria-label={t("tagRecolorAria", { name: tag.name })}>
+          {TAG_HUES.map((h) => (
+            <button
+              key={h}
+              type="button"
+              className={h === hue ? "set-hue on" : "set-hue"}
+              aria-label={t(`hue_${h}`)}
+              aria-pressed={h === hue}
+              onClick={() => { admin?.onRecolor(tag.id, h); setMode({ kind: "rest" }); }}
+            >
+              <TagDot hue={h} />
+            </button>
+          ))}
+          <Button variant="ghost" onClick={() => setMode({ kind: "rest" })}>{t("tagCancel")}</Button>
+        </span>
+      </div>
+    );
+  }
+
   if (mode.kind === "confirm") {
     return (
       <div className="set-row set-tag-edit">
-        <TagDot hue={hueOf(tag)} />
+        <TagDot hue={hue} />
         <div className="lab">
           <b>{t("tagDeleteAsk", { name: tag.name })}</b>
           <span>{t("tagDeleteWhat", { count })}</span>
@@ -180,7 +230,23 @@ function TagRow({
 
   return (
     <SettingsRow
-      leading={<TagDot hue={hueOf(tag)} />}
+      leading={
+        admin ? (
+          // The coloured dot IS the recolour affordance — clicking it opens the swatches. A row
+          // with Recolour/Rename/Delete as three text buttons does not fit 390px; the dot carries
+          // the one whose meaning its own colour already states.
+          <button
+            type="button"
+            className="set-tag-dot"
+            aria-label={t("tagRecolor", { name: tag.name })}
+            onClick={() => setMode({ kind: "recolor" })}
+          >
+            <TagDot hue={hue} />
+          </button>
+        ) : (
+          <TagDot hue={hue} />
+        )
+      }
       label={tag.name}
       description={t("tagMessages", { count })}
       control={
@@ -199,9 +265,61 @@ function TagRow({
   );
 }
 
+/**
+ * MAKE A TAG FROM THE PANE — the create verb of the admin surface, inline like the rail's.
+ *
+ * Duplicate-checked here, case-insensitively, against the tags the mirror already holds: `POST
+ * /tags`'s unique index is on `lower(name)`, so "Invoices" and "invoices" collide and the server
+ * answers 409. Refusing before the write keeps the pane from minting a row it knows will bounce and
+ * names the tag that already exists rather than reporting a bare failure. The new tag is `moss`,
+ * which is what `POST /tags` defaults to — the leading dot says so before it is made.
+ */
+function TagCreateRow({
+  tags,
+  onCreate,
+  t,
+}: {
+  tags: TagDTO[];
+  onCreate: (name: string) => void;
+  t: ReturnType<typeof useTranslations<"settings">>;
+}) {
+  const [draft, setDraft] = useState("");
+  const name = draft.trim();
+  const taken = name !== "" && tags.some((x) => x.name.toLowerCase() === name.toLowerCase());
+  const canAdd = name !== "" && !taken;
+  const add = () => {
+    if (!canAdd) return;
+    onCreate(name);
+    setDraft("");
+  };
+  return (
+    <>
+      <div className="set-row set-tag-edit set-tag-new">
+        <TagDot hue="moss" />
+        <input
+          className="join-input set-tag-input"
+          value={draft}
+          placeholder={t("tagNewPlaceholder")}
+          aria-label={t("tagNew")}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); add(); }
+            // Escape clears the field and belongs to it, like the rename input's — the shell's
+            // overlay ladder must not also act on it.
+            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setDraft(""); }
+          }}
+        />
+        <span className="set-tag-acts">
+          <Button variant="primary" disabled={!canAdd} onClick={add}>{t("tagAdd")}</Button>
+        </span>
+      </div>
+      {taken ? <p className="set-note-inline set-tag-taken" role="alert">{t("tagTaken", { name })}</p> : null}
+    </>
+  );
+}
+
 export function SettingsView({
   notifications,
-  mailboxes,
   tags,
   tagCounts,
   rules,
@@ -220,7 +338,6 @@ export function SettingsView({
 }: {
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
   notifications: NotificationsMeta | null;
-  mailboxes: MailboxEntity[];
   tags: TagDTO[];
   tagCounts: Record<string, number>;
   /**
@@ -253,31 +370,39 @@ export function SettingsView({
     onRetarget: (ruleId: string, destination: Folder) => Promise<RuleOutcome>;
   };
   /**
-   * RENAME AND DELETE — one object, or a read-only list.
+   * CREATE / RENAME / RECOLOUR / DELETE — one object, or a read-only list.
    *
-   * The same rule as {@link rules} and for the same reason: two optional callbacks can be
-   * half-supplied, and a pane that renders Delete without an `onDelete` is exactly the shape
-   * this is fixing. What shipped was worse than half-supplied — both buttons were present and
-   * both called `toast("Renaming and deleting tags isn't wired up yet.")`, which is a control
-   * whose only function is to say it has none.
+   * The same rule as {@link rules} and for the same reason: four optional callbacks can be
+   * half-supplied, and a pane that renders a verb without its handler is exactly the shape this
+   * is fixing. What shipped originally was worse than half-supplied — Rename and Delete both
+   * called `toast("Renaming and deleting tags isn't wired up yet.")`, controls whose only
+   * function was to say they had none.
    *
-   * Absent ⇒ the list renders with no verbs. That is right for a shell that has not wired
-   * them and it is never the live one: both are ordinary engine mutations on the same wire
-   * `tag_assign` uses, so the demo and the desktop shell get them too.
+   * All four are ordinary engine mutations on the same wire `tag_assign` uses (`tag_create`,
+   * `tag_rename`, `tag_recolor`, `tag_delete`), so the demo and the desktop shell get them too —
+   * `FixturesAdapter` serves whatever `mutationEffects` produces. Absent ⇒ the list renders with
+   * no verbs and no create row, which is right for a shell that has not wired them.
    */
-  tagAdmin?: {
-    onRename: (tagId: string, name: string) => void;
-    onDelete: (tagId: string) => void;
-  };
+  tagAdmin?: TagAdminVerbs;
   /** The Cloud client's Account pane, or absent — see the header. */
   accountSection?: ReactNode;
   /**
-   * The Cloud client's Mailboxes pane, REPLACING the mirror-backed list below.
+   * THE MAILBOXES PANE — HOST-SUPPLIED, ON EVERY SURFACE, and it names its own mode.
    *
-   * Same seam and same reason as {@link accountSection}: connecting a mailbox means
-   * `POST /mailboxes`, a step-up ceremony and `app/api-client`, none of which may exist in
-   * the Desktop mirror. Absent ⇒ the shared fixture list, which is the correct pane for
-   * Desktop and for `?demo=1`.
+   * There is no mirror fallback any more. This pane used to fall back to
+   * `reader.list<MailboxEntity>("mailbox")`, but `"mailbox"` is not a `/sync` entity
+   * (`packages/db/src/change-log.ts`), so `/sync` never emits one and the list was empty for
+   * every real account — the built-tested-unreachable branch this slice deletes rather than
+   * layers over. Both surfaces now bring the real list from `GET /mailboxes`: the Cloud client
+   * from `(product)/mailbox/MailboxSection` through `app/api-client`, the desktop shell from the
+   * sidecar's mounted API over its bridge. Each pane HEADS itself with the mode it is showing —
+   * "Cloud mailboxes" or "Local mailboxes on this computer" — because an install is one or the
+   * other, never both in parallel.
+   *
+   * Absent ⇒ NO pane and no nav entry (the demo, and a desktop window with no engine yet): a
+   * settings pane that connects a mailbox needs a server this surface is not talking to, so it is
+   * withheld structurally rather than offered dead. Same seam as {@link accountSection}, which
+   * `scripts/publish-desktop.mjs` keeps out of the shared file.
    */
   mailboxSection?: ReactNode;
   /**
@@ -411,7 +536,11 @@ export function SettingsView({
   const panes: Array<[PaneId, string]> = [
     ["general", t("general")],
     ["notifications", t("notifications")],
-    ["mailboxes", t("mailboxes")],
+    // MAILBOXES — the connections this install opens. Host-supplied on every surface and named
+    // for its mode inside the pane; present IFF the shell wired the node. There is no mirror
+    // fallback: a surface with no host source gets no pane rather than the empty one the mirror
+    // list always was for a real account. See {@link mailboxSection}.
+    ...(mailboxSection ? [["mailboxes", t("mailboxes")] as [PaneId, string]] : []),
     // Directly after Mailboxes, because everything in it — the posture, the dormancy dial, the
     // auto-suggest opt-in and the door back to the sent-mail review — is about the mail a connected
     // mailbox brings. Present IFF the shell wired any of its nodes; the demo passes none, so the
@@ -559,27 +688,11 @@ export function SettingsView({
             </SettingsSection>
           ) : null}
 
-          {/* MAILBOXES. The Cloud client REPLACES this pane wholesale, by passing its own
-              `mailboxSection`, because the list below cannot be right for it: these are the
-              MIRROR's mailbox entities, and `"mailbox"` is not an `EntityType` in the change
-              log, so `/sync` never emits one. Only the FixturesAdapter seeds them — which is
-              exactly right for Desktop and for the demo, and always empty for a real
-              account. */}
-          {pane === "mailboxes" ? (
-            mailboxSection ?? (
-              <SettingsSection>
-                {mailboxes.map((m) => (
-                  <SettingsRow
-                    key={m.id}
-                    label={m.address}
-                    description={`${m.provider} · ${m.protocol}`}
-                    value={t("mailboxStatus")}
-                  />
-                ))}
-                <p className="set-note-inline">{t("mailboxNote")}</p>
-              </SettingsSection>
-            )
-          ) : null}
+          {/* MAILBOXES — the host-supplied node, verbatim. No mirror fallback: the old one drew
+              `reader.list("mailbox")`, which `/sync` never fills, so it was empty for every real
+              account (the built-tested-unreachable branch). The node names its own mode; the nav
+              entry above is present only when it is wired. See {@link mailboxSection}. */}
+          {pane === "mailboxes" ? mailboxSection : null}
 
           {pane === "billing" ? billingSection : null}
 
@@ -599,6 +712,10 @@ export function SettingsView({
                   t={t}
                 />
               ))}
+              {/* CREATE — the pane's own inline mint, offered only where the verbs are wired (a
+                  read-only shell gets the list and no create row). The rail can make a tag too;
+                  this is the same verb, where somebody managing the whole set would look for it. */}
+              {tagAdmin ? <TagCreateRow tags={tags} onCreate={tagAdmin.onCreate} t={t} /> : null}
               <p className="set-note-inline">{t("tagNote")}</p>
               {/* THE OWNERSHIP SENTENCE, SAID ONCE, WHERE THE VERBS ARE.
                   A tag is a row in ohmail's database keyed by message — never an IMAP folder

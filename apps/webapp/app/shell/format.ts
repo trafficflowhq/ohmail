@@ -11,7 +11,7 @@ import {
   type EngineMessage,
   type TagDTO,
 } from "@ohmail/client-engine";
-import type { TagHueName } from "@ohmail/ui";
+import { TAG_HUES, type TagHueName } from "@ohmail/ui";
 
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -327,6 +327,13 @@ export function tagsOfMessage(m: EngineMessage, tags: TagDTO[]): TagDTO[] {
   return tags.filter((t) => m.labels.includes(t.id));
 }
 
+/**
+ * The renderable hue for a tag, CLAMPED. `tag.hue` is a free `string` on the wire and a row
+ * written by an older build (or a future one) can carry a name `chip.css` has no rule for — which
+ * would paint an invisible dot. Anything off the canonical list falls back to `moss` so every tag
+ * has a visible colour; the picker only ever offers members of the list, so a clamp fires only for
+ * legacy or skewed data.
+ */
 export function hueOf(tag: TagDTO): TagHueName {
-  return (tag.hue as TagHueName) ?? "moss";
+  return TAG_HUES.includes(tag.hue as TagHueName) ? (tag.hue as TagHueName) : "moss";
 }

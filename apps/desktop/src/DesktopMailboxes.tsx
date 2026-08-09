@@ -9,10 +9,11 @@
  *    tab supplies a probe over the hosted API, which this window may not name; so it supplied none,
  *    the ladder returned its resting value on every render, and a first sync ran to completion with
  *    the window silent throughout. That is the missing loader.
- *  · SETTINGS → MAILBOXES. The shared pane's fallback list renders the mirror's `mailbox`
- *    entities, and `mailbox` is not a kind of thing the change feed carries — only the invented
- *    sample world has any. So the pane was reliably empty on a real install, which is exactly the
- *    surface somebody opens to find out what their install is connected to.
+ *  · SETTINGS → MAILBOXES. The shared pane USED TO fall back to the mirror's `mailbox` entities,
+ *    and `mailbox` is not a kind of thing the change feed carries — only the invented sample world
+ *    has any — so the pane was reliably empty on a real install, which is exactly the surface
+ *    somebody opens to find out what their install is connected to. That fallback is deleted now;
+ *    the pane is host-supplied on every surface, and this file IS the desktop's host node.
  *
  * Both are answered by `GET /mailboxes`, which BOTH doors serve out of the database on this machine
  * — the standalone engine from its own row, the hosted one from the mirror — so this file needs no
@@ -118,6 +119,9 @@ export function DesktopMailboxes() {
   if (facts === null) {
     return (
       <SettingsSection>
+        {/* Names the mode, like the Cloud pane's "Cloud mailboxes" heading — one mode per
+            install, never both in parallel. */}
+        <h2 className="acct-h">Local mailboxes on this computer</h2>
         <p className="set-note-inline">Asking the mail engine which mailbox this install opens…</p>
       </SettingsSection>
     );
@@ -125,9 +129,10 @@ export function DesktopMailboxes() {
 
   return (
     <SettingsSection>
+      <h2 className="acct-h">Local mailboxes on this computer</h2>
       {facts.length === 0 ? (
         <p className="set-note-inline">
-          This install has no mailbox yet. Choose one under Desktop → Use a different mailbox.
+          This install has no mailbox yet — choose one in the Desktop settings pane.
         </p>
       ) : null}
       {facts.map((m) => (

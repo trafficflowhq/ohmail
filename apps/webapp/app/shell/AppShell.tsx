@@ -1925,9 +1925,21 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     },
     [engine, reader, toast, t],
   );
+  /**
+   * Recolour a tag. NO toast, deliberately: the dot changes colour in place, which is the
+   * confirmation — a "Recoloured Invoices" toast would restate a change the eye already saw. The
+   * picker only ever passes a renderable hue (`TAG_HUES`), and the server accepts exactly those,
+   * so this cannot store a colour nothing can draw.
+   */
+  const recolorTag = useCallback(
+    (tagId: string, hue: string) => {
+      void engine.mutate({ kind: "tag_recolor", tagId, hue });
+    },
+    [engine],
+  );
   const tagAdmin = useMemo(
-    () => ({ onRename: renameTag, onDelete: deleteTag }),
-    [renameTag, deleteTag],
+    () => ({ onCreate: createTagAlone, onRename: renameTag, onRecolor: recolorTag, onDelete: deleteTag }),
+    [createTagAlone, renameTag, recolorTag, deleteTag],
   );
 
   const onMessageAction = useCallback(
@@ -3548,7 +3560,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "settings" ? (
               <SettingsView
                 notifications={notifications}
-                mailboxes={mailboxes}
                 tags={tags}
                 tagCounts={Object.fromEntries(
                   tagGroups.map((g) => [g.tag.id, g.messages.length]),

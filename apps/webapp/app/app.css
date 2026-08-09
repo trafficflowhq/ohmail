@@ -1933,6 +1933,46 @@ body.reading .shell {
   flex: 0 0 auto;
 }
 
+/* The coloured dot doubles as the recolour trigger: a bare button so the dot sits exactly where a
+   static one would, with a hit area and a focus ring but no button chrome. */
+.set-tag-dot {
+  border: 0;
+  background: none;
+  padding: 5px;
+  margin: -5px;
+  cursor: pointer;
+  border-radius: 7px;
+  display: inline-flex;
+  line-height: 0;
+}
+.set-tag-dot:hover { background: var(--tint); }
+.set-tag-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The recolour swatches — one button per renderable hue, the current one ringed. */
+.set-tag-hues {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  flex: 0 0 auto;
+}
+.set-tag-hues .set-hue {
+  border: 0;
+  background: none;
+  padding: 5px;
+  cursor: pointer;
+  border-radius: 999px;
+  display: inline-flex;
+  line-height: 0;
+  box-shadow: inset 0 0 0 1px transparent;
+}
+.set-tag-hues .set-hue:hover { box-shadow: inset 0 0 0 1px var(--hair); }
+.set-tag-hues .set-hue.on { box-shadow: inset 0 0 0 2px var(--accent-hair); }
+.set-tag-hues .set-hue:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The duplicate-name refusal beneath the create row. */
+.set-tag-taken { color: var(--accent-ink); }
+
 .tagp {
   position: fixed;
   z-index: var(--z-pal);

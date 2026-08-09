@@ -206,11 +206,11 @@ export function DesktopSettings({
       ) : null}
 
       <SettingsRow
-        label="Use a different mailbox"
+        label="Switch mailbox"
         description={
-          "Choose the other door, or a different mail server. The copy of your mail from this " +
-          "one is frozen where it is rather than deleted, so coming back does not cost a full " +
-          "re-sync."
+          "Open a different mail server, or move between this Mac and your hosted account. The " +
+          "copy of your mail from this one is frozen where it is rather than deleted, so coming " +
+          "back does not cost a full re-sync."
         }
         control={<Button onClick={onSwitchDoor} disabled={busy}>Switch…</Button>}
       />
