@@ -1254,11 +1254,10 @@ function looksLikeOpaqueToken(seg: string): boolean {
  * What that cost: `no_ai` is set on any message containing a `/login`, `/signin`, `/confirm`,
  * `/verify`, `/reset` or `/invite` link, or a `?t=` / `?code=` parameter — which is ordinary bulk
  * marketing mail, footer unsubscribe links and discount codes. It reaches through HTML `href`
- * attributes too, so an invisible "Log in" button in a template was enough. Measured on a live
- * account: 535 of 1717 held senders (31%) were withheld from the model, and the four the account
- * owner reported as "the Screener never suggests anything for these" were all of them —
- * `https://app.netdata.cloud/sign-in` and its kind. They cannot be suggested for, cannot be
- * drafted against, and their bodies are stored redacted.
+ * attributes too, so an invisible "Log in" button in a template was enough. A sender whose every
+ * message carries such a link — a monitoring service that signs each mail `…/sign-in`, say — is
+ * withheld from the model wholesale: it can never be suggested for, never drafted against, and its
+ * bodies are stored redacted, none of which the message needed.
  *
  * The fix is to search the CAPTURED TAIL — what follows the marker — which is what "an
  * authentication-shaped URL carrying a token" meant all along. `/verify` with nothing after it is
@@ -1277,6 +1276,127 @@ function hasAuthUrlToken(s: string): boolean {
     for (const seg of tail.match(TOKEN_SEGMENT) ?? []) {
       if (looksLikeOpaqueToken(seg)) return true;
     }
+  }
+  return false;
+}
+
+/**
+ * ── A LINK IN A DOCUMENT IS NOT A CREDENTIAL DELIVERED — THE INDETERMINATE ARM, GATED ────────
+ *
+ * {@link hasAuthUrlToken} answers "does an authentication-shaped URL carry an opaque token". That
+ * is the right question for the outbound SINK — the last check before bytes leave for a model,
+ * where over-refusing costs one redacted URL tail and under-refusing leaks a secret, so it must
+ * stay as broad as it is and this function does NOT touch it. It is the WRONG question for
+ * `classifySensitivity`'s indeterminate arm, which withholds the whole message from every model,
+ * stores its body redacted, and (when it also matched a stale category) hides the rich body.
+ *
+ * ── WHAT WENT WRONG ──────────────────────────────────────────────────────────────────────────
+ *
+ * The token search runs over the whole visible text, so ANY authentication-shaped URL anywhere in
+ * a message — a `Log in to manage your account` link in a receipt footer, an `unsubscribe?token=`
+ * in a newsletter, a `/verify-email` tracker quoted three replies deep in a business thread — was
+ * enough to route the message to the fail-closed bucket. Most mail that trips this carries no
+ * credential the recipient could act on, and it falls into three classes the rule below tells apart:
+ *   · a link to a LOGIN PAGE — `billing.stripe.com/p/login/<id>`, `track.toggl.com/login/?…`,
+ *     `notion.so/login?utm_campaign=…`. You bring your OWN password to a login page; nothing
+ *     secret is carried in the URL, and the opaque run after `/login` is a session id, a
+ *     `returnTo` path or a campaign name.
+ *   · a UTILITY endpoint — `/unsubscribe?token=…`, `/mailing_preferences?token=…`,
+ *     `zendesk.com/attachments/token/<id>`, a MailStore archive `…/derefer/?url=…&token=<static>`
+ *     (the same token rides every message from that sender — the archive's key, not the reader's),
+ *     and an app's own `…/confirm_change_notification_category_setting?key=…`,
+ *     `…/domain_user_profile_photo?key=…` and `…/log_view?dest=…` settings, avatar and click
+ *     links. The token authorises unsubscribing, dereferencing an archived link, changing a
+ *     setting or loading an avatar — never a login.
+ *   · a QUOTED link — a reply thread whose firing URL sits in the HTML the reply quotes, below a
+ *     `Von:`/`schrieb:` reply header, rather than in anything the reply itself delivers.
+ *
+ * ── THE GATE, AND WHY IT CANNOT WEAKEN THE BOUNDARY ──────────────────────────────────────────
+ *
+ * This is the same move as {@link schemeNameNearCode}: a signal that names a TOPIC or a
+ * NAVIGATION target ("go to the login page", "manage your subscription") is not a credential and
+ * fires only on real credential evidence. A URL is a credential DELIVERY when the token is the
+ * operative payload — a credential NAMED as a query parameter ({@link AUTH_STRONG_PARAM}: `token`,
+ * `key`, `code`, `magic`, `*_token`, … — never the tracking `t`/`tk`/`session`/`sso`), or the
+ * segment following a credential-DELIVERY path marker ({@link AUTH_DELIVERY_PATH}: `verify`,
+ * `reset`, `activate`, `confirm`, `auth`, … — never the `login`/`signin`/`session` PAGE markers).
+ * A message that is short and link-dominated ({@link AUTH_LOW_PROSE}) is a delivery too, whatever
+ * the marker — a bare magic/bearer link IS the message. A {@link AUTH_UTILITY_URL} endpoint and a
+ * {@link inQuotedReply} link are never deliveries.
+ *
+ * It cannot open the hole this rule closes, and that is proven three ways rather than asserted:
+ *   · the SINK is untouched. `screenOutboundText` still calls {@link hasAuthUrlToken} over the
+ *     exact bytes about to reach a model, so a credential this arm now lets past — always a URL
+ *     buried in a long document, never the short subject+snippet the sink screens — is still
+ *     redacted out of the payload. This arm decides ROUTING and storage; the sink decides
+ *     disclosure, and disclosure did not move.
+ *   · every genuine fixture stays withheld. The fail-closed corpus's bare bearer link
+ *     (`/session?t=SECRET-LOGIN-TOKEN`, body = the URL alone) fires via {@link AUTH_LOW_PROSE};
+ *     the auth-URL corpus's magic-link/JWT/reset/`login_token` cases fire via delivery-path or
+ *     strong-param. Both suites stay green, unmodified.
+ *   · nothing with a delivery-shaped, non-utility, non-quoted URL flips to ordinary. What flips is
+ *     login-page, utility or quoted; what stays withheld is a genuine credential delivery
+ *     (verify/reset/activate/magic/invite/order-authenticate), with a small conservative tail (a
+ *     community-invite link with a campaign token, a survey) left withheld rather than hand-excluded.
+ *
+ * Both mutations were watched to fail: forcing this predicate always-true reinstates the false
+ * positives (the flip fixtures go red); forcing it always-false drops the genuine
+ * deliveries (the keep fixtures go red).
+ */
+// Each endpoint word names an action that is NOT a login. `derefer` is an archive's
+// link-dereference wrapper (the SAME static token rides every message from one sender — it is the
+// archive's key, not the reader's); `notification(s)`, `profile[_-]photo`, `user_profile`,
+// `log_view` and `/inbox` are an application's own settings, avatar and click-tracking links;
+// `download_file` is a file-download link. None appears in a genuine
+// magic-link/reset/verify/activate/invite URL, so adding them only ever over-withholds less.
+const AUTH_UTILITY_URL =
+  /unsubscribe|unsub\b|mailing[_-]?preferences|manage[_-]?preferences|\/preferences\b|\bpreferences\b|\/subscriptions?\b|\/manage\b|attachments?|opt[_-]?out|list-manage|derefer|notifications?|profile[_-]?photo|user_profile|log_view|\/inbox\b|download[_-]?file/i;
+const AUTH_STRONG_PARAM =
+  /[?&](?:token|code|key|otp|magic|nonce|secret|access_token|id_token|[a-z]+_token)=([A-Za-z0-9_\-.~+%]+)/gi;
+const AUTH_DELIVERY_PATH =
+  /\/(?:auth|authorize|authorise|authenticate|verify|verification|confirm|confirmation|activate|activation|reset|recover|recovery|magic|passwordless|invite|invitation|onetime|one-time|token|otp|2fa|mfa)\b/i;
+const REPLY_QUOTE_HEADER =
+  /-----\s*(?:Original|Ursprüngliche|Weitergeleitete)|^\s*(?:Am|On|Le)\b.{0,80}?(?:schrieb|wrote|a écrit)\s*:|\bwrote:\s*$|\bschrieb:\s*$|^\s*\*?(?:Von|From|Gesendet|Sent)\s*:/im;
+/** Prose word count under which a message is short/link-dominated — a delivery, not a document. */
+const AUTH_LOW_PROSE = 40;
+
+/** Does this ONE url deliver a credential (as opposed to linking to a page or a utility action)? */
+function urlDeliversCredential(url: string): boolean {
+  if (AUTH_UTILITY_URL.test(url)) return false;
+  AUTH_STRONG_PARAM.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = AUTH_STRONG_PARAM.exec(url)) !== null) {
+    if (looksLikeOpaqueToken(m[1] ?? "")) return true;
+  }
+  return AUTH_DELIVERY_PATH.test(url);
+}
+
+/** Is the character at `idx` inside quoted-reply content — a `>` line or below a reply header? */
+function inQuotedReply(s: string, idx: number): boolean {
+  const lineStart = s.lastIndexOf("\n", Math.max(0, idx - 1)) + 1;
+  if (/^\s*>/.test(s.slice(lineStart, idx))) return true;
+  return REPLY_QUOTE_HEADER.test(s.slice(Math.max(0, idx - 600), idx));
+}
+
+/**
+ * The GATED predicate for the indeterminate arm — {@link hasAuthUrlToken}'s token search exactly,
+ * then keep only the credential deliveries. `lowProse` is a whole-message property, so it is
+ * computed once by the caller and passed in.
+ */
+function authCredentialUrlIn(s: string, lowProse: boolean): boolean {
+  AUTH_URL_MARKER.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = AUTH_URL_MARKER.exec(s)) !== null) {
+    const tail = m[1] ?? "";
+    let hasToken = false;
+    for (const seg of tail.match(TOKEN_SEGMENT) ?? []) {
+      if (looksLikeOpaqueToken(seg)) { hasToken = true; break; }
+    }
+    if (!hasToken) continue;
+    if (inQuotedReply(s, m.index)) continue;
+    const run = /https?:\/\/[^\s<>"')\]]+/.exec(s.slice(m.index));
+    const url = run ? run[0] : s.slice(m.index, m.index + m[0].length);
+    if (urlDeliversCredential(url) || lowProse) return true;
   }
   return false;
 }
@@ -1511,11 +1631,18 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
       reasons.add("unrecognised_language");
     }
 
+    // Prose density for the auth-URL gate: URL-stripped words across every human-visible field. A
+    // message dominated by a link is a credential DELIVERY; a document that merely CONTAINS a link
+    // is prose whose incidental login/tracking URL is not a credential. See {@link authCredentialUrlIn}.
+    const lowProse =
+      words(`${subject}\n${text}\n${htmlText}`.replace(/https?:\/\/[^\s<>"')\]]+/gi, " ")).length
+      < AUTH_LOW_PROSE;
+
     for (const rep of reps) {
       if (credentialShapeIn(rep)) {
         reasons.add("credential_shape");
       }
-      if (hasAuthUrlToken(rep.raw) || hasAuthUrlToken(rep.canonical.plain)) {
+      if (authCredentialUrlIn(rep.raw, lowProse) || authCredentialUrlIn(rep.canonical.plain, lowProse)) {
         reasons.add("auth_url_token");
       }
     }
