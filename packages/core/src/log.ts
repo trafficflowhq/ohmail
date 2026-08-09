@@ -136,6 +136,16 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // ── identity and correlation (what makes a line greppable at all) ──
   "accountId", "mailboxId", "requestId", "instanceId", "environment", "version",
   "shard", "shards", "route", "method", "status", "code", "host",
+  // `messageId` is the `messages.id` ROW UUID a per-message worker line names when it acts on one
+  // row — NOT the `Message-ID` HEADER, which carries a domain and reads like an address and is not
+  // logged anywhere. A row id is the same shape and the same non-secret as `accountId` and
+  // `mailboxId` one line up: it correlates a line to a database row and contains no mail content.
+  // Added AFTER the fact, the same way the attach-phase and repair-count entries below were: the
+  // sensitivity backfill's per-row `sensitive_fp_backfill_unreadable` / `_oversize` warn lines
+  // passed it and the census dropped it (`droppedFields=["messageId"]`), so the two oversized rows
+  // those lines exist to name could not be named. A row-scoped test drives the REAL logger for this
+  // name, so it cannot silently go missing again.
+  "messageId",
   // ── The attach-phase durations, added AFTER the first live run refused them ──
   //
   // The six landed in `mailbox_attached` without landing here, so the first live line read
@@ -197,8 +207,15 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // `stillSensitive` are the two halves of the only question an operator asks about this pass —
   // how much mail became readable, and how much was correctly left alone — and one `count` that
   // means either depending on the event is not a claim anybody can check.
-  "candidates", "fetched", "cleared", "stillSensitive", "unreadable", "mismatched",
-  "capped", "marked",
+  //
+  // `clearedFromStored` is the ninth, added with the oversized-original ruling: a candidate whose
+  // ORIGINAL is over the re-read ceiling cannot be re-read, so its sensitivity is cleared from the
+  // STORED text instead — a repair that un-withholds the row but cannot restore the html the false
+  // positive deleted. It is counted APART from `cleared` because the two are not the same outcome
+  // (one restores the body, one only the metadata), which is the distinction an operator asks
+  // about. Structurally an integer accumulated by `++`, so it carries no content, same as the eight.
+  "candidates", "fetched", "cleared", "clearedFromStored", "stillSensitive", "unreadable",
+  "mismatched", "capped", "marked",
   // ── The Cloud mirror's one-time tag repair, added WITH its call site ──
   //
   // `tags` is how many tag ROWS the repair restored and `messages` how many mirrored messages
