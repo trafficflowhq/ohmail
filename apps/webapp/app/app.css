@@ -771,6 +771,159 @@ body.reading .shell {
   font-size: 11.5px;
   padding: 4.5px 11px;
 }
+/* the waiting queue, partitioned — one chip per suggested pile, plus the two the apply
+   button steps over (`.off`) and the "All" reset */
+.scn-chips {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.scn-chip {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: none;
+  color: var(--ink2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s var(--swift), color 0.14s var(--swift),
+    border-color 0.14s var(--swift);
+}
+.scn-chip:hover {
+  background: var(--tint);
+}
+.scn-chip .num {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink3);
+  margin-left: 2px;
+}
+/* the two the bulk apply will not touch read quieter than the four it will */
+.scn-chip.off {
+  color: var(--ink3);
+  border-style: dashed;
+}
+.scn-chip.on {
+  background: var(--chip);
+  border-color: transparent;
+  color: var(--ink);
+}
+.scn-chip.on .num {
+  color: var(--ink2);
+}
+/* a bulk in flight — the sentence, and the same numbers as a track */
+.scn-applying {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.scn-applying-lab {
+  font-size: 11.5px;
+  color: var(--ink2);
+}
+.scn-prog {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 108px;
+  height: 3px;
+  border: 0;
+  border-radius: 99px;
+  background: var(--line);
+  flex: none;
+}
+.scn-prog::-webkit-progress-bar {
+  background: var(--line);
+  border-radius: 99px;
+}
+.scn-prog::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: 99px;
+  transition: width 0.25s var(--swift);
+}
+.scn-prog::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: 99px;
+}
+/* quick-adjust — the accept and the destination menu that ride each waiting row */
+.scn-act {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 550;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--ink2);
+  cursor: pointer;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.14s var(--swift), background 0.14s var(--swift), color 0.14s var(--swift);
+}
+/* REVEALED BY THE POINTER, BUT NEVER ONLY BY IT. A control that exists only under :hover is
+   unreachable by keyboard and invisible on a touch screen, so the row's own focus and
+   selection show it too, and a coarse pointer gets it unconditionally. */
+.row-slot:hover .scn-act,
+.row-slot:focus-within .scn-act,
+.row-slot:has(.row.sel) .scn-act {
+  opacity: 1;
+}
+.scn-act:focus-visible {
+  opacity: 1;
+}
+.scn-act:hover {
+  background: var(--tint);
+  color: var(--ink);
+}
+.scn-act-yes:hover {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.scn-act-more {
+  padding: 4px 6px;
+  line-height: 0;
+}
+.scn-act-more .chev {
+  transform: rotate(-90deg);
+}
+.scn-act-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: 4px;
+  gap: 1px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--float);
+  box-shadow: var(--lift-2);
+}
+.scn-act-dest {
+  font: inherit;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+.scn-act-dest:hover {
+  background: var(--tint);
+}
+@media (hover: none) {
+  .scn-act {
+    opacity: 1;
+  }
+}
 /* the suggestion purchase — batch size, the server's price, confirm */
 .scn-suggest {
   display: flex;

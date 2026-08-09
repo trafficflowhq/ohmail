@@ -38,6 +38,7 @@ import { avatarHue } from "../shell/format";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { goScreener, type ScreenerSegmentId } from "../shell/routing";
+import { APPLY_PILE_ORDER } from "../shell/screener-state";
 import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
 import type { SuggestBatchControl } from "../shell/screener-suggest";
 import type { RemoteImagesChrome } from "../shell/remote-images";
@@ -75,6 +76,137 @@ function pileList(dests: DecisionDestination[], t: (k: string, v?: Record<string
   const last = names[names.length - 1]!;
   const head = names.slice(0, -1);
   return t("pileJoin", { a: head.join(", "), b: last });
+}
+
+/**
+ * THE SIX GROUPS A WAITING QUEUE FALLS INTO — the filter chips, in the order they are offered.
+ *
+ * Spelled as {@link APPLY_PILE_ORDER} plus the two the bulk apply REFUSES, because that is the
+ * whole point of the row. "Apply 12 — Ohbox, Reads & Receipts" over a queue of 47 is a true
+ * sentence that leaves 35 senders unaccounted for, and a reader has no way to find out where
+ * they went: the button names what it will do and says nothing about what it is stepping over.
+ * The chips are that remainder, made countable — `spam`, which the bulk will not judge forty at
+ * a time, and `none`, which is every sender the model held, could not answer for, or was never
+ * asked about.
+ *
+ * Deriving the first four from the shared constant rather than re-listing them is what keeps the
+ * chips and the banner describing ONE set: a sixth destination, or a change of order, moves both
+ * at once. Two hand-kept lists would drift, and the drift would read as the apply count being
+ * wrong.
+ */
+const FILTER_ORDER = [...APPLY_PILE_ORDER, "spam", "none"] as const;
+type ScreenerFilterId = DecisionDestination | "none";
+
+/**
+ * Which chip a waiting row belongs to.
+ *
+ * A hold (`dest: "screener"`, the model declining to place this sender), a `noAnswer` (it was
+ * never asked, or the run ran out) and a row nobody has bought advice for are ONE group here,
+ * and deliberately: they differ in why, which the row chip and the preview already say, but not
+ * in what a reader has to do about them. All three are senders still waiting on a person.
+ */
+function filterGroupOf(w: ScreenerSenderDTO): ScreenerFilterId {
+  const ai = w.ai;
+  if (!ai || ai.noAnswer || ai.dest === "screener") return "none";
+  return ai.dest;
+}
+
+/**
+ * THE DESTINATION A ROW'S ACCEPT WOULD FILE TO — null when there is nothing to accept.
+ *
+ * The same predicate the Enter binding uses, and it must stay the same one: a row that offers a
+ * one-press accept while Enter refuses it (or the reverse) is two answers to "is there a
+ * suggestion here". `screener` is the model declining to place the sender and `noAnswer` is it
+ * never having answered; an accept control on either would be a button whose only meaning is
+ * "accept the decision not to decide".
+ */
+function acceptDestOf(w: ScreenerSenderDTO): DecisionDestination | null {
+  const ai = w.ai;
+  if (!ai || ai.noAnswer || ai.dest === "screener") return null;
+  return ai.dest;
+}
+
+/**
+ * THE FILTER CHIPS — the waiting queue, partitioned and counted.
+ *
+ * Counted over the SAME rows `suggestedCount` is counted over (waiting minus everything already
+ * decided), so the four apply-able chips add up to the number on the apply button. They are read
+ * off one array in one pass rather than re-derived per chip, which is the only way that identity
+ * survives someone editing one of them later.
+ *
+ * ── WHAT IS NOT OFFERED ────────────────────────────────────────────────────────────────────
+ *
+ * A chip with nothing in it. Pressing it would empty the pane, and an empty pane under a pressed
+ * chip is indistinguishable from an empty queue — the same inert-control lie the apply button is
+ * gated against one control over. And with only one non-empty group there is no partition to
+ * make: the chip would filter the list to itself, so the whole row stays away.
+ */
+function FilterChips({
+  counts,
+  value,
+  onChange,
+}: {
+  counts: Record<ScreenerFilterId, number>;
+  value: ScreenerFilterId | null;
+  onChange: (next: ScreenerFilterId | null) => void;
+}) {
+  const t = useTranslations("screener");
+  const shown = FILTER_ORDER.filter((id) => counts[id] > 0);
+  if (shown.length < 2) return null;
+  const total = shown.reduce((n, id) => n + counts[id], 0);
+  return (
+    <div className="scn-chips" role="group" aria-label={t("filterAria")}>
+      <button
+        type="button"
+        className={value === null ? "scn-chip on" : "scn-chip"}
+        aria-pressed={value === null}
+        onClick={() => onChange(null)}
+      >
+        {t("filterAll")} <span className="num">{total}</span>
+      </button>
+      {shown.map((id) => (
+        <button
+          key={id}
+          type="button"
+          /* `off` marks the two the apply button steps over. It is the reason this row exists,
+             so it is a difference a reader can see and not only one they can count. */
+          className={[
+            "scn-chip",
+            value === id ? "on" : null,
+            id === "spam" || id === "none" ? "off" : null,
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          aria-pressed={value === id}
+          onClick={() => onChange(value === id ? null : id)}
+        >
+          {id === "none" ? t("filterNone") : t(PILE_KEY[id])}{" "}
+          <span className="num">{counts[id]}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A PROGRESS TRACK OVER A SENTENCE THAT IS ALREADY ON SCREEN.
+ *
+ * Both bulk paths here — buying suggestions, applying them — publish their progress as two
+ * numbers beside the sentence that states them, never as a string to be parsed back (see
+ * `SuggestBatchControl.progress`). This renders the pair and nothing else.
+ *
+ * `aria-hidden`, and that is not an oversight: the sentence beside it is in a `role="status"`
+ * and is already announced. A labelled `<progress>` would announce the same fact a second time,
+ * once as prose and once as a percentage, which is how a screen reader user ends up hearing a
+ * bulk run narrated twice per chunk.
+ *
+ * NEVER RENDERED WITHOUT BOTH NUMBERS. `total` of 0 would put `NaN%` in the accessibility tree
+ * and an indeterminate bar on screen — a run that claims to be in flight forever — so a track
+ * with no denominator is no track.
+ */
+function BulkProgress({ done, total }: { done: number; total: number }) {
+  if (!(total > 0)) return null;
+  return <progress className="scn-prog" aria-hidden="true" value={done} max={total} />;
 }
 
 /**
@@ -158,7 +290,108 @@ function SuggestControl({ control }: { control: SuggestBatchControl }) {
           {control.notice}
         </span>
       ) : null}
+      {/* HOW FAR THE PURCHASE HAS GOT, as a track under the sentence that says it in words.
+          A chosen size larger than one request is bought as several chunks, so a 40-sender
+          press is several round trips and the only evidence of the middle ones was a number
+          in a sentence changing. Read straight off `control.progress` — the field the hook
+          publishes beside the notice, from the same two sources — and absent in every phase
+          but `running`, which is why a finished run leaves no bar behind. */}
+      {control.progress ? (
+        <BulkProgress done={control.progress.done} total={control.progress.total} />
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * QUICK-ADJUST — the decision, on the row, without opening the sender.
+ *
+ * The Screener's decisions have always lived in the bar above the PREVIEW, which means every
+ * sender costs a selection before it costs a decision. On a queue of seventy that is seventy
+ * round trips through a reading pane to file mail whose destination the list already names.
+ * This is the same decision taken where it is already legible.
+ *
+ * ── IT ADDS NOTHING TO THE DECIDE PATH, AND THAT IS THE POINT ───────────────────────────────
+ *
+ * Every control here calls `ScreenerState.decide` — the one funnel. So a row press gets the
+ * undo window, the delayed commit, the read clamp on the demoting piles, the rule promotion,
+ * and the past-the-gate branch that files with a rule and capped moves instead of a decide,
+ * all of them, because it is not a second implementation of filing. A row control that reached
+ * for `engine.mutate` directly would look identical on screen and quietly drop all six.
+ *
+ * ── AND IT ACCEPTS ONLY WHAT THERE IS TO ACCEPT ─────────────────────────────────────────────
+ *
+ * `accept` is present exactly when {@link acceptDestOf} names a destination. A held sender, a
+ * `noAnswer`, and a sender nobody bought advice for get the five destinations and no accept —
+ * there is no suggestion to take, and a ✓ over one would be the row claiming an answer the
+ * model refused to give.
+ */
+function RowActions({
+  accept,
+  open,
+  onOpen,
+  onFile,
+  exiting,
+}: {
+  /** The suggested destination, or null when there is nothing to accept. */
+  accept: DecisionDestination | null;
+  open: boolean;
+  onOpen: (open: boolean) => void;
+  onFile: (dest: DecisionDestination) => void;
+  /**
+   * This row has been decided and is animating away.
+   *
+   * Rendered as NULL rather than by dropping `MessageRow`'s `actions` prop: dropping it changes
+   * the element tree around the row button, which remounts the button and cuts the exit
+   * animation off at the first frame. The slot stays, and empties.
+   */
+  exiting: boolean;
+}) {
+  const t = useTranslations("screener");
+  if (exiting) return null;
+  return (
+    <>
+      {accept ? (
+        <button
+          type="button"
+          className="scn-act scn-act-yes"
+          /* The visible word is short because the row already says WHERE — the suggestion chip
+             is one line above it. The accessible name is not allowed that context: a screen
+             reader user arriving on this button hears it alone, so it names the pile. */
+          aria-label={t("rowAcceptAria", { dest: DECISION_DONE_LABEL[accept] })}
+          title={t("rowAcceptAria", { dest: DECISION_DONE_LABEL[accept] })}
+          onClick={() => onFile(accept)}
+        >
+          {t("rowAccept")}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="scn-act scn-act-more"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={t("rowMoreAria")}
+        title={t("rowMoreAria")}
+        onClick={() => onOpen(!open)}
+      >
+        <Icon name="chev" className="chev" />
+      </button>
+      {open ? (
+        <div className="scn-act-menu" role="menu" aria-label={t("rowMoreAria")}>
+          {(["ohbox", "reads", "receipts", "screened", "spam"] as DecisionDestination[]).map((d) => (
+            <button
+              key={d}
+              type="button"
+              role="menuitem"
+              className="scn-act-dest"
+              onClick={() => onFile(d)}
+            >
+              {t(PILE_KEY[d])} <Kbd>{DECISION_KEY[d]}</Kbd>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -278,10 +511,51 @@ export function ScreenerView({
   const t = useTranslations("screener");
   const [scopes, setScopes] = useState<Map<string, DecisionScope>>(() => new Map());
   const [choosing, setChoosing] = useState<"allow" | "notspam" | null>(null);
+  /**
+   * The chip in force, and the row whose destination menu is open. Both are PURE VIEW STATE:
+   * nothing below writes to the mirror, dispatches a mutation or reaches the server, and a
+   * reload forgets both. A filter that survived a reload would be a stored claim about which
+   * senders exist.
+   *
+   * The open menu is held HERE and not per row so that opening one closes the last: seventy
+   * rows each holding their own flag is seventy menus that can be open at once, over a list
+   * whose rows slide away underneath them.
+   */
+  const [filter, setFilter] = useState<ScreenerFilterId | null>(null);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+
+  /**
+   * THE SIX COUNTS, over the rows the apply button is counted over.
+   *
+   * `state.waiting` includes rows mid-exit — they are still on screen, sliding away — and
+   * `suggestedCount` is derived from waiting MINUS everything already decided. Counting the
+   * exiting ones here would put a chip one ahead of the button for the length of an animation,
+   * and the two numbers are meant to be checkable against each other. One pass, six buckets.
+   */
+  const filterCounts = { ohbox: 0, reads: 0, receipts: 0, screened: 0, spam: 0, none: 0 } as Record<
+    ScreenerFilterId,
+    number
+  >;
+  for (const w of state.waiting) if (!state.isExiting(w.id)) filterCounts[filterGroupOf(w)]++;
+
+  /**
+   * A CHIP WHOSE GROUP HAS EMPTIED RELEASES ITSELF.
+   *
+   * Working a filtered queue ends with the last sender in it being decided, and the honest
+   * answer to that is the whole queue again — not an empty pane under a pressed chip, which
+   * states "there is nothing waiting" while the other five groups are full. Derived rather than
+   * cleared in an effect: an effect would render the dead state once before fixing it.
+   */
+  const activeFilter = filter !== null && filterCounts[filter] > 0 ? filter : null;
 
   const items: Array<ScreenerSenderDTO | SpamRow> =
     segment === "waiting"
-      ? state.waiting
+      ? activeFilter === null
+        ? state.waiting
+        : // Exiting rows are filtered by the same predicate as any other: their suggestion has
+          // not changed, so a row decided from inside a group stays in that group and animates
+          // away where the reader pressed it.
+          state.waiting.filter((w) => filterGroupOf(w) === activeFilter)
       : segment === "screened"
         ? state.screenedOut
         : state.spam;
@@ -365,6 +639,34 @@ export function ScreenerView({
   }, [heldKey, hydrateBody]);
   /** A human asking again — the only path allowed to re-ask a server that refused. */
   const retryBody = (id: string) => hydrateBody(id, { retry: true });
+
+  /**
+   * THE ROW MENU CLOSES ON THE NEXT THING THAT HAPPENS.
+   *
+   * It is a popover anchored to a row in a list whose rows slide away on a timer, so "press the
+   * chevron again" is not a dismissal anyone can rely on — the row it hangs off may be gone by
+   * then. Escape closes it, a press anywhere outside it closes it, and it is dropped outright
+   * whenever the list underneath changes shape.
+   */
+  useEffect(() => {
+    setMenuFor(null);
+  }, [segment, activeFilter]);
+  useEffect(() => {
+    if (menuFor === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuFor(null);
+    };
+    const onPointer = (e: Event) => {
+      if ((e.target as HTMLElement | null)?.closest?.(".row-actions")) return;
+      setMenuFor(null);
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, [menuFor]);
 
   const decideCurrent = (dest: Parameters<ScreenerState["decide"]>[1], read: boolean) => {
     if (!current || "pinned" in current) return;
@@ -534,6 +836,26 @@ export function ScreenerView({
               : undefined
           }
           heldCount={w.held.length}
+          /* QUICK-ADJUST, on the row. Every branch of it goes through `state.decide` — the same
+             funnel the decision bar, the five keys and both bulks use — so a row press earns
+             the undo window, the read clamp, the rule promotion and the past-the-gate branch
+             without this file knowing that any of them exist. See {@link RowActions}. */
+          actions={
+            <RowActions
+              exiting={state.isExiting(w.id)}
+              accept={acceptDestOf(w)}
+              open={menuFor === w.id}
+              onOpen={(o) => setMenuFor(o ? w.id : null)}
+              onFile={(dest) => {
+                setMenuFor(null);
+                /* `scopeOf(w)` and not a hard "sender": the preview's scope switch writes the
+                   per-sender choice this reads, so a reader who set this sender to domain scope
+                   and then filed from the row gets the rule the bar in front of them named. It
+                   IS "sender" for every row nobody has touched, which is the common case. */
+                state.decide(w, dest, { read: false, scope: scopeOf(w) });
+              }}
+            />
+          }
           onClick={() => selectRow(w.id)}
         />
       );
@@ -647,6 +969,29 @@ export function ScreenerView({
                   {t("markAllSpam")}
                 </Button>
               </div>
+            ) : null}
+            {/* HOW FAR THE BULK HAS GOT. `applyAll` and `markAllSpam` dispatch one row every
+                240ms, so a forty-sender press is ten seconds of work whose only evidence was
+                rows leaving one at a time — a stagger and a stall look identical from here, and
+                the summary toast that states a number does not arrive until the last row. Read
+                off `state.applying`, which is null unless a run is in flight, so a finished run
+                leaves nothing behind. */}
+            {segment === "waiting" && state.applying ? (
+              <div className="scn-applying">
+                <span className="scn-applying-lab num" role="status">
+                  {t("applying", {
+                    done: state.applying.done,
+                    total: state.applying.total,
+                  })}
+                </span>
+                <BulkProgress done={state.applying.done} total={state.applying.total} />
+              </div>
+            ) : null}
+            {/* THE PARTITION, under the controls that act on it. Waiting only: the screened-out
+                and spam segments are already one group each, and a chip row over them would
+                offer to filter a list by the one thing every row in it has in common. */}
+            {segment === "waiting" ? (
+              <FilterChips counts={filterCounts} value={activeFilter} onChange={setFilter} />
             ) : null}
           </div>
         }

@@ -304,6 +304,12 @@
     "pileScreened": "Screened out",
     "pileSpam": "Spam",
     "pileJoin": "{a} & {b}",
+    "filterAria": "Show only senders suggested for one pile",
+    "filterAll": "All",
+    "filterNone": "No suggestion",
+    "rowAccept": "Accept",
+    "rowAcceptAria": "Accept the suggestion — file this sender to {dest}",
+    "rowMoreAria": "Choose where this sender's mail goes",
     "suggest": {
       "open": "Suggest…",
       "label": "Suggest for the first",
