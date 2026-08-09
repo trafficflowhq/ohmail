@@ -47,9 +47,10 @@ import { DesktopMailboxes, readMailboxFacts } from "./DesktopMailboxes.js";
 import { DesktopScreening } from "./DesktopScreening.js";
 import { GateNotice } from "./GateNotice.js";
 import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
-import { gateFor, mailMount, readShell, type Shell } from "./doors.js";
+import { gateFor, mailMount, readShell, suggestDoorFor, type Shell } from "./doors.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
 import { LocalSuggest } from "./local-suggest.js";
+import { CloudSuggest } from "./CloudSuggest.js";
 import { notify, onMenuCommand, onMenuNavigate, setBadge, type MenuCommand } from "./native.js";
 import { createLocalEngine, type EngineStatus } from "./bridge-fetch.js";
 
@@ -185,6 +186,7 @@ export function DesktopGate() {
   }
 
   const status = shell.kind === "status" ? shell.status : null;
+  const suggestDoor = suggestDoorFor(status);
 
   /* Null on the one render where the engine has just been asked for and the state that holds it
      has not caught up. React re-renders before painting, so that render is never seen; it still
@@ -253,15 +255,19 @@ export function DesktopGate() {
               }
             : undefined
         }
-        /* THE STANDALONE DOOR'S OWN SUGGEST CONTROL, and only that door's.
-           An install on the hosted door has an account with an allowance behind it, and the place
-           to spend one is the web app, where the balance and the way to add to it live. A spend
-           control here whose only failure is "you have run out", with nothing in this window that
-           could change that, is a purchase control missing its second half — so it is absent
-           rather than present and refusing.
-           `mode` is null while the shell has not answered, and that produces absence too: a
-           control chosen on a guess is a control that appears and then changes its mind. */
-        {...(status?.mode === "local"
+        /* A SUGGEST CONTROL PER DOOR, because the two doors are not buying the same thing.
+           On the STANDALONE door the model belongs to whoever installed it and nothing is
+           metered, so the control names no price and says instead whether there is a model at
+           all. On the HOSTED door there is an account with an allowance behind it, and the
+           question is the one a browser tab asks — what would this cost — so that door renders
+           the SHARED ladder over a transport that reaches the account through the engine.
+           Neither is a control with nothing behind it, which is the thing this surface must
+           never be: the hosted one is offered only once a session is held, because a purchase
+           control on a signed-out install could only ever refuse.
+           Which of the three it is — including "none" — is `suggestDoorFor`, a pure function in
+           `doors.ts` for the reason `gateFor` and `mailMount` are: a decision a test can drive is
+           worth more than a condition a component describes. */
+        {...(suggestDoor === "local"
           ? {
               screenerSuggest: ({ senders, absorb }) => (
                 <LocalSuggest
@@ -272,7 +278,13 @@ export function DesktopGate() {
                 />
               ),
             }
-          : {})}
+          : suggestDoor === "cloud"
+            ? {
+                screenerSuggest: ({ senders, resuggestable, absorb }) => (
+                  <CloudSuggest senders={senders} resuggestable={resuggestable} absorb={absorb} />
+                ),
+              }
+            : {})}
         onUnread={onUnread}
       />
       {overlay ? (

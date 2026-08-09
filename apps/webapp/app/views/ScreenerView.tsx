@@ -37,6 +37,10 @@ import { messageOf } from "../api-client";
 import { avatarHue } from "../shell/format";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+/* The reader surfaces' own bound on "still coming" — one mechanism, not a second one shaped like
+   it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
+   picked, and `HeldMail` below for why this pile needs it too. */
+import { useBodyStalled } from "../shell/message-chrome";
 import { goScreener, type ScreenerSegmentId } from "../shell/routing";
 import { APPLY_PILE_ORDER } from "../shell/screener-state";
 import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
@@ -238,8 +242,18 @@ function BulkProgress({ done, total }: { done: number; total: number }) {
  * The only case that still renders nothing is nothing to buy AND nothing to re-ask, which is an
  * empty gate. The list beside this already says "No one's waiting."; a sentence here about zero
  * senders having zero suggestions would be a second, worse way to say it.
+ *
+ * ── EXPORTED, FOR THE ONE HOST THAT BRINGS ITS OWN CONTROL BUT NOT ITS OWN LADDER ───────────
+ *
+ * The desktop app hands a node in through this view's `suggestNode` prop, and what that node
+ * contains depends on which door the install came in by. A standalone install spends nothing and
+ * has its own, wordless control. An install pointed at a hosted account spends that account's
+ * allowance, so it is buying the same thing this ladder buys, over a pipe instead of a socket —
+ * and rendering a second ladder for it would be a second place for a price to be shown that a
+ * purchase does not honour. So it renders THIS one, over a {@link SuggestBatchControl} built by the
+ * shared hook with a transport of its own. Nothing about the control changes; only how it asks.
  */
-function SuggestControl({ control }: { control: SuggestBatchControl }) {
+export function SuggestControl({ control }: { control: SuggestBatchControl }) {
   const t = useTranslations("screener");
   const again = control.mode === "again";
   if (control.available === 0 && control.resuggestable === 0) return null;
@@ -1280,6 +1294,7 @@ function HeldUnsubscribe({
 }
 
 function HeldMail({
+  messageId,
   from,
   address,
   subject,
@@ -1298,6 +1313,11 @@ function HeldMail({
   trackerNote,
   dull,
 }: {
+  /**
+   * Which held message this is — carried for {@link useBodyStalled}'s key and nothing else.
+   * Absent on a mount that cannot name one (a fixture, a bare test), where the subject stands in.
+   */
+  messageId?: string;
   from: string;
   address?: string;
   subject: string;
@@ -1377,13 +1397,41 @@ function HeldMail({
    *                  rather than narrating a wait that has no end.
    *     · in flight → the spinner, which is the original argument, kept for the case it holds.
    */
+  /**
+   * ── AND EVEN A SPINNER OVER A REAL REQUEST HAS TO END ───────────────────────────────────
+   *
+   * `bodyStall` bounds the two cases where `hydrateBody` asks for NOTHING — a protected message
+   * and a row that has left the mirror. It says nothing about the third: a request that departs,
+   * is accepted, and never comes back. The record stays `loading`, no further mirror bump is
+   * coming to re-drive it, and this preview says the body is on its way for as long as the sender
+   * stays selected, with no control to escape it — the exact shape the reader surfaces were bounded
+   * for, in the one pile where the text is the basis of a consent decision.
+   *
+   * So the same bound, from the same hook: past {@link BODY_STALL_MS} — the engine's own fetch
+   * deadline plus the queue, derived rather than chosen here — the claim is retired and the
+   * failure sentence WITH its Retry is shown instead. A body that arrives first clears `waiting`
+   * and the timer with it, and `messageId` keys it so a stalled message cannot hand its verdict to
+   * the next one rendered in its place.
+   *
+   * The Retry is the same human re-ask the `failed` state offers, and it is what makes the new
+   * sentence honest: `hydrateBody` refuses an automatic re-ask, so without the button this state
+   * would be a dead end with better wording.
+   */
   const protectedMail = bodyStall === "protected";
+  const waiting =
+    !protectedMail
+    && bodyState !== undefined
+    && bodyState !== "full"
+    && bodyState !== "failed"
+    && (bodyState === "loading" || bodyStall == null);
+  const stalled = useBodyStalled(messageId ?? subject, waiting);
+  const failed = bodyState === "failed" || (waiting && stalled);
   const note =
     protectedMail || bodyState === undefined || bodyState === "full"
       ? null
-      : bodyState === "failed"
+      : failed
         ? t("failed")
-        : bodyState === "loading" || bodyStall == null
+        : waiting
           ? t("loading")
           : null;
   return (
@@ -1428,9 +1476,9 @@ function HeldMail({
         )}
       </div>
       {note ? (
-        <p className={bodyState === "failed" ? "hm-state warn" : "hm-state"} role="status">
+        <p className={failed ? "hm-state warn" : "hm-state"} role="status">
           {note}{" "}
-          {bodyState === "failed" && onRetry ? (
+          {failed && onRetry ? (
             <Button variant="ghost" onClick={onRetry}>
               {t("retry")}
             </Button>
@@ -1554,6 +1602,7 @@ function WaitingPreview({
         {sender.held.map((h) => (
           <HeldMail
             key={h.id}
+            messageId={h.id}
             from={sender.from.name || sender.from.address}
             address={sender.from.name ? sender.from.address : undefined}
             subject={h.subject}
@@ -1636,6 +1685,7 @@ function ScreenedPreview({
         {sender.held.map((h) => (
           <HeldMail
             key={h.id}
+            messageId={h.id}
             from={sender.from.name || sender.from.address}
             address={sender.from.name ? sender.from.address : undefined}
             subject={h.subject}
@@ -1735,6 +1785,7 @@ function SpamPreview({
         {held.map((h) => (
           <HeldMail
             key={h.id}
+            messageId={h.id}
             from={row.sender.from.name || row.sender.from.address}
             address={row.sender.from.name ? row.sender.from.address : undefined}
             subject={h.subject}

@@ -132,9 +132,28 @@ const absent = MARKERS.filter((m) => !present.includes(m));
  * The preview is asserted to have the exact inverse, for the reason the whole file is written in
  * both directions: a guard that only proves absence goes green when the feature is deleted.
  */
+/**
+ * THE HOSTED-ACCOUNT SUGGEST TRANSPORT — the other surface that belongs to one artifact only.
+ *
+ * An install pointed at a hosted account can buy AI suggestions for the Screener, and it does it
+ * over the same pipe the mail comes down. The control it renders is the SHARED one — the ladder,
+ * the quote, the confirm — so nothing in the copy distinguishes the two artifacts: every word of
+ * that ladder is in the preview already, legitimately, because the preview compiles the same client
+ * and simply never draws it. A marker taken from the copy would be present in both and prove
+ * nothing in either direction, which is the trap the local-model markers above already document.
+ *
+ * This string is the transport's own refusal type. It exists in `src/cloud-suggest.ts` and nowhere
+ * else, and that module is reachable only from the gate — so it is in the engine build, where the
+ * feature works, and must be absent from the preview, which has no pipe to reach an account
+ * through. Checked in both directions for the reason everything else here is: a guard that only
+ * proves absence goes green the day the feature is deleted.
+ */
+const HOSTED_SUGGEST_MARKER = "SuggestRefused";
+
 const STUB_REFUSAL = "there is no Cloud sync client in this build";
 const REAL_CLIENT_MARKERS = ["x-csrf-token", "/sync/snapshot"];
 
+const hostedSuggestPresent = text.includes(HOSTED_SUGGEST_MARKER);
 const stubPresent = text.includes(STUB_REFUSAL);
 const realPresent = REAL_CLIENT_MARKERS.filter((m) => text.toLowerCase().includes(m));
 const realMissing = REAL_CLIENT_MARKERS.filter((m) => !realPresent.includes(m));
@@ -154,6 +173,13 @@ if (wantsEngine) {
   if (absent.length > 0) {
     failures.push(`the engine bundle is missing the local-model surface: ${absent.join(", ")}`);
   }
+  if (!hostedSuggestPresent) {
+    failures.push(
+      "the engine bundle has no hosted-account suggest transport in it — an install pointed at a " +
+        "hosted account would find the Screener's suggest control missing, which is the state " +
+        "this feature was added to end",
+    );
+  }
   if (stubPresent) {
     failures.push(
       "the engine bundle carries the PREVIEW's sync-client stub, whose constructor throws — " +
@@ -171,6 +197,12 @@ if (wantsEngine) {
 } else {
   if (present.length > 0) {
     failures.push(`the interface preview carries the local-model surface: ${present.join(", ")}`);
+  }
+  if (hostedSuggestPresent) {
+    failures.push(
+      "the interface preview carries the hosted-account suggest transport — that module reaches " +
+        "the bridge, and this artifact has none",
+    );
   }
   if (!stubPresent) {
     failures.push(

@@ -470,7 +470,17 @@ export function AppShell({
    * Present ⇒ this shell's own control is not offered. Never both.
    */
   screenerSuggest?: (ctx: {
+    /** Waiting senders with no answer yet, in queue order — what a purchase would buy. */
     senders: string[];
+    /**
+     * Waiting senders that ALREADY have one — what a re-ask would cover.
+     *
+     * Handed over for the same reason this shell's own control takes both: a queue that has been
+     * worked through has an empty buy list and a full re-ask list, and a control given only the
+     * first has nothing to say on exactly the account that has used the feature most. A host that
+     * ignores it is free to; a host that cannot see it has no choice.
+     */
+    resuggestable: string[];
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   }) => ReactNode;
   /**
@@ -558,6 +568,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   screeningSection?: ReactNode;
   screenerSuggest?: (ctx: {
     senders: string[];
+    resuggestable: string[];
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   }) => ReactNode;
   onUnread?: (unread: number) => void;
@@ -3251,6 +3262,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                     ? undefined
                     : screenerSuggest({
                         senders: screener.unsuggestedSenders,
+                        resuggestable: screener.suggestedSenders,
                         absorb: suggestions.absorb,
                       })
                 }

@@ -177,6 +177,36 @@ export function mailMount(shell: Shell, mounted: string | null): MailMount {
   return mounted === null ? { kind: "opening" } : { kind: "engine", key: mounted };
 }
 
+/**
+ * WHICH SUGGEST CONTROL THE SCREENER GETS, if any — a decision, so it is a function and not a
+ * condition buried in a render.
+ *
+ * The two doors buy different things and the difference is not wording. A STANDALONE install spends
+ * nothing: the model is the installer's own, reached over the pipe, so its control names no price
+ * and instead says whether there is a model at all. A HOSTED install spends an account's allowance,
+ * so the question is the one asked in a browser tab — what would this cost — and the answer has to
+ * come from the account.
+ *
+ * `null` is a control that is not offered, and it covers three states, all of which are the same
+ * rule: never a spend control with nothing behind it.
+ *
+ *  · NO DOOR YET, or no answer from the shell. A control chosen on a guess appears and then changes
+ *    its mind about what it is.
+ *  · A HOSTED INSTALL WITH NO SESSION. Every press could only be refused, and the refusal would be
+ *    about the one thing this window cannot fix from inside the Screener.
+ *  · Anything else a later door might add, by construction — the arms are named, not defaulted.
+ */
+export type SuggestDoor = "local" | "cloud" | null;
+
+export function suggestDoorFor(status: EngineStatus | null): SuggestDoor {
+  if (status?.mode === "local") return "local";
+  // READY, not merely present: on this door the credential IS the hosted session, so `absent` is
+  // "signed out" and `unreadable`/`unknown` are "we cannot say" — and a purchase control offered on
+  // a maybe is a purchase control that refuses.
+  if (status?.mode === "cloud" && status.credentialState === "ready") return "cloud";
+  return null;
+}
+
 /** What the local door's form collects. Every field is what the user typed, untrimmed. */
 export interface LocalDoorFields {
   /** The preset's id — `providerById` in the shared shell resolves it to hosts and ports. */

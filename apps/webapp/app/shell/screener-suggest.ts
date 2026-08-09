@@ -37,7 +37,7 @@ import { senderKey } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import {
   ApiError, apiConfigured, screener as screenerApi,
-  type ScreenerSkipReason, type ScreenerSuggestWire,
+  type ScreenerSkipReason, type ScreenerSuggestWire, type ScreenerWirePage,
 } from "../api-client";
 
 /**
@@ -205,11 +205,12 @@ export interface SuggestBatchControl {
  */
 export interface AutoOptInControl {
   /**
-   * Is there a server to ask? False on the desktop build and on any host with no API base.
+   * Is there a server to ask? {@link SuggestWire.configured}, and nothing else — false on any host
+   * with no API base, which is every browser tab this app is served from without one.
    *
    * The row must not render at all where this is false. The flag cannot become true there —
-   * `useConsentState` skips its fetch, and the automatic effect checks `apiConfigured()` — so a
-   * switch would be a control with nothing behind it, which is the defect this slice is fixing
+   * `useConsentState` skips its fetch, and the automatic effect asks the same transport — so a
+   * switch would be a control with nothing behind it, which is the defect this exists to avoid
    * rather than one it may create.
    */
   supported: boolean;
@@ -269,6 +270,76 @@ export interface ScreenerSuggestions {
    */
   autoOptIn: (addresses: string[]) => AutoOptInControl;
 }
+
+/**
+ * THE TWO CALLS THIS HOOK MAKES, GATHERED INTO SOMETHING A HOST CAN HAND IN.
+ *
+ * ── WHY THE TRANSPORT IS A PARAMETER AND THE SPEND RULE IS NOT ──────────────────────────────
+ *
+ * This module reaches a server twice — it prices a set, and it buys one — and until now it reached
+ * it exactly one way: the browser's `fetch` to a hosted API base. The desktop app renders this same
+ * client against a mail engine running on the same machine, addressed over a pipe rather than a
+ * socket, so on that surface the calls above resolve to nothing and the control could not be shown
+ * at all. An install pointed at a hosted account has the account, the allowance and the balance
+ * that make this control meaningful; what it does not have is the browser's way of asking.
+ *
+ * The alternative was a second control on that side, with its own quote, its own chunking and its
+ * own idempotency keys. That is a second implementation of how money moves, and the two would
+ * disagree the first time either was edited — a ladder quoting one figure while a purchase charges
+ * another is the exact defect the dry run in the middle of this flow exists to prevent. So what
+ * varies is the four lines that carry bytes, and everything above them — when to price, what to
+ * consent to, how large a request may be, one key per chunk, halt on the first refusal — is shared
+ * and cannot be forked by supplying one of these.
+ *
+ * Every method here is deliberately shaped like the hosted client's own, because the hosted client
+ * IS the default (see {@link CLOUD_WIRE}) and a shape that had to be adapted for it would be a
+ * shape invented for the second caller.
+ */
+export interface SuggestWire {
+  /**
+   * Is there a server to ask at all?
+   *
+   * Read rather than assumed: it decides whether the stored-answer read runs, whether the automatic
+   * batch may fire, and whether the opt-in switch is offered. A host that answers false gets a
+   * surface with no spend control on it, which is the correct posture where nothing could serve one.
+   */
+  configured: () => boolean;
+  /** What has ALREADY been bought, one page of it. Spends nothing. */
+  list: (opts: { limit?: number }) => Promise<ScreenerWirePage>;
+  /**
+   * Price a sender set (`dryRun`) or buy it.
+   *
+   * `idempotencyKey` belongs to ONE request and is the caller's, never this transport's: the thing
+   * being made idempotent is one chunk of one purchase, so a transport that minted its own key
+   * would make a retry of a lost answer into a second charge.
+   */
+  suggest: (
+    senders: string[],
+    opts?: { dryRun?: boolean; idempotencyKey?: string },
+  ) => Promise<ScreenerSuggestWire>;
+  /**
+   * The sentence to show for a refusal this transport produced.
+   *
+   * On the wire it is the SERVICE's own words — no classifier connected, managed AI switched off,
+   * no actions remaining — and each is a different, actionable fact that no status code carries. It
+   * belongs to the transport because only the transport knows the shape its own failures arrive in;
+   * re-deriving a taxonomy here is how somebody with an empty balance is told the model is down.
+   */
+  messageFor: (err: unknown, fallback: string) => string;
+}
+
+/**
+ * The hosted transport — the browser talking to the API this app was written against.
+ *
+ * The default, so every existing caller is unchanged and no host has to name a transport to get the
+ * behaviour it already had.
+ */
+const CLOUD_WIRE: SuggestWire = {
+  configured: () => apiConfigured(),
+  list: (opts) => screenerApi.list(opts),
+  suggest: (senders, opts) => screenerApi.suggest(senders, opts ?? {}),
+  messageFor: apiMessageFor,
+};
 
 /**
  * The per-request CAP — the 413 boundary — to assume before the server has published its own.
@@ -361,10 +432,30 @@ export function useScreenerSuggestions(opts: {
    */
   autoSuggest?: boolean;
   toast: ToastFn;
+  /**
+   * HOW THIS HOOK REACHES A SERVER. Absent ⇒ the browser's hosted client — see {@link SuggestWire}.
+   *
+   * The only thing a host may substitute. It carries bytes and nothing else: the price, the
+   * consent, the chunk size and the per-chunk key are decided above it and are the same on every
+   * surface that supplies one.
+   */
+  wire?: SuggestWire;
+  /**
+   * WHERE ANSWERS LAND WHEN THE OVERLAY ON SCREEN IS SOMEBODY ELSE'S.
+   *
+   * There is exactly one suggestion overlay in a rendered client, and the rows, the suggested
+   * count, "Apply all" and Enter-accept all read it. A host that mounts this hook BESIDE that
+   * overlay rather than owning it — a control handed into the shell, holding its own copy of this
+   * machinery — must push what it buys into the real one or it has paid for chips nothing can
+   * draw. Called with the same rows {@link ScreenerSuggestions.absorb} takes, so the two ends of
+   * that seam speak one vocabulary.
+   */
+  publish?: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
 }): ScreenerSuggestions {
   const t = useTranslations("screener");
   const { active, toast } = opts;
   const autoSuggest = opts.autoSuggest === true;
+  const wire = opts.wire ?? CLOUD_WIRE;
 
   const [suggestions, setSuggestions] = useState<SuggestionOverlay>(() => new Map());
   const [phase, setPhase] = useState<SuggestPhase>("closed");
@@ -498,9 +589,23 @@ export function useScreenerSuggestions(opts: {
   const notify = useRef({ toast, t });
   notify.current = { toast, t };
 
+  /**
+   * The transport and the overlay sink, HELD IN A REF for the reason `notify` above is.
+   *
+   * Both are things a caller may build inline — an object literal, an arrow — so listing either in
+   * the automatic batch's dependency array would re-run that effect on every render of the parent
+   * and make the cold-mirror retrigger below work by accident rather than by design. The effects
+   * read `link.current`; the dependency list stays the four signals it claims to be.
+   */
+  const link = useRef({ wire, publish: opts.publish });
+  link.current = { wire, publish: opts.publish };
+
   const merge = useCallback(
     (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => {
       if (rows.length === 0) return;
+      // OUT TO THE HOST'S OVERLAY FIRST, when there is one. Absent on every surface that owns its
+      // own — see the option — so this line changes nothing for the client this file ships in.
+      link.current.publish?.(rows);
       setSuggestions((prev) => {
         const next = new Map(prev);
         for (const r of rows) next.set(senderKey(r.address), r.suggestion);
@@ -526,12 +631,12 @@ export function useScreenerSuggestions(opts: {
    * nobody is looking at.
    */
   useEffect(() => {
-    if (!active || io.current.hydrated || !apiConfigured()) return;
+    if (!active || io.current.hydrated || !link.current.wire.configured()) return;
     io.current.hydrated = true;
     let cancelled = false;
     void (async () => {
       try {
-        const page = await screenerApi.list({ limit: HYDRATE_LIMIT });
+        const page = await link.current.wire.list({ limit: HYDRATE_LIMIT });
         if (cancelled) return;
         if (page.suggestable?.maxPerRequest) setMaxPerRequest(page.suggestable.maxPerRequest);
         merge(
@@ -561,7 +666,7 @@ export function useScreenerSuggestions(opts: {
   /**
    * THE AUTOMATIC BATCH — one per mounted Screener, only when the account opted in.
    *
-   * Everything this path is allowed to do is buy suggestions. It reaches `screenerApi.suggest`
+   * Everything this path is allowed to do is buy suggestions. It reaches {@link SuggestWire.suggest}
    * and nothing else: there is no branch here that can call `POST /screener/:id`, write a rule or
    * move a message, which is what keeps the opt-in an opt-in to WORK rather than to a decision.
    * `screener-auto-suggest.test.tsx` asserts that by watching the calls, because "I did not write
@@ -581,7 +686,7 @@ export function useScreenerSuggestions(opts: {
       io.current.autoFired = false;
       return;
     }
-    if (!autoSuggest || !apiConfigured()) return;
+    if (!autoSuggest || !link.current.wire.configured()) return;
     if (!hydrateSettled) return;
     if (io.current.autoFired || io.current.autoDisarmed) return;
     const set = io.current.queue.slice(0, AUTO_BATCH_SIZE);
@@ -595,7 +700,7 @@ export function useScreenerSuggestions(opts: {
     const run = ++io.current.autoRun;
     void (async () => {
       try {
-        const res = await screenerApi.suggest(set, { idempotencyKey: newKey() });
+        const res = await link.current.wire.suggest(set, { idempotencyKey: newKey() });
         if (io.current.autoRun !== run) return;
         merge([
           ...res.suggestions.map((s) => ({ address: s.sender, suggestion: toSuggestion(s) })),
@@ -612,7 +717,7 @@ export function useScreenerSuggestions(opts: {
         // standing condition (no credits, AI off, no classifier), not a blip, so retrying it
         // automatically is a flood against a wall.
         io.current.autoDisarmed = true;
-        const why = messageFor(err, notify.current.t("suggest.failed"));
+        const why = link.current.wire.messageFor(err, notify.current.t("suggest.failed"));
         // TOASTED, NOT ONLY NOTICED — and the distinction was found by a test rather than by
         // reading. `notice` is painted INSIDE the suggest panel, which on this path nobody
         // opened, so setting it alone left a refused automatic purchase completely invisible: the
@@ -729,7 +834,7 @@ export function useScreenerSuggestions(opts: {
         for (const chunk of chunksOf(set)) {
           let res;
           try {
-            res = await screenerApi.suggest(chunk, { dryRun: true });
+            res = await wire.suggest(chunk, { dryRun: true });
           } catch (err) {
             if (io.current.run !== run) return;
             setPhase("ready");
@@ -737,7 +842,7 @@ export function useScreenerSuggestions(opts: {
             // The server's own sentence. Every refusal on this path — no classifier
             // connected, AI switched off, no credits — already has a true one, and a second
             // taxonomy here is how a user gets told the wrong reason.
-            setNotice(messageFor(err, t("suggest.failed")));
+            setNotice(wire.messageFor(err, t("suggest.failed")));
             return;
           }
           if (io.current.run !== run) return;
@@ -862,7 +967,7 @@ export function useScreenerSuggestions(opts: {
           for (const chunk of chunksOf(set)) {
             let res;
             try {
-              res = await screenerApi.suggest(chunk, { idempotencyKey: newKey() });
+              res = await wire.suggest(chunk, { idempotencyKey: newKey() });
             } catch (err) {
               // Stale — a newer press owns the state; paint nothing.
               if (io.current.run !== run) return;
@@ -873,7 +978,7 @@ export function useScreenerSuggestions(opts: {
               // sentence that says the run stopped would be two surfaces disagreeing about the
               // same event, with the moving one winning the reader's attention.
               setProgress(null);
-              const why = messageFor(err, t("suggest.failed"));
+              const why = wire.messageFor(err, t("suggest.failed"));
               if (gotSuggestions.length > 0) {
                 setNotice(t("suggest.stoppedAt", { done: gotSuggestions.length, total, reason: why }));
                 toast(summarize(
@@ -949,7 +1054,7 @@ export function useScreenerSuggestions(opts: {
       setOptIn({ phase: "pricing", quote: null, notice: null });
       void (async () => {
         try {
-          const res = await screenerApi.suggest(set, { dryRun: true });
+          const res = await wire.suggest(set, { dryRun: true });
           if (io.current.optInRun !== run) return;
           // NO PRICE, NO CONSENT — the same rule the manual control states, and it has to be
           // restated here rather than shared because this is the flow that authorises EVERY
@@ -969,13 +1074,13 @@ export function useScreenerSuggestions(opts: {
           if (io.current.optInRun !== run) return;
           // The server's own sentence — no classifier connected, AI switched off, no credits.
           // A second taxonomy here is how a user with an empty balance is told the model is down.
-          setOptIn({ phase: "ready", quote: null, notice: messageFor(err, t("suggest.failed")) });
+          setOptIn({ phase: "ready", quote: null, notice: wire.messageFor(err, t("suggest.failed")) });
         }
       })();
     };
 
     return {
-      supported: apiConfigured(),
+      supported: wire.configured(),
       batchSize: AUTO_BATCH_SIZE,
       available: addresses.length,
       phase: optIn.phase,
@@ -1111,7 +1216,8 @@ function summarize(
 }
 
 /**
- * The sentence to show for a refusal.
+ * The sentence to show for a refusal THE HOSTED TRANSPORT produced — {@link CLOUD_WIRE}'s half of
+ * {@link SuggestWire.messageFor}, and never called directly by the flow above.
  *
  * An {@link ApiError} already carries the SERVICE's own message — "this deployment has no AI
  * classifier connected", "managed AI is switched off for this account", "no AI actions remain
@@ -1120,7 +1226,7 @@ function summarize(
  * balance is told the model is down. Anything that is not an `ApiError` is a bug in this
  * client, and there is nothing true to say about it.
  */
-function messageFor(err: unknown, fallback: string): string {
+function apiMessageFor(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
 }
 
