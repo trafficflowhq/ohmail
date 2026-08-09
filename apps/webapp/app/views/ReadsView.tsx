@@ -6,7 +6,7 @@
  * scroll-spy keeps list and stream in step, and the pending-AI chip
  * carries the classification approval flow.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type {
   EngineMessage,
@@ -20,17 +20,14 @@ import {
   ListPane,
   ListRows,
   MessageRow,
-  StreamArt,
-  StreamCard,
   Waterline,
 } from "@ohmail/ui";
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
-import { MessageActionBar, type MessageAction } from "../shell/MessagePane";
-import { FoldTableArt, StreamShell, type StreamHandle } from "../shell/StreamShell";
-// Aliased: `MessageBody` is already imported above as the engine's body DTO type.
-import { MessageBody as MessageBodyView } from "../components/MessageBody";
+import { type MessageAction } from "../shell/MessagePane";
+import { StreamShell, type StreamHandle } from "../shell/StreamShell";
+import { StreamCardMemo } from "../shell/StreamCardMemo";
 
 export type ReadsChipState = null | "approved" | "corrected";
 
@@ -250,58 +247,47 @@ export function ReadsView({
     />
   );
 
+  /* Expanding a card that holds only a snippet IS the request for the rest of it — and the retry
+     after a failure, which is why the failed copy says to expand again. It is also what raises the
+     verbs, so record which card is open. STABLE (keyed only on `hydrateBody`) so `StreamCardMemo`
+     can skip a card whose inputs did not change across a version bump — see its header. */
+  const onToggle = useCallback(
+    (id: string, open: boolean) => {
+      setExpandedId(open ? id : null);
+      if (open) hydrateBody(id, { retry: true });
+    },
+    [hydrateBody],
+  );
+  const loadingLabel = tb("loading");
+  const failedLabel = tb("failed");
+
+  /* One memoized card per message — the stream is not windowed, so this is what keeps an apply
+     that touched nothing from re-rendering the whole pile. `bodyOf` is called here (not inside the
+     memo) because the body can change without the message reference changing; its PRIMITIVE fields
+     are what the card compares on. The verbs, the html viewer and the fold-table art all live
+     inside `StreamCardMemo`, gated on `expanded`/`current`, so they mount for one card, not two
+     hundred. */
   const card = (m: EngineMessage) => {
     const body = bodyOf(m);
     return (
-    <StreamCard
-      key={m.id}
-      id={m.id}
-      from={senderName(m)}
-      address={m.from.address}
-      time={displayTime(m, now)}
-      subject={m.subject}
-      body={body.text}
-      bodyState={body.state}
-      loadingLabel={tb("loading")}
-      failedLabel={tb("failed")}
-      /* Once hydrated, an opened card renders the sanitized html viewer — the same
-         `MessageBody` the Ohbox pane and the reader use — instead of dumping `body.text`.
-         Only when there is an html part; a plain-text mail keeps the text clamp unchanged.
-         No image proxy is threaded here, so remote content stays blocked, which is the
-         privacy-preserving default the viewer already ships. */
-      bodySlot={
-        body.state === "full" && body.html ? (
-          <MessageBodyView messageId={m.id} text={body.text} html={body.html} remoteLoaded={body.loadedRemoteContent} />
-        ) : undefined
-      }
-      unread={m.unread || justSeen.has(m.id)}
-      justSeen={justSeen.has(m.id)}
-      current={current === m.id}
-      onSelect={(id) => onCur(id)}
-      /* Expanding a card that holds only a snippet IS the request for the rest of it — and
-         the retry after a failure, which is why the failed copy says to expand again. It is
-         also what raises the verbs, so record which card is open. */
-      onToggle={(open) => {
-        setExpandedId(open ? m.id : null);
-        if (open) hydrateBody(m.id, { retry: true });
-      }}
-      /* THE VERBS, on the card the reader EXPANDED and on no other. The Ohbox's bar, not a
-         second one written for this view — see `MessageActionBar`. Gated on the expanded card
-         (never on `current`, which a scroll moves) so a stream of two hundred cards mounts one
-         bar, and only when the reader opens a card, not when they scroll past it. */
-      actions={
-        onAction && expandedId === m.id ? (
-          <MessageActionBar message={m} now={now} onAction={(a) => onAction(a, m)} />
-        ) : undefined
-      }
-      art={
-        m.art ? (
-          <StreamArt ariaLabel={m.art.ariaLabel} caption={m.art.caption}>
-            <FoldTableArt />
-          </StreamArt>
-        ) : undefined
-      }
-    />
+      <StreamCardMemo
+        key={m.id}
+        m={m}
+        now={now}
+        current={current === m.id}
+        expanded={expandedId === m.id}
+        unread={m.unread || justSeen.has(m.id)}
+        justSeen={justSeen.has(m.id)}
+        bodyText={body.text}
+        bodyState={body.state}
+        bodyHtml={body.html}
+        bodyLoadedRemote={body.loadedRemoteContent}
+        loadingLabel={loadingLabel}
+        failedLabel={failedLabel}
+        onSelect={onCur}
+        onToggle={onToggle}
+        onAction={onAction}
+      />
     );
   };
 

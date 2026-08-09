@@ -13,17 +13,16 @@
  * Seen-marking goes through the shell's `mark_seen` mutation, so it reaches `\Seen` on the
  * user's own IMAP server; the local `justSeen` set below is only the fade, not the state.
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage, MessageBody, TagDTO } from "@ohmail/client-engine";
-import { Kbd, ListPane, ListRows, MessageRow, StreamCard } from "@ohmail/ui";
+import { Kbd, ListPane, ListRows, MessageRow } from "@ohmail/ui";
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
-import { MessageActionBar, type MessageAction } from "../shell/MessagePane";
+import { type MessageAction } from "../shell/MessagePane";
 import { StreamShell, type StreamHandle } from "../shell/StreamShell";
-// Aliased: `MessageBody` is already imported above as the engine's body DTO type.
-import { MessageBody as MessageBodyView } from "../components/MessageBody";
+import { StreamCardMemo } from "../shell/StreamCardMemo";
 
 export function ReceiptsView({
   messages,
@@ -160,6 +159,19 @@ export function ReceiptsView({
   ];
   useKeyBindings(keys);
 
+  /* Expanding is the request for the rest of the receipt, and the retry — and it raises the verbs,
+     so record which card is open. STABLE so `StreamCardMemo` can skip an unchanged card across a
+     version bump; see its header. */
+  const onToggle = useCallback(
+    (id: string, open: boolean) => {
+      setExpandedId(open ? id : null);
+      if (open) hydrateBody(id, { retry: true });
+    },
+    [hydrateBody],
+  );
+  const loadingLabel = tb("loading");
+  const failedLabel = tb("failed");
+
   const row = (m: EngineMessage) => (
     <MessageRow
       key={m.id}
@@ -236,43 +248,23 @@ export function ReceiptsView({
         {all.map((m) => {
           const body = bodyOf(m);
           return (
-            <StreamCard
+            <StreamCardMemo
               key={m.id}
-              id={m.id}
-              from={senderName(m)}
-              address={m.from.address}
-              amount={m.amount}
-              time={displayTime(m, now)}
-              subject={m.subject}
-              body={body.text}
-              bodyState={body.state}
-              loadingLabel={tb("loading")}
-              failedLabel={tb("failed")}
-              /* The opened receipt renders through the same html viewer as everywhere else,
-                 once its body has been hydrated and only when there is an html part. See
-                 `ReadsView` for the reasoning; remote content stays blocked here too. */
-              bodySlot={
-                body.state === "full" && body.html ? (
-                  <MessageBodyView messageId={m.id} text={body.text} html={body.html} remoteLoaded={body.loadedRemoteContent} />
-                ) : undefined
-              }
+              m={m}
+              now={now}
+              current={current === m.id}
+              expanded={expandedId === m.id}
               unread={isUnread(m) || justSeen.has(m.id)}
               justSeen={justSeen.has(m.id)}
-              current={current === m.id}
-              onSelect={(id) => onCur(id)}
-              /* Expanding is the request for the rest of the receipt, and the retry — and it is
-                 what raises the verbs, so record which card is open. */
-              onToggle={(open) => {
-                setExpandedId(open ? m.id : null);
-                if (open) hydrateBody(m.id, { retry: true });
-              }}
-              /* THE VERBS, on the receipt the reader EXPANDED and on no other — the Ohbox's own
-                 bar. Gated on the expanded card, never on `current`, so a scroll cannot raise it. */
-              actions={
-                onAction && expandedId === m.id ? (
-                  <MessageActionBar message={m} now={now} onAction={(a) => onAction(a, m)} />
-                ) : undefined
-              }
+              bodyText={body.text}
+              bodyState={body.state}
+              bodyHtml={body.html}
+              bodyLoadedRemote={body.loadedRemoteContent}
+              loadingLabel={loadingLabel}
+              failedLabel={failedLabel}
+              onSelect={onCur}
+              onToggle={onToggle}
+              onAction={onAction}
             />
           );
         })}
