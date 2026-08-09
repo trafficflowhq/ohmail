@@ -90,6 +90,24 @@ export const SERVER_VIEW_OF: Record<string, ServerMessageView | null> = {
   screener: null,
 };
 
+/**
+ * HOW LONG A BODY FETCH MAY STAY IN THE AIR — a number this artifact never reads.
+ *
+ * It is here for exactly the reason `SERVER_VIEW_OF` is: the package barrel re-exports it BY NAME
+ * from the module this file stands in for, so in the preview build the barrel has to find it here
+ * or it binds nothing and the bundle does not build. It did not build: the constant was added to
+ * the real adapter and re-exported, this file did not follow, and the preview bundle failed with
+ * `"BODY_FETCH_TIMEOUT_MS" is not exported`. Nothing local said so — the type checker resolves the
+ * real module, and no test in this repository runs the bundler.
+ *
+ * The VALUE is deliberately not a promise about anything. Nothing in the preview waits on a body:
+ * it runs on fixture mail whose rows carry their text already, so the reader short-circuits before
+ * an adapter is consulted, and the constructor above throws anyway. What matters is that the name
+ * exists; the number beside it is the real module's, so a reader comparing the two files is not
+ * left wondering which is authoritative.
+ */
+export const BODY_FETCH_TIMEOUT_MS = 12_000;
+
 export interface HttpAdapterOptions {
   baseUrl?: string;
   fetch?: FetchLike;

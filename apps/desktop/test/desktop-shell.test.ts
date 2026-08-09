@@ -954,6 +954,23 @@ describe("the UI bundle's build config", () => {
      * So the barrel's own re-export list is the oracle: every name it takes from
      * `./adapters/http-adapter.js` must be exported by this file. Red by deleting either symbol
      * from the stub, or by adding a re-export to the barrel without mirroring it.
+     *
+     * ── AND THE PARSE STRIPS COMMENTS BEFORE IT SPLITS, WHICH IT DID NOT USED TO ────────────
+     *
+     * This test was GREEN while the preview bundle could not be built. The barrel documents each
+     * name it re-exports with a `//` comment above it, and one of those comments contains a COMMA
+     * — "a spinner is only honest for as long as a request can still be in the air, and this is
+     * how long that is." Splitting on commas first cut that sentence in two, so the fragment
+     * carrying `BODY_FETCH_TIMEOUT_MS` began with prose rather than with a `//`, survived the
+     * comment strip as prose, failed the identifier filter, and was DROPPED. A name the oracle
+     * never saw is a name this loop never checked, and the stub went a whole release without it:
+     * `vite build` failed with `"BODY_FETCH_TIMEOUT_MS" is not exported`, on a tree where every
+     * test passed.
+     *
+     * The filter that hid it is the same one that makes the parse tolerant, so it stays — what
+     * changed is the order. Comments are removed from the WHOLE block first, and then the split
+     * sees only the export list. The `toContain` below pins a name that only the new order can
+     * see, so reverting the order is red rather than merely lenient.
      */
     const barrel = fs.readFileSync(
       path.resolve(APP, "../../packages/client-engine/src/index.ts"),
@@ -962,14 +979,18 @@ describe("the UI bundle's build config", () => {
     const block = /export\s*\{([^}]*)\}\s*from\s*"\.\/adapters\/http-adapter\.js";/.exec(barrel);
     expect(block, "could not find the barrel's http-adapter re-export block").not.toBeNull();
     const names = block![1]
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "")
       .split(",")
-      .map((x) => x.replace(/\/\/.*$/gm, "").trim())
+      .map((x) => x.trim())
       .filter(Boolean)
       .map((x) => x.replace(/^type\s+/, "").trim())
       .filter((x) => /^[A-Za-z_$][\w$]*$/.test(x));
     // The harness bites only if it found something to compare.
     expect(names.length).toBeGreaterThanOrEqual(4);
     expect(names).toContain("SERVER_VIEW_OF");
+    // The name the old parse could not see. Pinned so the ordering above cannot quietly go back.
+    expect(names).toContain("BODY_FETCH_TIMEOUT_MS");
 
     const stub = read("src/no-http-adapter.ts");
     for (const name of names) {
