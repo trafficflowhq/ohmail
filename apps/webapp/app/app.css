@@ -858,18 +858,25 @@ body.reading .shell {
   cursor: pointer;
   white-space: nowrap;
   opacity: 0;
+  /* The controls float OVER the row's trailing end (`.row-actions` is an absolute overlay —
+     see row.css), so a hidden control sitting invisibly over the preview must not swallow a
+     click meant for the row. It is inert until revealed, and only then clickable. */
+  pointer-events: none;
   transition: opacity 0.14s var(--swift), background 0.14s var(--swift), color 0.14s var(--swift);
 }
 /* REVEALED BY THE POINTER, BUT NEVER ONLY BY IT. A control that exists only under :hover is
    unreachable by keyboard and invisible on a touch screen, so the row's own focus and
-   selection show it too, and a coarse pointer gets it unconditionally. */
+   selection show it too, and a coarse pointer gets it unconditionally. Reveal hands back
+   `pointer-events` in lockstep with `opacity`, or the floating buttons would be unclickable. */
 .row-slot:hover .scn-act,
 .row-slot:focus-within .scn-act,
 .row-slot:has(.row.sel) .scn-act {
   opacity: 1;
+  pointer-events: auto;
 }
 .scn-act:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 .scn-act:hover {
   background: var(--tint);
@@ -900,6 +907,9 @@ body.reading .shell {
   border: 1px solid var(--line);
   background: var(--float);
   box-shadow: var(--lift-2);
+  /* opened from a revealed control; the popover itself lives inside the click-through overlay
+     (`.row-actions`), so it opts back into pointer events or its own items are not clickable. */
+  pointer-events: auto;
 }
 .scn-act-dest {
   font: inherit;
@@ -922,6 +932,7 @@ body.reading .shell {
 @media (hover: none) {
   .scn-act {
     opacity: 1;
+    pointer-events: auto;
   }
 }
 /* the suggestion purchase — batch size, the server's price, confirm */

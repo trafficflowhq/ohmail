@@ -42,8 +42,38 @@
 
 /* the trailing action slot — MessageRow's `actions`, a SIBLING of the row button.
    The wrapper adds no height of its own, so a row mid-exit still collapses to nothing:
-   `.row.out` shrinks the button and the slot's own contents are gone by then. */
-.row-slot{display:flex;align-items:center;gap:6px}
-.row-slot>.row{flex:1 1 auto;min-width:0;width:auto}
-.row-actions{flex:none;position:relative;display:flex;align-items:center;gap:4px}
+   `.row.out` shrinks the button and the slot's own contents are gone by then.
+
+   THE SLOT OVERLAYS THE ROW; IT DOES NOT SIT BESIDE IT. The controls used to be an in-flow
+   flex sibling (`.row-actions{flex:none}` inside a flex `.row-slot`), which reserved a chip's
+   width of inline space for them at all times — and because they only fade with `opacity:0`,
+   which keeps an element in flow, that space was reserved even while they were invisible. So
+   every waiting row's preview was truncated by that width whether or not the pointer was near
+   it. Now `.row-actions` is absolutely positioned over the row's trailing end: it takes ZERO
+   layout width, and the row (and its preview) keeps the full width whether a row has actions or
+   not. The far edge of the preview is briefly covered only while the controls are revealed. */
+.row-slot{position:relative;display:block}
+.row-slot>.row{width:100%}
+.row-actions{
+  position:absolute;top:0;bottom:0;right:0;z-index:2;
+  display:flex;align-items:center;gap:4px;
+  padding:0 12px 0 28px;
+  /* click-through until a control is revealed: the container never intercepts a click meant
+     for the row underneath (a bare press selects the row); the revealed buttons/menu opt back
+     in with `pointer-events:auto` — see `.scn-act` and `.scn-act-menu` in app.css. */
+  pointer-events:none;
+  /* the fade masks the last inch of preview behind the controls, and ONLY when they show —
+     `--edge` tracks the row's own background so the mask is seamless in both themes and in the
+     hover / selected states. At rest the background is transparent, so the preview is unmasked
+     when nothing is near it. */
+  --edge:var(--panel);
+  background:transparent;
+  transition:background .14s var(--swift);
+}
 .row-actions:empty{display:none}
+.row-slot:hover .row-actions{--edge:var(--tint)}
+.row-slot:has(.row.sel) .row-actions{--edge:var(--float)}
+.row-slot:hover .row-actions,
+.row-slot:focus-within .row-actions,
+.row-slot:has(.row.sel) .row-actions{background:linear-gradient(to right,transparent,var(--edge) 24px)}
+@media (hover:none){.row-actions{background:linear-gradient(to right,transparent,var(--edge) 24px)}}
