@@ -112,16 +112,24 @@ function stateOf(m: MailboxFacts): string {
  * Read out of the same context the sync line reads, rather than fetched again: there is one poller
  * for this already, and two would be two answers to one question. `null` means the read has not
  * landed or could not be made, and it says so instead of claiming the install has no mailbox.
+ *
+ * ── THE HEADING NAMES THE DOOR, BECAUSE THE DOOR IS THE MODE ────────────────────────────────
+ *
+ * The pane names which kind of mailbox it lists — one mode per install, never both in parallel.
+ * On the cloud door the mailbox is the hosted account's, organized in the cloud, so the heading is
+ * "Cloud mailboxes", the same words the browser client uses. On the local door the engine opens the
+ * user's own server on this machine, so it is "Local mailboxes on this computer". Reading the same
+ * `door` the rest of the settings pane reads keeps the heading from ever contradicting the door
+ * row two lines up.
  */
-export function DesktopMailboxes() {
+export function DesktopMailboxes({ door }: { door?: string | null }) {
   const facts = useMailboxFacts();
+  const heading = door === "cloud" ? "Cloud mailboxes" : "Local mailboxes on this computer";
 
   if (facts === null) {
     return (
       <SettingsSection>
-        {/* Names the mode, like the Cloud pane's "Cloud mailboxes" heading — one mode per
-            install, never both in parallel. */}
-        <h2 className="acct-h">Local mailboxes on this computer</h2>
+        <h2 className="acct-h">{heading}</h2>
         <p className="set-note-inline">Asking the mail engine which mailbox this install opens…</p>
       </SettingsSection>
     );
@@ -129,7 +137,7 @@ export function DesktopMailboxes() {
 
   return (
     <SettingsSection>
-      <h2 className="acct-h">Local mailboxes on this computer</h2>
+      <h2 className="acct-h">{heading}</h2>
       {facts.length === 0 ? (
         <p className="set-note-inline">
           This install has no mailbox yet — choose one in the Desktop settings pane.

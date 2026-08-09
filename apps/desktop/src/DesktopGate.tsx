@@ -225,10 +225,11 @@ export function DesktopGate() {
            report. See `DesktopMailboxes.tsx` for why the probe must reject rather than answer
            with an empty list. */
         {...(engine ? { mailboxFacts: readMailboxFacts } : {})}
-        /* SETTINGS → MAILBOXES. The shared pane's own list is drawn from the mirror's `mailbox`
-           entities, which only the invented world has — so on a real install it was an empty
-           pane. This one reads the same facts the sync line does. */
-        {...(engine ? { mailboxSection: <DesktopMailboxes /> } : {})}
+        /* SETTINGS → MAILBOXES. The shared pane's own list used to be drawn from the mirror's
+           `mailbox` entities, which only the invented world has — so on a real install it was an
+           empty pane; that fallback is deleted now. This one reads the same facts the sync line
+           does, and names its mode from the door (Cloud on the hosted door, local on the other). */
+        {...(engine ? { mailboxSection: <DesktopMailboxes door={status?.mode ?? null} /> } : {})}
         /* SETTINGS → SCREENER. The shared shell's own section reaches an API client that is not
            in this build, so it drew nothing and the pane was blank. This is the same three
            controls over the same three columns, over the pipe. */
