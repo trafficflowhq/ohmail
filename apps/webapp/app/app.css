@@ -168,10 +168,13 @@ body.reading .shell {
 }
 /* History was the first windowed list; the Ohbox, Reads and Receipts lists are windowed the same
    way and need the same opt-out. Kept as its own rule so History's own guard still reads a
-   `.view-history .rows { … }` block verbatim. */
-.view-ohbox .rows,
-.view-reads .rows,
-.view-receipts .rows {
+   `.view-history .rows { … }` block verbatim. Scoped to the LIST scroller rather than to `.rows`
+   because these three place their spacers at the scroller level (the Ohbox and Reads lists are
+   grouped, so the reserved-height blocks sit beside the row containers, not inside one). The
+   reading stream's own scroller is deliberately left out — it is not windowed. */
+.view-ohbox .list-col .scroller,
+.view-reads .list-col .scroller,
+.view-receipts .list-col .scroller {
   overflow-anchor: none;
 }
 
