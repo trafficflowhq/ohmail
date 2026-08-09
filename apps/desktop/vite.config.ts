@@ -118,6 +118,16 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // `drafts.discardWhat` where the sentence explaining that a discard is not recoverable
   // belongs — which is the one string in it that must not arrive as a raw key.
   "drafts",
+  // `message` is the reading pane's own header — the sender line, the timestamp and the
+  // collapse control (`MessageCard`); `markAll` is the "mark everything read" action
+  // (`MarkAllRead`). Both are shell surfaces the desktop renders, and both are present in
+  // en.json. Listed for the same reason the rest are: this array is compared against what
+  // the sources READ, not against what they display, so a `useTranslations` added to either
+  // surface has to be followed here or the guard goes red rather than the app.
+  // `viewError` is the shell's view-level error boundary — the three lines shown when a pane
+  // fails to render (`AppShell`, via the unscoped `t("viewError.title|body|action")`), so it
+  // is the second kind of read the header note warns about and is caught the same way.
+  "markAll", "message", "viewError",
   "shortcuts", "sync", "tag", "triage",
 ] as const;
 
