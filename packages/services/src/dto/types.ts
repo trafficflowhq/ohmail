@@ -384,6 +384,50 @@ export interface MailboxDTO {
    * the partial-import case it exists to disclose.
    */
   initialImportCompletedAt: ISODateTime | null;
+  /**
+   * HOW MANY OF OUR OWN FILINGS THIS MAILBOX HAS NOT YET APPLIED.
+   *
+   * ── THE SILENCE THIS ENDS ────────────────────────────────────────────────────────────
+   *
+   * Invariant #3: the serverless API never opens IMAP. A Screener decision, a bulk apply, a
+   * move — every one of them writes `folder_state` and returns, and the WORKER performs the
+   * actual IMAP move on its next cycle. That is correct and it is what keeps a request path
+   * from holding a mail connection. What the wire never carried is the consequence: between
+   * the press and the worker's cycle the user's mail has been filed in ohmail and NOT on their
+   * server, and if the mail host is refusing connections that gap does not close.
+   *
+   * From the client's side that state was indistinguishable from a finished job. The mirror
+   * shows the mail where the user put it, `status` says `connected` (a host that refuses one
+   * cycle has not yet earned `error`), `syncBlockedSince` is null because this is not one of
+   * our own infrastructure blocks, and the strip is `quiet`. So the product looked complete
+   * while a growing backlog of the user's own decisions sat unapplied — and the one screen
+   * that could have said so said nothing.
+   *
+   * ── WHAT IT COUNTS, AND WHY EACH CLAUSE IS THERE ─────────────────────────────────────
+   *
+   * `folder_state` rows for this mailbox where `reconcile_status = 'pending'` AND
+   * `last_set_by = 'us'` AND `desired_folder <> observed_folder`. All three:
+   *
+   *  · `last_set_by = 'us'` — an EXTERNAL pending row is the user moving mail in their own
+   *    client, which we adopt rather than apply. Counting it would report the user's own
+   *    tidying as our backlog.
+   *  · `desired <> observed` — a pending row whose two folders already agree is a no-op the
+   *    reconciler will retire without touching IMAP. It is not work.
+   *  · `pending` — `reconciled` and `failed` are both terminal for this purpose; a failed row
+   *    is a different sentence (and a different column) from "not applied yet".
+   *
+   * ── PROJECTED UNCONDITIONALLY, LIKE THE SYNC-BLOCK PAIR AND UNLIKE THE `error*` FOUR ──
+   *
+   * Every state it describes happens while `status` IS `connected` — that is the point. A gate
+   * on `status` would make it permanently 0 on the wire, which is the invisibility being
+   * removed. And 0 is the ordinary case and means exactly "nothing of ours is outstanding".
+   *
+   * A client must read it with a `typeof === "number"` guard, never `> 0` on a possibly-absent
+   * field: a bundle older than this column omits it, and `undefined > 0` is false, so a naive
+   * read degrades correctly — but `Filing 0 messages` is the failure in the other direction and
+   * `apps/webapp/app/shell/mail-state.ts` states the rule it applies.
+   */
+  pendingMoves: number;
   folders?: MailboxFolderSummary[];
   createdAt: ISODateTime;
   // NOTE: intentionally NO credential field — creds are envelope-encrypted at rest

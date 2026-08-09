@@ -1,6 +1,7 @@
 import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import {
-  mailboxes, mailboxCredentials, mailboxFolders, isMailboxDisabledReason, isMailboxSyncBlockReason,
+  mailboxes, mailboxCredentials, mailboxFolders, folderState, messages,
+  isMailboxDisabledReason, isMailboxSyncBlockReason,
   type LedgerTx, type MailboxErrorCode, type Tx,
 } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
@@ -1082,6 +1083,26 @@ export class MailboxService {
       hasSyncCursor: f.highestmodseq != null,
       updatedAt: f.updatedAt.toISOString(),
     }));
+    // ── OUR OWN FILINGS THIS MAILBOX HAS NOT APPLIED YET (see `MailboxDTO.pendingMoves`) ──
+    //
+    // A COUNT and never the rows: this DTO is read on the mailbox panel and by the shell strip,
+    // and the only question either of them asks is "is there a backlog, and how big". Shipping
+    // the message ids would put a list of the user's mail into a lifecycle payload for no
+    // surface that wants one.
+    //
+    // Joined through `messages` because `folder_state` is keyed by message and carries no
+    // mailbox column — the same join `listPendingFolderStates` uses, and the same three
+    // predicates, so the number here and the work the reconciler will actually do are one set.
+    // Written as a filtered aggregate rather than a second SELECT so it costs one round trip.
+    const [pending] = await ctx.db.select({ n: sql<number>`count(*)::int` })
+      .from(folderState)
+      .innerJoin(messages, eq(messages.id, folderState.messageId))
+      .where(and(
+        eq(messages.mailboxId, m.id),
+        eq(folderState.reconcileStatus, "pending"),
+        eq(folderState.lastSetBy, "us"),
+        sql`${folderState.desiredFolder} <> ${folderState.observedFolder}`,
+      ));
     return {
       id: m.id,
       provider: m.provider,
@@ -1141,6 +1162,11 @@ export class MailboxService {
       // the floor `mail-state.ts` holds under "still importing". Gating it on a status would hide
       // the partial-import case it exists to disclose.
       initialImportCompletedAt: m.initialImportCompletedAt ? m.initialImportCompletedAt.toISOString() : null,
+      // UNCONDITIONAL, for the reason the sync-block pair above is: every state this number
+      // describes happens while the row says `connected`. `?? 0` because `count(*)` cannot
+      // return no row here, but a driver that answered `undefined` must degrade to "nothing
+      // outstanding" rather than to `NaN` on somebody's strip.
+      pendingMoves: pending?.n ?? 0,
       folders,
       createdAt: m.createdAt.toISOString(),
     };

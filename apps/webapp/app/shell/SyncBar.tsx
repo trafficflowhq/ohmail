@@ -233,6 +233,26 @@ function speech(state: MailState, t: Translate, tm: Translate): Speech {
         link: settings,
       };
 
+    case "filing":
+      return {
+        // BUSY, not `warn`. Nothing has failed: the API files by writing `folder_state` and the
+        // worker applies it on its next cycle, so a backlog is the ordinary shape of that
+        // handoff and only becomes a problem if it stops draining. A warning triangle over a
+        // normal few seconds would train people to ignore the one that matters.
+        tone: "busy", role: "status", warn: false, busy: true,
+        // "On your mail server" is the load-bearing half of the sentence. The mail HAS moved in
+        // ohmail — the user watched it — so a bare "Filing 12 messages" reads as a lie about
+        // something they can see is already done. What is outstanding is the copy of that
+        // decision on their own IMAP host.
+        title: t("filing", { count: state.pending }),
+        detail: state.address ? t("filingWhere", { address: state.address }) : null,
+        // THE RETRY AFFORDANCE. If the host is refusing connections this does not drain on its
+        // own, and Settings → Mailboxes is where the mailbox's own state and its reconnect live.
+        // The link is the difference between a sentence a person can act on and one they can
+        // only watch.
+        link: settings,
+      };
+
     case "noMailbox":
       // Reachable only when `GET /mailboxes` ANSWERED and answered zero. A probe that failed
       // leaves the facts unknown and this strip silent — see `MailStateProvider`.

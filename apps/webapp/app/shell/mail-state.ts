@@ -225,6 +225,25 @@ export interface MailboxFacts {
    * therefore forwards the field untouched.
    */
   initialImportCompletedAt?: string | null;
+  /**
+   * HOW MANY OF THE USER'S OWN FILINGS THIS MAILBOX HAS NOT APPLIED YET.
+   *
+   * The API never opens IMAP: a Screener decision writes `folder_state` and the WORKER moves the
+   * mail on its next cycle. So there is always a window in which ohmail shows the mail filed and
+   * the user's server does not — and when the mail host is refusing connections, that window
+   * does not close. Nothing else on this row notices: the mailbox is still `connected` (one
+   * refused cycle does not earn `error`), `syncBlockedSince` is null because this is not one of
+   * OUR infrastructure blocks, and the strip therefore said nothing at all while a backlog of
+   * the user's own decisions built up on the server.
+   *
+   * OPTIONAL, and read with a `typeof === "number"` guard — the same rule, and for the same
+   * measured reason, as {@link initialImportCompletedAt} above: a bundle or a server that
+   * predates the column omits the field, and `undefined` must mean "this build cannot tell",
+   * never `0`. Absent ⇒ the arm is skipped and the ladder behaves exactly as it did before the
+   * column existed. The inverse mistake has its own cost: `Filing 0 messages on your mail
+   * server…` is a sentence about nothing, which is why the arm tests `> 0` as well.
+   */
+  pendingMoves?: number;
   /** When this mailbox was connected. The one per-mailbox clock that is not shared. */
   createdAt: string;
 }
@@ -582,6 +601,7 @@ export type MailStateKey =
   | "failing"
   | "blocked"
   | "mailboxError"
+  | "filing"
   | "noMailbox"
   | "importing"
   | "awaiting"
@@ -652,6 +672,18 @@ export interface MailState {
    */
   screenerCandidate: boolean;
   /**
+   * `filing` only — how many of OUR OWN filings the mail server has not applied yet.
+   *
+   * A field of its own and not `count`, which is documented as the size of the MIRROR and is
+   * carried by every state for context. Overloading it would make one number mean two things
+   * depending on the key beside it, and the first surface to read it without checking the key
+   * would report a backlog of six as a mailbox holding six messages.
+   *
+   * `0` in every other state. The arm never fires at 0 — see {@link MailboxFacts.pendingMoves}
+   * for why "Filing 0 messages" is as wrong as silence is.
+   */
+  pending: number;
+  /**
    * **MAY AN EMPTY LIST BE STATED AS A SETTLED FACT?**
    *
    * ── THE DEFECT ──────────────────────────────────────────────────────────────────────────
@@ -719,6 +751,7 @@ const QUIET: MailState = {
   minutes: null,
   slow: false,
   screenerCandidate: false,
+  pending: 0,
   // Overwritten for every state by `deriveMailState`'s wrapper — see {@link MailState.settled}.
   // `true` here so that a `QUIET` used directly as a resting value never withholds a pane's
   // ordinary empty state.
@@ -956,6 +989,66 @@ function climb(input: MailStateInputs): MailState {
       count: mirrored,
       errorCode: failed.errorCode ?? "unknown",
       address: failed.address,
+    };
+  }
+
+  // ── 5a. FILING — WE HAVE FILED THE MAIL AND THE SERVER HAS NOT ─────────────────────────
+  //
+  // ── THE STATE THAT HAD NO SENTENCE ───────────────────────────────────────────────────
+  //
+  // Invariant #3: the serverless API never opens IMAP. Every decision writes `folder_state`
+  // and returns; the WORKER performs the move on its next cycle. So there is always a window
+  // where ohmail shows the mail filed and the user's own mail server still holds it where it
+  // was — and if the host is refusing connections, the window does not close.
+  //
+  // Nothing above this arm can see that. The mailbox is `connected` (a single refused cycle
+  // does not earn `error` — that takes `maxSyncFailures` in a row, or a refused ATTACH), it is
+  // not `blocked` because a sync block is OUR infrastructure declining and this is theirs, and
+  // it is not `stoodDown`. So the ladder fell straight through to `quiet` and the product
+  // looked finished while the backlog grew. The user's evidence was the mail moving in ohmail;
+  // their mail server disagreed silently and for as long as the outage lasted.
+  //
+  // ── WHY HERE, AND NOT HIGHER OR LOWER ────────────────────────────────────────────────
+  //
+  // BELOW `mailboxError`: a mailbox in `error` is quarantined and earning a backoff, and
+  // "your mail server refused us" is the larger, more actionable fact — a pending backlog on a
+  // mailbox that is already reported broken adds nothing a person can act on differently.
+  //
+  // ABOVE `importing` and everything under it: those states are about mail COMING IN, and this
+  // is about the user's own decisions GOING OUT. A first import can run for minutes and is
+  // expected to; unapplied filings are not, and burying them under "Syncing your mail" for the
+  // duration of an import is how this stayed invisible in the first place.
+  //
+  // ── THE `typeof` GUARD IS THE PRECEDENT ONE ARM UP, RESTATED ─────────────────────────
+  //
+  // `typeof m.pendingMoves === "number"` and NOT `m.pendingMoves != null` — the stale-probe
+  // reading `stoodDown` records the same rule and the same caught defect: a bundle or a server
+  // compiled before the field simply OMITS it, and `undefined != null` is false but
+  // `undefined > 0` is also false, so only the positive test says what is meant. An absent
+  // field is "this build cannot tell" and it must produce silence, not a number.
+  //
+  // `> 0` is the other half: `Filing 0 messages on your mail server…` is a sentence about
+  // nothing, and it would be on screen for every healthy account permanently.
+  //
+  // SUMMED across live mailboxes, and the ADDRESS is the one they belong to only when there is
+  // exactly one — the strip makes account-wide statements (see `awaiting`'s `every`), and
+  // naming one of two mailboxes beside a total covering both would be a sentence whose two
+  // halves are about different things.
+  const filing = live.filter((m) => typeof m.pendingMoves === "number" && m.pendingMoves > 0);
+  const outstanding = filing.reduce((n, m) => n + (m.pendingMoves ?? 0), 0);
+  if (outstanding > 0) {
+    return {
+      ...QUIET,
+      key: "filing",
+      // The mirror is not the subject here, but every state carries it for context.
+      count: mirrored,
+      pending: outstanding,
+      address: filing.length === 1 ? filing[0]!.address : null,
+      // TIME-DEPENDENT, so the strip runs its own clock: nothing in the MIRROR changes when the
+      // worker drains this backlog — `folder_state` is server-side and `/sync` carries no
+      // change for a move that has already been applied locally — so a state keyed only on
+      // mirror movement would never re-paint and the number would freeze at whatever it was.
+      clock: true,
     };
   }
 

@@ -112,6 +112,7 @@ export interface MailboxDTO {
     retryCount?: number;
     syncBlockedReason?: string | null;
     syncBlockedSince?: string | null;
+    pendingMoves?: number;
     disabledReason?: string | null;
     createdAt?: string;
     initialImportCompletedAt?: string | null;
