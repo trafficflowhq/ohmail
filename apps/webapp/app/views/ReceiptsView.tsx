@@ -19,6 +19,7 @@ import type { EngineMessage, MessageBody, TagDTO } from "@ohmail/client-engine";
 import { Kbd, ListPane, ListRows, MessageRow, StreamCard } from "@ohmail/ui";
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { useListWindow } from "../shell/list-window";
 import { MessageActionBar, type MessageAction } from "../shell/MessagePane";
 import { StreamShell, type StreamHandle } from "../shell/StreamShell";
 // Aliased: `MessageBody` is already imported above as the engine's body DTO type.
@@ -62,9 +63,18 @@ export function ReceiptsView({
   const tr = useTranslations("reads");
   const tb = useTranslations("body");
   const streamRef = useRef<StreamHandle>(null);
+  const listScrollerRef = useRef<HTMLDivElement>(null);
   const [justSeen, setJustSeen] = useState<Set<string>>(() => new Set());
 
   const all = messages;
+  /**
+   * THE LIST IS A WINDOW, not the whole pile. Receipts is a working set on most accounts, but a
+   * standalone desktop client's mirror is the whole mailbox, and `all.map(row)` mounted every
+   * row of it — the same unbounded cost History was windowed for. Only the LIST column is
+   * windowed here; the reading stream to its right stays whole (its cards are variable-height
+   * and drive `\Seen` through scroll-coupled observers) and is kept cheap off-screen in CSS.
+   */
+  const win = useListWindow({ scrollerRef: listScrollerRef, count: all.length });
   const current = cur ?? all.find(isUnread)?.id ?? all[0]?.id ?? null;
 
   const seenMark = (id: string) => {
@@ -168,6 +178,10 @@ export function ReceiptsView({
         title={t("title")}
         meta={t("meta", { count: unreadCount })}
         onSeen={seenMark}
+        scrollerRef={listScrollerRef}
+        /* Re-scan the seen-on-scroll observer as the window slides, so a row that mounts on
+           scroll is still marked read when the reader scrolls past it. */
+        rescanKey={`${win.start}:${win.end}`}
         hints={
           <>
             <span>
@@ -180,7 +194,13 @@ export function ReceiptsView({
           </>
         }
       >
-        <ListRows>{all.map(row)}</ListRows>
+        <ListRows>
+          {/* Rows above and below the window as reserved height — the scrollbar and scroll
+              position stay what they would be with every row mounted. See `useListWindow`. */}
+          {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+          {all.slice(win.start, win.end).map(row)}
+          {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
+        </ListRows>
         {/* No-collapse rule: every receipt is a real row above. */}
         <div className="tail-row">{t("tail")}</div>
       </ListPane>

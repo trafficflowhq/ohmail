@@ -1,4 +1,4 @@
-import { useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 import { useSeenOnScroll, type SeenObserver } from "../hooks/useSeenOnScroll.js";
 import "./list-pane.css";
 
@@ -22,6 +22,18 @@ export interface ListPaneProps {
   onSeen?: (id: string) => void;
   /** External scroller ref, if the app drives scrolling itself. */
   scrollerRef?: RefObject<HTMLDivElement>;
+  /**
+   * RE-SCAN THE SEEN-ON-SCROLL OBSERVER when this value changes.
+   *
+   * `useSeenOnScroll` observes the rows present when it first runs and never again on its own.
+   * That is correct for a list that mounts all its rows at once, and WRONG for a windowed list,
+   * whose rows come and go as the window slides: a row that mounts on scroll would never be
+   * observed, so it could never mark itself `\Seen` however far the user read past it. A view
+   * that windows AND wires `onSeen` passes its window bounds here so the observer re-attaches to
+   * the rows actually on screen — the same thing `StreamShell` does for the reading stream via
+   * its `contentKey`. Absent ⇒ scan once, the unwindowed behaviour every existing caller had.
+   */
+  rescanKey?: unknown;
   className?: string;
 }
 
@@ -40,14 +52,20 @@ export function ListPane({
   solo,
   onSeen,
   scrollerRef,
+  rescanKey,
   className,
 }: ListPaneProps) {
   const internalRef = useRef<HTMLDivElement>(null);
   const ref = scrollerRef ?? internalRef;
-  useSeenOnScroll({
+  const seen = useSeenOnScroll({
     root: ref,
     onSeen: onSeen ?? (() => {}),
   });
+  // Re-attach the observer to the rows a windowed list has just mounted. No-op when `rescanKey`
+  // is undefined and constant, so a non-windowed pane observes once exactly as before.
+  useEffect(() => {
+    if (rescanKey !== undefined) seen.observe();
+  }, [seen, rescanKey]);
 
   const cls = ["list-col", solo ? "solo" : null, className].filter(Boolean).join(" ");
   return (

@@ -156,15 +156,42 @@ body.reading .shell {
   border-bottom: 1px solid var(--hair-soft);
 }
 
-/* HISTORY IS THE ONE WINDOWED LIST, AND SCROLL ANCHORING IS THE BROWSER FEATURE THAT FIGHTS ONE.
+/* THE WINDOWED LISTS, AND SCROLL ANCHORING IS THE BROWSER FEATURE THAT FIGHTS ONE.
    Rows above the viewport are unmounted into a spacer as you scroll, and anchoring exists
    precisely to adjust `scrollTop` when the content above the viewport changes — which here is
    every frame of a fast scroll, and the correction it would apply is against a total height that
    never actually moved (`useListWindow` reserves exactly what it unmounts). Turning it off for
-   this subtree costs nothing anywhere else: no other list swaps its own content out from under
+   these subtrees costs nothing anywhere else: no other list swaps its own content out from under
    the scroll position. */
 .view-history .rows {
   overflow-anchor: none;
+}
+/* History was the first windowed list; the Ohbox, Reads and Receipts lists are windowed the same
+   way and need the same opt-out. Kept as its own rule so History's own guard still reads a
+   `.view-history .rows { … }` block verbatim. */
+.view-ohbox .rows,
+.view-reads .rows,
+.view-receipts .rows {
+  overflow-anchor: none;
+}
+
+/* THE READING STREAMS ARE NOT WINDOWED — THEY ARE MADE CHEAP OFF-SCREEN INSTEAD.
+   Reads and Receipts render a card per message beside the windowed list, and a card is
+   variable-height (a snippet clamps short, a full body to 348px) and drives `\Seen` through the
+   scroll-coupled observers, the scroll-spy and `scrollTo` in `StreamShell` — all of which read
+   the live set of `.scast` cards. Unmounting cards out of that set (a list-style window) would
+   be both incorrect (the fixed-row-height arithmetic does not fit a variable-height stream) and
+   unsafe (an observer cannot fire for a card that is not in the DOM). So every card stays
+   mounted and `content-visibility` lets the browser skip the layout and paint of the ones off
+   screen — the cost the switch was actually paying — while the card keeps its box, so
+   `getBoundingClientRect`, the IntersectionObservers and `scrollTo` all behave exactly as
+   before. `contain-intrinsic-size: auto` remembers each card's real height once measured, so the
+   scrollbar is honest after the first pass; ~200px is the first-frame guess for a card not yet
+   seen. */
+.view-reads .stream .scast,
+.view-receipts .stream .scast {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 200px;
 }
 
 /* ================= the sent-mail seed review ================= */

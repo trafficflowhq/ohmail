@@ -21,6 +21,7 @@ import {
 } from "@ohmail/ui";
 import { PLACE_LABEL, avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { useListWindow } from "../shell/list-window";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useMailState } from "../shell/MailStateProvider";
 import type { OlderMail } from "../shell/older-mail";
@@ -162,6 +163,24 @@ export function OhboxView({
     () => [...newForYou, ...previouslySeen],
     [newForYou, previouslySeen],
   );
+
+  /**
+   * THE LIST IS A WINDOW over `[New for you, Earlier]`. The Ohbox is a working set, but a
+   * standalone desktop client's mirror is the whole mailbox, and grouped `.map(row)` mounted
+   * every accepted row of it — the unbounded cost History was windowed for. The two groups keep
+   * their own `role="listbox"` containers; each renders only its share of the mounted window,
+   * with reserved height above and below. The `Older` tail below is bounded (server pages) and
+   * stays whole. The Ohbox writes no `\Seen` on scroll (its read-state is the dwell), so unlike
+   * Reads/Receipts the window needs no observer re-scan. The split reader is untouched: it reads
+   * `selected` from `all` by id, so a pick survives its row scrolling out of the window.
+   */
+  const listScrollerRef = useRef<HTMLDivElement>(null);
+  const win = useListWindow({ scrollerRef: listScrollerRef, count: all.length });
+  const newCount = newForYou.length;
+  const newFrom = Math.min(win.start, newCount);
+  const newTo = Math.min(win.end, newCount);
+  const prevFrom = Math.max(0, win.start - newCount);
+  const prevTo = Math.max(0, win.end - newCount);
   /**
    * THE OPEN MESSAGE, or `null` — never "the first one, then".
    *
@@ -852,6 +871,7 @@ export function OhboxView({
     <section className="view split view-ohbox" onClickCapture={onRangeClickCapture}>
       <ListPane
         title={t("title")}
+        scrollerRef={listScrollerRef}
         /* "0 unread of 0 messages" IS A CLAIM ABOUT THE MAILBOX, not a description of the
            list — and it was on screen, beside "Nothing in your Ohbox.", over an account that
            was not empty, for as long as the first drain took. While the mirror has not
@@ -947,18 +967,24 @@ export function OhboxView({
             under either and (see `SyncState`) nothing else on the pane at all. A section label
             asserts that a section follows. It also left two empty `role="listbox"` regions for
             a screen reader to land in and find nothing. */}
-        {newForYou.length > 0 ? (
+        {/* THE WINDOW, ACROSS TWO GROUPS. Reserved height above, then each group's share of the
+            mounted slice inside its own listbox, then reserved height below. A group whose rows
+            are entirely outside the window renders neither its label nor an empty listbox — the
+            heading-over-nothing rule, kept as the window slides. */}
+        {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+        {newForYou.length > 0 && newTo > newFrom ? (
           <>
             <ListGroupLabel>{t("newForYou")}</ListGroupLabel>
-            <ListRows multiSelectable ariaLabel={t("newForYou")}>{newForYou.map(row)}</ListRows>
+            <ListRows multiSelectable ariaLabel={t("newForYou")}>{newForYou.slice(newFrom, newTo).map(row)}</ListRows>
           </>
         ) : null}
-        {previouslySeen.length > 0 ? (
+        {previouslySeen.length > 0 && prevTo > prevFrom ? (
           <>
             <ListGroupLabel>{t("previouslySeen")}</ListGroupLabel>
-            <ListRows multiSelectable ariaLabel={t("previouslySeen")}>{previouslySeen.map(row)}</ListRows>
+            <ListRows multiSelectable ariaLabel={t("previouslySeen")}>{previouslySeen.slice(prevFrom, prevTo).map(row)}</ListRows>
           </>
         ) : null}
+        {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         {/* The view's own fact — this list is empty — combined with a state derived once, up
             in the shell. `doorbellCount` is the Screener's waiting count, already a prop. */}
         {all.length === 0 ? <SyncState waiting={doorbellCount} settled={settled} /> : null}

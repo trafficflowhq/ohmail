@@ -26,6 +26,7 @@ import {
 } from "@ohmail/ui";
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { useListWindow } from "../shell/list-window";
 import { MessageActionBar, type MessageAction } from "../shell/MessagePane";
 import { FoldTableArt, StreamShell, type StreamHandle } from "../shell/StreamShell";
 // Aliased: `MessageBody` is already imported above as the engine's body DTO type.
@@ -88,12 +89,29 @@ export function ReadsView({
   const t = useTranslations("reads");
   const tb = useTranslations("body");
   const streamRef = useRef<StreamHandle>(null);
+  const listScrollerRef = useRef<HTMLDivElement>(null);
   const [justSeen, setJustSeen] = useState<Set<string>>(() => new Set());
 
   const all = useMemo(
     () => [...partition.fresh, ...partition.seen],
     [partition.fresh, partition.seen],
   );
+  /**
+   * THE LIST IS A WINDOW over `[fresh, seen]`. A desktop client's mirror is the whole mailbox,
+   * so `partition.fresh`/`seen` can be tens of thousands of rows, and mapping every one of them
+   * mounted the whole pile on each visit — the cost History was windowed for. Only the LIST is
+   * windowed; the reading stream keeps every card (variable height, `\Seen` on scroll) and is
+   * kept cheap off-screen in CSS. The waterline and the AI chip sit inside the windowed slice.
+   */
+  const win = useListWindow({ scrollerRef: listScrollerRef, count: all.length });
+  const freshCount = partition.fresh.length;
+  const freshFrom = Math.min(win.start, freshCount);
+  const freshTo = Math.min(win.end, freshCount);
+  const seenFrom = Math.max(0, win.start - freshCount);
+  const seenTo = Math.max(0, win.end - freshCount);
+  // The waterline marks the fresh/seen junction; render it only when that junction is inside
+  // the mounted window, so it travels with the boundary instead of pinning to the list top.
+  const showWaterline = partition.waterline != null && win.start <= freshCount && win.end > freshCount;
   const unreadCount = all.filter((m) => m.unread).length;
   const current = cur ?? all.find((m) => m.unread)?.id ?? all[0]?.id ?? null;
 
@@ -302,6 +320,10 @@ export function ReadsView({
         title={t("title")}
         meta={t("meta", { count: unreadCount })}
         onSeen={seenMark}
+        scrollerRef={listScrollerRef}
+        /* Re-scan the seen-on-scroll observer as the window slides — a row that mounts on scroll
+           must still mark itself read when the reader scrolls past it. */
+        rescanKey={`${win.start}:${win.end}`}
         hints={
           <>
             <span>
@@ -314,18 +336,24 @@ export function ReadsView({
           </>
         }
       >
+        {/* ONE windowed sequence over `[fresh, seen]`: reserved height above, the fresh slice
+            (with the AI chip inline), the waterline at the junction when it is in view, the seen
+            slice, then the reserved height below. Two `ListRows` still, so the two groups keep
+            their own row containers, but each renders only its share of the mounted window. */}
+        {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
         <ListRows>
-          {partition.fresh.map((m) => (
+          {partition.fresh.slice(freshFrom, freshTo).map((m) => (
             <span key={m.id} style={{ display: "contents" }}>
               {row(m)}
               {aiChip?.afterId === m.id ? chipRow : null}
             </span>
           ))}
         </ListRows>
-        {partition.waterline ? (
-          <Waterline label={t("waterline")} meta={partition.waterline.meta} />
+        {showWaterline ? (
+          <Waterline label={t("waterline")} meta={partition.waterline!.meta} />
         ) : null}
-        <ListRows>{partition.seen.map(row)}</ListRows>
+        <ListRows>{partition.seen.slice(seenFrom, seenTo).map(row)}</ListRows>
+        {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         <div className="tail-row">{t("tail")}</div>
       </ListPane>
 
