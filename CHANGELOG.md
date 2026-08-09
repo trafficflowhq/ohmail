@@ -16,6 +16,50 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.8.1] — 2026-08-09
+
+A follow-up to 0.8.0, mostly about reading mail: how a message is drawn, how a conversation opens,
+and messages that used to stall on their way to the screen.
+
+### Reading
+
+**Plain and business mail is drawn as text, at the app's own reading size — only a true newsletter
+keeps its own layout.** A message that carries a design of its own still renders in its own frame;
+everything else, which is most mail between people, is now the app's own type. A **Show original**
+control on any message restores the sender's full formatting for that message when you want it, and
+leaves again on the next press.
+
+**A conversation opens at its latest message and shows every message in full.**
+
+**A message that would not finish loading now loads, and offers a Retry if one ever fails.** Some
+messages used to sit on "loading the full message" with nothing to do about it.
+
+**A picture in plain mail is reachable again.** A photo, scan or chart pasted into an otherwise plain
+message had stopped being openable when that mail became text; it is listed and opens again, and
+leaves the list when Show original brings its frame back.
+
+### The Screener
+
+**The suggestion tools stay available even after every sender has a suggestion, and you can re-run
+them.** They used to disappear once there was nothing left to suggest, which is exactly when you
+might want to look again. On a hosted account signed in from the desktop app, the suggestion tools
+now work too.
+
+**The Screener no longer waits for ever on a message that will not load.** A held message whose
+preview could not be drawn used to leave the Screener spinning.
+
+### Tags
+
+**Your tags now appear on the desktop, including on installs set up before tag sync existed.** An
+install that was already running when this arrived asks for its tags rather than waiting for a fresh
+one, and the messages it already holds regain their chips.
+
+### What is held back
+
+**Far fewer ordinary messages are mistakenly held back as sensitive.** The name of a two-factor
+scheme, a link to a sign-in page inside a document, and several kinds of notification and archive
+link were being read as secrets and hidden; they are ordinary mail and are now treated as such.
+
 ## [0.8.0] — 2026-08-09
 
 The largest release since every platform became a working mail client. Sign-in, the first minutes
