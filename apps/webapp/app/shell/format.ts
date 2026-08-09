@@ -7,12 +7,14 @@ import {
   folderLeaf,
   messageDisplayTime,
   VIEW_OF_FOLDER,
+  type EmailAddress,
   type EngineMessage,
   type TagDTO,
 } from "@ohmail/client-engine";
 import type { TagHueName } from "@ohmail/ui";
 
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** The human name of each client view. Keys are view ids, never folders. */
 export const PLACE_LABEL: Record<string, string> = {
@@ -231,6 +233,93 @@ export function avatarOf(m: EngineMessage): { avatarInitial: string; avatarHue: 
 
 export function firstName(m: EngineMessage): string {
   return senderName(m).split(" ")[0] ?? senderName(m);
+}
+
+/**
+ * ABSOLUTE date and time, for the hover title on a message's relative stamp — "Tue 5 Aug 2026,
+ * 14:32". The visible stamp is {@link displayTime} (relative: "09:12", "Mon"); this is what the
+ * reader gets when they want the exact instant, so it carries the year and never abbreviates
+ * to a weekday.
+ *
+ * UTC, like every other formatter in this file (`clockOf`, `resurfaceLabel`): the fixtures and
+ * the whole test surface are stamped and read in UTC, and a locale-relative render would put a
+ * different instant on screen for every reader. Empty string for a message with no `Date:`
+ * header — there is no instant to name, exactly as `displayTime` answers "" — so a caller
+ * interpolating it prints nothing rather than "Invalid Date".
+ */
+export function fullDateTime(m: EngineMessage): string {
+  if (!m.date) return "";
+  const d = new Date(m.date);
+  if (Number.isNaN(d.getTime())) return "";
+  return (
+    `${WEEKDAY_SHORT[d.getUTCDay()]} ${d.getUTCDate()} ${MONTH_SHORT[d.getUTCMonth()]} ` +
+    `${d.getUTCFullYear()}, ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
+  );
+}
+
+/** One recipient, folded: the reader's own address becomes "me", everyone else keeps a name. */
+export type RecipientChip = { me: true } | { name: string };
+
+/**
+ * WHO ELSE THE MESSAGE WENT TO, summarised for a single line under the sender.
+ *
+ * Pure and i18n-free on purpose: it returns STRUCTURE, not sentence. The words ("to", "me",
+ * "cc", "+N") are the app's, read from `messages/en.json` at the card; folding the reader's own
+ * address to a translated "me" here would bake one locale's copy into a function every locale
+ * shares. So an own address surfaces as `{ me: true }` and the card swaps in `t("me")`.
+ *
+ * The rules, in the order they bite:
+ *  · **Nothing to say → `empty`.** A message with no To and no Cc renders no recipients line at
+ *    all — never a dangling "to" with nothing after it, which is the punctuation-shaped lie
+ *    `metaLine` exists to prevent one row up.
+ *  · **Own addresses fold to "me", case-folded.** The comparison is `toLowerCase()` on both
+ *    sides; `ownAddresses` is whatever `GET /mailboxes` reported (see `AppShell`), and an empty
+ *    set means the reader is recognised nowhere — every address renders in full, which is the
+ *    honest degradation, not "me" applied to a stranger.
+ *  · **At most two To names, then "+N".** `to` holds the first two folded recipients and
+ *    `toOverflow` counts the rest, so "to me, Anna Roth +3" is the card's job to assemble.
+ *  · **Cc is one name or a count.** A single Cc shows its (possibly folded) name; several show
+ *    only how many, because a card is not the place to list eleven addresses — `details` is.
+ */
+export interface RecipientSummary {
+  /** The first two To recipients, folded. */
+  to: RecipientChip[];
+  /** How many further To recipients there are past the two in `to`. */
+  toOverflow: number;
+  /** The Cc line: a single folded name, a bare count, or nothing. */
+  cc: { name: RecipientChip } | { count: number } | null;
+  /** True only when there is no To and no Cc — the card renders no recipients line. */
+  empty: boolean;
+}
+
+function foldRecipient(r: EmailAddress, own: ReadonlySet<string>): RecipientChip {
+  if (own.has(r.address.trim().toLowerCase())) return { me: true };
+  return { name: r.name || r.address };
+}
+
+export function recipientSummary(
+  m: EngineMessage,
+  ownAddresses: readonly string[],
+): RecipientSummary {
+  const to = m.to ?? [];
+  const cc = m.cc ?? [];
+  if (to.length === 0 && cc.length === 0) {
+    return { to: [], toOverflow: 0, cc: null, empty: true };
+  }
+  const own = new Set(ownAddresses.map((a) => a.trim().toLowerCase()));
+  const foldedTo = to.map((r) => foldRecipient(r, own));
+  const ccSummary: RecipientSummary["cc"] =
+    cc.length === 0
+      ? null
+      : cc.length === 1
+        ? { name: foldRecipient(cc[0]!, own) }
+        : { count: cc.length };
+  return {
+    to: foldedTo.slice(0, 2),
+    toOverflow: Math.max(0, foldedTo.length - 2),
+    cc: ccSummary,
+    empty: false,
+  };
 }
 
 /** Tag lookup helpers over the mirror's tag entities. */

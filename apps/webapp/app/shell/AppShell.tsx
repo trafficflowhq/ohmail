@@ -2951,6 +2951,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
   const chrome = useMemo(
     () => ({
+      ownAddresses,
       replyTo, replyBody, onReplyBody, closeReply, sendReply,
       replySendState: mailSend.stateOf,
       // The offer and the draft waiting to be placed travel with the reply draft, and for the
@@ -2965,7 +2966,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       bodyOf: bodyOfMessage, hydrateBody, hydrateThread,
       attachments, remoteImages,
     }),
-    [replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
+    [ownAddresses, replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       openSenderMenu,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
   );

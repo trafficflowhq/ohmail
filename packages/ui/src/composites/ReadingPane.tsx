@@ -10,11 +10,17 @@ export interface ReadingPaneAttachment {
 }
 
 export interface ReadingPaneProps {
-  from: string;
+  /**
+   * The sender's name for the built-in from-line. **Optional**, and its absence is a real mode:
+   * a caller that composes its own message header (the app's `MessageCard`) leaves it off, and
+   * the from-line block below is not rendered at all — so there is exactly one header per
+   * message and never a doubled one during the anatomy migration.
+   */
+  from?: string;
   address?: string;
   time?: string;
-  threadCount?: number;
-  subject: string;
+  /** Optional for the same reason as `from`: a caller composing its own header owns the subject. */
+  subject?: string;
   /** Routing/tracker/tag chips row. */
   chips?: ReactNode;
   /** Body text (pre-line). Ignored when `children` is given. */
@@ -75,7 +81,6 @@ export function ReadingPane({
   from,
   address,
   time,
-  threadCount,
   subject,
   chips,
   body,
@@ -103,37 +108,43 @@ export function ReadingPane({
   );
   return (
     <article className={className ? `msg ${className}` : "msg"}>
-      <div className="msg-from">
-        {onSender ? (
-          <button
-            type="button"
-            className="msg-sender"
-            title={senderTitle}
-            aria-label={senderTitle}
-            onClick={(e) => onSender(e.currentTarget)}
-          >
-            {who}
-          </button>
-        ) : (
-          who
-        )}
-        <span className="t num">
-          {threadCount ? `thread (${threadCount}) · ` : ""}
-          {time}
-          {onEnterReader ? (
+      {/* THE BUILT-IN FROM-LINE, ONLY WHEN A CALLER ASKED FOR ONE. `MessagePane` composes its
+          own `MessageHeader` in the children slot now — richer than this line (recipients, the
+          absolute date on hover) and the same one an expanded sibling wears — so it leaves
+          `from` off and this block does not render. A caller that still hands over a name (the
+          showcase, the smoke test) gets the simple line unchanged. */}
+      {from !== undefined ? (
+        <div className="msg-from">
+          {onSender ? (
             <button
               type="button"
-              className="msg-open"
-              title="Read (↵)"
-              aria-label="Open reading mode"
-              onClick={onEnterReader}
+              className="msg-sender"
+              title={senderTitle}
+              aria-label={senderTitle}
+              onClick={(e) => onSender(e.currentTarget)}
             >
-              <Icon name="open" size={13} />
+              {who}
             </button>
-          ) : null}
-        </span>
-      </div>
-      <h2>{subject}</h2>
+          ) : (
+            who
+          )}
+          <span className="t num">
+            {time}
+            {onEnterReader ? (
+              <button
+                type="button"
+                className="msg-open"
+                title="Read (↵)"
+                aria-label="Open reading mode"
+                onClick={onEnterReader}
+              >
+                <Icon name="open" size={13} />
+              </button>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
+      {subject !== undefined ? <h2>{subject}</h2> : null}
       {chips ? <div className="chips">{chips}</div> : null}
       {children ?? (body !== undefined ? <p className="msg-body">{body}</p> : null)}
       {bodyNote ? (

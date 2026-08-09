@@ -22,6 +22,18 @@ import type { DraftReplyChrome } from "./InlineReply";
 import type { RemoteImagesChrome } from "./remote-images";
 
 export interface MessageChrome {
+  /**
+   * THE READER'S OWN ADDRESSES, so the message header can fold a recipient that IS the reader
+   * to "me" rather than printing their own address back at them.
+   *
+   * It rides the chrome for the same reason `conversationOf` and `bodyOf` do: `MessagePane` is
+   * mounted TWICE while the reader is open and holds no engine hook of its own, and the answer
+   * has one source — `GET /mailboxes`, resolved once in `AppShell` (`ownAddresses`). A default
+   * of `[]` is a real answer, not a stub: a surface with no mailbox facts (the desktop shell, a
+   * test) recognises the reader nowhere, so every recipient renders in full, which is the honest
+   * degradation. `recipientSummary` case-folds both sides.
+   */
+  ownAddresses: readonly string[];
   /** The message id whose inline reply editor is open, if any. */
   replyTo: string | null;
   /** Both halves of what is typed in it — the markup and its plain rendering. */
@@ -171,6 +183,7 @@ const noop = (): void => {};
  * reply editor exists in order to show a message.
  */
 const MessageChromeContext = createContext<MessageChrome>({
+  ownAddresses: [],
   replyTo: null,
   replyBody: EMPTY_RICH,
   onReplyBody: noop,

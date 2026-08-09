@@ -3028,6 +3028,139 @@ body.reading .shell {
   }
 }
 
+/* ── A COLLAPSED SIBLING: THE WHOLE CARD IS ONE PEEK-ROW BUTTON ──────────────────────────────
+   Monogram, name, a one-line peek of the body and the stamp, on one line at every width. The
+   card owns no padding of its own here — the button does — so the hover fill reaches the card's
+   rounded edge. `min-width:0` on the peek is what lets `text-overflow:ellipsis` bite; the name
+   and stamp are `flex:none` so the stamp never wraps and the peek is the only thing that gives. */
+.conv .hmail.hm-collapsed {
+  padding: 0;
+}
+.hm-peekrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 12px 19px;
+  border-radius: inherit;
+  transition: background 0.15s var(--swift);
+}
+.hm-peekrow:hover {
+  background: var(--tint);
+}
+.hm-peekrow .hm-name {
+  flex: none;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.hm-peekrow .hm-peek {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hm-peekrow .t {
+  flex: none;
+  margin-left: 2px;
+  font-size: 11px;
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 560px) {
+  .hm-peekrow {
+    padding: 11px 15px;
+  }
+}
+
+/* ── THE RECIPIENTS LINE — who else it went to, under the sender ─────────────────────────────
+   "to me, Anna Roth +2 · cc 2", with a quiet "details" press that unfolds the full To/Cc list,
+   the exact date and where the message physically sits. Sits under `.msg-from`, quieter than it,
+   and it is the product speaking about the message — never the sender's words. */
+.msg-rcpt {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 3px 0 0;
+  font-size: 11.5px;
+  color: var(--ink3);
+}
+.msg-rcpt-line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msg-rcpt-more {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink2);
+  cursor: pointer;
+}
+.msg-rcpt-more:hover {
+  color: var(--ink);
+}
+.msg-rcpt-more[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.msg-rcpt-full {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--ink3);
+  line-height: 1.6;
+}
+.msg-rcpt-full > div {
+  display: flex;
+  gap: 6px;
+}
+.msg-rcpt-full dt {
+  flex: none;
+  color: var(--ink2);
+  font-weight: 600;
+}
+.msg-rcpt-full dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* The chevron that folds an expanded sibling back to a peek row. Sits in the from-line's `.t`
+   slot beside the stamp; points up because pressing it collapses. */
+.msg-collapse {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 99px;
+  border: 0;
+  background: none;
+  color: var(--ink3);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.msg-collapse:hover {
+  background: var(--tint);
+  color: var(--ink);
+}
+.msg-collapse svg {
+  transform: rotate(180deg);
+}
+
 /* ================= inline reply =======================================
    Inside <article class="msg">, under the actions: head, editor, controls, status. Nothing
    else — the conversation it used to quote in a 190px `.reply-context` scroller (with

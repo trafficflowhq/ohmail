@@ -725,6 +725,16 @@
     "failed": "Couldn't load the full message — showing the preview.",
     "retry": "Retry"
   },
+  "message": {
+    "me": "me",
+    "to": "to {names}",
+    "cc": "cc {who}",
+    "plusN": "+{n}",
+    "details": "details",
+    "detailsAria": "Show every recipient and the full date",
+    "expand": "Read {sender}'s message",
+    "collapse": "Collapse {sender}'s message"
+  },
   "nav": {
     "skip": "Skip to content",
     "product": "Product",

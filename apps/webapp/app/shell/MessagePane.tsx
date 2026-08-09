@@ -13,7 +13,8 @@ import { AttachmentStrip } from "../components/AttachmentStrip";
 import { isPreviewable } from "../components/AttachmentPreview";
 import { MessageBody } from "../components/MessageBody";
 import { ConversationEntries, ConversationHead } from "./Conversation";
-import { PLACE_LABEL, avatarHue, dayNine, dayValue, displayTime, hueOf, initialsOf, metaLine, nextWeekNine, rowAddress, senderName, tagsOfMessage, tomorrowNine } from "./format";
+import { MessageHeader } from "./MessageCard";
+import { PLACE_LABEL, dayNine, dayValue, hueOf, nextWeekNine, tagsOfMessage, tomorrowNine } from "./format";
 import { InlineReply } from "./InlineReply";
 import { chordKeys, useBinding, useKeyPress } from "./keymap";
 import { useBodyStalled, useMessageChrome } from "./message-chrome";
@@ -556,7 +557,6 @@ export function MessagePane({
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
 }) {
   const t = useTranslations("ohbox");
-  const tr = useTranslations("screening");
   /** The conversation's copy lives with the reply's — one namespace owns the thread. */
   const tc = useTranslations("reply");
   /** Hydration state copy, shared with the Reads/Receipts cards and the Screener preview. */
@@ -616,7 +616,45 @@ export function MessagePane({
   const showConversation = conversation.length > 0;
 
   /**
+   * ── WHICH SIBLINGS ARE OPEN — THE COLLAPSE STATE, AND WHY IT STARTS WHERE IT DOES ─────────
+   *
+   * A thread renders one row per message with every body already loaded (see `hydrateThread`
+   * below and `MessageCard`); this Set is only which of those rows are UNFOLDED. It opens on two
+   * ids: the NEWEST message, because a thread you return to should show its latest, and the
+   * message you OPENED — which is usually the newest, but is an older one when a search result
+   * or a deep link put you there, and in that case both ride in expanded so the reader lands on
+   * the message they asked for AND sees the freshest reply.
+   *
+   * `newestId` is read from the conversation, whose MEMBERSHIP is stable across mirror bumps
+   * (only bodies hydrate), so the reset keys on the opened message alone — the recommended
+   * "adjust state when a prop changes" pattern rather than an effect, so a thread swap paints
+   * the right rows on the first frame instead of flashing the previous thread's.
+   */
+  const newestId = conversation.length ? conversation[conversation.length - 1]!.id : message.id;
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set([newestId, message.id]));
+  const [openedFor, setOpenedFor] = useState(message.id);
+  if (openedFor !== message.id) {
+    setOpenedFor(message.id);
+    setExpanded(new Set([newestId, message.id]));
+  }
+  const toggleExpanded = useCallback((id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  /**
    * ── ASK FOR THE WHOLE CONVERSATION'S BODIES, ONCE, IN ONE REQUEST ───────────────────────
+   *
+   * THIS IS WHAT MAKES COLLAPSE HONEST. A sibling starts folded (see `MessageCard`), but its
+   * body is fetched HERE, on open, alongside every other message on the thread — so unfolding a
+   * row reveals a body already in the mirror with no new request, and a collapsed row is a
+   * message the reader has in hand rather than a placeholder for one they would have to go and
+   * get. Collapse changes what is drawn, never what is loaded, which is why a folded thread
+   * withholds nothing (see `Conversation.tsx`).
    *
    * Keyed on the joined id list rather than on `conversation`, which is a fresh array on every
    * render (see above — it is computed inline on purpose). An array dep would re-fire this on
@@ -760,13 +798,6 @@ export function MessagePane({
     for (const ev of HANDOVER) window.addEventListener(ev, release, true);
     return release;
   }, [message.id, showConversation]);
-
-  /**
-   * The from-line count. Real on Cloud now; the fixture fallback stays because the demo
-   * world sets `threadId: null` on every row (`fixtures-adapter.ts`) and carries a curated
-   * `threadCount` instead — dropping it would delete chrome the demo ships today.
-   */
-  const threadCount = conversation.length >= 2 ? conversation.length : message.threadCount;
 
   /**
    * THE BODY, HYDRATED.
@@ -970,59 +1001,39 @@ export function MessagePane({
       tb("loading")
     );
 
+  const chips = (
+    <>
+      {message.rationale ? <Chip variant="rationale">{message.rationale}</Chip> : null}
+      {message.trackerNote ? <Chip variant="tracker">{message.trackerNote}</Chip> : null}
+      {mine.map((tag) => (
+        <Chip key={tag.id} variant="tag" hue={hueOf(tag)} big>
+          {tag.name}
+        </Chip>
+      ))}
+      <span ref={addRef} style={{ display: "inline-flex" }}>
+        <Chip variant="add" kbdHint="t" onPress={() => onAddTag(message.id, addRef.current)}>
+          {t("tagChip")}
+        </Chip>
+      </span>
+    </>
+  );
+
+  /**
+   * THE FOCUSED MESSAGE'S OWN HEADER — the same {@link MessageHeader} an expanded sibling wears,
+   * so the message you opened and the ones around it read identically: avatar, name, the address
+   * that is still the screening control, the relative stamp with the absolute date on hover, and
+   * the recipients line whose "details" press reveals the full To/Cc, the exact date and where
+   * the message physically sits (`physicalFolder`). `onEnterReader` rides here now — the from-line
+   * it used to hang off is gone from `ReadingPane`.
+   */
+  const focusedHeader = <MessageHeader message={message} now={now} onEnterReader={onEnterReader} />;
+
   return (
     <ReadingPane
-      from={senderName(message)}
-      address={rowAddress(message)}
-      avatarInitial={initialsOf(senderName(message))}
-      avatarHue={avatarHue(message.from.address)}
-      onSender={(anchor) => chrome.openSenderMenu(message.id, anchor)}
-      senderTitle={tr("openFor", { sender: message.from.address })}
-      /* `threadMeta` used to be the literal "thread ({count}) · " and this was a
-         concatenation, so a message with no `Date:` header rendered "thread (3) · " with
-         nothing after the separator, and a threadless one rendered an empty stamp. The key no
-         longer carries the punctuation and `metaLine` prints a separator only between two
-         values that exist. */
-      /**
-       * WHERE IT ACTUALLY IS, whenever that is not where it is being shown.
-       *
-       * `physicalFolder` is set by the consent projection on exactly the messages whose place
-       * and folder differ — a consented sender's backlog presented in the Ohbox while it sits
-       * in the Screener folder, and everything in History. Those are the only cases; a message
-       * shown in the pile it is filed in says nothing extra, because there is nothing to say.
-       *
-       * It matters because the product's promise is to organise a mailbox in place. A reader
-       * who wants to find this message in Apple Mail needs the server's answer, not ours, and
-       * a presentation that never admitted to being one would be the product quietly claiming
-       * to have moved mail it deliberately did not move.
-       */
-      time={metaLine(
-        threadCount ? t("threadMeta", { count: threadCount }) : null,
-        message.physicalFolder ? t("onServer", { folder: message.physicalFolder }) : null,
-        displayTime(message, now),
-      )}
-      subject={message.subject}
-      onEnterReader={onEnterReader}
-      chips={
-        <>
-          {message.rationale ? <Chip variant="rationale">{message.rationale}</Chip> : null}
-          {message.trackerNote ? <Chip variant="tracker">{message.trackerNote}</Chip> : null}
-          {mine.map((tag) => (
-            <Chip key={tag.id} variant="tag" hue={hueOf(tag)} big>
-              {tag.name}
-            </Chip>
-          ))}
-          <span ref={addRef} style={{ display: "inline-flex" }}>
-            <Chip
-              variant="add"
-              kbdHint="t"
-              onPress={() => onAddTag(message.id, addRef.current)}
-            >
-              {t("tagChip")}
-            </Chip>
-          </span>
-        </>
-      }
+      /* NO `from`, `subject`, `chips`, `time` OR `onSender` any more — the pane composes its own
+         `MessageHeader`, subject and chips in the children slot below, so `ReadingPane` renders
+         no from-line and there is exactly one header per message. What stays is what is ABOUT the
+         message rather than part of it: the body-state note, the action bar and the reply slot. */
       bodyNote={bodyNote}
       bodyNoteFailed={body.state === "failed" || stalled}
       actions={
@@ -1057,38 +1068,51 @@ export function MessagePane({
         ) : undefined
       }
     >
-      {/* THE CONVERSATION IN THE MESSAGE.
-          Oldest first, and the message you opened keeps the full anatomy — plain prose
-          between carded siblings — so which one is focused needs no legend. Siblings older
-          than it sit above and newer ones below, which means the stack reads in order
-          whichever message was opened, not only the newest. */}
+      {/* THE CONVERSATION IN THE MESSAGE — one ROW per message, every body already loaded.
+          Oldest first; the message you opened keeps the full anatomy and its own accent rule,
+          and its siblings are collapsible peek rows (see `MessageCard`). The newest and the
+          opened message start expanded, so a reader lands on what they asked for and the latest
+          reply — never on a count standing in for mail they cannot reach. */}
       {showConversation ? (
-        // `role="group"` because `aria-label` on a bare div is ignored, and a landmark
-        // (`<section>`) would be too loud for one part of one message.
-        <div className="conv" role="group" aria-label={tc("conversationAria")} ref={convRef}>
-          <ConversationHead count={conversation.length} />
-          <ConversationEntries
-            messages={conversation.filter((m) => before(m, message))}
-            threadSubject={message.subject}
-            now={now}
-          />
-          <div className="conv-focus" data-conv-id={message.id} aria-current="true">
-            {focusedMessage}
+        <>
+          {/* The thread's subject once, at the top: each message wears a header rather than
+              repeating the subject, and a sibling shows its own only when it diverges. */}
+          <h2>{message.subject}</h2>
+          <div className="chips">{chips}</div>
+          {/* `role="group"` because `aria-label` on a bare div is ignored, and a landmark
+              (`<section>`) would be too loud for one part of one message. */}
+          <div className="conv" role="group" aria-label={tc("conversationAria")} ref={convRef}>
+            <ConversationHead count={conversation.length} />
+            <ConversationEntries
+              messages={conversation.filter((m) => before(m, message))}
+              threadSubject={message.subject}
+              now={now}
+              expanded={expanded}
+              onToggle={toggleExpanded}
+            />
+            <div className="conv-focus" data-conv-id={message.id} aria-current="true">
+              {focusedHeader}
+              {focusedMessage}
+            </div>
+            <ConversationEntries
+              messages={conversation.filter((m) => m.id !== message.id && !before(m, message))}
+              threadSubject={message.subject}
+              now={now}
+              expanded={expanded}
+              onToggle={toggleExpanded}
+            />
           </div>
-          <ConversationEntries
-            messages={conversation.filter((m) => m.id !== message.id && !before(m, message))}
-            threadSubject={message.subject}
-            now={now}
-          />
-        </div>
+        </>
       ) : (
-        // `focusedBody`, not `isProtected ? focusedBody : undefined`. The `undefined` arm
-        // was what fell through to `ReadingPane`'s own `body` string; `focusedBody` already
-        // answers both cases, and the protected rule is unmoved — it is decided where it
-        // always was,
-        // by the `isProtected` branch at the top of this component, which is still first and
-        // still never consults `body`.
-        focusedMessage
+        // A single message: header, subject, chips, then the body. `focusedMessage` is the same
+        // expression the thread's focused row uses — `focusedBody` (protected rule decided first,
+        // never consulting `body`) plus the attachment strip.
+        <>
+          {focusedHeader}
+          <h2>{message.subject}</h2>
+          <div className="chips">{chips}</div>
+          {focusedMessage}
+        </>
       )}
     </ReadingPane>
   );
