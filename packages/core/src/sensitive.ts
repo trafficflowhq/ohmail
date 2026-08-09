@@ -709,8 +709,11 @@ const OTP = new RegExp(
     `\\bcode\\s+(to|for)\\s+(verify|confirm|access|authenticate)\\b`,
     // "use 482913 to sign in" / "enter 991122 to log in" — the code carries its own purpose.
     `\\b(use|enter|type)\\s+\\**[0-9A-Z-]{4,10}\\**\\s+to\\s+(sign|log)[-\\s]?in\\b`,
-    // Unambiguous on its own.
-    `\\b(one[-\\s]?time (pass)?(code|word)|passcode|otp|2fa|two[-\\s]?factor|multi[-\\s]?factor)\\b`,
+    // Unambiguous on its own — these NAME THE CREDENTIAL ITSELF. "Here is the passcode you asked
+    // for" carries one; there is no reading of `passcode` or `one-time password` that is merely a
+    // topic. The four SCHEME names that used to sit in this arm — `otp`, `2fa`, `two-factor`,
+    // `multi-factor` — do have such a reading, and they moved to {@link schemeNameNearCode}.
+    `\\b(one[-\\s]?time (pass)?(code|word)|passcode)\\b`,
     // The bare-code case: `Your PIN`. Bare lowercase "pin" is "pin the tab" and is excluded; a framed PIN,
     // a PIN with a noun, and the uppercase acronym are all credentials.
     `\\b(your|the|a|new|temporary|one[-\\s]?time|single[-\\s]?use|security|access|secret)\\s+pin\\b`,
@@ -1076,6 +1079,70 @@ function looseNumericCode(numeric: string, raw: string): boolean {
 }
 
 /**
+ * THE NAME OF A SCHEME IS NOT A CREDENTIAL. `otp`, `2fa`, `two-factor`, `multi-factor`.
+ *
+ * ── What went wrong, measured ────────────────────────────────────────────────────────────────
+ *
+ * These four sat in {@link OTP}'s "unambiguous on its own" arm, so ANY message containing the
+ * word was `sensitive` — stored REDACTED, its sender HTML never written, withheld from the model
+ * and force-routed. But unlike `passcode` or `one-time password`, which name the credential
+ * object, these name a METHOD, and a method is a thing people write to each other about.
+ *
+ * The shape that found it is a long reply thread in which colleagues discuss enabling two-factor
+ * sign-in — many paragraphs of ordinary prose whose only contact with this vocabulary is one
+ * sentence containing `2FA`. Blank that one acronym and the classifier returns `ordinary`: the
+ * word was the whole of the evidence. The message carried no code, and its reader was shown a
+ * redacted body for mail about nothing secret at all.
+ *
+ * On a large mail store the class is dominated by mail that DISCUSSES authentication rather than
+ * carrying it: vendor security announcements, developer newsletters, "multi-factor will become
+ * mandatory" policy notices, a password manager's own marketing, and human threads about rolling
+ * the scheme out. A seventh of one store's `otp` verdicts rested on one of these four words
+ * alone, and most of those messages contained no code-shaped token anywhere.
+ *
+ * ── The gate, and why it cannot weaken the boundary ──────────────────────────────────────────
+ *
+ * The word now needs a code-shaped run within {@link CODE_PROXIMITY} of it — the same distance,
+ * the same {@link codeRunSpans} (so the same exclusions: a year, a price, a `#`-order number, an
+ * ISO date and a phone-length run are still not codes), and the same {@link proseOnly} mask the
+ * rest of {@link categoryOf} reads through. `Your OTP is 482913` and `2FA code: 448 213` are
+ * exactly as positive as they were.
+ *
+ * The safety argument is that this predicate is a NEAR-DUPLICATE of a test the classifier already
+ * ran. {@link CRED_NOUN_GENERIC} carries `otp|mfa|2fa`, so a scheme name sitting near a code run
+ * ALREADY raised `credential_shape` through {@link looseNumericCode} — which withholds the
+ * message from the model AND stores it redacted. The two layers therefore agree by construction:
+ * where a code is present this rule promotes that same finding to a positive category, and where
+ * no code is present neither layer fires, because there is no credential in the text for either
+ * of them to be protecting. What is given up is a positive on messages that provably contain no
+ * code-shaped token — where redaction had nothing to redact.
+ *
+ * Read from `numeric` rather than `folded` so a non-ASCII code counts, for the reason
+ * {@link Canonical.numeric} gives; the acronyms themselves are unaffected by the digit fold.
+ */
+const SCHEME_NAME = /\b(otp|2fa|two[-\s]?factor|multi[-\s]?factor)\b/gi;
+
+function schemeNameNearCode(numeric: string): boolean {
+  // The acronym test FIRST and the span scan second. `categoryOf` is the hot path — it runs for
+  // every representation of every message, and now for every model payload through
+  // `screenOutboundText` too — while {@link codeRunSpans} walks the whole text with two global
+  // regexes. Almost no message names one of these four schemes, so the cheap test is the one
+  // that should decide. `SCHEME_NAME` is global, hence the reset before each use.
+  SCHEME_NAME.lastIndex = 0;
+  if (!SCHEME_NAME.test(numeric)) return false;
+  const spans = codeRunSpans(numeric);
+  if (spans.length === 0) return false;
+  SCHEME_NAME.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = SCHEME_NAME.exec(numeric)) !== null) {
+    const from = m.index - CODE_PROXIMITY;
+    const to = m.index + m[0].length + CODE_PROXIMITY;
+    for (const [start, end] of spans) if (start <= to && end >= from) return true;
+  }
+  return false;
+}
+
+/**
  * The two-clause credential-shape test, in ONE place because it has two call sites with
  * deliberately different semantics: `classifySensitivity` asks it per REPRESENTATION, and
  * `screenOutboundText` asks it of the JOINED payload about to be serialised for a model. The defect
@@ -1346,9 +1413,12 @@ function categoryOf(rep: Representation): SensitivityCategory | null {
   const folded = proseOnly(rep.canonical.folded);
   const plain = proseOnly(rep.canonical.plain);
   const raw = proseOnly(rep.raw);
+  const numeric = proseOnly(rep.canonical.numeric);
   // Order is precedence, not priority: a mail matching both OTP and ALERT ("new sign-in — enter
   // this code") is an OTP, because that is the category whose redaction matters.
-  if (OTP.test(folded) || PIN_ACRONYM.test(raw) || WORLD_OTP.test(plain)) return "otp";
+  if (OTP.test(folded) || schemeNameNearCode(numeric) || PIN_ACRONYM.test(raw) || WORLD_OTP.test(plain)) {
+    return "otp";
+  }
   if (RESET.test(folded)) return "password_reset";
   if (VERIFY.test(folded)) return "verification";
   if (ALERT.test(folded)) return "security_alert";
