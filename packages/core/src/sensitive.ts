@@ -130,10 +130,15 @@ import type { NormalizedMessage } from "./types.js";
  * prompt (`drafting-service.ts`'s `no_kb = false AND no_ai = false` WHERE clause), so an
  * indeterminate message must be out of both.
  *
- * `no_forward`, `priority` and redaction follow the POSITIVE match only. Failing those closed
- * would not protect anything a model could read; it would block a user action, mangle the
- * priority signal, and replace the digits of ordinary mail with `[REDACTED]` in the user's own
- * storage. Fail-closed is a rule about disclosure, not a licence to damage the product.
+ * `no_forward` and `priority` follow the POSITIVE match only. Failing those closed would not
+ * protect anything a model could read; it would block a user action and mangle the priority
+ * signal. Fail-closed is a rule about disclosure to a model, not a licence to damage the product.
+ *
+ * There is no longer a "store the body redacted" outcome at all. The body the user stores, is
+ * served and reads is the FULL original in every case — the mailbox on the IMAP server already
+ * holds it unredacted, so redacting the display copy only hid it from the one person entitled to
+ * see it. The credential is still stripped before it reaches a MODEL ({@link redactForModel}),
+ * which is a separate question asked at the model boundary over the same bytes.
  *
  * ── Detection is local-only, on purpose ─────────────────────────────────────────────────────
  *
@@ -185,7 +190,7 @@ export type IndeterminateReason =
   | "scan_truncated";
 
 export interface SensitivityResult {
-  /** POSITIVE identification. Drives routing to INBOX, redaction, `no_forward`, `priority`. */
+  /** POSITIVE identification. Drives routing to INBOX, the sensitivity LABEL, `no_forward`, `priority`. */
   sensitive: boolean;
   verdict: SensitivityVerdict;
   category: SensitivityCategory | null;
@@ -198,32 +203,24 @@ export interface SensitivityResult {
   reasons: IndeterminateReason[];
   flags: { no_ai: boolean; no_forward: boolean; no_kb: boolean; priority: boolean };
   /**
-   * The body safe to STORE — redacted whenever a credential is present, and that is now BOTH
-   * halves of that rule — never sent to a model, AND stored redacted — not just the first.
+   * ── BODY REDACTION IS GONE — THE FIELDS THAT CARRIED IT ARE REMOVED ──────────────────────────
    *
-   * Earlier this was redacted only when {@link sensitive}. But an INDETERMINATE credential —
-   * `indeterminate [credential_shape]` / `[auth_url_token]` / `[unsupported_script]` — is a message
-   * we positively decided carries a code (that is why we withheld it from the model), and the
-   * persist path stored its raw `textBody` all the same. So a German TAN mail routed to the
-   * fail-closed bucket left the code in `message_bodies.text` in the clear. {@link storeRedactedBody}
-   * is true for those cases too, and this field carries the redacted text for them.
+   * This result once carried `redactedTextBody` / `redactedHtmlBody` / `storeRedactedBody`, and the
+   * ingest path stored those in place of the real body whenever a credential was present. That is
+   * removed: the mail already sits unredacted on the IMAP server — the master — so redacting the
+   * cloud/display copy only hid content from the OWNER of the mailbox, never from anyone else, and
+   * it over-fired (a plain calendar invite could surface as "Verification code ······" when a body
+   * merely mentioned a code). The user's own stored, served and displayed body is now the FULL
+   * original, always.
+   *
+   * WHAT REMAINS is the disclosure gate to a MODEL, which is a different question asked at a
+   * different moment over the same bytes: `flags.no_ai` / `flags.no_kb` keep sensitive and
+   * indeterminate mail out of automatic AI, and {@link redactForModel} / {@link screenOutboundText}
+   * strip the credential VALUE from any payload a user-pressed AI action sends. Those never touch
+   * what the user sees. `flags.no_forward` still holds (sensitive mail is not forwarded), and
+   * `sensitive` / `category` remain the LABEL the surfaces show. See {@link redactSensitiveText}:
+   * it is now used ONLY by the model gate, never by storage.
    */
-  redactedTextBody: string;
-  /**
-   * The html safe to store for an indeterminate CREDENTIAL case (positively-sensitive mail stores
-   * no html at all — the pipeline drops it — so this stays `null` there and for ordinary mail).
-   */
-  redactedHtmlBody: string | null;
-  /**
-   * True when the stored body must be the redacted one: positively sensitive, OR an indeterminate
-   * case whose reason is that a credential is present. The persist path and the snippet reader both
-   * key off this instead of {@link sensitive}, which is what closes the stored-raw half for the
-   * fail-closed bucket. It deliberately EXCLUDES the indeterminate reasons that are not a credential
-   * (`unrecognised_language`, `alternatives_disagree`, `no_visible_text`, …): redacting ordinary
-   * foreign-language or structurally-odd mail would replace the digits of a receipt with `[REDACTED]`
-   * in the user's own storage, which the header note forbids.
-   */
-  storeRedactedBody: boolean;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -1497,14 +1494,14 @@ function redactAuthUrls(text: string): string {
 }
 
 /**
- * THE REDACTION, AS ONE FUNCTION — the transform that produces every redacted representation
- * this codebase stores or sends.
+ * THE REDACTION, AS ONE FUNCTION — the transform that strips a credential VALUE out of a payload
+ * bound for a MODEL. It is no longer applied to anything the user stores or reads.
  *
- * It was a closure inside {@link classifySensitivity} and it now has a second caller, so it is
- * named here rather than copied there. That matters more than tidiness: the stored body, the
- * stored snippet and — since the AI-open ruling of 2026-08-08 — the payload a user-requested
- * model call carries are **the same bytes**, produced by one function. Two spellings of "redact"
- * is how a credential comes to be blanked on the screen and sent in the clear on the wire.
+ * It was once used for BOTH the stored body and the model payload — one function so the two could
+ * not drift. Storage redaction is gone (the mailbox already holds the mail unredacted, so hiding
+ * the display copy only hid it from the user), so the ONLY callers now are the model gate:
+ * {@link redactForModel} and the user-requested AI path. The credential a user sees is never
+ * blanked; the credential a model sees always is.
  *
  * The order is load-bearing. {@link redactAuthUrls} runs FIRST, because it rewrites whole URL
  * tails; running {@link CODE} first would blank a digit run inside a token and leave the rest of
@@ -1676,18 +1673,11 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
   // a licence to block user actions or mangle the priority signal.
   const withheldFromModel = verdict !== "ordinary";
 
-  // The STORED-REDACTED half of the rule, for the fail-closed bucket. A message we withheld
-  // because it carries a credential must not then be stored raw. `credential_shape` and
-  // `auth_url_token` are positive "a code is here" signals; `unsupported_script` is admitted too
-  // because a code in a script we cannot read is exactly the case that would otherwise sit in the
-  // clear. The OTHER indeterminate reasons are NOT admitted — redacting ordinary foreign-language
-  // or structurally-odd mail would strip the digits of a receipt in the user's own storage, which
-  // the header note (`redaction follows the positive match only`) forbids.
-  const credentialWithheld = !sensitive && withheldFromModel
-    && (reasons.has("credential_shape") || reasons.has("auth_url_token") || reasons.has("unsupported_script"));
-  const storeRedactedBody = sensitive || credentialWithheld;
-  const redactText = redactSensitiveText;
-
+  // BODY REDACTION IS REMOVED. This function no longer decides "store the redacted body" — the
+  // ingest path stores the FULL original, always, because the mailbox on the IMAP server already
+  // holds it unredacted and hiding the display copy only hid it from the user. What survives is the
+  // MODEL gate: `no_ai`/`no_kb` (fail-closed on indeterminate) and, at the model boundary,
+  // `redactForModel`. See the `SensitivityResult` note.
   return {
     sensitive,
     verdict,
@@ -1699,11 +1689,6 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
       no_forward: sensitive,
       priority: sensitive,
     },
-    redactedTextBody: storeRedactedBody ? redactText(msg.textBody ?? "") : (msg.textBody ?? ""),
-    // Positively-sensitive mail stores NO html (the pipeline drops it), so this only ever carries
-    // a value for an indeterminate credential — where the html is kept but redacted.
-    redactedHtmlBody: credentialWithheld && msg.htmlBody ? redactText(msg.htmlBody) : null,
-    storeRedactedBody,
   };
 }
 

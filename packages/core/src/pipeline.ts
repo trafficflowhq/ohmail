@@ -349,13 +349,13 @@ async function resolveExisting(
   return { key: fpKey, existing: null };
 }
 
-/** A short, sensitivity-safe preview for the DTO snippet + the classifier input. */
-function bodySnippet(normalized: NormalizedMessage, sensitivity: SensitivityResult): string {
-  // `storeRedactedBody`, not `sensitive`: the snippet is persisted (and, when AI is eligible, fed
-  // to the classifier), so an indeterminate CREDENTIAL — a German TAN, a bare magic-link URL — has
-  // to draw from the redacted text here too, or the code lands in the stored snippet.
-  const src = sensitivity.storeRedactedBody ? sensitivity.redactedTextBody : normalized.textBody;
-  return src.replace(/\s+/g, " ").trim().slice(0, 200);
+/** A short preview of the body for the DTO snippet + the classifier input. */
+function bodySnippet(normalized: NormalizedMessage): string {
+  // The FULL text, always — the snippet is the list preview the user reads, and body redaction is
+  // removed. It is also the classifier input, but a sensitive/indeterminate message never reaches
+  // the classifier (the AI condition below opens with `!no_ai`) and the model boundary re-screens
+  // with `redactForModel` regardless, so a full snippet here never carries a code to a model.
+  return normalized.textBody.replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
 /** A tiny, sensitivity-safe digest of routing-relevant headers (never the body). */
@@ -518,7 +518,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
           sensitivity,
           arrivalLocator,
           desired: arrivalLocator.folder,
-          snippet: bodySnippet(normalized, sensitivity),
+          snippet: bodySnippet(normalized),
           seen: true,
           // Recorded, and routing-inert by construction: this branch reaches no `evaluateRules`
           // call at all, so the user's own Sent mail cannot be demoted by its own provider's
@@ -667,7 +667,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
         result = await classifier.classify({
           from: normalized.from,
           subject: normalized.subject,
-          snippet: bodySnippet(normalized, sensitivity),
+          snippet: bodySnippet(normalized),
           headersDigest: headersDigest(normalized),
           fewShot: [],
           // The account's own words, into the USER turn only. Absent ⇒ omitted. It sharpens what
@@ -712,7 +712,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
         sensitivity,
         arrivalLocator,
         desired,
-        snippet: bodySnippet(normalized, sensitivity),
+        snippet: bodySnippet(normalized),
         // `?? false` and not `?? true`: an adapter that cannot report flags (the fallback path
         // has no prior flags to diff against) must not be able to assert that mail IS read.
         // Unknown degrades to unread, which is the recoverable direction — a real \Seen arrives
@@ -948,24 +948,19 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // message — atomic ingest, no orphan attachment without its message.
     await repo.insertAttachments(stored.id, accountId, p.normalized.attachments);
 
-    // AI-GATE (persist): the stored body is the redacted text whenever a credential is present —
-    // positively sensitive OR an indeterminate credential (`storeRedactedBody`) — so the raw secret
-    // is never written server-side. Earlier this keyed off `sensitive` alone, and a German TAN
-    // routed to the fail-closed bucket left its code in `message_bodies.text` in the clear.
+    // THE FULL ORIGINAL BODY, ALWAYS — text AND html, sensitive or not. Body redaction is removed:
+    // the mailbox on the IMAP server (the master) already holds this mail unredacted, so storing a
+    // redacted display copy only hid it from the one person entitled to read it, and it over-fired.
+    // The disclosure gate to a MODEL is elsewhere and unchanged — `no_ai`/`no_kb` keep this mail out
+    // of automatic AI, and `redactForModel` strips the credential from any user-pressed AI payload.
     //
     // `prepareHtmlForStorage` is the ONLY route html takes into the database — this is the sole
     // writer of `message_bodies.html` (`privacy-service.ts` flips `loadedRemoteContent` and
     // nothing else; `message-service.ts` only reads). It strips oversized inline base64 payloads
     // and enforces the 256 KiB cap that the `message_bodies_html_cap` CHECK constraint asserts.
-    // Positively-sensitive mail stores no html at all; an indeterminate credential keeps its html
-    // but with the credential runs redacted (`redactedHtmlBody`).
     await repo.insertMessageBody(stored.id, {
-      text: p.sensitivity.storeRedactedBody ? p.sensitivity.redactedTextBody : p.normalized.textBody,
-      html: p.sensitivity.sensitive
-        ? null
-        : p.sensitivity.storeRedactedBody
-          ? prepareHtmlForStorage(p.sensitivity.redactedHtmlBody)
-          : prepareHtmlForStorage(p.normalized.htmlBody),
+      text: p.normalized.textBody,
+      html: prepareHtmlForStorage(p.normalized.htmlBody),
       headers: p.normalized.headers,
     });
 

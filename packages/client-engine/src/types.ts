@@ -242,27 +242,25 @@ export interface EngineMessage extends EngineMessageExtras {
 }
 
 /**
- * IS THIS MESSAGE PROTECTED — the one predicate that decides whether its raw body may sit at rest.
+ * IS THIS MESSAGE'S BODY WITHHELD FROM THE READER — now always NO.
  *
- * A sensitive message's body must never persist unredacted, on the server OR on the
- * client. A message can be cached and indexed while it is ORDINARY and later BECOME protected — a
- * server-side redaction pass, a late sensitivity reclassification arriving as a `message` update —
- * so the raw body it cached beforehand has to be shed. This predicate is the single place that
- * decision is made, consulted where a `message` delta lands (purge the cached body on the
- * transition, {@link MirrorStore}), on engine load (reconcile a body cached by an older build),
- * and where the local search index is built (never index a protected body).
+ * This predicate used to blank the body of a message flagged sensitive: the reader saw a lock and
+ * a "······" placeholder instead of the mail, and the client refused to cache, fetch or index that
+ * body. That is removed. A message body is never hidden from the person reading their own mailbox:
+ * the mail already sits in full on their mail server, so hiding the copy shown in the app only hid
+ * it from the one person entitled to read it — and the detector that drove it over-fired, blanking
+ * ordinary mail (a calendar invite that merely mentioned a code) as if it were a live credential.
  *
- * TWO SIGNALS, because two worlds feed it. `sensitivity.sensitive` is the wire DTO's own flag and
- * the signal on a Cloud account. `protected` is the fixture world's display extra, which
- * `FixturesAdapter` sets alongside `sensitivity.sensitive`; the reader surfaces route on it
- * (`MessagePane`), so keying on it too keeps the demo and a live account answering the same way.
+ * Sensitivity is still a LABEL — a message that looks like it carries a login code is marked as
+ * such and kept out of automatic AI — but the label no longer withholds the body. The predicate is
+ * retained as a single named seam (its callers gate body fetch, the local search index and the
+ * mirror's body cache) so the "always show the body" decision reads in one place rather than being
+ * threaded through each of them; it is a constant `false` on purpose.
  */
 export function isProtectedMessage(
-  m: { sensitivity?: SensitivityFlags | null; protected?: unknown } | null | undefined,
+  _m: { sensitivity?: SensitivityFlags | null; protected?: unknown } | null | undefined,
 ): boolean {
-  if (m == null) return false;
-  if (m.protected != null) return true;
-  return m.sensitivity?.sensitive === true;
+  return false;
 }
 
 // ── message bodies ─────────────────────────────────────────────────────────

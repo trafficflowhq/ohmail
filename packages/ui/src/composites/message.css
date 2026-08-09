@@ -87,6 +87,19 @@
    14px is the gap `.msg h2` already uses above and below itself; no new spacing value. */
 .msg-p{margin:0 0 14px;overflow-wrap:anywhere}
 .msg-p:last-child{margin-bottom:0}
+/* QUOTED REPLY CHAINS. Each level of ">" quoting gets a quiet left rule, a step of indent and a
+   more muted tone, so a thread reads as a thread instead of one undifferentiated wall. Sibling
+   blocks with depth-scaled indent stand in for DOM nesting; `data-quote-depth` carries the actual
+   depth and the visual steps are capped so a ">>>>>" chain does not march off the panel. */
+.msg-quote{border-inline-start:2px solid var(--hair);padding-inline-start:12px;margin:0 0 14px;color:var(--ink2)}
+.msg-quote .msg-p,.msg-quote .msg-attribution{color:inherit;margin-bottom:6px}
+.msg-quote .msg-p:last-child,.msg-quote .msg-attribution:last-child{margin-bottom:0}
+.msg-quote[data-quote-depth="2"]{margin-inline-start:12px;color:var(--ink3)}
+.msg-quote[data-quote-depth="3"]{margin-inline-start:24px;color:var(--ink3)}
+.msg-quote[data-quote-depth="4"]{margin-inline-start:36px;color:var(--ink3)}
+/* The line that says who wrote the block below — never the sender's words, so it is set apart
+   and quieted, like `.msg-body-state` but inline with the thread. */
+.msg-attribution{margin:0 0 8px;color:var(--ink3);font-size:.92em;overflow-wrap:anywhere}
 /* A link in mail is the accent, quietly: coloured ink and a hairline underline rather than the
    browser's blue. `overflow-wrap` is inherited from `.msg-p`, so a 300-character tracking URL
    breaks inside the anchor instead of pushing the panel. */

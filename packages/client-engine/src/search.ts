@@ -161,20 +161,16 @@ export class SearchIndex {
    */
   add(m: EngineMessage, hydrated?: string): void {
     this.messages.set(m.id, m);
-    // A PROTECTED message's raw body is never indexed, and never counted as
-    // covered. `store.ts` and `engine.ts` purge the cached `message_body` on the protect
-    // transition and on load, so `hydrated` is normally already gone by the time `build` runs;
-    // withholding `whole` here refuses to index the full text even if a record briefly survives
-    // (a delta this build applied but has not yet cascaded), or a fixture carries `body` on the
-    // row. A search for a secret's distinctive text therefore cannot match on this device.
+    // Every message's full body is indexed — bodies are no longer withheld from the reader, so a
+    // search over the reader's own mailbox reaches all of it, sensitive mail included.
+    // ({@link isProtectedMessage} is a constant `false` now; it is left in the expression as the
+    // one named seam should that policy ever change again.)
     const whole = isProtectedMessage(m) ? undefined : (m.body ?? hydrated);
     if (whole !== undefined) this.full++;
     for (const t of tokenize(m.subject)) this.index(t, m.id, FIELD_WEIGHT.subject);
     for (const t of tokenize(`${m.from.name ?? ""} ${m.from.address}`)) this.index(t, m.id, FIELD_WEIGHT.from);
-    // The snippet IS indexed, protected or not: it is a REDACTED preview for a sensitive message
-    // (server-side, where sensitive mail is stored redacted), so it carries no secret, the two
-    // strings are not always prefix-related, and dropping it would lose terms on exactly the rows
-    // the redaction rule governs.
+    // The snippet is indexed alongside the body: the two strings are not always prefix-related, so
+    // dropping it would lose terms.
     for (const t of tokenize(`${m.snippet} ${whole ?? ""}`)) this.index(t, m.id, FIELD_WEIGHT.text);
   }
 

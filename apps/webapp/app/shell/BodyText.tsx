@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * THE MESSAGE BODY AS PROSE — paragraphs, and real links.
+ * THE MESSAGE BODY AS PROSE — paragraphs, quoted reply chains, and real links.
  *
  * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
  *
@@ -9,6 +9,18 @@
  * raw query string, the text overflowed the panel, and there was no paragraph rhythm. All three
  * symptoms came out of ONE expression, `<p className="msg-body">{body.text}</p>`: mailparser's
  * `htmlToText` output, dropped into a single `<p>` with no break rule and no block structure.
+ *
+ * ── AND A REPLY CHAIN WAS AN UNDIFFERENTIATED WALL ──────────────────────────────────────
+ *
+ * The paragraph fix was not enough for a thread. A native-rendered plain-text reply chain — the
+ * `>`-quoted history under a fresh reply, the "On <date>, X wrote:" and "Von: … Betreff: …"
+ * lines that say who wrote what — arrived with its `>` markers rendered as literal characters and
+ * every level of quoting flattened into the same tone, so it was impossible to tell the writer's
+ * new words from the four replies underneath them. {@link classifyLine} reads the quote depth off
+ * each line, {@link toBlocks} groups the lines a depth at a time, and each quoted block is drawn
+ * with a quiet left rule, a step of indent and a more muted tone per level, with the attribution
+ * lines set apart as separators. The sender's own line breaks INSIDE a block still survive, under
+ * `white-space: pre-line` — the same paragraph-rhythm rule as before, unchanged.
  *
  * ── WHY THIS IS A RENDER-TIME COMPONENT AND NOT AN INGEST STEP ────────────────────────────
  *
@@ -32,8 +44,92 @@
  */
 import type { ReactNode } from "react";
 
-/** A blank line — the one thing in plain-text mail that reliably means "new paragraph". */
-const PARAGRAPH_BREAK = /\n[ \t]*\n+/;
+/**
+ * Leading email quote markers — up to a little indent, then one or more `>` each optionally
+ * followed by a space. The number of `>` is the quote DEPTH; the rest of the line is its content.
+ * `> `, `>>`, `> > ` all parse to the depth the reader means.
+ */
+const QUOTE_PREFIX = /^[ \t]{0,3}((?:>[ \t]?)+)/;
+
+/**
+ * ATTRIBUTION LINES — the sentence that says who wrote the block below, in the forms real mail
+ * actually uses. Rendered as a quiet separator rather than as prose, so each quoted block's author
+ * stays legible instead of dissolving into the wall.
+ *
+ *   · "On <date>, Alice <a@x> wrote:"          (en)   · "Am <date> schrieb Alice:"     (de)
+ *   · "Le <date>, Alice a écrit :"             (fr)   · "El <date>, Alice escribió:"    (es)
+ *   · the forwarded-header block — Von/From, Gesendet/Sent, An/To, Betreff/Subject, Datum/Date…
+ *   · a "-----Original Message-----" / "Ursprüngliche Nachricht" separator line.
+ *
+ * Deliberately anchored and bounded: a match needs the whole short line to be the attribution
+ * shape, so an ordinary sentence that merely contains "wrote" or a colon is left as prose.
+ */
+const ATTRIBUTION: RegExp[] = [
+  /^on\b.*\bwrote:$/i,
+  /^am\b.*\bschrieb.*:$/i,
+  /^le\b.*\ba\s+écrit\s*:$/i,
+  /^el\b.*\bescribió\s*:$/i,
+  /^[-_]{2,}.*(original message|original-nachricht|urspr[üu]ngliche nachricht|weitergeleitete nachricht|forwarded message).*$/i,
+  /^(von|from|gesendet|sent|an|to|betreff|subject|datum|date|cc|bcc|reply-to|antwort an|de|para|asunto|enviado|répondre à)\s*:\s?\S/i,
+];
+
+function isAttribution(content: string): boolean {
+  const s = content.trim();
+  if (s.length === 0 || s.length > 400) return false;
+  return ATTRIBUTION.some((re) => re.test(s));
+}
+
+interface ClassifiedLine {
+  depth: number;
+  /** The line with its quote markers stripped — what the reader is meant to read. */
+  content: string;
+  blank: boolean;
+  attribution: boolean;
+}
+
+/** Strip the quote markers off one line and read its depth + role. */
+function classifyLine(raw: string): ClassifiedLine {
+  const m = QUOTE_PREFIX.exec(raw);
+  const depth = m ? (m[1]!.match(/>/g) ?? []).length : 0;
+  const content = m ? raw.slice(m[0].length) : raw;
+  const blank = content.trim().length === 0;
+  return { depth, content, blank, attribution: !blank && isAttribution(content) };
+}
+
+/**
+ * A rendered block — a maximal run of consecutive non-blank lines that share a quote depth and a
+ * role. A blank line, a depth change or a role change ends the block. Lines are joined with `\n`
+ * and rendered under `white-space: pre-line`, so the sender's own line breaks survive INSIDE a
+ * block while quote depth and attribution give the block its shape.
+ */
+interface Block {
+  depth: number;
+  attribution: boolean;
+  text: string;
+}
+
+function toBlocks(lines: ClassifiedLine[]): Block[] {
+  const blocks: Block[] = [];
+  let run: ClassifiedLine[] = [];
+  const flush = (): void => {
+    if (run.length === 0) return;
+    const head = run[0]!;
+    blocks.push({
+      depth: head.depth,
+      attribution: head.attribution,
+      text: run.map((l) => l.content).join("\n"),
+    });
+    run = [];
+  };
+  for (const ln of lines) {
+    if (ln.blank) { flush(); continue; }
+    const head = run[0];
+    if (head && (head.depth !== ln.depth || head.attribution !== ln.attribution)) flush();
+    run.push(ln);
+  }
+  flush();
+  return blocks;
+}
 
 /**
  * A CANDIDATE, NOT A DECISION.
@@ -148,21 +244,30 @@ function linkify(block: string, keyBase: number): ReactNode[] {
  * assertions select on, and what carries the surface's own type scale.
  */
 export function BodyText({ text }: { text: string }) {
-  const blocks = (text ?? "")
-    // CRLF is what an IMAP body actually carries; normalise before splitting, or the blank
-    // line between two paragraphs is `\r\n\r\n` and the split misses every one of them.
-    .replace(/\r\n?/g, "\n")
-    .split(PARAGRAPH_BREAK)
-    .map((block) => block.trim())
-    .filter((block) => block.length > 0);
+  // CRLF is what an IMAP body actually carries; normalise before splitting on lines, or a
+  // blank line is `\r\n\r\n` and every paragraph boundary is missed.
+  const lines = (text ?? "").replace(/\r\n?/g, "\n").split("\n").map(classifyLine);
+  const blocks = toBlocks(lines);
 
   return (
     <>
-      {blocks.map((block, i) => (
-        <p className="msg-p" key={i}>
-          {linkify(block, i)}
-        </p>
-      ))}
+      {blocks.map((block, i) => {
+        const cls = block.attribution ? "msg-attribution" : "msg-p";
+        const para = (
+          <p className={cls} key={block.depth === 0 ? i : undefined}>
+            {linkify(block.text, i)}
+          </p>
+        );
+        if (block.depth === 0) return para;
+        // A quoted block: a quiet left rule, a step of indent and a more muted tone, keyed by
+        // depth. NOT nested wrappers — sibling blocks with depth-scaled indent read as nesting
+        // and stay flat in the DOM, which is what keeps a pathological ">>>>>" chain cheap.
+        return (
+          <div className="msg-quote" data-quote-depth={block.depth} key={i}>
+            {para}
+          </div>
+        );
+      })}
     </>
   );
 }

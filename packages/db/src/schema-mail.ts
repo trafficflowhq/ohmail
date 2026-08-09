@@ -715,13 +715,14 @@ export const threads = pgTable("threads", {
 export const messageBodies = pgTable("message_bodies", {
   id: uuid("id").defaultRandom().primaryKey(),
   messageId: uuid("message_id").notNull().references(() => messages.id),  // 1:1
-  text: text("text").notNull().default(""),             // redactedTextBody when sensitive
+  text: text("text").notNull().default(""),             // the FULL original body text (no redaction)
   html: text("html"),
   headers: jsonb("headers").notNull().default(sql`'{}'::jsonb`),
   loadedRemoteContent: boolean("loaded_remote_content").notNull().default(false),
   // ── Migration 0008: the body-text lexical index lives HERE
-  // (on `message_bodies`, not `messages`), over the already-sensitivity-REDACTED
-  // `text` — search never re-derives a secret. DB-generated; the app never writes it. ──
+  // (on `message_bodies`, not `messages`), over the full stored `text`. Bodies are stored
+  // unredacted (the mailbox on the server holds them in full anyway), so search reaches all of
+  // the reader's own mail. DB-generated; the app never writes it. ──
   bodyTsv: tsvector("body_tsv").generatedAlwaysAs(
     sql`to_tsvector('english', coalesce(text, ''))`,
   ),

@@ -147,9 +147,9 @@ export interface GetBodiesOptions {
 /**
  * The batch text pull bounds, and why each one exists on a `maxDuration = 60` lambda.
  *
- * `limit` defaults to 50 and is capped at 100: each row here is a whole stored body — the
- * redacted `text`, and for non-sensitive mail the sanitized `html` — not a compact DTO, so a
- * page is far heavier than a list page and 100 is the most rows one request may name.
+ * `limit` defaults to 50 and is capped at 100: each row here is a whole stored body — the full
+ * `text` and the sanitized `html` — not a compact DTO, so a page is far heavier than a list page
+ * and 100 is the most rows one request may name.
  *
  * The BYTE BUDGET is the real fence, because the count cap alone is not one. A single page of
  * newsletter html can be hundreds of KiB, so 100 marketing bodies would push megabytes through
@@ -239,8 +239,9 @@ export class MessageService {
 
     const [body] = await ctx.db.select().from(messageBodies)
       .where(eq(messageBodies.messageId, id)).limit(1);
-    // The stored `text` is already sensitivity-redacted — returned as-is,
-    // never re-derived. A message with no ingested body yields an empty body.
+    // The stored `text` and `html` are the FULL original body — returned as-is, never re-derived
+    // and never redacted (a message's own owner always sees their own mail in full). A message with
+    // no ingested body yields an empty body.
     const headers = (body?.headers as Record<string, unknown>) ?? {};
     // The unsubscribe posture is DERIVED here, from the raw headers this endpoint already holds,
     // and only the enum + optional https link cross the wire — the raw headers do NOT enter the
@@ -263,9 +264,9 @@ export class MessageService {
    * The batch text pull — the foundation of the macOS Cloud-local text mirror.
    *
    * Keyset-paginates the account's message bodies by `messages.id` (ascending), returning the
-   * STORED ROW VERBATIM: `text` is already sensitivity-redacted and positively-sensitive mail
-   * has `html: null` at write time (`packages/core/src/pipeline.ts`), so this NEVER re-derives a
-   * secret and NEVER rehydrates. Ownership is proven through `messages` — `message_bodies` has no
+   * STORED ROW VERBATIM: `text` and `html` are the full original body written at ingest
+   * (`packages/core/src/pipeline.ts`), so this NEVER re-derives anything and NEVER rehydrates.
+   * Ownership is proven through `messages` — `message_bodies` has no
    * `account_id`, exactly as {@link getBody} handles it — and the query LEFT-JOINs
    * `message_bodies` and joins NOTHING ELSE: no headers, no attachment bytes, no other table.
    * That absence IS the no-rehydrate guarantee, so there is deliberately no rehydrate path here.

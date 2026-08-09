@@ -3572,7 +3572,15 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           transition never flashes an empty panel. */}
       {previewFor && attachments
         ? (() => {
-            const view = attachments.itemsOf(previewFor.messageId);
+            // `includeInlineImages: true` — the overlay's item list MUST be able to find the id it
+            // was opened on, and an INLINE image (a picture attached `Content-Disposition: inline`,
+            // shown in the message body) is a real, clickable tile in the strip whenever the body
+            // renders as text (`MessagePane` lists them with `includeInlineImages: nativeBody`). The
+            // overlay used to build its list WITHOUT inline images, so clicking such a picture found
+            // no matching item — and when the message carried nothing BUT inline images the list was
+            // empty and the overlay silently declined to open. Including them makes every tile the
+            // strip can show openable, and it is the superset in every other case.
+            const view = attachments.itemsOf(previewFor.messageId, { includeInlineImages: true });
             const previewItems = view.state === "ready" ? view.items : [];
             if (previewItems.length === 0) return null;
             return (

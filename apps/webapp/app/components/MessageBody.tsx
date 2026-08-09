@@ -132,7 +132,6 @@ export const COPY = {
   pixelMany: (n: number) => `${n} of them are tracking pixels.`,
   pixelOnly: "A tracking pixel was blocked.",
   show: "Show images",
-  showing: "Images loaded for this message.",
   /** The dark-viewer toggle. Shown only in a dark theme; flips THIS message between the
    *  adapted (dark) rendering and its original light one, and the choice is remembered. */
   darkOriginal: "Original",
@@ -2201,7 +2200,10 @@ export function MessageBody({
   const remote = mail.blocked;
   const sheets = mail.sheets;
   const pixels = remote.filter((b) => b.pixel).length;
-  const hasBlocked = remote.length > 0 || sheets.length > 0;
+  // A loaded remote image is no longer "blocked", so it contributes nothing to the bar — the
+  // status line that used to say "Images loaded for this message." was pure noise and is gone.
+  // Blocked stylesheets have no consent path, so they still count even when images loaded.
+  const hasBlocked = (remote.length > 0 && !remoteLoaded) || sheets.length > 0;
   // The bar also carries the dark-viewer toggle, so it appears in a dark theme even when there
   // is nothing blocked to report. The empty text span below still takes the flex space, which
   // is what pushes the toggle to the right whether or not the blocked-content sentence is there.
@@ -2286,15 +2288,13 @@ export function MessageBody({
             </svg>
           ) : null}
           <span className="mb-bar-text">
-            {remote.length === 0
+            {remote.length === 0 || remoteLoaded
               ? null
-              : remoteLoaded
-                ? COPY.showing
-                : remote.length === pixels && pixels > 0
-                  ? COPY.pixelOnly
-                  : remote.length === 1
-                    ? COPY.blockedOne
-                    : COPY.blockedMany(remote.length)}
+              : remote.length === pixels && pixels > 0
+                ? COPY.pixelOnly
+                : remote.length === 1
+                  ? COPY.blockedOne
+                  : COPY.blockedMany(remote.length)}
             {!remoteLoaded && pixels > 0 && remote.length !== pixels ? (
               <>
                 {" "}

@@ -129,14 +129,16 @@ export const ohbox: MessageFixture[] = [
     subject: "Your verification code",
     time: "08:31",
     unread: true,
+    snippet: "Your Cinderlock verification code is 481 920. It expires in 10 minutes.",
+    body: "Your Cinderlock verification code is 481 920. It expires in 10 minutes.\n\nIf you didn't ask to sign in, you can ignore this message.\n\n— Cinderlock",
     protected: {
       kind: "verification",
       label: "Verification code",
-      redactedNote: "(redacted)",
+      redactedNote: "kept out of AI",
       policy:
-        "Protected — the code is stripped before AI, never forwarded, stored redacted. Codes live and die on your device.",
+        "You see it in full — it's your own code. It's kept out of AI and never forwarded; only what a model would read is stripped.",
     },
-    rationale: "Protected class: verification — filed by structure, content untouched",
+    rationale: "Sensitive class: verification — labelled and kept out of AI; the body is shown in full",
   },
   {
     id: "ben",
