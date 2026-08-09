@@ -7,7 +7,7 @@ import {
 } from "@trafficflow/db/mail";
 import type {
   ApprovalDTO, ChangeOp, DraftDTO, EntityType, MessageBodyBatchItem, MessageDTO, MessageStateDTO,
-  Page, RoutingDecisionDTO, RuleDTO, SyncChange, SyncResponse, TagDTO, ThreadDTO,
+  Page, RoutingDecisionDTO, RuleDTO, SnapshotResponse, SyncChange, SyncResponse, TagDTO, ThreadDTO,
 } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";
@@ -102,6 +102,13 @@ interface CursorState {
    * complete generation — and clears it only once the sweep has run.
    */
   bootstrapping: boolean;
+  /**
+   * Set once the one-time stale-mirror tag repair has been CONSIDERED — see {@link CloudMirrorConfig}
+   * and the repair in {@link createCloudMirror}. Absent from every cursor file written before that
+   * repair existed, which reads as `false` — and that population is exactly the one it is for: the
+   * mirrors bootstrapped while the drain still asked for eight of the feed's nine types.
+   */
+  tagBackfill: boolean;
 }
 
 export interface CloudMirrorConfig {
@@ -168,9 +175,10 @@ function readCursor(path: string): CursorState {
       sync: typeof j.sync === "string" && j.sync !== "" ? j.sync : "0",
       bodies: typeof j.bodies === "string" ? j.bodies : null,
       bootstrapping: j.bootstrapping === true,
+      tagBackfill: j.tagBackfill === true,
     };
   } catch {
-    return { sync: "0", bodies: null, bootstrapping: false };
+    return { sync: "0", bodies: null, bootstrapping: false, tagBackfill: false };
   }
 }
 
@@ -638,6 +646,84 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
   });
 }
 
+/**
+ * THE ONE-TIME STALE-MIRROR TAG REPAIR — apply `GET /sync/snapshot` page 1 into a mirror whose
+ * cursor has already run past the tags it never asked for.
+ *
+ * ── THE SHAPE OF THE DAMAGE ───────────────────────────────────────────────────────────────────
+ *
+ * `CLOUD_SYNC_TYPES` gained `"tag"` after the first Cloud mirrors were already running. `types=` is
+ * a REQUEST, so those mirrors were served no tag change at all — and the tags on the account are
+ * old, so their `change_log` rows sit BELOW the cursor those mirrors hold. A delta drain only ever
+ * looks forward: it will never deliver them, on any launch, for the life of the install. Signing in
+ * fresh is not affected (a `since=0` bootstrap asks for everything from zero and now names `tag`),
+ * which is precisely why the fix looked proven when it was not — the case that was tested was the
+ * only case that was never broken.
+ *
+ * ── AND WHY THE TAGS ALONE WOULD NOT LIGHT A SINGLE CHIP ──────────────────────────────────────
+ *
+ * Assignments do not travel as their own entity: they ride `MessageDTO.labels`, and {@link applyLabels}
+ * SKIPS an id naming a tag the mirror has not got, because `message_tags.tag_id` is a foreign key.
+ * So on these installs every already-mirrored message applied its labels against an empty `tags`
+ * table and kept none of them. Writing the tag rows now would restore the rail and leave every
+ * message bare. The repair therefore has two halves, and the second is the one that shows.
+ *
+ * ── WHY `/sync/snapshot` PAGE 1 IS THE WHOLE PROBE ────────────────────────────────────────────
+ *
+ * Page 1 of the snapshot is the account's live state: EVERY tag (`sync-service.ts` refuses to page
+ * them, for its own rail-boots-empty reason) plus the newest window of messages as full DTOs — so
+ * one request answers "does the hosted account have tags" and carries both halves of the repair.
+ *
+ * ── WHAT IT DELIBERATELY DOES NOT DO ──────────────────────────────────────────────────────────
+ *
+ * It rewrites no message row — only the assignments — so a snapshot read cannot walk a message
+ * backwards over a delta the drain has already applied. And it touches only messages whose snapshot
+ * DTO carries a NON-EMPTY `labels`: on the mirror this repairs, `message_tags` is necessarily empty
+ * (the FK cannot hold a row without a tag), so nothing local can need CLEARING and a message with no
+ * labels is already correct. That keeps the change-log churn to the messages that actually gain a
+ * chip rather than the whole window.
+ *
+ * The window is the honest limit of the repair: older mail outside it regains its chips when its own
+ * `message` change next comes down the delta, now that the tag it names exists. Stated rather than
+ * hidden, because a full re-read of the mailbox is not worth doing to a mirror that is otherwise fine.
+ */
+async function applyTagBackfill(
+  db: LocalDb,
+  world: LocalWorld,
+  snap: SnapshotResponse,
+  now: Date,
+): Promise<{ tags: number; messages: number }> {
+  return db.transaction(async (tx) => {
+    let tagCount = 0;
+    for (const ch of snap.changes) {
+      if (ch.type !== "tag" || ch.op === "delete") continue;
+      if (await applyUpsert(tx, world, ch, now, null)) {
+        await recordChange(tx, { accountId: world.accountId, entityType: "tag", entityId: ch.id, op: "create", meta: null });
+        tagCount++;
+      }
+    }
+
+    let msgCount = 0;
+    // AFTER the tags, in the same transaction, for the FK reason `APPLY_ORDER` exists.
+    for (const ch of snap.changes) {
+      if (ch.type !== "message" || ch.op === "delete") continue;
+      const m = ch.entity as MessageDTO | undefined;
+      if (!m?.labels || m.labels.length === 0) continue;
+      // Only messages this mirror already holds. A snapshot message that is missing locally is not
+      // this repair's business — the drain owns the mail, and it will carry its labels when it lands.
+      if (!(await messagePresent(tx, m.id))) continue;
+      await applyLabels(tx, world, m.id, m.labels);
+      // An `update`, because the message existed before this ran. This row is the only reason the
+      // window re-reads the message: without it the projection never asks again and the chips stay
+      // off until something else touches the message.
+      await recordChange(tx, { accountId: world.accountId, entityType: "message", entityId: m.id, op: "update", meta: null });
+      msgCount++;
+    }
+
+    return { tags: tagCount, messages: msgCount };
+  });
+}
+
 export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const now = cfg.now ?? ((): Date => new Date());
   const pageLimit = cfg.pageLimit ?? DEFAULT_PAGE_LIMIT;
@@ -716,6 +802,83 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     return { applied, sweep };
   };
 
+  /**
+   * THE STALE-MIRROR TAG REPAIR, ONCE PER INSTALL. See {@link applyTagBackfill} for what is broken
+   * and why the snapshot is the probe; this is the decision to run it.
+   *
+   * Three gates, in cost order, and each one is also a correctness statement:
+   *
+   *  1. the cursor flag — a mirror that has already been through here is never asked again, so a
+   *     second startup does nothing and no steady-state pull carries an extra request;
+   *  2. ZERO local tag rows — the whole detection. A mirror that holds any tag has been served the
+   *     `tag` type and is not the damaged population, so it is left completely alone. A fresh
+   *     sign-in reaches this line with its bootstrap already applied and is skipped by it;
+   *  3. the hosted account HAS tags — an account with none has nothing to repair, and a tag it makes
+   *     later arrives as a delta above the cursor like any other change.
+   *
+   * A FAILED PROBE IS NOT A FAILED PULL. This is a one-time repair on top of a mirror that works;
+   * letting it throw would mark the mirror offline and put the write-through proxy into
+   * `503 offline_read_only` over a snapshot request. So it swallows, leaves the flag unset, and the
+   * next pull tries again.
+   *
+   * Crash safety is the flag being the LAST write: a repair that commits and then dies re-probes on
+   * the next launch, finds tags present, and skips at gate 2 — the apply is an upsert either way.
+   */
+  const repairStaleTags = async (): Promise<number> => {
+    if (cursor.tagBackfill) return 0;
+    const markConsidered = (): void => {
+      cursor.tagBackfill = true;
+      writeCursor(cfg.cursorPath, cursor);
+    };
+
+    const held = await cfg.db.select({ id: tags.id }).from(tags)
+      .where(eq(tags.accountId, cfg.world.accountId)).limit(1);
+    if (held.length > 0) {
+      markConsidered();
+      return 0;
+    }
+
+    try {
+      const res = await cfg.auth.authedFetch(`/sync/snapshot?limit=${String(pageLimit)}`);
+      if (!res.ok) {
+        cfg.log?.("cloud_tag_backfill_deferred", {
+          status: res.status,
+          reason: "the snapshot probe for the one-time tag repair did not answer; the mirror is " +
+            "unaffected and the next pull retries",
+        });
+        return 0;
+      }
+      const snap = (await res.json()) as SnapshotResponse;
+      // A wire boundary, so the shape is checked rather than assumed: marking the repair done off a
+      // body that is not a snapshot would spend the one chance this install gets at it.
+      if (!Array.isArray(snap.changes)) {
+        cfg.log?.("cloud_tag_backfill_deferred", {
+          reason: "the snapshot probe answered something that is not a snapshot; the mirror is " +
+            "unaffected and the next pull retries",
+        });
+        return 0;
+      }
+      const written = await applyTagBackfill(cfg.db, cfg.world, snap, now());
+      markConsidered();
+      if (written.tags > 0) {
+        cfg.log?.("cloud_tag_backfill_applied", {
+          tags: written.tags,
+          messages: written.messages,
+          reason: "this mirror was bootstrapped before the drain asked for tags, so its tags sat " +
+            "below the cursor and no delta could ever deliver them",
+        });
+      }
+      return written.tags;
+    } catch (err) {
+      cfg.log?.("cloud_tag_backfill_deferred", {
+        err,
+        reason: "the one-time tag repair did not complete; the mirror is unaffected and the next " +
+          "pull retries",
+      });
+      return 0;
+    }
+  };
+
   /** Backfill message bodies via the batch text-pull endpoint's `GET /messages/bodies`. Not a `/sync` entity, so no change-log row. */
   const backfillBodies = async (): Promise<number> => {
     let written = 0;
@@ -761,6 +924,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         cursor.bootstrapping = false;
         writeCursor(cfg.cursorPath, cursor);
       }
+      // AFTER the drain, so a bootstrap has already delivered the tags natively and is skipped by
+      // the zero-tags gate rather than by a special case for it.
+      await repairStaleTags();
       await backfillBodies();
       /* THE TWO STAMPS THE PROGRESS SURFACE READS. See {@link stampSynced} — on a mirrored
          install this process is the only thing that could write them, and without them the

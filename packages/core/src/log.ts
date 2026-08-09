@@ -199,6 +199,16 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // means either depending on the event is not a claim anybody can check.
   "candidates", "fetched", "cleared", "stillSensitive", "unreadable", "mismatched",
   "capped", "marked",
+  // ── The Cloud mirror's one-time tag repair, added WITH its call site ──
+  //
+  // `tags` is how many tag ROWS the repair restored and `messages` how many mirrored messages
+  // regained their assignments; both are `++` counters over a snapshot page in
+  // `apps/sidecar/src/cloud-mirror.ts` and neither is derived from a tag's NAME or a message's
+  // content. Named rather than folded into `count` on this file's own rule: the two answer
+  // different questions — whether the rail came back, and whether any chip did — and an operator
+  // reading `count` alone could not tell a repair that restored the tags and lit nothing from one
+  // that worked.
+  "tags", "messages",
   // `inFlight` is `StdioHost.inFlight` (`apps/sidecar/src/host.ts`), the only field the sidecar
   // needed that the Cloud census did not contain. It is a private counter that `dispatch` moves
   // with `inFlight++` / `inFlight--` and nothing else assigns, so it is structurally an integer
