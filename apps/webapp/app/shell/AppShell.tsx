@@ -350,6 +350,64 @@ function tagsOnAll(reader: EntityReader, ids: string[]): string[] {
  * now re-renders only the rail. The `groups` handed in still carry `defaultOpen`; this injects the
  * live `open`/`onOpenChange` onto whichever group owns the Tags sub-list.
  */
+/**
+ * WHERE THE "GET OHMAIL FOR DESKTOP" PROMPT MAY APPEAR — the signed-in browser, and only there.
+ *
+ * `desktop` is the shell's own platform tell: the desktop app injects `desktopSection` (the pane
+ * only a native process can have), so its presence IS "this build is the desktop app" — the same
+ * signal the Settings nav already reads. A `desktopSection` is never handed to the Cloud shell, so
+ * the prompt cannot show inside the app it is inviting people to install. `demo` is excluded
+ * because the demo is a shop window, not an account, and the shell only ever renders for the demo
+ * or a validated session — so `!demo` in a browser is a signed-in reader. Pure and exported so the
+ * platform branch is a value a test can drive, not a JSX condition it has to reach through a shell.
+ */
+export function showDesktopCta(opts: { demo: boolean; desktop: boolean }): boolean {
+  return !opts.demo && !opts.desktop;
+}
+
+/** localStorage key for a one-time dismissal of the desktop prompt. */
+const DESKTOP_CTA_DISMISSED = "ohmail.desktopCtaDismissed";
+
+/**
+ * A subtle, dismissible line at the foot of the rail: "Get ohmail for desktop", linking to the
+ * download section of the site (a new tab, so the reader's mailbox stays open). The dismissal is
+ * persisted — a promo dismissed should stay dismissed — and read AFTER mount rather than during
+ * render, so a server pass and its hydration agree before the effect quietly hides it.
+ */
+export function DesktopCta({ href, label, dismissLabel }: { href: string; label: string; dismissLabel: string }) {
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(DESKTOP_CTA_DISMISSED) === "1") setDismissed(true);
+    } catch {
+      // A blocked or absent localStorage just means the line stays offerable — never a throw.
+    }
+  }, []);
+  if (dismissed) return null;
+  return (
+    <div className="rail-desktop-cta">
+      <a className="rail-desktop-cta-link" href={href} target="_blank" rel="noopener noreferrer">
+        {label}
+      </a>
+      <button
+        type="button"
+        className="rail-desktop-cta-x"
+        aria-label={dismissLabel}
+        onClick={() => {
+          setDismissed(true);
+          try {
+            localStorage.setItem(DESKTOP_CTA_DISMISSED, "1");
+          } catch {
+            // Dismissal that cannot persist still hides the line for this session.
+          }
+        }}
+      >
+        <span aria-hidden="true">×</span>
+      </button>
+    </div>
+  );
+}
+
 function ShellRail({ groups, ...rest }: RailNavProps) {
   const [tagsOpen, setTagsOpen] = usePersistedFlag(UI_KEYS.tagsOpen, true);
   const withTagState = useMemo<RailGroup[]>(
@@ -914,6 +972,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const [chipState, setChipState] = useState<ReadsChipState>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [jump, setJump] = useState<{ view: "reads" | "receipts"; id: string } | null>(null);
+  /**
+   * ── ABSOLUTE-TIME STAMPS — A MOMENTARY, VIEW-SCOPED FLIP, NOT A SETTING ────────────────────
+   *
+   * Clicking any stamp in the open message flips every stamp in it to the exact date and time
+   * (see `absoluteTime` on `MessageChrome`, read by `MessageHeader`/`MessageCard`). It is
+   * deliberately NOT persisted, and it resets on every view switch: it answers "let me read the
+   * exact dates on THIS", so carrying it to the next pile — or across a reload — would be the
+   * interface remembering a glance nobody asked it to keep. In-memory state covers reload and
+   * re-open for free; the effect below covers moving between rail views.
+   */
+  const [absoluteTime, setAbsoluteTime] = useState(false);
+  useEffect(() => {
+    setAbsoluteTime(false);
+  }, [route.view]);
   /**
    * THE ROW A SEARCH HIT LANDED ON — so the user can SEE where they were taken.
    *
@@ -2965,6 +3037,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const chrome = useMemo(
     () => ({
       ownAddresses,
+      absoluteTime,
+      onToggleAbsoluteTime: () => setAbsoluteTime((v) => !v),
       replyTo, replyBody, onReplyBody, closeReply, sendReply,
       replySendState: mailSend.stateOf,
       // The offer and the draft waiting to be placed travel with the reply draft, and for the
@@ -2979,7 +3053,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       bodyOf: bodyOfMessage, hydrateBody, hydrateThread,
       attachments, remoteImages,
     }),
-    [ownAddresses, replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
+    [ownAddresses, absoluteTime, replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       openSenderMenu,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
   );
@@ -3128,7 +3202,24 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                component and the same derivation as the strip below the topbar — one of the two
                is showing at any width, never both (see `SyncBar.tsx`). */
             sync={<SyncBar variant="rail" />}
-            footer={account?.email}
+            /* The account line at the foot of the rail — and, in the signed-in BROWSER only, the
+               quiet "Get ohmail for desktop" prompt (never in the desktop app, never the demo:
+               see `showDesktopCta`). The two do not coexist — `account` is a demo-only fixture
+               (`/sync` emits no `view_meta`), and the prompt shows only when `!demo`. */
+            footer={
+              account?.email || showDesktopCta({ demo, desktop: desktopSection != null }) ? (
+                <>
+                  {account?.email ? <span className="rail-mail-addr">{account.email}</span> : null}
+                  {showDesktopCta({ demo, desktop: desktopSection != null }) ? (
+                    <DesktopCta
+                      href="/#download"
+                      label={t("rail.getDesktop")}
+                      dismissLabel={t("rail.getDesktopDismiss")}
+                    />
+                  ) : null}
+                </>
+              ) : undefined
+            }
             ariaLabel={t("rail.ariaMain")}
           />
 

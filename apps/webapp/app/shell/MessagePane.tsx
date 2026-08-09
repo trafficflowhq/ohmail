@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, isProtectedMessage, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
-import { Button, Chip, Icon, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
+import { Button, Chip, Icon, InfoNote, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
 import { AttachmentStrip } from "../components/AttachmentStrip";
 import { isPreviewable } from "../components/AttachmentPreview";
 import { MessageBody } from "../components/MessageBody";
@@ -1001,21 +1001,57 @@ export function MessagePane({
       tb("loading")
     );
 
-  const chips = (
-    <>
-      {message.rationale ? <Chip variant="rationale">{message.rationale}</Chip> : null}
-      {message.trackerNote ? <Chip variant="tracker">{message.trackerNote}</Chip> : null}
-      {mine.map((tag) => (
-        <Chip key={tag.id} variant="tag" hue={hueOf(tag)} big>
-          {tag.name}
-        </Chip>
-      ))}
-      <span ref={addRef} style={{ display: "inline-flex" }}>
-        <Chip variant="add" kbdHint="t" onPress={() => onAddTag(message.id, addRef.current)}>
-          {t("tagChip")}
-        </Chip>
-      </span>
-    </>
+  /**
+   * ── THE TITLE'S CHROME — SIGNALS INLINE, TAGS FOLDED ──────────────────────────────────────
+   *
+   * Two different things used to share one wrapping row directly under the subject. The routing
+   * rationale and the tracker shield are SIGNALS the product is stating about this message — they
+   * are here to be read once, and there are at most two of them. The tags are the reader's OWN
+   * marks, and a message can carry several; rendered as a row of full colour chips right under the
+   * title they dominated the head of every tagged message, so a mark meant to be quiet read louder
+   * than the sender.
+   *
+   * So the signals keep their inline row (rendered only when one exists — no empty gap otherwise),
+   * and the tags move into the same collapsed `(i)` disclosure the list explainers use: a quiet
+   * "{n} tags" line under the title that opens to the colour chips on demand. The list rows are
+   * left exactly as they were — a tag there is a scanning aid at row scale, not the head of an
+   * open letter, so `MessageRow` still renders its chips inline.
+   *
+   * The add-tag control stays OUTSIDE the disclosure and always visible: it is a small dashed
+   * affordance rather than a mark competing for attention, and its popover anchors to `addRef`,
+   * which must not be a node the browser has hidden inside a folded `<details>`.
+   */
+  const titleChrome = (
+    <div className="msg-marks">
+      {message.rationale || message.trackerNote ? (
+        <div className="msg-signals">
+          {message.rationale ? <Chip variant="rationale">{message.rationale}</Chip> : null}
+          {message.trackerNote ? <Chip variant="tracker">{message.trackerNote}</Chip> : null}
+        </div>
+      ) : null}
+      <div className="tag-chrome">
+        {mine.length > 0 ? (
+          <InfoNote
+            className="tag-note"
+            lead={t("tagsLead", { count: mine.length })}
+            moreLabel={t("tagsMore")}
+          >
+            <div className="tag-note-chips">
+              {mine.map((tag) => (
+                <Chip key={tag.id} variant="tag" hue={hueOf(tag)} big>
+                  {tag.name}
+                </Chip>
+              ))}
+            </div>
+          </InfoNote>
+        ) : null}
+        <span ref={addRef} style={{ display: "inline-flex" }}>
+          <Chip variant="add" kbdHint="t" onPress={() => onAddTag(message.id, addRef.current)}>
+            {t("tagChip")}
+          </Chip>
+        </span>
+      </div>
+    </div>
   );
 
   /**
@@ -1078,7 +1114,7 @@ export function MessagePane({
           {/* The thread's subject once, at the top: each message wears a header rather than
               repeating the subject, and a sibling shows its own only when it diverges. */}
           <h2>{message.subject}</h2>
-          <div className="chips">{chips}</div>
+          {titleChrome}
           {/* `role="group"` because `aria-label` on a bare div is ignored, and a landmark
               (`<section>`) would be too loud for one part of one message. */}
           <div className="conv" role="group" aria-label={tc("conversationAria")} ref={convRef}>
@@ -1110,7 +1146,7 @@ export function MessagePane({
         <>
           {focusedHeader}
           <h2>{message.subject}</h2>
-          <div className="chips">{chips}</div>
+          {titleChrome}
           {focusedMessage}
         </>
       )}

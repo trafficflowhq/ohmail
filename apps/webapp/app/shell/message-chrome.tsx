@@ -34,6 +34,24 @@ export interface MessageChrome {
    * degradation. `recipientSummary` case-folds both sides.
    */
   ownAddresses: readonly string[];
+  /**
+   * ABSOLUTE-TIME DISPLAY — a session-and-view-scoped preference on the reader's stamps.
+   *
+   * Every stamp in the open message shows the relative form by default ("09:12", "Mon"), with the
+   * exact instant on hover. Clicking any one of them flips ALL of them to the absolute form at
+   * once — so a reader comparing dates across a thread sees them all in the same shape rather than
+   * hovering each. It rides the chrome for the reason the rest of this context does: the stamp is
+   * rendered by `MessageHeader`/`MessageCard`, which are mounted several deep and hold no shell
+   * state of their own, and there may be more than one stamp on screen (the focused message plus
+   * its siblings) that must agree.
+   *
+   * DELIBERATELY NOT PERSISTED and reset on every view switch (see `AppShell`): it is a momentary
+   * "let me read the exact dates on THIS" gesture, not a setting. A default of `false` is the
+   * resting state, so a pane with no shell behind it (the inert default) simply always shows
+   * relative and its stamp does nothing on click.
+   */
+  absoluteTime: boolean;
+  onToggleAbsoluteTime: () => void;
   /** The message id whose inline reply editor is open, if any. */
   replyTo: string | null;
   /** Both halves of what is typed in it — the markup and its plain rendering. */
@@ -184,6 +202,8 @@ const noop = (): void => {};
  */
 const MessageChromeContext = createContext<MessageChrome>({
   ownAddresses: [],
+  absoluteTime: false,
+  onToggleAbsoluteTime: noop,
   replyTo: null,
   replyBody: EMPTY_RICH,
   onReplyBody: noop,

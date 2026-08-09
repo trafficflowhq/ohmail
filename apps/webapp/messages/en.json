@@ -168,7 +168,9 @@
     "readsTitle": "{count} new",
     "screenerTitle": "{count} waiting",
     "openNav": "Open navigation",
-    "closeNav": "Close navigation"
+    "closeNav": "Close navigation",
+    "getDesktop": "Get ohmail for desktop",
+    "getDesktopDismiss": "Dismiss"
   },
   "ohbox": {
     "title": "Ohbox",
@@ -190,6 +192,8 @@
     "hintPick": "select",
     "hintUnread": "unread",
     "tagChip": "Tag",
+    "tagsLead": "{count, plural, one {1 tag} other {# tags}}",
+    "tagsMore": "Show tags",
     "protectedPreview": "Verification code — kept out of AI",
     "actionReply": "Reply",
     "actionSetAside": "Park",

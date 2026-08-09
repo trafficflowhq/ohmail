@@ -90,6 +90,8 @@ export function MessageHeader({
   const address = rowAddress(message);
   const rel = displayTime(message, now);
   const abs = fullDateTime(message);
+  /** Show the absolute form when the reader has asked for it AND there is one to show. */
+  const showAbs = chrome.absoluteTime && !!abs;
   const summary = recipientSummary(message, ownAddresses);
   const meLabel = tm("me");
   const nameOf = (chip: RecipientChip): string => ("me" in chip ? meLabel : chip.name);
@@ -123,13 +125,25 @@ export function MessageHeader({
           {address ? <small>{address}</small> : null}
         </button>
         <span className="t num">
-          {/* Relative visible, absolute on hover — `dateTime` carries the machine value and
-              `title` the human one. Nothing at all for a message with no `Date:` header, rather
-              than an empty stamp element. */}
+          {/* Relative by default, the exact instant on hover (`title`) — and clicking flips
+              EVERY stamp in the open message to the absolute form at once (`onToggleAbsoluteTime`,
+              session- and view-scoped; see the chrome). A `<button>` and not a bare `<time>` so
+              the flip is reachable by keyboard; `dateTime` keeps the machine value on the inner
+              `<time>`, and `title` names whichever form is NOT on screen. Nothing at all for a
+              message with no `Date:` header, rather than an empty stamp element. */}
           {rel ? (
-            <time dateTime={message.date ?? undefined} title={abs || undefined}>
-              {rel}
-            </time>
+            <button
+              type="button"
+              className="stamp-toggle"
+              onClick={chrome.onToggleAbsoluteTime}
+              aria-pressed={chrome.absoluteTime}
+            >
+              {/* `title` and `dateTime` stay on the `<time>` itself — hover over the stamp shows
+                  whichever form is NOT on screen, and the machine value is the element's own. */}
+              <time dateTime={message.date ?? undefined} title={(showAbs ? rel : abs) || undefined}>
+                {showAbs ? abs : rel}
+              </time>
+            </button>
           ) : null}
           {onEnterReader ? (
             <button
@@ -226,8 +240,11 @@ export function MessageCard({
   showSubject: boolean;
 }) {
   const tm = useTranslations("message");
+  const chrome = useMessageChrome();
   const name = senderName(message);
   const rel = displayTime(message, now);
+  const abs = fullDateTime(message);
+  const showAbs = chrome.absoluteTime && !!abs;
 
   if (collapsed) {
     return (
@@ -244,7 +261,18 @@ export function MessageCard({
           <Avatar initials={initialsOf(name)} hue={avatarHue(message.from.address)} size="s" />
           <b className="hm-name">{name}</b>
           <span className="hm-peek">{message.snippet}</span>
-          {rel ? <span className="t num">{rel}</span> : null}
+          {/* Read-only here — the whole row is the fold toggle, so the stamp cannot own a click of
+              its own — but it still follows the shared absolute-time flip and shows the exact
+              instant on hover, so every stamp in the thread reads in one form together. */}
+          {rel ? (
+            <time
+              className="t num"
+              dateTime={message.date ?? undefined}
+              title={(showAbs ? rel : abs) || undefined}
+            >
+              {showAbs ? abs : rel}
+            </time>
+          ) : null}
         </button>
       </article>
     );

@@ -166,10 +166,16 @@ body.reading .shell {
 /* One quiet sentence above a list, explaining what the list IS. Used by History, where the
    word on the heading is one this product uses in a way no other mail client does. Sized and
    coloured like the settings notes rather than like body copy: it is furniture, not content,
-   and it must never compete with the first row for attention. */
+   and it must never compete with the first row for attention.
+
+   The 30px horizontal inset is the LIST GUTTER — the same one `.vhead` (the title above it) and
+   every row's text (`.rows` 16px + `.row` 14px) sit at, so the sentence, the heading and the mail
+   share one left edge. It was 14px, which ran the copy wider than the list it explains — most
+   visible on the full-width single-column views, where the explainer overshot the rows on both
+   sides. See `.rows .empty` below: the empty state is aligned to the same gutter. */
 .view-note {
   margin: 0;
-  padding: 0 14px 10px;
+  padding: 0 30px 10px;
   font-size: 12px;
   line-height: 1.45;
   color: var(--ink3);
@@ -647,6 +653,51 @@ body.reading .shell {
     width: 100%;
     opacity: 0.45;
   }
+}
+
+/* ================= the "get ohmail for desktop" prompt =================
+   A quiet line at the foot of the rail, shown ONLY in the signed-in browser — never in the
+   desktop app it invites you to install, never the demo (the gate is `showDesktopCta` in
+   AppShell). It sits inside `.rail-mail`, which already carries the muted foot-of-rail tone and
+   the top gutter, so this only lays out the link and its dismiss. Subtle by construction: the
+   link is one small line, the × is a bare glyph that lifts on hover. */
+.rail-desktop-cta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.rail-desktop-cta-link {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink2);
+  text-decoration: none;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.rail-desktop-cta-link:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.rail-desktop-cta-x {
+  flex: none;
+  border: 0;
+  background: none;
+  padding: 1px 4px;
+  border-radius: 6px;
+  color: var(--ink3);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.rail-desktop-cta-x:hover {
+  color: var(--ink);
+  background: var(--tint);
+}
+.rail-desktop-cta-x:focus-visible {
+  outline: 2px solid var(--focus, var(--ink2));
+  outline-offset: 1px;
 }
 
 /* ================= reads pending-AI chip row ================= */
@@ -1260,6 +1311,18 @@ body.reading .shell {
 .hmail.dull .hm-body {
   color: var(--ink2);
 }
+/* A LIST'S EMPTY STATE ALIGNS TO THE LIST GUTTER, not to a wider inset of its own.
+   The shared `.empty` (packages/ui `list-pane.css`) carries `padding: 52px 20px`, and every list
+   empty is a child of `.rows` (16px) — History, Drafts and the Screener all render `<Empty>`
+   inside `<ListRows>` — so the block sat at a 36px inset while the header title and every row's
+   text sit at 30px. Matching `.row`'s own 14px inset here lands the empty's copy on the same
+   30px gutter (16px `.rows` + 14px), so an empty pile reads flush with the rows it replaces
+   rather than indented past them. Horizontal only: the shared block keeps its 52px top, and the
+   reading-column empties below keep their own vertical rule. */
+.rows .empty {
+  padding-left: 14px;
+  padding-right: 14px;
+}
 .scn-read .empty {
   padding-top: 96px;
 }
@@ -1269,6 +1332,73 @@ body.reading .shell {
    first; this is that rule, aimed at the one other column that now has a resting state. */
 .view-ohbox .read-col .empty {
   padding-top: 96px;
+}
+
+/* ================= the open message's marks =================
+   Under the subject sit two different things that used to share one wrapping `.chips` row. The
+   SIGNALS the product states about the message (the routing rationale, the tracker shield) keep
+   an inline row. The reader's OWN tags fold into the same `(i)` disclosure the list explainers
+   use (`.view-note`, `InfoNote`): a colour-chip row directly under the title read louder than the
+   sender it belonged to, and a mark meant to be quiet should not. `.msg-marks` carries the 22px
+   the old `.chips` row spent under the title, so the gap above the body is unchanged whether or
+   not the message is tagged; `gap` is the smaller step BETWEEN the signals row and the tag row. */
+.msg-marks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 22px;
+}
+.msg-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+/* The tag row: the folded pill (present only when the message carries a mark) and the add-tag
+   affordance, which stays OUT of the fold and always reachable — see MessagePane for why `addRef`
+   must not sit inside a collapsed `<details>`. */
+.tag-chrome {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+/* Quiet, like the list explainers it borrows from — a muted "{n} tags" line with the `(i)`,
+   opening to the colour chips. Inherits the InfoNote structure; only the type is set here. */
+.tag-note {
+  font-size: 12px;
+  color: var(--ink3);
+}
+.tag-note-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+/* THE STAMP IS A CONTROL. It reads as the plain relative time it always was — this strips every
+   trace of button chrome and inherits the `.msg-from .t` type and colour — but it is a real
+   `<button>` so the absolute-time flip is keyboard-reachable, so it earns a pointer cursor, a
+   quieter hover and a focus ring sized for a small target. `tabular-nums` keeps "09:12" and a
+   long absolute date from jittering the row width as it toggles. */
+.stamp-toggle {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.stamp-toggle:hover {
+  color: var(--ink2);
+}
+.stamp-toggle:focus-visible {
+  outline: 2px solid var(--focus, var(--ink2));
+  outline-offset: 2px;
 }
 
 /* ================= triage =================
