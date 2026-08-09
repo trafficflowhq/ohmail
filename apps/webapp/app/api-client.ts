@@ -452,6 +452,7 @@ export interface ScreenerSuggestWire {
     quotedCredits: number;
     charged: number;
     stopped?: "out_of_credits" | "spend_unavailable";
+    remainingCredits?: number;
     suggestions: Array<{
         sender: string;
         messageId: string;

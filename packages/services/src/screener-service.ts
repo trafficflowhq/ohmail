@@ -116,6 +116,25 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
    * are only useful together anyway.
    */
   credits?: (db: Tx, accountId: string) => AiCreditGate;
+  /**
+   * THE BALANCE READ that answers "how much is left", beside the gate that spends it.
+   *
+   * A separate dep and not a method on {@link AiCreditGate}, because the gate is a PORT — the
+   * question a caller asks about permission — and this is a read with no decision in it.
+   * Widening that port would make every implementation of it, including the one-line test
+   * doubles the pipeline's degrade-to-rules proof is written against, owe an answer about a
+   * ledger they do not have.
+   *
+   * A factory taking `(db, accountId)` for the same reason `credits` is one: this service is
+   * constructed once per host and serves every account.
+   *
+   * ABSENT ⇒ {@link ScreenerSuggestResult.remainingCredits} is omitted, and the surface says
+   * nothing about a balance. That is the correct answer for the local install and for the
+   * hosted deployment during any window where the ledger is not wired: silence, never `0`.
+   * It is also why `balanceOf` is not imported here — it lives in `@trafficflow/db/cloud`,
+   * the half this module must compile without (see the import block's own note).
+   */
+  remaining?: (db: Tx, accountId: string) => Promise<number>;
 }
 
 export interface ScreenBody {
@@ -312,6 +331,30 @@ export interface ScreenerSuggestResult {
    * 402/409/503 instead, because "you have no credits" is not a successful request.
    */
   stopped?: "out_of_credits" | "spend_unavailable";
+  /**
+   * WHAT IS LEFT ON THE ACCOUNT AFTER THIS REQUEST — read from the ledger, never inferred.
+   *
+   * ── WHY THE SERVER HAS TO SAY IT ──────────────────────────────────────────────────────
+   *
+   * The summary a person sees after a run states what it cost. The obvious next question —
+   * "so how much have I got left?" — had no answer anywhere on this path, and the only
+   * material a client held was `charged`, which answers a different question entirely. A
+   * client that subtracted `charged` from a remembered figure would be keeping its own
+   * shadow ledger: wrong after a renewal, wrong after a refund, wrong after a second tab,
+   * wrong after an expiry, and wrong in the direction that tells somebody they have credits
+   * they do not. Invariant #10 is that money is named by the side that moves it.
+   *
+   * ── OPTIONAL, AND THE OPTIONALITY IS THE CONTRACT ─────────────────────────────────────
+   *
+   * A deployment with no ledger — the local install, every test that predates the gate —
+   * supplies no reader, so the field is ABSENT and the client omits the clause. It is never
+   * `0` for "we do not know": zero is a real balance with a real sentence of its own, and
+   * conflating them would put "no credits left" in front of an unmetered install.
+   *
+   * Read AFTER the loop, so it is the balance the run left behind rather than the one it
+   * started with. A dry run charges nothing, so on that path the two are the same number.
+   */
+  remainingCredits?: number;
   suggestions: ScreenerSuggestion[];
   skipped: Array<{ sender: string; reason: ScreenerSuggestSkip }>;
 }
@@ -1072,12 +1115,15 @@ export class ScreenerService extends ScreenerReadService {
    */
   private readonly classifier?: ClassifierPort;
   private readonly credits?: (db: Tx, accountId: string) => AiCreditGate;
+  /** The balance READ. Destructured out for the same reason as the two above. */
+  private readonly remaining?: (db: Tx, accountId: string) => Promise<number>;
 
   constructor(deps: ScreenerSuggestDeps) {
-    const { classifier, credits, ...readOnly } = deps;
+    const { classifier, credits, remaining, ...readOnly } = deps;
     super(readOnly);
     this.classifier = classifier;
     this.credits = credits;
+    this.remaining = remaining;
   }
 
   /**
@@ -1358,9 +1404,31 @@ export class ScreenerService extends ScreenerReadService {
       );
     }
 
+    // ── WHAT IS LEFT, FROM THE LEDGER THE GATE READS ──────────────────────────────────────
+    //
+    // AFTER the loop, so it is the balance this run left behind and not the one it began with.
+    // No arithmetic: the client is never handed material to subtract `charged` from, because a
+    // client-side balance is a shadow ledger that goes wrong on a renewal, a refund, an expiry
+    // or a second tab — and goes wrong upward, telling somebody they have credits they do not.
+    //
+    // A FAILED READ IS SILENCE, NOT ZERO. The run has already completed and its suggestions are
+    // already paid for; a database hiccup on a courtesy read must not turn a successful purchase
+    // into an error, and must not report an empty balance to a funded account. Absent means "no
+    // answer", which is exactly what an unmetered deployment (no `remaining` dep at all) means
+    // too, so the client needs one rule for both.
+    let remainingCredits: number | undefined;
+    if (this.remaining) {
+      try {
+        remainingCredits = await this.remaining(asTx(ctx), ctx.accountId);
+      } catch (err) {
+        console.error(`[screener] balance read failed for account ${ctx.accountId}:`, err);
+      }
+    }
+
     const dto: ScreenerSuggestResult = {
       dryRun, requested: senders.length, quoted, quotedCredits: quoted * AI_ACTION_COST, charged,
       ...(stopped ? { stopped } : {}),
+      ...(typeof remainingCredits === "number" ? { remainingCredits } : {}),
       suggestions, skipped,
     };
 

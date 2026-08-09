@@ -735,6 +735,16 @@ export function useScreenerSuggestions(opts: {
           const gotSkipped: Array<{ reason: string }> = [];
           let charged = 0;
           let stopped: "out_of_credits" | "spend_unavailable" | undefined;
+          /**
+           * The LATEST balance the server reported, across the chunks of one purchase.
+           *
+           * Last-write-wins rather than first, because each chunk's read happens after that
+           * chunk's spend: the newest answer is the one that describes the account as it stands
+           * when the summary is shown. Left `undefined` when no chunk carried the field, which
+           * is what an unmetered deployment produces — and `summarize` then omits the clause
+           * instead of inventing a figure.
+           */
+          let remainingCredits: number | undefined;
           for (const chunk of chunksOf(set)) {
             let res;
             try {
@@ -752,7 +762,16 @@ export function useScreenerSuggestions(opts: {
               const why = messageFor(err, t("suggest.failed"));
               if (gotSuggestions.length > 0) {
                 setNotice(t("suggest.stoppedAt", { done: gotSuggestions.length, total, reason: why }));
-                toast(summarize({ suggestions: gotSuggestions, charged, skipped: gotSkipped }, t));
+                toast(summarize(
+                  {
+                    suggestions: gotSuggestions, charged, skipped: gotSkipped,
+                    // Whatever the last chunk that ANSWERED reported. The chunk that threw said
+                    // nothing about the balance, and a run that stopped part-way is exactly when
+                    // "how much is left" is worth stating.
+                    ...(typeof remainingCredits === "number" ? { remainingCredits } : {}),
+                  },
+                  t,
+                ));
               } else {
                 setNotice(why);
               }
@@ -769,6 +788,7 @@ export function useScreenerSuggestions(opts: {
             gotSkipped.push(...res.skipped);
             charged += res.charged;
             stopped ??= res.stopped;
+            if (typeof res.remainingCredits === "number") remainingCredits = res.remainingCredits;
             setNotice(t("suggest.progress", { done: gotSuggestions.length, total }));
             setProgress({ done: gotSuggestions.length, total });
             // HALT on the first chunk the gate stopped part-way: the balance is exhausted, so
@@ -782,7 +802,10 @@ export function useScreenerSuggestions(opts: {
           // that work is still in flight; the completed run's numbers are in the toast.
           setProgress(null);
           toast(summarize(
-            { suggestions: gotSuggestions, charged, ...(stopped ? { stopped } : {}), skipped: gotSkipped },
+            {
+              suggestions: gotSuggestions, charged, ...(stopped ? { stopped } : {}), skipped: gotSkipped,
+              ...(typeof remainingCredits === "number" ? { remainingCredits } : {}),
+            },
             t,
           ));
         })();
@@ -946,6 +969,7 @@ function summarize(
     suggestions: unknown[];
     charged: number;
     stopped?: "out_of_credits" | "spend_unavailable";
+    remainingCredits?: number;
     skipped: Array<{ reason: string }>;
   },
   t: (key: string, values?: Record<string, string | number>) => string,
@@ -955,6 +979,17 @@ function summarize(
   // back on the strength of what the mail looks like, so there is no count to state.
   const parts = [
     t("suggest.doneCount", { count: res.suggestions.length, credits: res.charged }),
+    // ── WHAT IS LEFT, ONLY WHEN THE SERVER SAID SO ────────────────────────────────────────
+    //
+    // `typeof === "number"` and never `res.remainingCredits ?? …`: the field is absent on an
+    // unmetered deployment and on a hosted one whose balance read failed, and 0 is a real
+    // balance with a real sentence. The clause is omitted rather than guessed, and nothing here
+    // derives it — a client that computed `known - charged` would be keeping a second ledger
+    // that goes wrong on a renewal, a refund, an expiry or a second tab. The side that moves
+    // the money is the side that names it.
+    typeof res.remainingCredits === "number"
+      ? t("suggest.remaining", { count: res.remainingCredits })
+      : null,
     res.stopped === "out_of_credits" ? t("suggest.stoppedCredits") : null,
     res.stopped === "spend_unavailable" ? t("suggest.stoppedUnavailable") : null,
   ].filter(Boolean);
