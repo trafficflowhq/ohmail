@@ -139,6 +139,28 @@ export const COPY = {
   darkAdapt: "Adapt to dark",
   darkOriginalTitle: "Show this message in its original colours",
   darkAdaptTitle: "Adapt this message to the dark theme",
+  /**
+   * ── THE WAY BACK TO THE SENDER'S OWN RENDERING ─────────────────────────────────────────
+   *
+   * Mail that declares no canvas is set in the app's type over the message's TEXT part, which
+   * draws no pictures at all. For most mail that is the better rendering and nothing is lost —
+   * but "nothing is lost" is a claim about the AVERAGE message, and this control is what makes
+   * it safe to be wrong about a particular one. A photograph a sender embedded, a table whose
+   * columns carry the meaning, a receipt whose layout IS the information: one press and the
+   * message is drawn exactly as it was sent, in the frame, with the sandbox and the image
+   * blocking unchanged.
+   *
+   * It replaces an earlier attempt that tried to be clever — messages whose remote pictures the
+   * reader had consented to were kept in the frame automatically. That reverted the whole
+   * default on any account where remote images load by default, because consent is then true
+   * from the first paint: measured on a live account, every message in a four-message thread
+   * came back framed. A DECISION THE READER MAKES cannot be inferred from a setting they made
+   * once about something else.
+   */
+  design: "Show original",
+  designTitle: "Show this message with the sender's own formatting",
+  plain: "Show as text",
+  plainTitle: "Show this message as text, in the app's own type",
   frameTitle: "Message content",
   unsupported: "Showing the plain-text version of this message.",
   /**
@@ -1849,6 +1871,21 @@ export function MessageBody({
     [messageId, overrides],
   );
   /**
+   * ── "SHOW ORIGINAL" — THE FRAME, ON REQUEST, FOR MAIL THAT DECLARES NO CANVAS ────────────
+   *
+   * SESSION-ONLY AND PER MOUNT, which is the opposite of the dark override above and is
+   * deliberate. The dark choice is about a PROPERTY OF THE SENDER — their poster inverts badly,
+   * and it will invert badly every time — so it is remembered across reloads. This one is about
+   * a moment: "I want to see how this particular message was laid out, now". Persisting it would
+   * accumulate a set of messages that quietly opt out of the app's own typography for ever,
+   * which is the default this component was just rearranged to establish.
+   *
+   * It resets when `messageId` changes so that selecting the next message does not inherit the
+   * last one's answer.
+   */
+  const [showOriginal, setShowOriginal] = useState(false);
+  useEffect(() => { setShowOriginal(false); }, [messageId]);
+  /**
    * The transform is WANTED when the theme is dark and the reader has not asked for the
    * original. Whether it is actually APPLIED is `dark` below, which adds the third condition:
    * the mail has to be light enough to be worth inverting. Two names because the difference
@@ -2127,16 +2164,19 @@ export function MessageBody({
    *
    *   · AN EMPTY TEXT PART keeps its frame. A message classified prose whose text part is empty
    *     has nothing to render frameless — the words exist only inside the html.
-   *   · A REMOTE PICTURE THE READER HAS ASKED FOR keeps its frame, and this is the half that
-   *     makes "Show images" honest. The frameless path draws no images at all, so a message
-   *     rendered through it while `remoteLoaded` is true would carry a bar button whose only
-   *     effect had already happened invisibly — the same objection `canAdapt` answers below for
-   *     the dark toggle, and the reader would additionally have consented to see something they
-   *     were then not shown. BEACONS ARE EXCLUDED (`!b.pixel`): a beacon renders as nothing, and
-   *     letting one drag a letter back into a frame would undo the default for every mail that
-   *     carries a tracking pixel — which is most of them, and precisely the mail this class is
-   *     for. Under the account-wide auto mode `remoteLoaded` is true from the first paint, so
-   *     this is also what keeps a photograph visible for readers who never press anything.
+   *   · "SHOW ORIGINAL" — a press, and only a press. The frameless path draws no images and no
+   *     layout, so there must be a way back to the sender's own rendering; `showOriginal` is it,
+   *     and it is per message and per mount (see its declaration).
+   *
+   *     THIS WAS FIRST WRITTEN AS AN INFERENCE AND THE INFERENCE WAS WRONG. The term was
+   *     `remoteLoaded && remote.some((b) => !b.pixel)` — "the reader has consented to this
+   *     message's pictures, so they must want the design" — which is true of a press and false
+   *     of the account-wide setting that loads remote images by default, because that setting
+   *     makes `remoteLoaded` true from the first paint. Measured against a live account with
+   *     that default on: every message of a four-message business thread came back FRAMED, i.e.
+   *     the flip this component was rearranged to make had no effect at all for exactly the
+   *     readers it was for. A decision about one message cannot be read out of a setting someone
+   *     made once about something else.
    *
    * ── WHAT IS RENDERED, AND THE LINE THAT MUST NOT MOVE ──────────────────────────────────
    *
@@ -2159,18 +2199,22 @@ export function MessageBody({
    * the control would be a button that visibly does nothing — the same rule `canAdapt` applies to
    * a mail the sender already drew dark.
    */
-  /** A picture the reader would actually see if this kept its frame — never a beacon. */
-  const showsPicture = remoteLoaded && remote.some((b) => !b.pixel);
-  const proseView = mail.prose && text.trim().length > 0 && !showsPicture;
+  /**
+   * IS THIS MAIL ELIGIBLE for the frameless rendering — the document's answer plus the text part
+   * this component holds. Separate from {@link proseView} because the bar needs it: the control
+   * that offers the sender's own rendering may only appear where there is one to go back TO.
+   */
+  const proseable = mail.prose && text.trim().length > 0;
+  const proseView = proseable && !showOriginal;
   const canAdapt = themeDark && adaptable && !proseView;
-  const showBar = hasBlocked || canAdapt;
+  const showBar = hasBlocked || canAdapt || proseable;
   /**
    * IS WHAT THE READER IS LOOKING AT DARK? Not the same question as `dark`, which is only
    * whether the FILTER is on. A mail the sender drew dark is dark on screen with no filter at
    * all, and the surround has to match that too or a dark newsletter sits in a light frame.
    */
   const surfaceDark = themeDark && (dark || !adaptable);
-  const canLoad = imageProxy != null && onLoadRemote != null && !remoteLoaded;
+  const canLoad = imageProxy != null && onLoadRemote != null && !remoteLoaded && !proseView;
 
   return (
     <div className="mb" ref={shellRef}>
@@ -2212,9 +2256,29 @@ export function MessageBody({
               </>
             ) : null}
           </span>
+          {/* "Show images" is SUPPRESSED on the frameless path (`canLoad` reads `!proseView`),
+              because that rendering draws no images at all — the button would consent to
+              something and then show nothing, which is the objection `canAdapt` answers for the
+              dark toggle. The route to those images is "Show original" beside it, which brings
+              the frame back and takes this button with it. */}
           {canLoad ? (
             <button type="button" className="mb-bar-btn" onClick={onLoadRemote}>
               {COPY.show}
+            </button>
+          ) : null}
+          {/* THE FRAMELESS DEFAULT IS REVERSIBLE, PER MESSAGE. Offered on any mail eligible for
+              the frameless rendering — whichever way it is currently being shown — so the reader
+              can always see how a message was actually laid out, and always get back. See
+              `COPY.design` for why this is a press and not something inferred from a setting. */}
+          {proseable ? (
+            <button
+              type="button"
+              className="mb-bar-btn"
+              aria-pressed={showOriginal}
+              title={showOriginal ? COPY.plainTitle : COPY.designTitle}
+              onClick={() => setShowOriginal(!showOriginal)}
+            >
+              {showOriginal ? COPY.plain : COPY.design}
             </button>
           ) : null}
           {/* The dark-viewer toggle. Only meaningful in a dark theme — in light there is
