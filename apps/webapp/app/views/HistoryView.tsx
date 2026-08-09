@@ -55,6 +55,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { physicalFolderOf, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { InfoNote, ListPane, ListRows, MessageRow, ReadColumn } from "@ohmail/ui";
+import { MarkAllRead } from "../components/MarkAllRead";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useListWindow } from "../shell/list-window";
 import { avatarOf, displayTime, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
@@ -74,6 +75,7 @@ export function HistoryView({
   hydrateBody,
   onAction,
   onAddTag,
+  onMarkAllRead,
 }: {
   messages: readonly EngineMessage[];
   tags: TagDTO[];
@@ -85,6 +87,12 @@ export function HistoryView({
   /** The reading column's message verbs — the shell's `onMessageAction`. */
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
+  /**
+   * Present for uniformity with the other list views. History is all-read by construction
+   * (an unread message is ACTIVE and lives in a pile, never here — see the file header), so the
+   * unread set is always empty and the affordance renders nothing. Optional and self-hiding.
+   */
+  onMarkAllRead?: (ids: string[]) => void;
 }) {
   const t = useTranslations("history");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -115,6 +123,14 @@ export function HistoryView({
       <ListPane
         title={t("title")}
         meta={messages.length ? t("metaCount", { count: messages.length }) : undefined}
+        action={
+          onMarkAllRead ? (
+            <MarkAllRead
+              unreadCount={messages.filter((m) => m.unread).length}
+              onMarkAllRead={() => onMarkAllRead(messages.filter((m) => m.unread).map((m) => m.id))}
+            />
+          ) : null
+        }
         /* The window reads this element's own scroll position; `ListPane` already offers the
            handle ("if the app drives scrolling itself"), so nothing in the pane changes. */
         scrollerRef={scrollerRef}

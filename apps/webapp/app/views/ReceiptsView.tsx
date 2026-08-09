@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage, MessageBody, TagDTO } from "@ohmail/client-engine";
 import { Kbd, ListPane, ListRows, MessageRow } from "@ohmail/ui";
+import { MarkAllRead } from "../components/MarkAllRead";
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
@@ -38,6 +39,7 @@ export function ReceiptsView({
   jumpTo,
   onJumped,
   onAction,
+  onMarkAllRead,
 }: {
   /** Every receipt, already in display order. Flat — the shell flattens `receiptsByDay`. */
   messages: EngineMessage[];
@@ -57,6 +59,9 @@ export function ReceiptsView({
   onJumped: () => void;
   /** The message verbs — the shell's `onMessageAction`. Optional, exactly as in `ReadsView`. */
   onAction?: (action: MessageAction, message: EngineMessage) => void;
+  /** Mark every unread receipt read, chunked, via the shell. Optional: this view mounts
+   * without a shell in tests, and a "mark all" with nothing behind it must not render. */
+  onMarkAllRead?: (ids: string[]) => void;
 }) {
   const t = useTranslations("receipts");
   const tr = useTranslations("reads");
@@ -197,6 +202,14 @@ export function ReceiptsView({
       <ListPane
         title={t("title")}
         meta={t("meta", { count: unreadCount })}
+        action={
+          onMarkAllRead ? (
+            <MarkAllRead
+              unreadCount={unreadCount}
+              onMarkAllRead={() => onMarkAllRead(all.filter(isUnread).map((m) => m.id))}
+            />
+          ) : null
+        }
         onSeen={seenMark}
         scrollerRef={listScrollerRef}
         /* Re-scan the seen-on-scroll observer as the window slides, so a row that mounts on

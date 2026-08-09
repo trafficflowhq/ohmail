@@ -19,6 +19,7 @@ import {
   MessageRow,
   ReadColumn,
 } from "@ohmail/ui";
+import { MarkAllRead } from "../components/MarkAllRead";
 import { PLACE_LABEL, avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
@@ -82,6 +83,7 @@ export function OhboxView({
   onAddTag,
   bulk,
   older,
+  onMarkAllRead,
 }: {
   /** Fixture world or a real mailbox — decides the "older mail" tail. See its use below. */
   demo: boolean;
@@ -156,6 +158,9 @@ export function OhboxView({
    * fact on this pane comes through.
    */
   older: OlderMail;
+  /** Mark every unread Ohbox message read, chunked, via the shell. Optional: this view is
+   * mounted without a shell in several tests, and a control with nothing behind it must not show. */
+  onMarkAllRead?: (ids: string[]) => void;
 }) {
   const t = useTranslations("ohbox");
 
@@ -163,6 +168,7 @@ export function OhboxView({
     () => [...newForYou, ...previouslySeen],
     [newForYou, previouslySeen],
   );
+  const unreadIds = useMemo(() => all.filter((m) => m.unread).map((m) => m.id), [all]);
 
   /**
    * THE LIST IS A WINDOW over `[New for you, Earlier]`. The Ohbox is a working set, but a
@@ -883,6 +889,14 @@ export function OhboxView({
           !settled && all.length === 0
             ? undefined
             : t("meta", { unread: newForYou.length, total: all.length })
+        }
+        action={
+          onMarkAllRead ? (
+            <MarkAllRead
+              unreadCount={unreadIds.length}
+              onMarkAllRead={() => onMarkAllRead(unreadIds)}
+            />
+          ) : null
         }
         header={
           <>

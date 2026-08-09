@@ -74,6 +74,7 @@ import { useOlderMail } from "./older-mail";
 import { PLACE_LABEL, avatarHue, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
 import { AttachmentPreview } from "../components/AttachmentPreview";
+import { dispatchMarkAllRead } from "./read-all";
 import { useMessageAttachments } from "./attachments";
 import { useRemoteImages } from "./remote-images";
 import { useConsentState } from "./consent-state";
@@ -1070,6 +1071,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       if (ids.length === 0) return;
       void engine.mutate({ kind: "mark_seen", messageIds: ids, unread });
     },
+    [engine],
+  );
+
+  /**
+   * "Mark all read" for a whole view. Unlike {@link markSeen}, this CHUNKS at
+   * {@link MARK_SEEN_CHUNK} because a full-view selection can exceed the route's 200-id cap; each
+   * chunk is a separate mutation with its own Idempotency-Key. The write reaches `\Seen` via the
+   * worker; the API opens no IMAP. `dispatchMarkAllRead` is a no-op on an empty list.
+   */
+  const markAllRead = useCallback(
+    (ids: string[]) => { dispatchMarkAllRead((m) => engine.mutate(m), ids); },
     [engine],
   );
 
@@ -3207,6 +3219,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    the shell because the hook needs the engine, and this view is mounted without
                    one by several tests. It is inert on a client whose mirror IS the mailbox. */
                 older={older}
+                onMarkAllRead={markAllRead}
               />
             ) : null}
 
@@ -3227,6 +3240,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 jumpTo={jump?.view === "reads" ? jump.id : null}
                 onJumped={() => setJump(null)}
                 onAction={onStreamAction}
+                onMarkAllRead={markAllRead}
               />
             ) : null}
 
@@ -3245,6 +3259,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 jumpTo={jump?.view === "receipts" ? jump.id : null}
                 onJumped={() => setJump(null)}
                 onAction={onStreamAction}
+                onMarkAllRead={markAllRead}
               />
             ) : null}
 
@@ -3396,6 +3411,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
+                onMarkAllRead={markAllRead}
               />
             ) : null}
 

@@ -7,6 +7,16 @@
 .vhead{display:flex;align-items:baseline;gap:12px;padding:22px 30px 14px;flex-wrap:wrap}
 .vhead h1{font-size:26px;font-weight:600;letter-spacing:-.025em;margin:0}
 .vhead .meta{font-size:12px;color:var(--ink3)}
+/* A quiet, far-right header control (e.g. "Mark all read"). Muted like the meta count until
+   hover, so it does not compete with the title. */
+.vhead-action{margin-left:auto;align-self:center}
+.mark-all-read{
+  appearance:none;border:0;background:transparent;font:inherit;font-size:12px;
+  color:var(--ink3);padding:4px 9px;border-radius:7px;cursor:pointer;
+  transition:color .12s ease, background .12s ease;
+}
+.mark-all-read:hover{color:var(--accent);background:var(--accent-soft)}
+.mark-all-read:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 /* 132px of this was clearance for a capsule that floated over the bottom of every view. The
    capsule is a group at the foot of the rail now (`.rail-dock`), so nothing overlaps the end of
    the list and the only thing left to reserve is the full falloff of the last row's shadow. */

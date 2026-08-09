@@ -22,6 +22,7 @@ import {
   MessageRow,
   Waterline,
 } from "@ohmail/ui";
+import { MarkAllRead } from "../components/MarkAllRead";
 import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
@@ -54,6 +55,7 @@ export function ReadsView({
   jumpTo,
   onJumped,
   onAction,
+  onMarkAllRead,
 }: {
   partition: ReadsPartition;
   tags: TagDTO[];
@@ -82,6 +84,13 @@ export function ReadsView({
    * the one thing a reading surface must never show.
    */
   onAction?: (action: MessageAction, message: EngineMessage) => void;
+  /**
+   * Mark the whole Reads pile read, chunked, via the shell. Distinct from `markSeen`, which
+   * is the per-message dwell writer, and from the `feed_mark_seen` waterline: this flips exactly
+   * the unread ids handed to it, folder-agnostically. Optional, since this view mounts without a
+   * shell in tests.
+   */
+  onMarkAllRead?: (ids: string[]) => void;
 }) {
   const t = useTranslations("reads");
   const tb = useTranslations("body");
@@ -317,6 +326,14 @@ export function ReadsView({
       <ListPane
         title={t("title")}
         meta={t("meta", { count: unreadCount })}
+        action={
+          onMarkAllRead ? (
+            <MarkAllRead
+              unreadCount={unreadCount}
+              onMarkAllRead={() => onMarkAllRead(all.filter((m) => m.unread).map((m) => m.id))}
+            />
+          ) : null
+        }
         onSeen={seenMark}
         scrollerRef={listScrollerRef}
         /* Re-scan the seen-on-scroll observer as the window slides — a row that mounts on scroll

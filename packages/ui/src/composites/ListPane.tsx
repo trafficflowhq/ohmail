@@ -6,6 +6,8 @@ export interface ListPaneProps {
   title: string;
   /** Right of the title — "4 unread of 9". */
   meta?: string;
+  /** A quiet header control, aligned to the far right of the title row — e.g. "Mark all read". */
+  action?: ReactNode;
   /** Between header and scroller (doorbell, segmented control, bulk bar). */
   header?: ReactNode;
   /** Scroller content: rows, group labels, waterline, footers. */
@@ -46,6 +48,7 @@ export interface ListPaneProps {
 export function ListPane({
   title,
   meta,
+  action,
   header,
   children,
   hints,
@@ -73,6 +76,7 @@ export function ListPane({
       <div className="vhead">
         <h1>{title}</h1>
         {meta ? <span className="meta num">{meta}</span> : null}
+        {action ? <span className="vhead-action">{action}</span> : null}
       </div>
       {header}
       <div className="scroller" ref={ref}>

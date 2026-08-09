@@ -4,6 +4,10 @@
     "description": "The ohmail client — consent-first email on the mailboxes you already own.",
     "ogAlt": "The ohmail app icon — a lowercase \"oh.\" on the canvas tile"
   },
+  "markAll": {
+    "label": "Mark all read",
+    "aria": "Mark all {count} unread messages read"
+  },
   "ribbon": {
     "label": "<b>Demo.</b> Invented mail. Nothing leaves this tab.",
     "dismiss": "Dismiss"
