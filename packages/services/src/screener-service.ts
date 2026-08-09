@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import {
   messages,
   folderState,
+  flagState,
   contacts,
   rules as rulesTbl,
   routingDecisions,
@@ -63,6 +64,31 @@ const NO_FOLDER: Destination = "ohmail/Screened";
  */
 const DECIDABLE_FOLDERS: ReadonlySet<string> = new Set<Destination>([
   YES_FOLDER, "ohmail/Reads", "ohmail/Receipts", NO_FOLDER, "ohmail/Quarantine",
+]);
+
+/**
+ * ── THE TWO "NO" DESTINATIONS WHOSE MAIL A DECISION MARKS READ, AND THE SAFETY LINE ─────────
+ *
+ * A screen-out (`ohmail/Screened`) or a spam press (`ohmail/Quarantine`) is the user saying they
+ * are done with this sender, so the mail they dismissed should not sit unread on the server for
+ * ever. This set is exactly those two folders, and its membership IS the safety boundary
+ * itself: `INBOX`, `ohmail/Reads` and `ohmail/Receipts` are ADMITTED mail and their read
+ * state is never touched here — admitting a sender is not reading their backlog — and
+ * `ohmail/Screener` is not a {@link DECIDABLE_FOLDERS} member at all, so mail still waiting at the
+ * gate for a decision can never be pre-read (which would hide that it needs the user's attention).
+ *
+ * The `\Seen` write is ADDITIVE and reversible: this records `flag_state.desired_seen = true`
+ * (`last_set_by = 'us'`, so it is distinguishable from the mailbox's own state and reversible by
+ * `scripts/undo-runaway-reads.mjs`), and the worker's `reconcileFlags` (`apps/worker/src/sync.ts`)
+ * adds `\Seen` on the real server. No move, no delete, no flag is ever REMOVED by this.
+ *
+ * It equals `decision === "no"` today — the consent gate refuses any other pairing — but is
+ * expressed as folder membership so a future destination cannot silently inherit a read-mark by
+ * being wired to a `no`. The same shape, for the same reason, as the membership-first check in
+ * `DECIDABLE_FOLDERS`.
+ */
+const MARK_READ_ON_DECIDE: ReadonlySet<string> = new Set<Destination>([
+  NO_FOLDER, "ohmail/Quarantine",
 ]);
 
 /**
@@ -401,6 +427,13 @@ interface ScreenerRow {
   observedFolder: string;
   nativeLocator: NativeLocator;
   updatedAt: Date;
+  /**
+   * The server's current `\Seen` as the mirror last recorded it, `!unread`. Read by `decide`'s
+   * read-mark step to seed `flag_state.observed_seen` on the INSERT branch — held mail has no
+   * `flag_state` row at ingest, so a wrong observed value would queue a needless (idempotent) IMAP
+   * STORE. Not surfaced to any list; the DTO does not carry it.
+   */
+  unread: boolean;
 }
 
 /**
@@ -423,13 +456,13 @@ const HELD_COLUMNS = {
   messageId: messages.id, threadId: messages.threadId, fromAddress: messages.fromAddress,
   subject: messages.subject, snippet: messages.snippet, date: messages.date,
   nativeLocator: messages.nativeLocator, observedFolder: folderState.observedFolder,
-  updatedAt: messages.updatedAt,
+  updatedAt: messages.updatedAt, unread: messages.unread,
 } as const;
 
 function toScreenerRow(r: {
   messageId: string; threadId: string | null; fromAddress: string; subject: string;
   snippet: string; date: Date | null; nativeLocator: unknown; observedFolder: string;
-  updatedAt: Date;
+  updatedAt: Date; unread: boolean;
 }): ScreenerRow {
   return {
     messageId: r.messageId,
@@ -441,6 +474,7 @@ function toScreenerRow(r: {
     observedFolder: r.observedFolder,
     nativeLocator: (r.nativeLocator as NativeLocator | null) ?? { folder: r.observedFolder, ref: "0:0" },
     updatedAt: r.updatedAt,
+    unread: r.unread,
   };
 }
 
@@ -775,6 +809,44 @@ export class ScreenerReadService {
           accountId: ctx.accountId, entityType: "message", entityId: m.messageId, op: "move",
           meta: { from: m.observedFolder, to: appliedFolder },
         });
+
+        // ── A SCREEN-OUT OR SPAM PRESS MARKS THE MAIL READ, IN THIS SAME TRANSACTION ─────────
+        //
+        // Only the two "no" destinations qualify — see {@link MARK_READ_ON_DECIDE} for why this
+        // is a folder-membership check and not `decision === "no"`, and for the safety boundary
+        // it draws. ADDITIVE: `desired_seen = true` is a `\Seen` to ADD, never a flag to remove,
+        // and the worker's `reconcileFlags` applies it on the real server — the API opens no IMAP.
+        //
+        // Shape mirrors `MessageService.upsertDesiredSeen`: `observed_seen` is supplied only on
+        // the INSERT (held mail has no `flag_state` row at ingest — `pipeline.ts` writes only
+        // `folder_state`), and on the UPDATE it is deliberately omitted so the worker's observed
+        // truth is preserved and `reconcile_status` is recomputed in SQL against the STORED value.
+        // A `\Seen` already on the server ⇒ `reconciled`, no needless STORE.
+        if (MARK_READ_ON_DECIDE.has(appliedFolder)) {
+          await tx.insert(flagState).values({
+            messageId: m.messageId, desiredSeen: true, observedSeen: !m.unread,
+            lastSetBy: "us", reconcileStatus: m.unread ? "pending" : "reconciled", conflict: false,
+          }).onConflictDoUpdate({
+            target: flagState.messageId,
+            set: {
+              desiredSeen: true, lastSetBy: "us", conflict: false, updatedAt: ctx.now(),
+              reconcileStatus: sql`case when ${flagState.observedSeen} = true then 'reconciled' else 'pending' end`,
+            },
+          });
+          // The mirror the client renders. `unread` is written by the API at mark-read time, never
+          // by the reconciler (see `scripts/undo-runaway-reads.mjs`), so without this the lists
+          // would still show the dismissed mail bold. `last_read_at` tracks the flag, as
+          // `MessageService.markSeen` does, so the two read-paths file identically in "Earlier".
+          await tx.update(messages)
+            .set({ unread: false, lastReadAt: ctx.now(), updatedAt: ctx.now() })
+            .where(and(eq(messages.id, m.messageId), eq(messages.accountId, ctx.accountId)));
+          // The read-state delta the client applies — `op: "update"`, the same contract
+          // `markSeen` emits for a read change. Distinct from the `move` above: one says where the
+          // mail went, this says it is no longer unread.
+          lastSeq = await recordChange(tx, {
+            accountId: ctx.accountId, entityType: "message", entityId: m.messageId, op: "update", meta: null,
+          });
+        }
       }
 
       await this.learning.recordOn(tx, ctx.accountId, {
@@ -1137,7 +1209,7 @@ export class ScreenerService extends ScreenerReadService {
    * thousand senders — a four-figure spend one malformed body away. Absent evidence must not
    * select the expensive branch.
    *
-   * ## AI-OPEN — THE OWNER'S RULING OF 2026-08-08, AND WHAT IT REPLACED
+   * ## AI-OPEN — THE CURRENT RULING, AND WHAT IT REPLACED
    *
    * "There is not one single message for AI to not read justified… scan everything and remove the
    * exceptions; if someone wants to use AI, they can, if not, they won't."
