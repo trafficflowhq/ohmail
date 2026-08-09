@@ -1530,7 +1530,19 @@
     "toastRevokeFailed": "Couldn't revoke that rule. It's still in place.",
     "toastRetargeted": "New mail matching this rule will go to {place}.",
     "toastRetargetQueued": "Change queued — it'll go through when you're back online.",
-    "toastRetargetFailed": "Couldn't change that rule. Nothing has changed."
+    "toastRetargetFailed": "Couldn't change that rule. Nothing has changed.",
+    "search": "Search by sender or domain",
+    "searchLabel": "Search rules",
+    "facetLabel": "Show rules that file into",
+    "facetAll": "All",
+    "noMatch": "No rules match.",
+    "bulkRevoke": "Revoke {count, plural, one {the rule shown} other {all # shown}}",
+    "bulkRevokeExplain": "This stops {count, plural, one {this rule} other {these # rules}} deciding new mail. Mail it already filed stays where it is.",
+    "bulkRevokeConfirm": "Revoke {count, plural, one {# rule} other {# rules}}",
+    "bulkToastRevoked": "{count, plural, one {# rule} other {# rules}} revoked. Your mail hasn't moved.",
+    "bulkToastQueued": "Revokes queued — they'll go through when you're back online.",
+    "bulkToastPartial": "Revoked {ok} of {count}. The rest are still in place.",
+    "bulkToastFailed": "Couldn't revoke those rules. Nothing has changed."
   },
   "drafts": {
     "title": "Drafts",

@@ -1,0 +1,65 @@
+/* rules — a management surface: search, destination facets, a windowed list and one
+   action region. It lives inside a settings pane (.set-pane, lift-1), so nothing here
+   is a raised card: controls are pills, the confirm is a flat tinted well, and the list
+   is a plain overflow region. No card inside a card. */
+
+.rules-view .set-note-inline{padding-top:0}
+
+/* toolbar — search, facets, bulk trigger. Wraps to a column on a narrow pane. */
+.rules-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 0 12px}
+
+/* search — the product's search pill, but inset rather than lifted: a raised pill inside a
+   raised pane reads as a card in a card. */
+.rules-search{display:flex;align-items:center;gap:9px;flex:1 1 220px;min-width:0;
+  border-radius:99px;padding:8px 15px;background:var(--tint);
+  box-shadow:inset 0 0 0 1px var(--hair);transition:box-shadow .18s var(--swift)}
+.rules-search:focus-within{box-shadow:inset 0 0 0 1.5px var(--accent-hair)}
+.rules-search svg{color:var(--ink3);flex:none}
+.rules-search input{flex:1;border:0;background:none;font:inherit;font-size:13px;min-width:0;color:inherit}
+.rules-search input:focus{outline:none}
+.rules-search input::placeholder{color:var(--ink3)}
+/* drop the WebKit search decorations — the native clear glyph is a second, unstyled control */
+.rules-search input::-webkit-search-decoration,
+.rules-search input::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}
+
+/* facets — capsule filter buttons; the active one carries the accent tint */
+.rules-facets{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.rules-facets button{font-size:11.5px;font-weight:550;color:var(--ink2);border-radius:99px;
+  padding:5px 12px;background:var(--tint);transition:background .16s var(--swift),color .16s var(--swift)}
+.rules-facets button:hover{color:var(--ink)}
+.rules-facets button.on{background:var(--accent-soft);color:var(--accent-ink)}
+
+/* bulk trigger — pushed to the trailing edge; the count of rules it will act on is on the label */
+.rules-bulk{margin-left:auto;font-size:11.5px;padding:5px 12px;color:var(--accent-ink)}
+
+/* the action region — a flat tinted well, not a lifted card. Holds one confirm at a time. */
+.rules-confirm{display:grid;gap:9px;padding:14px 16px;margin:0 0 12px;border-radius:16px;
+  background:var(--accent-soft);animation:rise .18s var(--spring)}
+.rules-confirm .what{font-size:13px;font-weight:600;color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rules-confirm > span{font-size:12px;color:var(--ink2);line-height:1.45}
+.rules-confirm .acts{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+
+/* the windowed list — a bounded overflow region so long rule sets scroll in place rather than
+   pushing the note below off the pane. useListWindow reads this element's own scroll. */
+.rules-scroll{max-height:min(58vh,560px);overflow-y:auto;overscroll-behavior:contain;
+  margin:0 -6px;padding:0 6px}
+.rules-list{display:flex;flex-direction:column}
+
+/* one rule — a FIXED-height row (see RULE_ROW_PX): two ellipsised lines on the left, the
+   controls on the right. Fixed height is what lets the window reserve spacer height exactly. */
+.rules-item{display:flex;align-items:center;gap:12px;height:64px;
+  border-bottom:1px solid var(--hair-soft)}
+.rules-item .body{display:flex;flex-direction:column;gap:2px;flex:1 1 auto;min-width:0}
+.rules-item .what{font-size:13px;font-weight:600;color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rules-item .meta{font-size:11.5px;color:var(--ink3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rules-item .acts{display:flex;gap:6px;flex:none}
+.rules-view .rules-item .acts .btn,
+.rules-view .rules-confirm .btn{font-size:11.5px;padding:5px 12px}
+
+.rules-empty{font-size:12.5px;color:var(--ink3);padding:22px 4px;text-align:center}
+
+/* the standing note keeps a little air above it once a list is in play */
+.rules-view .set-note{margin-top:16px}
