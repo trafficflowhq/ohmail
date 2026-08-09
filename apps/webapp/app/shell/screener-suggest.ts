@@ -102,10 +102,45 @@ export type SuggestionOverlay = ReadonlyMap<string, SenderSuggestion>;
 
 export type SuggestPhase = "closed" | "pricing" | "ready" | "running";
 
+/**
+ * WHICH SET AN OPEN LADDER IS BOUND TO — the one thing that differs between the two ways in.
+ *
+ * `new` covers senders with no answer yet; `again` covers senders that already have one. They
+ * share every other moving part on purpose: one phase, one quote, one press counter, one chunked
+ * purchase. A second state machine for the re-ask would be a second implementation of the spend
+ * rule — a second place for a price to be shown that a purchase does not honour.
+ *
+ * The two sets are disjoint by construction (`ai == null` against `ai != null` over one queue), so
+ * a sender is never in both ladders and the mode is the whole of the difference.
+ */
+export type SuggestMode = "new" | "again";
+
 /** The control, already bound to the senders it would act on. */
 export interface SuggestBatchControl {
   /** Waiting senders with no suggestion yet — how much there is to buy. */
   available: number;
+  /**
+   * Waiting senders that ALREADY have an answer — how much there is to ask about AGAIN.
+   *
+   * Not a second kind of purchase, and not priced differently: a re-ask is quoted by the same dry
+   * run over the same endpoint, and the server prices it from what it is holding. A sender whose
+   * representative message is unchanged is already bought, so it quotes 0 and answers from the
+   * store; a sender whose newest mail arrived since is unbought, so it quotes and charges like any
+   * other. Nothing here decides which — the ledger does, and this number is only how many senders
+   * are eligible to be asked about.
+   */
+  resuggestable: number;
+  /** Which of the two sets the currently open ladder covers. `new` while nothing is open. */
+  mode: SuggestMode;
+  /**
+   * How many senders the OPEN LADDER draws from — {@link available} in `new`,
+   * {@link resuggestable} in `again`.
+   *
+   * The view's "all N" label reads this and not `available`: labelled off the buy list, a re-ask
+   * ladder over 74 senders would print "all 0" on its largest size, or print nothing at all and
+   * make the top of the ladder unidentifiable.
+   */
+  pool: number;
   /**
    * Batch sizes offered, clamped to {@link available} and to {@link MAX_SUGGEST_BATCH} — the most
    * one authorised purchase may buy. This is NOT one request's size: a chosen size larger than a
@@ -139,7 +174,17 @@ export interface SuggestBatchControl {
    * it was aiming at, or "8 of 8" would report a stopped run as a complete one.
    */
   progress: { done: number; total: number } | null;
+  /** Open the ladder over the senders with no answer yet. */
   open: () => void;
+  /**
+   * Open the SAME ladder over the senders that already have one.
+   *
+   * A separate entry point rather than a mode argument on {@link open}, because the two are
+   * different affordances on screen with different labels and different counts, and the caller
+   * that presses one must not be able to spell the other by accident. Everything after the press
+   * is the one flow: quote, confirm, progress, summary.
+   */
+  openAgain: () => void;
   choose: (size: number) => void;
   confirm: () => void;
   cancel: () => void;
@@ -205,8 +250,14 @@ export interface ScreenerSuggestions {
    * A function rather than a hook argument because the list is computed by
    * `useScreenerState`, which in turn consumes {@link suggestions}: passing it in would be a
    * cycle. Called during render, it closes over the list for the one press that follows.
+   *
+   * `resuggestable` is the OTHER half of the same queue — senders that already have an answer —
+   * and it is a second parameter rather than a second call because the two ladders share one
+   * phase, one quote and one press counter. Two calls would mint two controls over one piece of
+   * state, and both would report the other's `pricing`. Omitted ⇒ no re-ask is offered, which is
+   * what every host that does not compute the list gets.
    */
-  forSenders: (addresses: string[]) => SuggestBatchControl;
+  forSenders: (addresses: string[], resuggestable?: string[]) => SuggestBatchControl;
   /**
    * Bind the OPT-IN's quote to the same sender list.
    *
@@ -317,6 +368,15 @@ export function useScreenerSuggestions(opts: {
 
   const [suggestions, setSuggestions] = useState<SuggestionOverlay>(() => new Map());
   const [phase, setPhase] = useState<SuggestPhase>("closed");
+  /**
+   * Which set the open ladder covers. Set by whichever entry point opened it, and reset to `new`
+   * on cancel so a closed control never reports a mode nothing is bound to.
+   *
+   * It selects the sender list for `price` and `confirm`, and it selects the wording. It does NOT
+   * select a price, an endpoint or an idempotency scheme — there is one of each, and the whole
+   * point of routing the re-ask through here is that it cannot acquire a second.
+   */
+  const [mode, setMode] = useState<SuggestMode>("new");
   const [size, setSize] = useState(0);
   const [quote, setQuote] = useState<{ senders: number; credits: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -578,10 +638,18 @@ export function useScreenerSuggestions(opts: {
    * confirm button never becomes pressable. Building a small object per render is cheaper
    * than the class of bug that memoising it invites.
    */
-  const forSenders = (addresses: string[]): SuggestBatchControl => {
-    // The automatic batch's only view of the queue. A REF write during render, which is safe —
-    // it schedules nothing and changes no output — and the alternative (passing the list in as a
-    // hook argument) is the cycle this function's own docblock exists to explain.
+  const forSenders = (addresses: string[], resuggestable: string[] = []): SuggestBatchControl => {
+    // The automatic batch's only view of the queue, and it is the UNSUGGESTED list alone.
+    //
+    // Deliberately not widened to include `resuggestable` when the re-ask arrived. The automatic
+    // path spends without a press, and its entire licence is "the cost was named when the setting
+    // was turned on" — a figure quoted over the senders that have no answer yet. Feeding it a set
+    // that includes senders whose newest mail is unbought would make it spend, unpressed, on a
+    // batch nobody priced. The re-ask is a manual affordance and stays one.
+    //
+    // A REF write during render, which is safe — it schedules nothing and changes no output — and
+    // the alternative (passing the list in as a hook argument) is the cycle this function's own
+    // docblock exists to explain.
     io.current.queue = addresses;
     // One state write, the first time there is anything to buy, so the effect above gets a
     // dependency that changes when the cold mirror finally has senders in it.
@@ -591,10 +659,18 @@ export function useScreenerSuggestions(opts: {
     }
     // The ladder is bounded by the PURCHASE ceiling, not the per-request cap — a size larger than
     // one request is delivered as several requests, below.
-    const sizes = batchSizes(addresses.length, MAX_SUGGEST_BATCH);
+    //
+    // BOTH ladders are computed every render, because the entry points need them before the mode
+    // has changed. `openAgain` is pressed while `mode` is still `new`, so a single ladder read off
+    // the current mode would open the re-ask at a size taken from the buy list — the "Suggest
+    // again for 25" that quotes 3 because 25 was never in this set.
+    const newSizes = batchSizes(addresses.length, MAX_SUGGEST_BATCH);
+    const againSizes = batchSizes(resuggestable.length, MAX_SUGGEST_BATCH);
+    // The set the OPEN ladder acts on. Every slice below — price, confirm, the size labels — comes
+    // from here, so the set that is quoted and the set that is bought are one list.
+    const target = mode === "again" ? resuggestable : addresses;
+    const sizes = mode === "again" ? againSizes : newSizes;
     const chosen = sizes.includes(size) ? size : (sizes[sizes.length - 1] ?? 0);
-    // The largest size on the ladder — the default the control opens to.
-    const cap = sizes[sizes.length - 1] ?? 0;
 
     /**
      * ONE request carries at most this many senders — the LOWER of the latency budget
@@ -615,20 +691,30 @@ export function useScreenerSuggestions(opts: {
     };
 
     /**
-     * Price `n` senders on the SERVER. No model, no debit, nothing stored.
+     * Price the first `n` of `from` on the SERVER. No model, no debit, nothing stored.
      *
      * The set is priced in REQUEST-SIZED chunks and the quotes are SUMMED — the same chunks the
      * purchase will use, so the number on screen is the exact ceiling the purchase honours.
      * Consent is to the sum, not to a first chunk that happened to fit one request. Every chunk
      * checks the press counter on arrival, so a size changed mid-flight discards the whole
      * half-summed price rather than painting it under the new label.
+     *
+     * `from` and `kind` are ARGUMENTS rather than reads of `target`/`mode`, and that is the whole
+     * of what makes the two entry points safe. `openAgain` calls `setMode("again")` and prices in
+     * the same handler; `mode` is still `new` in that closure, so a `price` that read it would
+     * quote the buy list and label the answer as a re-ask. The parameters are what the caller
+     * already knows for certain.
+     *
+     * A quote of ZERO is a real answer here, not an error: the server prices only what it is not
+     * already holding, so a re-ask over senders whose newest mail is unchanged is honestly free
+     * and honestly buys nothing new. `kind` picks which of those two sentences is true.
      */
-    const price = (n: number) => {
-      const set = addresses.slice(0, n);
+    const price = (n: number, from: string[], kind: SuggestMode) => {
+      const set = from.slice(0, n);
       if (set.length === 0) {
         setPhase("ready");
         setQuote({ senders: 0, credits: 0 });
-        setNotice(t("suggest.nothing"));
+        setNotice(t(kind === "again" ? "suggest.nothingAgain" : "suggest.nothing"));
         return;
       }
       // Captured ONCE. Never re-bumped inside the loop — a per-chunk bump would make each chunk
@@ -672,26 +758,48 @@ export function useScreenerSuggestions(opts: {
         if (io.current.run !== run) return;
         setPhase("ready");
         setQuote({ senders, credits });
-        setNotice(senders === 0 ? t("suggest.nothing") : null);
+        setNotice(
+          senders === 0 ? t(kind === "again" ? "suggest.nothingAgain" : "suggest.nothing") : null,
+        );
       })();
+    };
+
+    /**
+     * Open one of the two ladders: pick a size on it, and price that.
+     *
+     * A size chosen earlier survives a cancel and a re-open — but only onto the ladder it was
+     * chosen on. Carried across a MODE SWITCH it would be a number that means something else:
+     * "25" picked off a buy list of 400 lands on a re-ask ladder of [10, 12] as either a
+     * pressed-looking button that is not there, or a slice of a different set than the one the
+     * label named. Switching sets therefore always opens at that set's largest size, which is
+     * the "all N" a person pressing "Suggest again…" is asking for anyway.
+     */
+    const openOn = (kind: SuggestMode, from: string[], ladder: number[]) => {
+      const keep = kind === mode && ladder.includes(size);
+      const start = keep ? size : (ladder[ladder.length - 1] ?? 0);
+      setMode(kind);
+      setSize(start);
+      price(start, from, kind);
     };
 
     return {
       available: addresses.length,
+      resuggestable: resuggestable.length,
+      mode,
+      pool: target.length,
       sizes,
       size: chosen,
       phase,
       quote,
       notice,
       progress,
-      open: () => {
-        const start = sizes.includes(size) ? size : cap;
-        setSize(start);
-        price(start);
-      },
+      open: () => openOn("new", addresses, newSizes),
+      openAgain: () => openOn("again", resuggestable, againSizes),
       choose: (n: number) => {
         setSize(n);
-        price(n);
+        // `target`/`mode` and not arguments here: `choose` is only reachable from an open ladder,
+        // so the render that drew the button it was pressed on already settled the mode.
+        price(n, target, mode);
       },
       cancel: () => {
         io.current.run++;
@@ -699,6 +807,9 @@ export function useScreenerSuggestions(opts: {
         setQuote(null);
         setNotice(null);
         setProgress(null);
+        // Back to the ordinary ladder. A closed control that still reported `again` would draw the
+        // re-ask's wording over the next press, whichever button opened it.
+        setMode("new");
       },
       /**
        * Buy the chosen set — in REQUEST-SIZED chunks, halting on the first that stops or fails.
@@ -721,7 +832,10 @@ export function useScreenerSuggestions(opts: {
        *    sum that was quoted.
        */
       confirm: () => {
-        const set = addresses.slice(0, chosen);
+        // THE SET THE OPEN LADDER QUOTED, whichever it is. Sliced from `target` and not from
+        // `addresses`, or a confirmed re-ask would buy the front of the buy list — a purchase over
+        // senders the price on screen never covered.
+        const set = target.slice(0, chosen);
         if (set.length === 0 || phase === "running") return;
         const run = ++io.current.run;
         const total = set.length;

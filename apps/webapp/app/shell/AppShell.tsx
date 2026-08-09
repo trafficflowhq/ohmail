@@ -3230,10 +3230,18 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    Read off `autoOptIn.supported` rather than by calling `apiConfigured()` here,
                    so "is there a server to ask" has ONE answer in this file and this shared
                    shell keeps its standing rule of not importing the Cloud API client. */
+                /* BOTH HALVES OF THE QUEUE, and the second one is why the control no longer
+                   vanishes on a worked account. `unsuggestedSenders` is what a purchase buys;
+                   `suggestedSenders` is what a re-ask covers, and it is the count the resting
+                   state states. Bound at the same render for the same reason the first is —
+                   the set that gets priced and the set that gets bought are one list. */
                 suggest={
                   demo || !autoOptIn.supported || screenerSuggest
                     ? undefined
-                    : suggestions.forSenders(screener.unsuggestedSenders)
+                    : suggestions.forSenders(
+                        screener.unsuggestedSenders,
+                        screener.suggestedSenders,
+                      )
                 }
                 /* THE HOST'S OWN CONTROL, when it has one — see the prop's declaration. It is
                    bound to the same list and lands its answers in the same overlay, so the

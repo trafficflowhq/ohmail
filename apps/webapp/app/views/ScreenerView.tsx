@@ -221,23 +221,66 @@ function BulkProgress({ done, total }: { done: number; total: number }) {
  * first-time senders; "suggest for all of them" behind one press is a spend nobody can picture
  * in advance. Sizes come from the state, already clamped to what one request may carry, and
  * the largest is always "everything you could buy in one go" so the common case is one press.
+ *
+ * ── AND IT DOES NOT VANISH WHEN THERE IS NOTHING LEFT TO BUY ──────────────────────────────
+ *
+ * This function began `if (control.available === 0) return null`, which is the hide the whole
+ * of the AI surface used on a worked queue: an account with 74 answered senders and none
+ * outstanding had no suggest control, no mention of suggestions, nothing — indistinguishable
+ * from a build where the feature was never wired up. The chips and the apply banner were still
+ * there, but they act on advice; nothing on screen said where advice comes from or that this
+ * account had already got all of it.
+ *
+ * So the empty buy list now RESTS rather than disappears. It states the number of senders that
+ * have an answer, and it offers the one action that is still true — asking again — which is the
+ * same ladder, the same dry run and the same confirm, over the other half of the queue.
+ *
+ * The only case that still renders nothing is nothing to buy AND nothing to re-ask, which is an
+ * empty gate. The list beside this already says "No one's waiting."; a sentence here about zero
+ * senders having zero suggestions would be a second, worse way to say it.
  */
 function SuggestControl({ control }: { control: SuggestBatchControl }) {
   const t = useTranslations("screener");
-  if (control.available === 0) return null;
+  const again = control.mode === "again";
+  if (control.available === 0 && control.resuggestable === 0) return null;
 
   if (control.phase === "closed") {
     return (
-      <Button variant="ghost" onClick={control.open}>
-        {t("suggest.open")}
-      </Button>
+      <div className="scn-sg-rest">
+        {control.available === 0 ? (
+          // THE RESTING STATE — a fact, not a control. `role="status"` because it replaces a
+          // button in place when the last sender is answered for, and a surface that changes
+          // from an action to a sentence under a keyboard user's cursor has to say so.
+          <span className="scn-sg-all" role="status">
+            {t("suggest.allSuggested", { count: control.resuggestable })}
+          </span>
+        ) : (
+          <Button variant="ghost" onClick={control.open}>
+            {t("suggest.open")}
+          </Button>
+        )}
+        {/* Offered whenever there is anything to ask about again — beside the buy control while
+            the queue is mixed, alone once it is worked through. Its own affordance and not a
+            branch of the one to its left, for the reason the buy and apply controls are separate:
+            they are different acts. Pressing it enters the same quote → confirm → progress flow,
+            so nothing here can spend before the server has named a figure. */}
+        {control.resuggestable > 0 ? (
+          <Button variant="ghost" onClick={control.openAgain}>
+            {t("suggest.again")}
+          </Button>
+        ) : null}
+      </div>
     );
   }
 
   const busy = control.phase === "pricing" || control.phase === "running";
   return (
-    <div className="scn-suggest" role="group" aria-label={t("suggest.aria")}>
-      <span className="scn-sg-lab">{t("suggest.label")}</span>
+    <div
+      className="scn-suggest"
+      role="group"
+      aria-label={t(again ? "suggest.ariaAgain" : "suggest.aria")}
+    >
+      <span className="scn-sg-lab">{t(again ? "suggest.labelAgain" : "suggest.label")}</span>
       <div className="scn-sg-sizes">
         {control.sizes.map((n) => (
           <button
@@ -248,7 +291,10 @@ function SuggestControl({ control }: { control: SuggestBatchControl }) {
             disabled={control.phase === "running"}
             onClick={() => control.choose(n)}
           >
-            {n === control.available ? t("suggest.sizeAll", { count: n }) : n}
+            {/* `pool` and not `available`: the top of a re-ask ladder is "all 74 of the senders
+                that already have an answer", and read off the buy list that label would be
+                attached to the wrong number or to no size at all. */}
+            {n === control.pool ? t("suggest.sizeAll", { count: n }) : n}
           </button>
         ))}
       </div>
@@ -276,8 +322,15 @@ function SuggestControl({ control }: { control: SuggestBatchControl }) {
         {/* THE SERVER'S COUNT WHEN THERE IS ONE, the chosen size only while the price is still
             unknown — and the button is unpressable in exactly that window. A label built from
             `size` alone would say "Suggest for 25 senders" over a quote of 12, which is the
-            control naming one number and spending against another. */}
-        {t("suggest.confirm", { n: control.quote?.senders ?? control.size })}
+            control naming one number and spending against another.
+
+            On the re-ask that gap is the ordinary case rather than a race: the server prices only
+            what it is not already holding, so a ladder of 74 routinely quotes 3. "Suggest again
+            for 3 senders" over a chosen 74 is the truth — those three are the ones with new mail,
+            and the other 71 answer from what was already bought. */}
+        {t(again ? "suggest.confirmAgain" : "suggest.confirm", {
+          n: control.quote?.senders ?? control.size,
+        })}
       </Button>
       <Button variant="ghost" disabled={control.phase === "running"} onClick={control.cancel}>
         {t("suggest.cancel")}

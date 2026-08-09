@@ -153,6 +153,19 @@ export interface ScreenerState {
    */
   unsuggestedSenders: string[];
   /**
+   * The waiting senders that ALREADY have a suggestion, in the queue's own order — the batch a
+   * re-ask would be composed from, and the count the resting state states.
+   *
+   * The complement of {@link unsuggestedSenders} within the set the server can speak for, and
+   * never within the whole queue: see the derivation for why every eligibility filter is repeated
+   * here instead of subtracting one list from another.
+   *
+   * It exists because a Screener whose every sender has been answered for used to render no AI
+   * surface at all — the buy control hid itself on an empty buy list, and "there is nothing left
+   * to buy" and "this feature is not here" looked identical.
+   */
+  suggestedSenders: string[];
+  /**
    * HOW FAR A BULK IS THROUGH ITS OWN QUEUE — `null` unless one is running.
    *
    * `applyAll` and `markAllSpam` do not decide forty rows in one frame. Every row is dispatched
@@ -604,6 +617,28 @@ export function useScreenerState(
         .map((x) => senderKey(x.from.address)),
     ),
   ];
+  /**
+   * THE RE-ASK LIST — the same buyable set, on the other side of `ai == null`.
+   *
+   * Every filter above is repeated deliberately rather than computed as "waiting minus
+   * unsuggested": `derived` and `gatePhysical` are facts about whether the SERVER can speak for
+   * this sender at all, and they are as true of a sender who already has an answer as of one who
+   * does not. A complement taken over the whole queue would put fixture rows and past-the-gate
+   * rows into a batch the endpoint can only answer `not_held` for — the exact loop #116 removed
+   * from the buy list, re-created on the re-ask path.
+   *
+   * `ai != null` and NOT `suggestedRows`' predicate: that set drops `screener` and `spam` because
+   * they are destinations a bulk APPLY refuses to act on. A sender the model declined to place, or
+   * one a run could not answer for, is not un-re-askable — it is the case with the most to gain
+   * from being asked again once their next mail arrives.
+   */
+  const suggestedSenders = [
+    ...new Set(
+      undecided
+        .filter((x) => x.derived === true && x.ai != null && x.gatePhysical !== false)
+        .map((x) => senderKey(x.from.address)),
+    ),
+  ];
 
   const bulk = (
     destOf: (x: ScreenerSenderDTO) => DecisionDestination,
@@ -843,6 +878,7 @@ export function useScreenerState(
     suggestedCount,
     suggestedDests,
     unsuggestedSenders,
+    suggestedSenders,
     applying: s.applying,
     screenedOut: segments.screenedOut,
     spam,
