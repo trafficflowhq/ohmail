@@ -390,8 +390,8 @@ export function SettingsView({
    * THE MAILBOXES PANE — HOST-SUPPLIED, ON EVERY SURFACE, and it names its own mode.
    *
    * There is no mirror fallback any more. This pane used to fall back to
-   * `reader.list<MailboxEntity>("mailbox")`, but `"mailbox"` is not a `/sync` entity
-   * (`packages/db/src/change-log.ts`), so `/sync` never emits one and the list was empty for
+   * `reader.list<MailboxEntity>("mailbox")`, but `"mailbox"` is not one of the entity types the
+   * `/sync` change feed carries, so `/sync` never emits one and the list was empty for
    * every real account — the built-tested-unreachable branch this slice deletes rather than
    * layers over. Both surfaces now bring the real list from `GET /mailboxes`: the Cloud client
    * from `(product)/mailbox/MailboxSection` through `app/api-client`, the desktop shell from the
