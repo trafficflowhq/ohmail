@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { StaticKeyProvider, type KeyProvider } from "@trafficflow/core/mail";
 import {
@@ -125,9 +125,64 @@ export interface CloudSidecar {
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+/** The file recording which hosted address this cloud mirror was bootstrapped for. */
+export const MIRROR_OWNER_FILE = "mirror-owner";
+
+/**
+ * ONE MIRROR, ONE ACCOUNT — enforced before the database is opened.
+ *
+ * The cloud mirror's directory is keyed by MODE, not by account: `src-tauri/src/config.rs`
+ * derives `engine-cloud/` from the door alone and DELIBERATELY FREEZES it across a switch. And
+ * `identity.ts`'s `ensureLocalWorld` reuses the single local `accounts` row for every address it
+ * is ever asked for — the reads the shell issues scope by that one `accountId`. Put those two
+ * facts together and re-pointing the cloud door at a DIFFERENT hosted address reopens a database
+ * still holding the previous account's mail, under the very `accountId` the new session reads by,
+ * so the previous account's messages render in the new account's Ohbox and Screener.
+ *
+ * That is not hypothetical. A mirror that had been bootstrapped against a different account's
+ * mailbox went on rendering that account's messages after the door was re-pointed — a signed-in
+ * account showing another mailbox's mail, which is the worst failure shape this product has.
+ *
+ * The mirror is a CACHE and the hosted account is master, so the only correct response to a
+ * change of owner is to throw the cache away and re-bootstrap clean — never to reconcile two
+ * accounts in one database. The sealed session and the sync cursor belong to the OLD account too,
+ * so they are discarded with it; the next launch establishes a session for the new address and
+ * bootstraps from `since=0`.
+ *
+ * Called BEFORE {@link openLocalDb}, so nothing holds the files being removed. Idempotent: a
+ * launch whose owner matches — every ordinary relaunch — removes nothing and only rewrites the
+ * same marker. An install that predates this marker (a `pgdata` with no owner file) is ADOPTED as
+ * the current address rather than wiped: its owner is unknowable in retrospect, and the common
+ * case is that it already belongs to the address now being served; the guarantee this makes is
+ * forward — no future owner change can mix two accounts.
+ *
+ * @returns whether a foreign mirror was discarded — for the log line and the test, nothing reads it.
+ */
+export function enforceMirrorOwner(dataDir: string, address: string, log?: Diagnostic): boolean {
+  const served = address.trim().toLowerCase();
+  const ownerPath = join(dataDir, MIRROR_OWNER_FILE);
+  const prior = existsSync(ownerPath) ? readFileSync(ownerPath, "utf8").trim().toLowerCase() : null;
+  const foreign = prior !== null && prior !== served;
+  if (foreign) {
+    // The database, its cursor and the previous account's sealed session are all stale. Remove
+    // them so the new account bootstraps from empty rather than inheriting a stranger's mail.
+    for (const stale of ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"]) {
+      rmSync(join(dataDir, stale), { recursive: true, force: true });
+    }
+    log?.("cloud_mirror_reset_on_owner_change", { prior, served });
+  }
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(ownerPath, served, { mode: 0o600 });
+  return foreign;
+}
+
 export async function createCloudSidecar(config: CloudSidecarConfig): Promise<CloudSidecar> {
   const log = config.log;
   const now = config.now ?? ((): Date => new Date());
+
+  // The mirror belongs to exactly one hosted account; discard it whole if the served address has
+  // changed. Must run before the database is opened — see {@link enforceMirrorOwner}.
+  enforceMirrorOwner(config.dataDir, config.address, log);
 
   const opened: OpenLocalDb = await openLocalDb(config.dataDir);
   try {
