@@ -79,11 +79,11 @@
  */
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
-import type { EngineMessage } from "@ohmail/client-engine";
+import { isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
 import { MessageBody } from "../components/MessageBody";
 import { BodyText } from "./BodyText";
 import { displayTime, rowAddress, senderName } from "./format";
-import { useMessageChrome } from "./message-chrome";
+import { useBodyStalled, useMessageChrome } from "./message-chrome";
 
 /**
  * A subject with its reply prefixes stripped, case-folded — used ONLY to decide whether an
@@ -142,6 +142,25 @@ export function ConversationEntries({
    * This component renders what it is given and asks for nothing.
    */
 
+  /**
+   * ── ONE CLOCK FOR THE WHOLE THREAD, BECAUSE THERE WAS ONE REQUEST ───────────────────────
+   *
+   * `MessagePane` hydrates the conversation through a single `hydrateThread`, so every sibling
+   * still waiting has been waiting since the same instant and a per-sibling timer would be N
+   * copies of one fact. `waiting` stays true while ANY of them is unresolved, which is the
+   * correct reading: the clock runs from the first one and is not restarted by siblings landing
+   * one at a time.
+   *
+   * Keyed on the ids so opening another conversation starts a fresh clock rather than inheriting
+   * the last one's. See {@link useBodyStalled} for why the sentence needs a bound at all.
+   */
+  const waiting = messages.some((m) => {
+    if (isProtectedMessage(m)) return false;
+    const s = chrome.bodyOf(m).state;
+    return s === "loading" || s === "snippet";
+  });
+  const stalled = useBodyStalled(messages.map((m) => m.id).join(","), waiting);
+
   if (messages.length === 0) return null;
   const alreadySaid = threadSubject ? subjectKey(threadSubject) : null;
 
@@ -152,8 +171,29 @@ export function ConversationEntries({
          * DECIDED FIRST, AND NO BODY IS CONSULTED INSIDE IT. The same expression `MessagePane`
          * uses for the focused message, and it is checked before `bodyOf` is called at all, so a
          * protected sibling renders its label and no content whatever the mirror happens to hold.
+         *
+         * ── AND IT IS `isProtectedMessage`, NOT `m.protected` — WHICH IS THE WHOLE DEFECT ─────
+         *
+         * `protected` is the FIXTURE world's display extra; only `FixturesAdapter` ever writes
+         * it, and `types.ts` says so in as many words. On a live account the signal is
+         * `sensitivity.sensitive`, so this expression was FALSE for every protected message a
+         * real reader has ever had — while `OhmailEngine.hydrateBody`, which decides on
+         * `isProtectedMessage`, was refusing to fetch those same messages' bodies. The two
+         * halves disagreed, and the shape of the disagreement was an eternal spinner: no
+         * request is ever made, so no `message_body` record is ever written, so `bodyOf`
+         * answers `snippet` for ever, and the branch below renders `snippet` as "still coming".
+         * AND THE SERVER WAS NEVER PART OF IT, which is checkable from the route rather than
+         * from any one message: `GET /messages/:id/body` is `cost: "read"`, one indexed row, and
+         * holds no IMAP slot — the same cost class `BODY_FETCH_TIMEOUT_MS` (client-engine's
+         * `http-adapter.ts`) reasons about when it argues that this route answers in well under a
+         * second whenever the server is answering at all. A body that never arrives here was
+         * never requested.
+         *
+         * Reading the same predicate the engine decides on is what keeps the surface's sentence
+         * true about the engine's behaviour. `screener-state.ts` already did this; these two
+         * reader surfaces did not.
          */
-        const isProtected = m.protected != null;
+        const isProtected = isProtectedMessage(m);
         const body = isProtected ? null : chrome.bodyOf(m);
         return (
           <article key={m.id} className="hmail" data-conv-id={m.id}>
@@ -211,10 +251,11 @@ export function ConversationEntries({
                     defect, and "still coming" is the honest thing to say about it.
                     `failed` carries the way out — the pane's own dead end, reached from the
                     other side. */}
-                {body.state === "loading" || body.state === "snippet" ? (
+                {!stalled && (body.state === "loading" || body.state === "snippet") ? (
                   <p className="hm-state">{tb("loading")}</p>
                 ) : null}
-                {body.state === "failed" ? (
+                {body.state === "failed" ||
+                (stalled && (body.state === "loading" || body.state === "snippet")) ? (
                   <p className="hm-state warn">
                     {tb("failed")}{" "}
                     <Button variant="ghost" onClick={() => hydrateBody(m.id, { retry: true })}>

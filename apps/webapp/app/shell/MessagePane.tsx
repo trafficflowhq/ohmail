@@ -7,7 +7,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { FOLDER_OF_VIEW, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, isProtectedMessage, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, Icon, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
 import { AttachmentStrip } from "../components/AttachmentStrip";
 import { isPreviewable } from "../components/AttachmentPreview";
@@ -16,7 +16,7 @@ import { ConversationEntries, ConversationHead } from "./Conversation";
 import { PLACE_LABEL, avatarHue, dayNine, dayValue, displayTime, hueOf, initialsOf, metaLine, nextWeekNine, rowAddress, senderName, tagsOfMessage, tomorrowNine } from "./format";
 import { InlineReply } from "./InlineReply";
 import { chordKeys, useBinding, useKeyPress } from "./keymap";
-import { useMessageChrome } from "./message-chrome";
+import { useBodyStalled, useMessageChrome } from "./message-chrome";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import "./action-bar.css";
 
@@ -564,7 +564,14 @@ export function MessagePane({
   const addRef = useRef<HTMLSpanElement>(null);
   /** The conversation stack, so the pane can open at the LATEST message — see below. */
   const convRef = useRef<HTMLDivElement>(null);
-  const isProtected = message.protected != null;
+  /**
+   * `isProtectedMessage`, NOT `message.protected` — see the same decision in `Conversation.tsx`
+   * for the failure this was. `protected` is the fixture world's display extra and is absent on
+   * every live message, so this pane's protected branch had never once run against a real
+   * account; the engine meanwhile refuses to hydrate those bodies, and the pane rendered the
+   * resulting record-less `snippet` as "Loading the full message…" with no end and no control.
+   */
+  const isProtected = isProtectedMessage(message);
   const mine = tagsOfMessage(message, tags);
   const [panel, setPanel] = useState<BarPanel | null>(null);
   const chrome = useMessageChrome();
@@ -789,11 +796,22 @@ export function MessagePane({
    * case. `children` replaces `body` in `ReadingPane`, so the pane composes that slot itself
    * now, always, and the `body` prop is not passed in any case.
    */
+  /**
+   * THE FIXTURE EXTRA IS OPTIONAL HERE, AND ON A LIVE ACCOUNT IT IS ALWAYS ABSENT.
+   *
+   * `message.protected` carries demo-authored copy — a label, a redaction note, a policy
+   * sentence. It exists only in the fixture world. `ProtectedBlock` defaults all three to the
+   * same wording the live surfaces already use for this state (`ohbox.protectedPreview`,
+   * `reply.quotedProtected` — "Verification code ······ (redacted)"), so a live protected
+   * message renders the block with the product's own copy and no policy line, rather than
+   * throwing on `message.protected!` the moment this branch became reachable for real mail.
+   */
+  const extra = message.protected;
   const focusedBody = isProtected ? (
     <ProtectedBlock
-      label={message.protected!.label}
-      redactedNote={message.protected!.redactedNote}
-      policy={<ProtectedPolicy text={message.protected!.policy} />}
+      label={extra?.label}
+      redactedNote={extra?.redactedNote}
+      policy={extra ? <ProtectedPolicy text={extra.policy} /> : undefined}
     />
   ) : (
     /* A `<div>` rather than the `<p>` this was, because `BodyText` emits the paragraphs
@@ -899,8 +917,16 @@ export function MessagePane({
    * on the selected id, so without a button a single 500 leaves the body unreachable until
    * the user selects away and returns — a dead end nobody would guess the exit from.
    */
+  /**
+   * `snippet` is grouped with `loading` because both mean "not the mail yet" — see the note
+   * above. {@link useBodyStalled} is what stops that from being said for ever: past the engine's
+   * own deadline the claim is retired and the failure branch below, WITH its Retry, is shown
+   * instead. A body that arrives first clears `waiting` and the timer with it.
+   */
+  const waitingForBody = body.state === "loading" || body.state === "snippet";
+  const stalled = useBodyStalled(message.id, !isProtected && waitingForBody);
   const bodyNote =
-    isProtected || body.state === "full" ? undefined : body.state === "failed" ? (
+    isProtected || body.state === "full" ? undefined : body.state === "failed" || stalled ? (
       <>
         {tb("failed")}{" "}
         {/* `retry` because this IS a human asking again. An automatic trigger deliberately
@@ -967,7 +993,7 @@ export function MessagePane({
         </>
       }
       bodyNote={bodyNote}
-      bodyNoteFailed={body.state === "failed"}
+      bodyNoteFailed={body.state === "failed" || stalled}
       actions={
         <ActionBar
           message={message}

@@ -13,8 +13,8 @@
  * deep inside `OhboxView`, and threading five more parameters through a view that already
  * takes fifteen would make the seam harder to see, not easier.
  */
-import { createContext, useContext, type ReactNode } from "react";
-import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { BODY_FETCH_TIMEOUT_MS, type EngineMessage, type MessageBody } from "@ohmail/client-engine";
 import type { AttachmentsChrome } from "./attachments";
 import type { SendState } from "./mail-send";
 import { EMPTY_RICH, type RichValue } from "./rich-text";
@@ -207,4 +207,50 @@ export function MessageChromeProvider({
 
 export function useMessageChrome(): MessageChrome {
   return useContext(MessageChromeContext);
+}
+
+/**
+ * ── HOW LONG "STILL COMING" MAY BE SAID BEFORE IT STOPS BEING TRUE ──────────────────────────
+ *
+ * The engine's own deadline plus a margin. `BODY_FETCH_TIMEOUT_MS` is the point at which a body
+ * request is aborted and turned into a `failed` record, so a spinner is a true statement for that
+ * long and no longer; the margin covers the queue (four bodies in the air at once, so a fifth
+ * legitimately waits behind one full deadline) and the mirror write that follows.
+ *
+ * DERIVED, NOT CHOSEN. A number picked here would silently stop matching the engine the first
+ * time that deadline moved, and the failure mode of being too short is a Retry button offered
+ * over a request that was about to succeed.
+ */
+export const BODY_STALL_MS = BODY_FETCH_TIMEOUT_MS * 2 + 3_000;
+
+/**
+ * ── A SPINNER MUST HAVE AN END, AND THIS IS THE ONE THAT DOES NOT DEPEND ON BEING RIGHT ─────
+ *
+ * Every path the engine takes deliberately ends in `ready` or `failed`: the fetch is bounded by a
+ * deadline, the batch's throw fans out to a `failed` record per id, and a message nobody will ask
+ * for is now recognised by the surfaces before they promise a request. That reasoning has been
+ * wrong before — a protected message on a live account sat under "Loading the full message…" for
+ * the life of the tab because two halves of the codebase read two different predicates — and it
+ * can be wrong again in a way nothing here anticipates: `putBody` reaches IndexedDB, IndexedDB
+ * refuses (a full quota, a private window, a version change), and BOTH the ready write and the
+ * failure write are swallowed by design. The record then keeps saying `loading` for ever and no
+ * further mirror bump is coming to re-drive it.
+ *
+ * So this is a bound on the SENTENCE rather than on any particular cause. Once a surface has
+ * claimed a body is coming for longer than one could possibly be, it says the other true thing
+ * instead — that it could not be loaded — and offers the Retry that re-asks. `retry: true` is
+ * the arm that bypasses the failed-guard, so the way out is real and not another no-op.
+ *
+ * `waiting` false resets it: a body that arrives clears the claim, and a reader who selects
+ * another message starts the clock again rather than inheriting the last one's.
+ */
+export function useBodyStalled(key: string, waiting: boolean): boolean {
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    setStalled(false);
+    if (!waiting) return;
+    const timer = setTimeout(() => setStalled(true), BODY_STALL_MS);
+    return () => clearTimeout(timer);
+  }, [key, waiting]);
+  return stalled;
 }

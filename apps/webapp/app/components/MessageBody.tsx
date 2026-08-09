@@ -847,6 +847,29 @@ export function cssColor(c: Rgb): string {
 export const RIGID_MIN_PX = 520;
 
 /**
+ * ── AND THE UPPER BOUND, WHICH IS THE HALF REAL MAIL FORCED ─────────────────────────────
+ *
+ * A canvas is a READING COLUMN somebody designed, and designed reading columns have a range.
+ * Measured across a live mailbox: every genuine newsletter in the sample declares between 560
+ * and 800 px — `<table width="600">` twelve times over, 624, 640, 700, 800. Nothing designed
+ * for mail is wider than that, because nothing designed for mail can assume a wider window.
+ *
+ * What IS wider is markup that was never a mail design at all. The case that found this: two
+ * ordinary business replies — German prose, a quoted thread, a sign-off — classified rigid on a
+ * single `<div style="width:1578px">` belonging to a chunk of WooCommerce ADMIN HTML the sender
+ * had pasted in. There is no design there to preserve, and treating it as one is actively worse
+ * than ignoring it: the rigid path is scale-to-fit, so a 1578 px declaration renders the entire
+ * message — the sender's actual sentences included — at about 0.4, which is precisely the
+ * "shrunk until it cannot be read" failure the reflow class was introduced to end.
+ *
+ * So rigidity is a BAND, not a floor. Below {@link RIGID_MIN_PX} there is no canvas; above this
+ * there is no mail design either, and the honest treatment for both is to reflow. 1000 rather
+ * than a tighter number because the widest genuine canvas measured is 800 and a 960-grid
+ * template is a thing that exists; 1578 is comfortably outside either.
+ */
+export const RIGID_MAX_PX = 1000;
+
+/**
  * The elements a fixed CANVAS is declared on. An `<img width="700">` is not a canvas — an
  * oversized picture caps to the column and keeps its aspect ratio, which is a reflow that
  * costs nothing — so images are deliberately absent and a mail is not called rigid for
@@ -854,9 +877,20 @@ export const RIGID_MIN_PX = 520;
  */
 const CANVAS_TAGS = "table,tr,td,th,col,colgroup,div,center";
 
+/** Is this a declared mail canvas — a width in the band, not a cap and not pasted debris? */
+function isCanvasPx(n: number | null): boolean {
+  return n !== null && n >= RIGID_MIN_PX && n <= RIGID_MAX_PX;
+}
+
 /**
- * The widest `width` / `min-width` DECLARATION in a chunk of css, in pixels; 0 when there is
- * none.
+ * Does a chunk of css DECLARE a canvas — any `width` / `min-width` in the band?
+ *
+ * ANY, not the widest, and that is the whole reason this is a predicate rather than a number.
+ * It used to return the widest declaration and the caller compared it to the floor, which reads
+ * the same on a document with one width and differently on a document with two: a real 600 px
+ * newsletter with a pasted 1578 px fragment in it answered 1578, and under an upper bound that
+ * would have dropped a genuine design out of the rigid class because of the debris beside it.
+ * A canvas is a thing a document CONTAINS; a maximum is not the way to ask whether it does.
  *
  * Anchored at a declaration boundary (`;`, `{`, or the start of a style attribute), which is
  * what keeps two near-misses out:
@@ -864,14 +898,12 @@ const CANVAS_TAGS = "table,tr,td,th,col,colgroup,div,center";
  *   `@media (max-width:620px)`   a QUERY about the viewport, inside `(`, which is not a
  *                                boundary either. Every responsive newsletter contains one.
  */
-function widestFixedWidthPx(css: string): number {
+function declaresCanvas(css: string): boolean {
   const re = /(?:^|[;{])\s*(?:min-)?width\s*:\s*(\d+(?:\.\d+)?)\s*px/gi;
-  let widest = 0;
   for (let m = re.exec(css); m; m = re.exec(css)) {
-    const n = Number(m[1]);
-    if (n > widest) widest = n;
+    if (isCanvasPx(Number(m[1]))) return true;
   }
-  return widest;
+  return false;
 }
 
 /** An html `width="600"` / `width="600px"` as a number. `null` for `"100%"` and for junk. */
@@ -882,17 +914,12 @@ function widthAttrPx(v: string | null): number | null {
 }
 
 /**
- * Does this document declare a fixed layout canvas wider than a reading column?
+ * ── THE FRAME IS THE EXCEPTION, AND RIGIDITY IS THE WHOLE TEST ────────────────────────────
  *
- * Exported so the classification can be watched directly against real mail rather than
- * inferred from a rendered frame — see the reflow guards in `message-body.test.ts`.
- */
-/**
- * ── THE PROSE CLASS: MAIL THAT IS A LETTER, AND HAS NOTHING TO RENDER BUT WORDS ───────────
- *
- * A third reading of the same document, beside {@link SanitizedMail.light} and
- * {@link SanitizedMail.reflow}, and it answers a bigger question than either: does this message
- * need a frame at all?
+ * `prose` — "render this as {@link BodyText} over the message's TEXT part, in the app's own
+ * type" — is now exactly `!`{@link isRigidLayout}. One reading of one document decides all
+ * three of {@link SanitizedMail.reflow}, {@link SanitizedMail.prose} and, with it, whether a
+ * frame is built at all.
  *
  * Most mail between people is a paragraph and a sign-off. It arrives as html because every
  * client sends html, not because anything about it is designed — and putting it in a sandboxed
@@ -900,29 +927,30 @@ function widthAttrPx(v: string | null): number | null {
  * something the app can set in its own type. Worse, it draws it in the SENDER's type: their font
  * stack, their line height, their idea of a link colour, inside a product that has its own.
  *
- * So a message that declares no layout, shows no picture and carries no meaningful stylesheet is
- * rendered as {@link BodyText} over the message's TEXT part, exactly as a message with no html at
- * all has always been. That is not a new renderer; it is the fallback this component has always
- * had, reached deliberately instead of only by accident.
+ * ── THE THREE TESTS THAT WERE HERE AND ARE GONE, AND WHY ────────────────────────────────
  *
- * ── THE FOUR TESTS, AND WHY EACH ONE IS DISQUALIFYING ────────────────────────────────────
+ * This used to be four tests: not rigid, no picture, no background image, and a stylesheet under
+ * a length threshold. The last three were calibrated against fixtures and they do not survive
+ * real mail. Measured on a live mailbox: an ordinary German business reply — a table for the
+ * quoted thread, a signature logo, and the `<style>` block Outlook emits about its own paragraph
+ * classes — failed the picture test and the style-length test, and so was rendered in a frame,
+ * in the sender's type, for no design that existed. The tests were answering "did the sender's
+ * client emit markup?", which is always yes, rather than "did the sender lay something out?".
  *
- *   1. NOT RIGID. A declared canvas ({@link isRigidLayout}) is a design, and a design is
- *      precisely what the frame exists to render faithfully.
- *   2. NO PICTURE. Any `<img>` that is not a classified beacon — including a `data:` image and an
- *      inline `cid:` reference this build cannot resolve — means the sender put something on the
- *      screen that the text part does not contain. A BEACON is not a picture and is deliberately
- *      allowed here: it renders as nothing, it is never fetched, and excluding it would drop most
- *      ordinary mail out of this class for a thing the reader cannot see.
- *   3. NO BACKGROUND IMAGE. The same fact under a different spelling — `data-ohmail-bgimg` on an
- *      element, or a surviving `url()` in the neutralised sheet.
- *   4. TRIVIAL STYLE TEXT. A sender who wrote a stylesheet was styling something. The threshold is
- *      generous enough for the boilerplate a desktop client emits about its own paragraph class
- *      and tight enough that a template's sheet fails it. Crossing it costs nothing but the frame
- *      the message would have had anyway, which is why the cut can be blunt.
+ * A DECLARED CANVAS is the only evidence of the second question. `isRigidLayout` finds a fixed
+ * width at or past {@link RIGID_MIN_PX} — the newsletter's 600 px table, the template's
+ * `max-width` — and that, and only that, is a design the frame exists to render faithfully.
+ * Everything else is a letter: tables, inline images, signature logos and all.
  *
- * Every test is read from the FINAL, sanitized document and the NEUTRALISED sheet, for the reason
- * {@link SanitizedMail.light} is: the answer has to be about the document the frame would build.
+ * ── WHAT THE READER LOSES, SAID PLAINLY ────────────────────────────────────────────────
+ *
+ * A picture in a non-rigid mail is not drawn. `cid:` inline images were never drawn in the frame
+ * either (nothing in this build resolves them), so that half costs nothing; a REMOTE picture the
+ * reader has consented to load is the half that does, and the render branch at the bottom of this
+ * component hands those messages back to the frame rather than letting "Show images" become a
+ * button that does nothing. Beacons are excluded from that test, because a beacon is not a
+ * picture: it renders as nothing, and letting one drag a letter into a frame would undo this
+ * whole rule for a thing the reader cannot see.
  *
  * ── THE ONE THING THIS MUST NEVER BECOME ────────────────────────────────────────────────
  *
@@ -932,39 +960,23 @@ function widthAttrPx(v: string | null): number | null {
  * is the sentence that removes it. What this class does is render the message's TEXT part
  * instead, through the same component a message with no html has always used. There is no path
  * from `prose` to markup in the app document, and `message-body-prose.test.ts` holds it there.
+ * WIDENING `prose` WIDENS WHAT THAT GUARD COVERS AND NOTHING ELSE: every message that changed
+ * class here moved from the frame to `BodyText`, which renders text nodes only.
  */
-const PROSE_MAX_STYLE_CHARS = 1024;
 
 /**
- * Is this document a letter rather than a layout? See {@link PROSE_MAX_STYLE_CHARS} for the four
- * tests and for why the sanitized html is still never inlined.
+ * Does this document declare a fixed layout canvas wider than a reading column?
  *
- * Exported so the classification can be watched directly against real mail rather than inferred
- * from what happened to render.
+ * Exported so the classification can be watched directly against real mail rather than
+ * inferred from a rendered frame — see the reflow guards in `message-body.test.ts` and the
+ * prose guards in `message-body-prose.test.ts`. It is the ONLY classifier behind both.
  */
-export function isProseDocument(root: Element, styleText: string): boolean {
-  // A picture, in either spelling. `data-ohmail-pixel` is written by the post-pass on the images
-  // it classified as beacons, and a sender's copy of it cannot survive `ALLOW_DATA_ATTR: false` —
-  // which is the same single gate `data-ohmail-host` depends on, named here so it is not two
-  // unwatched flags.
-  for (const img of root.querySelectorAll("img")) {
-    if (img.getAttribute("data-ohmail-pixel") !== "1") return false;
-  }
-  if (root.querySelector("[data-ohmail-bgimg]")) return false;
-  // A surviving `url()` in the sheet: `data:`, or a proxied remote image under the auto mode.
-  // Every REMOTE one that is not admitted is already `none` by this point, so what is left here
-  // is something that will actually paint.
-  if (/url\(/i.test(styleText)) return false;
-  return styleText.trim().length <= PROSE_MAX_STYLE_CHARS;
-}
-
 export function isRigidLayout(root: Element, styleText: string): boolean {
-  if (widestFixedWidthPx(styleText) >= RIGID_MIN_PX) return true;
+  if (declaresCanvas(styleText)) return true;
   for (const el of root.querySelectorAll(CANVAS_TAGS)) {
-    const attr = widthAttrPx(el.getAttribute("width"));
-    if (attr !== null && attr >= RIGID_MIN_PX) return true;
+    if (isCanvasPx(widthAttrPx(el.getAttribute("width")))) return true;
     const style = el.getAttribute("style");
-    if (style && widestFixedWidthPx(style) >= RIGID_MIN_PX) return true;
+    if (style && declaresCanvas(style)) return true;
   }
   return false;
 }
@@ -1016,16 +1028,19 @@ export interface SanitizedMail {
    */
   reflow: boolean;
   /**
-   * IS THIS A LETTER RATHER THAN A LAYOUT? The one input to the frameless path — see
-   * {@link isProseDocument} for the four tests.
+   * IS THIS A LETTER RATHER THAN A LAYOUT? The one input to the frameless path — see the note
+   * above {@link isRigidLayout}, which is the whole test.
    *
    * `true` means the component may render the message's TEXT part in the app's own type and skip
    * the iframe entirely. It NEVER means the sanitized html may be inlined: the srcdoc sandbox is
    * the XSS boundary, and this flag decides which of two SAFE renderings is used, not whether the
    * boundary applies.
    *
-   * Implies {@link reflow} — a rigid document is a design and can never be prose — but the two are
-   * carried separately because a reflowable mail with a picture in it is common and is not prose.
+   * EQUAL TO {@link reflow} TODAY, and that is a statement about the current rule rather than a
+   * duplicated field: both mean "this document declares no canvas". They are separate because
+   * they are separate questions to a caller, and because a divergence — should one ever be
+   * justified by real mail rather than by a fixture — must have somewhere to land that is not a
+   * second read of the same document.
    */
   prose: boolean;
   /**
@@ -1249,13 +1264,14 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
           node.setAttribute("src", BLANK_GIF);
           node.setAttribute("data-ohmail-blocked", "1");
         }
-        // WHAT THIS IMAGE WAS JUDGED TO BE, kept on the element because a later reading of the
-        // document has to be able to ask. `data-ohmail-blocked` cannot answer it: under the
-        // manual mode a picture and a beacon are both blanked and both carry that marker, so a
-        // reader of the final document could not tell "this message shows nothing" from "this
-        // message shows a photograph the reader has not asked for yet". {@link isProseDocument}
-        // needs exactly that distinction. A sender's own copy of this attribute cannot survive
-        // `ALLOW_DATA_ATTR: false` — the same single gate the anti-phishing markers rely on.
+        // WHAT THIS IMAGE WAS JUDGED TO BE, kept on the element because `data-ohmail-blocked`
+        // cannot answer it: under the manual mode a picture and a beacon are both blanked and
+        // both carry that marker, so a reader of the final document could not tell "this message
+        // shows nothing" from "this message shows a photograph the reader has not asked for yet".
+        // The COMPONENT asks that question from `blocked[].pixel` rather than from the document
+        // (see the render branch's `showsPicture`); this attribute is the same fact spelled onto
+        // the element, for a reader of the frame's own document. A sender's own copy of it cannot
+        // survive `ALLOW_DATA_ATTR: false` — the single gate the anti-phishing markers rely on.
         if (pixel) node.setAttribute("data-ohmail-pixel", "1");
       } else if (!src.startsWith("data:")) {
         // `cid:` and anything relative. Neither can be resolved from here, and a browser
@@ -1379,8 +1395,11 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // post-pass above is the last thing that writes, and it writes attributes only, which is the
   // rule this whole function is arranged around.
   const background = effectiveBackground(parsed.body, sanitized, styleText);
-  // ONE READING OF `isRigidLayout`, SHARED. `prose` implies `reflow`, and computing the rigidity
-  // twice is how the two answers get to disagree about one document.
+  // ONE READING OF `isRigidLayout`, SHARED — and now it is the ONLY reading behind both answers.
+  // `reflow` and `prose` are the same fact stated to two different consumers: "this document
+  // declares no canvas". They are kept as two fields because they are two questions to a caller
+  // (may I lay it out at my own width / need I build a frame at all), and a future divergence has
+  // somewhere to go; they may never be computed from two different reads of one document.
   const rigid = isRigidLayout(sanitized, styleText);
   return {
     html: sanitized.innerHTML,
@@ -1388,7 +1407,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     sheets,
     light: mailIsLight(background),
     reflow: !rigid,
-    prose: !rigid && isProseDocument(sanitized, styleText),
+    prose: !rigid,
     background,
   };
 }
@@ -1876,10 +1895,9 @@ export function MessageBody({
       light,
       /**
        * IS THIS A LETTER? Decided in the same pass as `light` and `reflow` and carried the same
-       * way — see {@link isProseDocument}. The RENDER branch that reads it is at the bottom of
-       * this component, and it also requires a non-empty text part: a message classified prose
-       * whose text part is empty has nothing to render frameless, and its frame is the only place
-       * the words are.
+       * way — see {@link isRigidLayout}. The RENDER branch that reads it is at the bottom of this
+       * component, and it adds two terms this classifier cannot see: a non-empty text part, and
+       * no remote picture the reader has already consented to. Both are stated there.
        */
       prose,
       // `darkWanted && light` is baked in for the FIRST paint (no flash), then never rebuilt:
@@ -2104,11 +2122,21 @@ export function MessageBody({
   /**
    * ── THE FRAMELESS PATH — A LETTER, SET IN THE APP'S OWN TYPE ────────────────────────────
    *
-   * `mail.prose` is the document's answer (see {@link isProseDocument}); the second term is this
-   * component's. A message classified prose whose TEXT part is empty has nothing to render
-   * frameless — the words exist only inside the html — so it keeps its frame. That is the whole
-   * of the fallback, and it is checked here rather than in the classifier because `text` is a
-   * prop and the classifier reads a document.
+   * `mail.prose` is the document's answer (it declares no canvas — see {@link isRigidLayout});
+   * the other two terms are this component's, and both are about props the classifier cannot see.
+   *
+   *   · AN EMPTY TEXT PART keeps its frame. A message classified prose whose text part is empty
+   *     has nothing to render frameless — the words exist only inside the html.
+   *   · A REMOTE PICTURE THE READER HAS ASKED FOR keeps its frame, and this is the half that
+   *     makes "Show images" honest. The frameless path draws no images at all, so a message
+   *     rendered through it while `remoteLoaded` is true would carry a bar button whose only
+   *     effect had already happened invisibly — the same objection `canAdapt` answers below for
+   *     the dark toggle, and the reader would additionally have consented to see something they
+   *     were then not shown. BEACONS ARE EXCLUDED (`!b.pixel`): a beacon renders as nothing, and
+   *     letting one drag a letter back into a frame would undo the default for every mail that
+   *     carries a tracking pixel — which is most of them, and precisely the mail this class is
+   *     for. Under the account-wide auto mode `remoteLoaded` is true from the first paint, so
+   *     this is also what keeps a photograph visible for readers who never press anything.
    *
    * ── WHAT IS RENDERED, AND THE LINE THAT MUST NOT MOVE ──────────────────────────────────
    *
@@ -2131,7 +2159,9 @@ export function MessageBody({
    * the control would be a button that visibly does nothing — the same rule `canAdapt` applies to
    * a mail the sender already drew dark.
    */
-  const proseView = mail.prose && text.trim().length > 0;
+  /** A picture the reader would actually see if this kept its frame — never a beacon. */
+  const showsPicture = remoteLoaded && remote.some((b) => !b.pixel);
+  const proseView = mail.prose && text.trim().length > 0 && !showsPicture;
   const canAdapt = themeDark && adaptable && !proseView;
   const showBar = hasBlocked || canAdapt;
   /**

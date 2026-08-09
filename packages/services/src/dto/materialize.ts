@@ -123,8 +123,12 @@ export function tagRowToDTO(t: typeof tags.$inferSelect): TagDTO {
  * 500-row page. At real database round-trip latency that pushed a single page past the function
  * timeout and a full bootstrap into the minutes, so the first page timed out and the client
  * received NOTHING. On a large mailbox every view rendered empty.
+ *
+ * EXPORTED so the sensitivity projection can be watched directly rather than only through a
+ * database round trip. `sensitive` decides whether a client renders a message's text AT ALL
+ * (see the note inside), which is too consequential to be reachable only through a fixture.
  */
-function messageRowToDTO(
+export function messageRowToDTO(
   m: typeof messages.$inferSelect,
   fs: typeof folderState.$inferSelect | undefined,
   st: typeof messageStates.$inferSelect | undefined,
@@ -133,8 +137,35 @@ function messageRowToDTO(
   const loc = (m.nativeLocator as { folder?: string } | null) ?? null;
   const folder = (fs?.desiredFolder ?? loc?.folder ?? "INBOX") as Folder;
   const category = (m.sensitivityCategory as SensitivityFlags["category"]) ?? null;
+  /**
+   * ── `sensitive` IS THE POSITIVE MATCH, AND ONLY THE POSITIVE MATCH ────────────────────────
+   *
+   * Core owns this definition and states it in one line: `const sensitive = category !== null`
+   * (`packages/core/src/sensitive.ts`), directly above the rule that explains why the OTHER four
+   * flags are not it — *"`no_ai` and `no_kb` fail CLOSED on indeterminate … fail-closed is a rule
+   * about disclosure to a model, not a licence to block user actions"*. `no_forward` and
+   * `priority` follow the positive match exactly, so they can only ever agree with `category`;
+   * `no_ai` and `no_kb` are set for the whole INDETERMINATE bucket as well, and that bucket is
+   * ordinary mail we declined to show a model.
+   *
+   * This line used to OR all five together, and that widening is not cosmetic, because the client
+   * treats the field as "render no text at all": `isProtectedMessage` (client-engine) reads
+   * `sensitivity.sensitive` and nothing else, `OhmailEngine.hydrateBody` refuses to fetch a body
+   * for such a message, and the mirror purges any body it already held.
+   *
+   * The size of the error follows from the classifier's own structure rather than from any one
+   * mailbox: `no_ai` and `no_kb` are true for `sensitive` AND for the whole `indeterminate`
+   * bucket, so the OR is a STRICT SUPERSET of the categorised set, and everything in the
+   * difference is by definition mail the classifier did NOT positively classify. Every one of
+   * those was unreadable, and unreadable in the worst way available: the reader surfaces have no
+   * request to wait for, so they sat on "Loading the full message…" for ever.
+   *
+   * So this is not a narrowing for tidiness — it is this projection being brought back to the
+   * definition core already publishes, and the flags it drops remain on the DTO below, where a
+   * caller that genuinely means "was this withheld from the model" reads them by name.
+   */
   const sensitivity: SensitivityFlags = {
-    sensitive: category !== null || m.noAi || m.noForward || m.noKb || m.priority,
+    sensitive: category !== null,
     category,
     no_ai: m.noAi, no_forward: m.noForward, no_kb: m.noKb, priority: m.priority,
   };

@@ -137,6 +137,10 @@ export type { EngineAdapter, MutationOutcome, SyncParams } from "./adapters/adap
 export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";
 export {
   HttpAdapter,
+  // The deadline a body fetch runs under. Exported so a SURFACE that says "still coming" can
+  // bound that sentence by the engine's own number instead of guessing one: a spinner is only
+  // honest for as long as a request can still be in the air, and this is how long that is.
+  BODY_FETCH_TIMEOUT_MS,
   // The client↔server view vocabularies and the single table that joins them. Exported so the
   // translation can be checked against the server's own list rather than only through a request.
   SERVER_VIEW_OF,
