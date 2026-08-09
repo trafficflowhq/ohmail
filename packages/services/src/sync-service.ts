@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import {
-  approvals, changeLog, drafts, messageStates, messages, minRetainedSeq, routingDecisions, rules,
-  tags, type EntityType,
+  approvals, changeLog, drafts, messageStates, messages, messageTags, minRetainedSeq,
+  routingDecisions, rules, tags, type EntityType,
 } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -55,6 +55,14 @@ interface SnapshotCursor {
   id: string;
   /** Messages emitted by every page so far — the `minRows` floor is cumulative. */
   emitted: number;
+  /**
+   * `"tail"` ⇒ this cursor resumes the LABELED-MESSAGES TAIL, not the windowed walk. Absent on
+   * every windowed cursor (and on any cursor a client held before this field existed, which is why
+   * absence and not a version bump means "windowed" — an in-flight bootstrap across a deploy keeps
+   * paging correctly and transitions to the tail when the window is satisfied). See the tail block
+   * in {@link SyncService.getSnapshot} for what the tail is and why it exists.
+   */
+  phase?: "tail";
 }
 
 /**
@@ -83,7 +91,10 @@ export class SyncService {
 
   /** Opaque base64url of the snapshot's consistent point plus this page's keyset position. */
   encodeSnapshotCursor(c: SnapshotCursor): string {
-    const payload = { v: 1, s: c.asOfSeq.toString(10), d: c.date, i: c.id, n: c.emitted };
+    const payload = {
+      v: 1, s: c.asOfSeq.toString(10), d: c.date, i: c.id, n: c.emitted,
+      ...(c.phase ? { p: c.phase } : {}),
+    };
     return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   }
 
@@ -97,13 +108,17 @@ export class SyncService {
     try {
       const raw: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
       if (typeof raw !== "object" || raw === null) throw new Error("not an object");
-      const { v, s, d, i, n } = raw as Record<string, unknown>;
+      const { v, s, d, i, n, p } = raw as Record<string, unknown>;
       if (v !== 1) throw new Error("unknown cursor version");
       if (typeof s !== "string" || !/^\d+$/.test(s)) throw new Error("bad asOfSeq");
       if (typeof i !== "string" || i === "") throw new Error("bad keyset id");
       if (typeof n !== "number" || !Number.isInteger(n) || n < 0) throw new Error("bad emitted count");
       if (d !== null && (typeof d !== "number" || !Number.isFinite(d))) throw new Error("bad keyset date");
-      return { asOfSeq: BigInt(s), date: d as number | null, id: i, emitted: n };
+      if (p !== undefined && p !== "tail") throw new Error("bad phase");
+      return {
+        asOfSeq: BigInt(s), date: d as number | null, id: i, emitted: n,
+        ...(p === "tail" ? { phase: "tail" as const } : {}),
+      };
     } catch {
       throw new ServiceError(
         "cursor_expired", 410,
@@ -294,12 +309,22 @@ export class SyncService {
    * there is no live folder row to project — including a query for it would be a query that can
    * only ever return nothing.
    *
-   * ── THE WINDOW ───────────────────────────────────────────────────────────────────────────
+   * ── THE WINDOW, THEN THE LABELED TAIL ────────────────────────────────────────────────────
    *
    * Messages are bounded by {@link SNAPSHOT_WINDOW}: paging continues while the last row read is
    * inside the recency floor, and keeps going past it until the volume floor is met. Both
    * numbers are returned in every response so the client states the truth about what it has
    * without carrying a copy of them.
+   *
+   * The window is not the end of the message stream. A tag is cross-cutting and a person tags old
+   * mail, so a windowed bootstrap that stopped at the volume/recency floor dropped every tagged
+   * message below it — and the delta could never recover them, because their `message_tags`
+   * changes sit below the cursor the client adopts after bootstrap. So once the window is met the
+   * drain opens a TAIL: the same keyset walk, continued past the window, restricted to messages
+   * that own a `message_tags` row. Its cost is bounded by how much mail carries a tag, not by the
+   * mailbox — an untagged row below the window is never read. The client needs no new code: tail
+   * pages are `op:"create"` at `seq = asOfSeq` like every other page, so a re-read is idempotent
+   * on the older-or-equal seq guard, and the drain simply follows `nextCursor` until it is null.
    *
    * ── WHY EVERY ROW IS `op: "create"` AT `seq = asOfSeq` ───────────────────────────────────
    *
@@ -384,9 +409,30 @@ export class SyncService {
           isNull(messages.date),
         );
 
-    const where = keyset
-      ? and(eq(messages.accountId, accountId), keyset)
-      : eq(messages.accountId, accountId);
+    // ── THE LABELED-MESSAGES TAIL PREDICATE (only in the tail phase) ─────────────────────────
+    //
+    // Once the window is satisfied the walk switches to the tail (see the stop logic below): the
+    // SAME keyset walk, resumed from where the window stopped, but restricted to messages that own
+    // a `message_tags` row. Its cost — pages and rows — is bounded by how much mail carries a tag,
+    // never by the size of the mailbox, because an unlabeled row below the window fails this EXISTS
+    // and is never read. `message_tags.account_id` is denormalized, so it is filtered here too,
+    // belt-and-braces with the outer `messages.account_id`: a bug that ever let the two disagree
+    // must fail closed rather than leak one account's tagged mail into another's bootstrap.
+    const inTail = cursor?.phase === "tail";
+    const labeled = inTail
+      ? exists(
+        db.select({ x: sql`1` }).from(messageTags).where(and(
+          eq(messageTags.messageId, messages.id),
+          eq(messageTags.accountId, accountId),
+        )),
+      )
+      : undefined;
+
+    const where = and(
+      eq(messages.accountId, accountId),
+      ...(keyset ? [keyset] : []),
+      ...(labeled ? [labeled] : []),
+    );
 
     const rows = await db
       .select({ id: messages.id, date: messages.date })
@@ -424,27 +470,44 @@ export class SyncService {
 
     const emitted = (cursor?.emitted ?? 0) + rows.length;
     const last = rows[rows.length - 1];
-    const cutoff = ctx.now().getTime() - SNAPSHOT_WINDOW.days * DAY_MS;
-    // Inside the recency floor ⇒ keep going. Past it ⇒ keep going only until the volume floor is
-    // met. An undated row is past the floor by construction (it sorts into the tail), so it can
-    // only be carried by the volume arm.
-    const withinWindow = last?.date != null && last.date.getTime() >= cutoff;
-    const hasMore = rows.length === limit && last !== undefined
-      && (withinWindow || emitted < SNAPSHOT_WINDOW.minRows);
+    const fullPage = rows.length === limit && last !== undefined;
+    const keysetOf = (phase?: "tail"): string => this.encodeSnapshotCursor({
+      asOfSeq,
+      date: last!.date ? last!.date.getTime() : null,
+      id: last!.id,
+      emitted,
+      ...(phase ? { phase } : {}),
+    });
 
-    return {
-      asOfSeq: seq,
-      changes,
-      nextCursor: hasMore
-        ? this.encodeSnapshotCursor({
-          asOfSeq,
-          date: last.date ? last.date.getTime() : null,
-          id: last.id,
-          emitted,
-        })
-        : null,
-      window: SNAPSHOT_WINDOW,
-    };
+    // ── WHERE THE NEXT PAGE COMES FROM: window → tail → done ─────────────────────────────────
+    //
+    // The window is the recency floor OR the volume floor, whichever is not yet met. When BOTH
+    // are met the windowed walk stops — and that is exactly the point older tagged mail was lost at, because any
+    // tagged mail below the window was then dropped from every windowed mirror and no delta could
+    // ever re-deliver it (its `message_tags` change sits below the client's post-bootstrap
+    // cursor). So the walk does not end there: it opens the labeled tail, resuming the same keyset
+    // and carrying every message below the window that owns a tag. The tail ends when a page comes
+    // back short. A windowed walk that ran off the end of the mailbox (a short page) has no tail —
+    // every tagged message is already above it.
+    let nextCursor: string | null;
+    if (inTail) {
+      nextCursor = fullPage ? keysetOf("tail") : null;
+    } else {
+      const cutoff = ctx.now().getTime() - SNAPSHOT_WINDOW.days * DAY_MS;
+      // Inside the recency floor ⇒ keep going. Past it ⇒ keep going only until the volume floor is
+      // met. An undated row is past the floor by construction (it sorts into the tail), so it can
+      // only be carried by the volume arm.
+      const withinWindow = last?.date != null && last.date.getTime() >= cutoff;
+      if (fullPage && (withinWindow || emitted < SNAPSHOT_WINDOW.minRows)) {
+        nextCursor = keysetOf();            // still inside the window
+      } else if (fullPage) {
+        nextCursor = keysetOf("tail");      // window satisfied, mail below it ⇒ open the tail
+      } else {
+        nextCursor = null;                  // ran off the end of the mailbox ⇒ no tail
+      }
+    }
+
+    return { asOfSeq: seq, changes, nextCursor, window: SNAPSHOT_WINDOW };
   }
 }
 

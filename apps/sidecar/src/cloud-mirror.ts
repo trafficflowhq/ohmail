@@ -647,7 +647,7 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
 }
 
 /**
- * THE ONE-TIME STALE-MIRROR TAG REPAIR — apply `GET /sync/snapshot` page 1 into a mirror whose
+ * THE ONE-TIME STALE-MIRROR TAG REPAIR — apply a `GET /sync/snapshot` page into a mirror whose
  * cursor has already run past the tags it never asked for.
  *
  * ── THE SHAPE OF THE DAMAGE ───────────────────────────────────────────────────────────────────
@@ -668,11 +668,16 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
  * table and kept none of them. Writing the tag rows now would restore the rail and leave every
  * message bare. The repair therefore has two halves, and the second is the one that shows.
  *
- * ── WHY `/sync/snapshot` PAGE 1 IS THE WHOLE PROBE ────────────────────────────────────────────
+ * ── ONE PAGE AT A TIME; THE CALLER PAGES ──────────────────────────────────────────────────────
  *
- * Page 1 of the snapshot is the account's live state: EVERY tag (`sync-service.ts` refuses to page
- * them, for its own rail-boots-empty reason) plus the newest window of messages as full DTOs — so
- * one request answers "does the hosted account have tags" and carries both halves of the repair.
+ * This applies ONE snapshot page. Page 1 carries the account's live state — EVERY tag
+ * (`sync-service.ts` refuses to page them, for its own rail-boots-empty reason) — and the caller
+ * (`repairStaleTags`) then follows `nextCursor` through the windowed pages and the LABELED TAIL,
+ * applying each. The tail is the half that matters here: it carries tagged mail OLDER than the
+ * bootstrap window, which the mirror holds (its `/sync?since=0` bootstrap replayed every message,
+ * unbounded by the snapshot window) but whose labels were skipped when the tag did not yet exist
+ * locally. Paging to the tail is the only way those chips come back — the delta never will, because
+ * their `message_tags` changes sit below the cursor this mirror already holds.
  *
  * ── WHAT IT DELIBERATELY DOES NOT DO ──────────────────────────────────────────────────────────
  *
@@ -681,11 +686,8 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
  * DTO carries a NON-EMPTY `labels`: on the mirror this repairs, `message_tags` is necessarily empty
  * (the FK cannot hold a row without a tag), so nothing local can need CLEARING and a message with no
  * labels is already correct. That keeps the change-log churn to the messages that actually gain a
- * chip rather than the whole window.
- *
- * The window is the honest limit of the repair: older mail outside it regains its chips when its own
- * `message` change next comes down the delta, now that the tag it names exists. Stated rather than
- * hidden, because a full re-read of the mailbox is not worth doing to a mirror that is otherwise fine.
+ * chip rather than the whole mailbox. The apply is idempotent (delete-then-insert per message), so a
+ * re-run after a mid-drain failure converges rather than doubling anything.
  */
 async function applyTagBackfill(
   db: LocalDb,
@@ -821,9 +823,44 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * `503 offline_read_only` over a snapshot request. So it swallows, leaves the flag unset, and the
    * next pull tries again.
    *
+   * IT DRAINS THE WHOLE SNAPSHOT, NOT PAGE 1. Page 1 carries the tags; the windowed pages and the
+   * labeled tail carry the assignments to re-hang, and the tail specifically carries tagged mail
+   * OLDER than the window — the older-tags case, which page 1 alone never reached. So it follows
+   * `nextCursor` to the end. The flag is set only once that drain COMPLETES: a mid-drain failure
+   * returns without marking, so the next launch re-runs from page 1, and the apply is idempotent so
+   * the re-run converges. The honest limit: if page 1 lands and applies tags but a later page then
+   * fails on every launch, gate 2 (tags now present) will settle it — the rail is fixed and some
+   * below-window chips may wait for whatever next touches their message. That is strictly better
+   * than the pre-tail repair, which never reached them at all.
+   *
    * Crash safety is the flag being the LAST write: a repair that commits and then dies re-probes on
    * the next launch, finds tags present, and skips at gate 2 — the apply is an upsert either way.
    */
+  const fetchSnapshotPage = async (pageCursor?: string): Promise<SnapshotResponse | null> => {
+    const q = new URLSearchParams({ limit: String(pageLimit) });
+    if (pageCursor) q.set("cursor", pageCursor);
+    const res = await cfg.auth.authedFetch(`/sync/snapshot?${q.toString()}`);
+    if (!res.ok) {
+      cfg.log?.("cloud_tag_backfill_deferred", {
+        status: res.status,
+        reason: "a snapshot page for the one-time tag repair did not answer; the mirror is " +
+          "unaffected and the next pull retries",
+      });
+      return null;
+    }
+    const snap = (await res.json()) as SnapshotResponse;
+    // A wire boundary, so the shape is checked rather than assumed: marking the repair done off a
+    // body that is not a snapshot would spend the one chance this install gets at it.
+    if (!Array.isArray(snap.changes)) {
+      cfg.log?.("cloud_tag_backfill_deferred", {
+        reason: "a snapshot page answered something that is not a snapshot; the mirror is " +
+          "unaffected and the next pull retries",
+      });
+      return null;
+    }
+    return snap;
+  };
+
   const repairStaleTags = async (): Promise<number> => {
     if (cursor.tagBackfill) return 0;
     const markConsidered = (): void => {
@@ -839,36 +876,28 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     }
 
     try {
-      const res = await cfg.auth.authedFetch(`/sync/snapshot?limit=${String(pageLimit)}`);
-      if (!res.ok) {
-        cfg.log?.("cloud_tag_backfill_deferred", {
-          status: res.status,
-          reason: "the snapshot probe for the one-time tag repair did not answer; the mirror is " +
-            "unaffected and the next pull retries",
-        });
-        return 0;
+      let totalTags = 0;
+      let totalMessages = 0;
+      let pageCursor: string | undefined;
+      for (;;) {
+        const snap = await fetchSnapshotPage(pageCursor);
+        if (!snap) return totalTags;   // a page failed → NOT marked done; the next pull retries
+        const written = await applyTagBackfill(cfg.db, cfg.world, snap, now());
+        totalTags += written.tags;
+        totalMessages += written.messages;
+        if (!snap.nextCursor) break;
+        pageCursor = snap.nextCursor;
       }
-      const snap = (await res.json()) as SnapshotResponse;
-      // A wire boundary, so the shape is checked rather than assumed: marking the repair done off a
-      // body that is not a snapshot would spend the one chance this install gets at it.
-      if (!Array.isArray(snap.changes)) {
-        cfg.log?.("cloud_tag_backfill_deferred", {
-          reason: "the snapshot probe answered something that is not a snapshot; the mirror is " +
-            "unaffected and the next pull retries",
-        });
-        return 0;
-      }
-      const written = await applyTagBackfill(cfg.db, cfg.world, snap, now());
       markConsidered();
-      if (written.tags > 0) {
+      if (totalTags > 0) {
         cfg.log?.("cloud_tag_backfill_applied", {
-          tags: written.tags,
-          messages: written.messages,
+          tags: totalTags,
+          messages: totalMessages,
           reason: "this mirror was bootstrapped before the drain asked for tags, so its tags sat " +
             "below the cursor and no delta could ever deliver them",
         });
       }
-      return written.tags;
+      return totalTags;
     } catch (err) {
       cfg.log?.("cloud_tag_backfill_deferred", {
         err,
