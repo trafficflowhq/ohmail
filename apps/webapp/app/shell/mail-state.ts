@@ -587,11 +587,16 @@ export function importFloorSpeaks(
  * mirror count is FROZEN, so every claim below about growth is a claim about a number that
  * cannot move. A frozen counter is the same lie in a new font.
  *
- * `failing` has a SECOND cause. It is reached by the failure streak, as before, and
- * also by a single coded 401/403 that the server has not yet re-made (`sync.refused`). Both mean
- * the same thing about the mirror, which is why they share a state and a sentence: the loop is
- * not draining and it intends to try again. What the second one must not do is reach `stopped`,
- * because that sentence tells a signed-in user they are signed out on one request's evidence.
+ * `failing` has ONE cause, and it is a SUSTAINED one: `failureStreak` consecutive failed drains.
+ * It used to have a second — a single coded 401/403 the server had not yet re-made (`sync.refused`)
+ * — and that second cause was the "Sync failed. Retrying." false alarm reported on open: a transient
+ * 401 on the first `/api/sync` (a cold function, a warming session, a deploy alias mid-roll — all
+ * recoverable, all documented in `sync-scheduler.ts`) painted a failure banner over a first sync
+ * that was about to succeed, and cleared itself a minute later when the confirm drain landed. A
+ * refusal one request old is not a sustained failure, so it no longer reaches `failing`; it falls
+ * through to the calm progress states. Only when the server RE-MAKES the refusal does the loop latch
+ * `terminal` and reach `stopped` — the confirmation already required in front of the stronger
+ * banner, now honoured by the weaker one too.
  *
  * `quiet` is the resting value and it is most of the time. There is no permanent "everything
  * is fine" chrome to learn to ignore.
@@ -711,11 +716,13 @@ export interface MailState {
    * ── THE DERIVATION READS THE LADDER'S VERDICT, NOT THE LADDER'S CONDITIONS ──────────────
    *
    * `!bootstrapping || key === "stopped" || key === "failing"`, and the second half is
-   * deliberately expressed as KEYS rather than as `terminal || failures >= streak || refused`.
+   * deliberately expressed as KEYS rather than as `terminal || failures >= streak`.
    * Those are the same thing today ({@link deriveMailState}'s first two arms), and writing the
    * conditions out again would be a second copy of a precedence rule that lives twenty lines
    * away — the exact drift this module's header was written to end. A future change to what
-   * counts as failing flows through for free.
+   * counts as failing flows through for free — and one such change already happened: a single
+   * unconfirmed `refused` no longer keys `failing`, so it no longer settles an empty list either,
+   * which is correct (a transient refusal is not an answer about whether the mailbox is empty).
    *
    * ── WHY `bootstrapping` IS THE RIGHT CLOCK HERE, HAVING BEEN THE WRONG ONE THERE ────────
    *
@@ -802,9 +809,13 @@ export interface MailStateInputs {
    * `useSyncStatus()` — what the tab's own drain loop is doing.
    *
    * Structural, and re-declared rather than imported as `SyncStatus`, for the reason
-   * {@link MailboxFacts} is: this module ships in the Desktop mirror. The four fields are the
-   * whole of what the ladder is entitled to consult. `refused` is a coded 401/403 the server has
-   * not yet re-made — weaker than `terminal` and deliberately so.
+   * {@link MailboxFacts} is: this module ships in the Desktop mirror. It carries all four fields
+   * the scheduler publishes so the shape mirrors `SyncStatus` exactly, but the ladder keys states
+   * on only three of them. `refused` — a coded 401/403 the server has not yet RE-MADE — is
+   * received and NOT rendered as a failure: it is one request's evidence, weaker than `terminal`
+   * and deliberately treated as transient, so a single one falls through to the calm progress
+   * states rather than surfacing "Sync failed". Only a CONFIRMED refusal (`terminal`) speaks. See
+   * {@link climb}'s `failing` arm.
    */
   sync: { bootstrapping: boolean; failures: number; terminal: boolean; refused: boolean };
   /** `SYNC_FAILURE_STREAK`, passed in so the surfaces cannot drift from the scheduler. */
@@ -871,16 +882,27 @@ function climb(input: MailStateInputs): MailState {
   // `terminal` first: the loop has disarmed itself and will not restart, so no count below
   // can move and no mailbox fact below can be refreshed.
   if (sync.terminal) return { ...QUIET, key: "stopped" };
-  // And a failing loop means the mirror is FROZEN. `OhboxView`'s counter already stops here;
-  // every state below would be reading a number that cannot change.
+  // And a SUSTAINED failing loop means the mirror is FROZEN. `OhboxView`'s counter already stops
+  // here; every state below would be reading a number that cannot change. The streak is what makes
+  // this a SUSTAINED claim rather than a blip: `failureStreak` consecutive failures, which at the
+  // backoff ceilings is well inside one cap — the network is down, and the strip may say so.
   //
-  // `sync.refused` joins it, and does NOT get its own key. A coded 401/403 the server has
-  // not re-made means the loop has stopped draining and has armed one more ask, which is what
-  // `failing` already says and already means; a seventh state would need copy of its own for a
-  // condition that resolves in sixty seconds either way. It bypasses `failureStreak` because that
-  // threshold exists for blips ("one is a dropped packet") and a refusal our own API made about
-  // this identity is not one. What it must not do is reach `stopped` above.
-  if (sync.failures >= failureStreak || sync.refused) return { ...QUIET, key: "failing" };
+  // `sync.refused` DELIBERATELY does NOT join it, and this is the fix for the false alarm that had
+  // "Sync failed. Retrying." painted over a healthy first sync on every open. A single coded
+  // 401/403 the server has not yet RE-MADE is one request's evidence, and `sync-scheduler.ts`
+  // itself records that such a 401 on `/api/sync` is routinely TRANSIENT — a cold serverless
+  // function, a session still warming, a deploy alias mid-roll. Rendering "failed" on it is the
+  // same over-reach the `stopped` banner was moved behind a confirmation to end, one banner
+  // weaker: it announces a failure on evidence that resolves in `REFUSAL_CONFIRM_MS`, and it did so
+  // over a first sync that was about to succeed. So an UNCONFIRMED refusal falls through to the
+  // calm progress states below — `awaiting` ("the first sync has not finished yet") or `importing`
+  // ("Syncing your mail") while the mirror is cold, the resting value once it has drained — never
+  // "failed". It is not answered with a scarier sentence than the facts support, and it is not
+  // answered with silence during a first sync either: the ladder below has a calm true sentence for
+  // it. What surfaces a failure banner is a SUSTAINED failure and nothing else: the streak here, or
+  // a CONFIRMED refusal, which `sync-scheduler.ts` latches to `terminal` and the `stopped` arm
+  // above renders. This mirrors the discipline of that non-latching fix at the weaker banner.
+  if (sync.failures >= failureStreak) return { ...QUIET, key: "failing" };
 
   // "We cannot see mailboxes" — not "there are none". Everything from here reads them.
   if (mailboxes === null) return QUIET;
