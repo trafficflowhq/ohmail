@@ -450,6 +450,28 @@ function localServices(
 
 export const DEFAULT_POLL_INTERVAL_MS = 15_000;
 
+/**
+ * A DRAIN'S WALL-CLOCK SHAPE, from the per-cycle durations it measured.
+ *
+ * This is the number that attributes desktop CPU and quit lag. A drain runs its inner cycles
+ * back-to-back (only a `setTimeout(0)` yield between them), so a drain that TAKES longer than the
+ * poll interval is, over the poll period, a high-duty loop — and quit closes the engine's stdin and
+ * waits for the in-flight cycle to finish, so `slowestMs` is also the floor on how long an ordinary
+ * quit blocks. Both symptoms trace to per-cycle cost, which is why it is measured here rather than
+ * guessed. `slowestMs` is the max, not the sum, because it is the single cycle a quit waits on and
+ * the sharpest read on the account-wide-modseq folder-diff (an iCloud mailbox re-scans every
+ * watched folder whenever any of them changed). Pure so it can be tested without standing up IMAP.
+ */
+export function summarizeDrain(cycleMs: readonly number[]): { cycles: number; totalMs: number; slowestMs: number } {
+  let totalMs = 0;
+  let slowestMs = 0;
+  for (const ms of cycleMs) {
+    totalMs += ms;
+    if (ms > slowestMs) slowestMs = ms;
+  }
+  return { cycles: cycleMs.length, totalMs, slowestMs };
+}
+
 export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   const log = config.log ?? ((): void => undefined);
   const now = config.now ?? ((): Date => new Date());
@@ -1036,7 +1058,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // `syncDeps` above, which is built once per process — that would freeze the posture for the
       // life of the engine, so an edit in Settings would need a relaunch to take effect.
       const screening = await screeningNow();
+      // Per-cycle wall durations, summarized into one `sync_drain` line below — the read that
+      // attributes desktop CPU and quit lag to the pipeline. `Date.now()` deliberately, not the
+      // injected `now()`: a test may freeze that clock, and a frozen clock would report every
+      // cycle as 0 ms.
+      const cycleMs: number[] = [];
       while (!stopped && cycles < maxCycles) {
+        const cycleStart = Date.now();
         // ── THE MODEL IS RESOLVED ONCE PER CYCLE AND NEVER HELD ───────────────────────────
         //
         // `classifierForCycle()` answers `undefined` when this install has no verified model AND
@@ -1052,10 +1080,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const { hasBacklog } = await runSyncCycle({
           ...syncDeps, ...screening, classifier: ai.classifierForCycle(),
         });
+        cycleMs.push(Date.now() - cycleStart);
         cycles++;
         if (!hasBacklog) { drained = true; break; }
         // Yield, so a backlog drain cannot starve the request handler sharing this event loop.
         await new Promise((r) => setTimeout(r, 0));
+      }
+      // One line per drain — a settled mailbox emits it every poll interval, so it stays quiet;
+      // a slow or spinning drain is the line that shows it. `slowestMs` above the poll interval is
+      // the signal to chase (a cycle longer than the interval is a high-duty period and a quit that
+      // waits on it). Literal field keys, not a spread of the summary object: the log census refuses
+      // a call site whose field set it cannot read statically. See `summarizeDrain`.
+      if (cycles > 0) {
+        const shape = summarizeDrain(cycleMs);
+        log("sync_drain", { cycles: shape.cycles, totalMs: shape.totalMs, slowestMs: shape.slowestMs, drained });
       }
       /* HOW FAR THIS MAILBOX HAS GOT, WRITTEN DOWN. On a hosted account these two columns are the
          worker's; here this process IS the worker, and the window's sync line reads them to tell a

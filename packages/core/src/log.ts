@@ -174,6 +174,15 @@ export const ALLOWED_FIELDS: readonly string[] = [
   "dropped", "unexplained", "examined", "resolved", "rerouted", "pruned", "count", "more",
   "sample", "claims", "threadsCreated", "contactsImported", "sentRecipients", "truncated",
   "maxPages", "healthPort", "signal",
+  // ── The local engine's per-drain timing (`sync_drain`), added WITH the call site ──
+  //
+  // `cycles` is the inner-cycle count of one drain; `totalMs` and `slowestMs` are wall-clock
+  // milliseconds from `Date.now()` deltas (`summarizeDrain`). All three are integers derived from a
+  // counter and a clock — structurally content-free, naming no mailbox and no message — and they are
+  // the read that attributes desktop CPU and quit lag to the pipeline. NAMED rather than folded into
+  // `count`, on this file's own rule: `totalMs` and `slowestMs` are different quantities and one
+  // `count` meaning either is not a claim a reviewer can check. (`drained` is already above.)
+  "cycles", "totalMs", "slowestMs",
   // ── The three cron-pass counts, added WITH the call sites and not after them ──
   //
   // `generated` (proposals stored), `flipped` (bubble-ups resurfaced) and `drained` (workflow runs
