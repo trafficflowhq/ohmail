@@ -920,6 +920,25 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       /**
+       * RECOLOUR — the {@link tag_rename} PATCH with `hue` in place of `name`. The two are
+       * separate verbs, not one wide one, so each request carries exactly the field that
+       * changed; `TagsService.update` merges whatever is sent over what it holds.
+       */
+      case "tag_recolor": {
+        const res = await this.request("PATCH", `/tags/${encodeURIComponent(m.tagId)}`, {
+          body: { hue: m.hue },
+          idempotencyKey: opts.idempotencyKey,
+        });
+        if (!res.ok) throw await this.rejectionOf(res);
+        const seq = this.noteSeq(res);
+        const dto = (await res.json()) as TagDTO;
+        return {
+          changes: seq === null ? [] : [{ type: "tag", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? dto.createdAt ?? "", entity: dto }],
+          seq,
+        };
+      }
+
+      /**
        * 204 WITH NO BODY, and a 404 is success — the same reading `rule_delete` uses below.
        * The tag is gone either way, which is what the caller asked for; treating "already
        * gone" as a failure would roll back an optimistic delete that was correct.

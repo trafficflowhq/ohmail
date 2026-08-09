@@ -5,6 +5,14 @@ import "./chip.css";
 
 export type TagHueName = "moss" | "ochre" | "rosewood";
 
+/**
+ * The tag hues the Blanc system paints, in the order a picker shows them. The single source of
+ * this list on the client: `chip.css` has a `.hue-*` rule for each, `hueOf` clamps to it, and the
+ * server's `TagsService.HUES` must equal it (a hue with no CSS rule is an invisible dot). Adding
+ * one means adding a `--tg-*` family AND a `chip.css` rule in the same change.
+ */
+export const TAG_HUES: readonly TagHueName[] = ["moss", "ochre", "rosewood"];
+
 export type ChipVariant =
   /** Routing rationale — route icon, tint capsule. */
   | "rationale"

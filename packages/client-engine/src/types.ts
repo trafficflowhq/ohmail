@@ -855,16 +855,22 @@ export type EngineMutation =
    */
   | { kind: "tag_create"; tagId: string; name: string; hue?: string }
   /**
-   * NAME ONLY, AND THE MISSING HUE IS DELIBERATE.
-   *
-   * `PATCH /tags/:id` accepts `hue` too, and offering it would ship a broken control today:
-   * `TagsService.HUES` is `moss|clay|slate|plum|amber|teal` while `packages/ui`'s
-   * `TagHueName` — and `chip.css` — know only `moss|ochre|rosewood`. Four of the six server
-   * hues have no rule to render, so a colour picker would let somebody choose an invisible
-   * dot. Renaming is the verb that was asked for; the hue sets have to be reconciled before
-   * anything offers a choice between them.
+   * RENAME — NAME ONLY. The colour travels on its own verb ({@link tag_recolor}); a rename that
+   * also carried a hue would make one "Save" mean two things and send a field the user did not
+   * touch. `PATCH /tags/:id` accepts `name` alone, which is what this sends.
    */
   | { kind: "tag_rename"; tagId: string; name: string }
+  /**
+   * RECOLOUR — HUE ONLY, and the obstacle it waited on is gone.
+   *
+   * `TagsService.HUES` and `packages/ui`'s `TagHueName` used to be two different lists — six
+   * server names (`moss|clay|slate|plum|amber|teal`) against three renderable ones
+   * (`moss|ochre|rosewood`), overlapping only on `moss` — so any colour a picker could offer was
+   * one the other half could not honour: an invisible dot or a 400. They are reconciled to the
+   * three the Blanc system actually paints, so every hue on the wire renders and every hue the
+   * picker shows validates. `PATCH /tags/:id` takes `{ hue }` on its own.
+   */
+  | { kind: "tag_recolor"; tagId: string; hue: string }
   /**
    * DELETING A TAG TAKES IT OFF EVERY MESSAGE, AND THE EFFECT SAYS SO.
    *

@@ -9,9 +9,16 @@ import type { TagDTO } from "./dto/types.js";
  *  is a real transaction host, but the union type does not say so. */
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
-/** The hues the client can render (`TagHueName` in `packages/ui`). A closed set, validated
- *  here rather than at the DB: it is presentation, and a new hue must not need a migration. */
-const HUES = ["moss", "clay", "slate", "plum", "amber", "teal"] as const;
+/**
+ * The hues the client can render — `TagHueName` in `packages/ui` (`moss|ochre|rosewood`), the
+ * three the Blanc token families (`--tg-pottery|buch|privat`) actually paint. This list MUST
+ * equal that one: a hue accepted here but with no rule in `chip.css` is an invisible dot, which
+ * is why the tag recolour verb waited on the two sets being reconciled (see `client-engine`'s
+ * `tag_recolor`). A closed set validated here rather than at the DB — it is presentation, and a
+ * new hue must not need a migration — and a round-trip test pins it so a sixth name cannot creep
+ * back in without a matching family being drawn first.
+ */
+const HUES = ["moss", "ochre", "rosewood"] as const;
 export type TagHue = (typeof HUES)[number];
 
 /** Longest tag name we store. Tags are labels, not notes — a rail entry that does not fit is

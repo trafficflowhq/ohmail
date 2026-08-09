@@ -30,7 +30,7 @@ export { Kbd } from "./primitives/Kbd.js";
 export type { KbdProps } from "./primitives/Kbd.js";
 export { SplitButton } from "./primitives/SplitButton.js";
 export type { SplitButtonProps } from "./primitives/SplitButton.js";
-export { Chip, Badge, TagDot } from "./primitives/Chip.js";
+export { Chip, Badge, TagDot, TAG_HUES } from "./primitives/Chip.js";
 export type {
   ChipProps,
   ChipVariant,

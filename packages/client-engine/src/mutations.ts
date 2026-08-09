@@ -307,6 +307,18 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     /**
+     * The recolour, on the row the mirror already holds — the {@link tag_rename} shape, one
+     * field over. Unknown id yields [] (rejected: the tag was deleted under the cursor); an
+     * empty hue yields [] (the server would 400 it, and a hue is never blank from a picker).
+     */
+    case "tag_recolor": {
+      const tag = reader.get<TagDTO>("tag", m.tagId);
+      const hue = m.hue.trim();
+      if (!tag || hue === "") return [];
+      return [{ type: "tag", id: tag.id, entity: { ...tag, hue, updatedAt: iso } satisfies TagDTO }];
+    }
+
+    /**
      * THE TOMBSTONE **AND** EVERY MESSAGE THAT CARRIED IT.
      *
      * `TagsService.remove` deletes the `message_tags` rows in the same transaction and emits
