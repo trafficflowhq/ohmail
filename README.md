@@ -94,9 +94,11 @@ became a working mail client.
   than in the sender's; a conversation opens on its latest message and fetches the
   whole thread in one request; a message that has not arrived yet says so instead
   of showing its first two hundred characters as though they were the mail.
-- **Pictures load when you open a message,** through a proxy that fetches them
-  server-side so the sender never learns your address. There is a switch to turn
-  that off. A tracking pixel is never fetched in either mode.
+- **Pictures load when you open a message,** through the app's own proxy rather
+  than from the page, so none of your browser's identifying headers reach the
+  sender. On a standalone install the fetch still comes from your own connection;
+  on a hosted account it is made on the server. There is a switch to turn
+  automatic loading off, and a tracking pixel is never requested in either mode.
 - **Attachments open on a press** and save from the icon in the corner; Download
   all gives you the files rather than a zip.
 - **Drafts are saved to your account,** two seconds after you stop typing, with a

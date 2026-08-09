@@ -89,11 +89,18 @@ waiting for you to find the one message and press Retry.
 
 **A message's pictures load when you open it, and a tracking pixel still never does.** Remote images
 were blocked behind a press, once per message, for ever — the right default for a beacon and the
-wrong one for a photograph. Every image loads through the product's own proxy, which fetches it
-server-side, so the sender never learns your address whether or not you pressed anything. Automatic
-loading is now the default and there is a switch in Settings to turn it off, which restores the
-per-message press. What does not move in either mode: a one-pixel image, a zero-dimension image and
-a beacon-shaped url are never fetched at all, and remote stylesheets stay blocked.
+wrong one for a photograph. Automatic loading is now the default, and there is a switch in Settings
+to turn it off, which restores the per-message press.
+
+Every image is fetched through the app's own proxy rather than by the page: the request carries none
+of the browser's identifying headers, because the port it goes through takes a url and nothing else,
+and the message frame is under a policy that admits no host but this one. **What that does not do on
+a standalone install is hide your address** — the fetch is made by the engine on your own machine,
+so it comes from your own connection, exactly as it would in any other mail client. On a hosted
+account the fetch happens on the server, and there your address never reaches the sender at all.
+
+What does not move in either mode: a one-pixel image, a zero-dimension image and a beacon-shaped url
+are never requested, and remote stylesheets stay blocked.
 
 **Pressing an attachment opens it; the icon in its corner saves it.** It was the other way round,
 which meant reading a PDF once cost you a file in your downloads folder to find, open elsewhere and

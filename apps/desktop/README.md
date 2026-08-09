@@ -118,8 +118,20 @@ This is not belt-and-braces for its own sake — it is what makes the promise
 bundle loads, and fails if any of them is called or if the guard leaves one
 alone.
 
-**4 · The Windows installers do not fetch the WebView2 runtime.**
-`bundle.windows.webviewInstallMode` is `{ "type": "skip" }`. Tauri's default is
+**4 · The PREVIEW's Windows installers do not fetch the WebView2 runtime, and the
+RELEASED ones deliberately do.** This is the one lock where the two artifacts were
+argued to opposite answers, so read the reversal before the reasoning below it.
+
+`tauri.conf.json` — the preview — sets `webviewInstallMode` to `{ "type": "skip" }`,
+and everything from here to the end of this section is about that artifact.
+`tauri.engine.conf.json`, which is the config the released installers are built
+with, sets `downloadBootstrapper` instead, and CI's Windows job asserts the
+bootstrapper **is** present in the shipped `-setup.exe`. The argument for the
+reversal is short: an interface preview whose window cannot render is a demo that
+did not run, and a mail client whose window cannot render is not degraded, it is
+broken. The zero-network promise belongs to the artifact that makes it.
+
+`bundle.windows.webviewInstallMode` is `{ "type": "skip" }` there. Tauri's default is
 `downloadBootstrapper`, which compiles a WiX custom action into the `.msi` —
 `DownloadAndInvokeBootstrapper`, a hidden `powershell.exe` running
 `Invoke-WebRequest` against `go.microsoft.com/fwlink/p/?LinkId=2124703` whenever
@@ -215,8 +227,11 @@ not fetch the runtime for you.
 
 Drop the `| sort -u` and read the whole lines if you want to check the three
 adjacency claims yourself — that is the point of shipping uncompressed. CI prints
-the complete list on every run and reports its size beside it, so the number in a
-README can be reconciled against a run rather than remembered.
+the complete list on every run and reports its size beside it, so the number here
+is reconciled against a run rather than remembered: at 0.8.0 it is **38 on Linux
+and 29 on Windows**. Neither is asserted in the workflow, deliberately — a
+toolchain bump moves them for reasons nobody can act on, and the check that has to
+hold is the allow-list below.
 
 **What CI actually fails on is the allow-list, and it is spelled out one entry at
 a time.** Every URL in the binary naming `ohmail` or `trafficflow` must be one of:
