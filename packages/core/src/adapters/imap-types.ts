@@ -452,7 +452,17 @@ export interface ImapAdapterOpts {
 }
 
 export interface PersistedFolderCursor { uidValidity: string; uidNext: number; highestModseq: string; }
-export interface KnownEntry { uid: number; messageId: string | null; }
+/**
+ * One UID the adapter must not re-fetch, plus the `\Seen` state the database last observed for
+ * it (`flag_state.observed_seen`, or the ingest-time flags before any flag row exists).
+ *
+ * `seen` is the PRIOR FLAGS the no-CONDSTORE fallback diffs against: a server that cannot
+ * answer `changedSince` (Office 365 advertises no CONDSTORE) still answers a plain FLAGS fetch,
+ * and a divergence from this baseline is exactly a flag change. `null`/absent means the repo
+ * could not state a baseline (a dead-lettered UID, a pre-migration cursor) — such an entry is
+ * never diffed, only protected from re-fetch.
+ */
+export interface KnownEntry { uid: number; messageId: string | null; seen?: boolean | null; }
 export interface FolderCursor extends PersistedFolderCursor { known: KnownEntry[]; }
 export interface ImapCursor { folders: Record<string, FolderCursor>; }
 
@@ -488,6 +498,24 @@ export interface OutboundMessage {
   cc?: string | string[]; bcc?: string | string[];
   text: string; html?: string;
   messageId?: string; inReplyTo?: string; references?: string | string[];
+  /**
+   * Extra RFC 5322 header fields, written onto BOTH the delivered message and the Sent-folder copy
+   * (one `Mail.Options` builds both — see `outboundToMail`).
+   *
+   * It exists for ONE caller and one header: an automatic reply must carry
+   * `Auto-Submitted: auto-replied` (RFC 3834 §5), which is what stops another mail system's
+   * responder answering ours and the two of them filling a mailbox each. A hand-composed send
+   * never sets this — `SendService` does not pass it — so there is no path by which a message a
+   * person typed acquires an automation marker.
+   *
+   * Names are passed through to nodemailer's `headers` verbatim and may NOT restate a field this
+   * seam already owns (`From`/`To`/`Cc`/`Bcc`/`Subject`/`Message-ID`/`In-Reply-To`/`References`):
+   * MailComposer would emit the field twice, and a duplicated `Message-ID` breaks the
+   * verify-by-Sent probe the crash-safe send path depends on. The away responder's own test suite
+   * asserts the single header it passes, so the restriction above is a rule about this seam rather
+   * than a hope about its callers.
+   */
+  headers?: Readonly<Record<string, string>>;
   /**
    * FILES TO SEND — and the whole reason ohmail can attach without storing a byte.
    *
