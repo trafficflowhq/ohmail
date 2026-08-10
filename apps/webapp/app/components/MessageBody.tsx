@@ -813,6 +813,45 @@ export function mailIsLight(bg: Rgb | null): boolean {
 }
 
 /**
+ * HOW FAR FROM GREY A PAPER MAY DRIFT AND STILL COUNT AS "NO COLOUR", on the 0–255 channel
+ * scale. It is a chroma — the spread between the strongest and weakest sRGB channel — so it
+ * needs no colour-space conversion and reads as exactly "how far from grey is this".
+ *
+ * 12 is chosen against the two things it has to separate. A template's habit — the faint
+ * off-white or grey a mail builder drops behind a white card (`#efefef`, `#f5f5f5`, a warm
+ * `#faf8f2`) — has a chroma at or near 0 and is caught. A DELIBERATE pale tint — a brand's
+ * `#eef2ff`, a pale-yellow highlight card — clears it (17, 51) and is kept. The band is narrow
+ * on purpose: clamping a paper that WAS meant costs one letter drawn on white instead of
+ * near-white, which the "Show original" flip returns; not clamping costs the dull grey sheet
+ * behind an otherwise white letter, which is the reported defect.
+ */
+export const NEUTRAL_CHROMA = 12;
+
+/**
+ * ── THE PAPER ACTUALLY PAINTED, WITH A NEAR-NEUTRAL LIGHT GROUND CLAMPED TO THE APP'S WHITE ─
+ *
+ * {@link effectiveBackground} reads what a mail DECLARES; this decides what to PAINT it on, and
+ * the two are kept apart deliberately — the declared value still drives {@link mailIsLight} and
+ * the dark-viewing seam untouched, so the inversion tests keep asserting the real colour.
+ *
+ * A letter that declares a faint grey/off-white page is not asking the reader to keep that
+ * grey; it is the sender's template, and painting the frame's paper grey puts a dull sheet
+ * behind a white letter. So a paper that is BOTH light (above the inversion threshold) AND
+ * effectively colourless (chroma within {@link NEUTRAL_CHROMA}) becomes `null` — the app's own
+ * white, the same default a mail that declares no background at all is drawn on.
+ *
+ * Two papers keep their ground: a DELIBERATE colour (chroma past the band — a tinted card, a
+ * brand ground) and a DARK canvas (a sender who drew a dark page). Only the near-white-grey
+ * middle is dropped. `null` in, `null` out: a mail that declared nothing is unchanged.
+ */
+export function clampedPaper(bg: Rgb | null): Rgb | null {
+  if (bg === null) return null;
+  if (!mailIsLight(bg)) return bg;
+  const chroma = Math.max(bg.r, bg.g, bg.b) - Math.min(bg.r, bg.g, bg.b);
+  return chroma <= NEUTRAL_CHROMA ? null : bg;
+}
+
+/**
  * A colour this file computed, as CSS. Alpha is dropped deliberately — this is only ever used
  * to paint the frame's PAPER, which is the bottom-most surface and has nothing to blend with.
  */
@@ -1498,7 +1537,7 @@ export function frameCsp(imagesLoaded: boolean): string {
  * declares nothing, which is the mail this reflow path exists for.
  */
 export const NATIVE_FONT_SIZE = "14.5px";
-export const NATIVE_LINE_HEIGHT = "1.72";
+export const NATIVE_LINE_HEIGHT = "1.55";
 
 /**
  * The stylesheet the frame starts from — the sheet the letter is printed on, and nothing
@@ -1973,8 +2012,10 @@ export function MessageBody({
         // the frame. See `isRigidLayout` for what decides it.
         reflow,
         // The mail's own paper, so a message this viewer declines to invert does not sit on a
-        // white sheet it never asked for. Ignored whenever the filter is on — see FRAME_CSS.
-        paper: background,
+        // white sheet it never asked for — but a near-neutral light ground (the grey a template
+        // drops behind a white letter) is clamped back to the app's white, see clampedPaper.
+        // Ignored whenever the filter is on — see FRAME_CSS.
+        paper: clampedPaper(background),
       }),
       blocked,
       sheets,
@@ -2242,23 +2283,30 @@ export function MessageBody({
    * to relax it. `message-body-prose.test.ts` plants markup in a prose-classified message and
    * asserts that not one element of it reaches the app's DOM.
    *
-   * ── THE BAR STAYS ─────────────────────────────────────────────────────────────────────
+   * ── THE BAR STAYS WHEN IT HAS SOMETHING TO SAY ─────────────────────────────────────────
    *
    * A prose message can still have named a beacon, a background image or a remote stylesheet —
    * none of which paints anything, which is why the message qualifies — and the bar is the only
    * place the product says so. Dropping it to render "just the text" would delete a privacy
    * disclosure the site makes in as many words, for a message where the disclosure is the ONLY
-   * thing there was to report. So the frame is what this path replaces, not the chrome.
+   * thing there was to report. So the frame is what this path replaces, not that disclosure.
    *
-   * The dark toggle is the exception and is suppressed below: the transform is a filter on the
-   * FRAME's document, and there is no frame here. `BodyText` is app-native and already themed, so
-   * the control would be a button that visibly does nothing — the same rule `canAdapt` applies to
-   * a mail the sender already drew dark.
+   * But the bar is put up ONLY for a sentence (`showBar` reads `hasBlocked || canAdapt`), never
+   * for the flip alone: a plain letter with nothing blocked used to raise a whole bar to hold a
+   * single "Show original" button — a strip of chrome above an otherwise clean message. The flip
+   * moved out to its own quiet control after the body, so that message now shows no bar at all.
+   *
+   * The dark toggle is suppressed on this path: the transform is a filter on the FRAME's
+   * document, and there is no frame here. `BodyText` is app-native and already themed, so the
+   * control would be a button that visibly does nothing — the same rule `canAdapt` applies to a
+   * mail the sender already drew dark.
    */
   /**
    * IS THIS MAIL ELIGIBLE for the frameless rendering — the document's answer plus the text part
-   * this component holds. Separate from {@link proseView} because the bar needs it: the control
-   * that offers the sender's own rendering may only appear where there is one to go back TO.
+   * this component holds. It drives the flip control after the body (the way between the app's
+   * own type and the sender's own layout), which may only appear where there is one to go back
+   * TO. It is deliberately NOT a term of {@link showBar}: a prose letter with nothing blocked has
+   * no sentence to show, and a bar put up to carry only the flip is the empty strip this removes.
    */
   const proseable = mail.prose && text.trim().length > 0;
   /* The same three terms as {@link framelessView} above, and deliberately that value rather than a
@@ -2266,7 +2314,14 @@ export function MessageBody({
      the one the strip reads is the one computed above. */
   const proseView = framelessView;
   const canAdapt = themeDark && adaptable && !proseView;
-  const showBar = hasBlocked || canAdapt || proseable;
+  /**
+   * THE BAR CARRIES A SENTENCE OR A CONTROL WITH A JOB — never nothing. `hasBlocked` is the
+   * privacy disclosure (a beacon or a stylesheet the message named and this refused); `canAdapt`
+   * is the dark-viewer toggle, meaningful only over a frame in a dark theme. `proseable` is NOT
+   * here: it is the frameless flip, which now lives as its own quiet control after the body, so
+   * a plain letter with nothing to report shows no bar at all.
+   */
+  const showBar = hasBlocked || canAdapt;
   /**
    * IS WHAT THE READER IS LOOKING AT DARK? Not the same question as `dark`, which is only
    * whether the FILTER is on. A mail the sender drew dark is dark on screen with no filter at
@@ -2323,21 +2378,6 @@ export function MessageBody({
               {COPY.show}
             </button>
           ) : null}
-          {/* THE FRAMELESS DEFAULT IS REVERSIBLE, PER MESSAGE. Offered on any mail eligible for
-              the frameless rendering — whichever way it is currently being shown — so the reader
-              can always see how a message was actually laid out, and always get back. See
-              `COPY.design` for why this is a press and not something inferred from a setting. */}
-          {proseable ? (
-            <button
-              type="button"
-              className="mb-bar-btn"
-              aria-pressed={showOriginal}
-              title={showOriginal ? COPY.plainTitle : COPY.designTitle}
-              onClick={() => setShowOriginal(!showOriginal)}
-            >
-              {showOriginal ? COPY.plain : COPY.design}
-            </button>
-          ) : null}
           {/* The dark-viewer toggle. Only meaningful in a dark theme — in light there is
               nothing to adapt — so it is absent otherwise. `aria-pressed` reports whether the
               reader has forced the original light rendering for this message. */}
@@ -2375,6 +2415,24 @@ export function MessageBody({
           />
         </div>
       )}
+
+      {/* THE FRAMELESS DEFAULT IS REVERSIBLE, PER MESSAGE — a quiet text control AFTER the body,
+          not a button in a bar. Mail that declares no canvas is set in the app's own type by
+          default; this is the one press to the sender's own layout (and back), offered whichever
+          way the message is currently shown. A prose letter with nothing blocked shows no bar, so
+          this control — quiet, and out of the way under the letter — is the whole of the chrome
+          it carries. See `COPY.design` for why it is a press, not something read off a setting. */}
+      {proseable ? (
+        <button
+          type="button"
+          className="mb-flip"
+          aria-pressed={showOriginal}
+          title={showOriginal ? COPY.plainTitle : COPY.designTitle}
+          onClick={() => setShowOriginal(!showOriginal)}
+        >
+          {showOriginal ? COPY.plain : COPY.design}
+        </button>
+      ) : null}
     </div>
   );
 }

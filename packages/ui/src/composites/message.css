@@ -80,19 +80,20 @@
    the panel scrolls sideways at 390px. `pre-line` stays — single newlines inside a paragraph are
    the sender's line breaks and mail still means them — and the measure opens from 60ch to 68ch
    now that paragraphs, rather than one wall of text, carry the rhythm. */
-.msg-body{font-size:14.5px;line-height:1.72;color:var(--ink);white-space:pre-line;max-width:var(--msg-measure);margin:0;overflow-wrap:anywhere}
+.msg-body{font-size:14.5px;line-height:1.55;color:var(--ink);white-space:pre-line;max-width:var(--msg-measure);margin:0;overflow-wrap:anywhere}
 /* The paragraphs `BodyText` emits — deliberately NOT scoped under `.msg-body`, because the same
    component renders the conversation siblings inside `.hm-body`, whose rules live in the app's
    own stylesheet. One class, one rhythm, wherever a mail body is rendered.
-   14px is the gap `.msg h2` already uses above and below itself; no new spacing value. */
-.msg-p{margin:0 0 14px;overflow-wrap:anywhere}
+   10px sets the paragraphs a touch tighter than the 14px `.msg h2` uses, so a run of short
+   paragraphs reads as one letter rather than a stack of separated blocks. */
+.msg-p{margin:0 0 10px;overflow-wrap:anywhere}
 .msg-p:last-child{margin-bottom:0}
 /* QUOTED REPLY CHAINS. Each level of ">" quoting gets a quiet left rule, a step of indent and a
    more muted tone, so a thread reads as a thread instead of one undifferentiated wall. Sibling
    blocks with depth-scaled indent stand in for DOM nesting; `data-quote-depth` carries the actual
    depth and the visual steps are capped so a ">>>>>" chain does not march off the panel. */
 .msg-quote{border-inline-start:2px solid var(--hair);padding-inline-start:12px;margin:0 0 14px;color:var(--ink2)}
-.msg-quote .msg-p,.msg-quote .msg-attribution{color:inherit;margin-bottom:6px}
+.msg-quote .msg-p,.msg-quote .msg-attribution{color:inherit;margin-bottom:4px}
 .msg-quote .msg-p:last-child,.msg-quote .msg-attribution:last-child{margin-bottom:0}
 .msg-quote[data-quote-depth="2"]{margin-inline-start:12px;color:var(--ink3)}
 .msg-quote[data-quote-depth="3"]{margin-inline-start:24px;color:var(--ink3)}

@@ -71,6 +71,29 @@
 .mb-bar-btn:hover { transform: translateY(-1px); box-shadow: var(--lift-2); }
 .mb-bar-btn:disabled { cursor: default; opacity: 0.55; transform: none; box-shadow: var(--lift-0); }
 
+/* ── the way back to the sender's own rendering ─────────────────────────────────────────
+   A quiet text control under the body, not a pill in a bar. Mail that declares no canvas is
+   set in the app's own type by default; this is the one press that brings the sender's own
+   layout back, and takes the reader out of it again. Deliberately understated — it is an
+   escape hatch for the message this viewer guessed wrong about, not a primary action — so it
+   reads as a footnote to the letter above it rather than a second control surface. `flex-start`
+   because `.mb` is a stretch column and this must size to its text, left under the body. */
+.mb-flip {
+  align-self: flex-start;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 0;
+  color: var(--ink3);
+  text-decoration: underline;
+  text-decoration-color: var(--hair);
+  text-underline-offset: 2px;
+  transition: color 0.15s var(--swift), text-decoration-color 0.15s var(--swift);
+}
+.mb-flip:hover { color: var(--accent-ink); text-decoration-color: var(--accent-hair); }
+
 /* ── the sheet ────────────────────────────────────────────────────────────────────────
    A letter on the desk. Light by default in both themes — a sender's html assumes a light
    background, half of bulk mail sets `color:#333` and no background at all, and re-tinting the

@@ -3205,12 +3205,12 @@ body.reading .shell {
   font-size: 13px;
   color: var(--ink2);
 }
-/* The message you opened keeps full-weight prose and takes the accent rule, so which one
-   is focused needs no legend and no colour-only cue. */
+/* The message you opened is set in full-weight prose while its siblings collapse to a muted
+   13px peek — that difference in scale and weight IS which one is focused, so it carries no
+   side rule, no border and no colour-only cue. The focused message sits flush in the column;
+   the siblings are the inset cards, which is the reading order stated as layout. */
 .conv > .conv-focus {
   margin: 0 0 16px;
-  padding: 2px 0 2px 15px;
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 @media (max-width: 560px) {
   .conv .hmail {
