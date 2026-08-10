@@ -344,13 +344,6 @@
       "when": 1788382486206,
       "tag": "0048_remote_images_default",
       "breakpoints": true
-    },
-    {
-      "idx": 49,
-      "version": "7",
-      "when": 1788468886206,
-      "tag": "0049_mailbox_sync_requested_at",
-      "breakpoints": true
     }
   ]
 }
