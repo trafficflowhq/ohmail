@@ -13,7 +13,8 @@ about how it behaves against real mail:
 
 - **Design and interaction** — the Blanc surfaces, keyboard flow, compact
   (≤ 390 px) layout, reduced-motion behaviour, screen-reader gaps.
-- **The shell's security posture** — the CSP, the empty capability list, the
+- **The shell's security posture** — the CSP, the main window's empty capability
+  list and the updater window's single listen-only grant, the
   offline guard, the aliases in `apps/desktop/vite.config.ts`. A way for the app
   to reach the network that we have missed is the most valuable bug in the
   repository.
