@@ -3115,25 +3115,10 @@ body.reading .shell {
   border-bottom: 1px solid var(--hair);
 }
 .mbx-row:last-of-type { border-bottom: 0; }
-/* 120px is the FLOOR under the address column, not a suggestion: with `min-width: 0` a wide
-   state column (an error sentence plus two buttons) presses this to nothing, and a long
-   address then breaks mid-word ("…@examp / le-company.ch") — which is why the address now
-   ellipsizes instead of wrapping (`title` carries the full value; see MailboxSection.tsx). */
-.mbx-main { display: flex; flex-direction: column; gap: 2px; min-width: 120px; flex: 1; }
-.mbx-addr {
-  font-size: 14px; color: var(--ink);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+.mbx-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.mbx-addr { font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
 .mbx-sub { font-size: 11.5px; color: var(--ink2); }
-/* The state may WRAP but its buttons may not: `min-width: 0` lets the column give space back
-   by dropping the status sentence onto its own line, while each button stays a whole capsule
-   (`.mbx-btn` below is `nowrap`/`flex: none`). That is the split the screenshot demanded —
-   the words are the flexible thing, the controls keep their shape. Right-aligned so a wrapped
-   line still hangs off the row's right edge rather than drifting under the address. */
-.mbx-state {
-  display: flex; align-items: center; justify-content: flex-end;
-  gap: 8px 10px; flex-wrap: wrap; min-width: 0;
-}
+.mbx-state { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .mbx-ok { font-size: 12px; color: var(--ink2); font-variant-numeric: tabular-nums; }
 .mbx-bad { font-size: 12px; color: var(--danger, #b3261e); }
 .mbx-wait { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink2); }
@@ -3146,19 +3131,13 @@ body.reading .shell {
 }
 @keyframes mbx-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .mbx-spin { animation: none; } }
-/* A button label never breaks — "Reconnect Microsoft" on two lines inside its own capsule is
-   the cramped wrapping the screenshot showed. The row makes room by wrapping BETWEEN items. */
-.mbx-btn { font-size: 12px; padding: 5px 12px; white-space: nowrap; flex: none; }
+.mbx-btn { font-size: 12px; padding: 5px 12px; }
 /* The takeover panel's two buttons. `wrap` because the confirm sits under a two-sentence
    explanation that is deliberately not shortened, and at 390px the pair must go to a second line
    rather than push the row wider than the card. */
 .mbx-actions { display: inline-flex; flex-wrap: wrap; gap: 7px; margin-top: 5px; }
 @media (max-width: 560px) {
-  /* `stretch`, not `flex-start`: the address span needs the full row width for its ellipsis —
-     a fit-content column would let a long address size its own box and never truncate. */
-  .mbx-row { flex-direction: column; align-items: stretch; gap: 9px; }
-  /* Wrap is inherited from the base rule, which is what makes this work at a 320px pane:
-     the status sentence takes a line, the buttons take the next, and no capsule squishes. */
+  .mbx-row { flex-direction: column; align-items: flex-start; gap: 9px; }
   .mbx-state { width: 100%; justify-content: space-between; }
 }
 
