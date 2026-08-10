@@ -107,6 +107,7 @@ import { ViewBoundary } from "./ViewBoundary";
 import {
   optionsFromFacts,
   optionsFromMirror,
+  replyAllRecipients,
   replyRecipients,
   resolveComposeFrom,
   resolveReplyFrom,
@@ -946,6 +947,14 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   /* The inline reply. The id and the text live HERE, not in `MessagePane`, because
      that pane is mounted twice whenever the reader is open — see `message-chrome.tsx`. */
   const [replyTo, setReplyTo] = useState<string | null>(null);
+  /**
+   * Whether the open editor answers EVERYONE on the message (reply all). Set by every open —
+   * `openReply(id, all)` — and read only while `replyTo` is non-null, so a stale `true` after
+   * a close can never address anybody. The RECIPIENTS are not stored: `sendReply` resolves
+   * `replyAllRecipients` at send time from the same facts the head renders, which is what
+   * keeps the claim on screen and the envelope on the wire one decision.
+   */
+  const [replyAll, setReplyAll] = useState(false);
   const [replyBody, setReplyBody] = useState<RichValue>(EMPTY_RICH);
   /**
    * THE COMPOSE FORM, and why it lives up here rather than in `ComposeView`.
@@ -1346,7 +1355,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * complaint. The draft is restored from `localStorage` on open, so a reload lands you
    * back in the same half-written sentence.
    */
-  const openReply = useCallback((messageId: string) => {
+  const openReply = useCallback((messageId: string, all = false) => {
+    // The mode travels with the open, never separately: a Reply press while a reply-all
+    // editor is up on the same message is an explicit narrowing, and vice versa.
+    setReplyAll(all);
     setReplyTo(messageId);
     setReplyBody(readReplyDraft(messageId));
     // MOBILE. Under 900px the reading column is `display:none` (app.css), so an inline
@@ -1397,6 +1409,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   /** Open the reply on `messageId` and put `next` in it — memory, buffer and mobile alike. */
   const placeDraft = useCallback(
     (messageId: string, next: RichValue) => {
+      // An arriving draft keeps the audience the editor already has on this message — a
+      // reply-all someone bought a draft for must not silently narrow to the sender alone —
+      // and resets to a plain reply when it opens the editor on a different message.
+      setReplyAll((prev) => replyToRef.current === messageId && prev);
       setReplyTo(messageId);
       setReplyBody(next);
       writeReplyDraft(messageId, next);
@@ -1594,9 +1610,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       // a message you sent — a self-authored one shows inline the moment a thread has two turns.
       // `replyRecipients` returns the correspondents for that case (and `null` otherwise, leaving
       // the default in place), using the account's own addresses off the same From options.
-      const to = parent
-        ? replyRecipients(parent, fromOptions.map((o) => o.address))
-        : null;
+      //
+      // A REPLY ALL resolves `replyAllRecipients` instead — the SAME call that let the button
+      // render and that the editor's head named, over the same options, so the audience shown
+      // is the audience sent. `null` (the envelope degenerated — a recipient list that shrank
+      // under the open editor) falls back to the plain-reply path rather than guessing.
+      const all =
+        replyAll && parent
+          ? replyAllRecipients(parent, fromOptions.map((o) => o.address))
+          : null;
+      const to = all
+        ? all.to
+        : parent
+          ? replyRecipients(parent, fromOptions.map((o) => o.address))
+          : null;
       mailSend.send({
         kind: "mail_send",
         inReplyTo: messageId,
@@ -1608,9 +1635,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         ...(replyBody.html ? { html: replyBody.html } : {}),
         ...(from.substituted && from.mailboxId ? { mailboxId: from.mailboxId } : {}),
         ...(to ? { to } : {}),
+        // The Cc line rides only on a reply-all that has one — a plain reply's envelope is
+        // unchanged, exactly as it was before reply-all existed.
+        ...(all && all.cc.length > 0 ? { cc: all.cc } : {}),
       });
     },
-    [mailSend, replyTo, replyBody, reader, version, fromOptions],
+    [mailSend, replyTo, replyAll, replyBody, reader, version, fromOptions],
   );
 
   /**
@@ -2109,6 +2139,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           // the message you were answering left the screen as you started answering it.
           openReply(m.id);
           break;
+        case "reply_all":
+          // The same editor, opened over the whole audience. The bar only dispatches this
+          // where `replyAllRecipients` admitted a control (see `MessagePane.ActionBar`), and
+          // `sendReply` resolves that same call again for the wire.
+          openReply(m.id, true);
+          break;
         case "draft":
           /**
            * IT NOW ASKS THE DRAFTER, and it used to navigate to Compose.
@@ -2120,7 +2156,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
            * price sits beside the box the text will land in; the offer spends nothing until
            * it is confirmed.
            */
-          openReply(m.id);
+          // The open KEEPS the audience an editor already holds on this message — a drafted
+          // text bought for a reply-all must not silently narrow the envelope to the sender.
+          openReply(m.id, replyTo === m.id && replyAll);
           draftReply.open(m.id);
           break;
         case "later":
@@ -2196,7 +2234,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         }
       }
     },
-    [engine, toast, t, piles.replyLater.length, now, openReply, markSeen, draftReply],
+    [engine, toast, t, piles.replyLater.length, now, openReply, markSeen, draftReply, replyTo, replyAll],
   );
 
   /**
@@ -2218,7 +2256,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    */
   const onStreamAction = useCallback(
     (action: MessageAction, m: EngineMessage) => {
-      if (action === "reply" || action === "draft") setReaderFor(m.id);
+      if (action === "reply" || action === "reply_all" || action === "draft") setReaderFor(m.id);
       onMessageAction(action, m);
     },
     [onMessageAction],
@@ -2732,6 +2770,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       run: () => selectedOhbox && openReply(selectedOhbox.id),
     },
     {
+      // `shift+r` — the shifted variant of the verb it widens, the convention `shift+u`
+      // already set. Inert wherever `r` is, and ADDITIONALLY on a message whose audience is
+      // the sender alone: `replyAllRecipients` is the bar's own visibility predicate, so the
+      // key and the button appear and disappear together.
+      chord: "shift+r",
+      group: "message",
+      label: t("shortcuts.replyAll"),
+      disabled:
+        route.view !== "ohbox" ||
+        selectedOhbox == null ||
+        replyAllRecipients(selectedOhbox, ownAddresses) === null,
+      run: () => selectedOhbox && openReply(selectedOhbox.id, true),
+    },
+    {
       // SENDING FROM THE KEYBOARD. `inInput` is not optional: the editor takes
       // focus the moment it opens, so without it the one place the shortcut is for is the one
       // place it would not fire — the same reasoning Escape's binding already carries.
@@ -3215,7 +3267,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       ownAddresses,
       absoluteTime,
       onToggleAbsoluteTime: () => setAbsoluteTime((v) => !v),
-      replyTo, replyBody, onReplyBody, closeReply, sendReply,
+      replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply,
       /**
        * THE SIBLING VERBS, no longer dormant.
        *
@@ -3248,7 +3300,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       bodyOf: bodyOfMessage, hydrateBody, hydrateThread,
       attachments, remoteImages,
     }),
-    [ownAddresses, absoluteTime, replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
+    [ownAddresses, absoluteTime, replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       openSenderMenu, openReply, forwardMessage, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
   );
