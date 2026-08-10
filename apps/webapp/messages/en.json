@@ -1429,6 +1429,7 @@
     "failing": "Sync failed. Retrying.",
     "stopped": "Sync stopped — this session is no longer authorized.",
     "stoppedLocal": "Sync stopped. Quit and reopen ohmail to reconnect.",
+    "catchingUp": "Catching up…",
     "signIn": "Sign in",
     "settings": "Settings → Mailboxes",
     "importing": "Syncing your mail.",

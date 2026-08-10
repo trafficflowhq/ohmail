@@ -604,6 +604,7 @@ export function importFloorSpeaks(
 export type MailStateKey =
   | "stopped"
   | "failing"
+  | "catchingUp"
   | "blocked"
   | "mailboxError"
   | "filing"
@@ -894,18 +895,41 @@ function climb(input: MailStateInputs): MailState {
   // function, a session still warming, a deploy alias mid-roll. Rendering "failed" on it is the
   // same over-reach the `stopped` banner was moved behind a confirmation to end, one banner
   // weaker: it announces a failure on evidence that resolves in `REFUSAL_CONFIRM_MS`, and it did so
-  // over a first sync that was about to succeed. So an UNCONFIRMED refusal falls through to the
-  // calm progress states below — `awaiting` ("the first sync has not finished yet") or `importing`
-  // ("Syncing your mail") while the mirror is cold, the resting value once it has drained — never
-  // "failed". It is not answered with a scarier sentence than the facts support, and it is not
-  // answered with silence during a first sync either: the ladder below has a calm true sentence for
-  // it. What surfaces a failure banner is a SUSTAINED failure and nothing else: the streak here, or
-  // a CONFIRMED refusal, which `sync-scheduler.ts` latches to `terminal` and the `stopped` arm
-  // above renders. This mirrors the discipline of that non-latching fix at the weaker banner.
+  // over a first sync that was about to succeed. So an UNCONFIRMED refusal is handled by the calm
+  // `catchingUp` FLOOR below — never "failed" — rather than here. It is not answered with a scarier
+  // sentence than the facts support, and (the other half, which the ladder used to get wrong) it is
+  // not answered with silence either. What surfaces a failure banner is a SUSTAINED failure and
+  // nothing else: the streak here, or a CONFIRMED refusal, which `sync-scheduler.ts` latches to
+  // `terminal` and the `stopped` arm above renders. This mirrors the discipline of that non-latching
+  // fix at the weaker banner.
   if (sync.failures >= failureStreak) return { ...QUIET, key: "failing" };
 
-  // "We cannot see mailboxes" — not "there are none". Everything from here reads them.
-  if (mailboxes === null) return QUIET;
+  // ── The calm FLOOR for an UNCONFIRMED coded refusal ─────────────────────────────────────
+  //
+  // `sync.refused` is a 401/403 our API made about this identity ONCE and has not yet RE-MADE
+  // (`REFUSAL_CONFIRM_MS`, sync-scheduler.ts). It must never be answered with the scary "Sync
+  // failed. Retrying." — the confirm window exists so a refusal that resolves inside it is not
+  // announced as a failure (the arm above) — and it must never be answered with SILENCE. A coded
+  // refusal answered with nothing on screen is the invariant this floor exists to hold: the strip
+  // says something true and calm the whole time the refusal is being confirmed.
+  //
+  // But it is a FLOOR, not a high-priority arm, and the difference is deliberate. The visible states
+  // below — `awaiting` ("the first sync has not finished"), `importing` ("Syncing your mail"),
+  // `blocked`, and the rest — are calm true sentences in their own right, so a refusal DURING one of
+  // them changes nothing a reader needs: a first-sync refusal shows the first-sync sentence, not a
+  // generic "catching up" (`mail-state.test.ts` pins exactly that). What this replaces is only the
+  // SILENT `quiet` fall-throughs — a `null` mailbox probe, no connected mailbox, and above all the
+  // settled mirror whose screener pointer is silent by design — which is the exact settled case the
+  // ladder used to answer a refusal with nothing at all. Once the refusal is CONFIRMED the scheduler
+  // latches `terminal` and the `stopped` arm above renders the banner and the sign-in remedy.
+  //
+  // Not in the `settled` keys (see {@link MailState.settled}) on purpose: a transient refusal is not
+  // an answer about whether the mailbox is empty.
+  const quietOrCatchingUp: MailState = sync.refused ? { ...QUIET, key: "catchingUp" } : QUIET;
+
+  // "We cannot see mailboxes" — not "there are none". Everything from here reads them. Silent unless
+  // a refusal is being confirmed, in which case the floor speaks rather than the screen going blank.
+  if (mailboxes === null) return quietOrCatchingUp;
 
   const live = mailboxes.filter((m) => m.status !== "disabled");
 
@@ -1081,7 +1105,7 @@ function climb(input: MailStateInputs): MailState {
   if (live.length === 0) return { ...QUIET, key: "noMailbox" };
 
   const connected = live.filter((m) => m.status === "connected");
-  if (connected.length === 0) return QUIET;
+  if (connected.length === 0) return quietOrCatchingUp;
 
   // ── 2. IMPORTING — the mirror is growing ───────────────────────────────────────────────
   //
@@ -1199,6 +1223,12 @@ function climb(input: MailStateInputs): MailState {
   // Mail has landed, the mirror is settled and nothing above matched. `mirrored > 0` is
   // load-bearing rather than defensive: without it an account that has never received
   // anything would offer to explain where its mail went.
+  //
+  // THE SETTLED-CASE FLOOR. This is where the silence hole was: a mirror that had already drained
+  // left an unconfirmed refusal with no calm progress arm to fall into, so it fell here to `quiet`
+  // — silence. When a refusal is being confirmed the floor speaks instead, and `screenerCandidate`
+  // stays false (a refusal is not the "all clear, it's in the Screener" moment).
+  if (sync.refused) return { ...QUIET, key: "catchingUp", count: mirrored };
   return { ...QUIET, count: mirrored, screenerCandidate: mirrored > 0 };
 }
 
