@@ -448,11 +448,11 @@
   },
   "seed": {
     "title": "Du hast {count, plural, one {1 Person} other {# Leuten}} geschrieben.",
-    "lede": "Jemandem zu schreiben ist das deutlichste Zeichen, dass du eine Antwort willst. Alle unten angehakten kommen von jetzt an in deine Ohbox. Hak ab, wen du lieber screenen willst.",
+    "lede": "Jemandem zu schreiben ist das deutlichste Zeichen, dass du eine Antwort willst. Alle unten angehakten kommen von jetzt an in deine Ohbox. Nimm den Haken weg bei allen, die du lieber screenen willst.",
     "truncated": "Gelesen aus deinen {scanned, number} neuesten gesendeten Nachrichten. Wem du davor geschrieben hast, landet weiter im Screener, wenn er sich wieder meldet.",
     "filterPlaceholder": "Jemanden finden …",
     "selectShown": "Alle {count, plural, one {1 angezeigte} other {# angezeigten}} anhaken",
-    "deselectShown": "{count, plural, one {1 angezeigte} other {alle # angezeigten}} abhaken",
+    "deselectShown": "Haken weg bei {count, plural, one {1 angezeigten} other {allen # angezeigten}}",
     "wroteN": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
     "alreadyDecided": "schon entschieden",
     "excludedSummary": "{count, plural, one {1 Adresse wurde ausgelassen} other {# Adressen wurden ausgelassen}}",
@@ -616,7 +616,7 @@
     "screener": "Screener",
     "tags": "Tags",
     "language": "Sprache",
-    "languageHint": "Gilt für diese App, überall wo du dich anmeldest",
+    "languageHint": "Gilt für diese App, überall, wo du dich anmeldest",
     "languageAria": "Sprache",
     "languageFailed": "Das ließ sich nicht speichern — versuch es nochmal.",
     "languageName": {
@@ -632,7 +632,7 @@
     "screening": {
       "title": "Was in deine Ohbox kommt",
       "postureTitle": "Meine Ohbox für das freihalten, was zählt",
-      "postureOn": "Echte Menschen und die Service-Post, mit der du etwas tust, bleiben in der Ohbox. Newsletter und Werbung gehen in den Lesestoff, Belege in die Belege.",
+      "postureOn": "Echte Menschen und die Service-Post, mit der du etwas tust, bleiben in der Ohbox. Newsletter und Werbung gehen in den Lesestoff, Quittungen und Rechnungen in die Belege.",
       "postureOff": "Alles von einem Absender, dem du geschrieben hast, kommt in deine Ohbox — Werbung eingeschlossen.",
       "autoApplyTitle": "Offensichtliche Massenpost für mich aus dem Screener einsortieren",
       "autoApplyDescription": "Wenn ein Erstabsender ganz klar ein Newsletter oder ein Beleg ist, wird er in den Lesestoff oder die Belege einsortiert, statt für dich zurückgehalten zu werden. Nur feste Regeln — keine KI, und es kostet nie etwas. Sicherheitscodes und andere sensible Post werden nie verschoben, und Erstabsender aus Fleisch und Blut warten immer auf dich. Du kannst alles zurückholen; gelöscht wird nichts. Standardmäßig aus.",
