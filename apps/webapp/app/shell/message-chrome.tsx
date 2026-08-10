@@ -55,6 +55,13 @@ export interface MessageChrome {
   /** The message id whose inline reply editor is open, if any. */
   replyTo: string | null;
   /**
+   * Whether that editor answers EVERYONE on the message (reply all) rather than the sender
+   * alone. Set by the open (`AppShell.openReply(id, true)`); meaningful only while `replyTo`
+   * is non-null. OPTIONAL, and absent means a plain reply — the inert default and every
+   * provider-less mount keep compiling, exactly as `openReply` does.
+   */
+  replyAll?: boolean;
+  /**
    * OPEN THE REPLY EDITOR ON A SPECIFIC MESSAGE — the seam a conversation SIBLING answers with.
    *
    * The focused message's own Reply travels the pane's `onAction("reply")` prop, which the shell
