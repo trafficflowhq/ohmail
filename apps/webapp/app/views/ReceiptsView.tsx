@@ -24,6 +24,7 @@ import { useListWindow } from "../shell/list-window";
 import { type MessageAction } from "../shell/MessagePane";
 import { StreamShell, type StreamHandle } from "../shell/StreamShell";
 import { StreamCardMemo } from "../shell/StreamCardMemo";
+import { useStreamWindow } from "../shell/stream-window";
 
 export function ReceiptsView({
   messages,
@@ -82,11 +83,24 @@ export function ReceiptsView({
   /**
    * THE LIST IS A WINDOW, not the whole pile. Receipts is a working set on most accounts, but a
    * standalone desktop client's mirror is the whole mailbox, and `all.map(row)` mounted every
-   * row of it — the same unbounded cost History was windowed for. Only the LIST column is
-   * windowed here; the reading stream to its right stays whole (its cards are variable-height
-   * and drive `\Seen` through scroll-coupled observers) and is kept cheap off-screen in CSS.
+   * row of it — the same unbounded cost History was windowed for. The reading stream to its
+   * right mounts an opening run that grows toward the reader (`stream-window.ts`, which carries
+   * the whole argument): mounting a card per message before first paint was the dominant cost
+   * of switching into this view, exactly as it was for Reads.
    */
   const win = useListWindow({ scrollerRef: listScrollerRef, count: all.length });
+  const stream = useStreamWindow({
+    total: all.length,
+    getRoot: () => streamRef.current?.element() ?? null,
+  });
+  /* A scroll to a card that is not in the DOM is a silent no-op (`StreamShell.scrollTo`), so
+     every jump extends the run first and scrolls AFTER the commit that mounted the target. */
+  const [pendingScroll, setPendingScroll] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingScroll) return;
+    streamRef.current?.scrollTo(pendingScroll);
+    setPendingScroll(null);
+  }, [pendingScroll]);
   const current = cur ?? all.find(isUnread)?.id ?? all[0]?.id ?? null;
 
   const seenMark = (id: string) => {
@@ -99,18 +113,20 @@ export function ReceiptsView({
   const jump = (id: string) => {
     seenMark(id);
     onCur(id);
-    streamRef.current?.scrollTo(id);
+    stream.ensure(all.findIndex((m) => m.id === id));
+    setPendingScroll(id);
   };
 
   useEffect(() => {
     if (!jumpTo) return;
     const timer = requestAnimationFrame(() => {
       onCur(jumpTo);
-      streamRef.current?.scrollTo(jumpTo);
+      stream.ensure(all.findIndex((m) => m.id === jumpTo));
+      setPendingScroll(jumpTo);
       onJumped();
     });
     return () => cancelAnimationFrame(timer);
-  }, [jumpTo, onCur, onJumped]);
+  }, [jumpTo, onCur, onJumped, stream.ensure, all]);
 
   /**
    * Keep the row the USER selected in view — `cur`, never `current`.
@@ -243,7 +259,10 @@ export function ReceiptsView({
         ariaLabel={t("streamAria")}
         onCurrentChange={onCur}
         onSeen={seenMark}
-        contentKey={all.map((m) => m.id).join(",")}
+        /* The run length is part of the key: growth mounts NEW cards, and the seen observer
+           re-scans on this value — without it a card mounted by a growth commit would never
+           mark itself seen. */
+        contentKey={`${stream.count}:${all.map((m) => m.id).join(",")}`}
       >
         <div className="stream-top">
           <h1>{t("title")}</h1>
@@ -258,7 +277,7 @@ export function ReceiptsView({
           </span>
           <span>{tr("hintSeen")}</span>
         </div>
-        {all.map((m) => {
+        {all.slice(0, stream.count).map((m) => {
           const body = bodyOf(m);
           return (
             <StreamCardMemo
@@ -281,7 +300,11 @@ export function ReceiptsView({
             />
           );
         })}
-        <div className="tail-row">{t("tail")}</div>
+        {/* Growth sentinel, then the reserved height standing in for the unmounted tail. */}
+        <div ref={stream.sentinelRef} data-stream-sentinel aria-hidden />
+        {stream.tailPx > 0 ? <div aria-hidden data-stream-tail style={{ height: stream.tailPx }} /> : null}
+        {/* The end-of-pile line is a claim; it is made only over a fully mounted pile. */}
+        {stream.count >= all.length ? <div className="tail-row">{t("tail")}</div> : null}
       </StreamShell>
     </section>
   );
