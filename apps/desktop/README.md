@@ -160,33 +160,16 @@ payload. All eight were run against the last pre-fix installers and all eight
 fired. `desktop-shell.test.ts` asserts the config key itself, so a future edit
 that restores the default is red in the monorepo suite too.
 
-## Capabilities: none for the window you use
-
-`capabilities/` holds two files, and every build carries both.
+## Capabilities: none
 
 ```json
 { "identifier": "main", "windows": ["main"], "permissions": [] }
 ```
 
-The main window's permission list is **empty**. Not `core:default`, not a trimmed
-subset — empty. The frontend calls no `invoke`, `withGlobalTauri` is `false`, so
-the webview has no Tauri API to reach for and would be refused if it tried. On the
+The permission list is **empty**. Not `core:default`, not a trimmed subset —
+empty. The frontend calls no `invoke`, `withGlobalTauri` is `false`, so the
+webview has no Tauri API to reach for and would be refused if it tried. On the
 Rust side there is no `invoke_handler`, no `std::net` and no socket of any kind.
-
-```json
-{ "identifier": "updater", "windows": ["updater"], "permissions": ["core:event:allow-listen"] }
-```
-
-The second file is the only grant in the tree, and it is not for that window. It
-covers the transient progress window shown **only** while an update is
-downloading (`src/updater-window.ts`, opened and closed by `src/updater.rs`), and
-it carries exactly one permission: it may LISTEN for the local
-`updater://progress` event the Rust updater emits, so it can render a byte-count.
-There is no `core:event:allow-emit`, so it cannot make the shell hear anything
-back; no command; no filesystem permission; and it inherits the app-wide
-`connect-src 'none'`, so it reaches the network no more than the main window
-does. The asymmetry is the design: the download is driven Rust-side, and the page
-that watches it is granted one direction of one event.
 
 The one file this binary can open is behind a compile-time feature that is
 **off** in every published build: `src/engine.rs` — the shell's ownership of a
@@ -380,9 +363,8 @@ cd apps/desktop/src-tauri && cargo test    # the signature + downgrade proofs
 ```
 
 `test/desktop-shell.test.ts` is the drift guard: it asserts the identifier, the
-one bare version across five files, the CSP directive by directive, the main
-window's empty capability list and the updater window's single listen-only grant,
-the absent `invoke_handler`, the absent `compression` feature,
+one bare version across five files, the CSP directive by directive, the empty
+capability list, the absent `invoke_handler`, the absent `compression` feature,
 the exact two-plugin allow-list, the pinned update feed, a valid updater pubkey
 (with a negative control for the packaging gate), the http-adapter alias, and
 that `index.html`'s CSP still matches the webview's. Those files are read by
@@ -413,7 +395,7 @@ apps/desktop/
     ├── Cargo.toml        tauri (defaults minus compression) + updater + dialog
     ├── tauri.conf.json   window, CSP, bundle targets, icons, updater feed + pubkey
     ├── build.rs          command manifest + the missing-pubkey packaging gate
-    ├── capabilities/     main.json (no permissions) + updater.json (listen only)
+    ├── capabilities/     one file, zero permissions
     ├── icons/            the "oh." family (.ico, .icns, .png ladder)
     └── src/
         ├── main.rs           the window, and the updater hook-up

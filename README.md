@@ -429,14 +429,10 @@ bundle at build time — it is not compiled in, and its source is not in this
 repository at all.
 
 **In the interface-only build that is the whole story**, and it is a property of
-the artifact rather than of a branch: the main window's Tauri capability list is
-literally empty (`"permissions": []`), so the page can call no Tauri command,
-touch no file and spawn no process. The one other grant in the tree belongs to a
-different window — the transient one shown while an update downloads, which is
-allowed to listen for a local progress event (`core:event:allow-listen`) and
-nothing else: no emit back, no command, no file, and the same `connect-src
-'none'`. That build is what you get from `npm run ui:build` + `npx tauri build`,
-and it is what the render check in CI runs against.
+the artifact rather than of a branch: its Tauri capability list is literally
+empty (`"permissions": []`), so the page can call no Tauri command, touch no
+file and spawn no process. That build is what you get from `npm run ui:build` +
+`npx tauri build`, and it is what the render check in CI runs against.
 
 **In the build you download, the window can call six commands and nothing else.**
 They are the bridge to the mail engine, a notification, and the icon's badge. Mail
@@ -523,8 +519,7 @@ the same React sources the other two platforms already used.
 | `src-tauri/src/main.rs` | opens the window, installs the menu bar, hooks up the updater, and — in the engine-bearing build — owns the engine's lifetime |
 | `src-tauri/src/engine.rs` | the engine's whole life: find a Node runtime, spawn it with the engine, read its frames, and make certain it is gone when the app is. Compiled only with the `local-engine` feature, so the interface-only build does not contain it at all |
 | `src-tauri/tauri.conf.json` | window geometry (clean to 390 px), the CSP, the bundle targets, the `oh.` icon family |
-| `src-tauri/capabilities/main.json` | the main window's grant: `"permissions": []` |
-| `src-tauri/capabilities/updater.json` | the transient download-progress window's grant: `core:event:allow-listen`, and nothing else |
+| `src-tauri/capabilities/main.json` | one file, `"permissions": []` |
 | `src/` | the desktop-specific layer: providers, the pre-paint theme stamp, the offline guard, and the two stubs that stand in for the Cloud sync client and the Cloud API client |
 | `packages/{tokens,ui,fixtures,client-engine}` + `apps/webapp/app/{shell,views,components}` | the interface itself — the same sources the web client renders, compiled by Vite into the bundle Tauri embeds |
 

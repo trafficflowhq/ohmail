@@ -22,6 +22,7 @@ import {
   VIEW_OF_FOLDER,
   bodyOf,
   consentPartition,
+  forwardSubject,
   ohboxView,
   physicalFolderOf,
   presentationReader,
@@ -33,6 +34,8 @@ import {
   sendingMailboxId,
   tagsCrossView,
   threadOf,
+  threadParticipants,
+  threadSubject,
   triagePiles,
   type ConsentPartition,
   type EmailAddress,
@@ -71,13 +74,15 @@ import {
   type ProvidedEngine,
 } from "./engine";
 import { useOlderMail } from "./older-mail";
-import { PLACE_LABEL, avatarHue, firstName, hueOf, nextFridayNine, resurfaceLabel } from "./format";
+import { PLACE_LABEL, avatarHue, firstName, hueOf, initialsOf, nextFridayNine, resurfaceLabel } from "./format";
+import { displayAddress, displayDomain } from "./idn";
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
 import { AttachmentPreview } from "../components/AttachmentPreview";
 import { dispatchMarkAllRead } from "./read-all";
 import { useMessageAttachments } from "./attachments";
 import { useRemoteImages } from "./remote-images";
 import { useConsentState } from "./consent-state";
+import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
 import { useScreenerSuggestions, type SenderSuggestion } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
@@ -85,6 +90,8 @@ import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
 import { useComposeAutosave } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
+import { AwayResponderRow } from "./AwayResponderRow";
+import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
   composePlan,
@@ -105,6 +112,7 @@ import { ViewBoundary } from "./ViewBoundary";
 import {
   optionsFromFacts,
   optionsFromMirror,
+  replyAllRecipients,
   replyRecipients,
   resolveComposeFrom,
   resolveReplyFrom,
@@ -117,9 +125,12 @@ import {
   dispatchScreeningChange,
   planScreeningChange,
   senderScreening,
+  worstStatus,
   type ScreeningDest,
   type ScreeningScope,
 } from "./sender-screening";
+import { SubjectRuleSheet, type SubjectRuleState } from "./SubjectRuleSheet";
+import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "./subject-rule";
 import { senderHitOf } from "./sender-hit";
 import {
   go, goScreener, goTag, goTriage, useHashRoute,
@@ -681,6 +692,37 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    */
   const consent = useConsentState(!demo);
   /**
+   * THE ACCOUNT'S LANGUAGE WINS OVER THIS DEVICE'S — the whole of the account-tied half, and it
+   * rides the `GET /consent` this shell already makes rather than a request of its own.
+   *
+   * The two preferences exist for different reasons and both are needed. `localStorage` is what a
+   * STANDALONE install has (there is no account to store anything on) and what the SIGN-IN screen
+   * has (there is no account yet). The account column is what makes "my mail is in German" true on
+   * a machine that has never seen this account — a borrowed laptop, a second browser, a fresh
+   * install. So when both exist the account is the authority, which is this effect.
+   *
+   * `adoptLocale`, never `setLocale`: on the Cloud client the latter WRITES the account, so adopting
+   * a value that came FROM the account would PATCH it back on every boot of every tab — and a
+   * failed write of a value nobody changed would reject into a control nobody touched. See
+   * `LocaleControls.adoptLocale`.
+   *
+   * Null means the account has no preference and the device's choice stands, which is why there is
+   * no `else` arm here: this effect can only ever move the language TOWARDS what an account said.
+   * `adoptLocale` is a no-op when the two already agree, so the steady state is one comparison per
+   * consent read and nothing else.
+   *
+   * Absent provider (`locale === null`) is the demo and the unit tests, which have no locale
+   * machinery at all — nothing to adopt into, and no error worth raising.
+   */
+  const localeControls = useAppLocale();
+  const accountLocale = consent.locale;
+  const adoptLocale = localeControls?.adoptLocale;
+  const activeLocale = localeControls?.locale;
+  useEffect(() => {
+    if (!adoptLocale || accountLocale === null || accountLocale === activeLocale) return;
+    void adoptLocale(accountLocale);
+  }, [adoptLocale, accountLocale, activeLocale]);
+  /**
    * THE SEED REVIEW, OFFERED ONCE THE SERVER SAYS IT IS OWED — and dismissible.
    *
    * `seedConfirmedAt` is null until somebody has answered the review, which is also the state
@@ -884,6 +926,15 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * calling it every render is free.
    */
   const autoOptIn = suggestions.autoOptIn(screener.unsuggestedSenders);
+  /**
+   * THE AWAY RESPONDER'S ONE SHELL FACT — is it on, and for whom. One `GET /away-responder`
+   * per tab, held HERE so the Ohbox notice reads shell state on every visit rather than
+   * costing a round trip per mount; the settings row's `onChanged` echo (bound below, beside
+   * `awaySection`) keeps it current for a same-tab edit. Gated exactly as `awaySection` is:
+   * no server, no read, no notice — and see `AwayNotice.tsx` for why a failed read stays
+   * silent rather than guessing.
+   */
+  const awayNotice = useAwayNotice(!demo && autoOptIn.supported);
 
   /* ── view state ── */
   const [ohboxSel, setOhboxSel] = useState<string | null>(null);
@@ -934,9 +985,21 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [senderMenu, setSenderMenu] = useState<SenderMenuState | null>(null);
   const [senderAudit, setSenderAudit] = useState<SenderAuditState | null>(null);
+  /* The subject-rule sheet — the finer sibling of the sender popover, opened from a message's
+     title. It lives here for the reason every overlay here does: `MessagePane` is mounted TWICE
+     while the reader is open, so a sheet held per-pane would be two sheets. */
+  const [subjectRule, setSubjectRule] = useState<SubjectRuleState | null>(null);
   /* The inline reply. The id and the text live HERE, not in `MessagePane`, because
      that pane is mounted twice whenever the reader is open — see `message-chrome.tsx`. */
   const [replyTo, setReplyTo] = useState<string | null>(null);
+  /**
+   * Whether the open editor answers EVERYONE on the message (reply all). Set by every open —
+   * `openReply(id, all)` — and read only while `replyTo` is non-null, so a stale `true` after
+   * a close can never address anybody. The RECIPIENTS are not stored: `sendReply` resolves
+   * `replyAllRecipients` at send time from the same facts the head renders, which is what
+   * keeps the claim on screen and the envelope on the wire one decision.
+   */
+  const [replyAll, setReplyAll] = useState(false);
   const [replyBody, setReplyBody] = useState<RichValue>(EMPTY_RICH);
   /**
    * THE COMPOSE FORM, and why it lives up here rather than in `ComposeView`.
@@ -1041,8 +1104,32 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   }, []);
 
   const allOhbox = useMemo(
-    () => [...ohbox.newForYou, ...ohbox.previouslySeen],
+    () => [...ohbox.resurfaced, ...ohbox.newForYou, ...ohbox.previouslySeen],
     [ohbox],
+  );
+  /**
+   * THE CONVERSATION'S PEOPLE, for a row's participant circles — bound to the presented
+   * reader here because `OhboxView` has no reader of its own, and mapped to `{initials, hue}` with
+   * the same helpers every other avatar in the app uses, so a face is the same colour everywhere.
+   */
+  const participantsOf = useCallback(
+    (threadId: string) =>
+      threadParticipants(presented, threadId).map((a) => ({
+        initials: initialsOf(a.name || a.address),
+        hue: avatarHue(a.address),
+      })),
+    [presented, version],
+  );
+  /**
+   * THE CONVERSATION'S STORED NAME, for the Ohbox's grouped rows — bound here for the same
+   * reason `participantsOf` is: the view has no reader of its own. The mirror's thread row
+   * carries the subject the server named the thread with, prefixes already stripped, so the
+   * grouped row says "Webshop" where its members say "Re: Webshop". `null` while the thread
+   * row has not synced; the view falls back to the newest member's subject.
+   */
+  const threadSubjectOf = useCallback(
+    (threadId: string) => threadSubject(presented, threadId),
+    [presented, version],
   );
   /**
    * WHAT IS OPEN IN THE OHBOX — and `null` until somebody opens something.
@@ -1285,6 +1372,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       setFr(null);
       setRailOpen(false);
       setSenderMenu(null);
+      // The subject sheet is anchored to a message in the view being left, so it closes with the
+      // rest of the overlays. Left open it would float over the new view holding a token count read
+      // from a sender the reader is no longer looking at.
+      setSubjectRule(null);
       setShortcutsOpen(false);
       setReplyTo(null);
       if (route.view !== "screener") setScreenerFull(false);
@@ -1320,7 +1411,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * complaint. The draft is restored from `localStorage` on open, so a reload lands you
    * back in the same half-written sentence.
    */
-  const openReply = useCallback((messageId: string) => {
+  const openReply = useCallback((messageId: string, all = false) => {
+    // The mode travels with the open, never separately: a Reply press while a reply-all
+    // editor is up on the same message is an explicit narrowing, and vice versa.
+    setReplyAll(all);
     setReplyTo(messageId);
     setReplyBody(readReplyDraft(messageId));
     // MOBILE. Under 900px the reading column is `display:none` (app.css), so an inline
@@ -1371,6 +1465,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   /** Open the reply on `messageId` and put `next` in it — memory, buffer and mobile alike. */
   const placeDraft = useCallback(
     (messageId: string, next: RichValue) => {
+      // An arriving draft keeps the audience the editor already has on this message — a
+      // reply-all someone bought a draft for must not silently narrow to the sender alone —
+      // and resets to a plain reply when it opens the editor on a different message.
+      setReplyAll((prev) => replyToRef.current === messageId && prev);
       setReplyTo(messageId);
       setReplyBody(next);
       writeReplyDraft(messageId, next);
@@ -1466,8 +1564,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
   /**
    * The reply that most recently settled, handed to `OhboxView` for the animate-to-Earlier gesture
-   * (which lands in a following slice — the prop ships dark until then). Set only for a reply: a
-   * compose answers nothing and moves no row out of "New for you".
+   * — the Ohbox's one deliberate mid-session move: the answered row slides to "Earlier" and is
+   * marked read. Set only for a reply: a compose answers nothing and moves no row out of "New for
+   * you".
    */
   const [replyDone, setReplyDone] = useState<OhboxReplyDone | null>(null);
 
@@ -1567,9 +1666,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       // a message you sent — a self-authored one shows inline the moment a thread has two turns.
       // `replyRecipients` returns the correspondents for that case (and `null` otherwise, leaving
       // the default in place), using the account's own addresses off the same From options.
-      const to = parent
-        ? replyRecipients(parent, fromOptions.map((o) => o.address))
-        : null;
+      //
+      // A REPLY ALL resolves `replyAllRecipients` instead — the SAME call that let the button
+      // render and that the editor's head named, over the same options, so the audience shown
+      // is the audience sent. `null` (the envelope degenerated — a recipient list that shrank
+      // under the open editor) falls back to the plain-reply path rather than guessing.
+      const all =
+        replyAll && parent
+          ? replyAllRecipients(parent, fromOptions.map((o) => o.address))
+          : null;
+      const to = all
+        ? all.to
+        : parent
+          ? replyRecipients(parent, fromOptions.map((o) => o.address))
+          : null;
       mailSend.send({
         kind: "mail_send",
         inReplyTo: messageId,
@@ -1581,9 +1691,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         ...(replyBody.html ? { html: replyBody.html } : {}),
         ...(from.substituted && from.mailboxId ? { mailboxId: from.mailboxId } : {}),
         ...(to ? { to } : {}),
+        // The Cc line rides only on a reply-all that has one — a plain reply's envelope is
+        // unchanged, exactly as it was before reply-all existed.
+        ...(all && all.cc.length > 0 ? { cc: all.cc } : {}),
       });
     },
-    [mailSend, replyTo, replyBody, reader, version, fromOptions],
+    [mailSend, replyTo, replyAll, replyBody, reader, version, fromOptions],
   );
 
   /**
@@ -1684,6 +1797,16 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         // Plain text is the honest reading of what this client holds.
         html: "",
         fromMailboxId: d.mailboxId,
+        // NO `forwardOf`, and it cannot be otherwise: `forwardOf` rides the SEND request, never the
+        // draft row (`send-service.ts` reads it from the request body), so the `drafts` table has no
+        // column that could remember it and an `EngineDraft` carries nothing to read back. A forward
+        // abandoned to autosave and reopened from the drafts list is therefore a plain compose whose
+        // subject still says "Fwd:" — the original is not quoted into it. That is the honest reading
+        // of what the account stored, and it is preferable to the alternative on offer: quoting the
+        // original into the draft body at write time would put a copy of somebody else's message —
+        // possibly a redacted sensitive one — into a stored row, which is the exact thing the
+        // server-side quote exists to prevent. Recorded here because a reader will otherwise take it
+        // for an oversight, and because the fix is a schema change, not a line in this function.
       };
       setCompose(seeded);
       writeComposeDraft(seeded);
@@ -1715,6 +1838,60 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const sendCompose = useCallback(() => mailSend.send(plan.mutation), [mailSend, plan]);
 
   /**
+   * FORWARDING A MESSAGE — the compose surface's entry, and the client half of the sensitive gate.
+   *
+   * ── IT SEEDS THE ORDINARY COMPOSE FORM, IT DOES NOT BUILD A MESSAGE ─────────────────────
+   *
+   * All this puts on screen is a `Fwd: …` subject, no recipients, an empty body and the original's
+   * id in `forwardOf`. The quoted original, its attachments and the `no_forward` refusal are all
+   * the server's (`send-service.ts`), so nothing here reads the original's BODY — which is the
+   * point: a client that assembled the quote itself would be the one seam a redacted sensitive body
+   * could leave the account through, and this shell never holds the unredacted bytes anyway.
+   *
+   * Recipients are deliberately EMPTY rather than pre-filled from the original: a forward goes to
+   * somebody the user picks, and seeding the original's sender is how a "forward this to my
+   * colleague" turns into a reply nobody meant to send.
+   *
+   * ── THE `no_forward` CHECK IS HERE AND ALSO ON THE SERVER, AND BOTH ARE NEEDED ──────────
+   *
+   * The server's is the authoritative one — a client's silence is not a guarantee. This one exists
+   * so the refusal is legible: a user who presses Forward on an OTP learns why immediately, rather
+   * than writing a message, picking a recipient, pressing Send and collecting a 403 on a draft that
+   * can never be sent. The reason is the same in both places and the flag is the same flag.
+   *
+   * ── IT RELEASES THE AUTOSAVE FIRST ─────────────────────────────────────────────────────
+   *
+   * A forward is a NEW message. Without the release, `composePlan` would still carry the
+   * `draftId` of whatever the form last held — an unrelated draft, possibly one opened from the
+   * drafts list — so the forward would overwrite that row and send from it. `openDraft` adopts for
+   * exactly the opposite reason; this is the same rule read the other way round.
+   */
+  const forwardMessage = useCallback(
+    (messageId: string) => {
+      const m = engine.read().get<EngineMessage>("message", messageId);
+      if (!m) return;
+      if (m.sensitivity?.no_forward) {
+        toast(t("compose.forwardRefused"));
+        return;
+      }
+      const seeded: ComposeFields = {
+        ...EMPTY_COMPOSE,
+        subject: forwardSubject(m.subject),
+        forwardOf: messageId,
+      };
+      autosave.release();
+      setCompose(seeded);
+      writeComposeDraft(seeded);
+      // The inline editor may be open on the message being forwarded; leaving it open would put a
+      // reply box and a forward on screen for the same message. The route change closes the reader
+      // by itself (the view-transition effect above), so only this needs saying.
+      setReplyTo(null);
+      go("compose");
+    },
+    [engine, toast, t, autosave, go],
+  );
+
+  /**
    * SCREENING FROM ANYWHERE — one call site for every surface.
    *
    * The plan comes from `sender-screening.ts`, which decides whether the endpoint can be
@@ -1739,7 +1916,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       const place = PLACE_LABEL[dest] ?? dest;
       // The SUBJECT of the sentence follows the scope, or a domain decision would report
       // itself as being about the one address the user happened to click.
-      const who = scope === "domain" ? sender.domain : sender.address;
+      const who = scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
       if (plan.mutations.length === 0) {
         toast(t("screening.toastAlready", { sender: who, place }));
         return;
@@ -1764,7 +1941,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       const sender = senderScreening(reader, messageId);
       if (!sender) return;
       setSenderAudit({
-        title: scope === "domain" ? sender.domain : sender.address,
+        title: scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address),
         domain: scope === "domain",
         rows: attributeMessages(reader, sender.scopes[scope].messages),
       });
@@ -1775,6 +1952,67 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const openSenderMenu = useCallback((messageId: string, anchor: HTMLElement | null) => {
     setSenderMenu({ messageId, ...placePicker(anchor) });
   }, []);
+
+  /**
+   * OPEN THE SUBJECT-RULE SHEET — from a message's title, and from the sender popover's last row.
+   *
+   * `chrome.openSubjectRule` has been a declared seam with nothing behind it since the reading
+   * surface landed; this fills it. The anchor is the pressed element where there is one — the title
+   * button dispatches `openSubjectRule(id)` with no element, so the sheet is placed by
+   * `placePicker(null)`, exactly as a keyboard-invoked tag picker is.
+   *
+   * It CLOSES the sender popover, because the subject sheet replaces it: they answer the same
+   * question about different halves of one message and two open sheets is two questions.
+   */
+  const openSubjectRule = useCallback((messageId: string, anchor: HTMLElement | null = null) => {
+    setSenderMenu(null);
+    setSubjectRule({ messageId, ...placePicker(anchor) });
+  }, []);
+
+  /**
+   * WRITE THE TWO-TERM RULE, AND SAY ONLY WHAT THE SERVER CONFIRMED.
+   *
+   * The plan comes from `subject-rule.ts`; this dispatches it. The RULE mutation is awaited and the
+   * moves are not — the same split `dispatchScreeningChange` documents at length, for the same
+   * reason: a `move` that fails rolls its own row back on screen, while "future mail files there
+   * too" is a claim about the server that a refusal falsifies. The fixtures adapter never refuses,
+   * so a toast fired on click would be green in every test and wrong on a live account.
+   *
+   * Dispatched here rather than inside the sheet so the sheet stays a pure render of a plan, and so
+   * the awaiting is testable without a DOM.
+   */
+  const confirmSubjectRule = useCallback(
+    (messageId: string, term: string, dest: ScreeningDest, field: TermField = "subject") => {
+      setSubjectRule(null);
+      const ctx = subjectRuleContext(reader, messageId);
+      if (!ctx) return;
+      const plan = planSubjectRule(ctx, term, dest, field);
+      const place = PLACE_LABEL[dest] ?? dest;
+      const rules = plan.ruleMutations.map((m) => engine.mutate(m));
+      for (const m of plan.mutations) {
+        if (!plan.ruleMutations.includes(m)) void engine.mutate(m);
+      }
+      void Promise.all(rules).then((results) => {
+        const key = subjectRuleToast(plan, worstStatus(results));
+        // The count is `matched`, not `outOfPlace`: the sentence is about the mail the rule NAMES,
+        // which is what the confirm row showed. Reporting the smaller number afterwards would read
+        // as the rule having done less than it said. The confirmed sentence names the FIELD the
+        // term reads (mail 0052), because "in the subject" about a text rule is a false claim.
+        toast(t.has(`screening.${key}`)
+          ? t(`screening.${key}`, { sender: displayAddress(ctx.address), place, count: plan.matched, term: plan.term })
+          : key === "subjectAlready"
+            ? `You already had that rule. Nothing changed.`
+            : key === "subjectRuleFailed"
+              ? `That rule wasn't saved. Nothing has moved.`
+              : key === "subjectRuleQueued"
+                ? `Rule saved here. We'll send it when you're back online.`
+                : plan.field === "body"
+                  ? `Mail from ${displayAddress(ctx.address)} with »${plan.term}« in the text now files to ${place}.`
+                  : `Mail from ${displayAddress(ctx.address)} with »${plan.term}« in the subject now files to ${place}.`);
+      });
+    },
+    [engine, reader, toast, t],
+  );
 
   /**
    * Clicking a sender's circle or address, on ANY surface that shows one.
@@ -1960,6 +2198,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           // the message you were answering left the screen as you started answering it.
           openReply(m.id);
           break;
+        case "reply_all":
+          // The same editor, opened over the whole audience. The bar only dispatches this
+          // where `replyAllRecipients` admitted a control (see `MessagePane.ActionBar`), and
+          // `sendReply` resolves that same call again for the wire.
+          openReply(m.id, true);
+          break;
         case "draft":
           /**
            * IT NOW ASKS THE DRAFTER, and it used to navigate to Compose.
@@ -1971,7 +2215,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
            * price sits beside the box the text will land in; the offer spends nothing until
            * it is confirmed.
            */
-          openReply(m.id);
+          // The open KEEPS the audience an editor already holds on this message — a drafted
+          // text bought for a reply-all must not silently narrow the envelope to the sender.
+          openReply(m.id, replyTo === m.id && replyAll);
           draftReply.open(m.id);
           break;
         case "later":
@@ -2047,7 +2293,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         }
       }
     },
-    [engine, toast, t, piles.replyLater.length, now, openReply, markSeen, draftReply],
+    [engine, toast, t, piles.replyLater.length, now, openReply, markSeen, draftReply, replyTo, replyAll],
   );
 
   /**
@@ -2069,7 +2315,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    */
   const onStreamAction = useCallback(
     (action: MessageAction, m: EngineMessage) => {
-      if (action === "reply" || action === "draft") setReaderFor(m.id);
+      if (action === "reply" || action === "reply_all" || action === "draft") setReaderFor(m.id);
       onMessageAction(action, m);
     },
     [onMessageAction],
@@ -2497,6 +2743,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     // Above the popover: the audit panel is opened FROM the sheet and replaces it, so it is
     // the innermost thing on screen whenever it exists.
     [senderAudit != null, () => setSenderAudit(null)],
+    // Above the sender popover for the same reason the audit panel is: the subject sheet is opened
+    // FROM it and replaces it, so whenever both flags could be true the subject sheet is the thing
+    // on screen. (It closes the popover on open, so in practice they are never both set — the
+    // ordering is here so that stays a property of this list rather than of one callback.)
+    [subjectRule != null, () => setSubjectRule(null)],
     [senderMenu != null, () => setSenderMenu(null)],
     [picker != null, () => setPicker(null)],
     [fr != null, () => setFr(null)],
@@ -2576,6 +2827,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       // skim streams. Listed everywhere, inert where there is nothing to reply in.
       disabled: route.view !== "ohbox" || selectedOhbox == null,
       run: () => selectedOhbox && openReply(selectedOhbox.id),
+    },
+    {
+      // `shift+r` — the shifted variant of the verb it widens, the convention `shift+u`
+      // already set. Inert wherever `r` is, and ADDITIONALLY on a message whose audience is
+      // the sender alone: `replyAllRecipients` is the bar's own visibility predicate, so the
+      // key and the button appear and disappear together.
+      chord: "shift+r",
+      group: "message",
+      label: t("shortcuts.replyAll"),
+      disabled:
+        route.view !== "ohbox" ||
+        selectedOhbox == null ||
+        replyAllRecipients(selectedOhbox, ownAddresses) === null,
+      run: () => selectedOhbox && openReply(selectedOhbox.id, true),
     },
     {
       // SENDING FROM THE KEYBOARD. `inInput` is not optional: the editor takes
@@ -3061,7 +3326,23 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       ownAddresses,
       absoluteTime,
       onToggleAbsoluteTime: () => setAbsoluteTime((v) => !v),
-      replyTo, replyBody, onReplyBody, closeReply, sendReply,
+      replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply,
+      /**
+       * THE SIBLING VERBS, no longer dormant.
+       *
+       * `MessageCard` has rendered a Reply/Forward footer on every expanded conversation sibling
+       * since the thread surface landed, and both buttons were declared OPTIONAL on the chrome so
+       * the footer simply did not appear until a shell supplied them. Nothing did, so a reader
+       * looking back at an older message in a thread had no way to answer it without first making
+       * it the focused one — the exact detour the footer exists to remove.
+       *
+       * `openReply` is the SAME callback the focused message's action bar runs, passed straight
+       * through: one reply machine, retargeted by id, so the mobile rule it carries (under 900px
+       * the reading column is `display:none`, so open the reader) holds for a sibling too. Any
+       * second implementation here would be a copy of that rule waiting to drift.
+       */
+      openReply,
+      forward: forwardMessage,
       replySendState: mailSend.stateOf,
       // The offer and the draft waiting to be placed travel with the reply draft, and for the
       // same reason: `MessagePane` is mounted TWICE while the reader is open, and an offer
@@ -3069,14 +3350,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       // knew nothing about.
       draftReply: draftReplyChrome,
       openSenderMenu,
+      // The title press. The seam was declared with no implementation, so the viewer rendered the
+      // subject as a plain heading; supplying it is what turns the title into the control.
+      openSubjectRule: (messageId: string) => openSubjectRule(messageId, null),
       openAttachmentPreview: (messageId: string, attachmentId: string) =>
         setPreviewFor({ messageId, attachmentId }),
       conversationOf,
       bodyOf: bodyOfMessage, hydrateBody, hydrateThread,
       attachments, remoteImages,
     }),
-    [ownAddresses, absoluteTime, replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
-      openSenderMenu,
+    [ownAddresses, absoluteTime, replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
+      openSenderMenu, openReply, forwardMessage, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
   );
 
@@ -3085,6 +3369,14 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const senderMenuFor = useMemo(
     () => (senderMenu ? senderScreening(reader, senderMenu.messageId) : null),
     [senderMenu, reader, version],
+  );
+
+  // Same shape and the same `version` dep as above, for the same reason: a message whose row has
+  // just been moved out from under the sheet closes it rather than rendering an empty one, and a
+  // memo that forgot `version` would show a stale token count after a sync drain.
+  const subjectRuleFor = useMemo(
+    () => (subjectRule ? subjectRuleContext(reader, subjectRule.messageId) : null),
+    [subjectRule, reader, version],
   );
 
   /**
@@ -3216,7 +3508,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             }}
             mailboxesLabel={t("rail.mailboxes")}
             mailboxes={mailboxes.map((m) => ({
-              name: (m as { name?: string }).name ?? m.address,
+              name: (m as { name?: string }).name ?? displayAddress(m.address),
               hint: (m as { railHint?: string }).railHint ?? m.provider,
             }))}
             dock={railDock}
@@ -3295,8 +3587,22 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               <OhboxView
                 replyDone={replyDone}
                 demo={demo}
+                /* THE AWAY-RESPONDER NOTICE — the one state in which this product sends mail
+                   on its own, made visible on the pane its owner actually reads. Same gate as
+                   the settings row (`awaySection` below): absent on the demo, absent on a
+                   standalone install, and absent unless the SERVER's own row says it is on.
+                   `awayNotice.on` resting false means the fail-shape is a missing courtesy
+                   line, never a false claim that replies are going out. */
+                noticeSection={
+                  demo || !autoOptIn.supported || !awayNotice.on
+                    ? undefined
+                    : <AwayNotice audience={awayNotice.audience} />
+                }
+                resurfaced={ohbox.resurfaced}
                 newForYou={ohbox.newForYou}
                 previouslySeen={ohbox.previouslySeen}
+                threadParticipants={participantsOf}
+                threadSubject={threadSubjectOf}
                 tags={tags}
                 now={now}
                 selectedId={selectedOhbox?.id ?? null}
@@ -3668,6 +3974,27 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                     setBlockRemoteImages={consent.setBlockRemoteImages}
                   />
                 )}
+                /* THE AWAY RESPONDER. Gated on "is there a server to ask" and NOT on
+                   `consent.known`, unlike the two rows above: it holds no consent state and loads
+                   its own row, so it has nothing to flash the wrong way round. But the server gate
+                   is required, and for a stronger reason than the auto-suggest row's — the SENDER is
+                   a pass in the hosted worker, so a standalone install drawing this control would
+                   store a configuration that answers nobody, which is the built-and-unreachable
+                   shape this slice exists to remove, reintroduced one layer up.
+
+                   Read off `autoOptIn.supported`, not by calling `apiConfigured()` here, for the
+                   reason the block above gives at length: one answer to that question in this file,
+                   and this shared shell does not import the Cloud API client. The row itself does —
+                   it is a separate module, like `consent-state`, and it is the mirror's api-client
+                   stand-in that makes that safe. Withheld from the demo for the reason every
+                   injected pane is: there is no mailbox to answer mail from.
+
+                   The `onChanged` echo is how the Ohbox notice above hears a same-tab save
+                   without a refetch — the row reports what the SERVER answered, never what a
+                   click asked for, into the one `useAwayNotice` state the shell holds. */
+                awaySection={demo || !autoOptIn.supported ? undefined : (
+                  <AwayResponderRow onChanged={awayNotice.update} />
+                )}
                 billingSection={demo ? undefined : billingSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has
                    something true to say here and no API to say it with. The live body comes
@@ -3874,7 +4201,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           sender={senderMenuFor}
           onChoose={(dest, scope, makeRule) => changeScreening(senderMenu!.messageId, dest, scope, makeRule)}
           onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope)}
+          onSubjectRule={() => openSubjectRule(senderMenu!.messageId, null)}
           onClose={() => setSenderMenu(null)}
+        />
+      ) : null}
+      {/* The finer sibling: from this address AND with this in the subject. Resolved above so a
+          sender whose last message has just been moved closes the sheet instead of rendering an
+          empty one. */}
+      {subjectRuleFor ? (
+        <SubjectRuleSheet
+          state={subjectRule!}
+          ctx={subjectRuleFor}
+          onConfirm={(term, dest, field) => confirmSubjectRule(subjectRule!.messageId, term, dest, field)}
+          onClose={() => setSubjectRule(null)}
         />
       ) : null}
 

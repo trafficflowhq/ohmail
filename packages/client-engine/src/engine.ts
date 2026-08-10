@@ -1,5 +1,5 @@
-import type { AttachmentWire, EngineAdapter } from "./adapters/adapter.js";
-import { mutationEffects, replySubject, type MutationEffect } from "./mutations.js";
+import type { AttachmentWire, EngineAdapter, MutationOutcome } from "./adapters/adapter.js";
+import { mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SearchIndex, type LocalSearchResult } from "./search.js";
 import { sendingMailboxId } from "./selectors.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
@@ -552,6 +552,20 @@ const MAX_CONCURRENT_BODIES = 4;
  */
 export const RENDERED_PINS = 64;
 
+/**
+ * HOW LONG AN OPTIMISTIC SENT COPY STANDS before it is dropped on TTL alone.
+ *
+ * The overlay's real job is to bridge the gap between "the server confirmed the send" and "the
+ * worker's Sent-folder watch ingested the copy", which is normally minutes; {@link
+ * OhmailEngine.reconcileOptimisticSent} drops it the moment the real row arrives, so this ceiling
+ * only bites when that ingest never lands in this session (the tab is closed, the mailbox is slow).
+ * Ten minutes is past the ordinary Sent-watch latency and matches `SEND_STALE_AFTER_MS` on the
+ * server, so a copy that outlives it is genuinely one whose real row this session will not see, and
+ * a stale "sent" row is worse than none — the conversation would carry a message the mirror cannot
+ * confirm.
+ */
+export const OPTIMISTIC_SENT_TTL_MS = 10 * 60 * 1000;
+
 export class OhmailEngine {
   readonly store: MirrorStore;
   private readonly adapter: EngineAdapter;
@@ -562,6 +576,17 @@ export class OhmailEngine {
 
   private readonly overlays = new Map<string, MutationEffect[]>();
   private overlayRev = 0;
+  /**
+   * THE OPTIMISTIC SENT COPIES, keyed by their overlay id — the confirm-time half of `mail_send`.
+   *
+   * Each names the entry it added to {@link overlays} (a provisional Sent message), the
+   * `messageIdHeader` the real row will arrive under, and when it expires. It is SEPARATE from the
+   * mutation overlays on purpose: a mutation overlay is dropped the instant its own request
+   * resolves (`dispatch`), and this one must OUTLIVE that — it stands from the send's confirmation
+   * until the worker's Sent-folder watch ingests the real row minutes later. {@link
+   * reconcileOptimisticSent} drops each when its header appears in the mirror or its TTL passes.
+   */
+  private readonly optimisticSent = new Map<string, { header: string; expiresAtMs: number }>();
   private readonly queue: PendingMutation[] = [];
   private readonly listeners = new Set<() => void>();
   private readonly readerView: OverlayReader;
@@ -820,6 +845,12 @@ export class OhmailEngine {
       // at its most complete — which is when a windowed client's eviction decision is least
       // likely to be made about a half-arrived mailbox. A `full` policy returns immediately.
       if (await this.pruneToPolicy()) this.notify();
+      // A drain is the one thing that can deliver the REAL Sent row an optimistic copy is standing
+      // in for — retire any copy the mirror now holds under the same header (or that has aged out),
+      // so the conversation shows the ingested row alone rather than a duplicate.
+      const before = this.optimisticSent.size;
+      this.reconcileOptimisticSent();
+      if (this.optimisticSent.size !== before) { this.overlayRev++; this.notify(); }
       return;
     }
   }
@@ -1839,6 +1870,14 @@ export class OhmailEngine {
         } catch { /* see above — the write landed; the mirror catches up on the next poll */ }
       }
       this.overlays.delete(p.id);
+      // THE SENT COPY IS MATERIALISED HERE, on the confirmation and not before it — the send is
+      // the one verb whose optimistic effect is not reversible, so its Sent row is only ever a
+      // statement the server has already made (see `types.ts` `mail_send`). A rejection reaches the
+      // `catch` below and never gets here, which is the "DROP on send rejection" half.
+      this.materializeSentOverlay(p.mutation, outcome);
+      // Sweep the confirm's own drain-side reconcile (a real Sent row for an EARLIER send may have
+      // just landed) and any expired copies, so the map cannot accumulate across a long session.
+      this.reconcileOptimisticSent();
       this.overlayRev++;
       this.notify();
       // `entityId` rides only on the CONFIRMED result. A queued or rolled-back mutation has no
@@ -1863,6 +1902,55 @@ export class OhmailEngine {
       this.overlayRev++;
       this.notify();
       return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection };
+    }
+  }
+
+  /**
+   * ADD THE OPTIMISTIC SENT COPY of a confirmed send. A no-op for anything else.
+   *
+   * Gated on `mail_send` AND a `providerMessageId`: the id is the server's word that the message
+   * left and was appended to Sent, and its absence (the FixturesAdapter, an older server) means no
+   * overlay rather than a fabricated one. The copy goes into {@link overlays} under a dedicated key
+   * so the {@link OverlayReader} merges it into every message read — the conversation and the Ohbox
+   * see it with no change of their own — and its `messageIdHeader`/expiry are recorded in {@link
+   * optimisticSent} for {@link reconcileOptimisticSent} to retire it by.
+   */
+  private materializeSentOverlay(m: EngineMutation, outcome: MutationOutcome): void {
+    if (m.kind !== "mail_send") return;
+    const header = outcome.providerMessageId;
+    if (!header) return;
+    const sent = sentOverlayMessage(this.read(), m, header, { now: this.now, uuid: this.uuid });
+    if (!sent) return;
+    const overlayId = `sent:${sent.id}`;
+    this.overlays.set(overlayId, [{ type: "message", id: sent.id, entity: sent }]);
+    this.optimisticSent.set(overlayId, {
+      header,
+      expiresAtMs: this.now().getTime() + OPTIMISTIC_SENT_TTL_MS,
+    });
+  }
+
+  /**
+   * RETIRE optimistic Sent copies — by the real row arriving, or by the TTL.
+   *
+   * The real row is the authoritative one: once the mirror holds a message carrying the same
+   * `messageIdHeader` the copy was minted under, the copy is a duplicate and is dropped, so the
+   * conversation shows the ingested row alone. The TTL is the backstop for a copy whose real row
+   * this session never sees. Cheap by construction — it scans the mirror only while at least one
+   * copy is outstanding, which is the rare case.
+   */
+  private reconcileOptimisticSent(): void {
+    if (this.optimisticSent.size === 0) return;
+    const nowMs = this.now().getTime();
+    const landed = new Set<string>();
+    for (const { entity } of this.store.entries<EngineMessage>("message")) {
+      const h = entity.messageIdHeader;
+      if (h) landed.add(h);
+    }
+    for (const [overlayId, meta] of this.optimisticSent) {
+      if (landed.has(meta.header) || nowMs >= meta.expiresAtMs) {
+        this.overlays.delete(overlayId);
+        this.optimisticSent.delete(overlayId);
+      }
     }
   }
 

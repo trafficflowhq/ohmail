@@ -1,0 +1,18 @@
+/* "Mark all read" — a QUIET inline control on the Ohbox meta row, never its own line.
+
+   It sits in the ListPane `action` slot (`.vhead-action`), aligned far-right of the title row, and
+   stays on that row down to 390px because the meta count beside it yields first (it shrinks and
+   ellipsises rather than pushing this control onto a line of its own — see `.vhead .meta` in
+   `list-pane.css`). Muted like the meta count until hover, so it never competes with the title.
+
+   It renders ONLY when something is unread — `MarkAllRead` returns null otherwise — so it is never
+   a control that can be pressed against an already-read list, which would lie about doing anything
+   and would dispatch an empty `mark_seen`. `white-space:nowrap` + `flex:none` are what keep it a
+   single unbroken token in the flex header. */
+.mark-all-read{
+  appearance:none;border:0;background:transparent;font:inherit;font-size:12px;line-height:1;
+  color:var(--ink3);padding:4px 8px;border-radius:7px;cursor:pointer;white-space:nowrap;flex:none;
+  transition:color .12s ease, background .12s ease;
+}
+.mark-all-read:hover{color:var(--accent);background:var(--accent-soft)}
+.mark-all-read:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
