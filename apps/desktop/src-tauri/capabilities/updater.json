@@ -1,0 +1,6 @@
+{
+  "identifier": "updater",
+  "description": "The transient progress window shown ONLY while an update is downloading (src/updater-window.ts, opened by src/updater.rs). It is granted exactly one permission — to LISTEN for the local `updater://progress` event the Rust updater emits — and nothing else: no command, no emit-back (`core:event:allow-emit` is deliberately absent), no filesystem, and no network (it inherits the app-wide `connect-src 'none'` CSP). Scoped to the `updater` window alone, so the main window's grant stays literally empty (`capabilities/main.json`).",
+  "windows": ["updater"],
+  "permissions": ["core:event:allow-listen"]
+}
