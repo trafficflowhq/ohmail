@@ -154,6 +154,31 @@ export const mailboxes = pgTable("mailboxes", {
   // `failed_at` does, so a mailbox blocked for three days reports three days instead of "just
   // now, again" on every roster pass.
   syncBlockedSince: timestamp("sync_blocked_since", { withTimezone: true }),
+  // ── Mail 0049 — ENFORCED SYNC: "the mailbox owes a reconcile RIGHT NOW", set by the API ──
+  //
+  // The worker's ordinary rhythm is a poll every `pollIntervalMs` (60 s) plus an IDLE push from
+  // the server. That is fine for mail arriving, and too slow for a change the USER just made and is
+  // watching for: a send whose Sent copy has to appear, a folder move whose desired-state write the
+  // mirror should reflect. Waiting up to a minute for the worker's next cycle is the gap between
+  // "I did that" and "I can see I did that".
+  //
+  // So the API STAMPS this column the instant it finalizes such a write — `now()` — and a short
+  // worker scan (`sync-kick.ts`, ~3 s) picks up any stamped mailbox IT SERVES and triggers an
+  // out-of-band cycle, then clears the stamp. NULL is the resting state: nothing owed. A timestamp
+  // means "a user-visible write landed at this instant; reconcile and clear".
+  //
+  // ── IT IS A REQUEST, NOT A SCHEDULE, AND THE CLEAR IS COMPARE-AND-CLEAR ──────────────────────
+  //
+  // The kick clears ONLY the exact value it observed (`WHERE sync_requested_at = <observed>`), so a
+  // second stamp that lands WHILE the kick is running is not lost — the clear misses, and the next
+  // scan re-kicks. That is the whole of its convergence: a stamp is either being served or will be
+  // on the next pass, and a burst of stamps collapses to at most one extra cycle. Nothing reads it
+  // to make a routing decision; it is a doorbell, not state.
+  //
+  // Additive, nullable, no default, no CHECK — a timestamp closes no set (0030's rule). Only the
+  // API writes it and only the worker clears it; a deploy in either order is safe, because an
+  // unstamped mailbox is exactly today's poll-only behaviour.
+  syncRequestedAt: timestamp("sync_requested_at", { withTimezone: true }),
   // ── Mail 0030 — the ONE-TIME re-evaluation of mail the sensitivity override already misrouted ──
   //
   // A fix stopped `pipeline.ts:393` letting a sender-chosen subject or body carry a stranger
