@@ -1069,6 +1069,10 @@ export class HttpAdapter implements EngineAdapter {
             // has nothing to say about it — and in the `Idempotency-Key` request hash of every one
             // of them, changing the hash of requests whose meaning did not change.
             ...(m.subjectContains ? { subjectContains: m.subjectContains } : {}),
+            // The third term (mail 0052): omitted when absent, on the line above's reasoning —
+            // no default to own, and no `null` in the idempotency hash of callers with nothing
+            // to say about it.
+            ...(m.bodyContains ? { bodyContains: m.bodyContains } : {}),
             // Sent on every call, never omitted. The server treats an absent field as `true`;
             // the surface decides what actually ships, from one constant it can flip in one
             // line (`sender-screening.ts#RETRO_DEFAULT_ON`). `?? true` keeps a caller that has

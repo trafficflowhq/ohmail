@@ -467,6 +467,12 @@ export interface RuleDTO {
    * a narrow subject rule when the user changed a broad sender's destination.
    */
   subjectContains: string | null;
+  /**
+   * The rule's THIRD term, or `null` — *from this address AND with this in the message text*
+   * (mail 0052). `subjectContains`' contract one field deeper, and on the DTO for its reasons:
+   * the rules list and the ladder must be able to tell a body-narrowed rule from a bare one.
+   */
+  bodyContains: string | null;
   stats: { hits: number; lastHitAt: ISODateTime | null; demotions: number };
   createdAt: ISODateTime;
   updatedAt: ISODateTime;

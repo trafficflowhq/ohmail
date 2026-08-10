@@ -455,7 +455,12 @@ export function planScreeningChange(
    * reason is that they are no longer tied.
    */
   const covering = makeRule && !promoted
-    ? s.rules.filter((r) => r.kind === scope && (r.subjectContains ?? "").trim() === "")
+    // Neither term may be present (mail 0050/0051): a subject- or body-narrowed rule is the rule
+    // for one SLICE of the sender's mail, and retargeting it from a whole-sender click would
+    // destroy the split the user deliberately built — the note above, for both terms.
+    ? s.rules.filter((r) => r.kind === scope
+        && (r.subjectContains ?? "").trim() === ""
+        && (r.bodyContains ?? "").trim() === "")
     : [];
   const ruleMutations: EngineMutation[] = [];
   let ruleState: ScreeningRuleState = "none";

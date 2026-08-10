@@ -723,6 +723,10 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
      * All three refusals are unreachable from the surfaces — the subject sheet is always about one
      * message's sender and normalizes its term — and all three are written so that they STAY
      * unreachable rather than becoming a rule that quietly means something else.
+     *
+     * `bodyContains` (mail 0052) gets the same two term refusals by the same mechanism, for the
+     * same reasons: a blank body term is a rule matching every message, and a term on a non-sender
+     * kind is a request the server answers 400.
      */
     case "rule_create": {
       if (m.match === "") return [];
@@ -730,6 +734,13 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       const term = typeof raw === "string" ? raw.trim() : "";
       if (typeof raw === "string" && term === "") return [];
       if (term !== "" && m.ruleKind !== "sender") return [];
+      // The body term (mail 0052): the same two refusals by the same mechanism, so a blank or
+      // mis-kinded third term is rejected locally with nothing on the wire rather than becoming
+      // an optimistic row for a rule the server will refuse — or worse, a silently-broadened one.
+      const rawBody = m.bodyContains;
+      const bodyTerm = typeof rawBody === "string" ? rawBody.trim() : "";
+      if (typeof rawBody === "string" && bodyTerm === "") return [];
+      if (bodyTerm !== "" && m.ruleKind !== "sender") return [];
       const rule: RuleDTO = {
         id: ctx.uuid(),
         kind: m.ruleKind,
@@ -742,6 +753,8 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         // `RulesService.validSubjectContains` applies, so the optimistic row and the echoed row
         // carry the same string rather than one with the user's trailing space and one without.
         subjectContains: term === "" ? null : term,
+        // `validBodyContains`' normalisation, for the same one-string-both-rows reason.
+        bodyContains: bodyTerm === "" ? null : bodyTerm,
         stats: { hits: 0, lastHitAt: null, demotions: 0 },
         createdAt: iso,
         updatedAt: iso,

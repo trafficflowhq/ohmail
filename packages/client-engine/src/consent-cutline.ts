@@ -172,10 +172,13 @@ export function domainOfAddress(address: string): string | null {
  * Ohbox and another says Screened is the reading that shows the user their mail; the reverse
  * hides mail on account of a rule they can no longer see the effect of.
  *
- * ── A SUBJECT-NARROWED RULE COUNTS AS A DECISION ABOUT THE WHOLE SENDER (mail 0050) ────────
+ * ── A SUBJECT- OR BODY-NARROWED RULE COUNTS AS A DECISION ABOUT THE WHOLE SENDER ───────────
+ * ── (mail 0050, and mail 0052 on identical reasoning) ──────────────────────────────────────
  *
- * `subject_contains` is deliberately NOT read here, and that is a ruling rather than an omission —
- * it decides the dormancy cutline, so it is worth stating rather than leaving to be rediscovered.
+ * `subject_contains` and `body_contains` are deliberately NOT read here, and that is a ruling
+ * rather than an omission — it decides the dormancy cutline, so it is worth stating rather than
+ * leaving to be rediscovered. Everything below said of a subject term holds verbatim for a body
+ * term: both narrow placement, neither narrows admission.
  *
  * A rule saying *from `info@` AND subject contains `[NinjaFirewall]` → Reads* narrows PLACEMENT for
  * a slice of that sender's mail. It does not narrow ADMISSION: writing it is the user saying they

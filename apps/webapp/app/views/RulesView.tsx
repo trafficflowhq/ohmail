@@ -157,6 +157,11 @@ export function subjectTermOf(rule: RuleDTO): string {
   return (rule.subjectContains ?? "").replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, "");
 }
 
+/** The rule's THIRD term (mail 0052), on `subjectTermOf`'s contract — `""` for none. */
+export function bodyTermOf(rule: RuleDTO): string {
+  return (rule.bodyContains ?? "").replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, "");
+}
+
 /**
  * The rules a search box and a destination facet leave standing. Search is a case-insensitive
  * substring over `rule.match` — the address or domain a person recognises — AND over the subject
@@ -176,7 +181,9 @@ export function filterRules(
       (facet === "all" || r.destination === facet) &&
       (q === "" ||
         r.match.toLowerCase().includes(q) ||
-        subjectTermOf(r).toLowerCase().includes(q)),
+        subjectTermOf(r).toLowerCase().includes(q) ||
+        // The body term (mail 0052), for the subject term's reason: it is what defines the rule.
+        bodyTermOf(r).toLowerCase().includes(q)),
   );
 }
 
@@ -233,6 +240,13 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
   const whatOf = (rule: RuleDTO): string => {
     const base = t(`what.${rule.kind}`, { match: rule.match });
     const term = subjectTermOf(rule);
+    const body = bodyTermOf(rule);
+    // A rule may carry either term or both (mail 0052); every carried term is spelled out, because
+    // an unnamed conjunct is a row indistinguishable from a broader rule — the defect above.
+    if (term !== "" && body !== "") {
+      return copy("whatBoth", `${base} with »${term}« in the subject and »${body}« in the text`);
+    }
+    if (body !== "") return copy("whatBody", `${base} with »${body}« in the text`);
     if (term === "") return base;
     return copy("whatSubject", `${base} with »${term}« in the subject`);
   };

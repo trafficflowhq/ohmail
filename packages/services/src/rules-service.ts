@@ -28,6 +28,13 @@ const FOLDER_SET = new Set<string>(FOLDERS);
  */
 export const MAX_SUBJECT_CONTAINS_CHARS = 200;
 
+/**
+ * The ceiling on a body term, mirroring `rules_body_contains_nonempty` (mail 0052) on the same
+ * two-layer argument. The same number as the subject ceiling deliberately: the term is a needle,
+ * and the haystack being a whole message body is not a licence to store a bigger needle.
+ */
+export const MAX_BODY_CONTAINS_CHARS = 200;
+
 export interface CreateRuleBody {
   kind: string;
   match: string;
@@ -51,6 +58,14 @@ export interface CreateRuleBody {
    * `[ninjafirewall]` for a token they read off their own mail as `[NinjaFirewall]`.
    */
   subjectContains?: string | null;
+  /**
+   * THE THIRD TERM — *from this address AND with this in the message text* (mail 0052). Absent or
+   * `null` for a rule without one. Everything `subjectContains` documents applies verbatim:
+   * `kind: "sender"` only and a 400 anywhere else, stored VERBATIM after trimming, matched
+   * case-folded by `core/src/rules.ts#bodySatisfies` against the message's canonical plain text.
+   * It composes with the subject term — a rule may carry both, and both must then hold.
+   */
+  bodyContains?: string | null;
   /**
    * ALSO APPLY THIS RULE TO MAIL THAT IS ALREADY FILED — **defaults to TRUE**.
    *
@@ -124,6 +139,7 @@ export class RulesService {
     const priority = this.validPriority(body.priority);
     const applyRetro = this.validApplyRetro(body.applyRetro);
     const subjectContains = this.validSubjectContains(body.subjectContains, kind);
+    const bodyContains = this.validBodyContains(body.bodyContains, kind);
 
     return asTx(ctx).transaction(async (tx) => {
       const [row] = await tx.insert(rules).values({
@@ -135,6 +151,8 @@ export class RulesService {
         // migration's CHECK. `validSubjectContains` has already turned `""` and a whitespace-only
         // string into `null`, so this can never insert a term that matches every subject.
         subjectContains,
+        // The third term (mail 0052), on identical terms via `validBodyContains`.
+        bodyContains,
         // The request, not the work. `NULL` means nobody ever asked this rule to reach mail
         // already on disk, which is the honest state for a rule created with `applyRetro: false`
         // and for every rule that existed before this column did.
@@ -242,6 +260,7 @@ export class RulesService {
       // is how a domain rule acquires a subject term the API says it will not accept.
       const [before] = await tx.select({
         destination: rules.destination, kind: rules.kind, subjectContains: rules.subjectContains,
+        bodyContains: rules.bodyContains,
       }).from(rules)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId))).limit(1);
 
@@ -253,6 +272,13 @@ export class RulesService {
           (set.kind as string | undefined) ?? before?.kind ?? "sender",
         );
       }
+      // The body term (mail 0052): identical handling, including the resolved after-patch kind.
+      if (patch.bodyContains !== undefined) {
+        set.bodyContains = this.validBodyContains(
+          patch.bodyContains,
+          (set.kind as string | undefined) ?? before?.kind ?? "sender",
+        );
+      }
 
       // Either half of "which mail does this rule claim, and where does it send it" moving is a
       // retroactive event. Compared against the STORED value, so a PATCH that re-sends the term it
@@ -261,7 +287,11 @@ export class RulesService {
         && set.destination !== before?.destination;
       const subjectMoved = set.subjectContains !== undefined
         && (set.subjectContains ?? null) !== (before?.subjectContains ?? null);
-      const retargeted = before !== undefined && (destinationMoved || subjectMoved);
+      // …and to the third (mail 0052): a body-term edit re-opens the backlog in both directions,
+      // on the subject term's reasoning verbatim.
+      const bodyMoved = set.bodyContains !== undefined
+        && (set.bodyContains ?? null) !== (before?.bodyContains ?? null);
+      const retargeted = before !== undefined && (destinationMoved || subjectMoved || bodyMoved);
       if (retargeted && applyRetro) {
         set.retroRequestedAt = ctx.now();
         set.retroDoneAt = null;
@@ -456,6 +486,40 @@ export class RulesService {
     if (kind !== "sender") {
       throw new ServiceError(
         "validation_failed", 400, "subjectContains is only valid on a sender rule",
+      );
+    }
+    return term;
+  }
+
+  /**
+   * The body term, under `validSubjectContains`' contract verbatim (mail 0052): the same four
+   * refusals in the same order, the same normalisation, and above all the same REFUSAL of a
+   * string that trims to nothing — `""` is a substring of every message text, so coercing it to
+   * `null` here would silently widen the exact request the caller made. An explicit `null` still
+   * clears the term, which is the only way to widen a narrow rule back. Kept as its own method
+   * rather than a parameterised one so each column's error text names the field the caller sent.
+   */
+  private validBodyContains(v: unknown, kind: string): string | null {
+    if (v === undefined || v === null) return null;
+    if (typeof v !== "string") {
+      throw new ServiceError("validation_failed", 400, "bodyContains must be a string or null");
+    }
+    const term = v.trim();
+    if (term.length === 0) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        "bodyContains must not be blank — send null to remove the body term",
+      );
+    }
+    if (term.length > MAX_BODY_CONTAINS_CHARS) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        `bodyContains must be at most ${MAX_BODY_CONTAINS_CHARS} characters`,
+      );
+    }
+    if (kind !== "sender") {
+      throw new ServiceError(
+        "validation_failed", 400, "bodyContains is only valid on a sender rule",
       );
     }
     return term;

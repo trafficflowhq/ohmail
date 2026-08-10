@@ -554,7 +554,7 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // lenient default. Deploy order is therefore migration → API → worker, and the migration arrow is
   // load-bearing for once.
   ["rules", "subject_contains"],
-  // mail 0051_away_responder — the responder's `audience` column, and it is the SHARPEST kind of
+  // mail 0052_away_responder — the responder's `audience` column, and it is the SHARPEST kind of
   // marker on this list: a column whose absence would not merely 42703 a surface, it would 42703
   // the surface that CONFIGURES an outbound-mail feature.
   //
@@ -579,6 +579,14 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // NARROW member — and the service's own closed-set validator refuses the other one at the
   // boundary. A missing CHECK here costs a defence in depth, not an audience.
   ["away_responders", "audience"],
+  // mail 0052_rule_body_contains — the third term on a sender rule. One additive nullable text
+  // column on `rules`, and the whole-row case is 0050's verbatim, because it is the SAME
+  // `select().from(rules)` in both halves: `materializeRule` (the rules surface, the `/sync`
+  // delta, the 201) and `drizzle-repo.ts#listRules` (what the router consults on arrival) both
+  // enumerate the table, so a too-early API 42703s the surface AND stops the organizing. The
+  // worker half is likewise NOT the safe kind — a routing read that 42703s stops filing mail —
+  // so the order stays migration → API → worker with the first arrow load-bearing.
+  ["rules", "body_contains"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -702,8 +710,15 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // its row reads as specific: mail the user split by subject silently re-collapses into one pile,
   // and nothing raises. `RulesService` refuses the same shapes with a 400, but that refusal is code
   // and can regress; the CHECK is the layer that holds for every writer, including the retro pass
-  // and any future importer. It is the NEWEST entry in the mail journal.
+  // and any future importer.
   "rules_subject_contains_nonempty",
+  // mail 0052_rule_body_contains — the same constraint for the third term, on 0050's argument
+  // verbatim: what it forbids is the AMBIGUOUS value, `''` and `'   '`, whose first
+  // reader-disagreement is a rule that matches EVERY MESSAGE while its row reads as specific —
+  // and for a body term "every message" is literal, since every message has a body to substring.
+  // Same predicate, same six-character class, and the pg test pins the two constraints'
+  // definitions equal up to the column name. It is the NEWEST entry in the mail journal.
+  "rules_body_contains_nonempty",
 ];
 
 /* `EXPECTED_MARKERS` — the BOTH-HALVES count — moved to `./health-cloud.js` with the list it
@@ -932,11 +947,16 @@ export const MAIL_EXPECTED_MARKERS =
  * endpoints: somebody already away could not turn their responder off. The worker half is real and
  * is the third step (the pass reads this row and writes `away_responder_sent`), and it fails in the
  * safe direction — a 42703 inside the pass is caught, logged and sends nothing. No INDEX marker and
- * no CHECK marker; the marker beside the column says why the CHECK does not need one. It is the
- * NEWEST entry in the mail journal — its `when` was rebased above `0050`'s when the two landed in
- * the same window, so the newest-entry gate below points here and not there.
+ * no CHECK marker; the marker beside the column says why the CHECK does not need one.
+ *
+ * `0052_rule_body_contains` is probed TWICE — by `rules.body_contains` AND by the
+ * `rules_body_contains_nonempty` CHECK — on `0050`'s two-halves argument verbatim: it is the same
+ * `rules` table both product halves enumerate, and the same ambiguous-value CHECK whose absence
+ * fails silently. One sharpening: without its constraint a stored `''` is a rule matching EVERY
+ * MESSAGE, not every subject, because every message has a body to substring. Same deploy order,
+ * same load-bearing first arrow. It is the NEWEST entry in the mail journal.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0051_away_responder";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0052_rule_body_contains";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

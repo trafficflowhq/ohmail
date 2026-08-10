@@ -51,9 +51,11 @@ import "./sender-sheet.css";
 import { RETRO_DEFAULT_ON, type ScreeningDest } from "./sender-screening";
 import {
   SUBJECT_RULE_DESTS,
+  bodyMatchCount,
   planSubjectRule,
   subjectMatchCount,
   type SubjectRuleContext,
+  type TermField,
 } from "./subject-rule";
 
 export interface SubjectRuleState {
@@ -64,17 +66,21 @@ export interface SubjectRuleState {
 }
 
 /**
- * Which term the sheet is offering. Two choices and no text input:
+ * Which term the sheet is offering. Three choices and no text input:
  *
- *  · `token`  — the detected repeating token. Absent when nothing repeats.
- *  · `whole`  — this message's entire subject, which is always available and always exact.
+ *  · `token`   — the detected repeating token in the SUBJECT. Absent when nothing repeats.
+ *  · `whole`   — this message's entire subject, which is always available and always exact.
+ *  · `content` — the detected repeating token in the message TEXT (mail 0052). Absent when
+ *                nothing repeats in the text the mirror holds. For the sender whose subjects are
+ *                all alike and whose distinguishing text is in the body.
  *
  * `whole` is not a fallback nobody would pick: "everything with this exact subject" is a real thing
  * to want for a recurring report whose title never changes, and it is the honest offer when detection
  * has nothing. It is never the DEFAULT while a token exists, because a rule keyed on a whole subject
- * line catches less than the user usually means.
+ * line catches less than the user usually means. `content` follows the same discipline as `token` —
+ * detected, never typed — and a `null` detection simply does not render the option.
  */
-type TermChoice = "token" | "whole";
+type TermChoice = "token" | "whole" | "content";
 
 export function SubjectRuleSheet({
   state,
@@ -84,7 +90,7 @@ export function SubjectRuleSheet({
 }: {
   state: SubjectRuleState;
   ctx: SubjectRuleContext;
-  onConfirm: (term: string, dest: ScreeningDest) => void;
+  onConfirm: (term: string, dest: ScreeningDest, field: TermField) => void;
   onClose: () => void;
 }) {
   const t = useTranslations("screening");
@@ -109,12 +115,17 @@ export function SubjectRuleSheet({
   const copy = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
 
   const label = ctx.name || ctx.address;
-  const term = (choice === "token" ? ctx.token : ctx.subject) ?? ctx.subject;
+  // The choice decides BOTH halves — the term and the field it reads — in one place, so the
+  // radio, the plan and the confirm sentence cannot disagree about what is being written.
+  const field: TermField = choice === "content" ? "body" : "subject";
+  const term = (choice === "token" ? ctx.token : choice === "content" ? ctx.bodyToken : ctx.subject)
+    ?? ctx.subject;
   // Computed through the SAME function the plan uses, so the number the sheet shows and the work that
   // happens cannot disagree — `SenderMenu`'s rule, applied here.
-  const plan = planSubjectRule(ctx, term, pending ?? "reads");
+  const plan = planSubjectRule(ctx, term, pending ?? "reads", field);
   const tokenCount = ctx.token ? subjectMatchCount(ctx.messages, ctx.token) : 0;
   const wholeCount = subjectMatchCount(ctx.messages, ctx.subject);
+  const contentCount = ctx.bodyToken ? bodyMatchCount(ctx.messages, ctx.bodyToken) : 0;
 
   return (
     <div
@@ -175,6 +186,29 @@ export function SubjectRuleSheet({
           {copy("subjectWhole", "This exact subject")}
           <small>{copy("subjectWholeCount", `${wholeCount} of this sender's messages`)}</small>
         </button>
+        {/* ── THE CONTENT TERM (mail 0052) ─────────────────────────────────────────────────
+            The same discipline as the subject token — detected, never typed — against the message
+            TEXT, for the sender whose subjects are all alike. Rendered only when something repeats
+            in the text the mirror holds. The count is over that same held text, which is a FLOOR
+            of what the server will match ("of the mail here"), not the exact measurement the
+            subject counts are — the copy says "here" for that reason. */}
+        {ctx.bodyToken ? (
+          <button
+            type="button"
+            role="radio"
+            aria-checked={choice === "content"}
+            className={choice === "content" ? "on" : undefined}
+            onClick={() => { setChoice("content"); setPending(null); }}
+          >
+            {`»${ctx.bodyToken}«`}
+            <small>
+              {copy(
+                "bodyTokenCount",
+                `in the message text — ${contentCount} of this sender's messages here`,
+              )}
+            </small>
+          </button>
+        ) : null}
       </div>
 
       {/* NOTHING REPEATS, SAID OUT LOUD. Detection answering `null` is a normal outcome, and a sheet
@@ -205,10 +239,15 @@ export function SubjectRuleSheet({
       {pending ? (
         <div className="sm-confirm">
           <p>
-            {copy(
-              "subjectConfirm",
-              `from ${plan.match} AND subject contains »${plan.term}« → ${DECISION_DONE_LABEL[pending]}`,
-            )}
+            {plan.field === "body"
+              ? copy(
+                  "bodyConfirm",
+                  `from ${plan.match} AND the text contains »${plan.term}« → ${DECISION_DONE_LABEL[pending]}`,
+                )
+              : copy(
+                  "subjectConfirm",
+                  `from ${plan.match} AND subject contains »${plan.term}« → ${DECISION_DONE_LABEL[pending]}`,
+                )}
           </p>
           <InfoNote
             className="sm-confirm-fine"
@@ -225,19 +264,27 @@ export function SubjectRuleSheet({
             }
             moreLabel={copy("subjectConfirmMoreLabel", "What it does not do")}
           >
-            {copy(
-              "subjectConfirmMore",
-              "The sender's other mail is untouched — this rule only names the messages whose subject "
-                + "matches. It never says every message: a higher-priority rule can keep one where it "
-                + "is, and mail you have already filed by hand is left alone. Revoke or change it at "
-                + "Settings → Rules.",
-            )}
+            {plan.field === "body"
+              ? copy(
+                  "bodyConfirmMore",
+                  "The sender's other mail is untouched — this rule only names the messages whose text "
+                    + "contains the term. It never says every message: a higher-priority rule can keep "
+                    + "one where it is, and mail you have already filed by hand is left alone. Revoke "
+                    + "or change it at Settings → Rules.",
+                )
+              : copy(
+                  "subjectConfirmMore",
+                  "The sender's other mail is untouched — this rule only names the messages whose subject "
+                    + "matches. It never says every message: a higher-priority rule can keep one where it "
+                    + "is, and mail you have already filed by hand is left alone. Revoke or change it at "
+                    + "Settings → Rules.",
+                )}
           </InfoNote>
           <span className="sm-confirm-row">
             <button
               type="button"
               className="go"
-              onClick={() => { setPending(null); onConfirm(plan.term, pending); }}
+              onClick={() => { setPending(null); onConfirm(plan.term, pending, plan.field); }}
             >
               {copy("subjectConfirmGo", `File these to ${DECISION_DONE_LABEL[pending]}`)}
             </button>
@@ -273,7 +320,8 @@ export function SubjectRuleSheet({
         {ctx.existing.length > 0
           ? copy(
               "subjectFootExisting",
-              `You already have ${ctx.existing.length} subject rule(s) for this sender. See them at `
+              // "narrower", not "subject": the count includes body-term rules (mail 0052).
+              `You already have ${ctx.existing.length} narrower rule(s) for this sender. See them at `
                 + "Settings → Rules.",
             )
           : copy(

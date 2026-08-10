@@ -418,6 +418,8 @@ async function applyUpsert(tx: Tx, world: LocalWorld, ch: SyncChange, now: Date,
         // the sender's mail after the user had widened the rule back to all of it. A mirror that
         // cannot un-set a field is not a mirror.
         subjectContains: r.subjectContains ?? null,
+        // The third term (mail 0052): `?? null` for the identical un-set reason.
+        bodyContains: r.bodyContains ?? null,
         hits: stats.hits ?? 0,
         lastHitAt: asDate(stats.lastHitAt),
         demotions: stats.demotions ?? 0,

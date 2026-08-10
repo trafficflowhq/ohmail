@@ -181,6 +181,75 @@ export function subjectMatchCount(messages: readonly EngineMessage[], term: stri
   return messages.filter((m) => (m.subject ?? "").toLowerCase().includes(needle)).length;
 }
 
+/**
+ * THE TEXT THE MIRROR HOLDS for a message — the full body where it has been mirrored or hydrated,
+ * the snippet otherwise, `""` for neither.
+ *
+ * ONE accessor, because "what does the client know about this message's text" is asked by the
+ * content detection, the match count and the audit panel, and they must agree. The answer is a
+ * FLOOR, never the server's haystack: the server matches `body_contains` against the full stored
+ * text, so a term the client can see in a snippet is genuinely a match, while a term sitting
+ * deeper in an unhydrated body is a match the client cannot see. Every consumer of this function
+ * is written for that direction — counts are stated as "here", and the audit names a rule only
+ * when the conjunct verifiably holds.
+ */
+export function bodyTextOf(m: EngineMessage): string {
+  return m.body ?? m.snippet ?? "";
+}
+
+/** How many of this sender's messages VISIBLY carry the term — a floor, see {@link bodyTextOf}. */
+export function bodyMatchCount(messages: readonly EngineMessage[], term: string): number {
+  const needle = term.trim().toLowerCase();
+  if (needle === "") return 0;
+  return messages.filter((m) => bodyTextOf(m).toLowerCase().includes(needle)).length;
+}
+
+/** How much of a body the content detection scans — the head, where machines put their tags. */
+export const MAX_BODY_SCAN = 600;
+
+/**
+ * The repeating token this sender puts in this KIND of message's TEXT — or `null`.
+ *
+ * {@link detectSubjectToken}'s contract against the body (mail 0052), for the sender whose
+ * subjects are all alike ("Notification", "Alert") and whose distinguishing text is in the body.
+ * `focusText`/`othersTexts` are what the mirror HOLDS ({@link bodyTextOf}), so detection sees a
+ * floor of the real corpus — a token it finds is real, and a token it misses because bodies are
+ * unhydrated is a `null`, which the sheet already treats as a normal outcome.
+ *
+ * ONE candidate class, not two: bracketed runs only. A subject's leading-label heuristic
+ * ("everything before the first colon") does not survive contact with prose — a body's first
+ * colon is a greeting or a sentence, not a label — and a wrong token that moves mail
+ * retroactively is far worse than none. The refusals are the subject detection's: the token must
+ * repeat in another message's text, must not BE the whole visible text, and clears the same
+ * length floor. Scanning stops at {@link MAX_BODY_SCAN} characters — machine tags live in the
+ * head, and a bound is required over text a stranger wrote.
+ */
+export function detectBodyToken(focusText: string, othersTexts: readonly string[]): string | null {
+  const head = focusText.slice(0, MAX_BODY_SCAN);
+  const stripped = head.trim();
+  const haystacks = othersTexts.map((t) => t.slice(0, MAX_BODY_SCAN).toLowerCase());
+  // Longest first — the subject detection's within-class tie-break, for its reason: the longer
+  // bracketed run is the more specific tag. Duplicates collapse case-insensitively, keeping the
+  // sender's own capitalisation of the first occurrence.
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  for (const m of head.matchAll(/\[([^[\]]{1,80})\]|\(([^()]{1,80})\)|\{([^{}]{1,80})\}/g)) {
+    const token = m[0]!.trim();
+    if (token.length < MIN_SUBJECT_TOKEN_CHARS) continue;
+    const k = token.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    candidates.push(token);
+  }
+  candidates.sort((a, b) => b.length - a.length);
+  for (const token of candidates) {
+    if (token.toLowerCase() === stripped.toLowerCase()) continue;   // the whole visible text
+    const needle = token.toLowerCase();
+    if (haystacks.some((h) => h.includes(needle))) return token;    // repeats, so it is a tag
+  }
+  return null;
+}
+
 /** Everything the sheet renders, read out of the mirror in one pass. */
 export interface SubjectRuleContext {
   /** The message the title was pressed on. */
@@ -195,8 +264,16 @@ export interface SubjectRuleContext {
   /** The detected repeating token, or `null` when nothing repeats. */
   token: string | null;
   /**
-   * The enabled rules that ALREADY carry a subject term for this address, so the sheet can say "you
-   * already have one of these" instead of minting a second row nobody can tell from the first.
+   * The repeating token in this sender's message TEXT, or `null` — the content flavour of
+   * `token` (mail 0052), detected over what the mirror holds ({@link detectBodyToken}). `null`
+   * whenever bodies are not mirrored deeply enough to see a repeat, which the sheet treats
+   * exactly as it treats a subject detection miss: a normal outcome, said out loud.
+   */
+  bodyToken: string | null;
+  /**
+   * The enabled rules that ALREADY carry a subject or body term for this address, so the sheet
+   * can say "you already have one of these" instead of minting a second row nobody can tell from
+   * the first.
    */
   existing: RuleDTO[];
 }
@@ -233,7 +310,8 @@ export function subjectRuleContext(
   mine.sort(byDateDesc);
 
   const address = seed.from.address.trim().toLowerCase();
-  const others = mine.filter((m) => m.id !== messageId).map((m) => m.subject ?? "");
+  const rest = mine.filter((m) => m.id !== messageId);
+  const others = rest.map((m) => m.subject ?? "");
 
   return {
     messageId,
@@ -243,17 +321,26 @@ export function subjectRuleContext(
     current: DEST_OF_FOLDER.get(seed.folder) ?? null,
     messages: mine,
     token: detectSubjectToken(seed.subject ?? "", others),
+    bodyToken: detectBodyToken(bodyTextOf(seed), rest.map(bodyTextOf)),
     // Exact address match AND a term present: those are the rows a second rule would be
     // indistinguishable from. A BARE sender rule is deliberately not here — it is the rule this
-    // sheet exists to refine, not one it collides with.
+    // sheet exists to refine, not one it collides with. Either term counts (mail 0052): a body
+    // rule is just as much "one of these" as a subject rule.
     existing: rulesList(reader).filter(
       (r) => r.enabled
         && r.kind === "sender"
         && r.match.trim().toLowerCase() === address
-        && (r.subjectContains ?? "").trim() !== "",
+        && ((r.subjectContains ?? "").trim() !== "" || (r.bodyContains ?? "").trim() !== ""),
     ),
   };
 }
+
+/**
+ * WHICH FIELD THE SECOND TERM READS — the subject line, or the message text (mail 0052). The
+ * sheet's choice control decides it; everything downstream (the mutation's field, the match
+ * count, the confirm sentence) derives from it so the four cannot disagree.
+ */
+export type TermField = "subject" | "body";
 
 /** What the sheet is about to do, in the shape the confirm row reads from. */
 export interface SubjectRulePlan {
@@ -264,6 +351,8 @@ export interface SubjectRulePlan {
   /** The two terms, as they will be stored. */
   match: string;
   term: string;
+  /** Which field `term` reads. */
+  field: TermField;
   destination: ScreeningDest;
   /**
    * How much of this sender's mail the rule NAMES. The number the confirm row shows.
@@ -307,19 +396,26 @@ export function planSubjectRule(
   ctx: SubjectRuleContext,
   term: string,
   destination: ScreeningDest,
+  field: TermField = "subject",
   applyRetro = RETRO_DEFAULT_ON,
 ): SubjectRulePlan {
   const wanted = FOLDER_OF_VIEW[destination];
   const match = ctx.address.trim().toLowerCase();
   const clean = term.trim();
 
+  // "Identical" means identical in the SAME field: a subject rule and a body rule carrying the
+  // same token are two different statements about two different slices of the sender's mail.
+  const termOf = (r: RuleDTO): string =>
+    ((field === "subject" ? r.subjectContains : r.bodyContains) ?? "").trim();
   const already = ctx.existing.some(
-    (r) => (r.subjectContains ?? "").trim().toLowerCase() === clean.toLowerCase()
-      && r.destination === wanted,
+    (r) => termOf(r).toLowerCase() === clean.toLowerCase() && r.destination === wanted,
   );
 
+  // For the body field this counts over what the mirror HOLDS (`bodyTextOf`), which is a floor
+  // of the server's own count — see the accessor. The sheet's copy is written for that.
   const matching = ctx.messages.filter(
-    (m) => clean !== "" && (m.subject ?? "").toLowerCase().includes(clean.toLowerCase()),
+    (m) => clean !== "" && (field === "subject" ? (m.subject ?? "") : bodyTextOf(m))
+      .toLowerCase().includes(clean.toLowerCase()),
   );
   const misplaced = matching.filter((m) => m.folder !== wanted);
 
@@ -328,7 +424,7 @@ export function planSubjectRule(
     ruleKind: "sender",
     match,
     destination: wanted,
-    subjectContains: clean,
+    ...(field === "subject" ? { subjectContains: clean } : { bodyContains: clean }),
     applyRetro,
   }];
 
@@ -343,6 +439,7 @@ export function planSubjectRule(
     ruleMutations,
     match,
     term: clean,
+    field,
     destination,
     matched: matching.length,
     outOfPlace: misplaced.length,

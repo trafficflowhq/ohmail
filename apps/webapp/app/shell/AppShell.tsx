@@ -127,7 +127,7 @@ import {
   type ScreeningScope,
 } from "./sender-screening";
 import { SubjectRuleSheet, type SubjectRuleState } from "./SubjectRuleSheet";
-import { planSubjectRule, subjectRuleContext, subjectRuleToast } from "./subject-rule";
+import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "./subject-rule";
 import { senderHitOf } from "./sender-hit";
 import {
   go, goScreener, goTag, goTriage, useHashRoute,
@@ -1939,11 +1939,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * the awaiting is testable without a DOM.
    */
   const confirmSubjectRule = useCallback(
-    (messageId: string, term: string, dest: ScreeningDest) => {
+    (messageId: string, term: string, dest: ScreeningDest, field: TermField = "subject") => {
       setSubjectRule(null);
       const ctx = subjectRuleContext(reader, messageId);
       if (!ctx) return;
-      const plan = planSubjectRule(ctx, term, dest);
+      const plan = planSubjectRule(ctx, term, dest, field);
       const place = PLACE_LABEL[dest] ?? dest;
       const rules = plan.ruleMutations.map((m) => engine.mutate(m));
       for (const m of plan.mutations) {
@@ -1953,7 +1953,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         const key = subjectRuleToast(plan, worstStatus(results));
         // The count is `matched`, not `outOfPlace`: the sentence is about the mail the rule NAMES,
         // which is what the confirm row showed. Reporting the smaller number afterwards would read
-        // as the rule having done less than it said.
+        // as the rule having done less than it said. The confirmed sentence names the FIELD the
+        // term reads (mail 0052), because "in the subject" about a text rule is a false claim.
         toast(t.has(`screening.${key}`)
           ? t(`screening.${key}`, { sender: ctx.address, place, count: plan.matched, term: plan.term })
           : key === "subjectAlready"
@@ -1962,7 +1963,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               ? `That rule wasn't saved. Nothing has moved.`
               : key === "subjectRuleQueued"
                 ? `Rule saved here. We'll send it when you're back online.`
-                : `Mail from ${ctx.address} with »${plan.term}« in the subject now files to ${place}.`);
+                : plan.field === "body"
+                  ? `Mail from ${ctx.address} with »${plan.term}« in the text now files to ${place}.`
+                  : `Mail from ${ctx.address} with »${plan.term}« in the subject now files to ${place}.`);
       });
     },
     [engine, reader, toast, t],
@@ -4149,7 +4152,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         <SubjectRuleSheet
           state={subjectRule!}
           ctx={subjectRuleFor}
-          onConfirm={(term, dest) => confirmSubjectRule(subjectRule!.messageId, term, dest)}
+          onConfirm={(term, dest, field) => confirmSubjectRule(subjectRule!.messageId, term, dest, field)}
           onClose={() => setSubjectRule(null)}
         />
       ) : null}

@@ -805,6 +805,16 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         // eleven shapes before this was written; `standard_conforming_strings` is `on`, so the escape
         // reaches the regex engine rather than the string parser.
         sql`case when ${rulesTbl.subjectContains} ~ '[^ \\t\\n\\r\\f\\v]' then 0 else 1 end`,
+        // THE BODY TERM'S CLAUSE (mail 0052), directly below the subject one — `bodyRank` in
+        // `rules.ts`, in the same position. Everything the comment above establishes applies
+        // verbatim: the predicate is this REGEX and not `IS NOT NULL` or `btrim`, the backslashes
+        // are DOUBLED so the text Postgres receives is byte-identical to the migration's CHECK,
+        // and the character class is the evaluator's trim class spelled in SQL. The subject
+        // clause ranking first is `bodyRank`'s documented decision: a rule with both terms
+        // outranks subject-only outranks body-only outranks bare, here and in `compareRules`,
+        // or the two statements of one order disagree and the router picks a winner `psql` does
+        // not show.
+        sql`case when ${rulesTbl.bodyContains} ~ '[^ \\t\\n\\r\\f\\v]' then 0 else 1 end`,
         // Every value spelled out, none left to the `else`. `PROVENANCE_RANK` in `rules.ts` is
         // the same order and ranks an UNKNOWN value last; an `else 2` here would rank a value
         // this list forgot as though it were `promoted`, and the server and the client would
@@ -828,6 +838,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         // that depends on them. `?? null` because drizzle types a nullable text as `string | null`
         // already; the coalesce is for the day somebody widens the select.
         subjectContains: r.subjectContains ?? null,
+        // The third term (mail 0052), carried VERBATIM for the same reasons: the folding and the
+        // blank reading are `rules.ts#bodyTermOf`'s job, in one place next to the matcher.
+        bodyContains: r.bodyContains ?? null,
       };
     });
   }

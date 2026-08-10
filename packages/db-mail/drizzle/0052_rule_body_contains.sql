@@ -1,0 +1,83 @@
+-- A THIRD TERM ON A SENDER RULE — `rules.body_contains`, so one sender can be split by what the
+-- message says, not only by what its subject line says.
+--
+-- ══ WHAT THIS FIXES ════════════════════════════════════════════════════════════════════════
+--
+-- 0050 added `subject_contains`: *from this address AND with this in the subject*. Some senders
+-- defeat it by writing the SAME subject on every message — "Notification", "Alert", an unchanging
+-- report title — and putting the text that distinguishes the invoice from the alert in the body.
+-- This column is the identical conjunction one field deeper: *from this address AND with this in
+-- the message text*.
+--
+-- ══ NULL IS THE RESTING STATE, AND THERE IS NO BACKFILL ════════════════════════════════════
+--
+-- NULL means "this rule has no body term" — the truth for every rule that exists when this lands,
+-- and byte-identical to the pre-column router. The data statement that must NEVER appear here is
+-- any `UPDATE rules SET body_contains = …`: a term invented for an existing rule would NARROW a
+-- decision its owner made about a whole sender, so mail that has been filing correctly for months
+-- would stop matching and silently drift back. 0050's refusal, for 0050's reasons, and like that
+-- one it is un-fixable by a later corrective entry.
+--
+-- ══ WHY ADDING IT CANNOT WIDEN ANYBODY'S ROUTING ═══════════════════════════════════════════
+--
+-- `packages/core/src/rules.ts#matches` reads the column as an EXTRA term a rule must satisfy,
+-- never as an alternative one, so a present term can only make a rule fire LESS often. An engine
+-- deployed BEHIND this migration keeps matching on the sender (and subject) alone — the
+-- pre-column behaviour, not a bypass — and a rule with a body term can never admit a sender the
+-- same rule without one would have refused. Nothing about the consent gate moves.
+--
+-- ══ WHAT THE TERM IS MATCHED AGAINST ═══════════════════════════════════════════════════════
+--
+-- The message's canonical plain text: `NormalizedMessage.textBody` on arrival, which is the
+-- byte-identical string `message_bodies.text` stores (the parsed text part, or the html→text
+-- derivation for html-only mail). The retroactive passes read that stored column back through
+-- their existing `message_bodies` join, so arrival and retro consult the SAME haystack. A message
+-- whose body is not on disk reads as the empty string, which satisfies no term — fail-closed for
+-- a narrowing conjunct: the rule declines to fire and the mail stays where it is.
+--
+-- ══ THE CHECK, THE SAME SIX CHARACTERS AS 0050'S, DELIBERATELY ═════════════════════════════
+--
+-- "No body term" must have exactly ONE representation, or every reader — the router, the
+-- adapter's `ORDER BY`, the specificity rank, the client's rule list — has to classify `''` and a
+-- whitespace-only string independently, and the first disagreement is a rule that matches EVERY
+-- message while its row looks specific. The predicate is `~ '[^ \t\n\r\f\v]'` and not `btrim`:
+-- one-argument `btrim` trims SPACES ONLY, so a tab-only term would pass the constraint while the
+-- evaluator's trim (the same six characters, in `rules.ts`) reads it as absent — the exact
+-- disagreement the constraint exists to prevent. 0050 measured this against real Postgres; this
+-- file inherits the measured predicate verbatim rather than re-deriving it, and the pg test
+-- asserts the two constraints' definitions stay identical up to the column name.
+--
+-- `length(body_contains) <= 200` bounds the stored value: the term is a needle, and the haystack
+-- being a whole message body is not a licence to store a bigger needle. `RulesService` trims
+-- before writing and answers 400 above the same ceiling, so the constraint is the backstop for
+-- writers the service never sees, not the validation the client relies on.
+--
+-- ══ ADDITIVE, IDEMPOTENT, REPLAY-SAFE ══════════════════════════════════════════════════════
+--
+-- `ADD COLUMN IF NOT EXISTS`, nullable, no default: a catalog-only change that rewrites no rows
+-- and takes no long lock. The CHECK is added under a preceding `DROP CONSTRAINT IF EXISTS` so a
+-- journal replay does not raise 42710 on the constraint — the 0037 trap, and the reason this file
+-- is three statements rather than two. A partially-applied window costs nothing: a column with no
+-- CHECK yet is still only ever written by `RulesService`, which validates the same shape.
+--
+-- ══ THE `when` IS 1788908540527, OFF THE max+1-DAY LATTICE ON PURPOSE ══════════════════════
+--
+-- The journal README's rule: `when` must be STRICTLY GREATER than the maximum already applied,
+-- and the maximum that matters is the one in the DATABASE (`drizzle_mail.__drizzle_migrations`),
+-- not the one in this folder — an entry at or below it is skipped silently, forever. This file
+-- was authored as a `0051` concurrently with `0051_away_responder` and renumbered when that one
+-- landed first; its `when` needed no move, because it was picked strictly above the shared test
+-- database's then-maximum — which was ALREADY the away responder's 1788814486206, one day past
+-- the journal's then-newest entry — and off the `max + 86400000` lattice a concurrently-authored
+-- migration derives identically. Before trusting a green `*.pg.test.ts` for this file, check
+-- 1788908540527 is present in `drizzle_mail.__drizzle_migrations` with a real hash.
+--
+-- ROLLBACK is `ALTER TABLE rules DROP COLUMN body_contains` (the CHECK goes with it). The cost is
+-- that every body rule reverts to matching on its remaining terms — a WIDENING, visible to the
+-- user as mail they had split re-collapsing. Prefer disabling the rules to dropping the column.
+
+ALTER TABLE "rules" ADD COLUMN IF NOT EXISTS "body_contains" text;
+--> statement-breakpoint
+ALTER TABLE "rules" DROP CONSTRAINT IF EXISTS "rules_body_contains_nonempty";
+--> statement-breakpoint
+ALTER TABLE "rules" ADD CONSTRAINT "rules_body_contains_nonempty" CHECK ("body_contains" IS NULL OR ("body_contains" ~ '[^ \t\n\r\f\v]' AND length("body_contains") <= 200));

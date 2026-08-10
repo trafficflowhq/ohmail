@@ -139,6 +139,29 @@ export interface Rule {
    * reaches for it.
    */
   subjectContains: string | null;
+  /**
+   * A THIRD TERM, SAME CONTRACT AS {@link subjectContains} ONE FIELD DEEPER — `null` for every
+   * rule that does not carry one (mail 0052).
+   *
+   * Some senders write the SAME subject on every message — "Notification", "Alert" — and put the
+   * distinguishing text in the body, which defeats a subject term entirely. This is the identical
+   * conjunction against the message's canonical plain text: *from this address AND with this in
+   * the message text*.
+   *
+   * Everything `subjectContains` documents holds here verbatim: {@link matches} reads it as an
+   * EXTRA term above the kind switch and for EVERY kind, so a present term can only make a rule
+   * fire LESS often and no value of this field can admit a sender; a stored term is applied even
+   * on kinds `RulesService` refuses to write it for; `null` and `""` both mean "no term" and the
+   * database forbids the second (`rules_body_contains_nonempty`); and it is REQUIRED on the type
+   * for the same reason — a `?` would let a future producer drop the term silently.
+   *
+   * The haystack is {@link NormalizedMessage.textBody}: mailparser's text part, or its html→text
+   * derivation for html-only mail, and the byte-identical string `message_bodies.text` stores —
+   * so arrival and the retroactive passes consult the SAME text. A message whose body is not on
+   * disk reaches the passes as `""`, which satisfies no term: fail-closed for a narrowing
+   * conjunct, the rule declines to fire and the mail stays put.
+   */
+  bodyContains: string | null;
 }
 
 /**
@@ -300,6 +323,19 @@ const KIND_RANK: Readonly<Record<RuleKind, number>> = { sender: 0, domain: 1, he
  */
 const subjectRank = (r: Rule): number => (subjectTermOf(r) === null ? 1 : 0);
 /**
+ * The same specificity clause for the BODY term (mail 0052), ranked directly BELOW the subject
+ * clause: a body-carrying rule outranks a bare one for the same address, for exactly
+ * {@link subjectRank}'s reasons — without it the broad-plus-narrow pair is a UUID coin toss.
+ *
+ * The subject clause coming first is a decision, not an accident of ordering: where one rule
+ * carries a subject term and another a body term, ties are broken the same way on every machine
+ * and in SQL, and a rule carrying BOTH terms outranks either single-term rule (it loses neither
+ * clause). No claim that a subject term is semantically "more specific" than a body term is being
+ * made — the claim is that the two statements of this order (`drizzle-repo.ts#listRules`' `ORDER
+ * BY` and this comparator) must agree literally, and an order must pick a direction.
+ */
+const bodyRank = (r: Rule): number => (bodyTermOf(r) === null ? 1 : 0);
+/**
  * What the user typed beats what we imported for them, which beats what we learned.
  *
  * `seeded-from-sent` sorts LAST, below `promoted`, and the tie it breaks is a real one: a user
@@ -338,7 +374,8 @@ function finitePriority(p: number): number {
 
 /**
  * Ascending = wins. Priority (numeric, user-facing) → deny over allow → sender over domain over
- * header → with a subject term over without one → manual over migrated over promoted → `id`.
+ * header → with a subject term over without one → with a body term over without one → manual over
+ * migrated over promoted → `id`.
  *
  * `id` is the final NON-SEMANTIC tie-break and is compared with `<`/`>` rather than
  * `localeCompare`: a locale-dependent collation is not a stable order across two machines.
@@ -358,6 +395,12 @@ export function compareRules(a: Rule, b: Rule): number {
   // `manual` rules for one address, where provenance separates nothing.
   const subject = subjectRank(a) - subjectRank(b);
   if (subject !== 0) return subject;
+
+  // Directly below the subject clause and above `provenance`, for the subject clause's reasons:
+  // a body term refines a claim about the same principal (mail 0052). See `bodyRank` for why the
+  // subject clause ranks first.
+  const body = bodyRank(a) - bodyRank(b);
+  if (body !== 0) return body;
 
   const provenance = rank(PROVENANCE_RANK, a.provenance) - rank(PROVENANCE_RANK, b.provenance);
   if (provenance !== 0) return provenance;
@@ -434,6 +477,49 @@ function subjectSatisfies(r: Rule, msg: NormalizedMessage): boolean {
 }
 
 /**
+ * The rule's BODY term, case-folded and trimmed — or `null` when it does not carry one.
+ *
+ * `subjectTermOf`'s contract, applied to `bodyContains` (mail 0052), and the ONE place "does this
+ * rule have a body term?" is answered: {@link matches} and {@link bodyRank} both consult it and
+ * must agree, or the narrow rule wins its tie and then declines to fire. The trim class is
+ * {@link SUBJECT_TERM_TRIM} — the SAME six characters, shared deliberately rather than
+ * duplicated, because both columns' CHECKs state the identical `[^ \t\n\r\f\v]` class in SQL and
+ * one definition of "blank" is the whole point of that constraint. `null`, `""` and a blank
+ * string all answer `null` here even though the database forbids the last two
+ * (`rules_body_contains_nonempty`): a CHECK constrains rows the migration reached, not a value a
+ * fixture or a mirror row hands this function.
+ */
+function bodyTermOf(r: Rule): string | null {
+  const raw = r.bodyContains;
+  if (typeof raw !== "string") return null;
+  const term = raw.replace(SUBJECT_TERM_TRIM, "").toLowerCase();
+  return term.length === 0 ? null : term;
+}
+
+/**
+ * Does the message's text satisfy the rule's body term?
+ *
+ * `true` when there is no term — an absent conjunct is satisfied, so every rule written before
+ * mail 0052 keeps its exact prior behaviour. Case-folded substring over
+ * {@link NormalizedMessage.textBody} and deliberately nothing cleverer, for `subjectSatisfies`'
+ * reasons: no regex (a user-supplied pattern over a stranger's multi-kilobyte body is a ReDoS on
+ * the ingest path), no normalisation, no whitespace collapsing. `textBody` is the canonical
+ * plain text — mailparser's text part or its html→text derivation — and the byte-identical
+ * string `message_bodies.text` stores, so the retro passes that read the column back consult the
+ * same haystack this does on arrival. `""` (no body part, or a stored row the pass could not
+ * find) satisfies no term, which is the fail-closed direction for a narrowing conjunct.
+ *
+ * The fold allocates a lowercased copy of the whole body per carrying rule. Accepted knowingly:
+ * bodies are capped upstream (`mime.ts`' html→text ceiling), accounts hold few body-carrying
+ * rules, and a shared fold cache would be a place for the term and the haystack to disagree.
+ */
+function bodySatisfies(r: Rule, msg: NormalizedMessage): boolean {
+  const term = bodyTermOf(r);
+  if (term === null) return true;
+  return msg.textBody.toLowerCase().includes(term);
+}
+
+/**
  * Does this rule fire on this message?
  *
  * `author === null` means the claimed author is absent, unparseable, or ambiguous
@@ -457,6 +543,9 @@ function matches(r: Rule, msg: NormalizedMessage, author: string | null): boolea
   // a conjunct the next arm can be written without, and the failure that produces is a rule whose
   // stored term does nothing — indistinguishable from the column not shipping.
   if (!subjectSatisfies(r, msg)) return false;
+  // The body term (mail 0052): the same conjunct one field deeper, in the same position and for
+  // the same reasons. An `AND`, so it can only ever turn a `true` into a `false`.
+  if (!bodySatisfies(r, msg)) return false;
   switch (r.kind) {
     case "sender":
       return author !== null && r.match.toLowerCase() === author;

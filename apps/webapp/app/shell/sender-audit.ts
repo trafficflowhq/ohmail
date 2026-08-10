@@ -52,6 +52,7 @@ import {
   type RuleDTO,
   type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
+import { bodyTextOf } from "./subject-rule";
 
 export type MailAttribution =
   | { kind: "gate"; suggestion: ScreenerSenderDTO["ai"] }
@@ -108,6 +109,23 @@ export function ruleSubjectHolds(rule: RuleDTO, subject: string): boolean {
 }
 
 /**
+ * Does the rule's BODY term (mail 0052) VERIFIABLY hold for this message? `true` when it has none.
+ *
+ * {@link ruleSubjectHolds}' contract against `text` — the message text the MIRROR holds
+ * (`subject-rule.ts#bodyTextOf`: the full body where hydrated, the snippet otherwise). That is a
+ * floor of the server's haystack, so the honest reading of a miss is "cannot verify", and this
+ * module's own header decides what that means: never assert something about the router the mirror
+ * cannot see. A body rule whose term sits deeper than the client's text is therefore NOT named,
+ * and the message reads as "arrival" — an attribution this module already prefers over a claim it
+ * cannot check.
+ */
+export function ruleBodyHolds(rule: RuleDTO, text: string): boolean {
+  const term = (rule.bodyContains ?? "").replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, "");
+  if (term === "") return true;
+  return text.toLowerCase().includes(term.toLowerCase());
+}
+
+/**
  * Attribute a set of messages. The rules are read ONCE for the whole set, not per message.
  *
  * A sender rule is preferred over a domain rule when both agree with the folder, because that
@@ -133,13 +151,15 @@ export function attributeMessages(
     const hits = rules.filter(
       (r) => r.destination === message.folder
         && ruleMatchesSender(r, message.from.address)
-        && ruleSubjectHolds(r, message.subject ?? ""),
+        && ruleSubjectHolds(r, message.subject ?? "")
+        && ruleBodyHolds(r, bodyTextOf(message)),
     );
-    // Among the rules that hold, the one carrying a subject term is the more specific TRUE statement
-    // — and it is also the one the router would pick (`compareRules`' specificity clause), so
-    // preferring it costs nothing this module refuses to do: it is still only ever reporting a rule
-    // that AGREES with where the message already is.
-    const rule = hits.find((r) => r.kind === "sender" && (r.subjectContains ?? "").trim() !== "")
+    // Among the rules that hold, the one carrying a term (subject or body, mail 0052) is the more
+    // specific TRUE statement — and it is also the one the router would pick (`compareRules`'
+    // specificity clauses), so preferring it costs nothing this module refuses to do: it is still
+    // only ever reporting a rule that AGREES with where the message already is.
+    const rule = hits.find((r) => r.kind === "sender"
+        && ((r.subjectContains ?? "").trim() !== "" || (r.bodyContains ?? "").trim() !== ""))
       ?? hits.find((r) => r.kind === "sender")
       ?? hits[0];
     return { message, attribution: rule ? { kind: "rule", rule } : { kind: "arrival" } };

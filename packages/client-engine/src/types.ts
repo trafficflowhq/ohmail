@@ -595,6 +595,16 @@ export interface RuleDTO {
    * parse failure — `undefined` and `null` mean the same thing to every reader here.
    */
   subjectContains?: string | null;
+  /**
+   * THE RULE'S THIRD TERM, or `null` — *from this address AND with this in the message text*.
+   *
+   * `subjectContains`' contract one field deeper, including WHY it is on the mirror (the rules
+   * list must render a body-narrowed rule differently from a bare one, and the sender sheet's
+   * ladder must not retarget it) and why it is OPTIONAL: an older server does not send it, and a
+   * mirror row predating the column reads as "no term" — `undefined` and `null` are the same
+   * thing to every reader here.
+   */
+  bodyContains?: string | null;
   stats: { hits: number; lastHitAt: ISODateTime | null; demotions: number };
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
@@ -1262,6 +1272,15 @@ export type EngineMutation =
        * surfaces quote the term back at the user, who read it off their own mail.
        */
       subjectContains?: string | null;
+      /**
+       * A THIRD TERM ON THE RULE — *from this address AND with this in the message text*.
+       *
+       * `subjectContains`' contract verbatim: absent for the ordinary rule, `ruleKind: "sender"`
+       * only (the server answers 400 elsewhere and `mutationEffects` yields no effects locally),
+       * sent as typed and matched case-folded by the server against the message's plain text. It
+       * composes with the subject term — a mutation may carry both, and both must then hold.
+       */
+      bodyContains?: string | null;
       /**
        * ALSO APPLY THIS RULE TO MAIL THAT IS ALREADY FILED.
        *
