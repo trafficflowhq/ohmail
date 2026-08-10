@@ -802,7 +802,7 @@ export function smtpCertNamesOf(err: unknown): { certHost: string | null; altNam
  * refusal. Measured live before this ordering existed: smtp.aberer.at's hostname mismatch
  * arrived as `code: "ESOCKET"` with Node's full identity sentence intact, and the
  * code-gated version of this function answered `connect` — a true sentence about the wrong
- * thing, on the exact host this slice exists for.
+ * thing, on the exact host this classifier was written against.
  */
 export function smtpTlsDetailOf(err: unknown, expectedHost: string): ProbeTlsDetail | null {
   const message = smtpMessageOf(err);
