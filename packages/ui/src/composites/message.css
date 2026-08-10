@@ -88,16 +88,19 @@
    paragraphs reads as one letter rather than a stack of separated blocks. */
 .msg-p{margin:0 0 10px;overflow-wrap:anywhere}
 .msg-p:last-child{margin-bottom:0}
-/* QUOTED REPLY CHAINS. Each level of ">" quoting gets a quiet left rule, a step of indent and a
-   more muted tone, so a thread reads as a thread instead of one undifferentiated wall. Sibling
-   blocks with depth-scaled indent stand in for DOM nesting; `data-quote-depth` carries the actual
-   depth and the visual steps are capped so a ">>>>>" chain does not march off the panel. */
+/* QUOTED REPLY CHAINS. One `.msg-quote` per quoted run per level, with deeper levels NESTED
+   inside — so each level contributes exactly one quiet left rule and one 12px step of indent,
+   and the rule runs unbroken down everything quoted at that level. It used to be one wrapper
+   per BLOCK, flat, with depth-scaled `margin-inline-start` standing in for nesting: a quoted
+   message of n paragraphs drew n short bars with 14px gaps — a picket fence, the reported
+   defect. The grouping (and the depth cap that keeps a ">>>>>" chain cheap) lives in
+   `BodyText.tsx`; `data-quote-depth` still carries the level. Nested quotes step down to the
+   quietest ink and sit at the 4px in-quote rhythm, so the history reads subordinate and whole. */
 .msg-quote{border-inline-start:2px solid var(--hair);padding-inline-start:12px;margin:0 0 14px;color:var(--ink2)}
 .msg-quote .msg-p,.msg-quote .msg-attribution{color:inherit;margin-bottom:4px}
 .msg-quote .msg-p:last-child,.msg-quote .msg-attribution:last-child{margin-bottom:0}
-.msg-quote[data-quote-depth="2"]{margin-inline-start:12px;color:var(--ink3)}
-.msg-quote[data-quote-depth="3"]{margin-inline-start:24px;color:var(--ink3)}
-.msg-quote[data-quote-depth="4"]{margin-inline-start:36px;color:var(--ink3)}
+.msg-quote .msg-quote{margin:4px 0;color:var(--ink3)}
+.msg-quote .msg-quote:last-child{margin-bottom:0}
 /* The line that says who wrote the block below — never the sender's words, so it is set apart
    and quieted, like `.msg-body-state` but inline with the thread. */
 .msg-attribution{margin:0 0 8px;color:var(--ink3);font-size:.92em;overflow-wrap:anywhere}
