@@ -20,7 +20,7 @@ import {
   DEFAULT_SYNC_BATCH_MAX_MESSAGES, DEFAULT_SYNC_BATCH_MAX_BYTES, DEFAULT_SYNC_BATCH_MAX_FLAGS,
   imapTlsFloor, smtpTlsFloor,
   type ImapConfig, type ImapAdapterOpts, type ImapCapabilities, type MailboxAdapter,
-  type ImapCursor, type ChangeBatch, type PersistedFolderCursor,
+  type ImapCursor, type ChangeBatch, type PersistedFolderCursor, type KnownEntry,
   type OutboundMessage, type SendResult, type FetchedPart, type FetchPartOptions,
   type FetchRawOptions, type NetTimeouts, type FetchByUidOptions, type TargetedFetch,
   type ImapAuth, type ImapOAuthAuth, type ResolvedImapAuth,
@@ -983,11 +983,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // last) and that ordering is a mail-latency guarantee — see the budget declaration above. Only
     // the flag ALLOWANCE rotates.
     const flagTotal = budget.flags;
-    // Eligible: could run a flag pass at all this cycle. A folder without a CONDSTORE baseline
-    // never reaches the fetch, so reserving budget for it would be reserving it for nobody.
+    // Eligible: could run a flag pass at all this cycle. With CONDSTORE that means a modseq
+    // baseline exists; without it (the FALLBACK — Office 365 advertises no CONDSTORE) it means
+    // the known-set carries seen baselines to diff against, and the Sent folder is out — see the
+    // fallback block below for both. A folder that never reaches the fetch must not have budget
+    // reserved for it, which would be reserving it for nobody.
     const flagEligible = scanFolders.filter((f) => {
       const p = cursor.folders[f];
-      return caps.condstore && !!p && p.highestModseq !== "0";
+      if (caps.condstore) return !!p && p.highestModseq !== "0";
+      return f !== sentFolder && (p?.known.length ?? 0) > 0;
     });
     // Claimants: the folders KNOWN to owe, which before the fetch means "has an in-flight drain".
     //
@@ -1027,14 +1031,40 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       try {
         const mb = this.client.mailbox as MailboxObject;
         const curUidValidity = mb.uidValidity;
-        const knownMap = new Map<number, string | null>((prev?.known ?? []).map((k) => [k.uid, k.messageId]));
+        const knownMap = new Map<number, KnownEntry>((prev?.known ?? []).map((k) => [k.uid, k]));
         const uidValidityChanged =
           !!prev && prev.uidValidity !== "0" && prev.uidValidity !== String(curUidValidity);
         // On a UIDVALIDITY change every prior UID is stale: treat the known-set as empty for
         // create/flag detection (so all current UIDs are re-learned) and emit every prior UID as a
         // delete; correlateMoves then re-pairs create↔delete by Message-ID into a single locator refresh.
-        const effectiveKnown = uidValidityChanged ? new Map<number, string | null>() : knownMap;
+        const effectiveKnown = uidValidityChanged ? new Map<number, KnownEntry>() : knownMap;
         const canFastPath = caps.condstore && !!prev && prev.highestModseq !== "0" && !uidValidityChanged;
+        // ── THE FALLBACK: FLAG CHANGES WITHOUT CONDSTORE ────────────────────────────────────
+        //
+        // Office 365 advertises no CONDSTORE (measured live: `IMAP4 IMAP4rev1 AUTH=PLAIN
+        // AUTH=XOAUTH2 SASL-IR UIDPLUS MOVE ID UNSELECT CHILDREN IDLE NAMESPACE LITERAL+`), so
+        // on such a server `canFastPath` is false on every cycle for ever — and until this
+        // branch existed that meant NO flag change was ever derived: mail read in Outlook stayed
+        // bold here permanently, per folder, which is the read-state-mirror bug all over again.
+        //
+        // The prior flags the old "documented limitation" said were missing are in the known-set
+        // now (`KnownEntry.seen` — what the database last observed the server holding). So the
+        // fallback fetches FLAGS for the known range — a plain fetch, no `changedSince` — and
+        // emits a change only where the server DISAGREES with that baseline. Agreement is free,
+        // so a clean folder costs one flags-only fetch and emits nothing, however large it is;
+        // that fetch every cycle is the unavoidable price of a server that cannot say "what
+        // changed", and it is the same price every no-CONDSTORE mail client pays.
+        //
+        // The SENT folder is excluded. `pipeline.ts` ingests own-sent mail `seen: true`
+        // regardless of what the server reported (a client that appends to Sent without `\Seen`
+        // must not put the user's own outbox into the unread count), so an unflagged Sent row's
+        // database state is a POLICY, not an observation — diffing against it would "adopt" a
+        // divergence nobody created and flip the user's own sent mail unread.
+        //
+        // The user-wins decision stays in `applyExternalFlag`, which declines while our own
+        // write is still in flight; this diff is a cost filter, not an authority.
+        const canFlagFallback =
+          !caps.condstore && !isSent && !uidValidityChanged && effectiveKnown.size > 0;
 
         // ── ENUMERATION: WHOLE FOLDER, OR THE SENT WATERMARK ──────────────────────────────
         //
@@ -1092,7 +1122,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
         const drain = this.flagDrain.get(folder);
         let flagsTruncated = false;
-        if (canFastPath) {
+        if (canFastPath || canFlagFallback) {
           // Flags only — no bodies, no envelopes. Known UIDs are the only ones that can
           // produce a flag change; unknown ones are creates and were handled above.
           //
@@ -1100,6 +1130,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           // identical set until the cursor moves, so truncating at N without a resume point
           // would hand back the same N for ever and the drain would never finish. The range
           // starts at the drain's resume UID and the modseq stays the one the drain began on.
+          //
+          // The FALLBACK (`canFlagFallback` — see its declaration) runs this same loop with two
+          // differences: the fetch carries no `changedSince` (the server cannot answer one), and
+          // a row is a change only when it DIVERGES from the known-set's seen baseline, where
+          // the fast path trusts CONDSTORE to have pre-filtered. The resume machinery is shared:
+          // a truncated fallback pass holds its place by UID exactly like a truncated fast pass,
+          // so "mark all read in Outlook" drains across cycles instead of re-reporting its first
+          // `allowance` for ever. `sinceModseq`/`advanceTo` are inert in that mode — the folder
+          // cursor's `highestModseq` is pinned at "0" for a no-CONDSTORE server below.
           const from = drain?.resumeUid ?? 1;
           const since = drain?.sinceModseq ?? prev!.highestModseq;
           // ── THE RESUME POINT IS WHAT THIS PASS EXAMINED, NOT WHAT IT ACCEPTED ────────────
@@ -1156,7 +1195,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           for await (const m of this.client.fetch(
             `${from}:*`,
             { uid: true, flags: true },
-            { uid: true, changedSince: BigInt(since) },
+            canFastPath ? { uid: true, changedSince: BigInt(since) } : { uid: true },
           )) {
             // NOT A SKIP — an unknown UID was EXAMINED, and unknown-ness is the answer. It is a
             // create, sourced by the known-set diff above with its flags attached, so this pass
@@ -1165,7 +1204,18 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             // safe to ignore: `advanceTo` is the modseq observed when the drain STARTED, so it
             // is at or above this UID's modseq, and a flag change on it after the drain ends is
             // re-reported by the ordinary `changedSince` on the next cycle.
-            if (!effectiveKnown.has(m.uid)) { lastFlagUid = m.uid; continue; }
+            const known = effectiveKnown.get(m.uid);
+            if (!known) { lastFlagUid = m.uid; continue; }
+            const seen = m.flags?.has("\\Seen") ?? false;
+            // The fallback's whole filter: agreement with the baseline is not a change, and a
+            // baseline the repo could not state (`seen` null/absent — a dead-lettered UID) is
+            // never diffed. Free to step over for the resume point exactly like an unknown UID:
+            // an agreement examined is an agreement answered. The fast path takes no part —
+            // CONDSTORE already said these rows changed, and its cursor semantics own them.
+            if (!canFastPath && (known.seen == null || known.seen === seen)) {
+              lastFlagUid = m.uid;
+              continue;
+            }
             // BOTH bounds. `taken` is this folder's share, `budget.flags` the cycle's hard cap —
             // the share is derived from the cap, so the second can only bite if a share was
             // rounded up past what was left.
@@ -1173,7 +1223,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             flagChanges.push({
               type: "flag",
               locator: { folder, ref: makeRef(curUidValidity, m.uid) },
-              seen: m.flags?.has("\\Seen") ?? false,
+              seen,
             });
             budget.flags--;
             taken++;
@@ -1191,11 +1241,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             this.flagDrain.delete(folder);
           }
         }
-        // Flag changes are not derivable without prior flags on the fallback path (documented limitation).
-
         // Deletes: previously-known UIDs that are gone (or ALL prior UIDs on a UIDVALIDITY change).
         const priorUidValidity = prev ? BigInt(prev.uidValidity === "0" ? String(curUidValidity) : prev.uidValidity) : curUidValidity;
-        for (const [uid, messageId] of knownMap) {
+        for (const [uid, { messageId }] of knownMap) {
           if (uidValidityChanged) {
             deletes.push({ folder, uidValidity: priorUidValidity, uid, messageId });
             continue;
