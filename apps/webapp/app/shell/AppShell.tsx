@@ -127,7 +127,7 @@ import {
 } from "./routing";
 import { HistoryView } from "../views/HistoryView";
 import { SeedReviewView } from "../views/SeedReviewView";
-import { OhboxView } from "../views/OhboxView";
+import { OhboxView, type OhboxReplyDone } from "../views/OhboxView";
 import { ReadsView, type ReadsChipState } from "../views/ReadsView";
 import { ReceiptsView } from "../views/ReceiptsView";
 import { ScreenerView } from "../views/ScreenerView";
@@ -1464,6 +1464,13 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   /** Late-bound for the same reason as {@link releaseDraft} — see below where it is assigned. */
   const openMessageRef = useRef<(m: EngineMessage) => void>(() => {});
 
+  /**
+   * The reply that most recently settled, handed to `OhboxView` for the animate-to-Earlier gesture
+   * (which lands in a following slice — the prop ships dark until then). Set only for a reply: a
+   * compose answers nothing and moves no row out of "New for you".
+   */
+  const [replyDone, setReplyDone] = useState<OhboxReplyDone | null>(null);
+
   const onSendSettled = useCallback((key: string) => {
     if (key === COMPOSE_SEND_KEY) {
       setCompose(EMPTY_COMPOSE);
@@ -1473,6 +1480,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       releaseDraft.current();
       return;
     }
+    // A reply settled. `key` is the answered message's id (`sendKeyOf`), which is exactly the row
+    // that should move from "New for you" to "Earlier" — so hand it to the Ohbox for the gesture.
+    setReplyDone({ messageId: key, at: new Date().toISOString() });
     setReplyTo((cur) => (cur === key ? null : cur));
     // A reply to this message has been delivered, so a drafted alternative to it is moot.
     // This is the ONLY thing that discards an unplaced draft other than answering the
@@ -3283,6 +3293,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             >
             {effectiveView === "ohbox" ? (
               <OhboxView
+                replyDone={replyDone}
                 demo={demo}
                 newForYou={ohbox.newForYou}
                 previouslySeen={ohbox.previouslySeen}

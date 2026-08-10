@@ -298,10 +298,14 @@ function ExpandedSibling({
   showSubject: boolean;
 }) {
   const tb = useTranslations("body");
+  const tm = useTranslations("message");
   const chrome = useMessageChrome();
   const body = chrome.bodyOf(message);
   const waiting = body.state === "loading" || body.state === "snippet";
   const stalled = useBodyStalled(message.id, waiting);
+  // Copy shim — `en.json` wins the moment the key lands; the fallback keeps the verb legible
+  // until it does, without this slice editing the message catalogue. See `ActionBar`'s `copy`.
+  const verb = (key: string, fallback: string): string => (tm.has(key) ? tm(key) : fallback);
 
   const loadingNote: ReactNode = !stalled && waiting ? <p className="hm-state">{tb("loading")}</p> : null;
   const failedNote: ReactNode =
@@ -338,6 +342,27 @@ function ExpandedSibling({
       </div>
       {loadingNote}
       {failedNote}
+      {/* THE SIBLING'S OWN VERBS — Reply and Forward, dispatched through the SAME chrome the
+          focused message's bar uses, so answering (or forwarding) an older message in the thread
+          does not first require making it the focused one. Deliberately NOT a second ActionBar: a
+          full bar per expanded sibling would stack the file / defer / read machinery onto a
+          message the reader is only glancing back at. Reply retargets the editor to THIS id;
+          Forward hands THIS id to the forward model. Each button appears only where the shell has
+          wired its verb — a footer of dead controls is exactly what this file refuses elsewhere. */}
+      {chrome.openReply || chrome.forward ? (
+        <div className="hm-foot">
+          {chrome.openReply ? (
+            <button type="button" className="hm-verb" onClick={() => chrome.openReply!(message.id)}>
+              {verb("siblingReply", "Reply")}
+            </button>
+          ) : null}
+          {chrome.forward ? (
+            <button type="button" className="hm-verb" onClick={() => chrome.forward!(message.id)}>
+              {verb("siblingForward", "Forward")}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   );
 }

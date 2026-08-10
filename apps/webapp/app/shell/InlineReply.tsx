@@ -168,8 +168,11 @@ export function InlineReply({
    * `focus()` alone already scrolls in a browser, which is exactly why the scroll is stated
    * separately: that is a side effect of focusing rather than an intent, and what it brings
    * into view is the CARET — so a tall editor could arrive with its head and its `to` line
-   * still above the fold. The BOX is scrolled, `block: "nearest"`, so a column that is
-   * already showing it does not jump.
+   * still above the fold. The BOX is scrolled `block: "end"`, so it is the editor's BOTTOM edge
+   * — the Send/Cancel actions row — that lands on screen, not merely its nearest edge (which on
+   * a tall editor was its head, leaving the actions still below the fold). This is the
+   * narrow-viewport and reader-overlay path; at split width with room the dock is sticky
+   * (`reader.css`) and the editor never leaves the screen to begin with.
    *
    * `scrollIntoView` is optional-chained on the METHOD, not only the node: jsdom does not
    * implement it (see `body-open.test.ts`, which stubs it for the views that call it
@@ -184,7 +187,7 @@ export function InlineReply({
    * there is no editor at all during the commit this effect runs in.
    */
   useEffect(() => {
-    box.current?.scrollIntoView?.({ block: "nearest" });
+    box.current?.scrollIntoView?.({ block: "end" });
   }, [message.id]);
 
   const inFlight = send.phase === "sending" || send.phase === "queued";
