@@ -23,7 +23,6 @@ export {
   encodeSeqCursor,
   decodeSeqCursor,
   type ChangeOp,
-  type ComposeAttachment,
   type Cursor,
   type EmailAddress,
   type EngineDraft,
@@ -93,8 +92,6 @@ export {
 // Selectors.
 export {
   bodyOf,
-  isOwnSent,
-  isResurfaced,
   messageDisplayTime,
   messagesIn,
   ohboxView,
@@ -108,8 +105,6 @@ export {
   triagePiles,
   tagsCrossView,
   threadOf,
-  threadParticipants,
-  THREAD_PARTICIPANTS_MAX,
   unreadCounts,
   type EngineCounts,
   type OhboxView,
@@ -135,15 +130,7 @@ export {
 export { SearchIndex, type LocalSearchResult, type SearchFacets, type SearchHit, type SearchMatch } from "./search.js";
 
 // Mutation semantics (shared optimistic/demo source of truth).
-export {
-  decideFolder,
-  forwardSubject,
-  mutationEffects,
-  replySubject,
-  sentOverlayMessage,
-  type EffectContext,
-  type MutationEffect,
-} from "./mutations.js";
+export { decideFolder, mutationEffects, replySubject, type EffectContext, type MutationEffect } from "./mutations.js";
 
 // Adapters.
 export type { EngineAdapter, MutationOutcome, SyncParams } from "./adapters/adapter.js";

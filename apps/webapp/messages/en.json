@@ -555,8 +555,6 @@
     "bccHint": "Bcc recipients are hidden from everyone else on the message.",
     "subject": "Subject",
     "noSubject": "No subject",
-    "forwardingNote": "The original message and its attachments are added when you send.",
-    "forwardRefused": "This message can't be forwarded — it contains sensitive content.",
     "draftNote": "Kept in this browser until you send it",
     "editorAria": "Message body",
     "editorPlaceholder": "Write your message…",

@@ -101,6 +101,48 @@ function pileList(dests: DecisionDestination[], t: (k: string, v?: Record<string
 const FILTER_ORDER = [...APPLY_PILE_ORDER, "spam", "none"] as const;
 type ScreenerFilterId = DecisionDestination | "none";
 
+/** Breathing room above the anchored message, so its own header is not flush with the column edge. */
+export const HELD_ANCHOR_PAD_PX = 14;
+
+/**
+ * WHERE THE READ COLUMN MUST SCROLL TO PUT THE LAST HELD MESSAGE AT THE TOP.
+ *
+ * Held mail renders oldest→newest, so a fresh render sits on the OLDEST message while the decision
+ * a person is about to take is about the newest. All three terms are load-bearing and the
+ * two-term versions are both plausible:
+ *
+ *  · `lastTop - readTop` is the message's offset from the column's VIEWPORT edge, not from the
+ *    column's content origin. Used alone it is correct only from `scrollTop === 0`, and from
+ *    anywhere else it scrolls by a delta instead of to a position — which is what happens on every
+ *    selection change after the first, because the previous sender left the column scrolled.
+ *  · `+ scrollTop` converts that viewport offset into a content offset. This is the term a
+ *    plausible-looking rewrite drops.
+ *  · `- pad` is the gap above the message. Clamped at 0, because the first message in a short list
+ *    yields a negative target and a negative `scrollTop` is silently coerced to 0 by the DOM —
+ *    correct by accident, and this makes it correct on purpose.
+ *
+ * Pure, and taking numbers rather than elements, because jsdom reports every
+ * `getBoundingClientRect` as zero: an assertion made against a MOUNTED view cannot tell this
+ * formula from a wrong one, so the guard has to drive the arithmetic directly.
+ *
+ * ── THE LIMIT, MEASURED BY READING RATHER THAN GUESSED ───────────────────────────────────────
+ *
+ * The effect that calls this runs once per `[activeId, segment]`, which is right for a WARM
+ * mirror: `bodyOf` answers `full` from stored bodies, every `.hmail` is already at its final
+ * height when the effect runs, and the anchor lands where it should. On a COLD one the held
+ * bodies arrive AFTER this pass (`hydrateBody` is dispatched by the same selection change), each
+ * card above the last one grows, and the anchored message is pushed below the fold. Re-anchoring
+ * on that growth is deliberately NOT done here: the effect's dependency list is the promise that
+ * a body landing does not yank a reader who has since scrolled, and the fix for the cold case is
+ * to re-anchor only while the reader has not — which needs a scroll-intent signal this view does
+ * not have.
+ */
+export function heldAnchorTop(
+  readTop: number, lastTop: number, scrollTop: number, pad = HELD_ANCHOR_PAD_PX,
+): number {
+  return Math.max(0, lastTop - readTop + scrollTop - pad);
+}
+
 /**
  * Which chip a waiting row belongs to.
  *
@@ -649,6 +691,14 @@ export function ScreenerView({
   // and fixed the same way: anchor the LAST `.hmail` by direct `scrollTop` (instant — the
   // `.scn-read` column, `.read-col` in `message.css`, declares no smooth scroll). Keyed on
   // `[activeId, segment]` only, so a body hydrating in does not re-anchor a scrolled reader.
+  //
+  // ── THE ARITHMETIC IS {@link heldAnchorTop}, AND THE LIMIT IS NAMED THERE ────────────────
+  //
+  // Extracted rather than inlined because it was the one part of this effect with no evidence
+  // behind it: the three-term expression is easy to write plausibly and wrongly (drop the
+  // `+ scrollTop` and it only works from the top of an unscrolled column), and a jsdom test of
+  // the effect cannot see it — jsdom reports every rect as zero, so a mounted assertion here
+  // would pass for a broken formula. `screener-anchor.test.ts` drives the function instead.
   useEffect(() => {
     setChoosing(null);
     const read = document.querySelector<HTMLElement>(".view-screener .scn-read");
@@ -659,8 +709,9 @@ export function ScreenerView({
       read.scrollTo({ top: 0 });
       return;
     }
-    read.scrollTop =
-      last.getBoundingClientRect().top - read.getBoundingClientRect().top + read.scrollTop - 14;
+    read.scrollTop = heldAnchorTop(
+      read.getBoundingClientRect().top, last.getBoundingClientRect().top, read.scrollTop,
+    );
   }, [activeId, segment]);
 
   /* `scn-full-open` used to be set on <body> here, and the one rule that read it hid the
