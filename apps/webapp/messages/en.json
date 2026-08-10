@@ -1046,7 +1046,7 @@
     "gmx": "GMX",
     "infomaniak": "Infomaniak",
     "any": "…and any IMAP mailbox, including your own server.",
-    "note": "Microsoft 365 and Outlook.com connect the way every other mailbox does: over IMAP. Native Exchange sync — Microsoft Graph, and signing in with Microsoft instead of an app password — is on the roadmap and not shipped yet; we’ll say so here the day it is."
+    "note": "Microsoft 365 and Outlook.com connect over IMAP, the way every other mailbox does. Native Exchange sync over Microsoft Graph — a different protocol, not IMAP — is on the roadmap and not shipped yet; we’ll say so here the day it is."
   },
   "faq": {
     "title": "Questions, answered.",
@@ -1061,7 +1061,7 @@
     "q5": "Do you read my mail?",
     "a5": "Not as a matter of practice, and our admin tools do not display message content — every response the console can produce is checked by a test that writes a marker into every text column of every table and fails if any of it reaches a staff response. The database itself does not yet refuse those columns to staff tooling: the column-restricted role that would enforce this below the application is built and tested but not yet live, and we will not claim it until it is. The honest fine print: Cloud mail is stored unencrypted at the application level and is not end-to-end encrypted, so someone with production database access could technically read it; that access is held by very few people, and the product privacy policy will spell out who and under what conditions when it publishes, before the first real mailbox connects. On Desktop the question doesn't arise — your mail never reaches our servers at all: the app runs as a real mail client against your own server, on macOS, Windows and Linux alike. Separately, nobody else gets to watch you read either: a spy pixel is never fetched, so it cannot report that you opened anything, and ohmail records who tried. Ordinary pictures do load, through our own proxy, which means the sender's server sees us and never your address.",
     "q6": "Which providers work?",
-    "a6": "Any IMAP mailbox: your own domain at Metanet or Infomaniak, iCloud, Gmail, Outlook, a self-hosted server. If it speaks IMAP, ohmail organizes it in place. Native Exchange sync over Microsoft Graph is on the roadmap; today Microsoft 365 connects over IMAP like everything else.",
+    "a6": "Any IMAP mailbox: your own domain at Metanet or Infomaniak, iCloud, Gmail, Outlook, a self-hosted server. If it speaks IMAP, ohmail organizes it in place. Native Exchange sync over Microsoft Graph is on the roadmap; Microsoft 365 connects over IMAP, like every other mailbox here.",
     "q7": "Is there a trial for Cloud?",
     "a7": "Yes — 14 days, no card. It is the whole product except the managed AI actions: rules, sync, push and the web app all run, and the included AI actions begin when a subscription does. Desktop needs no trial at all; it is simply free.",
     "q8": "Desktop or Cloud — what’s the real difference?",
