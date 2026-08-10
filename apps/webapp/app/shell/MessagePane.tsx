@@ -243,13 +243,7 @@ function ActionBar({
   const copy = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
 
   /**
-   * MARK UNREAD — the one read-state verb the bar carries, and only on a message that IS read.
-   *
-   * A message is read the instant it is opened (the 2 s dwell), so a "Mark read" arm on the bar
-   * of the message you are reading is a control for the state it is already in. So that arm is
-   * gone: the read switch offers ONLY "Mark unread", and only appears when there is a read state
-   * to undo. On an unread message the control is absent (see the row below), not a no-op sitting
-   * on the bar.
+   * MARK UNREAD — the read-state verb of a message that IS read.
    *
    * It PRESSES `u` rather than dispatching its own `mark_seen`, and `press` NOT
    * `useBinding("u")?.run()`: the memoised binding array holds closures from the last SHAPE change,
@@ -262,6 +256,31 @@ function ActionBar({
    */
   const markUnread = () => {
     if (!press("u")) onAction("unread");
+  };
+
+  /**
+   * MARK AS READ — the OTHER half of the same slot, and the reason the slot is never empty.
+   *
+   * The bar used to render nothing at all on an unread message: the argument was that opening a
+   * message reads it, so a "Mark read" arm acts on a state the message is about to be in anyway.
+   * That is true of the DWELL and false of the CONTROL — reading is committed on the way OUT
+   * (`OhboxView`), so a message opened and put back to unread with `u`, or opened on a surface with
+   * no dwell, sits under the reader's eyes as unread with no way to say "I am done with this"
+   * except to leave. And a slot that holds a verb in one state and nothing in the other reads as a
+   * control that has disappeared rather than as a state with no verb.
+   *
+   * IT PRESSES `⇧I`, NOT A TOGGLED `u`. The keyboard here is two DIRECTIONS and not one flip —
+   * `u` marks unread, `⇧I` marks read, argued out in `OhboxView`'s own binding table — and a
+   * button that pressed `u` on an unread message would need `u` to become a toggle, which is the
+   * shape that ruling rejects. Pressing the direction that already exists also means the `?` sheet
+   * documents this button's key without a new row: the sheet is generated from the same registry.
+   *
+   * Same seam as {@link markUnread} in every other respect: `press` resolves at call time, and
+   * `onAction("unread")` — a deliberate flip, so it needs no direction of its own — is the fallback
+   * for surfaces with no keymap behind them.
+   */
+  const markRead = () => {
+    if (!press("shift+i")) onAction("unread");
   };
 
   const defer = (
@@ -481,14 +500,13 @@ function ActionBar({
 
         <div className="abar-g abar-read-g">
           {/*
-           * ONE DIRECTION, AND ONLY ON A MESSAGE THAT IS READ — see `markUnread` above.
+           * ONE SLOT, TWO DIRECTIONS — see `markUnread` and `markRead` above.
            *
-           * A message is read the moment it is opened, so "Mark read" on the bar of the message
-           * you are reading acts on a state it is already in; that arm is gone. The control offers
-           * ONLY "Mark unread" and renders ONLY when `read`, so an unread
-           * message shows no read control at all rather than a no-op. Its keycap is `u`, read from
-           * the live registry (nothing where `u` is unbound), and the label states the verb — not
-           * a `role="switch"` reporting a state with the action hidden in a `title`.
+           * Exactly one of the two renders, in the same position, with the same shape: the verb as
+           * the label (not a `role="switch"` reporting a state with the action hidden in a
+           * `title`), a dot PREVIEWING the outcome, and a keycap read from the live registry, so a
+           * chord that moves takes the hint with it and an unbound chord shows nothing. Filled dot
+           * ⇒ the row will have one; hollow ⇒ it will not — the same mark the list uses.
            */}
           {read ? (
             <button
@@ -500,7 +518,17 @@ function ActionBar({
               {copy("actionMarkUnread", "Mark unread")}
               <Key chord="u" />
             </button>
-          ) : null}
+          ) : (
+            <button
+              type="button"
+              className="abar-b abar-solo abar-read"
+              onClick={markRead}
+            >
+              <span className="abar-dot abar-dot-off" aria-hidden="true" />
+              {t("actionMarkRead")}
+              <Key chord="shift+i" />
+            </button>
+          )}
 
           {/*
            * ICON-ONLY, and that is a measurement rather than a preference: dropping the word

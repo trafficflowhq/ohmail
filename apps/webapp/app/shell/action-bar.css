@@ -253,7 +253,7 @@
   color: inherit;
 }
 
-/* ── the read switch — it states the CURRENT state ─────────────────────────────────  */
+/* ── the read control — its dot previews the OUTCOME ───────────────────────────────  */
 
 .abar-dot {
   width: 7px;
@@ -264,9 +264,11 @@
   background: var(--accent);
   transition: background .15s var(--swift), border-color .15s var(--swift);
 }
-/* checked === read. The filled accent dot is the SAME mark the list row uses for unread,
-   so "there is a dot" means the same thing in both places. */
-.abar-read[aria-checked="true"] .abar-dot {
+/* The filled accent dot is the SAME mark the list row uses for unread, so "there is a dot"
+   means the same thing in both places — which is what lets the dot state what pressing the
+   button will LEAVE BEHIND: filled on "Mark unread", hollow on "Mark as read". One slot, two
+   directions, one glyph that distinguishes them without a second word. */
+.abar-dot-off {
   background: transparent;
   border-color: var(--hair);
 }

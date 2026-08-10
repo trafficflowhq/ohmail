@@ -259,11 +259,57 @@ export function OhboxView({
    * `dismissed` is the ONE exception, and the one deliberate mid-session move: a settled reply (see
    * the `replyDone` effect) drops its parent from the New order on purpose, so it animates down to
    * "Earlier". `settling` carries the slide while it does.
+   *
+   * ── AND THE REVERSE MOVE: `promoted` ─────────────────────────────────────────────────
+   *
+   * The forward move is DEFERRED (a read row keeps its slot). The reverse move must not be, and
+   * the asymmetry is not an inconsistency — it is the same rule applied in the other direction.
+   * Deferring the forward move exists to stop the list re-sorting under a reader who did not ask
+   * for it; an explicit mark-unread IS the asking, and the section it belongs in is defined by
+   * exactly the state the reader just set — "New for you" means unread-in-Ohbox.
+   *
+   * So `promoted` holds the ids the reader has explicitly put back to unread this session, and
+   * `reconcile` enters each of them at the FRONT of the New order rather than appending. Appending
+   * is what shipped, and it is the reported defect: the row a reader has just finished with sits at
+   * the TOP of "Earlier", so appending moved it exactly one position — past the "Earlier" label to
+   * the last slot of New, where it looks like nothing happened. The top of New is also where the
+   * next thing the reader intends to do with it is, and on a long list the bottom of New is off
+   * screen.
+   *
+   * It OVERRIDES `dismissed`, which is why `promote` clears it: a reply settled a message down to
+   * "Earlier" and then the reader said "no, this is unfinished" — the later, explicit act wins.
    */
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
+  const [promoted, setPromoted] = useState<Set<string>>(() => new Set());
   const [settling, setSettling] = useState<Set<string>>(() => new Set());
   const resurfacedOrder = useRef<string[]>([]);
   const newOrder = useRef<string[]>([]);
+
+  /**
+   * Record an explicit "this is unread again" for one or more ids — see `promoted` above.
+   *
+   * Both halves are needed and neither is housekeeping: the id joins the promote set so the next
+   * reconcile leads the New order with it, and it leaves `dismissed` so a settle that already
+   * pushed it down cannot keep filtering it out of that order.
+   *
+   * NOT PRUNED when a row leaves the Ohbox. The set is bounded by explicit user acts within one
+   * session, and an id it still holds is inert the moment the row is in the New order (reconcile
+   * only consults it for ids it is placing for the first time). A prune would be a second writer
+   * of the same fact for no behaviour.
+   */
+  const promote = useCallback((ids: readonly string[]) => {
+    setPromoted((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.add(id);
+      return next;
+    });
+    setDismissed((prev) => {
+      if (!ids.some((id) => prev.has(id))) return prev;
+      const next = new Set(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+  }, []);
 
   const ohboxAll = useMemo(
     () => [...resurfaced, ...newForYou, ...previouslySeen],
@@ -271,18 +317,33 @@ export function OhboxView({
   );
   const byId = useMemo(() => new Map(ohboxAll.map((m) => [m.id, m])), [ohboxAll]);
 
-  const reconcile = (prev: string[], current: EngineMessage[]): string[] => {
+  /**
+   * `lead` is the promote block: ids entering this group for the first time that the reader has
+   * explicitly marked unread go to the FRONT, keeping the group's own relative order among
+   * themselves (a bulk unread of three keeps their arrival order rather than reversing it), and
+   * everything else appends as before. An id already in `prev` is skipped by `have`, so a row the
+   * session order is already holding never moves — which is what makes marking a row that is
+   * already in New a no-op on placement.
+   */
+  const reconcile = (
+    prev: string[],
+    current: EngineMessage[],
+    front?: ReadonlySet<string>,
+  ): string[] => {
     const keep = prev.filter((id) => byId.has(id) && !dismissed.has(id));
     const have = new Set(keep);
+    const lead: string[] = [];
     for (const m of current) {
       if (dismissed.has(m.id) || have.has(m.id)) continue;
-      keep.push(m.id);
+      (front?.has(m.id) ? lead : keep).push(m.id);
       have.add(m.id);
     }
-    return keep;
+    return lead.length > 0 ? [...lead, ...keep] : keep;
   };
+  // Resurfaced takes no promote set: that group is the worker's pin, not a reading order, and a
+  // `u` on a resurfaced row leaves it exactly where the pin put it.
   resurfacedOrder.current = reconcile(resurfacedOrder.current, resurfaced);
-  newOrder.current = reconcile(newOrder.current, newForYou);
+  newOrder.current = reconcile(newOrder.current, newForYou, promoted);
 
   // The three groups as DISPLAYED: session order for the two upper ones, and "Earlier" with the
   // pinned upper ids removed so a row read this session is never shown twice.
@@ -441,10 +502,14 @@ export function OhboxView({
    */
   const runBulk = useCallback(
     (action: BulkAction) => {
+      // The selection's `unread` direction is the same explicit act `u` is, over more rows, so it
+      // re-surfaces them the same way — see `promoted`. Only the direction, never the toggle:
+      // `read` has nothing to promote and `move`/the horizons take the rows out of this list.
+      if (action === "unread") promote(pickedIds);
       bulk.run(action, pickedIds);
       clearPicked();
     },
-    [bulk, pickedIds, clearPicked],
+    [bulk, pickedIds, clearPicked, promote],
   );
 
   /**
@@ -688,12 +753,20 @@ export function OhboxView({
    * The debt is cancelled only when it is THIS message's. `u` acts on the row under the cursor;
    * if some other message is still owed a commit, that reading really did happen and the pin
    * here says nothing about it.
+   *
+   * ── AND IT MOVES THE ROW BACK ABOVE THE "EARLIER" LINE ─────────────────────────────────
+   *
+   * A THIRD mechanism, and it is about placement rather than about the write: the two above keep
+   * the state from being undone, and neither of them puts the row anywhere. `promote` does (see
+   * `promoted`), because "New for you" is defined by unread-in-Ohbox and a row this key has just
+   * made unread that stayed under "Earlier" is the list contradicting its own section heading.
    */
   const markUnread = useCallback((m: EngineMessage) => {
     pinnedUnread.current = m.id;
     if (pendingRead.current === m.id) pendingRead.current = null;
+    promote([m.id]);
     onMarkSeen([m.id], true);
-  }, [onMarkSeen]);
+  }, [onMarkSeen, promote]);
 
   const markRead = useCallback((m: EngineMessage) => {
     // Reading it is consent for the dwell to have been right, so the pin is released. The debt
