@@ -63,25 +63,6 @@ type PickPanel =
  */
 const DWELL_MS = 2000;
 
-/**
- * A reply that just landed, for the animate-to-Earlier gesture.
- *
- * The shell sets this from `onSendSettled` the moment a reply is delivered: `messageId` is the
- * message that was answered (the one that should slide from "New for you" down to "Earlier"), and
- * `at` is when it settled, so a consumer can key an animation and ignore a stale value on a later
- * render. Exported so the shell and the view name the same shape.
- *
- * The view accepts it but does not yet act on it — the animation ships in a following slice. Until
- * then it is a dark prop: passed, typed, and unread, which is exactly what lets the wiring land now
- * and the motion land later without a second change to this signature.
- */
-export interface OhboxReplyDone {
-  /** The answered message — the row that moves to Earlier. */
-  messageId: string;
-  /** ISO-8601 instant the reply settled. */
-  at: string;
-}
-
 export function OhboxView({
   demo,
   newForYou,
@@ -104,12 +85,6 @@ export function OhboxView({
   older,
   onMarkAllRead,
 }: {
-  /**
-   * A reply that just settled, or `null`. Consumed by the animate-to-Earlier gesture in a
-   * following slice; declared here so the shell can wire `onSendSettled` to it now. Optional
-   * so every existing caller and test compiles unchanged.
-   */
-  replyDone?: OhboxReplyDone | null;
   /** Fixture world or a real mailbox — decides the "older mail" tail. See its use below. */
   demo: boolean;
   newForYou: EngineMessage[];
