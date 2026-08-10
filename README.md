@@ -177,6 +177,35 @@ organised.
   from anything AI touches — in this codebase a protected message has *no body
   field to leak*.
 
+### What your mailbox looks like
+
+ohmail files mail by moving it between a small, fixed set of real IMAP folders in
+your own account — nothing lives in a database only ohmail can read. Open any
+other mail app and this is what you find:
+
+```
+Inbox                    mail from people you've said yes to
+Junk                     your provider's own — ohmail never reads or writes it
+Sent                     your replies, left where your provider already keeps them
+ohmail/
+├── Screener             new senders wait here until you decide where they go
+├── Reads                newsletters and things you read when you have a minute
+├── Receipts             receipts, confirmations, orders
+├── Screened             senders you keep, but out of the Inbox
+├── Quarantine           junk-grade mail, set aside
+└── _meta                a tiny bookkeeping folder, hidden in your other mail apps
+```
+
+Those are the only folders ohmail creates, and the set is deliberately frozen:
+your Inbox, and five folders under `ohmail/`. Your provider's own Junk folder is
+never touched, and your Sent folder is read but never moved. There is no folder
+called "Spam" — the pile ohmail sets junk-grade mail aside in is
+`ohmail/Quarantine`; "Spam" is only ever a friendly label the app shows over it.
+
+Because every decision lands as a real folder on your real server, leaving costs
+you nothing: cancel, sign out, or just open a different mail app, and your mail is
+already filed exactly where you left it.
+
 ## Screenshots
 
 Rendered from this source tree, unretouched.
