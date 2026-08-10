@@ -14,12 +14,71 @@ import {
 } from "@ohmail/client-engine";
 import { TAG_HUES, type TagHueName } from "@ohmail/ui";
 import { displayAddress } from "./idn";
+import { activeFormatLocale, liveCopy } from "./locale";
 
-const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/**
+ * THE DAY AND MONTH NAMES, FROM `Intl` AND STILL IN UTC.
+ *
+ * These were two hardcoded English arrays, and they are on screen: `resurfaceLabel` renders
+ * "Fri 09:00" in a toast and on a Triage row, `fullDateTime` renders "Tue 5 Aug 2026, 14:32" as the
+ * hover title of every message stamp. A German reader was getting "Fri" and "Aug".
+ *
+ * `Intl.DateTimeFormat` replaces the arrays rather than a second pair of German ones, because the
+ * abbreviation rules are not ours to invent — German shortens Tuesday to "Di" and September to
+ * "Sept." with a full stop, and a hand-written table gets that wrong in a way nobody reviews.
+ *
+ * **`timeZone: "UTC"` is preserved, and that is deliberate rather than an oversight.** Every
+ * formatter in this file reads in UTC and the file's own header says why: the fixtures and the whole
+ * test surface are stamped in UTC, and a locale-relative render would put a different instant on
+ * screen for every reader. Localising the WORDS is not localising the CLOCK — this slice changes
+ * which language the day is named in and nothing about which day it is.
+ *
+ * Cached per locale, because constructing a `DateTimeFormat` is the expensive part and these are
+ * called once per visible row.
+ */
+const DAY_NAMES = new Map<string, Intl.DateTimeFormat>();
+const MONTH_NAMES = new Map<string, Intl.DateTimeFormat>();
 
-/** The human name of each client view. Keys are view ids, never folders. */
-export const PLACE_LABEL: Record<string, string> = {
+function namer(cache: Map<string, Intl.DateTimeFormat>, opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const locale = activeFormatLocale();
+  const found = cache.get(locale);
+  if (found) return found;
+  const made = new Intl.DateTimeFormat(locale, { ...opts, timeZone: "UTC" });
+  cache.set(locale, made);
+  return made;
+}
+
+/** "Fri" / "Fr" — the short weekday of an instant, read in UTC, in the active locale. */
+function weekdayShort(d: Date): string {
+  return namer(DAY_NAMES, { weekday: "short" }).format(d);
+}
+
+/** "Aug" / "Aug." — the short month of an instant, read in UTC, in the active locale. */
+function monthShort(d: Date): string {
+  return namer(MONTH_NAMES, { month: "short" }).format(d);
+}
+
+/**
+ * THE HUMAN NAME OF EACH CLIENT VIEW — the badge on a search hit, the "→ Reads" in a move menu, the
+ * "Moved to Receipts." in a toast. Keys are view ids, never folders.
+ *
+ * It was a hardcoded English table and it is one of the most-repeated pieces of copy in the product,
+ * so it now reads the `place` namespace. `liveCopy` rather than a hook because this module is a
+ * FUNCTION LIBRARY: `screener-state.ts` reads it from inside a reducer and `AppShell` from inside a
+ * toast callback, neither of which can call `useTranslations`. See `app/shell/locale.ts`.
+ *
+ * The English strings below are the fallback and the parity oracle, exactly as the reading pane's
+ * tables are.
+ *
+ * ── WHICH OF THESE SIX ARE TRANSLATED IS A PRODUCT DECISION, NOT A MECHANICAL ONE ──────────────
+ *
+ * `Ohbox` and `Screener` keep their names in every language: they are what this product IS — a
+ * coined word and the signature feature — and a reader who is told about "the Screener" in a review,
+ * a changelog or a support thread has to find that word in their own interface. `Reads`, `Receipts`,
+ * `Screened` and `Spam` are plain function, and German has ordinary words for all four. The
+ * catalogue is where each choice lives, and `de.json`'s glossary header records it.
+ */
+const PLACE_EN = {
   ohbox: "Ohbox",
   reads: "Reads",
   receipts: "Receipts",
@@ -27,6 +86,8 @@ export const PLACE_LABEL: Record<string, string> = {
   screened: "Screened",
   spam: "Spam",
 };
+
+export const PLACE_LABEL: Record<string, string> = liveCopy("place", PLACE_EN);
 
 /**
  * The place badge for a message — the ONE place that turns a folder into
@@ -42,6 +103,7 @@ export function placeLabel(folder: string): string {
   const view = VIEW_OF_FOLDER[folder as keyof typeof VIEW_OF_FOLDER];
   return (view && PLACE_LABEL[view]) || folderLeaf(folder);
 }
+
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
@@ -59,7 +121,10 @@ export function clockOf(iso: string): string {
  * delegates so the two can never drift apart.
  */
 export function displayTime(m: EngineMessage, now: Date): string {
-  return messageDisplayTime(m, now);
+  /* The active locale, so "Mon" reads "Mo" for a German reader. The engine keeps English as its
+     default — it has no catalogue and its own tests assert the English stamps — and this is the
+     seam that supplies the reader s. */
+  return messageDisplayTime(m, now, activeFormatLocale());
 }
 
 /**
@@ -120,7 +185,7 @@ export function metaLine(...parts: Array<string | null | undefined>): string {
 export function resurfaceLabel(when: string): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(when)) return when;
   const d = new Date(when);
-  return `${WEEKDAY_SHORT[d.getUTCDay()]} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+  return `${weekdayShort(d)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 }
 
 /** The resurface fallback: the next Friday 09:00 UTC after `base` (the keyboard/palette default). */
@@ -313,7 +378,7 @@ export function fullDateTime(m: EngineMessage): string {
   const d = new Date(m.date);
   if (Number.isNaN(d.getTime())) return "";
   return (
-    `${WEEKDAY_SHORT[d.getUTCDay()]} ${d.getUTCDate()} ${MONTH_SHORT[d.getUTCMonth()]} ` +
+    `${weekdayShort(d)} ${d.getUTCDate()} ${monthShort(d)} ` +
     `${d.getUTCFullYear()}, ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
   );
 }

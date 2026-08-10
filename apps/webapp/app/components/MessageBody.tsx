@@ -116,16 +116,24 @@ import { useOptionalTheme } from "@ohmail/ui";
 import { BodyText } from "../shell/BodyText";
 import { UI_KEYS, usePersistedIdSet } from "../shell/persisted-ui";
 import "./message-body.css";
+import { liveCopy } from "../shell/locale";
 
 /**
- * COPY LIVES HERE RATHER THAN IN THE TRANSLATION CATALOGUE — for now, and with one exit.
+ * THE ENGLISH SENTENCES — the FALLBACK, not the source. Every string this component draws comes out
+ * of the `mailBody` namespace of `messages/<locale>.json`; `COPY` below is the resolved view.
  *
- * These sentences have no keys in `apps/webapp/messages/en.json` yet, so they are declared
- * locally under the `mailBody` namespace they will take there. Adding the keys and swapping
- * this constant for `useTranslations("mailBody")` is then a one-line change with exactly one
- * place to make it. `AttachmentStrip` carries the same shim for the same reason.
+ * The exit this constant's header used to name has been taken, in the other of the two directions it
+ * offered. NOT the hook: this component is rendered BARE — no intl provider anywhere above it — in a
+ * dozen unit tests (`remote-images`, `stale-body-cache`, `message-body-ssr` and the rest), three of
+ * which import `COPY` to assert against the text on screen, and `useTranslations` throws without a
+ * provider. Rewiring the sanitizer's test scaffolding for a copy edit is the wrong trade.
+ *
+ * So it stays a table and gains a catalogue behind it. It also stays the PARITY ORACLE:
+ * `test/locale-shim-parity.test.ts` holds it against `en.json` key for key and text for text, so
+ * "the catalogue says what this component says" is a checked claim and not one somebody eyeballed
+ * once. Deleting it deletes the check.
  */
-export const COPY = {
+const EN = {
   blockedOne: "1 remote image blocked.",
   blockedMany: (n: number) => `${n} remote images blocked.`,
   pixelOne: "One of them is a tracking pixel.",
@@ -173,7 +181,17 @@ export const COPY = {
     `${n} remote stylesheets were blocked, so this message may look plain.`,
   /** The size fallback. It states the reason, because a bare plain-text render reads as a bug. */
   oversize: "This message's HTML part is too large to render safely. Showing the plain-text version.",
-} as const;
+};
+
+/**
+ * THE SAME TABLE, RESOLVED AGAINST THE ACTIVE CATALOGUE — read by every call site in this file.
+ *
+ * `EN` is the fallback and the parity oracle; this is what renders. See `liveCopy` in
+ * `app/shell/locale.ts` for why the members are getters, and the note on `EN` for why the read is
+ * not `useTranslations`.
+ */
+export const COPY: typeof EN = liveCopy("mailBody", EN, { blockedMany: ["count"], pixelMany: ["count"], sheetMany: ["n"] });
+
 
 // ── the allow-lists ────────────────────────────────────────────────────────────────────
 

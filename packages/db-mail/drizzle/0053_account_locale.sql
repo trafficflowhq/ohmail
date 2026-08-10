@@ -1,0 +1,58 @@
+-- THE INTERFACE LANGUAGE, AS ACCOUNT STATE — one column on `account_settings`.
+--
+-- ══ WHY IT IS HERE AND NOT IN THE CLOUD JOURNAL ═══════════════════════════════════════════
+--
+-- The preference is per-account, it has no history, no delete semantics and no actor, and
+-- `account_settings` is the table this schema already nominates for exactly that shape: its own
+-- header says "The table is deliberately GENERAL … A new per-account setting is a column here."
+-- Six preferences already live on this row — the dormancy dial, the Ohbox posture, auto-suggest,
+-- auto-apply, the Ohbox bar, the remote-images opt-out — and a second per-account settings home
+-- would be the "three tables nobody can name from memory" that comment is written against.
+--
+-- The cloud journal was the other candidate and it is the WRONG one twice over. `drizzle-cloud`'s
+-- README forbids DDL on a shared table, and `users`/`accounts` are shared (mail 0000/0003), so the
+-- obvious `ALTER TABLE users ADD COLUMN locale` is not admissible there at all — it would have to
+-- invent a private `user_preferences` table whose only column is this one. And the fact is not a
+-- hosted-service fact: it is not billing, not identity, not an operator's registration. A local
+-- install has no account to carry it (its selector writes `localStorage`, and nothing in the
+-- sidecar reads this column), so the column is simply unused there — the same way
+-- `auto_suggest_at` is unused on a build that cannot spend.
+--
+-- ══ NULL IS THE DEFAULT AND THE DEFAULT IS NEVER STORED ═══════════════════════════════════
+--
+-- `NULL` means "nobody has chosen", which resolves to English at every layer: the API omits
+-- nothing and sends `locale: null`, the client reads null as "keep whatever this device has", and
+-- the server render falls back to `en`. Writing `'en'` for an account that has never touched the
+-- selector would be a snapshot of today's default wearing a preference's name — the same argument
+-- `dormancy_days` makes three columns over ("a dial, not a constant to hard-code"), and the same
+-- reason `setLocale` below stores NULL when asked for the default.
+--
+-- The distinction is load-bearing on the CLIENT and not merely tidy. A reader who set German on
+-- their laptop and then signs in on a borrowed machine must get German, because the ACCOUNT says
+-- so; a reader whose account says nothing must keep the language the machine in front of them is
+-- already in. Only a nullable column can express both, and `PATCH /consent/settings` accepts an
+-- explicit `null` so "put me back on the default" is a sendable request rather than a state you
+-- can only reach by never having chosen.
+--
+-- ══ THE CHECK IS THE CLOSED SET, AND IT IS CLOSED IN FOUR PLACES ══════════════════════════
+--
+-- `('en','de')` here, `LOCALES` in `apps/webapp/app/shell/locale.ts`, the wire validation in
+-- `PATCH /consent/settings`, and the selector in Settings → General. The constraint is the only one
+-- of the four that cannot be bypassed — a future admin tool, a hand-run UPDATE or a service written
+-- against a stale enum all pass through it — and the failure it prevents is specific: a stored
+-- locale nothing can load leaves `loadCatalog` falling back to English on every request with no
+-- error anywhere, i.e. a setting that silently does not work. A 23514 is a better outcome than
+-- that, and a much better one than a raw `screener.toastFiled` on somebody's screen.
+--
+-- NOT a Postgres enum type. An enum needs `ALTER TYPE … ADD VALUE` to grow, which cannot run in the
+-- same transaction as a statement that uses the new value — so the next language would be a
+-- two-migration dance. A CHECK is dropped and recreated in one statement.
+--
+-- `IS NULL OR` is written explicitly rather than relying on a CHECK's three-valued pass, because
+-- "unknown is allowed" is the semantic being asserted and a reader should not have to derive it.
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "locale" text;
+--> statement-breakpoint
+ALTER TABLE "account_settings" DROP CONSTRAINT IF EXISTS "account_settings_locale_supported";
+--> statement-breakpoint
+ALTER TABLE "account_settings" ADD CONSTRAINT "account_settings_locale_supported"
+  CHECK ("locale" IS NULL OR "locale" IN ('en', 'de'));

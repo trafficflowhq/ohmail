@@ -37,18 +37,26 @@
  *
  * ── COPY IS A SHIM, ON PURPOSE ───────────────────────────────────────────────────────────────
  *
- * The strings are literals in {@link COPY} rather than `settings` keys in `messages/en.json`.
- * This is a deliberate, temporary shim so the control can ship in one slice: one object, one place,
- * ready to be lifted into the message catalogue by whoever does the i18n pass. Nothing else in this
- * file contains a user-visible string.
+ * Its copy lives in the `away` namespace of `messages/en.json`, like every other user-visible
+ * string in this app. It used to be a local `COPY` constant — "a deliberate, temporary shim so the
+ * control can ship in one slice" — and the German translation is what came to collect it: a shim is
+ * a surface the catalogue cannot reach, so it is a surface that stays English for ever.
  */
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { Button, SegmentedControl, SettingsRow, Switch } from "@ohmail/ui";
 import { away as awayApi, type AwayResponderWire } from "../api-client";
 
-/** THE COPY SHIM. One object, so the i18n pass has one thing to move. */
-const COPY = {
+/**
+ * THE ENGLISH SENTENCES, KEPT — as the shape of the `away` namespace and nothing more.
+ *
+ * Not read at render: every string on screen comes from `t(...)` below. It stays because
+ * `test/locale-shim-parity.test.ts` holds it against `en.json` key for key and text for text, which
+ * is what makes "the catalogue says exactly what this control says" a checked claim rather than a
+ * migration somebody eyeballed once. Deleting it deletes the check.
+ */
+export const AWAY_COPY = {
   title: "Away responder",
   on: "On. One reply per person, from the mailbox they wrote to.",
   off: "Off. Nothing is sent.",
@@ -71,10 +79,8 @@ const COPY = {
 
 type Audience = AwayResponderWire["audience"];
 
-const AUDIENCES: Array<{ id: Audience; label: string }> = [
-  { id: "screened_in", label: COPY.screenedIn },
-  { id: "everyone", label: COPY.everyone },
-];
+/** The two audiences, in the order the control draws them. Labels are resolved at render. */
+const AUDIENCE_IDS: readonly Audience[] = ["screened_in", "everyone"];
 
 type Draft = Omit<AwayResponderWire, "updatedAt">;
 
@@ -91,6 +97,7 @@ export function AwayResponderRow({ onChanged }: {
    */
   onChanged?: (state: { enabled: boolean; audience: Audience }) => void;
 } = {}) {
+  const t = useTranslations("away");
   /**
    * `null` until the server has answered. The controls are not drawn before then, for the reason
    * `RemoteImagesRow` gives about its own switch and more sharply: drawing the resting OFF state to
@@ -167,62 +174,62 @@ export function AwayResponderRow({ onChanged }: {
   return (
     <>
       <SettingsRow
-        label={COPY.title}
-        description={draft.enabled ? COPY.on : COPY.off}
+        label={t("title")}
+        description={draft.enabled ? t("on") : t("off")}
         control={
           <Switch
             checked={draft.enabled}
             disabled={pending}
-            ariaLabel={COPY.title}
+            ariaLabel={t("title")}
             onChange={(enabled) => edit({ enabled })}
           />
         }
       />
       <SettingsRow
-        label={COPY.subjectLabel}
+        label={t("subjectLabel")}
         control={
           <input
             className="join-input set-tag-input"
             type="text"
             value={draft.subject ?? ""}
             disabled={pending}
-            aria-label={COPY.subjectLabel}
+            aria-label={t("subjectLabel")}
             onChange={(e) => edit({ subject: e.target.value })}
           />
         }
       />
       <SettingsRow
-        label={COPY.bodyLabel}
+        label={t("bodyLabel")}
         control={
           <textarea
             className="set-screening-textarea"
             rows={3}
             value={draft.body ?? ""}
             disabled={pending}
-            aria-label={COPY.bodyLabel}
+            aria-label={t("bodyLabel")}
             onChange={(e) => edit({ body: e.target.value })}
           />
         }
       />
       <SettingsRow
-        label={COPY.audienceLabel}
-        description={draft.audience === "everyone" ? COPY.everyoneNote : COPY.screenedInNote}
+        label={t("audienceLabel")}
+        description={draft.audience === "everyone" ? t("everyoneNote") : t("screenedInNote")}
         control={
           <SegmentedControl<Audience>
-            options={AUDIENCES}
+            options={AUDIENCE_IDS.map((id) => ({ id, label: t(id === "everyone" ? "everyone" : "screenedIn") }))}
             value={draft.audience}
-            ariaLabel={COPY.audienceLabel}
+            ariaLabel={t("audienceLabel")}
             onChange={(audience) => edit({ audience })}
           />
         }
       />
-      <p className="set-note-inline">{COPY.never}</p>
+      <p className="set-note-inline">{t("never")}</p>
       <div className="gate-actions">
-        <Button onClick={save} disabled={pending}>{pending ? COPY.saving : COPY.save}</Button>
+        <Button onClick={save} disabled={pending}>{pending ? t("saving") : t("save")}</Button>
       </div>
-      {state === "saved" ? <span className="scn-sg-note">{COPY.saved}</span> : null}
+      {state === "saved" ? <span className="scn-sg-note">{t("saved")}</span> : null}
       {state === "failed" ? (
-        <span className="scn-sg-note">{complete ? COPY.failed : COPY.incomplete}</span>
+        <span className="scn-sg-note">{complete ? t("failed") : t("incomplete")}</span>
       ) : null}
     </>
   );

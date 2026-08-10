@@ -27,7 +27,7 @@ import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
-import messages from "../../webapp/messages/en.json";
+import { DesktopLocale } from "./DesktopLocale.js";
 import "../../webapp/app/app.css";
 
 import { connectLocalEngine } from "./bridge-fetch.js";
@@ -113,11 +113,12 @@ const reactRoot = createRoot(root);
 const paint = (bootFailure: string | null): void =>
   reactRoot.render(
     <StrictMode>
-      <IntlProvider
-        locale="en"
-        messages={messages}
-        timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
-      >
+      {/* THE LANGUAGE, wired by hand for the reason every provider here is: there is no Next.
+          `DesktopLocale` is this window's `IntlProvider` plus the locale state the shared
+          Settings row writes through. `localStorage` is the whole of the persistence — a
+          standalone install has no account — and it is read before the first paint, so a
+          German window opens in German rather than flipping. */}
+      <DesktopLocale>
         <ThemeProvider storageKey="ohmail.theme">
           <ToastHost>
             {/* THE BOUNDARY IS OUTSIDE THE GATE, and it has to be: a component cannot catch its
@@ -139,7 +140,7 @@ const paint = (bootFailure: string | null): void =>
             </GateBoundary>
           </ToastHost>
         </ThemeProvider>
-      </IntlProvider>
+      </DesktopLocale>
     </StrictMode>,
   );
 

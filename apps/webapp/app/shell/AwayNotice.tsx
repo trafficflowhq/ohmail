@@ -34,16 +34,25 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { apiConfigured, away as awayApi, type AwayResponderWire } from "../api-client";
 import { go } from "./routing";
 
 type Audience = AwayResponderWire["audience"];
 
 /** THE COPY SHIM. One object, so the i18n pass has one thing to move. */
-const COPY = {
-  screenedIn: "Away responder is on — people you've let in get your away note.",
-  everyone: "Away responder is on — everyone who writes gets your away note.",
-  settings: "Away settings",
+/**
+ * THE ENGLISH SENTENCES, KEPT as the shape of these three keys and not read at render — see
+ * `AwayResponderRow`'s `AWAY_COPY` for why the constant survives its own migration.
+ *
+ * The three live under `away.notice*` rather than in a namespace of their own: they are the same
+ * feature's vocabulary as the settings row's, and a reader of `de.json` should find every sentence
+ * about the responder in one place.
+ */
+export const AWAY_NOTICE_COPY = {
+  noticeScreenedIn: "Away responder is on — people you've let in get your away note.",
+  noticeEveryone: "Away responder is on — everyone who writes gets your away note.",
+  noticeSettings: "Away settings",
 } as const;
 
 export interface AwayNoticeState {
@@ -113,11 +122,12 @@ function openAwaySettings(): void {
  * should hear once and not be interrupted by.
  */
 export function AwayNotice({ audience }: { audience: Audience }) {
+  const t = useTranslations("away");
   return (
     <div className="ohx-notice" role="status">
-      <span>{audience === "everyone" ? COPY.everyone : COPY.screenedIn}</span>
+      <span>{audience === "everyone" ? t("noticeEveryone") : t("noticeScreenedIn")}</span>
       <button type="button" onClick={openAwaySettings}>
-        {COPY.settings}
+        {t("noticeSettings")}
       </button>
     </div>
   );

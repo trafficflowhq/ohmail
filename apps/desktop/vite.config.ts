@@ -59,23 +59,31 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // guard compares this array against what the sources READ, not against what they display.
   // Omitting it would put `body.loading` in the binary where a sentence belongs.
   "about", "body", "compose", "dock", "ohbox", "palette", "rail", "reads", "receipts",
-  // `attachments` and `mailBody` belong to the two components the reading pane is composed
-  // from — the paperclip strip and the sanitized HTML body — and they are the one place where
-  // "what the sources READ" is not yet "what the sources CALL". Neither component calls
-  // `useTranslations` today: each renders from a local `COPY` constant whose header names the
-  // namespace it will take and the one-line swap that will take it. The guard reads the source
-  // text, so it counts the namespace the shim names, and listing it here is what keeps that
-  // swap a one-line change instead of a shipped regression. The two surfaces are the reason it
-  // would be a regression rather than a nuisance: both are unreachable in the fixtures-only
-  // preview — no attachment bytes, no bodies — and reachable on every real message with a file
-  // and every real HTML body in an engine-bearing build, so a swap that landed without the
-  // namespace would render `attachments.downloadAll` to a reader while passing everything the
-  // preview is able to exercise.
+  // `attachments` and `mailBody` belong to the two components the reading pane is composed from —
+  // the paperclip strip and the sanitized HTML body. They were listed here for two migrations
+  // before either component read a catalogue: each rendered from a local `COPY` constant whose
+  // header named the namespace it would one day take, and the derivation below counted the
+  // namespace that COMMENT named. The swap has happened. Both now read the catalogue through
+  // `liveCopy` (see `app/shell/locale.ts`), so the derivation counts a CALL, and the entries here
+  // mean what the rest of this list means.
   //
-  // `en.json` holds both, so neither trips the abort below. `mailBody` holds FEWER keys than
-  // its shim does — the dark-viewer toggle exists only in the constant — so taking that exit is
-  // a catalogue edit as well as a call-site edit.
+  // Why the swap mattered rather than being tidy: both surfaces are unreachable in the
+  // fixtures-only preview — no attachment bytes, no bodies — and reachable on every real message
+  // with a file and every real HTML body in an engine-bearing build. A German reader of the shipped
+  // binary is exactly the person who would have found them still in English.
   "attachments", "mailBody",
+  // `attachmentPreview` and `away` joined the list with the German translation, and by the ROUTE the
+  // header above warns about rather than by a new `useTranslations` call. Both were local `COPY`
+  // constants — a surface the catalogue cannot reach is a surface that stays English for ever — and
+  // both now read the catalogue: the preview modal through `liveCopy("attachmentPreview", …)`
+  // (`app/shell/locale.ts`, the non-hook translator the bare-rendered reading components need), the
+  // away responder through an ordinary `useTranslations("away")`. `place` arrived the same way, from
+  // `format.ts`'s hardcoded view-name table — the badge on every search hit and the "Moved to
+  // Receipts." in every move toast.
+  //
+  // The derivation in `test/desktop-messages.test.ts` counts `liveCopy("<ns>", …)` as a read for
+  // exactly this reason: it is a read.
+  "attachmentPreview", "away", "place",
   // `draftReply`, `history` and `seed` are the three the shell started reading without this
   // array following, which is precisely the omission `desktop-messages.test.ts` exists to
   // catch — and it was catching it: the guard has been red since those surfaces landed.
@@ -133,7 +141,7 @@ export const SHELL_MESSAGE_NAMESPACES = [
 ] as const;
 
 /**
- * Replace the en.json module with just those namespaces, at build time.
+ * Replace each catalogue module with just those namespaces, at build time.
  *
  * A runtime `pick()` would not do: a JSON import compiles to one object literal
  * and nothing tree-shakes the keys back out, so the strings would still be in the
@@ -150,23 +158,57 @@ export const SHELL_MESSAGE_NAMESPACES = [
  * `rail.ohbox` where a word should be, discovered by a user.
  */
 function shellMessagesOnly(): Plugin {
-  const target = r("../webapp/messages/en.json");
+  /**
+   * EVERY catalogue, not just English. `src/DesktopLocale.tsx` imports both, so a filter that named
+   * one file would put the marketing site's GERMAN copy — the pricing table, the FAQ — straight back
+   * into the executable through the second import: the exact defect this plugin exists for,
+   * reintroduced by the slice that added a language.
+   *
+   * Derived from the directory rather than listed, so a third catalogue is filtered the day it lands.
+   * `LOCALES` in `app/shell/locale.ts` is the closed set the APP resolves; the question here is
+   * different and broader — "which files under `messages/` could a bundle import" — and answering it
+   * from the filesystem is what makes the filter total instead of as up to date as this file is.
+   */
+  const dir = r("../webapp/messages");
+  const targets = new Map(
+    fs.readdirSync(dir).filter((f) => f.endsWith(".json"))
+      .map((f) => [path.resolve(path.join(dir, f)), f] as const),
+  );
+  if (targets.size === 0) {
+    throw new Error("apps/webapp/messages holds no .json catalogue — the filter has nothing to do");
+  }
   return {
     name: "ohmail-shell-messages-only",
     enforce: "pre",
     load(id) {
-      if (path.resolve(id.split("?")[0]) !== path.resolve(target)) return null;
-      const all = JSON.parse(fs.readFileSync(target, "utf8")) as Record<string, unknown>;
-      const missing = SHELL_MESSAGE_NAMESPACES.filter((ns) => !(ns in all));
-      if (missing.length) {
-        this.error(
-          `apps/webapp/messages/en.json has no ${missing.join(", ")} — ` +
-            `the shell reads ${missing.length > 1 ? "them" : "it"}. ` +
-            `Renamed upstream? Update SHELL_MESSAGE_NAMESPACES in vite.config.ts.`,
-        );
+      const resolved = path.resolve(id.split("?")[0]!);
+      const name = targets.get(resolved);
+      if (name === undefined) return null;
+      const all = JSON.parse(fs.readFileSync(resolved, "utf8")) as Record<string, unknown>;
+      /**
+       * A MISSING NAMESPACE ABORTS FOR `en.json` AND IS ACCEPTED FOR ANY OTHER — the fallback rule,
+       * stated at build time. English is the base of every merge, so a namespace absent there is a
+       * binary that renders `rail.ohbox` where a word belongs, which is what the abort was written
+       * for. A namespace absent from a TRANSLATION is one that has not been translated yet, and
+       * `fillFrom` resolves it to the English sentence; refusing the build over it would make an
+       * incomplete translation unshippable rather than incomplete. Full key parity is asserted where
+       * it can be reported usefully — the webapp's catalogue test names the missing keys — and not
+       * by a bundler whose only vocabulary is "no".
+       */
+      if (name === "en.json") {
+        const missing = SHELL_MESSAGE_NAMESPACES.filter((ns) => !(ns in all));
+        if (missing.length) {
+          this.error(
+            `apps/webapp/messages/en.json has no ${missing.join(", ")} — ` +
+              `the shell reads ${missing.length > 1 ? "them" : "it"}. ` +
+              `Renamed upstream? Update SHELL_MESSAGE_NAMESPACES in vite.config.ts.`,
+          );
+        }
       }
       const picked: Record<string, unknown> = {};
-      for (const ns of SHELL_MESSAGE_NAMESPACES) picked[ns] = all[ns];
+      for (const ns of SHELL_MESSAGE_NAMESPACES) {
+        if (ns in all) picked[ns] = all[ns];
+      }
       return JSON.stringify(picked);
     },
   };

@@ -66,6 +66,7 @@ import {
 } from "./sender-screening";
 import { PLACE_LABEL } from "./format";
 import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "./idn";
+import { useAppLocale } from "./LocaleContext";
 import {
   DECISION_DONE_LABEL,
   DECISION_QUIET,
@@ -338,7 +339,15 @@ export function useScreenerState(
   const reader = engine.read();
   // The QUEUE, from the projected mirror. See the `presented` parameter.
   const queueReader = presented ?? reader;
-  const segments = useMemo(() => screenerSegments(queueReader), [queueReader, version]);
+  /* THE DERIVED ROWS CARRY WORDS: a derived sender's stamp ("Mo", "2. Aug") and a screened-out
+     sender's date are minted by the selector, not by a view, so it has to be told which language to
+     name them in. The memo re-keys on the locale, so a switch re-derives the segments in the same
+     render rather than leaving yesterday's stamps in English until the next mutation. */
+  const locale = useAppLocale()?.locale ?? "en";
+  const segments = useMemo(
+    () => screenerSegments(queueReader, undefined, locale),
+    [queueReader, version, locale],
+  );
   const s = store.current;
 
   // Both of these end up inside toast and confirmation SENTENCES, so both name the sender the way

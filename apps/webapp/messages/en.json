@@ -616,8 +616,13 @@
     "screener": "Screener",
     "tags": "Tags",
     "language": "Language",
-    "languageHint": "More languages coming",
-    "languageValue": "English",
+    "languageHint": "Applies to this app everywhere you sign in",
+    "languageAria": "Language",
+    "languageFailed": "Couldn't save that — try again.",
+    "languageName": {
+      "en": "English",
+      "de": "Deutsch"
+    },
     "theme": "Theme",
     "themeHint": "Follows the system unless set",
     "themeLight": "Light",
@@ -1630,12 +1635,19 @@
     "pixelMany": "{count} of them are tracking pixels.",
     "pixelOnly": "A tracking pixel was blocked.",
     "show": "Show images",
-    "showing": "Images loaded for this message.",
     "frameTitle": "Message content",
     "unsupported": "Showing the plain-text version of this message.",
     "sheetOne": "A remote stylesheet was blocked, so this message may look plain.",
     "sheetMany": "{n} remote stylesheets were blocked, so this message may look plain.",
-    "oversize": "This message's HTML part is too large to render safely. Showing the plain-text version."
+    "oversize": "This message's HTML part is too large to render safely. Showing the plain-text version.",
+    "darkOriginal": "Original",
+    "darkAdapt": "Adapt to dark",
+    "darkOriginalTitle": "Show this message in its original colours",
+    "darkAdaptTitle": "Adapt this message to the dark theme",
+    "design": "Show original",
+    "designTitle": "Show this message with the sender's own formatting",
+    "plain": "Show as text",
+    "plainTitle": "Show this message as text, in the app's own type"
   },
   "attachments": {
     "count": "{count, plural, one {# attachment} other {# attachments}}",
@@ -1666,8 +1678,8 @@
     "tooLargeTitle": "Too large to preview",
     "tooLargeDetail": "This file is over the fetch limit for on-demand open.",
     "failedTitle": "Couldn't fetch this file",
-    "pdfErrorTitle": "Couldn't render this PDF",
-    "pdfErrorDetail": "The file may be damaged. Download it to open in another app.",
+    "pdfErrorTitle": "Can't show this PDF here",
+    "pdfErrorDetail": "Download it to open in another app.",
     "textTruncated": "— preview truncated. Download to read the rest.",
     "count": "{index} of {total}",
     "page": "{page} / {total}",
@@ -1683,5 +1695,34 @@
     "kNext": "next attachment",
     "kPrevPage": "previous page",
     "kNextPage": "next page"
+  },
+  "place": {
+    "ohbox": "Ohbox",
+    "reads": "Reads",
+    "receipts": "Receipts",
+    "screener": "Screener",
+    "screened": "Screened",
+    "spam": "Spam"
+  },
+  "away": {
+    "title": "Away responder",
+    "on": "On. One reply per person, from the mailbox they wrote to.",
+    "off": "Off. Nothing is sent.",
+    "subjectLabel": "Subject",
+    "bodyLabel": "Message",
+    "audienceLabel": "Who gets a reply",
+    "screenedIn": "People I've let in",
+    "everyone": "Everyone who writes",
+    "screenedInNote": "Senders still waiting in the Screener are not answered.",
+    "everyoneNote": "Strangers in the Screener are answered too — they learn this address is read.",
+    "never": "Never sent to mailing lists, no-reply addresses, security mail, or your own addresses. Each person is answered once until you change these settings.",
+    "save": "Save",
+    "saving": "Saving…",
+    "saved": "Saved.",
+    "failed": "That did not save. Nothing changed.",
+    "incomplete": "Add a subject and a message before turning this on.",
+    "noticeScreenedIn": "Away responder is on — people you've let in get your away note.",
+    "noticeEveryone": "Away responder is on — everyone who writes gets your away note.",
+    "noticeSettings": "Away settings"
   }
 }

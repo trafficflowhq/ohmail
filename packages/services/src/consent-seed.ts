@@ -584,6 +584,7 @@ export async function consentSettings(
   screeningResetAt: string | null;
   autoSuggestAt: string | null;
   blockRemoteImagesAt: string | null;
+  locale: string | null;
 }> {
   const [row] = await ctx.db.select().from(accountSettings)
     .where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
@@ -603,6 +604,14 @@ export async function consentSettings(
     blockRemoteImagesAt: row?.blockRemoteImagesAt
       ? row.blockRemoteImagesAt.toISOString()
       : null,
+    // NULL, an absent row and — unlike every other field here — an UNSUPPORTED value all answer
+    // null, which the client reads as "this account has no preference, keep the device's language".
+    // The `??` is what makes the third case true: `LOCALES` is closed by a CHECK, so an unsupported
+    // string is unreachable through any writer, and if one ever arrives (a hand-run UPDATE, a
+    // restore from a database that predates the constraint) sending it on would put a locale the
+    // client cannot load into the boot path. Refusing it here is the read-side half of the same
+    // closed set the constraint enforces on the write side.
+    locale: SUPPORTED_LOCALES.includes(row?.locale ?? "") ? row!.locale : null,
   };
 }
 
@@ -756,6 +765,75 @@ export async function setBlockRemoteImages(
       set: { blockRemoteImagesAt: at, updatedAt: ctx.now() },
     });
   return { blockRemoteImagesAt: at ? at.toISOString() : null };
+}
+
+/**
+ * THE INTERFACE LANGUAGES THIS SERVICE WILL STORE — the same closed set as the CHECK on
+ * `account_settings.locale` (mail 0053) and as `LOCALES` in `apps/webapp/app/shell/locale.ts`.
+ *
+ * Restated here rather than imported, because `packages/services` may not depend on an app: the
+ * constraint is the layer that actually holds the two together, and `consent-locale.test.ts`
+ * asserts this array and the catalogue files on disk agree so the restatement cannot drift.
+ */
+export const SUPPORTED_LOCALES: readonly string[] = ["en", "de"];
+
+/**
+ * THE DEFAULT, which is never stored. See {@link setLocale} and the migration's header.
+ */
+const DEFAULT_LOCALE = "en";
+
+/**
+ * SET THE INTERFACE LANGUAGE — the fourth knob on `account_settings`, and the only one whose value
+ * is a string rather than an instant or a flag.
+ *
+ * `null` — and `'en'`, which means the same thing — persist NULL: **the default is never stored.**
+ * That is the `dormancyDays` rule ("a dial, not a constant to hard-code") carrying a second,
+ * sharper consequence here, because the client reads the difference:
+ *
+ *   · NULL  ⇒ "this account has no preference" ⇒ the DEVICE's remembered language stands.
+ *   · 'de'  ⇒ "this account is in German"      ⇒ it OVERRIDES the device, on every machine.
+ *
+ * Storing `'en'` for an account that merely never opened the selector would silently move it from
+ * the first state to the second, and would reset a German-set browser to English at every boot — a
+ * setting acting on a decision nobody made. So English is expressed as absence, and asking for
+ * English is how an account gives its devices their choice back.
+ *
+ * ── WHAT THIS WRITE AUTHORISES: NOTHING ────────────────────────────────────────────────────────
+ *
+ * It spends nothing, moves no mail, and files nothing differently. It changes which words are drawn.
+ * That is worth stating because it shares a route with `autoSuggest`, which authorises metered
+ * spend, and the route's `cost: "work"` is inherited from that neighbour rather than earned here.
+ *
+ * ── THE UPSERT, COLUMN-SCOPED ──────────────────────────────────────────────────────────────────
+ *
+ * Same shape and reason as {@link setAutoSuggest}, {@link setDormancyDays} and
+ * {@link setBlockRemoteImages}: the row is created lazily by whichever feature writes first, so this
+ * races `confirmSeed`, `resetScreeningState` and the three other knobs on one primary key. Touching
+ * only `locale` + `updated_at` means a concurrent seed confirmation keeps its `seed_confirmed_at`.
+ *
+ * Returns the STORED value, so the caller echoes the database rather than the argument — the rule the
+ * other three follow. A client that asked for English reads back `null`, which is exactly what it
+ * needs in order to stop overriding its own device.
+ */
+export async function setLocale(
+  ctx: ServiceContext, locale: string | null,
+): Promise<{ locale: string | null }> {
+  if (locale !== null && !SUPPORTED_LOCALES.includes(locale)) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `locale must be one of ${SUPPORTED_LOCALES.join(", ")}, or null`,
+    );
+  }
+  // NEVER STORE THE DEFAULT — see the note above. The two spellings of "use the default" collapse
+  // to one stored representation so no reader has to handle both.
+  const stored = locale === null || locale === DEFAULT_LOCALE ? null : locale;
+  await ctx.db.insert(accountSettings)
+    .values({ accountId: ctx.accountId, locale: stored })
+    .onConflictDoUpdate({
+      target: accountSettings.accountId,
+      set: { locale: stored, updatedAt: ctx.now() },
+    });
+  return { locale: stored };
 }
 
 /* `assertNotConfirmed` used to live here: a helper that turned a non-null `seed_confirmed_at`

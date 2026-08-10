@@ -28,6 +28,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_DORMANCY_DAYS } from "@ohmail/client-engine";
 import { apiConfigured, consent as consentApi, type ConsentStateWire } from "../api-client";
+import { normalizeLocale, type AppLocale } from "./locale";
 
 export interface ConsentState {
   /** Null until the seed review has been confirmed. Drives which onboarding step is shown. */
@@ -71,6 +72,20 @@ export interface ConsentState {
   blockRemoteImages: boolean;
   /** When they opted out, for the settings row that says so. Null whenever images load. */
   blockRemoteImagesAt: string | null;
+  /**
+   * THE ACCOUNT'S INTERFACE LANGUAGE, or `null` for "this account has no preference".
+   *
+   * The one field on this object whose null is a DEFERRAL rather than a switch position, and the
+   * only one a consumer must not normalise. `AppShell` adopts a non-null value at boot, overriding
+   * whatever language this device had remembered — that is the guard the whole account-tied half of
+   * the feature exists for, and it only works if `null` reaches the consumer as null.
+   *
+   * Resting `null`, and so is a failed fetch, an API too old to carry the field, and a standalone
+   * install: all four mean "nothing from an account", and all four correctly leave the device's own
+   * choice standing. There is no direction here in which not knowing is dangerous — the worst case
+   * is an interface in the language the reader last picked on this machine.
+   */
+  locale: AppLocale | null;
   /** False until the first answer lands — an onboarding step must not flash before then. */
   known: boolean;
   /**
@@ -113,6 +128,10 @@ const RESTING: ConsentState = {
   // sender's content for somebody who asked us not to.
   blockRemoteImages: true,
   blockRemoteImagesAt: null,
+  // NOTHING FROM AN ACCOUNT. Unlike `blockRemoteImages` above, resting null is not a safe
+  // *position* — it is the absence of one, and it leaves the language this device remembered in
+  // charge. See {@link ConsentState.locale}.
+  locale: null,
   known: false,
   standalone: false,
 };
@@ -192,6 +211,12 @@ export function useConsentState(active: boolean): ConsentState & {
             ? true
             : wire.blockRemoteImagesAt !== null,
           blockRemoteImagesAt: wire.blockRemoteImagesAt ?? null,
+          // NORMALISED, not trusted. The column's CHECK and `consentSettings` both close the set,
+          // so an unsupported string cannot arrive from a current server — and this is the boot
+          // path, where a value that got through would make the client ask for a catalogue that
+          // does not exist. `normalizeLocale` answers null for anything it does not recognise,
+          // which lands on exactly the same branch as "this account has no preference".
+          locale: normalizeLocale(wire.locale),
           known: true,
           standalone: false,
         });

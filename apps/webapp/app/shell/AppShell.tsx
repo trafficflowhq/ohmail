@@ -82,6 +82,7 @@ import { dispatchMarkAllRead } from "./read-all";
 import { useMessageAttachments } from "./attachments";
 import { useRemoteImages } from "./remote-images";
 import { useConsentState } from "./consent-state";
+import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
 import { useScreenerSuggestions, type SenderSuggestion } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
@@ -690,6 +691,37 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * moves; this is a filter over the same mirror.
    */
   const consent = useConsentState(!demo);
+  /**
+   * THE ACCOUNT'S LANGUAGE WINS OVER THIS DEVICE'S — the whole of the account-tied half, and it
+   * rides the `GET /consent` this shell already makes rather than a request of its own.
+   *
+   * The two preferences exist for different reasons and both are needed. `localStorage` is what a
+   * STANDALONE install has (there is no account to store anything on) and what the SIGN-IN screen
+   * has (there is no account yet). The account column is what makes "my mail is in German" true on
+   * a machine that has never seen this account — a borrowed laptop, a second browser, a fresh
+   * install. So when both exist the account is the authority, which is this effect.
+   *
+   * `adoptLocale`, never `setLocale`: on the Cloud client the latter WRITES the account, so adopting
+   * a value that came FROM the account would PATCH it back on every boot of every tab — and a
+   * failed write of a value nobody changed would reject into a control nobody touched. See
+   * `LocaleControls.adoptLocale`.
+   *
+   * Null means the account has no preference and the device's choice stands, which is why there is
+   * no `else` arm here: this effect can only ever move the language TOWARDS what an account said.
+   * `adoptLocale` is a no-op when the two already agree, so the steady state is one comparison per
+   * consent read and nothing else.
+   *
+   * Absent provider (`locale === null`) is the demo and the unit tests, which have no locale
+   * machinery at all — nothing to adopt into, and no error worth raising.
+   */
+  const localeControls = useAppLocale();
+  const accountLocale = consent.locale;
+  const adoptLocale = localeControls?.adoptLocale;
+  const activeLocale = localeControls?.locale;
+  useEffect(() => {
+    if (!adoptLocale || accountLocale === null || accountLocale === activeLocale) return;
+    void adoptLocale(accountLocale);
+  }, [adoptLocale, accountLocale, activeLocale]);
   /**
    * THE SEED REVIEW, OFFERED ONCE THE SERVER SAYS IT IS OWED — and dismissible.
    *

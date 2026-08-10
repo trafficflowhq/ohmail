@@ -141,11 +141,27 @@ function sourceFiles(): string[] {
 }
 
 /**
- * The namespaces the shell reads, from BOTH call shapes:
+ * The namespaces the shell reads, from THREE call shapes:
  *  · `useTranslations("ohbox")` → the namespace is the argument;
  *  · `useTranslations()` unscoped (AppShell.tsx) → the namespace is the first
- *    segment of every dotted key passed to the returned `t`.
+ *    segment of every dotted key passed to the returned `t`;
+ *  · `liveCopy("mailBody", …)` / `activeTranslator("place")` → the NON-HOOK read.
+ *
  * The second shape is the one a reader misses, and missing it renders key names.
+ *
+ * ── WHY THE THIRD SHAPE IS HERE, AND WHY IT IS NOT A LOOPHOLE ───────────────────────────────────
+ *
+ * Three surfaces cannot call a hook and still have words on screen. `format.ts` is a function
+ * library — `screener-state.ts` reads its view-name table from inside a reducer and `AppShell` from
+ * inside a toast callback — and the reading pane's `MessageBody`, `AttachmentStrip` and
+ * `AttachmentPreview` are each rendered bare, with no intl provider above them, in a dozen unit
+ * tests. `app/shell/locale.ts`'s `liveCopy`/`activeTranslator` is how those four read the SAME
+ * catalogue through the SAME ICU implementation without a React context.
+ *
+ * They are counted for precisely the reason the other two shapes are: a namespace a source READS
+ * and this filter omits is a raw key in front of a user. Leaving them out would have made the
+ * German translation of the whole reading pane invisible to this guard — the shape of failure the
+ * header above describes ("correct when written, silently stale afterwards").
  */
 function namespacesUsed(): Set<string> {
   const found = new Set<string>();
@@ -153,6 +169,9 @@ function namespacesUsed(): Set<string> {
     const src = read(rel);
 
     for (const m of src.matchAll(/useTranslations\(\s*"([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
+    for (const m of src.matchAll(/\b(?:liveCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
+      found.add(m[1]!);
+    }
 
     // Unscoped: collect dotted keys from `t("a.b")` in files that call useTranslations().
     if (/useTranslations\(\s*\)/.test(src)) {

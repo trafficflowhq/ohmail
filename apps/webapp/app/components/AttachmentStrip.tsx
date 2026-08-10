@@ -43,6 +43,7 @@
  */
 import type { ReactNode } from "react";
 import "./attachment-strip.css";
+import { liveCopy } from "../shell/locale";
 
 export interface AttachmentItem {
   id: string;
@@ -136,8 +137,12 @@ export interface AttachmentStripProps {
   downloadingAll: boolean;
 }
 
-/** Reported for `messages/en.json` under the `attachments` namespace — see the header. */
-const COPY = {
+/**
+ * THE ENGLISH SENTENCES — the FALLBACK for the `attachments` namespace, and the parity oracle for
+ * it. `COPY` below is the resolved view every call site in this file reads; see `MessageBody`'s
+ * equivalent for why the read is `liveCopy` and not the hook.
+ */
+const EN = {
   /** en.json: "{count, plural, one {# attachment} other {# attachments}}" */
   count: (n: number) => `${n} ${n === 1 ? "attachment" : "attachments"}`,
   groupAria: "Attachments",
@@ -183,7 +188,17 @@ const COPY = {
   listTimeout: "ohmail didn't answer in time.",
   listRetry: "Try again",
   listRetrying: "Looking again…",
-} as const;
+};
+
+/**
+ * THE SAME TABLE, RESOLVED AGAINST THE ACTIVE CATALOGUE — read by every call site in this file.
+ *
+ * `EN` is the fallback and the parity oracle; this is what renders. See `liveCopy` in
+ * `app/shell/locale.ts` for why the members are getters, and the note on `EN` for why the read is
+ * not `useTranslations`.
+ */
+export const COPY: typeof EN = liveCopy("attachments", EN, { count: ["count"], preview: ["name"], download: ["name"], idle: ["size"], tooLarge: ["size"] });
+
 
 /** 1000-based, like the Finder the file is about to land in. One decimal below 100,
     never a trailing ".0" — "2.3 MB", "18.2 MB", "748 KB". */

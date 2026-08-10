@@ -63,6 +63,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs
 import type { AttachmentItem } from "./AttachmentStrip";
 import { useKeyBindings } from "../shell/keymap";
 import "./attachment-preview.css";
+import { liveCopy } from "../shell/locale";
 
 /* ── what can be looked at, and what merely downloads ─────────────────────────────────── */
 
@@ -93,7 +94,12 @@ export function isPreviewable(mimeType: string): boolean {
 
 /* ── copy (shim with one exit, the pattern `AttachmentStrip` and `MessageBody` use) ────── */
 
-const COPY = {
+/**
+ * THE ENGLISH SENTENCES — the FALLBACK for the `attachmentPreview` namespace, and the parity oracle
+ * for it. `COPY` below is the resolved view; see `MessageBody`'s equivalent for why the read is
+ * `liveCopy` and not the hook.
+ */
+const EN = {
   ariaLabel: "Attachment preview",
   fetching: "Fetching from your mailbox…",
   rendering: "Preparing preview…",
@@ -126,7 +132,17 @@ const COPY = {
   kNext: "next attachment",
   kPrevPage: "previous page",
   kNextPage: "next page",
-} as const;
+};
+
+/**
+ * THE SAME TABLE, RESOLVED AGAINST THE ACTIVE CATALOGUE — read by every call site in this file.
+ *
+ * `EN` is the fallback and the parity oracle; this is what renders. See `liveCopy` in
+ * `app/shell/locale.ts` for why the members are getters, and the note on `EN` for why the read is
+ * not `useTranslations`.
+ */
+export const COPY: typeof EN = liveCopy("attachmentPreview", EN, { count: ["index", "total"], page: ["page", "total"] });
+
 
 /** 1000-based, matching `AttachmentStrip.formatSize` so both surfaces name one size. */
 function formatSize(bytes: number): string {

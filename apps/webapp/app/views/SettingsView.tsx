@@ -38,6 +38,7 @@ import {
   type ThemePreference,
 } from "@ohmail/ui";
 import { hueOf } from "../shell/format";
+import { LanguageRow } from "../shell/LanguageRow";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
 type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "billing" | "tags" | "rules" | "about" | "security" | "account" | "desktop";
@@ -647,11 +648,14 @@ export function SettingsView({
 
           {pane === "general" ? (
             <SettingsSection>
-              <SettingsRow
-                label={t("language")}
-                description={t("languageHint")}
-                value={t("languageValue")}
-              />
+              {/* THE LANGUAGE, and the one control in this pane that is NOT injected as a node.
+                  Every other host-specific row here arrives as a `ReactNode` because it needs a
+                  server; this one is drawn by the shared file because BOTH surfaces have a
+                  language — a standalone install has no account but it still reads words, so a
+                  node injected by the Cloud host would leave the desktop with no selector. What
+                  differs is only where the choice is STORED, and that arrives through
+                  `LocaleContext`. Absent context (the demo, a bare pane in a test) ⇒ no row. */}
+              <LanguageRow />
               <SettingsRow
                 label={t("theme")}
                 description={t("themeHint")}

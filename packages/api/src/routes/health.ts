@@ -587,6 +587,22 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // worker half is likewise NOT the safe kind — a routing read that 42703s stops filing mail —
   // so the order stays migration → API → worker with the first arrow load-bearing.
   ["rules", "body_contains"],
+  // mail 0053_account_locale — the interface language. One additive nullable text column on
+  // `account_settings`, and it earns a marker for the same whole-row-select reason as
+  // `auto_suggest_at` (0040), `screener_auto_apply_at` (0046) and `block_remote_images_at` (0048):
+  // `consentSettings` does `select().from(accountSettings)`, so an API deployed ahead of the
+  // migration answers Postgres 42703 on `GET /consent` AND on `PATCH /consent/settings` — the whole
+  // consent surface, which onboarding runs through, and which the mail client calls once per tab.
+  // The cost of the 42703 is therefore not "the language setting is unavailable"; it is that the
+  // dormancy window, the auto-suggest flag and the remote-images opt-out all stop arriving, and the
+  // client falls back to its safe resting values on every load.
+  //
+  // No worker half: nothing in the sync worker reads or writes it. Deploy order: migration → API.
+  //
+  // A CHECK marker as well, unlike the three timestamps beside it, and the difference is 0030's
+  // rule read the right way round: a timestamp closes no set, but this column DOES close one, and
+  // it closes it over free text. See `account_settings_locale_supported` below.
+  ["account_settings", "locale"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -719,6 +735,20 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // Same predicate, same six-character class, and the pg test pins the two constraints'
   // definitions equal up to the column name. It is the NEWEST entry in the mail journal.
   "rules_body_contains_nonempty",
+  // mail 0053_account_locale — the closed set behind `account_settings.locale`. Listed on 0027's
+  // rule (the column and the CHECK fail DIFFERENTLY, and only one of them is loud) and it is the
+  // clearest case of it in this list, because the loud/silent asymmetry is total: a missing COLUMN
+  // 42703s the whole consent surface on the next request, while a column present WITHOUT its
+  // constraint accepts any string a writer lets through — and every consumer of a wrong value
+  // DEGRADES SILENTLY. `loadCatalog` falls back to English for a locale it cannot load, the server
+  // render falls back to English, `normalizeLocale` answers null, and the row in Settings shows the
+  // default. So a stored `'fr'`, `'de_DE'` or `''` produces an account whose language setting simply
+  // does not work, with no error in any log and nothing to grep for. The service validates the same
+  // set with a 400, but that is code and can regress; the CHECK is the layer that holds for a
+  // hand-run UPDATE, a future admin tool and any importer.
+  //
+  // It is the NEWEST entry in the mail journal.
+  "account_settings_locale_supported",
 ];
 
 /* `EXPECTED_MARKERS` — the BOTH-HALVES count — moved to `./health-cloud.js` with the list it
@@ -954,9 +984,19 @@ export const MAIL_EXPECTED_MARKERS =
  * `rules` table both product halves enumerate, and the same ambiguous-value CHECK whose absence
  * fails silently. One sharpening: without its constraint a stored `''` is a rule matching EVERY
  * MESSAGE, not every subject, because every message has a body to substring. Same deploy order,
- * same load-bearing first arrow. It is the NEWEST entry in the mail journal.
+ * same load-bearing first arrow.
+ *
+ * `0053_account_locale` is probed TWICE — by `account_settings.locale` AND by the
+ * `account_settings_locale_supported` CHECK — and it is the fourth mail entry with both halves. The
+ * column half is the `account_settings` whole-row case for the fourth time (`consentSettings` selects
+ * the row, so a too-early API 42703s the entire consent surface and not merely this preference). The
+ * CHECK half is the sharpest silent-failure case on that list: every reader of an unsupported locale
+ * degrades to English on purpose, so a column without its constraint yields an account whose language
+ * setting does not work and logs nothing anywhere. No worker half at all — nothing in the sync loop
+ * reads it — and no INDEX marker, since the column is read off a row fetched by primary key and is
+ * never a predicate. It is the NEWEST entry in the mail journal.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0052_rule_body_contains";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0053_account_locale";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
