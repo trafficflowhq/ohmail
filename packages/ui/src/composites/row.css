@@ -53,32 +53,6 @@
   transition:opacity .2s var(--swift), transform .25s var(--swift),
              height .3s var(--spring), padding .3s var(--spring)}
 
-/* A ROW ON ITS WAY DOWN TO "EARLIER" — a message that has just been read, wherever it was read.
-   `.out` above is the same grammar for a row leaving a list altogether (the Screener's decided
-   rows); this one is leaving a SECTION, and the next render draws it in the one below. So it
-   travels DOWNWARD rather than sideways: the direction is the information, and a row that slid
-   right would be saying "gone" about a message that is still in the list a heading away.
-
-   The collapse is what keeps the move legible for the rows AROUND it. Removing the row outright
-   would close the gap in one frame and jump everything below it up a row; taking the height to
-   zero over the same 280 ms the view waits before re-filing (`SETTLE_MS` in `OhboxView.tsx`)
-   makes that a movement instead of a jump, and gives the browser's own scroll anchoring something
-   continuous to hold on to. The two durations are one duration and must stay so — a transition
-   longer than the timer is a row that is still moving when it is redrawn somewhere else.
-
-   `pointer-events:none` because a departing row is not a target: it is under the cursor for a
-   quarter-second while shrinking away from it, and a click landing on it would select a message
-   the reader was aiming past. */
-@media (prefers-reduced-motion: no-preference){
-  .row.settling{opacity:0;transform:translateY(12px);overflow:hidden;pointer-events:none;
-    height:0 !important;padding-top:0;padding-bottom:0;
-    transition:opacity .18s var(--swift), transform .22s var(--swift),
-               height .28s var(--spring), padding .28s var(--spring)}
-}
-/* Under `prefers-reduced-motion: reduce` there is no rule at all: the row keeps its slot, unstyled
-   and unchanged, and simply appears under "Earlier" on the render the timer schedules. The move
-   still happens — it is the information — and only the travel is dropped. */
-
 /* the trailing action slot — MessageRow's `actions`, a SIBLING of the row button.
    The wrapper adds no height of its own, so a row mid-exit still collapses to nothing:
    `.row.out` shrinks the button and the slot's own contents are gone by then.

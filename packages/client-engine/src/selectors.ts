@@ -26,37 +26,9 @@ import {
  * when called through `engine.read()`.
  */
 
-/**
- * THE DAY AND MONTH NAMES THIS FILE MINTS, FROM `Intl`, IN UTC, IN WHATEVER LOCALE THE CALLER NAMES.
- *
- * Three hardcoded English arrays stood here and they are the most-repeated words in the product:
- * every message row that is not from today renders one ({@link messageDisplayTime}), every Receipts
- * day heading renders one ({@link receiptsByDay}), and every screened-out sender carries one. A
- * German reader saw "Tue", "Thursday" and "2 Aug".
- *
- * THE LOCALE IS A PARAMETER AND DEFAULTS TO ENGLISH, which is what keeps this package free of an
- * i18n dependency: `@ohmail/client-engine` has no catalogue, no provider and no opinion about
- * language, and every one of its own tests keeps asserting the English strings it always did. The
- * web app is the caller that passes a reader's locale (`app/shell/format.ts`, `AppShell`,
- * `screener-state.ts`).
- *
- * `timeZone: "UTC"` on all of them, because every instant here is read with `getUTC*` — see
- * `messageDisplayTime`'s bands. Naming a day in German does not move the day.
- *
- * Cached by locale-and-shape: constructing a formatter is the expensive part and these are called
- * once per visible row.
- */
-const NAMERS = new Map<string, Intl.DateTimeFormat>();
-
-function named(locale: string, opts: Intl.DateTimeFormatOptions, d: Date): string {
-  const key = `${locale}|${opts.weekday ?? ""}|${opts.month ?? ""}`;
-  let fmt = NAMERS.get(key);
-  if (!fmt) {
-    fmt = new Intl.DateTimeFormat(locale, { ...opts, timeZone: "UTC" });
-    NAMERS.set(key, fmt);
-  }
-  return fmt.format(d);
-}
+const WEEKDAY_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -93,12 +65,7 @@ function daysAgo(d: Date, now: Date): number {
  * A FUTURE date (a resurfaced or scheduled row) takes the dated branch too: `daysAgo` goes
  * negative, and "Fri" for something that has not happened yet reads as the past.
  */
-export function messageDisplayTime(
-  m: Pick<EngineMessage, "time" | "date">,
-  now: Date,
-  /** Which language to name the day and month in. English by default — see {@link named}. */
-  locale = "en",
-): string {
+export function messageDisplayTime(m: Pick<EngineMessage, "time" | "date">, now: Date): string {
   if (m.time) return m.time;
   if (!m.date) return "";
   const d = new Date(m.date);
@@ -106,9 +73,9 @@ export function messageDisplayTime(
 
   const ago = daysAgo(d, now);
   if (ago === 0) return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
-  if (ago >= 1 && ago <= 6) return named(locale, { weekday: "short" }, d);
+  if (ago >= 1 && ago <= 6) return WEEKDAY_SHORT[d.getUTCDay()]!;
 
-  const stamp = `${d.getUTCDate()} ${named(locale, { month: "short" }, d)}`;
+  const stamp = `${d.getUTCDate()} ${MONTH_SHORT[d.getUTCMonth()]}`;
   return d.getUTCFullYear() === now.getUTCFullYear() ? stamp : `${stamp} ${d.getUTCFullYear()}`;
 }
 
@@ -471,25 +438,6 @@ export function threadParticipants(reader: EntityReader, threadId: string): Emai
   return out.length > 1 ? out : [];
 }
 
-/**
- * THE CONVERSATION'S NAME — the mirror's thread row's stored subject, or `null` while no
- * thread row for this id has synced.
- *
- * The server names a thread at CREATE with the localized reply/forward prefixes stripped
- * (`baseSubject`, `packages/core`), and a heal pass renamed the rows stored before that table
- * was complete — so the stored name is already clean, and the client deliberately does NOT
- * re-derive it: a second copy of the prefix table here would be a second definition to drift.
- *
- * `null` is a real state, not an error: snapshot pages carry the threads their OWN messages
- * name, so a mirror can briefly hold a message whose thread row is a page behind. The caller
- * falls back to a member message's subject until the row lands.
- */
-export function threadSubject(reader: EntityReader, threadId: string): string | null {
-  const t = reader.get<{ subject?: unknown }>("thread", threadId);
-  const s = t?.subject;
-  return typeof s === "string" && s.trim() !== "" ? s : null;
-}
-
 // ── Reads: the waterline partition ─────────────────────────────────────────
 
 export interface ReadsPartition {
@@ -516,39 +464,22 @@ export interface ReceiptsDayGroup {
   items: EngineMessage[];
 }
 
-/**
- * "Today" / "Thursday" / "2 Aug" — and their equivalents in the caller's language.
- *
- * `Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(0, "day")` is what gives the first
- * of the three: it is the platform's own word for the current day ("today", "heute"), which is
- * better than a catalogue entry here for the reason the whole of {@link named} is — this package
- * has no catalogue, and inventing one for one word would give it an i18n dependency. It answers
- * lower case in both languages, so the first letter is raised to match the weekday and date labels
- * beside it, which `Intl` capitalises itself.
- */
-function dayLabel(date: Date, now: Date, locale: string): string {
+function dayLabel(date: Date, now: Date): string {
   const sameDay =
     date.getUTCFullYear() === now.getUTCFullYear() &&
     date.getUTCMonth() === now.getUTCMonth() &&
     date.getUTCDate() === now.getUTCDate();
-  if (sameDay) {
-    const today = new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(0, "day");
-    return today.charAt(0).toUpperCase() + today.slice(1);
-  }
+  if (sameDay) return "Today";
   const ageDays = Math.floor((Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) -
     Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())) / 86_400_000);
-  if (ageDays <= 6) return named(locale, { weekday: "long" }, date);
-  return `${date.getUTCDate()} ${named(locale, { month: "short" }, date)}`;
+  if (ageDays <= 6) return WEEKDAY_LONG[date.getUTCDay()]!;
+  return `${date.getUTCDate()} ${MONTH_SHORT[date.getUTCMonth()]}`;
 }
 
-export function receiptsByDay(
-  reader: EntityReader, now: Date,
-  /** Which language the day headings are named in. English by default — see {@link named}. */
-  locale = "en",
-): ReceiptsDayGroup[] {
+export function receiptsByDay(reader: EntityReader, now: Date): ReceiptsDayGroup[] {
   const groups: ReceiptsDayGroup[] = [];
   for (const m of messagesIn(reader, FOLDER_OF_VIEW.receipts)) {
-    const label = dayLabel(m.date ? new Date(m.date) : now, now, locale);
+    const label = dayLabel(m.date ? new Date(m.date) : now, now);
     const last = groups[groups.length - 1];
     if (last && last.label === label) last.items.push(m);
     else groups.push({ label, items: [m] });
@@ -596,12 +527,12 @@ export function senderKey(address: string): string {
  * `hydrateBody` has run for this id, and `bodyState` tells the preview which of the four
  * situations it is in so it can never present a truncation as the mail.
  */
-function heldOf(reader: EntityReader, m: EngineMessage, now: Date, locale: string): ScreenerHeldMail {
+function heldOf(reader: EntityReader, m: EngineMessage, now: Date): ScreenerHeldMail {
   const body = bodyOf(reader, m);
   return {
     id: m.id,
     subject: m.subject,
-    time: messageDisplayTime(m, now, locale),
+    time: messageDisplayTime(m, now),
     body: body.text,
     bodyState: body.state,
     // Carried so the preview can render the mail the way the reading pane does. `bodyOf`
@@ -671,11 +602,7 @@ function heldOf(reader: EntityReader, m: EngineMessage, now: Date, locale: strin
  * `physicalFolder` is unset, so the gate-physical rep IS `newestFirst[0]` and `gatePhysical` is
  * true — the rep does not move and no past-the-gate branch is reached.
  */
-export function screenerSegments(
-  reader: EntityReader, now: Date = new Date(),
-  /** Which language the derived rows' stamps are named in. English by default — see {@link named}. */
-  locale = "en",
-): ScreenerSegments {
+export function screenerSegments(reader: EntityReader, now: Date = new Date()): ScreenerSegments {
   const grouped: Record<ScreenerSegment, Map<string, EngineMessage[]>> = {
     waiting: new Map(),
     screened_out: new Map(),
@@ -722,16 +649,16 @@ export function screenerSegments(
           segment,
           from: rep.from,
           initial: (name.trim()[0] ?? "?").toUpperCase(),
-          time: messageDisplayTime(rep, now, locale),
+          time: messageDisplayTime(rep, now),
           scope: "sender",
           // DEGRADATION: no classifier runs client-side and `/sync` carries no
           // suggestion, so a derived row has none. `GET /screener` still returns
           // `aiSuggestion` for desktop/native and for enrichment later.
           ai: null,
           // Oldest first — the order every preview renders, and ALL of them.
-          held: [...newestFirst].reverse().map((m) => heldOf(reader, m, now, locale)),
+          held: [...newestFirst].reverse().map((m) => heldOf(reader, m, now)),
           ...(segment === "screened_out" && repDate
-            ? { screenedOn: `${repDate.getUTCDate()} ${named(locale, { month: "short" }, repDate)}` }
+            ? { screenedOn: `${repDate.getUTCDate()} ${MONTH_SHORT[repDate.getUTCMonth()]}` }
             : {}),
           derived: true,
           gatePhysical,
