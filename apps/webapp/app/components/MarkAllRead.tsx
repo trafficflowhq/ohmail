@@ -1,6 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import "./mark-all-read.css";
 
 /**
  * A SUBTLE "mark all read" affordance for a mail list header.
