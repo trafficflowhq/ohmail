@@ -89,6 +89,7 @@ import { DormancyRow } from "./DormancyRow";
 import { useComposeAutosave } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
 import { AwayResponderRow } from "./AwayResponderRow";
+import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
   composePlan,
@@ -892,6 +893,15 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * calling it every render is free.
    */
   const autoOptIn = suggestions.autoOptIn(screener.unsuggestedSenders);
+  /**
+   * THE AWAY RESPONDER'S ONE SHELL FACT — is it on, and for whom. One `GET /away-responder`
+   * per tab, held HERE so the Ohbox notice reads shell state on every visit rather than
+   * costing a round trip per mount; the settings row's `onChanged` echo (bound below, beside
+   * `awaySection`) keeps it current for a same-tab edit. Gated exactly as `awaySection` is:
+   * no server, no read, no notice — and see `AwayNotice.tsx` for why a failed read stays
+   * silent rather than guessing.
+   */
+  const awayNotice = useAwayNotice(!demo && autoOptIn.supported);
 
   /* ── view state ── */
   const [ohboxSel, setOhboxSel] = useState<string | null>(null);
@@ -3544,6 +3554,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               <OhboxView
                 replyDone={replyDone}
                 demo={demo}
+                /* THE AWAY-RESPONDER NOTICE — the one state in which this product sends mail
+                   on its own, made visible on the pane its owner actually reads. Same gate as
+                   the settings row (`awaySection` below): absent on the demo, absent on a
+                   standalone install, and absent unless the SERVER's own row says it is on.
+                   `awayNotice.on` resting false means the fail-shape is a missing courtesy
+                   line, never a false claim that replies are going out. */
+                noticeSection={
+                  demo || !autoOptIn.supported || !awayNotice.on
+                    ? undefined
+                    : <AwayNotice audience={awayNotice.audience} />
+                }
                 resurfaced={ohbox.resurfaced}
                 newForYou={ohbox.newForYou}
                 previouslySeen={ohbox.previouslySeen}
@@ -3933,8 +3954,14 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    and this shared shell does not import the Cloud API client. The row itself does —
                    it is a separate module, like `consent-state`, and it is the mirror's api-client
                    stand-in that makes that safe. Withheld from the demo for the reason every
-                   injected pane is: there is no mailbox to answer mail from. */
-                awaySection={demo || !autoOptIn.supported ? undefined : <AwayResponderRow />}
+                   injected pane is: there is no mailbox to answer mail from.
+
+                   The `onChanged` echo is how the Ohbox notice above hears a same-tab save
+                   without a refetch — the row reports what the SERVER answered, never what a
+                   click asked for, into the one `useAwayNotice` state the shell holds. */
+                awaySection={demo || !autoOptIn.supported ? undefined : (
+                  <AwayResponderRow onChanged={awayNotice.update} />
+                )}
                 billingSection={demo ? undefined : billingSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has
                    something true to say here and no API to say it with. The live body comes

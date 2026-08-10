@@ -82,7 +82,15 @@ const RESTING: Draft = {
   enabled: false, subject: null, body: null, startsAt: null, endsAt: null, audience: "screened_in",
 };
 
-export function AwayResponderRow() {
+export function AwayResponderRow({ onChanged }: {
+  /**
+   * THE SHELL'S ECHO — how the Ohbox notice (`AwayNotice.tsx`) learns of a same-tab edit
+   * without a refetch. Called with what the SERVER answered — the mount load and every save
+   * echo, never what a click asked for — so the row and any listener can only agree.
+   * Optional: this row predates the notice, and a mount with nothing to tell stays valid.
+   */
+  onChanged?: (state: { enabled: boolean; audience: Audience }) => void;
+} = {}) {
   /**
    * `null` until the server has answered. The controls are not drawn before then, for the reason
    * `RemoteImagesRow` gives about its own switch and more sharply: drawing the resting OFF state to
@@ -92,6 +100,10 @@ export function AwayResponderRow() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [pending, setPending] = useState(false);
   const [state, setState] = useState<"idle" | "saved" | "failed">("idle");
+
+  /** The echo through a ref, so the load effect below keeps its once-per-mount `[]` deps. */
+  const changed = useRef(onChanged);
+  changed.current = onChanged;
 
   /** Unmounted-after-await guard — a nav press swaps this pane out mid-request. */
   const alive = useRef(true);
@@ -109,6 +121,7 @@ export function AwayResponderRow() {
           enabled: wire.enabled, subject: wire.subject, body: wire.body,
           startsAt: wire.startsAt, endsAt: wire.endsAt, audience: wire.audience,
         });
+        changed.current?.({ enabled: wire.enabled, audience: wire.audience });
       } catch {
         // No server, or a refused read. The section stays absent rather than offering a control
         // whose Save would fail — a responder somebody believes they configured is worse than none.
@@ -141,6 +154,7 @@ export function AwayResponderRow() {
           enabled: wire.enabled, subject: wire.subject, body: wire.body,
           startsAt: wire.startsAt, endsAt: wire.endsAt, audience: wire.audience,
         });
+        changed.current?.({ enabled: wire.enabled, audience: wire.audience });
         setState("saved");
       } catch {
         if (alive.current) setState("failed");

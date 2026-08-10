@@ -755,6 +755,36 @@ body.reading .shell {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* ============ ohbox away notice: one quiet line ========================================
+   The away responder is the only thing this product does that sends mail on its own, and
+   this is its tell on the pane its owner actually reads (shell/AwayNotice.tsx). Ambient,
+   not an alert: muted ink, the pick-bar's gutter, no background strip — legible when
+   looked for, silent otherwise. The one affordance leads to the pane that controls it. */
+.ohx-notice {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin: 10px 26px 0;
+  font-size: 12px;
+  color: var(--ink2);
+}
+.ohx-notice button {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  border-radius: 99px;
+  padding: 2px 9px;
+}
+.ohx-notice button:hover {
+  background: var(--accent-soft);
+}
+@media (max-width: 900px) {
+  .ohx-notice {
+    margin: 8px 14px 0;
+  }
+}
+
 /* ============ ohbox doorbell: ONE compact line, never clipped ==========================
    The earlier fix for this bought its legibility with a second line, and two lines is worse
    UI here than one: it has to stay compact. This block is the other trade.

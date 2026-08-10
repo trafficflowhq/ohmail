@@ -6,7 +6,7 @@
  * doorbell, and the reading column. j/k moves, ↵ opens the reader,
  * t opens the tag picker, x picks, u toggles unread.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { isOwnSent } from "@ohmail/client-engine";
 import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
@@ -97,6 +97,7 @@ export interface OhboxReplyDone {
 export function OhboxView({
   demo,
   replyDone,
+  noticeSection,
   resurfaced = [],
   newForYou,
   previouslySeen,
@@ -126,6 +127,18 @@ export function OhboxView({
    * so every existing caller and test compiles unchanged.
    */
   replyDone?: OhboxReplyDone | null;
+  /**
+   * A QUIET LINE ABOVE THE LIST — the shell's channel for ambient state the Ohbox's owner
+   * should see without being interrupted. Today that is the away responder's "replies are
+   * going out for you" (`shell/AwayNotice.tsx`); the next quiet notice reuses this slot.
+   *
+   * A `ReactNode` SLOT and not a boolean per notice, deliberately: a boolean prop per notice
+   * is how a view ends up with five, and this view's props are already twenty named things
+   * about mail rows. The view draws what it is given and gates NOTHING — whether there is
+   * anything to say, and on which install, is the shell's call, made where the server state
+   * lives. Absent means absent: no placeholder, no reserved height.
+   */
+  noticeSection?: ReactNode;
   /** Fixture world or a real mailbox — decides the "older mail" tail. See its use below. */
   demo: boolean;
   /**
@@ -1190,6 +1203,10 @@ export function OhboxView({
         }
         header={
           <>
+            {/* The shell's quiet notice, above everything the header offers: it is ambient
+                state, not an affordance, so it must not displace the doorbell's claim or
+                scroll away with the rows. See the `noticeSection` prop. */}
+            {noticeSection}
             {/* "All clear" is the doorbell's `=0` arm, and it is the same claim in smaller
                 type: nobody is waiting at the gate. Before the mirror has been read nobody is
                 KNOWN to be waiting, which is a different sentence. The doorbell is withheld
