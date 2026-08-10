@@ -454,6 +454,30 @@ function isPictureItem(item: AttachmentItem): boolean {
   return item.mimeType.startsWith("image/");
 }
 
+/**
+ * WHEN A RESUMING MIRROR STOPS BEING "CURRENT" AND STARTS BEING "STALE" — the age of the last
+ * completed drain beyond which the next drain fetches the newest page before replaying its
+ * backlog. See {@link OhmailEngine.freshenStaleResume} for the whole mechanism.
+ *
+ * Five minutes, sized from both directions. Below it: a visible tab settles a drain every eight
+ * seconds, so a healthy tab's stamp is never more than seconds old and the freshness path costs
+ * every open tab exactly nothing — the property `stale-resume-freshness.test.ts` pins. Above it:
+ * a tab hidden for five minutes has issued zero syncs (the scheduler's visibility gate), its
+ * backlog is unknowable from here, and the price of guessing wrong is asymmetric — a false
+ * positive is one extra `GET /sync/snapshot` page (~0.5 s measured), a false negative is the
+ * newest mail arriving at the END of an oldest-first replay that production measured in whole
+ * minutes.
+ */
+export const STALE_RESUME_MS = 5 * 60_000;
+
+/**
+ * The meta key under which a completed drain stamps its own clock — the mirror's record of "when
+ * was this device last caught up", read by nothing but the staleness comparison above. Engine
+ * clock on both sides (`opts.now`), never `serverTime`: cross-machine skew cannot touch a
+ * comparison whose two operands come from the same clock.
+ */
+export const LAST_DRAIN_AT_META = "lastDrainAt";
+
 export interface EngineOptions {
   adapter: EngineAdapter;
   /**
@@ -473,6 +497,11 @@ export interface EngineOptions {
   types?: string[];
   /** Page size for the drain loop. */
   syncLimit?: number;
+  /**
+   * Override {@link STALE_RESUME_MS}. A test seam: the shipped paths never pass it, so the one
+   * number above is the one every client uses.
+   */
+  staleResumeMs?: number;
   now?: () => Date;
   uuid?: () => string;
 }
@@ -639,6 +668,8 @@ export class OhmailEngine {
   private snapshotUnavailable = false;
   /** How much of the mailbox to keep. Resolved once; `full` when the host said nothing. */
   private readonly storePolicy: StorePolicy;
+  /** See {@link STALE_RESUME_MS}; the option exists for tests. */
+  private readonly staleResumeMs: number;
   /** In-flight archive passes by query key — see {@link OhmailEngine.searchServer}. */
   private readonly serverSearches = new Map<string, Promise<ServerSearchOutcome>>();
   /** `GET /messages`, or `null` when this adapter has none — see {@link ListMessagesCapableAdapter}. */
@@ -687,6 +718,7 @@ export class OhmailEngine {
     this.store = opts.store ?? new MemoryMirrorStore();
     this.types = opts.types;
     this.syncLimit = opts.syncLimit;
+    this.staleResumeMs = opts.staleResumeMs ?? STALE_RESUME_MS;
     this.now = opts.now ?? (() => new Date());
     this.bootedAt = this.now().getTime();
     this.uuid = opts.uuid ?? (() => crypto.randomUUID());
@@ -805,6 +837,10 @@ export class OhmailEngine {
 
   private async drain(): Promise<void> {
     let rebootstrapped = false;
+    // A STALE resume converges its newest page FIRST — see the method for the whole argument.
+    // Before the loop, once per drain: the 410 branch re-enters the loop with a wiped mirror,
+    // where the bootstrap snapshot below already owns "newest first".
+    await this.freshenStaleResume();
     for (;;) {
       // COLD MIRROR + A SNAPSHOT ROUTE ⇒ TAKE THE SNAPSHOT INSTEAD OF REPLAYING THE LOG.
       //
@@ -851,8 +887,83 @@ export class OhmailEngine {
       const before = this.optimisticSent.size;
       this.reconcileOptimisticSent();
       if (this.optimisticSent.size !== before) { this.overlayRev++; this.notify(); }
+      // THE DRAIN'S LAST WORD: this mirror was fully caught up at this moment, on this device's
+      // own clock. Written at COMPLETION and nowhere earlier — a drain that fails or aborts
+      // mid-backlog leaves the old stamp standing, so the next drain still reads as a stale
+      // resume and freshens again (idempotent: the seq guard absorbs the repeat).
+      await this.store.setMeta(LAST_DRAIN_AT_META, this.now().toISOString());
       return;
     }
+  }
+
+  /**
+   * A STALE RESUME FETCHES THE NEWEST PAGE BEFORE IT REPLAYS ITS BACKLOG.
+   *
+   * ## THE DEFECT THIS EXISTS FOR — measured, not assumed (2026-08-10, production)
+   *
+   * The delta feed is ascending-seq by contract, so a warm mirror that resumes hours or days
+   * stale replays its backlog OLDEST-FIRST: the thing a returning user is looking for — the mail
+   * that arrived while they were away, the triage they did on another device — is in the LAST
+   * page of the drain, behind every page of history before it. Against a live account, a
+   * full-log replay took 4 pages and 28.5 s of wall clock, and the newest message's create
+   * applied at +28.5 s — the very end — while `GET /sync/snapshot` page 1 (the newest page of
+   * messages, every live thread, ALL small state: rules, message_states, decisions, approvals,
+   * drafts, tags) answered in 509 ms. On a real mailbox the same shape reads as "the app takes
+   * minutes to show what I did on the other machine".
+   *
+   * So: when the stamp {@link LAST_DRAIN_AT_META} says this mirror has not completed a drain
+   * within {@link STALE_RESUME_MS}, fetch snapshot page 1 and apply it ROWS-ONLY before the
+   * delta loop runs. Ohbox above the fold, unread counts and the Screener are current after one
+   * round trip; the backlog then replays behind content that is already right.
+   *
+   * ## WHY APPLYING A SNAPSHOT PAGE OVER A WARM MIRROR IS SOUND
+   *
+   * Snapshot rows carry `seq === asOfSeq`, the consistent point the server read them at, which
+   * is ≥ every seq in the backlog. The apply contract does the rest:
+   *
+   *  · the backlog's replay of those same rows — every intermediate state, ending at or below
+   *    `asOfSeq` — is refused by the older-or-equal guard, so history cannot un-freshen them;
+   *  · anything that changes AFTER the snapshot read arrives with a seq above `asOfSeq` and
+   *    wins, exactly as it would have without this;
+   *  · a row deleted while the client was away is simply absent from the snapshot — nothing
+   *    shields the stale copy, and the delta's tombstone removes it when the replay gets there.
+   *
+   * ## THE CURSOR IS NEVER TOUCHED — this is `applyChanges`, deliberately
+   *
+   * Committing `asOfSeq` here would be the unsound version: a snapshot page carries live rows
+   * only, so jumping the cursor over the backlog skips every tombstone in it and the mirror
+   * keeps ghosts of everything deleted while it was away, forever. The delta replay from the OLD
+   * cursor stays the one mechanism of record; this method only decides what the user is looking
+   * at while it runs. (Mutations are untouched for the same reason: this is a READ overlay — the
+   * queue's write ordering never passes through here.)
+   *
+   * ## FAILURE IS SWALLOWED, AND MUST NOT LATCH {@link snapshotUnavailable}
+   *
+   * Freshness is an optimization; the delta is the contract. A resume against a server without
+   * the route costs its head start and nothing else. And it must not latch the unavailable flag:
+   * that latch belongs to the BOOTSTRAP path's page-1 probe — latching it here on a transient
+   * failure would push a later 410 re-bootstrap onto the full `since=0` log replay for the life
+   * of the tab.
+   *
+   * ## A MISSING STAMP ON A WARM CURSOR IS STALE
+   *
+   * That is every mirror persisted before this shipped, resuming for the first time — exactly
+   * the mailboxes that reported the symptom. Within a session the stamp always exists after the
+   * first completed drain, so this arm fires at most once per pre-upgrade mirror.
+   */
+  private async freshenStaleResume(): Promise<void> {
+    if (!this.snapshotFn || this.snapshotUnavailable) return;
+    if (this.store.getCursor() === "0") return; // a cold mirror is the bootstrap's, not ours
+    const stamp = this.store.getMeta<string>(LAST_DRAIN_AT_META);
+    if (stamp !== undefined && this.now().getTime() - Date.parse(stamp) <= this.staleResumeMs) return;
+    let page: SyncSnapshotPage;
+    try {
+      page = await this.snapshotFn({});
+    } catch {
+      return; // the delta drain that follows is the source of truth, and of error reporting
+    }
+    await this.store.applyChanges(page.changes); // rows only — the cursor is the delta's
+    this.notify();
   }
 
   /**

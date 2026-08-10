@@ -172,6 +172,10 @@ export {
   // How many on-screen messages the windowed prune holds. Exported so the guard reads the
   // shipped number rather than a hand-copied one — see `RENDERED_PINS` in engine.ts.
   RENDERED_PINS,
+  // The stale-resume seam: the staleness threshold and the meta key the drain stamps. Exported
+  // for the same reason the two above are — the guards must read the shipped values, not copies.
+  STALE_RESUME_MS,
+  LAST_DRAIN_AT_META,
   type EngineOptions,
   type MutationResult,
   type MutationStatus,
