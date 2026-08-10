@@ -41,6 +41,19 @@ export interface MutationOutcome {
    * that eventually sends the wrong message.
    */
   entityId?: string;
+  /**
+   * THE DELIVERED MESSAGE-ID of a send the server CONFIRMED sent, and present ONLY then.
+   *
+   * `mail_send` alone carries it — `POST /drafts/:id/send` answers `{status:"sent",
+   * providerMessageId}` — and only on the `sent` status, never `unverified`/`failed`/`in_flight`.
+   * It is the Message-ID header the server minted up front and appended to the Sent folder, so it
+   * is the exact `messageIdHeader` the real Sent copy will carry when the worker's Sent-folder watch
+   * ingests it minutes later. That identity is what lets the engine reconcile its optimistic Sent
+   * overlay against the real row and drop the overlay the moment a drain delivers it, rather than
+   * leaving a fabricated twin behind. Absent ⇒ the engine materialises no Sent overlay, which is
+   * exactly the FixturesAdapter's answer (the demo has no server to mint an id).
+   */
+  providerMessageId?: string | null;
 }
 
 /**

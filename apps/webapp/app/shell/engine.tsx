@@ -22,7 +22,7 @@ import {
 import { useTranslations } from "next-intl";
 import { OhmailEngine, type EntityReader } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
-import { createEngine, EngineUnarmedError } from "./engine-config";
+import { createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
 import { useLoadingGrace } from "./loading-grace";
 import { readOwner } from "./owner-cookie";
 import {
@@ -462,7 +462,15 @@ export function EngineProvider({
       });
       return;
     }
-    return startSyncScheduler(engine, { onStatus: onSyncStatus });
+    // A DESKTOP build keeps polling while its window is occluded or unfocused; a browser tab keeps
+    // its hidden-tab-zero-syncs behaviour. `visibility: null` is the scheduler's "no visibility
+    // model" seam, and it is passed ONLY under the desktop build flag (`engine-config.ts`
+    // → `syncsWhileHidden`) — never unconditionally, or the web build would stop respecting a
+    // hidden tab. A web-side guard (grep `syncsWhileHidden`) fails on a leak.
+    return startSyncScheduler(engine, {
+      onStatus: onSyncStatus,
+      ...(syncsWhileHidden() ? { visibility: null } : {}),
+    });
   }, [engine, live, onSyncStatus]);
 
   if (binding.status === "resolving" || binding.status === "unauthenticated") {

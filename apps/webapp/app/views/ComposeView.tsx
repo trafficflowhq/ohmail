@@ -54,6 +54,7 @@ import { canSend, type SendState } from "../shell/mail-send";
 import { RichEditor } from "../shell/RichEditor";
 import { SendStatus } from "../shell/SendStatus";
 import { RecipientField } from "../shell/RecipientField";
+import { ComposeAttach } from "../components/ComposeAttach";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
 import type { ResolvedFrom } from "../shell/compose-from";
 
@@ -463,6 +464,16 @@ export function ComposeView({
               it. Grouped rather than left as two siblings because the pair is one region: the
               button and the sentence that explains what pressing it will do. */}
           <div className="compose-foot">
+            {/* ATTACHMENTS — files ride the send, not the account. The bytes live only in the form
+                (`compose.ts` strips them from the scratch buffer), so they reach the wire via
+                `plan.mutation.attachments` and are stored nowhere. In the foot, above Send, so the
+                pick-a-file control sits with the action it feeds; disabled while a send is in
+                flight, like every other input. */}
+            <ComposeAttach
+              attachments={fields.attachments ?? []}
+              onChange={(next) => onFields({ ...fields, attachments: next })}
+              disabled={inFlight}
+            />
             <div className="send-row">
               <Button
                 variant="primary"
