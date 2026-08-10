@@ -47,6 +47,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Avatar, DECISION_DONE_LABEL, InfoNote } from "@ohmail/ui";
 import { avatarHue, initialsOf } from "./format";
+import { displayAddress, displayAddressee, displayRuleMatch } from "./idn";
 import "./sender-sheet.css";
 import { RETRO_DEFAULT_ON, type ScreeningDest } from "./sender-screening";
 import {
@@ -114,7 +115,9 @@ export function SubjectRuleSheet({
    */
   const copy = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
 
-  const label = ctx.name || ctx.address;
+  const label = displayAddressee(ctx.name, ctx.address);
+  /** The sender as the sheet's sentences read them — see `idn.ts`. `ctx.address` writes the rule. */
+  const who = displayAddress(ctx.address);
   // The choice decides BOTH halves — the term and the field it reads — in one place, so the
   // radio, the plan and the confirm sentence cannot disagree about what is being written.
   const field: TermField = choice === "content" ? "body" : "subject";
@@ -134,7 +137,7 @@ export function SubjectRuleSheet({
       role="dialog"
       aria-label={copy(
         "subjectAria",
-        `Make a rule for mail from ${ctx.address} with this in the subject`,
+        `Make a rule for mail from ${who} with this in the subject`,
       )}
       style={{ left: state.x, top: state.y }}
     >
@@ -142,7 +145,7 @@ export function SubjectRuleSheet({
         <Avatar initials={initialsOf(label)} hue={avatarHue(ctx.address)} size="s" />
         <span className="sm-who">
           <b>{label}</b>
-          {ctx.name ? <small>{ctx.address}</small> : null}
+          {ctx.name ? <small>{who}</small> : null}
         </span>
       </div>
 
@@ -242,11 +245,11 @@ export function SubjectRuleSheet({
             {plan.field === "body"
               ? copy(
                   "bodyConfirm",
-                  `from ${plan.match} AND the text contains »${plan.term}« → ${DECISION_DONE_LABEL[pending]}`,
+                  `from ${displayRuleMatch(plan.match)} AND the text contains »${plan.term}« → ${DECISION_DONE_LABEL[pending]}`,
                 )
               : copy(
                   "subjectConfirm",
-                  `from ${plan.match} AND subject contains »${plan.term}« → ${DECISION_DONE_LABEL[pending]}`,
+                  `from ${displayRuleMatch(plan.match)} AND subject contains »${plan.term}« → ${DECISION_DONE_LABEL[pending]}`,
                 )}
           </p>
           <InfoNote

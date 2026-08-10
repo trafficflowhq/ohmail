@@ -35,6 +35,7 @@ import {
 } from "@ohmail/ui";
 import { messageOf } from "../api-client";
 import { avatarHue } from "../shell/format";
+import { displayAddress, displayAddressee, displayAddressUnder, displayDomainLabel } from "../shell/idn";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 /* The reader surfaces' own bound on "still coming" — one mechanism, not a second one shaped like
@@ -1009,8 +1010,8 @@ export function ScreenerView({
         <MessageRow
           key={w.id}
           id={w.id}
-          from={w.from.name || w.from.address}
-          address={w.from.name ? w.from.address : undefined}
+          from={displayAddressee(w.from.name, w.from.address)}
+          address={displayAddressUnder(w.from.name, w.from.address)}
           time={newest?.time ?? w.time}
           subject={newest?.subject ?? ""}
           avatarInitial={w.initial}
@@ -1076,8 +1077,8 @@ export function ScreenerView({
              name is the screening signal, the address is what keeps the judgement
              spoof-safe. `MessageRow` renders the second only when there is a first, so a
              genuinely nameless sender still shows exactly one line. */
-          from={w.from.name || w.from.address}
-          address={w.from.name ? w.from.address : undefined}
+          from={displayAddressee(w.from.name, w.from.address)}
+          address={displayAddressUnder(w.from.name, w.from.address)}
           time={screenedDate(w, t("today"))}
           subject={newestHeld(w)?.subject ?? ""}
           avatarInitial={w.initial}
@@ -1093,8 +1094,8 @@ export function ScreenerView({
       <MessageRow
         key={r.sender.id}
         id={r.sender.id}
-        from={r.sender.from.name || r.sender.from.address}
-        address={r.sender.from.name ? r.sender.from.address : undefined}
+        from={displayAddressee(r.sender.from.name, r.sender.from.address)}
+        address={displayAddressUnder(r.sender.from.name, r.sender.from.address)}
         time={newestHeld(r.sender)?.time ?? r.sender.time}
         subject={newestHeld(r.sender)?.subject ?? ""}
         avatarInitial={r.sender.initial}
@@ -1653,10 +1654,10 @@ function WaitingPreview({
   onBack: () => void;
 }) {
   const t = useTranslations("screener");
+  // What the decision bar SAYS the rule will cover. Display only — the rule the decision writes
+  // keys on the stored address (`screener-state.ts` → `decide`), which is why this may be decoded.
   const ruleTarget =
-    scope === "domain"
-      ? "@" + (sender.from.address.split("@")[1] ?? sender.from.address)
-      : sender.from.address;
+    scope === "domain" ? displayDomainLabel(sender.from.address) : displayAddress(sender.from.address);
   const aiDest = sender.ai?.dest as Parameters<typeof DecisionBar>[0]["aiDest"];
   return (
     <>
@@ -1739,8 +1740,8 @@ function WaitingPreview({
           <HeldMail
             key={h.id}
             messageId={h.id}
-            from={sender.from.name || sender.from.address}
-            address={sender.from.name ? sender.from.address : undefined}
+            from={displayAddressee(sender.from.name, sender.from.address)}
+            address={displayAddressUnder(sender.from.name, sender.from.address)}
             subject={h.subject}
             time={h.time}
             body={h.body}
@@ -1822,8 +1823,8 @@ function ScreenedPreview({
           <HeldMail
             key={h.id}
             messageId={h.id}
-            from={sender.from.name || sender.from.address}
-            address={sender.from.name ? sender.from.address : undefined}
+            from={displayAddressee(sender.from.name, sender.from.address)}
+            address={displayAddressUnder(sender.from.name, sender.from.address)}
             subject={h.subject}
             time={h.time}
             body={h.body}
@@ -1922,8 +1923,8 @@ function SpamPreview({
           <HeldMail
             key={h.id}
             messageId={h.id}
-            from={row.sender.from.name || row.sender.from.address}
-            address={row.sender.from.name ? row.sender.from.address : undefined}
+            from={displayAddressee(row.sender.from.name, row.sender.from.address)}
+            address={displayAddressUnder(row.sender.from.name, row.sender.from.address)}
             subject={h.subject}
             time={h.time}
             body={h.body}

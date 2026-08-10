@@ -39,6 +39,7 @@ import { memo, type ReactNode } from "react";
 import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import { StreamCard, StreamArt } from "@ohmail/ui";
 import { senderName, displayTime } from "./format";
+import { displayAddress } from "./idn";
 import { MessageActionBar, type MessageAction } from "./MessagePane";
 import { FoldTableArt } from "./StreamShell";
 import { MessageBody as MessageBodyView } from "../components/MessageBody";
@@ -90,7 +91,7 @@ function StreamCardMemoInner({
     <StreamCard
       id={m.id}
       from={senderName(m)}
-      address={m.from.address}
+      address={displayAddress(m.from.address)}
       amount={m.amount}
       time={displayTime(m, now)}
       subject={m.subject}

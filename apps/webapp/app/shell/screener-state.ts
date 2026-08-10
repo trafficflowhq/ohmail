@@ -65,6 +65,7 @@ import {
   senderScreening,
 } from "./sender-screening";
 import { PLACE_LABEL } from "./format";
+import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "./idn";
 import {
   DECISION_DONE_LABEL,
   DECISION_QUIET,
@@ -340,11 +341,14 @@ export function useScreenerState(
   const segments = useMemo(() => screenerSegments(queueReader), [queueReader, version]);
   const s = store.current;
 
-  const senderLabel = (x: ScreenerSenderDTO) => x.from.name || x.from.address;
+  // Both of these end up inside toast and confirmation SENTENCES, so both name the sender the way
+  // a person reads them — an internationalized domain decoded (`idn.ts`). The rule, the mutation
+  // and the screening key below all read `x.from.address` / `sender.address` directly.
+  const senderLabel = (x: ScreenerSenderDTO) => displayAddressee(x.from.name, x.from.address);
   const scopeText = (x: ScreenerSenderDTO, scope: DecisionScope) =>
     scope === "domain"
-      ? t("wholeDomain", { domain: "@" + (x.from.address.split("@")[1] ?? x.from.address) })
-      : x.from.address;
+      ? t("wholeDomain", { domain: displayDomainLabel(x.from.address) })
+      : displayAddress(x.from.address);
 
   /** A derived row's held ids ARE message ids; a fixture row's are not. */
   const heldMessageIds = (sender: ScreenerSenderDTO): string[] =>
@@ -429,7 +433,8 @@ export function useScreenerState(
       if (sender) {
         const dest = entry.dest;
         const plan = planScreeningChange(sender, dest, entry.scope, true);
-        const who = entry.scope === "domain" ? sender.domain : sender.address;
+        // The toast's subject, not the rule's — the rule was already written from `plan`.
+        const who = entry.scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
         const place = PLACE_LABEL[dest] ?? dest;
         void dispatchScreeningChange(plan, (m) => engine.mutate(m)).then((key) => {
           toast(ts(key, { sender: who, place, count: plan.moved }));
@@ -514,7 +519,7 @@ export function useScreenerState(
       dest === "screened"
         ? t("toastScreened", { target, read: read ? "true" : "false" })
         : dest === "spam"
-          ? t("toastSpam", { target: sender.from.address })
+          ? t("toastSpam", { target: displayAddress(sender.from.address) })
           : t("toastFiled", {
               dest: DECISION_DONE_LABEL[dest],
               read: read ? "true" : "false",
@@ -763,7 +768,7 @@ export function useScreenerState(
     toast(
       t("toastReleased", {
         count: sender.held.length,
-        sender: sender.from.address,
+        sender: displayAddress(sender.from.address),
         dest: DECISION_DONE_LABEL[dest],
       }),
     );
@@ -784,7 +789,7 @@ export function useScreenerState(
     toast(
       t("toastAllowed", {
         count: sender.held.length,
-        sender: sender.from.address,
+        sender: displayAddress(sender.from.address),
         dest: DECISION_DONE_LABEL[dest],
       }),
     );

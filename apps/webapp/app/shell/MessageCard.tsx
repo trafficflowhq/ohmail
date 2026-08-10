@@ -42,6 +42,7 @@ import {
   senderName,
   type RecipientChip,
 } from "./format";
+import { displayAddress } from "./idn";
 import { useBodyStalled, useMessageChrome } from "./message-chrome";
 
 /** A subject with its reply prefixes stripped, case-folded — see `Conversation.tsx`. */
@@ -50,10 +51,16 @@ export function subjectKey(subject: string): string {
   return subject.replace(REPLY_PREFIX, "").trim().toLowerCase();
 }
 
-/** A recipient shown in full in the details block: "me", or "Name <address>", or the address. */
+/**
+ * A recipient shown in full in the details block: "me", or "Name <address>", or the address.
+ *
+ * The fold to "me" compares the STORED address (`own` is `GET /mailboxes`, i.e. A-labels) and only
+ * what is PRINTED is decoded — the same order as `foldRecipient` in `format.ts`.
+ */
 function fullRecipient(r: EmailAddress, own: ReadonlySet<string>, me: string): string {
   if (own.has(r.address.trim().toLowerCase())) return me;
-  return r.name ? `${r.name} <${r.address}>` : r.address;
+  const shown = displayAddress(r.address);
+  return r.name ? `${r.name} <${shown}>` : shown;
 }
 
 /**
@@ -116,8 +123,10 @@ export function MessageHeader({
         <button
           type="button"
           className="msg-sender"
-          title={tr("openFor", { sender: message.from.address })}
-          aria-label={tr("openFor", { sender: message.from.address })}
+          // A tooltip and a screen-reader label are both things a person reads, so both get the
+          // readable address; the hue below stays keyed on the stored one.
+          title={tr("openFor", { sender: displayAddress(message.from.address) })}
+          aria-label={tr("openFor", { sender: displayAddress(message.from.address) })}
           onClick={(e) => chrome.openSenderMenu(message.id, e.currentTarget)}
         >
           <Avatar initials={initialsOf(name)} hue={avatarHue(message.from.address)} size="s" />

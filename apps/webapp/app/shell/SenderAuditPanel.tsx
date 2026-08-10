@@ -25,6 +25,7 @@ import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import type { AttributedMessage } from "./sender-audit";
 import { placeLabel } from "./format";
+import { displayAddress, displayRuleMatch } from "./idn";
 // The panel is opened from the sheet but can outlive it on screen, so it imports the
 // stylesheet itself rather than relying on `SenderMenu` having been mounted first.
 import "./sender-sheet.css";
@@ -69,7 +70,7 @@ export function SenderAuditPanel({ state, onClose }: { state: SenderAuditState; 
                   <span className="sa-place">{placeLabel(message.folder)}</span>
                 </div>
                 <div className="sa-meta">
-                  <span className="sa-from">{message.from.address}</span>
+                  <span className="sa-from">{displayAddress(message.from.address)}</span>
                   {message.date ? <span className="sa-when">{message.date.slice(0, 10)}</span> : null}
                 </div>
                 <div className="sa-why">
@@ -78,7 +79,7 @@ export function SenderAuditPanel({ state, onClose }: { state: SenderAuditState; 
                     // not "this rule filed this message" — which would be false for every
                     // message older than its rule.
                     ? t(`auditWhyRule.${attribution.rule.kind}`, {
-                        match: attribution.rule.match,
+                        match: displayRuleMatch(attribution.rule.match),
                         place: placeLabel(attribution.rule.destination),
                       })
                     : attribution.kind === "gate"

@@ -66,6 +66,7 @@ import { useTranslations } from "next-intl";
 import { Button, Icon, SettingsNote, SettingsSection, useToast } from "@ohmail/ui";
 import type { Folder, MutationStatus, RuleDTO } from "@ohmail/client-engine";
 import { placeLabel } from "../shell/format";
+import { displayRuleMatch } from "../shell/idn";
 import { useListWindow } from "../shell/list-window";
 import "./rules.css";
 
@@ -181,6 +182,10 @@ export function filterRules(
       (facet === "all" || r.destination === facet) &&
       (q === "" ||
         r.match.toLowerCase().includes(q) ||
+        // …and over the form the ROW SHOWS. On an internationalized domain the row reads
+        // `müller.example` and the stored match is `xn--mller-kva.example`, so searching only the
+        // stored one loses the rule to the very characters the reader can see (`shell/idn.ts`).
+        displayRuleMatch(r.match).toLowerCase().includes(q) ||
         subjectTermOf(r).toLowerCase().includes(q) ||
         // The body term (mail 0052), for the subject term's reason: it is what defines the rule.
         bodyTermOf(r).toLowerCase().includes(q)),
@@ -238,7 +243,7 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
    * files nothing.
    */
   const whatOf = (rule: RuleDTO): string => {
-    const base = t(`what.${rule.kind}`, { match: rule.match });
+    const base = t(`what.${rule.kind}`, { match: displayRuleMatch(rule.match) });
     const term = subjectTermOf(rule);
     const body = bodyTermOf(rule);
     // A rule may carry either term or both (mail 0052); every carried term is spelled out, because

@@ -72,6 +72,18 @@ import type { ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { apiConfigured } from "../api-client";
 import { useMailState } from "./MailStateProvider";
+// The strip names a mailbox in every arm that has one, and every one of those is a sentence a
+// person reads — so the address is decoded for display (`idn.ts`). `MailState` itself keeps the
+// stored form, which is what the settings link and the probe compare against.
+import { displayAddress } from "./idn";
+
+/**
+ * The mailbox address a strip arm names, readably — and `null` straight through, because two of
+ * these arms carry `address: string | null` and "we do not know which mailbox" must stay a missing
+ * detail rather than become an empty one.
+ */
+const readable = (address: string | null): string | null =>
+  address === null ? null : displayAddress(address);
 import { stripSpeaks, type MailState } from "./mail-state";
 
 /**
@@ -236,7 +248,7 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
         title: state.reason ? t(`blocked_${state.reason}`) : t("blockedUnknown"),
         detail: (
           <>
-            {state.address}
+            {readable(state.address)}
             <Since minutes={state.minutes} t={t} />
           </>
         ),
@@ -250,7 +262,7 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
       return {
         tone: "warn", role: "status", warn: true, busy: false,
         title: tm(`err_${state.errorCode}`),
-        detail: state.address,
+        detail: readable(state.address),
         link: settings,
       };
 
@@ -266,7 +278,7 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
         // something they can see is already done. What is outstanding is the copy of that
         // decision on their own IMAP host.
         title: t("filing", { count: state.pending }),
-        detail: state.address ? t("filingWhere", { address: state.address }) : null,
+        detail: state.address ? t("filingWhere", { address: displayAddress(state.address) }) : null,
         // THE RETRY AFFORDANCE. If the host is refusing connections this does not drain on its
         // own, and Settings → Mailboxes is where the mailbox's own state and its reconnect live.
         // The link is the difference between a sentence a person can act on and one they can
@@ -305,7 +317,7 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
         // point nothing has failed.
         title: state.slow ? t("awaitingSlow") : t("awaiting"),
         detail: state.address
-          ? t("awaitingWhere", { address: state.address, minutes: state.minutes ?? 0 })
+          ? t("awaitingWhere", { address: displayAddress(state.address), minutes: state.minutes ?? 0 })
           : t("awaitingFor", { minutes: state.minutes ?? 0 }),
         link: state.slow ? settings : null,
       };

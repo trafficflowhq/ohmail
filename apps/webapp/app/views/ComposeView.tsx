@@ -50,6 +50,7 @@ import type { Editor } from "@tiptap/react";
 import { Button, Chip, Icon, useToast } from "@ohmail/ui";
 import { useKeyBindings } from "../shell/keymap";
 import { go } from "../shell/routing";
+import { displayAddress } from "../shell/idn";
 import { canSend, type SendState } from "../shell/mail-send";
 import { RichEditor } from "../shell/RichEditor";
 import { SendStatus } from "../shell/SendStatus";
@@ -272,13 +273,17 @@ export function ComposeView({
                       disabled={inFlight}
                       onChange={(e) => onFields({ ...fields, fromMailboxId: e.target.value })}
                     >
+                      {/* The VALUE is the mailbox id and the LABEL is the address a human reads —
+                          `displayAddress` decodes the domain of an internationalized mailbox
+                          (`shell/idn.ts`). Nothing on the wire changes: the id is what the option
+                          carries and what the mutation sends. */}
                       {from.choices.map((o) => (
-                        <option key={o.id} value={o.id}>{o.address}</option>
+                        <option key={o.id} value={o.id}>{displayAddress(o.address)}</option>
                       ))}
                     </select>
                   </span>
                 ) : (
-                  <output id="compose-from" className="c-static">{from.address}</output>
+                  <output id="compose-from" className="c-static">{displayAddress(from.address)}</output>
                 )}
               </div>
             ) : null}

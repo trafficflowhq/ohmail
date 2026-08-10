@@ -13,6 +13,7 @@ import {
   type TagDTO,
 } from "@ohmail/client-engine";
 import { TAG_HUES, type TagHueName } from "@ohmail/ui";
+import { displayAddress } from "./idn";
 
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -171,8 +172,17 @@ export function dayValue(iso: string): string {
   return iso.slice(0, 10);
 }
 
+/**
+ * WHO WROTE IT: their display name, else their address in readable form.
+ *
+ * The address is passed through {@link displayAddress}, so a sender on an internationalized
+ * domain reads as `sarada@götsch.ch` rather than the `xn--…` A-label the mailbox stores. This is
+ * the display side of a deliberate split — see `idn.ts`. The identity side of the same message
+ * (`avatarHue`, the screening key, every mutation) reads `m.from.address` directly and is
+ * untouched, which is why THIS function is safe to decode inside and that field is not.
+ */
 export function senderName(m: EngineMessage): string {
-  return m.from.name || m.from.address;
+  return m.from.name || displayAddress(m.from.address);
 }
 
 /**
@@ -221,7 +231,7 @@ export function initialsOf(nameOrAddress: string): string {
  * been guarding against it by hand since it was written.
  */
 export function rowAddress(m: EngineMessage): string | undefined {
-  return m.from.name ? m.from.address : undefined;
+  return m.from.name ? displayAddress(m.from.address) : undefined;
 }
 
 /** The circle for a message row, in one call. */
@@ -234,9 +244,13 @@ export function avatarOf(m: EngineMessage): { avatarInitial: string; avatarHue: 
 
 /** An own-sent row's addressee: who the mail went to, and how many more it also went to. */
 export interface SentRowRecipient {
-  /** The first To recipient's display name, else their address. */
+  /** The first To recipient's display name, else their address READABLY (`idn.ts`). Display only. */
   name: string;
-  /** Their address — the stable key the circle's hue derives from, exactly as {@link avatarOf}. */
+  /**
+   * Their address — the stable key the circle's hue derives from, exactly as {@link avatarOf}, and
+   * therefore the STORED form, never the decoded one. Two surfaces keying one person off different
+   * spellings of their domain would give them two colours.
+   */
   address: string;
   /** How many further To recipients there are — the row's "+N". */
   extra: number;
@@ -263,7 +277,7 @@ export function sentRowRecipient(m: EngineMessage): SentRowRecipient | null {
   if (!isOwnSent(m)) return null;
   const to = m.to ?? [];
   const first = to[0];
-  const name = first ? first.name || first.address : "";
+  const name = first ? first.name || displayAddress(first.address) : "";
   if (!name) return null;
   return { name, address: first!.address, extra: to.length - 1 };
 }
@@ -339,9 +353,15 @@ export interface RecipientSummary {
   empty: boolean;
 }
 
+/**
+ * The fold compares STORED addresses and returns a DISPLAY name, and the order of those two
+ * matters: `ownAddresses` is what `GET /mailboxes` answered, which is A-labels, so a fold done on
+ * the decoded string would stop recognising the reader on their own internationalized mailbox and
+ * print their address back at them where "me" belongs.
+ */
 function foldRecipient(r: EmailAddress, own: ReadonlySet<string>): RecipientChip {
   if (own.has(r.address.trim().toLowerCase())) return { me: true };
-  return { name: r.name || r.address };
+  return { name: r.name || displayAddress(r.address) };
 }
 
 export function recipientSummary(

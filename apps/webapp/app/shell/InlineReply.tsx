@@ -45,6 +45,7 @@ import { useTranslations } from "next-intl";
 import type { EngineMessage } from "@ohmail/client-engine";
 import { Button, Kbd } from "@ohmail/ui";
 import { rowAddress, senderName } from "./format";
+import { displayAddress } from "./idn";
 import { canSend, type SendState } from "./mail-send";
 import { RichEditor } from "./RichEditor";
 import type { RichValue } from "./rich-text";
@@ -160,9 +161,12 @@ export function InlineReply({
    */
   const recipients = replyRecipients(message, options.map((o) => o.address));
   const target = recipients?.[0] ?? null;
-  const toName = target ? target.name ?? target.address : senderName(message);
+  // The head names people; the ENVELOPE is `recipients` itself, which `AppShell.sendReply` reads
+  // and which is never touched here. So the two lines below are decoded for display (`idn.ts`) and
+  // the comparison that decides whether the address adds anything stays on the stored strings.
+  const toName = target ? target.name ?? displayAddress(target.address) : senderName(message);
   const toAddr = target
-    ? (target.name && target.name !== target.address ? target.address : undefined)
+    ? (target.name && target.name !== target.address ? displayAddress(target.address) : undefined)
     : rowAddress(message);
 
   /**
@@ -172,7 +176,8 @@ export function InlineReply({
    * to the plain head below rather than claiming an "all" that is one person.
    */
   const all = replyAll ? replyAllRecipients(message, options.map((o) => o.address)) : null;
-  const nameOf = (r: { name: string | null; address: string }): string => r.name ?? r.address;
+  const nameOf = (r: { name: string | null; address: string }): string =>
+    r.name ?? displayAddress(r.address);
 
   /**
    * BRING THE EDITOR TO THE READER.
@@ -241,11 +246,11 @@ export function InlineReply({
           here is a different feature from being able to SEE it. */}
       {from.address !== null ? (
         <p className="reply-from">
-          <span>{t("from", { address: from.address })}</span>
+          <span>{t("from", { address: displayAddress(from.address) })}</span>
           {from.substituted ? (
             <span className="reply-from-sub">
               {from.substitutedFrom
-                ? t("fromSubstituted", { was: from.substitutedFrom })
+                ? t("fromSubstituted", { was: displayAddress(from.substitutedFrom) })
                 : t("fromSubstitutedUnknown")}
             </span>
           ) : null}

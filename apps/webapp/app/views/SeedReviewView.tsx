@@ -43,6 +43,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 import { ApiError, consent as consentApi, type SeedReviewWire } from "../api-client";
+import { displayAddress } from "../shell/idn";
 
 type Phase =
   | { state: "loading" }
@@ -255,8 +256,10 @@ export function SeedReviewView({
                   disabled={c.alreadyDecided || busy}
                   onChange={() => toggle(c.address)}
                 />
-                <span className="seed-who">{c.name ?? c.address}</span>
-                {c.name ? <span className="seed-addr">{c.address}</span> : null}
+                {/* Labels only. The checkbox's key and the `checked` set above stay on the STORED
+                    address, which is also what the decision this screen writes carries. */}
+                <span className="seed-who">{c.name ?? displayAddress(c.address)}</span>
+                {c.name ? <span className="seed-addr">{displayAddress(c.address)}</span> : null}
                 <span className="seed-count">{t("wroteN", { count: c.messages })}</span>
                 {/* Shown, and not silently dropped: a person already decided about is part of
                     why the number on the button is smaller than the list. */}
@@ -279,7 +282,7 @@ export function SeedReviewView({
             <ul className="seed-list">
               {review!.excluded.map((e) => (
                 <li key={e.address} className="seed-row">
-                  <span className="seed-who">{e.address}</span>
+                  <span className="seed-who">{displayAddress(e.address)}</span>
                   <span className="seed-note">{t(`excluded.${e.reason}`)}</span>
                 </li>
               ))}

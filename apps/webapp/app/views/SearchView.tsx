@@ -42,6 +42,7 @@ import {
 } from "@ohmail/client-engine";
 import { Facets, SearchBox, SearchHit, type FacetGroup } from "@ohmail/ui";
 import { displayTime, metaLine, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
+import { displayAddress } from "../shell/idn";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import "./search-keys.css";
 
@@ -224,7 +225,10 @@ export function SearchView({
       if (filter.group === "folder")
         return (VIEW_OF_FOLDER[m.folder] ?? folderLeaf(m.folder)) === filter.label;
       if (filter.group === "from")
-        return (m.from.name ?? m.from.address) === filter.label;
+        // Keyed on the same expression the facet below builds, decode included — the label is an
+        // in-tab comparison key and never leaves the client, so decoding it is safe as long as
+        // BOTH sides do it. One side alone and a sender facet would match nothing on an IDN.
+        return (m.from.name ?? displayAddress(m.from.address)) === filter.label;
       if (filter.group === "refine") return m.hasAttachments;
       return true;
     });
@@ -244,7 +248,7 @@ export function SearchView({
     const folders = new Map<string, number>();
     let attachments = 0;
     for (const { hit: { message: m } } of merged) {
-      const who = m.from.name ?? m.from.address;
+      const who = m.from.name ?? displayAddress(m.from.address);
       senders.set(who, (senders.get(who) ?? 0) + 1);
       // View id where a view exists, else the folder's LEAF — never the raw namespaced path,
       // which is what would otherwise reach the screen for a folder this client has no view for.

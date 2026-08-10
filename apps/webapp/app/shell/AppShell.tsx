@@ -75,6 +75,7 @@ import {
 } from "./engine";
 import { useOlderMail } from "./older-mail";
 import { PLACE_LABEL, avatarHue, firstName, hueOf, initialsOf, nextFridayNine, resurfaceLabel } from "./format";
+import { displayAddress, displayDomain } from "./idn";
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
 import { AttachmentPreview } from "../components/AttachmentPreview";
 import { dispatchMarkAllRead } from "./read-all";
@@ -1883,7 +1884,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       const place = PLACE_LABEL[dest] ?? dest;
       // The SUBJECT of the sentence follows the scope, or a domain decision would report
       // itself as being about the one address the user happened to click.
-      const who = scope === "domain" ? sender.domain : sender.address;
+      const who = scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
       if (plan.mutations.length === 0) {
         toast(t("screening.toastAlready", { sender: who, place }));
         return;
@@ -1908,7 +1909,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       const sender = senderScreening(reader, messageId);
       if (!sender) return;
       setSenderAudit({
-        title: scope === "domain" ? sender.domain : sender.address,
+        title: scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address),
         domain: scope === "domain",
         rows: attributeMessages(reader, sender.scopes[scope].messages),
       });
@@ -1966,7 +1967,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         // as the rule having done less than it said. The confirmed sentence names the FIELD the
         // term reads (mail 0052), because "in the subject" about a text rule is a false claim.
         toast(t.has(`screening.${key}`)
-          ? t(`screening.${key}`, { sender: ctx.address, place, count: plan.matched, term: plan.term })
+          ? t(`screening.${key}`, { sender: displayAddress(ctx.address), place, count: plan.matched, term: plan.term })
           : key === "subjectAlready"
             ? `You already had that rule. Nothing changed.`
             : key === "subjectRuleFailed"
@@ -1974,8 +1975,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               : key === "subjectRuleQueued"
                 ? `Rule saved here. We'll send it when you're back online.`
                 : plan.field === "body"
-                  ? `Mail from ${ctx.address} with »${plan.term}« in the text now files to ${place}.`
-                  : `Mail from ${ctx.address} with »${plan.term}« in the subject now files to ${place}.`);
+                  ? `Mail from ${displayAddress(ctx.address)} with »${plan.term}« in the text now files to ${place}.`
+                  : `Mail from ${displayAddress(ctx.address)} with »${plan.term}« in the subject now files to ${place}.`);
       });
     },
     [engine, reader, toast, t],
@@ -3475,7 +3476,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             }}
             mailboxesLabel={t("rail.mailboxes")}
             mailboxes={mailboxes.map((m) => ({
-              name: (m as { name?: string }).name ?? m.address,
+              name: (m as { name?: string }).name ?? displayAddress(m.address),
               hint: (m as { railHint?: string }).railHint ?? m.provider,
             }))}
             dock={railDock}

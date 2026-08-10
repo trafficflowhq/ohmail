@@ -56,6 +56,7 @@ import { useTranslations } from "next-intl";
 import { DECISION_DONE_LABEL } from "@ohmail/ui";
 import { Avatar, InfoNote } from "@ohmail/ui";
 import { avatarHue, initialsOf } from "./format";
+import { displayAddress, displayAddressee, displayDomain } from "./idn";
 import "./sender-sheet.css";
 import {
   DECISION_OF_DEST,
@@ -114,7 +115,15 @@ export function SenderMenu({
     return () => document.removeEventListener("mousedown", onDown);
   }, [onClose]);
 
-  const label = sender.name || sender.address;
+  const label = displayAddressee(sender.name, sender.address);
+  /**
+   * THE ADDRESS AND DOMAIN AS THE COPY READS THEM — an internationalized domain decoded
+   * (`idn.ts`). Every sentence in this menu is a promise about what a rule will do, and it should
+   * name the sender the way the reader knows them. What the rule is WRITTEN from stays
+   * `sender.address` / `sender.domain`, which is also what `avatarHue` keys on below.
+   */
+  const who = displayAddress(sender.address);
+  const whichDomain = displayDomain(sender.domain);
   // Offered only when there IS a domain: `decide` answers 422 for an address with no `@`
   // (an empty `match` on a domain rule is compared against the empty domain of every other
   // malformed address), so the switch must not present a choice the server refuses.
@@ -144,14 +153,14 @@ export function SenderMenu({
       ref={rootRef}
       className="senderm"
       role="dialog"
-      aria-label={t("aria", { sender: sender.address })}
+      aria-label={t("aria", { sender: who })}
       style={{ left: state.x, top: state.y }}
     >
       <div className="sm-head">
         <Avatar initials={initialsOf(label)} hue={avatarHue(sender.address)} size="s" />
         <span className="sm-who">
           <b>{label}</b>
-          {sender.name ? <small>{sender.address}</small> : null}
+          {sender.name ? <small>{who}</small> : null}
         </span>
       </div>
 
@@ -166,7 +175,7 @@ export function SenderMenu({
               className={scope === s ? "on" : undefined}
               onClick={() => { setScope(s); setConfirm(null); }}
             >
-              {s === "sender" ? t("scopeAddress") : t("scopeDomain", { domain: sender.domain })}
+              {s === "sender" ? t("scopeAddress") : t("scopeDomain", { domain: whichDomain })}
               {/* THE SIZE OF THE CHOICE, ON THE CHOICE. Domain scope on a shared provider is
                   the foot-gun; "214 messages · 38 senders" is what makes that visible without
                   a blocklist nobody can maintain. */}
@@ -239,11 +248,11 @@ export function SenderMenu({
           <p>
             {scope === "domain"
               ? t("unsubDomain", {
-                  domain: sender.domain,
+                  domain: whichDomain,
                   senders: preview.senders,
                   place: DECISION_DONE_LABEL[confirm],
                 })
-              : t("unsubSender", { sender: sender.address, place: DECISION_DONE_LABEL[confirm] })}
+              : t("unsubSender", { sender: who, place: DECISION_DONE_LABEL[confirm] })}
           </p>
           {/* THE FINE PRINT, SPLIT ON WHAT A PERSON MUST READ BEFORE PRESSING.
               "Once, and there is no undo" is the irreversible part and it stays on screen with
@@ -325,8 +334,8 @@ export function SenderMenu({
       <div className="sm-foot">
         {subject.waiting
           ? scope === "domain"
-            ? t("footRuleDomain", { domain: sender.domain })
-            : t("footRule", { sender: sender.address })
+            ? t("footRuleDomain", { domain: whichDomain })
+            : t("footRule", { sender: who })
           : makeRule
             ? RETRO_DEFAULT_ON
               // The sentence that used to promise only the future. It now names the
@@ -335,11 +344,11 @@ export function SenderMenu({
               // nothing else. Saying so here is the "way back" this feature actually has: the
               // count and the choice, before the click.
               ? scope === "domain"
-                ? t("footWillRuleRetroDomain", { domain: sender.domain })
-                : t("footWillRuleRetro", { sender: sender.address })
+                ? t("footWillRuleRetroDomain", { domain: whichDomain })
+                : t("footWillRuleRetro", { sender: who })
               : scope === "domain"
-                ? t("footWillRuleDomain", { domain: sender.domain })
-                : t("footWillRule", { sender: sender.address })
+                ? t("footWillRuleDomain", { domain: whichDomain })
+                : t("footWillRule", { sender: who })
             : t("footNoRule")}
       </div>
     </div>
