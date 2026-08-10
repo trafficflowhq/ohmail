@@ -226,12 +226,24 @@ export class SyncService {
      * client rendered empty. Bootstrapping such a mailbox would have taken minutes of wall clock
      * spread over dozens of pages.
      *
-     * Only `message` is prefetched because it is the only type that appears in volume; the other
-     * six stay on the per-row path, which is correct and rare. `materializeMessages` applies the
-     * same `accountId` predicate the per-row call did, so this changes cost and nothing else.
+     * `message` AND `thread` are prefetched because they are the two types that appear in
+     * volume — ingest records a thread create or update beside nearly every message create, so a
+     * catch-up page is dominated by the pair of them. `thread` learned this the way `message`
+     * did, measured rather than assumed: `materializeThread` is three sequential round-trips,
+     * so a 500-change page carrying a couple hundred thread changes pays hundreds of serial
+     * round-trips — measured in the tens of seconds against a remote database, which is the
+     * difference between a resume that converges and one that visibly hangs.
+     * `materializeThreads` (three queries whatever the count) already served the
+     * snapshot reader; a page of hundreds now costs what a page of one costs on both paths.
+     *
+     * The other six types stay on the per-row path, which is correct and rare. Both batch
+     * readers apply the same `accountId` predicate the per-row calls did, so this changes cost
+     * and nothing else.
      */
     const messageIds = rows.filter((r) => r.entityType === "message" && r.op !== "delete").map((r) => r.entityId);
     const prefetched = await materializeMessages(db, accountId, messageIds);
+    const threadIds = rows.filter((r) => r.entityType === "thread" && r.op !== "delete").map((r) => r.entityId);
+    const prefetchedThreads = await materializeThreads(db, accountId, threadIds);
 
     for (const row of rows) {
       const type = row.entityType as EntityType;
@@ -245,11 +257,13 @@ export class SyncService {
       }
 
       // Re-materialize the live entity. If it is gone, emit a delete tombstone
-      // instead — regardless of the original op. A message absent from the
+      // instead — regardless of the original op. A message or thread absent from its
       // prefetch is absent for the same reason the per-row call returned null.
       const entity = type === "message"
         ? (prefetched.get(id) ?? null)
-        : await materialize(db, accountId, type, id);
+        : type === "thread"
+          ? (prefetchedThreads.get(id) ?? null)
+          : await materialize(db, accountId, type, id);
       if (entity === null) {
         deletes.push({ type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() });
         continue;
