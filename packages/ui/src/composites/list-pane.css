@@ -6,16 +6,17 @@
 .list-col.solo{width:100%;max-width:680px;margin:0 auto}
 .vhead{display:flex;align-items:baseline;gap:12px;padding:22px 30px 14px;flex-wrap:wrap}
 .vhead h1{font-size:26px;font-weight:600;letter-spacing:-.025em;margin:0}
-/* The meta count YIELDS before the header action does: it shrinks and ellipsises rather than
-   bumping a far-right control onto a line of its own, which is what keeps "Mark all read" on the
-   title row down to 390px. Full width at any normal size; it only clips when the row is genuinely
-   too narrow to hold title + count + action together. */
-.vhead .meta{font-size:12px;color:var(--ink3);flex:0 1 auto;min-width:0;overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap}
-/* A quiet, far-right header control (e.g. "Mark all read"). `flex:none` so it never shrinks and
-   never wraps — the meta beside it is the thing that gives. The control styles itself (its CSS is
-   co-located with the component: `apps/webapp/app/components/mark-all-read.css`). */
-.vhead-action{margin-left:auto;align-self:center;flex:none}
+.vhead .meta{font-size:12px;color:var(--ink3)}
+/* A quiet, far-right header control (e.g. "Mark all read"). Muted like the meta count until
+   hover, so it does not compete with the title. */
+.vhead-action{margin-left:auto;align-self:center}
+.mark-all-read{
+  appearance:none;border:0;background:transparent;font:inherit;font-size:12px;
+  color:var(--ink3);padding:4px 9px;border-radius:7px;cursor:pointer;
+  transition:color .12s ease, background .12s ease;
+}
+.mark-all-read:hover{color:var(--accent);background:var(--accent-soft)}
+.mark-all-read:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 /* 132px of this was clearance for a capsule that floated over the bottom of every view. The
    capsule is a group at the foot of the rail now (`.rail-dock`), so nothing overlaps the end of
    the list and the only thing left to reserve is the full falloff of the last row's shadow. */

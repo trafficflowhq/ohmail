@@ -2,8 +2,36 @@ import { ServiceError, type CreateDraftBody, type PatchDraftBody } from "@traffi
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import { makeSendAdapter } from "../send-adapter.js";
+import { makeOpenAdapter } from "../attachments-adapter.js";
 import type { Route } from "../router.js";
 import { drafts, sends, readBody } from "./shared.js";
+
+/**
+ * THE SEND REQUEST'S BODY — everything the delivery needs beyond the stored draft, and nothing
+ * that is kept. `attachments` carries file bytes as base64 (JSON is the transport the send route
+ * has always used); they are decoded here and handed to `SendService` as raw bytes that reach the
+ * `OutboundMessage` and no table. An ordinary send sends no body at all — `readBody` returns `{}`.
+ */
+interface SendAttachmentWire { filename?: string; contentType?: string; contentBase64?: string }
+interface SendRequestBody {
+  attachments?: SendAttachmentWire[];
+  /** Forward this original — the server reads it, refuses a no_forward one, and quotes it. */
+  forwardOf?: string;
+}
+
+/** base64 → raw bytes, with lenient defaults; the total is capped in `SendService.reserve`. */
+function decodeSendAttachments(
+  items: SendAttachmentWire[] | undefined,
+): Array<{ filename: string; contentType: string; content: Buffer }> | undefined {
+  if (!Array.isArray(items) || items.length === 0) return undefined;
+  return items.map((a) => ({
+    filename: typeof a.filename === "string" && a.filename.length > 0 ? a.filename : "attachment",
+    contentType: typeof a.contentType === "string" && a.contentType.length > 0
+      ? a.contentType
+      : "application/octet-stream",
+    content: Buffer.from(typeof a.contentBase64 === "string" ? a.contentBase64 : "", "base64"),
+  }));
+}
 
 /**
  * §5 /drafts — manual compose drafts (Phase 3a). create/update/delete emit a
@@ -70,10 +98,22 @@ export const draftsRoutes: Route[] = [
     handler: async (req, deps, params) => {
       const key = req.headers.get("idempotency-key");
       if (!key) throw new ServiceError("validation_failed", 400, "Idempotency-Key header is required");
+      // Attachment bytes ride here — decoded to raw and handed to the service, never persisted. An
+      // ordinary send carries no body, so `readBody` answers `{}` and this is `undefined`.
+      const body = await readBody<SendRequestBody>(req);
+      const attachments = decodeSendAttachments(body.attachments);
+      const forwardOf = typeof body.forwardOf === "string" && body.forwardOf.length > 0 ? body.forwardOf : undefined;
       // Prod: decrypt both imap+smtp creds → connected ImapAdapter (R-P3-5). Tests
       // may inject a fake/GreenMail send spy via `deps.services.sendAdapter`.
       const openSendAdapter = deps.services?.sendAdapter ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId));
-      const result = await sends(deps).send(serviceContext(deps, req), params.id!, key, { openSendAdapter });
+      // Only ever OPENED on a forward (SendService calls it lazily), so a normal send builds this
+      // factory and never dials. Streams the forwarded original's attachments from the user's own
+      // IMAP, straight onto the outgoing message, never persisted.
+      const openFetchAdapter = makeOpenAdapter(deps);
+      const result = await sends(deps).send(
+        serviceContext(deps, req), params.id!, key,
+        { openSendAdapter, openFetchAdapter }, { attachments, forwardOf },
+      );
       switch (result.status) {
         case "sent":
           return jsonResponse(

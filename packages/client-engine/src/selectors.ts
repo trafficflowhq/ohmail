@@ -2,7 +2,6 @@ import type { EntityReader } from "./store.js";
 import {
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
-  type EmailAddress,
   type EngineDraft,
   type EngineMessage,
   type Folder,
@@ -26,37 +25,9 @@ import {
  * when called through `engine.read()`.
  */
 
-/**
- * THE DAY AND MONTH NAMES THIS FILE MINTS, FROM `Intl`, IN UTC, IN WHATEVER LOCALE THE CALLER NAMES.
- *
- * Three hardcoded English arrays stood here and they are the most-repeated words in the product:
- * every message row that is not from today renders one ({@link messageDisplayTime}), every Receipts
- * day heading renders one ({@link receiptsByDay}), and every screened-out sender carries one. A
- * German reader saw "Tue", "Thursday" and "2 Aug".
- *
- * THE LOCALE IS A PARAMETER AND DEFAULTS TO ENGLISH, which is what keeps this package free of an
- * i18n dependency: `@ohmail/client-engine` has no catalogue, no provider and no opinion about
- * language, and every one of its own tests keeps asserting the English strings it always did. The
- * web app is the caller that passes a reader's locale (`app/shell/format.ts`, `AppShell`,
- * `screener-state.ts`).
- *
- * `timeZone: "UTC"` on all of them, because every instant here is read with `getUTC*` — see
- * `messageDisplayTime`'s bands. Naming a day in German does not move the day.
- *
- * Cached by locale-and-shape: constructing a formatter is the expensive part and these are called
- * once per visible row.
- */
-const NAMERS = new Map<string, Intl.DateTimeFormat>();
-
-function named(locale: string, opts: Intl.DateTimeFormatOptions, d: Date): string {
-  const key = `${locale}|${opts.weekday ?? ""}|${opts.month ?? ""}`;
-  let fmt = NAMERS.get(key);
-  if (!fmt) {
-    fmt = new Intl.DateTimeFormat(locale, { ...opts, timeZone: "UTC" });
-    NAMERS.set(key, fmt);
-  }
-  return fmt.format(d);
-}
+const WEEKDAY_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -93,12 +64,7 @@ function daysAgo(d: Date, now: Date): number {
  * A FUTURE date (a resurfaced or scheduled row) takes the dated branch too: `daysAgo` goes
  * negative, and "Fri" for something that has not happened yet reads as the past.
  */
-export function messageDisplayTime(
-  m: Pick<EngineMessage, "time" | "date">,
-  now: Date,
-  /** Which language to name the day and month in. English by default — see {@link named}. */
-  locale = "en",
-): string {
+export function messageDisplayTime(m: Pick<EngineMessage, "time" | "date">, now: Date): string {
   if (m.time) return m.time;
   if (!m.date) return "";
   const d = new Date(m.date);
@@ -106,9 +72,9 @@ export function messageDisplayTime(
 
   const ago = daysAgo(d, now);
   if (ago === 0) return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
-  if (ago >= 1 && ago <= 6) return named(locale, { weekday: "short" }, d);
+  if (ago >= 1 && ago <= 6) return WEEKDAY_SHORT[d.getUTCDay()]!;
 
-  const stamp = `${d.getUTCDate()} ${named(locale, { month: "short" }, d)}`;
+  const stamp = `${d.getUTCDate()} ${MONTH_SHORT[d.getUTCMonth()]}`;
   return d.getUTCFullYear() === now.getUTCFullYear() ? stamp : `${stamp} ${d.getUTCFullYear()}`;
 }
 
@@ -303,51 +269,8 @@ export function sendingMailboxId(reader: EntityReader): string | null {
 // ── Ohbox: the read-state split (new_for_you / previously_seen, brief §4) ──
 
 export interface OhboxView {
-  /**
-   * RESURFACED MAIL, PINNED ABOVE EVERYTHING.
-   *
-   * Bubbled-up mail whose time has come: the worker's {@link bubbleUpPass} flips a due
-   * `bubbled_up` state to `resurfaced` (never straight back to `none`), and that is the whole of
-   * how a set-aside message earns the top of the Ohbox again. It is a group of its own — not
-   * folded into "New for you" — because it is a different claim: not "this arrived", but "you
-   * asked to see this again now". Excluded from the two groups below so a resurfaced row is
-   * counted and rendered exactly once.
-   */
-  resurfaced: EngineMessage[];
   newForYou: EngineMessage[];
   previouslySeen: EngineMessage[];
-}
-
-/** The organised ohmail views' folders — every folder the worker routes INBOX mail into. */
-const OHMAIL_FOLDERS: ReadonlySet<string> = new Set(Object.keys(VIEW_OF_FOLDER));
-
-/**
- * A MESSAGE THE ACCOUNT ITSELF WROTE.
- *
- * The worker watches the Sent folder now, so the account holder's own mail rides the mirror like
- * any other row — but it keeps its ARRIVAL folder (the pipeline never refiles Sent), and the Sent
- * folder is the only one the worker observes that is NOT one of the six organised ohmail views.
- * So "own-sent" is exactly "a mirror row whose folder is none of the organised views": no
- * account-address list is needed on the client, which does not have one on a Cloud account.
- *
- * These rows land already `\Seen` (the pipeline forces it — nothing you wrote is new to you), so
- * they never belong in "New for you"; {@link ohboxView} files every one of them under "Earlier".
- */
-export function isOwnSent(m: Pick<EngineMessage, "folder">): boolean {
-  return !OHMAIL_FOLDERS.has(m.folder);
-}
-
-/**
- * IS THIS A RESURFACED ROW.
- *
- * A plain-string compare because `resurfaced` is deliberately NOT a member of {@link TriageState}:
- * a resurfaced message belongs to NO bottom pile (it is back at the top of the Ohbox), so
- * {@link triagePiles} must go on ignoring it, and widening the union would invite a `pileOf` arm
- * that files it somewhere. The state exists only on the wire and in the mirror; here it is a fact
- * a row either has or does not.
- */
-export function isResurfaced(m: Pick<EngineMessage, "triage">): boolean {
-  return (m.triage?.state as string | undefined) === "resurfaced";
 }
 
 /**
@@ -404,90 +327,13 @@ function byLastReadDesc(a: EngineMessage, b: EngineMessage): number {
 }
 
 export function ohboxView(reader: EntityReader): OhboxView {
-  const inbox = messagesIn(reader, FOLDER_OF_VIEW.ohbox);
-  // the account's own sent mail, folder-agnostic (see `isOwnSent`), newest first.
-  const sent = reader.list<EngineMessage>("message").filter(isOwnSent).sort(byDateDesc);
-
-  // resurfaced rows are pulled OUT of the ordinary split and pinned above it. Newest bubble
-  // first — the order the two groups below use for anything that has no reading time to sort by.
-  const resurfaced = inbox.filter(isResurfaced).sort(byDateDesc);
-  const pinned = new Set(resurfaced.map((m) => m.id));
-
+  const all = messagesIn(reader, FOLDER_OF_VIEW.ohbox);
   return {
-    resurfaced,
     // Unread mail is ordered by ARRIVAL, unchanged: nothing has been read, so there is no reading
-    // order to use and the question the group answers is what came in. Resurfaced rows are held
-    // out — they sit pinned above, never doubled here.
-    newForYou: inbox.filter((m) => m.unread && !pinned.has(m.id)),
-    // "Earlier" is read INBOX mail joined by the account's own sent mail. Sent rows carry no
-    // `lastReadAt`, so `byLastReadDesc` files them into its by-date tail — "sorted by date in the
-    // read block" — below mail with a real reading time, which is the honest place for them.
-    previouslySeen: [
-      ...inbox.filter((m) => !m.unread && !pinned.has(m.id)),
-      ...sent,
-    ].sort(byLastReadDesc),
+    // order to use and the question the group answers is what came in.
+    newForYou: all.filter((m) => m.unread),
+    previouslySeen: all.filter((m) => !m.unread).sort(byLastReadDesc),
   };
-}
-
-/** How many participant circles a row shows at most — three overlapping avatars. */
-export const THREAD_PARTICIPANTS_MAX = 3;
-
-/**
- * THE PEOPLE IN A CONVERSATION, newest voice first.
- *
- * Distinct from {@link threadOf}, which returns the counterpart's MESSAGES for the reading pane.
- * This returns the SENDERS, de-duplicated by address, so a ten-mail exchange between two people
- * yields two circles rather than a "10" badge. Own-sent mail rides the mirror now (the Sent-folder
- * watch), so the account holder is one of the voices wherever they have written in the thread.
- *
- * Capped at {@link THREAD_PARTICIPANTS_MAX}: the row shows three circles and no more, and the
- * fourth would widen a slot the row holds at a constant width.
- *
- * `[]` for a message with no thread, or the sole member of one — the same "there is no
- * conversation here" contract {@link threadOf} keeps, so the caller renders circles only on a real
- * multi-message thread and never a lone circle standing in for a thread of one.
- *
- * O(mirror) per call, like every selector here. The Ohbox calls it only for the handful of rows
- * its window has mounted, and only for rows that carry a `threadId` — bounded by the window, not
- * the mailbox.
- */
-export function threadParticipants(reader: EntityReader, threadId: string): EmailAddress[] {
-  const members = reader
-    .list<EngineMessage>("message")
-    .filter((m) => m.threadId === threadId);
-  if (members.length <= 1) return [];
-  members.sort(byDateDesc);
-  const seen = new Set<string>();
-  const out: EmailAddress[] = [];
-  for (const m of members) {
-    const key = senderKey(m.from.address);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(m.from);
-    if (out.length >= THREAD_PARTICIPANTS_MAX) break;
-  }
-  // A single distinct sender is not a conversation of people — the numeric badge says more than
-  // one lone circle would, so leave that to the caller by answering "no participants".
-  return out.length > 1 ? out : [];
-}
-
-/**
- * THE CONVERSATION'S NAME — the mirror's thread row's stored subject, or `null` while no
- * thread row for this id has synced.
- *
- * The server names a thread at CREATE with the localized reply/forward prefixes stripped
- * (`baseSubject`, `packages/core`), and a heal pass renamed the rows stored before that table
- * was complete — so the stored name is already clean, and the client deliberately does NOT
- * re-derive it: a second copy of the prefix table here would be a second definition to drift.
- *
- * `null` is a real state, not an error: snapshot pages carry the threads their OWN messages
- * name, so a mirror can briefly hold a message whose thread row is a page behind. The caller
- * falls back to a member message's subject until the row lands.
- */
-export function threadSubject(reader: EntityReader, threadId: string): string | null {
-  const t = reader.get<{ subject?: unknown }>("thread", threadId);
-  const s = t?.subject;
-  return typeof s === "string" && s.trim() !== "" ? s : null;
 }
 
 // ── Reads: the waterline partition ─────────────────────────────────────────
@@ -516,39 +362,22 @@ export interface ReceiptsDayGroup {
   items: EngineMessage[];
 }
 
-/**
- * "Today" / "Thursday" / "2 Aug" — and their equivalents in the caller's language.
- *
- * `Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(0, "day")` is what gives the first
- * of the three: it is the platform's own word for the current day ("today", "heute"), which is
- * better than a catalogue entry here for the reason the whole of {@link named} is — this package
- * has no catalogue, and inventing one for one word would give it an i18n dependency. It answers
- * lower case in both languages, so the first letter is raised to match the weekday and date labels
- * beside it, which `Intl` capitalises itself.
- */
-function dayLabel(date: Date, now: Date, locale: string): string {
+function dayLabel(date: Date, now: Date): string {
   const sameDay =
     date.getUTCFullYear() === now.getUTCFullYear() &&
     date.getUTCMonth() === now.getUTCMonth() &&
     date.getUTCDate() === now.getUTCDate();
-  if (sameDay) {
-    const today = new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(0, "day");
-    return today.charAt(0).toUpperCase() + today.slice(1);
-  }
+  if (sameDay) return "Today";
   const ageDays = Math.floor((Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) -
     Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())) / 86_400_000);
-  if (ageDays <= 6) return named(locale, { weekday: "long" }, date);
-  return `${date.getUTCDate()} ${named(locale, { month: "short" }, date)}`;
+  if (ageDays <= 6) return WEEKDAY_LONG[date.getUTCDay()]!;
+  return `${date.getUTCDate()} ${MONTH_SHORT[date.getUTCMonth()]}`;
 }
 
-export function receiptsByDay(
-  reader: EntityReader, now: Date,
-  /** Which language the day headings are named in. English by default — see {@link named}. */
-  locale = "en",
-): ReceiptsDayGroup[] {
+export function receiptsByDay(reader: EntityReader, now: Date): ReceiptsDayGroup[] {
   const groups: ReceiptsDayGroup[] = [];
   for (const m of messagesIn(reader, FOLDER_OF_VIEW.receipts)) {
-    const label = dayLabel(m.date ? new Date(m.date) : now, now, locale);
+    const label = dayLabel(m.date ? new Date(m.date) : now, now);
     const last = groups[groups.length - 1];
     if (last && last.label === label) last.items.push(m);
     else groups.push({ label, items: [m] });
@@ -596,12 +425,12 @@ export function senderKey(address: string): string {
  * `hydrateBody` has run for this id, and `bodyState` tells the preview which of the four
  * situations it is in so it can never present a truncation as the mail.
  */
-function heldOf(reader: EntityReader, m: EngineMessage, now: Date, locale: string): ScreenerHeldMail {
+function heldOf(reader: EntityReader, m: EngineMessage, now: Date): ScreenerHeldMail {
   const body = bodyOf(reader, m);
   return {
     id: m.id,
     subject: m.subject,
-    time: messageDisplayTime(m, now, locale),
+    time: messageDisplayTime(m, now),
     body: body.text,
     bodyState: body.state,
     // Carried so the preview can render the mail the way the reading pane does. `bodyOf`
@@ -671,11 +500,7 @@ function heldOf(reader: EntityReader, m: EngineMessage, now: Date, locale: strin
  * `physicalFolder` is unset, so the gate-physical rep IS `newestFirst[0]` and `gatePhysical` is
  * true — the rep does not move and no past-the-gate branch is reached.
  */
-export function screenerSegments(
-  reader: EntityReader, now: Date = new Date(),
-  /** Which language the derived rows' stamps are named in. English by default — see {@link named}. */
-  locale = "en",
-): ScreenerSegments {
+export function screenerSegments(reader: EntityReader, now: Date = new Date()): ScreenerSegments {
   const grouped: Record<ScreenerSegment, Map<string, EngineMessage[]>> = {
     waiting: new Map(),
     screened_out: new Map(),
@@ -722,16 +547,16 @@ export function screenerSegments(
           segment,
           from: rep.from,
           initial: (name.trim()[0] ?? "?").toUpperCase(),
-          time: messageDisplayTime(rep, now, locale),
+          time: messageDisplayTime(rep, now),
           scope: "sender",
           // DEGRADATION: no classifier runs client-side and `/sync` carries no
           // suggestion, so a derived row has none. `GET /screener` still returns
           // `aiSuggestion` for desktop/native and for enrichment later.
           ai: null,
           // Oldest first — the order every preview renders, and ALL of them.
-          held: [...newestFirst].reverse().map((m) => heldOf(reader, m, now, locale)),
+          held: [...newestFirst].reverse().map((m) => heldOf(reader, m, now)),
           ...(segment === "screened_out" && repDate
-            ? { screenedOn: `${repDate.getUTCDate()} ${named(locale, { month: "short" }, repDate)}` }
+            ? { screenedOn: `${repDate.getUTCDate()} ${MONTH_SHORT[repDate.getUTCMonth()]}` }
             : {}),
           derived: true,
           gatePhysical,
