@@ -23,6 +23,7 @@ import {
   type ImapCursor, type ChangeBatch, type PersistedFolderCursor,
   type OutboundMessage, type SendResult, type FetchedPart, type FetchPartOptions,
   type FetchRawOptions, type NetTimeouts, type FetchByUidOptions, type TargetedFetch,
+  type ImapAuth, type ImapOAuthAuth, type ResolvedImapAuth,
 } from "./imap-types.js";
 import {
   makeLeaseIo, makeLeasePeekIo,
@@ -31,6 +32,9 @@ import {
 
 // Re-export the adapter types + folder constants so consumers can import them from this entrypoint.
 export * from "./imap-types.js";
+// The shared credential→auth builder lives beside the adapter and is reached through the same
+// entrypoint every dialer already imports, so no site has to reinvent the `authType` branch.
+export * from "./imap-auth.js";
 
 /** ref === `${uidvalidity}:${uid}` */
 export function makeRef(uidValidity: bigint | number | string, uid: number): string { return `${uidValidity}:${uid}`; }
@@ -115,15 +119,41 @@ export function orderCandidates(uids: readonly number[], dates: ReadonlyMap<numb
  * reject a configuration the adapter would refuse anyway, rather than re-deriving the rule.
  */
 export function imapFlowOptions(
-  config: ImapConfig, opts: Pick<ImapAdapterOpts, "logger"> = {},
+  config: Omit<ImapConfig, "auth"> & { auth: ResolvedImapAuth },
+  opts: Pick<ImapAdapterOpts, "logger"> = {},
 ): ImapFlowOptions {
   const t: NetTimeouts = { ...DEFAULT_NET_TIMEOUTS, ...(config.timeouts ?? {}) };
   return {
+    // `config.auth` is the RESOLVED wire form: `{ user, pass }` or `{ user, accessToken }`. This
+    // function stays pure/sync — the OAuth CALLBACK is awaited by `connect()` BEFORE it reaches here,
+    // so the TLS-floor guards can keep asserting the whole assembled option set. imapflow reads
+    // `auth.accessToken` and issues XOAUTH2 with no password on the wire.
     host: config.host, port: config.port,
     ...imapTlsFloor(config.host, config.secure).options,
     auth: config.auth, qresync: true, logger: opts.logger ? undefined : false,
     connectionTimeout: t.connectionMs, greetingTimeout: t.greetingMs, socketTimeout: t.socketMs,
   };
+}
+
+/** Is this the OAuth2 (callback-carrying) auth member? */
+export function isOAuthAuth(auth: ImapAuth): auth is ImapOAuthAuth {
+  return "fetchAccessToken" in auth;
+}
+
+/**
+ * Await the OAuth callback into a literal token, or pass a password through untouched.
+ *
+ * This is the ONE await between a stored config and a socket. A password config returns byte-for-byte
+ * what it was handed — the union defaults to the historical path with nothing added — so an existing
+ * mailbox reaches `imapFlowOptions` exactly as before. An OAuth config resolves a FRESH token on every
+ * call, which is what makes a re-dial after a dead socket pick up a new token with no reconnect
+ * machinery of its own.
+ */
+export async function resolveImapAuth(auth: ImapAuth): Promise<ResolvedImapAuth> {
+  if (isOAuthAuth(auth)) {
+    return { user: auth.user, accessToken: await auth.fetchAccessToken() };
+  }
+  return auth;
 }
 
 /** The complete nodemailer transport option set for a config's SMTP block. See {@link imapFlowOptions}. */
@@ -356,11 +386,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // swallow the new connection's death. See {@link established} and {@link closing}.
     this.established = false;
     this.closing = false;
+    // FIRST, before any option is assembled: resolve the auth. For a password config this is a
+    // no-op; for an OAuth config it awaits `fetchAccessToken()` into a literal token. Doing it here
+    // — above the injected-client branch too — is what makes "connect() fetches a token, and a
+    // re-dial fetches a FRESH one" true regardless of how the client was constructed.
+    const resolvedAuth = await resolveImapAuth(this.config.auth);
     if (this.opts.client) {
       this.client = this.opts.client as ImapFlow;
       this.guardAsyncErrors();
     } else {
-      this.client = new ImapFlow(imapFlowOptions(this.config, { logger: this.opts.logger }));
+      this.client = new ImapFlow(imapFlowOptions({ ...this.config, auth: resolvedAuth }, { logger: this.opts.logger }));
       // BEFORE the dial, not after, and the ordering is the whole point. imapflow's own
       // `emitError` routes to `initialReject` only while the connect promise is pending; the
       // moment it resolves, every later failure is a plain `emit("error")`. `connect()` is
@@ -1728,6 +1763,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // copy's headers — there is no way for the two to disagree about who was blind-copied.
     const mail = outboundToMail(msg, messageId);
 
+    // OAUTH SMTP IS A PER-MESSAGE OVERRIDE, NOT TRANSPORTER STATE. The transporter (built at
+    // `connect()`) carries NO static auth for an OAuth config — see `smtpTransportOptions`, whose
+    // `auth` is undefined when `smtp.auth` is — because a transporter outlives any access token. A
+    // token is fetched HERE, at send time, and handed to nodemailer as message-level auth
+    // (`mail.data.auth`, honoured by `smtp-transport` `getAuth`), which issues XOAUTH2 for this one
+    // send. A password config leaves the transporter's static auth in place and adds nothing.
+    if (isOAuthAuth(this.config.auth)) {
+      const accessToken = await this.config.auth.fetchAccessToken();
+      (mail as MailWithOAuth).auth = { type: "OAuth2", user: this.config.auth.user, accessToken };
+    }
+
     await this.transporter.sendMail(mail);
     const raw = await buildRaw(mail);
 
@@ -1889,6 +1935,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
  * to prevent. The Cc/Bcc round-trip test builds this and asserts both halves,
  * and was watched to go red when `bcc` is spelt as `keepBcc: true` or moved into the headers.
  */
+/**
+ * `Mail.Options` plus the per-message `auth` nodemailer honours at runtime (`mail.data.auth`) but
+ * `@types/nodemailer` omits from the message-options type. Narrowed to the XOAUTH2 shape we set.
+ */
+type MailWithOAuth = Mail.Options & { auth?: { type: "OAuth2"; user: string; accessToken: string } };
+
 export function outboundToMail(msg: OutboundMessage, messageId: string): Mail.Options {
   return {
     from: msg.from,

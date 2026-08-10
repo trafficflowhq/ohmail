@@ -211,6 +211,28 @@ export function smtpTlsFloor(host: string, secure: boolean): {
   };
 }
 
+/** Password auth as STORED in a config — the historical shape, unchanged. */
+export interface ImapPasswordAuth { user: string; pass: string }
+/**
+ * OAuth2 auth as STORED in a config: a CALLBACK, never a token.
+ *
+ * An access token is short-lived (minutes) and an `ImapConfig` outlives it — the worker holds one
+ * for the life of a connection, the API reuses a transporter across sends. So the token is not a
+ * field here; it is resolved at the moment it is needed ({@link ImapAdapter.connect} for IMAP,
+ * `ImapAdapter.send` for SMTP) by calling this. On a socket death the existing reconnect builds a
+ * FRESH adapter, whose `connect()` calls this again — which is the entire freshness story, with no
+ * mid-session re-auth and no token pinning anywhere.
+ */
+export interface ImapOAuthAuth { user: string; fetchAccessToken: () => Promise<string> }
+/** The auth a stored config may carry. The union defaults to the password path byte-for-byte. */
+export type ImapAuth = ImapPasswordAuth | ImapOAuthAuth;
+/**
+ * The RESOLVED wire form handed to imapflow — the {@link ImapOAuthAuth} callback already awaited
+ * into a literal `accessToken` (imapflow authenticates XOAUTH2 from `auth.accessToken` natively).
+ * Distinct from {@link ImapAuth} so the CALLBACK form can never reach the sync options builder.
+ */
+export type ResolvedImapAuth = { user: string; pass: string } | { user: string; accessToken: string };
+
 export interface ImapConfig {
   host: string;
   port: number;
@@ -220,7 +242,7 @@ export interface ImapConfig {
    * MANDATORY upgrade rather than an opportunistic one: see {@link imapTlsFloor}.
    */
   secure: boolean;
-  auth: { user: string; pass: string };
+  auth: ImapAuth;
   smtp?: { host: string; port: number; secure: boolean; auth?: { user: string; pass: string } };
   sentDomain?: string;
   /**
