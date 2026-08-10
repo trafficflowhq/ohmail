@@ -639,6 +639,44 @@ export const rules = pgTable("rules", {
   retroDoneAt: timestamp("retro_done_at", { withTimezone: true }),
   retroCursor: uuid("retro_cursor"),
   retroMoved: integer("retro_moved").notNull().default(0),
+
+  /* ── mail 0050 — A SECOND TERM ON A SENDER RULE: THE SUBJECT ────────────────────
+   *
+   * One sender sends two kinds of mail. `info@` at a small host is the invoice AND the
+   * `[NinjaFirewall]` alert every night; a sender rule can only say "all of it goes to Reads",
+   * which files the invoice with the alerts. The requirement is a rule that says BOTH things:
+   * *from this address AND with this in the subject*.
+   *
+   * NULL is the resting state and means "no subject term" — which is the truth for every rule
+   * that existed before this column and is byte-identical to the pre-slice router. There is no
+   * backfill and there can never be one: a term invented for an existing rule would NARROW a
+   * decision the user made about a whole sender, silently un-filing their mail.
+   *
+   * ── IT IS A CONJUNCTION, WHICH IS WHY IT IS SAFE TO ADD ────────────────────────
+   *
+   * `core/src/rules.ts#matches` reads it as an EXTRA term a rule must satisfy, never as an
+   * alternative one: a present term can only make a rule fire LESS often than it did. So the
+   * column cannot widen anybody's routing, and a row whose term nothing understands (an older
+   * engine reading a newer database) simply keeps matching on the sender alone — which is the
+   * pre-column behaviour and not a bypass.
+   *
+   * ── AND IT CHANGES THE ORDER, WHICH IS THE HALF THAT NEEDED A DECISION ─────────
+   *
+   * A subject-carrying sender rule OUTRANKS a bare sender rule for the same address
+   * (`compareRules`, mirrored in `drizzle-repo.ts#listRules`' `ORDER BY`). Without that, writing
+   * "from info@… AND subject contains [NinjaFirewall] → Reads" beside an existing
+   * "from info@… → Ohbox" would be a coin toss decided by a UUID tie-break: the more specific
+   * statement has to win, or the feature does not work at the only moment anybody reaches for it.
+   *
+   * The CHECK forbids the empty and whitespace-only string, so "no term" has exactly one
+   * representation (NULL) at the storage layer rather than three the readers must each agree
+   * about. The 200-char ceiling is a refusal to store a subject-length haystack as a needle.
+   *
+   * A MAIL column, so it ships to the desktop LOCAL engine with the rest of `rules`. Unlike the
+   * `retro_*` family above it has a reader there from day one: the local engine runs this same
+   * `evaluateRules`.
+   */
+  subjectContains: text("subject_contains"),
 }, (t) => ({
   /**
    * The owed-work probe, run once per account per worker cycle. Without it that is a full scan

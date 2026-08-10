@@ -351,6 +351,13 @@
       "when": 1788468886206,
       "tag": "0049_mailbox_sync_requested_at",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1788728086206,
+      "tag": "0050_rule_subject_contains",
+      "breakpoints": true
     }
   ]
 }

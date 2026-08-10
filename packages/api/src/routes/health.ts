@@ -517,9 +517,43 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // No worker half: nothing in the sync worker reads or writes it. Deploy order: migration → API.
   //
   // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker — the column is
-  // read off a row fetched by primary key and nothing filters on it. It is the NEWEST entry in the
-  // mail journal.
+  // read off a row fetched by primary key and nothing filters on it.
   ["account_settings", "block_remote_images_at"],
+  // mail 0049_mailbox_sync_requested_at — the enforced-sync doorbell. One additive nullable
+  // timestamptz on `mailboxes`, and it earns a marker on the whole-row-select rule its OWN
+  // migration already states: *"`MailboxService.list` selects whole rows, so
+  // `["mailboxes","sync_requested_at"]` joins the mail schema markers for a clean 503 on a too-early
+  // API."* It was not added when the migration landed, so the marker list, the tag below and four
+  // censuses in `packages/db/test` were all stale on the default branch at once — recorded in
+  // `journal-split.test.ts`'s `0049` census entry rather than quietly fixed.
+  //
+  // The API also WRITES this column beside the send/move finalize, but that write is deliberately
+  // best-effort and caught, so the failure a too-early API produces is not the stamp — it is
+  // `select().from(mailboxes)` answering 42703, which takes out the mailbox list and every read that
+  // resolves a mailbox. That is the whole-row case, and it is why the marker is the column a query
+  // ENUMERATES rather than the one a feature reads.
+  //
+  // The worker half is the safe kind: a worker ahead of the migration fails its kick scan on the
+  // missing column, so no out-of-band cycle runs and the product falls back to poll-only latency —
+  // visible, not silent. Deploy order: migration → API → worker.
+  //
+  // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker — the scan is a
+  // short `IS NOT NULL` probe over a table with one row per connected mailbox.
+  ["mailboxes", "sync_requested_at"],
+  // mail 0050_rule_subject_contains — the second term on a sender rule. One additive nullable text
+  // column on `rules`, and it is the SECOND-strongest whole-row case on this list after
+  // `messages.last_read_at`, for a reason worth stating: `rules` is read by
+  // `select().from(rules)` in BOTH halves of the product. `materializeRule` serves `GET /rules`, the
+  // rule DTO on every `/sync` delta and the 201 of every rule the sender sheet writes; and
+  // `drizzle-repo.ts#listRules` is what the ROUTER consults on arrival. So an API deployed ahead of
+  // this migration answers 42703 on the rules surface AND makes every routing decision fail — not a
+  // panel, the organizing.
+  //
+  // The worker reads the column through the same `listRules`, and there the failure is NOT the safe
+  // kind: a retro pass or an ingest that 42703s stops filing mail rather than degrading to a
+  // lenient default. Deploy order is therefore migration → API → worker, and the migration arrow is
+  // load-bearing for once.
+  ["rules", "subject_contains"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -629,9 +663,22 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // cap makes `cutlineCounts`' `toISOString()` throw `RangeError`, and `GET /consent` 500s for that
   // account on every tab load. `setDormancyDays` refuses >365 with a 400, but that refusal is code and
   // can regress; the CHECK is the one layer that holds for every writer, and this marker is what makes
-  // a deploy against a database missing 0044 say `503 schema_incomplete` and name the file to run. It
-  // is the NEWEST entry in the mail journal.
+  // a deploy against a database missing 0044 say `503 schema_incomplete` and name the file to run.
   "account_settings_dormancy_days_max",
+  // mail 0050_rule_subject_contains — the constraint that makes NULL the ONLY representation of "this
+  // rule has no subject term". It is listed on 0027's rule (the column and the CHECK fail
+  // DIFFERENTLY, and only one of them is loud) and it is the sharpest instance of it in this list,
+  // because what the CHECK forbids is not an oversized value but an AMBIGUOUS one.
+  //
+  // Without the constraint, `''` and `'   '` are storable, and every reader has to decide
+  // independently whether they mean "absent" — `core/src/rules.ts#matches`, the specificity rank in
+  // `compareRules`, the `ORDER BY` in `drizzle-repo.ts#listRules`, and the client's rule list. They
+  // agree today. The first one that stops agreeing produces a rule that MATCHES EVERY SUBJECT while
+  // its row reads as specific: mail the user split by subject silently re-collapses into one pile,
+  // and nothing raises. `RulesService` refuses the same shapes with a 400, but that refusal is code
+  // and can regress; the CHECK is the layer that holds for every writer, including the retro pass
+  // and any future importer. It is the NEWEST entry in the mail journal.
+  "rules_subject_contains_nonempty",
 ];
 
 /* `EXPECTED_MARKERS` — the BOTH-HALVES count — moved to `./health-cloud.js` with the list it
@@ -833,8 +880,28 @@ export const MAIL_EXPECTED_MARKERS =
  * INDEX marker. The order is migration → API — and note that this is the one column here whose
  * ROLLBACK is not safe in the usual direction: dropping it returns every opted-out account to
  * auto-loading, so the API goes back before the column does. See the migration.
+ *
+ * `0049_mailbox_sync_requested_at` is probed ONCE, by `mailboxes.sync_requested_at`, on the
+ * whole-row-select rule its own migration file already states. **It was added two migrations late**
+ * — the migration landed with no marker, no tag bump and no census bump, so this probe would have
+ * approved a database predating it for as long as nobody looked. The failure it now catches is not
+ * the doorbell (that write is caught and best-effort, deliberately) but `select().from(mailboxes)`
+ * answering 42703, which takes out the mailbox list and every read that resolves a mailbox. Worker
+ * half is safe (a failed kick scan degrades to poll-only). No CHECK, no INDEX marker.
+ *
+ * `0050_rule_subject_contains` is probed TWICE — by `rules.subject_contains` AND by the
+ * `rules_subject_contains_nonempty` CHECK — and it is the only mail entry with both halves since
+ * 0027. The column half is the second-strongest whole-row case on the list after
+ * `messages.last_read_at`: `rules` is enumerated by `materializeRule` (the rules surface, the
+ * `/sync` delta, the 201 of every rule the sender sheet writes) AND by
+ * `drizzle-repo.ts#listRules`, which is what the ROUTER consults on arrival — so a too-early API
+ * both 42703s the surface and stops filing mail. The CHECK half is listed separately because the
+ * two fail differently and only one is loud: a column present without its constraint accepts `''`,
+ * which is a rule matching EVERY subject while its row reads as specific. Worker half is NOT the
+ * safe kind (a routing read that 42703s stops organizing rather than degrading), so the order is
+ * migration → API → worker with the first arrow load-bearing.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0048_remote_images_default";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0050_rule_subject_contains";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

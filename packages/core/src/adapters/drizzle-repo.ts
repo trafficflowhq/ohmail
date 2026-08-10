@@ -774,6 +774,28 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         desc(rulesTbl.priority),
         sql`case when ${rulesTbl.destination} in ('ohmail/Screener', 'ohmail/Screened', 'ohmail/Quarantine') then 0 else 1 end`,
         sql`case ${rulesTbl.kind} when 'sender' then 0 when 'domain' then 1 else 2 end`,
+        // A SUBJECT TERM OUTRANKS ITS ABSENCE, within one kind — `subjectRank` in `rules.ts`, in
+        // the same position.
+        //
+        // The predicate is a REGEX and not `IS NOT NULL`, because the TypeScript side reads `''` and
+        // a blank string as ABSENT (a CHECK constrains rows the migration reached, not a value some
+        // other producer wrote), and the two statements of this order are required to agree
+        // literally: a row storing `'  '` must rank as bare in BOTH, or the narrow rule wins the tie
+        // in SQL and then declines to fire in the evaluator — a rule matching everything.
+        //
+        // It is not `btrim` either, and that is a measurement rather than a preference. One-argument
+        // `btrim` trims SPACES ONLY, so `btrim(E'\t') <> ''` is TRUE while `subjectTermOf` reads a
+        // tab-only term as absent — the exact disagreement, inside the guard against it. This
+        // character class is `SUBJECT_TERM_TRIM` in `rules.ts` spelled in SQL, and the pg test
+        // checks the two agree over every one of the six characters.
+        //
+        // The backslashes are DOUBLED so that the text Postgres receives is byte-identical to the
+        // text in the migration's CHECK — a tagged template cooks `\t` into a literal tab, which
+        // happens to mean the same thing to the regex engine but makes the two definitions of one
+        // predicate impossible to diff. Both forms were measured equal against real Postgres over all
+        // eleven shapes before this was written; `standard_conforming_strings` is `on`, so the escape
+        // reaches the regex engine rather than the string parser.
+        sql`case when ${rulesTbl.subjectContains} ~ '[^ \\t\\n\\r\\f\\v]' then 0 else 1 end`,
         // Every value spelled out, none left to the `else`. `PROVENANCE_RANK` in `rules.ts` is
         // the same order and ranks an UNKNOWN value last; an `else 2` here would rank a value
         // this list forgot as though it were `promoted`, and the server and the client would
@@ -792,6 +814,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         effect: effectForDestination(destination),
         priority: r.priority,
         provenance: r.provenance as Rule["provenance"], enabled: r.enabled,
+        // The second term (mail 0050). Carried VERBATIM — the folding and the empty/whitespace
+        // reading are `rules.ts#subjectTermOf`'s job and belong in one place, next to the matcher
+        // that depends on them. `?? null` because drizzle types a nullable text as `string | null`
+        // already; the coalesce is for the day somebody widens the select.
+        subjectContains: r.subjectContains ?? null,
       };
     });
   }

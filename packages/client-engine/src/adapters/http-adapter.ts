@@ -1061,6 +1061,14 @@ export class HttpAdapter implements EngineAdapter {
         const res = await this.request("POST", "/rules", {
           body: {
             kind: m.ruleKind, match: m.match, destination: m.destination,
+            // The second term, and OMITTED rather than sent as `null` when there is none — unlike
+            // `applyRetro` one line down, and for the opposite reason. `applyRetro`'s default is a
+            // DECISION this client owns, so it states it explicitly; `subjectContains` has no
+            // default to own (absent means "an ordinary one-term rule"), and sending `null` on every
+            // rule the sender sheet writes would put a field in the request body of a caller that
+            // has nothing to say about it — and in the `Idempotency-Key` request hash of every one
+            // of them, changing the hash of requests whose meaning did not change.
+            ...(m.subjectContains ? { subjectContains: m.subjectContains } : {}),
             // Sent on every call, never omitted. The server treats an absent field as `true`;
             // the surface decides what actually ships, from one constant it can flip in one
             // line (`sender-screening.ts#RETRO_DEFAULT_ON`). `?? true` keeps a caller that has

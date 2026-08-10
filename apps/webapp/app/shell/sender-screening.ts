@@ -437,8 +437,26 @@ export function planScreeningChange(
    * retargeted by a click on one address, because a new `sender` rule outranks it anyway
    * (`KIND_RANK`: sender 0, domain 1) and rewriting the domain's destination would silently
    * re-file everyone else at that domain. `s.rules` is already filtered to exact matches.
+   *
+   * ── AND NEITHER IS A RULE THAT CARRIES A SUBJECT TERM (mail 0050) ───────────────────────
+   *
+   * A rule with `subjectContains` is not "the rule for this sender" — it is the rule for one SLICE of
+   * this sender's mail, written deliberately from the subject sheet. Retargeting it from here would
+   * take a click that means *send this address's mail to Reads* and use it to silently re-point the
+   * user's `[NinjaFirewall]` rule at Reads as well, destroying the split they had just built. Worse,
+   * it would do so in preference to writing the rule they actually asked for, so the broad decision
+   * would not be recorded at all.
+   *
+   * Excluding it is also correct for the sentence the sheet shows. "Future mail from this sender
+   * files there too" stays true with a subject rule standing beside the new broad rule: the subject
+   * rule OUTRANKS it (`compareRules`' specificity clause) for the slice it names, and the broad rule
+   * takes the rest — which is exactly what the user asked for both times. This is the one place in
+   * this file where two rules for one subject are the right answer rather than a coin toss, and the
+   * reason is that they are no longer tied.
    */
-  const covering = makeRule && !promoted ? s.rules.filter((r) => r.kind === scope) : [];
+  const covering = makeRule && !promoted
+    ? s.rules.filter((r) => r.kind === scope && (r.subjectContains ?? "").trim() === "")
+    : [];
   const ruleMutations: EngineMutation[] = [];
   let ruleState: ScreeningRuleState = "none";
 

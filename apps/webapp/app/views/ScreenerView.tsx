@@ -8,7 +8,7 @@
  * stay reversible; auto-detected spam is held viewable, never deleted
  * silently. On mobile the preview opens full-screen.
  */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import type {
   BodyState,
@@ -125,23 +125,44 @@ export const HELD_ANCHOR_PAD_PX = 14;
  * `getBoundingClientRect` as zero: an assertion made against a MOUNTED view cannot tell this
  * formula from a wrong one, so the guard has to drive the arithmetic directly.
  *
- * ── THE LIMIT, MEASURED BY READING RATHER THAN GUESSED ───────────────────────────────────────
+ * ── THE LIMIT THIS DOCBLOCK USED TO NAME IS NOW CLOSED, AND IT WAS WORSE THAN "COLD" ─────────
  *
- * The effect that calls this runs once per `[activeId, segment]`, which is right for a WARM
- * mirror: `bodyOf` answers `full` from stored bodies, every `.hmail` is already at its final
- * height when the effect runs, and the anchor lands where it should. On a COLD one the held
- * bodies arrive AFTER this pass (`hydrateBody` is dispatched by the same selection change), each
- * card above the last one grows, and the anchored message is pushed below the fold. Re-anchoring
- * on that growth is deliberately NOT done here: the effect's dependency list is the promise that
- * a body landing does not yank a reader who has since scrolled, and the fix for the cold case is
- * to re-anchor only while the reader has not — which needs a scroll-intent signal this view does
- * not have.
+ * It read: the effect runs once per `[activeId, segment]`, which is right for a WARM mirror and
+ * leaves a COLD one anchored against snippets that then grow — and that re-anchoring "needs a
+ * scroll-intent signal this view does not have".
+ *
+ * The diagnosis was exactly right; the scope was too kind. "Cold" suggests a first run, and this is
+ * not about warm-up: a DERIVED row's body is a snippet EVERY time the sender is selected. `bodyOf`
+ * answers `full` only from a body it already holds — an inline `m.body`, or a stored `message_body`
+ * record — so wherever bodies are fetched on demand the entries begin short and grow. The anchor
+ * therefore landed correctly only where the rows carry their bodies inline (the demo world's shape,
+ * `m.body !== undefined`, final height from the first render) and put the reader inside the OLDEST
+ * message everywhere else. Three snippets at ~100px anchor at 186px; the same three hydrated are
+ * ~600px each, so 186px is inside the first card.
+ *
+ * The signal turned out not to need a listener. The caller now remembers the position it last
+ * WROTE ({@link ANCHOR_TOLERANCE_PX}) and re-anchors only while the scroller is still there, so a
+ * reader who scrolled owns the column and a body landing does not yank them — the promise the old
+ * dependency list was keeping, kept without giving up the anchor. See the effect, and
+ * `screener-latest-anchor.test.tsx`, which models the growth because jsdom reports no layout.
  */
 export function heldAnchorTop(
   readTop: number, lastTop: number, scrollTop: number, pad = HELD_ANCHOR_PAD_PX,
 ): number {
   return Math.max(0, lastTop - readTop + scrollTop - pad);
 }
+
+/**
+ * How far the read column may have drifted from where the latest-message anchor last put it and
+ * still count as "the reader has not touched it".
+ *
+ * Two pixels rather than zero because a browser reports a FRACTIONAL `scrollTop` under a fractional
+ * device pixel ratio, and clamps it to the scrollable range — so an exact comparison would read the
+ * anchor's own write as somebody else's scroll on the very next pass and stop re-anchoring, which is
+ * the defect this tolerance exists inside the fix for. Small enough that any deliberate scroll (a
+ * wheel notch is tens of pixels) is outside it.
+ */
+const ANCHOR_TOLERANCE_PX = 2;
 
 /**
  * Which chip a waiting row belongs to.
@@ -685,34 +706,101 @@ export function ScreenerView({
   const scopeOf = (s: ScreenerSenderDTO): DecisionScope =>
     scopes.get(s.id) ?? s.scope ?? "sender";
 
-  // Open the preview at the LATEST held message whenever the sender changes. The held mail
-  // renders oldest→newest (see `newestHeld` / the previews), so a fresh render sits at the
-  // top on the oldest — the same top-of-thread problem `MessagePane` fixes for conversations,
-  // and fixed the same way: anchor the LAST `.hmail` by direct `scrollTop` (instant — the
-  // `.scn-read` column, `.read-col` in `message.css`, declares no smooth scroll). Keyed on
-  // `[activeId, segment]` only, so a body hydrating in does not re-anchor a scrolled reader.
-  //
-  // ── THE ARITHMETIC IS {@link heldAnchorTop}, AND THE LIMIT IS NAMED THERE ────────────────
-  //
-  // Extracted rather than inlined because it was the one part of this effect with no evidence
-  // behind it: the three-term expression is easy to write plausibly and wrongly (drop the
-  // `+ scrollTop` and it only works from the top of an unscrolled column), and a jsdom test of
-  // the effect cannot see it — jsdom reports every rect as zero, so a mounted assertion here
-  // would pass for a broken formula. `screener-anchor.test.ts` drives the function instead.
+  /** The selected sender's held mail, whichever segment shape the row is. */
+  const heldOfCurrent = current === null
+    ? []
+    : "pinned" in current ? current.sender.held : current.held;
+  /**
+   * The BODY STATES of the selected sender's held mail, as one string.
+   *
+   * The anchor below depends on it because a body landing changes the HEIGHT of an entry, and the
+   * anchor is a pixel. It is the states and not the ids (`heldKey`, further down, is the ids and
+   * drives the hydration): the ids are stable for the whole time the sender is selected, which is
+   * precisely why keying the anchor on them left it computed against collapsed snippets for ever.
+   */
+  const heldBodyKey = heldOfCurrent.map((held) => held.bodyState ?? "").join(",");
+
   useEffect(() => {
     setChoosing(null);
+  }, [activeId, segment]);
+
+  /**
+   * OPEN THE PREVIEW AT THE LATEST HELD MESSAGE — and STAY there while the bodies arrive.
+   *
+   * The held mail renders oldest→newest (`selectors.ts`: `held: [...newestFirst].reverse()`), so a
+   * fresh render sits at the top on the OLDEST one and the consent decision is taken on the least
+   * current thing the sender sent. The fix is the same one `MessagePane` applies to a conversation:
+   * anchor the LAST `.hmail` by direct `scrollTop` (instant — `.scn-read`, `.read-col` in
+   * `message.css`, declares no smooth scroll).
+   *
+   * ── WHY THE DEPENDENCY LIST GREW, AND IT IS A MEASURED BUG AND NOT A TIDY-UP ──────────────
+   *
+   * This used to be keyed on `[activeId, segment]` alone, with the comment *"so a body hydrating in
+   * does not re-anchor a scrolled reader"*. That trade is the wrong way round, because the anchor is
+   * a PIXEL and not an element reference:
+   *
+   *  · where a held row carries its body INLINE, `bodyOf` answers `full` on the first render
+   *    (`m.body !== undefined`), so every `.hmail` is already at its final height when this runs
+   *    and the anchor lands correctly. That is the demo world's shape;
+   *  · where it does not, the row is DERIVED: `bodyOf` finds no `message_body` record, answers
+   *    `snippet`, and the text arrives later through `hydrateBody`. The entries GROW after the pixel
+   *    was computed. Three snippets at ~100px anchor at 186px; the same three hydrated are ~600px
+   *    each, so 186px is inside the FIRST message.
+   *
+   * The second shape is every mailbox whose bodies are fetched on demand rather than shipped with
+   * the row — which is the ordinary one, and the reason this looked correct while being wrong
+   * wherever it mattered. Both shapes are exercised in `screener-latest-anchor.test.tsx`, which
+   * models the growth explicitly because jsdom reports no layout and any assertion about this
+   * arithmetic is otherwise green by construction.
+   *
+   * ── AND THE ORIGINAL CONCERN IS STILL HONOURED, WITHOUT A SCROLL LISTENER ─────────────────
+   *
+   * A reader who scrolls deliberately must not be dragged back. That is answered by remembering the
+   * position we last WROTE ({@link ANCHOR_TOLERANCE_PX}): if the scroller has moved away from it,
+   * the reader owns the column and this effect returns. No listener is needed to know that, and
+   * there is no window in which our own write is mistaken for theirs. The OBSERVED value is stored
+   * rather than the computed target, because a browser clamps `scrollTop` to the scrollable range
+   * and a target beyond it would never match on the next pass.
+   *
+   * `anchoredFor` distinguishes a FRESH selection (always anchor, and forget the remembered
+   * position) from a re-run caused by a body landing.
+   */
+  const anchorKey = `${segment}::${activeId ?? ""}`;
+  const anchoredFor = useRef<string | null>(null);
+  const anchoredAt = useRef<number | null>(null);
+  useEffect(() => {
+    const fresh = anchoredFor.current !== anchorKey;
+    if (fresh) {
+      anchoredFor.current = anchorKey;
+      anchoredAt.current = null;
+    }
     const read = document.querySelector<HTMLElement>(".view-screener .scn-read");
     if (!read) return;
+    if (
+      !fresh
+      && anchoredAt.current !== null
+      && Math.abs(read.scrollTop - anchoredAt.current) > ANCHOR_TOLERANCE_PX
+    ) {
+      return;
+    }
     const entries = read.querySelectorAll<HTMLElement>(".hmail");
     const last = entries[entries.length - 1];
     if (!last) {
       read.scrollTo({ top: 0 });
+      anchoredAt.current = null;
       return;
     }
+    // The arithmetic is {@link heldAnchorTop} — extracted so a guard can drive it directly, because
+    // jsdom reports every rect as zero and a mounted assertion cannot tell this formula from a
+    // wrong one.
     read.scrollTop = heldAnchorTop(
       read.getBoundingClientRect().top, last.getBoundingClientRect().top, read.scrollTop,
     );
-  }, [activeId, segment]);
+    // The OBSERVED value, not the target: a browser clamps `scrollTop` to the scrollable range, and
+    // a stored target beyond it would never match on the next pass — which reads as "the reader
+    // scrolled" and stops the re-anchoring this effect exists to do.
+    anchoredAt.current = read.scrollTop;
+  }, [anchorKey, heldBodyKey]);
 
   /* `scn-full-open` used to be set on <body> here, and the one rule that read it hid the
      floating ⌘K capsule while the mobile full-screen preview was up. The capsule is a group at
@@ -746,12 +834,9 @@ export function ScreenerView({
    * decision keys exist precisely because plain filing does not mark held mail read, and a
    * preview that marked it read on sight would make that distinction meaningless.
    */
-  const heldIds = current && !("pinned" in current)
-    ? current.held.map((h) => h.id)
-    : current
-      ? current.sender.held.map((h) => h.id)
-      : [];
-  const heldKey = heldIds.join(",");
+  // `heldOfCurrent` is resolved once, up beside the anchor, so the two effects that read this
+  // sender's held mail cannot disagree about which rows they mean.
+  const heldKey = heldOfCurrent.map((h) => h.id).join(",");
   useEffect(() => {
     for (const id of heldKey ? heldKey.split(",") : []) hydrateBody(id);
   }, [heldKey, hydrateBody]);
