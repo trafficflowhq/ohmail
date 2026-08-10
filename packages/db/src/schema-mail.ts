@@ -1692,29 +1692,6 @@ export const accountSettings = pgTable("account_settings", {
    * separately and overrides the proxy for them; this flag governs pictures only.
    */
   blockRemoteImagesAt: timestamp("block_remote_images_at", { withTimezone: true }),
-  /**
-   * THE INTERFACE LANGUAGE — `'en' | 'de'`, or NULL for "nobody has chosen" (mail 0053). The CHECK
-   * (enum, closed) lives in the migration.
-   *
-   * The only column on this row that is neither a timestamp nor a switch, and the only one whose
-   * value a CLIENT resolves rather than a service. What reads it: `GET /consent` sends it, and the
-   * client adopts it at boot — which is the whole feature, because "my account is in German" has to
-   * hold on a machine that has never seen this account.
-   *
-   * **NULL is not `'en'`, and collapsing the two would break the one guard that matters.** A device
-   * remembers its own language in `localStorage` (the standalone install has nothing else, and the
-   * sign-in screen has no account yet). The rule is: an account preference WINS over the device's,
-   * and an account with no preference LEAVES THE DEVICE ALONE. Storing `'en'` for everyone who never
-   * opened the selector would make every boot on a German-set browser silently reset to English —
-   * so the default is never stored, exactly as `dormancyDays` is not, and `setLocale` maps a request
-   * for the default back to NULL.
-   *
-   * A FAILED read is not "English": `consent-state.ts` leaves the field null, which means "keep the
-   * device's language". That is the safe direction here in the same way MANUAL is for
-   * `blockRemoteImagesAt` — the cost of guessing wrong is an interface somebody cannot read, and the
-   * device's own remembered choice is a better guess than the product default.
-   */
-  locale: text("locale"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
