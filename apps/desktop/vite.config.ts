@@ -3,7 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
-import { UPDATER_HTML, UPDATER_JS } from "./src/updater-window";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
@@ -173,28 +172,6 @@ function shellMessagesOnly(): Plugin {
 }
 
 /**
- * Emit the auto-updater's progress page (`updater.html` + `updater.js`) into the bundle.
- *
- * These are NOT a Vite input and NOT under a `public/` folder, both deliberately: an extra HTML
- * input conflicts with `inlineDynamicImports`, and a `public/` asset would be outside the publish
- * payload (`scripts/publish-desktop.mjs` ships `apps/desktop/src` as `.ts` only), so a released
- * binary built from the mirror would open a blank updater window. Emitting them from a published
- * `.ts` module gets the same two bytes into both trees. See `src/updater-window.ts`.
- *
- * The Rust updater (`src-tauri/src/updater.rs`) opens a window at `updater.html`; that window is the
- * only one granted `core:event:allow-listen`, and it reaches nothing else.
- */
-function updaterProgressPage(): Plugin {
-  return {
-    name: "ohmail:updater-progress-page",
-    generateBundle() {
-      this.emitFile({ type: "asset", fileName: "updater.html", source: UPDATER_HTML });
-      this.emitFile({ type: "asset", fileName: "updater.js", source: UPDATER_JS });
-    },
-  };
-}
-
-/**
  * The desktop UI bundle: the SAME client shell app.ohmail.app renders, compiled to a
  * self-contained folder of files that Tauri embeds. No dev server, no CDN, no
  * remote origin, no Next.js.
@@ -250,7 +227,6 @@ export default defineConfig({
   base: "./",
   plugins: [
     shellMessagesOnly(),
-    updaterProgressPage(),
     react(),
     {
       /* The webview loads the bundle as an ES module, where `import.meta` is valid; the smoke test
@@ -272,15 +248,6 @@ export default defineConfig({
        vs HttpAdapter. Folding it to `undefined` at build time makes the Cloud
        branch statically dead; alias (2) above makes it unreachable regardless. */
     "process.env.NEXT_PUBLIC_API_BASE": "undefined",
-    /* THIS IS A DESKTOP BUILD, folded through `engine-config.ts` (`syncsWhileHidden`) so the shared
-       sync scheduler is told to keep polling while the window is occluded or unfocused. A desktop
-       window is not a browser tab: `document.visibilityState` reads `hidden` when the OS composites
-       it out of view, which would stop the sync loop on a mail client that is supposed to keep the
-       mailbox current in the background. Set for BOTH desktop artifacts. The Next web build never
-       defines this var, so `syncsWhileHidden()` is false there and browser tabs keep their
-       hidden-tab-zero-syncs behaviour unchanged — a web-side guard fails if the flag ever leaks on
-       (grep `syncsWhileHidden` in the web app's test suite). */
-    "process.env.NEXT_PUBLIC_DESKTOP": JSON.stringify("1"),
     /* Which artifact this is, as a literal. `main.tsx` branches on it, and the
        bundler removes the branch it did not take — so the preview does not carry
        a dormant bridge and the engine build does not carry a dead stub. See

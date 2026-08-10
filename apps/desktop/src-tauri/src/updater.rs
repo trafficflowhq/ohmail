@@ -18,13 +18,7 @@
 //!     the project's own GitHub Releases `latest.json` feed, over HTTPS. Nothing
 //!     else is reachable.
 //!   * NOTIFY-AND-INSTALL, never silent. The user is asked before a byte is
-//!     installed, and asked again before the restart that finishes it. While the
-//!     download runs, a tiny bundled progress window (`src/updater-window.ts`,
-//!     window label `updater`) shows the byte-count — it hears one
-//!     `updater://progress` event and reaches nothing else. That window has its
-//!     OWN capability (`capabilities/updater.json`, `core:event:allow-listen`
-//!     only); the MAIN window's grant stays empty, so the four zero-network locks
-//!     stay literally true.
+//!     installed, and asked again before the restart that finishes it.
 //!   * EVERY payload is minisign-verified against `plugins.updater.pubkey` by
 //!     `tauri-plugin-updater` before it is allowed to install — a tampered
 //!     payload is refused. That verification, and the committed key material it
@@ -44,22 +38,12 @@
 //! `{ "version", "notes", "pub_date", "platforms": { "<target>-<arch>":
 //! { "signature", "url" } } }`.
 
-use tauri::{AppHandle, Emitter, Runtime, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Runtime};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_updater::UpdaterExt;
 
 /// The id the menu item carries and the menu-event handler matches on.
 pub const CHECK_FOR_UPDATES_ID: &str = "check-for-updates";
-
-/// The window that renders download progress, and the event this module emits into it.
-///
-/// Both names are duplicated in `src/updater-window.ts` — a Rust binary and a static page share no
-/// artifact to import one from, exactly as `menu.rs` and `native.ts` do for the menu events — and
-/// `test/desktop-shell.test.ts` holds the two spellings together. The window is granted ONLY
-/// `core:event:allow-listen`, scoped to this label, by `capabilities/updater.json`; the main
-/// window's grant stays empty.
-pub const PROGRESS_WINDOW_LABEL: &str = "updater";
-pub const PROGRESS_EVENT: &str = "updater://progress";
 
 /// Register the updater, the dialog it prompts through, and the handler for its
 /// menu item. Called from `main.rs` in EVERY build — the updater ships in the
@@ -140,8 +124,7 @@ async fn prompt_and_install<R: Runtime>(app: AppHandle<R>, update: tauri_plugin_
     let consented = app
         .dialog()
         .message(format!(
-            "ohmail {version} is available. Download and install it now? \
-             ohmail will restart to finish."
+            "ohmail {version} is available. Install it now? ohmail will restart to finish."
         ))
         .title("Update available")
         .buttons(MessageDialogButtons::OkCancelCustom(
@@ -153,39 +136,7 @@ async fn prompt_and_install<R: Runtime>(app: AppHandle<R>, update: tauri_plugin_
         return;
     }
 
-    // A tiny, bundled, offline progress window (`updater.html`, emitted from
-    // `src/updater-window.ts` by `vite.config.ts`) in its OWN window, granted only
-    // `core:event:allow-listen` by `capabilities/updater.json`. The download's byte-count is
-    // pushed to it over `PROGRESS_EVENT`; the main webview is never told an update is downloading
-    // and its permission list stays empty. If the window cannot be built we still install — the
-    // bar is a courtesy, not the mechanism.
-    let progress = show_progress_window(&app);
-
-    // `download_and_install` hands `on_chunk` the size of THIS chunk, not the running total, so we
-    // accumulate. `content_len` is the server's Content-Length when it sent one (`None` otherwise,
-    // which the page renders as an indeterminate bar). A failed emit is never a reason to abort an
-    // install the user has consented to — the window may already be closed.
-    let emitter = app.clone();
-    let mut downloaded: u64 = 0;
-    let outcome = update
-        .download_and_install(
-            move |chunk_len, content_len| {
-                downloaded += chunk_len as u64;
-                let _ = emitter.emit(
-                    PROGRESS_EVENT,
-                    serde_json::json!({ "downloaded": downloaded, "total": content_len }),
-                );
-            },
-            || {},
-        )
-        .await;
-
-    // The progress window has done its job either way; close it before the next dialog.
-    if let Some(window) = progress {
-        let _ = window.close();
-    }
-
-    match outcome {
+    match update.download_and_install(|_downloaded, _total| {}, || {}).await {
         Ok(()) => {
             let restart = app
                 .dialog()
@@ -204,27 +155,6 @@ async fn prompt_and_install<R: Runtime>(app: AppHandle<R>, update: tauri_plugin_
         }
         Err(e) => notify(&app, "ohmail update", &format!("The update failed to install: {e}")),
     }
-}
-
-/// Build the transient progress window that renders `PROGRESS_EVENT`.
-///
-/// Returns `None` — and the install proceeds without a bar — if the window cannot be created. A
-/// missing page or a platform refusal is not a reason to refuse an update the user already
-/// consented to; the download and the minisign verification happen regardless.
-fn show_progress_window<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::WebviewWindow<R>> {
-    WebviewWindowBuilder::new(
-        app,
-        PROGRESS_WINDOW_LABEL,
-        WebviewUrl::App("updater.html".into()),
-    )
-    .title("Updating ohmail")
-    .inner_size(420.0, 210.0)
-    .resizable(false)
-    .minimizable(false)
-    .maximizable(false)
-    .center()
-    .build()
-    .ok()
 }
 
 /// A single-button native notice.

@@ -242,51 +242,23 @@ describe("tauri.conf.json", () => {
 
 describe("capabilities", () => {
   /**
-   * TWO FILES NOW, AND THE POINT IS WHAT EACH ONE MAY DO — ASSERTED TOGETHER.
+   * STILL EMPTY, INCLUDING NOW THAT THE ENGINE BUILD'S WINDOW HEARS EVENTS.
    *
-   * A file in `capabilities/` is compiled into EVERY build, so anything written here is carried by
-   * the published preview too. There used to be exactly one, `main.json`, granting nothing. The
-   * auto-updater adds a SECOND, `updater.json`, and this test would have gone red on
-   * `toEqual(["main.json"])` — a deliberate break, rewritten here rather than made to pass:
-   *
-   *  · `main.json` still grants the MAIN window nothing. `"permissions": []`. This is the empty-grant
-   *    lock, and it is the first thing checked — the whole updater design exists to keep it true.
-   *  · `updater.json` grants the transient `updater` window EXACTLY one permission,
-   *    `core:event:allow-listen`, so it can HEAR the `updater://progress` event and do nothing else.
-   *    No `allow-emit` (it cannot make the shell hear anything), no other `core:` permission, no
-   *    command. It is scoped to the `updater` window and touches no other.
-   *
-   * The engine build's runtime grant (`LOCAL_ENGINE_CAPABILITY` in `engine.rs`) is separate and
-   * unchanged — it lives in a module the preview does not compile.
+   * A file in `capabilities/` is compiled into EVERY build, so anything written here would be
+   * carried by the published preview — whose window calls nothing and listens to nothing. The
+   * engine build's grant is a runtime one (`LOCAL_ENGINE_CAPABILITY` in `engine.rs`), which lives
+   * in a module the preview does not compile, and `core:event:allow-listen` arrived there with the
+   * surface that needed it rather than in advance.
    */
-  it("grant the main window nothing and the updater window only event-listen", () => {
-    const files = fs.readdirSync(path.join(APP, "src-tauri/capabilities")).sort();
-    // Exactly these two — a THIRD capability file appearing must fail here until someone decides
-    // which window it is for and what it may do.
-    expect(files).toEqual(["main.json", "updater.json"]);
-
-    // The main window: still empty. The lock the whole Rust-side updater exists to preserve.
-    const main = readJson("src-tauri/capabilities/main.json") as never as {
+  it("grant the webview nothing", () => {
+    const files = fs.readdirSync(path.join(APP, "src-tauri/capabilities"));
+    expect(files).toEqual(["main.json"]);
+    const cap = readJson("src-tauri/capabilities/main.json") as never as {
       windows: string[];
       permissions: unknown[];
     };
-    expect(main.windows).toEqual(["main"]);
-    expect(main.permissions).toEqual([]);
-
-    // The updater window: exactly one receive-only event permission, and nothing else.
-    const updater = readJson("src-tauri/capabilities/updater.json") as never as {
-      windows: string[];
-      permissions: string[];
-    };
-    expect(updater.windows).toEqual(["updater"]);
-    expect(updater.permissions).toEqual(["core:event:allow-listen"]);
-    // Spelled out as well as compared, so a reworded set still has to face each claim: it may
-    // listen, it may NOT emit, and it gains no other core API (filesystem, shell, window, updater).
-    expect(updater.permissions).toContain("core:event:allow-listen");
-    expect(updater.permissions).not.toContain("core:event:allow-emit");
-    for (const p of updater.permissions) {
-      expect(p).toBe("core:event:allow-listen");
-    }
+    expect(cap.windows).toEqual(["main"]);
+    expect(cap.permissions).toEqual([]);
   });
 });
 
@@ -805,48 +777,6 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/pub fn should_offer\(/);
     expect(updater).toMatch(/candidate > installed/);
   });
-
-  /**
-   * DOWNLOAD PROGRESS RENDERS IN ITS OWN WINDOW, GRANTED ONLY EVENT-LISTEN.
-   *
-   * The plugin hands `on_chunk` the size of each chunk and the total; the old code discarded both
-   * (`|_downloaded, _total| {}`), so a download looked like a hang. It now ACCUMULATES the running
-   * total and emits `updater://progress { downloaded, total }`, which a tiny bundled page renders in
-   * a dedicated `updater` window. The main webview is never told and gains no permission — that is
-   * the whole reason the progress is a separate window rather than a call into the page.
-   *
-   * The event name and the window label are written in two languages (Rust here, the page in
-   * `src/updater-window.ts`) because a binary and a static page share no artifact to import one
-   * from — the same reason the menu's events are, and held together the same way.
-   */
-  it("renders download progress in a dedicated window, hearing one event and nothing else", () => {
-    // The Rust side accumulates and emits — not the discarded callbacks it used to have.
-    expect(updater).toMatch(/PROGRESS_EVENT: &str = "updater:\/\/progress"/);
-    expect(updater).toMatch(/PROGRESS_WINDOW_LABEL: &str = "updater"/);
-    expect(updater).toMatch(/\.emit\(\s*PROGRESS_EVENT/);
-    expect(updater).toMatch(/downloaded \+= chunk_len as u64/);
-    // The callbacks are no longer thrown away.
-    expect(updater).not.toMatch(/download_and_install\(\|_downloaded, _total\| \{\}/);
-    // The window loads the bundled page, and there is exactly one — no second webview window
-    // is opened anywhere in this module.
-    expect(updater).toMatch(/WebviewUrl::App\("updater\.html"\.into\(\)\)/);
-    expect(updater.match(/WebviewWindowBuilder::new/g)).toHaveLength(1);
-
-    // The page listens for the SAME event by name, over the runtime's own event plugin, and never
-    // emits — the asymmetry the capability grant enforces. (That the page reaches nothing — no
-    // network API, no URL, an external same-origin script, `connect-src 'none'` — is asserted
-    // against the emitted strings themselves in `updater-window.test.ts`.)
-    const page = read("src/updater-window.ts");
-    expect(page).toMatch(/PROGRESS_EVENT = "updater:\/\/progress"/);
-    expect(page).toMatch(/PROGRESS_WINDOW_LABEL = "updater"/);
-    expect(page).toMatch(/plugin:event\|listen/);
-
-    // The two files are emitted into the bundle by vite, not left in a `public/` folder the publish
-    // payload would never ship.
-    const viteConfig = read("vite.config.ts");
-    expect(viteConfig).toMatch(/emitFile\(\{ type: "asset", fileName: "updater\.html"/);
-    expect(viteConfig).toMatch(/emitFile\(\{ type: "asset", fileName: "updater\.js"/);
-  });
 });
 
 describe("the menu bar", () => {
@@ -1071,31 +1001,6 @@ describe("the UI bundle's build config", () => {
 
   it("emits origin-agnostic relative URLs", () => {
     expect(vite).toMatch(/base: "\.\/"/);
-  });
-
-  /**
-   * THE DESKTOP BUILD SETS THE FLAG THAT KEEPS SYNC RUNNING WHILE THE WINDOW IS HIDDEN.
-   *
-   * `apps/webapp/app/shell/engine-config.ts`'s `syncsWhileHidden()` reads `NEXT_PUBLIC_DESKTOP`,
-   * and this is where a desktop build turns it on. Both artifacts set it — a mail client is a
-   * desktop app whether or not it carries the engine — so it is defined at the top level rather
-   * than under the `LOCAL_ENGINE` branch. The web build never defines it, which is what keeps a
-   * browser tab's hidden-tab-zero-syncs behaviour; the positive gate against a leak lives in the
-   * web app's own test suite (grep `syncsWhileHidden`), and this is its desktop half.
-   */
-  it("declares itself a desktop build, so the shared shell syncs while occluded", () => {
-    // The literal define, set to "1" (a string, because `process.env.*` values are strings).
-    expect(vite).toMatch(/"process\.env\.NEXT_PUBLIC_DESKTOP": JSON\.stringify\("1"\)/);
-    // It sits in the `define` block, before `resolve:` — i.e. a build-time constant folded into
-    // every module, both artifacts. It is NOT gated on the LOCAL_ENGINE flag: the preview is a
-    // desktop app too, and only the WEB build (which sets this var nowhere) must miss it.
-    const defineStart = vite.indexOf("define: {");
-    const resolveStart = vite.indexOf("resolve: {");
-    expect(defineStart).toBeGreaterThan(0);
-    expect(resolveStart).toBeGreaterThan(defineStart);
-    const defineBlock = vite.slice(defineStart, resolveStart);
-    expect(defineBlock).toMatch(/NEXT_PUBLIC_DESKTOP/);
-    expect(defineBlock).not.toMatch(/LOCAL_ENGINE\s*\?/);
   });
 
   it("renders the same shell the web client does — no desktop fork", () => {

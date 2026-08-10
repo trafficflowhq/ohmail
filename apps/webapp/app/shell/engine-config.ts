@@ -37,49 +37,10 @@ import { createSyncGate, registerSyncGate } from "./sync-scheduler";
  */
 export interface EngineEnv {
   NEXT_PUBLIC_API_BASE?: string;
-  /**
-   * `"1"` only in a DESKTOP build — set by `apps/desktop/vite.config.ts`'s `define`, absent from
-   * the Next web build. Read through {@link syncsWhileHidden}; see it for what it decides and why
-   * it is a build flag rather than a prop.
-   */
-  NEXT_PUBLIC_DESKTOP?: string;
 }
 
-/** The build-time environment, read once. */
-const BUILD_ENV: EngineEnv = {
-  NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE,
-  NEXT_PUBLIC_DESKTOP: process.env.NEXT_PUBLIC_DESKTOP,
-};
-
-/**
- * SHOULD THE SYNC SCHEDULER KEEP POLLING WHILE THE WINDOW IS HIDDEN?
- *
- * `startSyncScheduler` gates on `document.visibilityState`: a browser tab that goes to the
- * background performs ZERO syncs, because a background tab keeping a mailbox warm is API cost with
- * no one behind it (`sync-scheduler.ts`). That rule is right for a tab and wrong for the desktop
- * app: a Tauri window the OS composites out of view — occluded by another window, on another
- * Space, or merely unfocused — ALSO reads `visibilityState: "hidden"`, so the shared shell would
- * silently stop syncing a mail client that is supposed to stay current in the background. The
- * symptom is mail that only arrives when you click the window.
- *
- * The fix is the scheduler's existing seam: passing `visibility: null` tells it "this environment
- * has no visibility model", so `visible()` is always true and the loop never stops for occlusion.
- * `engine.tsx` passes it exactly when this returns true.
- *
- * ── A BUILD FLAG, FOLDED HERE — NOT A PROP ──────────────────────────────────────────────────
- *
- * The desktop-versus-web distinction is a property of the BUILD, so it is a build-time flag read
- * here rather than a prop threaded down from the shell. A prop buys only a silent-omission mode —
- * a shell that forgets to pass it loads fine and then quietly never syncs in the background, which
- * is the very bug re-created as a wiring bug (the same reasoning `engine.tsx` gives for wiring the
- * scheduler inside the provider). The Next web build never defines `NEXT_PUBLIC_DESKTOP`, so this
- * is false there and browser tabs keep hidden-tab-zero-syncs; only a desktop build turns it on.
- * A web-side test (grep `syncsWhileHidden` in this app's test suite) fails if the flag ever leaks
- * into the default (web) environment.
- */
-export function syncsWhileHidden(env: EngineEnv = BUILD_ENV): boolean {
-  return env.NEXT_PUBLIC_DESKTOP === "1";
-}
+/** The build-time API base, read once. `undefined` ⇒ this build has no server. */
+const BUILD_ENV: EngineEnv = { NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE };
 
 /**
  * A live engine was asked for and this build has no server to point it at.
