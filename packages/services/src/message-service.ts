@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import {
-  messages, folderState, flagState, messageBodies, messageStates, claimIdempotencyKey, recordChange, type Tx,
+  messages, folderState, flagState, messageBodies, claimIdempotencyKey, recordChange, type Tx,
 } from "@trafficflow/db";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
 import { httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
@@ -526,32 +526,6 @@ export class MessageService {
         last = await recordChange(tx, {
           accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
         });
-      }
-
-      // ── READING A RESURFACED ROW SPENDS THE RESURFACE ────────────────────────────────────
-      //
-      // The worker flips a due `bubbled_up` state to `resurfaced` (see `bubbleUpPass`), which pins
-      // the row at the top of the Ohbox. That pin is answered by READING, not by opening: the
-      // moment a resurfaced message is marked read it clears back to `none`, in THIS transaction,
-      // so "Resurfaced" never outlives the read that dealt with it. A settled reply marks the
-      // parent read through this same route, so it clears a resurface too — one rule, both cases.
-      // Only when marking read (`unread === false`); marking unread must not touch triage. Emitted
-      // as `message_state` updates so every client drops the pin on the next `/sync`.
-      if (!unread) {
-        const cleared = await tx
-          .update(messageStates)
-          .set({ state: "none", bubbleUpAt: null, updatedAt: ctx.now() })
-          .where(and(
-            inArray(messageStates.messageId, ids),
-            eq(messageStates.accountId, ctx.accountId),
-            eq(messageStates.state, "resurfaced"),
-          ))
-          .returning({ id: messageStates.id });
-        for (const r of cleared) {
-          last = await recordChange(tx, {
-            accountId: ctx.accountId, entityType: "message_state", entityId: r.id, op: "update", meta: null,
-          });
-        }
       }
       return last;
     });

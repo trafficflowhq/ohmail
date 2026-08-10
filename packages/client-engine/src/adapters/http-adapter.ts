@@ -1354,18 +1354,7 @@ export class HttpAdapter implements EngineAdapter {
       this.draftForKey.set(idempotencyKey, draftId);
     }
 
-    // ATTACHMENTS AND `forwardOf` RIDE THE SEND, not the draft. Attachment bytes are base64 on this
-    // one request; the server decodes them, caps the total, hands them to the transport, and stores
-    // none of them. `forwardOf` is just the original's id — the server reads the original, refuses a
-    // no_forward one, builds the quoted MIME and streams its attachments. Omitted when neither is
-    // set, so a plain send stays the bodyless request it has always been.
-    const sendBody: { attachments?: typeof m.attachments; forwardOf?: string } = {};
-    if (m.attachments && m.attachments.length) sendBody.attachments = m.attachments;
-    if (m.forwardOf) sendBody.forwardOf = m.forwardOf;
-    const res = await this.request("POST", `/drafts/${draftId}/send`, {
-      idempotencyKey,
-      ...(Object.keys(sendBody).length ? { body: sendBody } : {}),
-    });
+    const res = await this.request("POST", `/drafts/${draftId}/send`, { idempotencyKey });
     // BEFORE any throw: the route echoes X-Sync-Seq on the unverified answer too, and a
     // rejection is no reason to let `lastSyncSeq` fall behind the log.
     const seq = this.noteSeq(res);
@@ -1382,13 +1371,7 @@ export class HttpAdapter implements EngineAdapter {
       // No echo turned into changes: the answer is `{status, providerMessageId}`, not a
       // seq'd DTO, and the draft's `sent` transition arrives on the authoritative drain the
       // engine runs when `changes` is empty — the `triage_set`/`mark_seen` contract.
-      //
-      // `providerMessageId` IS surfaced, and it is the one field this outcome adds over that
-      // contract: it is the minted Message-ID the server appended to Sent, which the engine uses
-      // to materialise an optimistic Sent overlay on confirm and to reconcile it against the real
-      // row when a later drain ingests it (`OhmailEngine.dispatch`). A missing/empty value simply
-      // means no overlay — the send still confirmed.
-      return { changes: [], seq, providerMessageId: wire.providerMessageId ?? null };
+      return { changes: [], seq };
     }
 
     if (wire.status === "unverified") {
