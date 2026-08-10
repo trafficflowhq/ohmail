@@ -5,6 +5,7 @@
  */
 import {
   folderLeaf,
+  isOwnSent,
   messageDisplayTime,
   VIEW_OF_FOLDER,
   type EmailAddress,
@@ -229,6 +230,52 @@ export function avatarOf(m: EngineMessage): { avatarInitial: string; avatarHue: 
     avatarInitial: initialsOf(senderName(m)),
     avatarHue: avatarHue(m.from.address),
   };
+}
+
+/** An own-sent row's addressee: who the mail went to, and how many more it also went to. */
+export interface SentRowRecipient {
+  /** The first To recipient's display name, else their address. */
+  name: string;
+  /** Their address — the stable key the circle's hue derives from, exactly as {@link avatarOf}. */
+  address: string;
+  /** How many further To recipients there are — the row's "+N". */
+  extra: number;
+}
+
+/**
+ * WHO AN OWN-SENT ROW IS ABOUT.
+ *
+ * A sent message's `from` is the reader's own identity — the one fact on the row that says
+ * nothing. The row says who the mail WENT TO instead ("Me → Nora Lindt"), assembled by the
+ * caller from this structure. Pure and i18n-free like {@link recipientSummary}, for the same
+ * reason: the words ("Me", "+N") are the app's, read from `en.json` where the row renders.
+ *
+ * `null` twice, and both mean "keep the ordinary sender display":
+ *  · a row that is not the account's own sent mail;
+ *  · an own-sent row with no To recipient to name — rows ingested before recipients reached
+ *    the wire carry an empty `to`, and "Me →" with nothing after the arrow is the same
+ *    punctuation-shaped lie the dangling "·" was ({@link metaLine}).
+ *
+ * Cc is deliberately not consulted: the label names who the mail was written to, not everyone
+ * who was copied — the open view's recipients block is where Cc is said.
+ */
+export function sentRowRecipient(m: EngineMessage): SentRowRecipient | null {
+  if (!isOwnSent(m)) return null;
+  const to = m.to ?? [];
+  const first = to[0];
+  const name = first ? first.name || first.address : "";
+  if (!name) return null;
+  return { name, address: first!.address, extra: to.length - 1 };
+}
+
+/**
+ * The circle for an own-sent row: the RECIPIENT's identity, never the writer's own. The person
+ * a sent row is about is the person it went to, so the circle follows the label — same letter
+ * and same hue for that person as every row where they are the sender. Hue keys on the address
+ * (the one rule, {@link avatarHue}), falling back to the name for a recipient stored without one.
+ */
+export function sentAvatarOf(r: SentRowRecipient): { avatarInitial: string; avatarHue: number } {
+  return { avatarInitial: initialsOf(r.name), avatarHue: avatarHue(r.address || r.name) };
 }
 
 export function firstName(m: EngineMessage): string {

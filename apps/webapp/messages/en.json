@@ -195,6 +195,8 @@
     "tagsLead": "{count, plural, one {1 tag} other {# tags}}",
     "tagsMore": "Show tags",
     "protectedPreview": "Verification code — kept out of AI",
+    "rowSentTo": "Me → {name}",
+    "rowSentToMore": "Me → {name} +{count}",
     "actionReply": "Reply",
     "actionReplyAll": "Reply all",
     "actionSetAside": "Park",

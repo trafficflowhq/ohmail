@@ -22,7 +22,7 @@ import {
 } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { groupSection, sendTimeOf, singletonGroup, type OhboxRowGroup } from "./ohbox-groups";
-import { PLACE_LABEL, avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { PLACE_LABEL, avatarOf, rowAddress, displayTime, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
 import { useLoadingGrace } from "../shell/loading-grace";
@@ -1057,17 +1057,40 @@ export function OhboxView({
     pickRangeTo(id);
   }, [pickRangeTo]);
 
+  /**
+   * OWN-SENT ROWS NAME THE RECIPIENT — "Me → Nora Lindt", never the writer's own identity.
+   *
+   * A sent row's `from` is the reader themselves, which is the one fact on the row that says
+   * nothing; who it WENT TO is the row's whole context. The first To recipient's display name
+   * (their address where there is none), "+N" for the rest, and the circle carries the
+   * recipient's initial and hue — the person the row is about. `null` keeps the ordinary
+   * sender display: a received row, or a sent row whose mirror predates recipients on the
+   * wire (empty `to`) — never "Me →" with nothing after the arrow.
+   */
+  const sentLabelOf = (m: EngineMessage): { label: string; avatar: { avatarInitial: string; avatarHue: number } } | null => {
+    const r = sentRowRecipient(m);
+    if (!r) return null;
+    const label =
+      r.extra > 0
+        ? t("rowSentToMore", { name: r.name, count: r.extra })
+        : t("rowSentTo", { name: r.name });
+    return { label, avatar: sentAvatarOf(r) };
+  };
+
   const row = (m: EngineMessage) => {
     // the conversation's people, computed by the shell's bound selector and never in the row.
     // Only for a threaded row; `[]` (⇒ the numeric badge stays) for a single-sender thread or none.
     const participants = m.threadId && threadParticipants ? threadParticipants(m.threadId) : [];
+    // see `sentLabelOf`: an own-sent row is labelled by its recipient, circle included; the
+    // address slot stays empty (the writer's own address is the fact being replaced).
+    const sent = sentLabelOf(m);
     return (
     <MessageRow
       key={m.id}
       id={m.id}
-      from={senderName(m)}
-      address={rowAddress(m)}
-      {...avatarOf(m)}
+      from={sent ? sent.label : senderName(m)}
+      address={sent ? undefined : rowAddress(m)}
+      {...(sent ? sent.avatar : avatarOf(m))}
       time={displayTime(m, now)}
       subject={m.subject}
       preview={m.protected ? t("protectedPreview") : m.snippet}
@@ -1145,15 +1168,35 @@ export function OhboxView({
     const target = g.openTarget;
     const shown = g.latest;
     const participants = threadParticipants ? threadParticipants(g.key) : [];
+    /**
+     * THE NEWEST MEMBER IS THE ACCOUNT'S OWN REPLY — the conversation ends, so far, with the
+     * reader's own words, and the row says who they went to rather than showing the reader
+     * their own name (see `sentLabelOf`). Two arms, one label, never both:
+     *   · everything read (the live shape — own-sent is never unread, so a folded reply sits
+     *     in an all-read "Earlier" row): the sender line and the circle are the recipient's,
+     *     exactly as on a singleton sent row;
+     *   · unread members present: the distinct unread senders own the sender line, unchanged,
+     *     and the snippet — which is the reply's — carries the label as its attribution.
+     * A reply with no recipients on the row (pre-recipient mirror) is `sent == null`, and the
+     * row keeps the ordinary sender summary.
+     */
+    const sent = sentLabelOf(shown);
+    const sentLeads = sent !== null && g.unreadCount === 0;
     return (
       <MessageRow
         key={`t:${g.key}`}
         id={target.id}
-        from={groupSenders(g)}
-        {...avatarOf(target)}
+        from={sentLeads ? sent.label : groupSenders(g)}
+        {...(sentLeads ? sent.avatar : avatarOf(target))}
         time={displayTime(shown, now)}
         subject={threadSubject?.(g.key) ?? shown.subject}
-        preview={shown.protected ? t("protectedPreview") : shown.snippet}
+        preview={
+          shown.protected
+            ? t("protectedPreview")
+            : sent !== null && !sentLeads
+              ? `${sent.label}: ${shown.snippet}`
+              : shown.snippet
+        }
         unread={g.unreadCount > 0}
         seen={g.unreadCount === 0}
         selected={selected != null && g.members.some((m) => m.id === selected.id)}
