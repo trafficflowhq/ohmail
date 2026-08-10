@@ -318,6 +318,38 @@ function TagCreateRow({
   );
 }
 
+/**
+ * WHICH PANE A DEEP LINK ASKS FOR — `?settings=<pane>` on the app URL, or `"general"`.
+ *
+ * It exists for one caller and one reason: the Microsoft consent ceremony's callback has to send the
+ * browser somewhere that can render its outcome, and the outcome belongs on the Mailboxes pane.
+ * `#/settings` (`shell/routing.ts`) already gets the SETTINGS VIEW open; nothing could ask for a
+ * pane inside it, so the redirect landed on General and the sentence explaining what happened was
+ * one click away and invisible.
+ *
+ * A QUERY PARAMETER rather than a second hash segment, deliberately: `parseHash` matches the view
+ * name exactly, so `#/settings/mailboxes` would fall through to `ohbox` — making this a change to
+ * the shared router as well as to this file, for a link with one consumer.
+ *
+ * It is read ONCE, as the initial state, and never watched. A pane the user has since clicked away
+ * from must not be dragged back by a parameter still sitting in the address bar, and the caller that
+ * put it there strips it as soon as it has read its own half.
+ *
+ * An unrecognised value is `"general"` — the same posture `parseHash` takes for an unknown view, and
+ * the reason this validates against {@link PANE_IDS} rather than casting: `pane` selects a render
+ * branch, and a value from a URL that matched none of them would render an empty settings screen.
+ */
+export const PANE_IDS: readonly PaneId[] = [
+  "general", "notifications", "mailboxes", "screener", "billing", "tags", "rules",
+  "about", "security", "account", "desktop",
+];
+
+export function initialPaneFromUrl(): PaneId {
+  if (typeof window === "undefined") return "general";
+  const asked = new URLSearchParams(window.location.search).get("settings");
+  return PANE_IDS.includes(asked as PaneId) ? (asked as PaneId) : "general";
+}
+
 export function SettingsView({
   notifications,
   tags,
@@ -521,7 +553,7 @@ export function SettingsView({
   const tg = useTranslations("tag");
   const toast = useToast();
   const { preference, setTheme } = useTheme();
-  const [pane, setPane] = useState<PaneId>("general");
+  const [pane, setPane] = useState<PaneId>(initialPaneFromUrl);
   const [channels, setChannels] = useState(NOTIFICATION_CHANNELS);
   const [vips, setVips] = useState<string[] | null>(null);
   const [learned, setLearned] = useState<"open" | "accepted" | "dismissed">("open");
