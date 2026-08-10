@@ -28,6 +28,123 @@ export function replySubject(parentSubject: string): string {
 }
 
 /**
+ * The forward subject for an original's subject — `Fwd: ` exactly once.
+ *
+ * THE CLIENT OWNS THIS, and that is not an accident of layering: `SendService` builds the outgoing
+ * message with `subject: d.subject` — the draft row's subject, verbatim — and adds no prefix of its
+ * own. So if this were left out, a forward would go out under the original's bare subject and the
+ * recipient would have no way to tell a forward from a fresh message. Everything ELSE about a
+ * forward is the server's (the quoted body, the streamed attachments, the `no_forward` refusal);
+ * the subject line is the one part the compose form is authoritative for, because it is the one
+ * part the user may edit before sending.
+ *
+ * Same shape as {@link replySubject} and for the same reasons: case-insensitive, so a chain through
+ * an Outlook correspondent does not accumulate `Fwd: FW: FWD: …`, and only the LEADING run of
+ * prefixes is collapsed. `Fw:` and `Fwd:` are both stripped because both are in wide use, and both
+ * normalise to the one form this app writes. A subject that merely contains "fw:" is untouched.
+ */
+export function forwardSubject(originalSubject: string): string {
+  const bare = originalSubject.replace(/^(?:\s*fwd?\s*:\s*)+/i, "").trim();
+  return bare ? `Fwd: ${bare}` : "Fwd:";
+}
+
+/**
+ * THE OPTIMISTIC SENT COPY OF A CONFIRMED SEND — built on `{status:"sent"}`, never before it.
+ *
+ * A confirmed `mail_send` is the mailbox's own word that the message left and was appended to
+ * Sent, minted under `providerMessageId`. This turns that fact into a provisional message row so
+ * the reply appears in its conversation in under a second, minutes ahead of the worker's
+ * Sent-folder watch ingesting the real one. Unlike `effectsOf`'s `sending` draft this is NOT a
+ * mutate-time optimistic effect — the engine calls it from `dispatch` only after the server
+ * confirmed — so it never asserts a delivery the server has not owned.
+ *
+ * The two load-bearing fields:
+ *  · `messageIdHeader = providerMessageId` — the exact header the real Sent copy will carry, which
+ *    is how the engine reconciles the two and drops this overlay when the drain delivers the row.
+ *  · `folder: "Sent"` (cast — Sent is not one of the six `Destination` folders, exactly as the
+ *    server files an ingested Sent twin), beside `local: true` marking it provisional.
+ *
+ * ── WHERE IT SURFACES, CORRECTED ───────────────────────────────────────────────────────────
+ *
+ * This used to say the copy "matches no pile view and reaches the surface ONLY through its
+ * conversation". That was true when it was written and is NOT true now: `ohboxView`'s own-sent
+ * union files every mirror row whose folder is not one of the six organised views into "Earlier",
+ * and `isOwnSent` is exactly `!OHMAIL_FOLDERS.has(folder)` — which `folder: "Sent"` satisfies. So
+ * the copy appears in Earlier as well as in its conversation, from the moment the send confirms
+ * until the real row replaces it.
+ *
+ * That is the right behaviour and it needs no gate: a message the user just sent belongs in their
+ * own sent history, `unread: false` keeps it out of "New for you", and the reconcile is by
+ * `messageIdHeader`, so the overlay is dropped the instant the ingested row lands — the two are
+ * never in the list together. The note is here because the sentence it replaces was load-bearing
+ * for anyone reasoning about which surfaces can see a provisional row: the answer is any surface
+ * reading the mirror, so `local` is the flag to test, never the folder.
+ *
+ * Returns `null` when there is nothing to place it against — no mailbox to attribute it to — which
+ * is the same refusal `effectsOf`'s `mail_send` makes, so a send that could not resolve a mailbox
+ * produces no overlay rather than a headless row.
+ */
+export function sentOverlayMessage(
+  reader: EntityReader,
+  m: Extract<EngineMutation, { kind: "mail_send" }>,
+  providerMessageId: string,
+  ctx: EffectContext,
+): EngineMessage | null {
+  const parent = m.inReplyTo === null ? null : reader.get<EngineMessage>("message", m.inReplyTo);
+  const mailboxId = m.mailboxId ?? parent?.mailboxId;
+  if (!mailboxId) return null;
+
+  const iso = ctx.now().toISOString();
+  const to = m.to ?? (parent ? [parent.from] : []);
+  const subject = m.subject ?? (parent ? replySubject(parent.subject) : "");
+  // Parent thread for a reply; a compose starts none — the same rule `effectsOf` follows so a
+  // compose never files onto a stranger's conversation in the mirror.
+  const threadId = m.threadId ?? parent?.threadId ?? null;
+  // The account is single-tenant in a mirror, so any message names it; the parent is the direct
+  // source when there is one.
+  const accountId = parent?.accountId ?? reader.list<EngineMessage>("message")[0]?.accountId ?? "";
+
+  // OWN FROM — the sender's own identity. The `mailbox` entity carries the address on a Cloud tab
+  // whose mailbox poll has landed (`consent-cutline.ts` reads the same list); before that, and on
+  // Desktop, it is absent, so this falls back to the address the parent was sent to (the user, on a
+  // reply) and finally to a bare empty address. The overlay is transient — the real row replaces it
+  // within a drain — so a best-effort From is enough to render "me" until then.
+  const mb = reader.list<{ id?: string; address?: string; name?: string }>("mailbox")
+    .find((x) => x.id === mailboxId);
+  const from: EmailAddress =
+    typeof mb?.address === "string" && mb.address.length > 0
+      ? { name: mb.name ?? null, address: mb.address }
+      : parent?.to?.[0] ?? { name: null, address: "" };
+
+  return {
+    id: ctx.uuid(),
+    accountId,
+    mailboxId,
+    threadId,
+    messageIdHeader: providerMessageId,
+    subject,
+    from,
+    to,
+    cc: m.cc ?? [],
+    date: iso,
+    // Not a `Destination`; an ingested Sent twin is filed the same way (`materialize.ts` reads the
+    // native locator's folder for a row with no folder_state). It matches no view filter.
+    folder: "Sent" as Folder,
+    snippet: m.body.slice(0, 200),
+    body: m.body,
+    unread: false,
+    hasAttachments: (m.attachments?.length ?? 0) > 0,
+    attachmentCount: m.attachments?.length ?? 0,
+    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+    triage: null,
+    labels: [],
+    remoteContent: "none",
+    local: true,
+    updatedAt: iso,
+  } satisfies EngineMessage;
+}
+
+/**
  * The ONE source of truth for what each mutation MEANS locally. Both consumers
  * share it, so the optimistic view and the demo "server" can never disagree:
  *

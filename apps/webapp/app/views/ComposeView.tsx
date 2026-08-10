@@ -54,6 +54,7 @@ import { canSend, type SendState } from "../shell/mail-send";
 import { RichEditor } from "../shell/RichEditor";
 import { SendStatus } from "../shell/SendStatus";
 import { RecipientField } from "../shell/RecipientField";
+import { ComposeAttach } from "../components/ComposeAttach";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
 import type { ResolvedFrom } from "../shell/compose-from";
 
@@ -404,6 +405,18 @@ export function ComposeView({
             </div>
           </div>
 
+          {/* FORWARDING — the note exists because the form would otherwise LIE BY OMISSION.
+              A forward opens with an empty body and a `Fwd:` subject, and the quoted original plus
+              its attachments are added by the SERVER at send (`send-service.ts`) — they are
+              deliberately not assembled in the browser, because a client-built quote is the seam a
+              redacted sensitive body would escape through. Without this line the user sees an empty
+              message and reasonably concludes nothing is attached to it. It says what WILL be sent,
+              not what is on screen, which is the only honest reading of this form.
+              A `<p>`, not a dismissible chip: it is a fact about the message, not a notification. */}
+          {fields.forwardOf ? (
+            <p className="compose-forwarding">{t("forwardingNote")}</p>
+          ) : null}
+
           {cardVisible ? (
             <div className="draft-card">
               <span className="draft-tag">
@@ -463,6 +476,16 @@ export function ComposeView({
               it. Grouped rather than left as two siblings because the pair is one region: the
               button and the sentence that explains what pressing it will do. */}
           <div className="compose-foot">
+            {/* ATTACHMENTS — files ride the send, not the account. The bytes live only in the form
+                (`compose.ts` strips them from the scratch buffer), so they reach the wire via
+                `plan.mutation.attachments` and are stored nowhere. In the foot, above Send, so the
+                pick-a-file control sits with the action it feeds; disabled while a send is in
+                flight, like every other input. */}
+            <ComposeAttach
+              attachments={fields.attachments ?? []}
+              onChange={(next) => onFields({ ...fields, attachments: next })}
+              disabled={inFlight}
+            />
             <div className="send-row">
               <Button
                 variant="primary"

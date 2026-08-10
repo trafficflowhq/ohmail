@@ -167,12 +167,13 @@ export interface ThreadResolutionInput {
    * The addresses this message contributes to the conversation, unioned by lowercased address.
    *
    * The CALLER decides, because the two callers genuinely know different things. Ingest has the
-   * parsed message and passes sender + recipients. The backfill has only what was persisted,
-   * and `insertMessage` has never written `messages.to_addresses` — every row in the database
-   * carries its `'[]'` default — so it passes the sender alone. That asymmetry is real and is
-   * recorded here rather than hidden: a conversation resolved by the backfill lists fewer
-   * participants than the same conversation would have if it were ingested today. Writing
-   * `to_addresses` at ingest is the fix, and it is a MessageDTO change, not this slice.
+   * parsed message and passes sender + recipients. The backfill has only what was persisted, and
+   * `insertMessage` writes `messages.to_addresses` only from the recipients slice onward — every
+   * row that predates it carries the column's `'[]'` default — so it passes the sender alone. That
+   * asymmetry is real and is recorded here rather than hidden: a conversation resolved by the
+   * backfill over OLD rows lists fewer participants than the same conversation would have if it
+   * were ingested today. Newly ingested mail has the recipients on the row, so the gap stops
+   * growing; it is not retroactively closed, and closing it would need the raw bytes.
    */
   participants: EmailAddress[];
   date: Date | null;

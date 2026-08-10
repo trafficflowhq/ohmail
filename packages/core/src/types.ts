@@ -60,8 +60,8 @@ export interface NormalizedMessage {
   from: EmailAddress;
   to: EmailAddress[];
   /**
-   * `Cc:`, parsed. Carried for {@link messageFingerprint} and nothing else — no
-   * routing rule reads it, and `insertMessage` still does not write `messages.cc_addresses`.
+   * `Cc:`, parsed. No routing rule reads it; {@link messageFingerprint} consumes it, and
+   * `insertMessage` now writes it to `messages.cc_addresses` so the reader can render a Cc line.
    *
    * It is in the fingerprint because leaving it out is the UNSAFE direction: two messages that
    * differ only in their Cc list would share a logical identity, and the second would be filed
