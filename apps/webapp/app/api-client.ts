@@ -225,15 +225,16 @@ export interface CreateMailboxBody {
     displayName?: string;
     imap: {
         host: string;
-        port: number;
-        secure: boolean;
+        port?: number;
+        secure?: boolean;
         user: string;
         pass: string;
+        allowInsecure?: boolean;
     };
     smtp?: {
         host: string;
-        port: number;
-        secure: boolean;
+        port?: number;
+        secure?: boolean;
         user?: string;
         pass?: string;
     };
@@ -248,6 +249,7 @@ export interface UpdateMailboxBody {
         secure?: boolean;
         user?: string;
         pass: string;
+        allowInsecure?: boolean;
     };
     smtp?: {
         host?: string;
