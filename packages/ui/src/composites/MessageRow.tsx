@@ -48,6 +48,16 @@ export interface MessageRowProps {
   /** Spam-grade rendering — less ink. */
   dull?: boolean;
   threadCount?: number;
+  /**
+   * THREAD PARTICIPANTS — the people in this conversation, replacing the numeric thread badge.
+   *
+   * Up to three overlapping sender circles, newest voice first, computed by
+   * `threadParticipants` and never derived in the row. Present and non-empty ⇒ the circles render
+   * in place of the `⤷ N` badge; absent or empty ⇒ the numeric badge stays. The slot is a fixed,
+   * overlap-bounded width (a negative-margin stack), so a two- and a three-person thread cost the
+   * row the same space and the subject beside it never shifts.
+   */
+  participants?: { initials: string; hue: number }[];
   hasAttachment?: boolean;
   /** Protected badge (shield + "protected"). */
   protected?: boolean;
@@ -116,6 +126,7 @@ export function MessageRow(props: MessageRowProps) {
     picked,
     dull,
     threadCount,
+    participants,
     hasAttachment,
     tags,
     place,
@@ -130,7 +141,19 @@ export function MessageRow(props: MessageRowProps) {
   } = props;
 
   const badges: ReactNode[] = [];
-  if (threadCount) badges.push(<Badge key="thread">⤷ {threadCount}</Badge>);
+  // the participant circles REPLACE the numeric badge when present — "who is in this
+  // conversation" carries more than "how many mails", and a same-sender thread (the selector
+  // answers `[]` for it) keeps the count. `aria-hidden` like the badge it stands in for: the
+  // thread hint is decorative, and the row's own `aria-label` already names sender and subject.
+  if (participants && participants.length > 0)
+    badges.push(
+      <span className="thread-circles" key="thread" aria-hidden="true">
+        {participants.map((p, i) => (
+          <Avatar key={i} initials={p.initials} hue={p.hue} size="s" />
+        ))}
+      </span>,
+    );
+  else if (threadCount) badges.push(<Badge key="thread">⤷ {threadCount}</Badge>);
   if (hasAttachment) badges.push(<Badge key="attach" icon="clip" />);
   if (props.protected)
     badges.push(
