@@ -554,6 +554,31 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // lenient default. Deploy order is therefore migration → API → worker, and the migration arrow is
   // load-bearing for once.
   ["rules", "subject_contains"],
+  // mail 0051_away_responder — the responder's `audience` column, and it is the SHARPEST kind of
+  // marker on this list: a column whose absence would not merely 42703 a surface, it would 42703
+  // the surface that CONFIGURES an outbound-mail feature.
+  //
+  // `AwayResponderService` does `select().from(awayResponders)` and its `put` returns the inserted
+  // row, so both `/away-responder` endpoints go dark on an API deployed ahead of the migration —
+  // meaning somebody who is already away cannot turn their responder OFF, which is the one direction
+  // of that control that is urgent. `audience` is probed rather than the new table, on this list's
+  // usual rule: probe the column a QUERY reads to make a DECISION, and this is the column that
+  // decides whether a stranger gets answered.
+  //
+  // The WORKER half is the third deploy step and the safe kind: the pass reads this row and writes
+  // `away_responder_sent`, so a worker ahead of the migration throws 42703/42P01 inside the pass,
+  // which its own try/catch logs — no reply is sent, which is the direction to fail. Deploy order:
+  // migration → API → worker.
+  //
+  // No INDEX marker (the two indexes this migration creates are on the new table, whose absence is
+  // a loud 42P01 inside the pass and not a silent slowdown) and no CHECK marker, even though
+  // `away_responders_audience_closed` is exactly the kind of constraint 0029 and 0037 earned one
+  // for. The reason is that this CHECK cannot be half-applied in a way anybody would survive: the
+  // column arrives NOT NULL with a DEFAULT in the statement before it, so a database that took the
+  // column and not the CHECK still resolves every existing and every new row to `screened_in` — the
+  // NARROW member — and the service's own closed-set validator refuses the other one at the
+  // boundary. A missing CHECK here costs a defence in depth, not an audience.
+  ["away_responders", "audience"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -900,8 +925,18 @@ export const MAIL_EXPECTED_MARKERS =
  * which is a rule matching EVERY subject while its row reads as specific. Worker half is NOT the
  * safe kind (a routing read that 42703s stops organizing rather than degrading), so the order is
  * migration → API → worker with the first arrow load-bearing.
+ *
+ * `0051_away_responder` is probed ONCE, by `away_responders.audience` — the first marker on this
+ * list belonging to a feature that SENDS MAIL. `AwayResponderService` selects whole rows and `put`
+ * returns the inserted one, so an API ahead of the migration 42703s both `/away-responder`
+ * endpoints: somebody already away could not turn their responder off. The worker half is real and
+ * is the third step (the pass reads this row and writes `away_responder_sent`), and it fails in the
+ * safe direction — a 42703 inside the pass is caught, logged and sends nothing. No INDEX marker and
+ * no CHECK marker; the marker beside the column says why the CHECK does not need one. It is the
+ * NEWEST entry in the mail journal — its `when` was rebased above `0050`'s when the two landed in
+ * the same window, so the newest-entry gate below points here and not there.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0050_rule_subject_contains";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0051_away_responder";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
