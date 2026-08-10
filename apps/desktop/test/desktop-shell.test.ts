@@ -1085,7 +1085,7 @@ describe("the UI bundle's build config", () => {
    */
   it("hands the shared settings screen the panes only this shell can fill", () => {
     const gate = read("src/DesktopGate.tsx");
-    expect(gate).toMatch(/mailboxSection: <DesktopMailboxes \/>/);
+    expect(gate).toMatch(/mailboxSection: <DesktopMailboxes door=\{status\?\.mode \?\? null\} \/>/);
     expect(gate).toMatch(/aboutSection: <DesktopAbout status=/);
     expect(gate).toMatch(/mailboxFacts: readMailboxFacts/);
 
