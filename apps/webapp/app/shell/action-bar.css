@@ -418,8 +418,7 @@
  * intrinsic width and none of them touches this file.
  */
 .abar-defer,
-.abar-file,
-.abar-rall { display: none; }
+.abar-file { display: none; }
 
 /* Duplicates, hidden exactly when the group is standing in the row above, so a verb is in the
    row or behind More and never in both. Same queries, opposite sense.
@@ -443,32 +442,6 @@
   .abar-defer { display: flex; }
   .abar-panel .abar-p-defer { display: none; }
   .mmenu .mm-defer { display: none; }
-}
-
-/* ── REPLY ALL'S OWN TIER, ABOVE DEFER AND BELOW NOTHING A MESSAGE BAR CAN REACH ────────
- *
- * The group exists only on a multi-recipient message (`replyAllRecipients`), so unlike defer
- * and file its width is sometimes simply absent — but the tier must be set for the row that
- * CARRIES it, or the one message that shows it is the one message that overflows. It is
- * admitted only after the full defer row stands (455.2px, the ladder above), plus its own
- * measured width, plus one 6px gap:
- *
- *     base + defer + reply-all = 455.2 + 95.7 + 6 = 556.9  → admit at 557
- *
- * 95.7 is a MEASUREMENT — a `.abar-b.abar-solo` capsule labelled "Reply all" with its `⇧ r`
- * keycap (27.2px), read off the built page in Chrome at the 572px reading measure (see the
- * header's rule: re-measure when a label or the font stack changes).
- *
- * WHY IT OUTRANKS NOTHING AND NOTHING OUTRANKS IT: a message bar's container is capped by the
- * mail measure at ≤576px (`.msg` 640 − 68 padding; a stream card's `.scast` 620 − 44), so the
- * 601 file tier below never fires where this group can exist — the two can NOT stand together,
- * which is why 601 did not move when this tier landed. The only surface that reaches 601 is
- * the selection bar, and a selection carries no reply verbs at all (`BulkAction`). If the mail
- * measure ever widens past `601 + 95.7 + 6`, re-derive BOTH numbers.
- */
-@container abar (min-width: 557px) {
-  .abar-rall { display: flex; }
-  .mmenu .mm-rall { display: none; }
 }
 
 @container abar (min-width: 601px) {

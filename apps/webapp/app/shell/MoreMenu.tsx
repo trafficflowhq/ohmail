@@ -47,7 +47,7 @@ export interface MoreMenuItem {
    * Rendered as a class the container queries switch off when the same group is standing in the
    * row. Absent means "no row position at all" — Draft reply has never had one.
    */
-  group?: "defer" | "file" | "rall";
+  group?: "defer" | "file";
   /** Leading glyph, for the one item that carries one. */
   icon?: ReactNode;
   run: () => void;

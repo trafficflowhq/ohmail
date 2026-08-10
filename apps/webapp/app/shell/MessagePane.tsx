@@ -15,7 +15,6 @@ import { MessageBody } from "../components/MessageBody";
 import { ConversationEntries, ConversationHead } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
 import { PLACE_LABEL, dayNine, dayValue, hueOf, nextWeekNine, tagsOfMessage, tomorrowNine } from "./format";
-import { replyAllRecipients } from "./compose-from";
 import { InlineReply } from "./InlineReply";
 import { chordKeys, useBinding, useKeyPress } from "./keymap";
 import { useBodyStalled, useMessageChrome } from "./message-chrome";
@@ -41,12 +40,6 @@ export type MoveTarget = Extract<OhmailView, "ohbox" | "reads" | "receipts" | "s
  */
 export type MessageAction =
   | "reply"
-  /**
-   * Reply to EVERYONE on the message — sender plus the other To/Cc recipients. Dispatched only
-   * from a control that `replyAllRecipients` allowed to render, so a 1:1 message never offers
-   * it; the shell resolves the same call again at send time (`AppShell.sendReply`).
-   */
-  | "reply_all"
   | "later"
   | "aside"
   | "resurface"
@@ -202,19 +195,8 @@ function ActionBar({
   const t = useTranslations("ohbox");
   const tr = useTranslations("screening");
   const press = useKeyPress();
-  const chrome = useMessageChrome();
   /** Hoisted above `toggleRead`, which needs it to decide WHICH key it is standing in for. */
   const read = !message.unread;
-  /**
-   * REPLY ALL RENDERS ONLY WHEN "ALL" IS MORE PEOPLE THAN "REPLY" — the predicate is
-   * `replyAllRecipients`, the same call the shell resolves at send time, so the button and the
-   * envelope cannot disagree. On a 1:1 message it returns `null` and no control renders: a
-   * second reply verb whose recipients equal the first's would be noise, not an option.
-   * `ownAddresses` rides the chrome (see `message-chrome.tsx`) because this bar is mounted
-   * twice while the reader is open and holds no engine hook of its own.
-   */
-  const canReplyAll =
-    replyAllRecipients(message, chrome.ownAddresses ?? []) !== null;
   /** Is the disclosure menu open? A boolean, because the menu is anchored by CSS, not by a point. */
   const [menuOpen, setMenuOpen] = useState(false);
   /**
@@ -391,17 +373,6 @@ function ActionBar({
    * than under a bar that has just closed.
    */
   const menuItems: MoreMenuItem[] = [
-    // Reply all mirrors its row position — first, beside the verb it varies. Present only when
-    // the predicate admits it, exactly like the row button, so the menu never offers a reply
-    // whose recipients would equal plain Reply's.
-    ...(canReplyAll
-      ? [{
-          id: "reply_all",
-          group: "rall",
-          label: t("actionReplyAll"),
-          run: () => { closeMenu(); onAction("reply_all"); },
-        } as MoreMenuItem]
-      : []),
     { id: "later", group: "defer", label: copy("actionLater", "Later"), run: () => { closeMenu(); onAction("later"); } },
     { id: "aside", group: "defer", label: t("actionSetAside"), run: () => { closeMenu(); onAction("aside"); } },
     { id: "resurface", group: "defer", label: t("actionResurface"), run: () => { closeMenu(); onPanel("resurface"); } },
@@ -443,25 +414,6 @@ function ActionBar({
             <Key chord="r" />
           </button>
         </div>
-
-        {/* REPLY ALL — the same question as Reply, answered to everyone, so it stands beside
-            the accent verb and NOT inside it: a segment would dilute the one primary capsule.
-            Rendered only when `canReplyAll` (see above), and its own `.abar-g` so the row gap
-            applies. `.abar-rall` is a density-ladder group like defer/file — below its tier it
-            folds into More, where `mm-rall` is the other half of "in the row or in the menu,
-            never both". */}
-        {canReplyAll ? (
-          <div className="abar-g abar-rall">
-            <button
-              type="button"
-              className="abar-b abar-solo"
-              onClick={() => onAction("reply_all")}
-            >
-              {t("actionReplyAll")}
-              <Key chord="shift+r" />
-            </button>
-          </div>
-        ) : null}
 
         <div
           className="abar-g abar-seg abar-defer"
@@ -1198,10 +1150,6 @@ export function MessagePane({
                nothing else — the `to` line, the draft key and `canSend` are all it needs
                a message FOR. */
             message={message}
-            /* Whether this editor answers EVERYONE on the message — set by the open
-               (`openReply(id, true)`), read here so the head names the same audience the
-               send will carry. Absent chrome field means a plain reply. */
-            replyAll={chrome.replyAll === true}
             value={chrome.replyBody}
             send={chrome.replySendState(message.id)}
             onChange={chrome.onReplyBody}

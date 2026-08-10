@@ -51,7 +51,7 @@ import type { RichValue } from "./rich-text";
 import type { DraftReplyControl, DraftedReply } from "./draft-reply";
 import { SendStatus } from "./SendStatus";
 import { useMailboxFacts } from "./MailStateProvider";
-import { optionsFromFacts, replyAllRecipients, replyRecipients, resolveReplyFrom } from "./compose-from";
+import { optionsFromFacts, replyRecipients, resolveReplyFrom } from "./compose-from";
 
 /*
  * The scratch-buffer helpers and `canSend` used to live here and now live in `mail-send.ts`,
@@ -81,7 +81,6 @@ export interface DraftReplyChrome {
 
 export function InlineReply({
   message,
-  replyAll = false,
   value,
   send = { phase: "idle" },
   onChange,
@@ -90,14 +89,6 @@ export function InlineReply({
   draftReply,
 }: {
   message: EngineMessage;
-  /**
-   * ANSWER EVERYONE ON THE MESSAGE, not the sender alone. The head then names the reply-all
-   * envelope — `replyAllRecipients`, the same pure call `AppShell.sendReply` resolves for the
-   * wire — so what the editor claims and what leaves the account are one decision. When that
-   * call returns `null` (the audience degenerates to the plain reply's), the head AND the send
-   * both fall back to the plain path, for the same reason from the same function.
-   */
-  replyAll?: boolean;
   /**
    * BOTH HALVES — the markup and the plain rendering of it. `text` is what `canSend` judges
    * and what the optimistic row shows; `html` is what goes on the wire when there is any.
@@ -166,15 +157,6 @@ export function InlineReply({
     : rowAddress(message);
 
   /**
-   * THE REPLY-ALL ENVELOPE, when this editor was opened as one — see the `replyAll` prop. The
-   * same options feed it that feed the plain head above, so both heads and the wire read one
-   * set of facts. `null` (a 1:1 message, or an audience the facts cannot enlarge) falls back
-   * to the plain head below rather than claiming an "all" that is one person.
-   */
-  const all = replyAll ? replyAllRecipients(message, options.map((o) => o.address)) : null;
-  const nameOf = (r: { name: string | null; address: string }): string => r.name ?? r.address;
-
-  /**
    * BRING THE EDITOR TO THE READER.
    *
    * The conversation above is no longer a bounded 190px quote — it is the real thread, as
@@ -222,19 +204,11 @@ export function InlineReply({
 
   return (
     <div className="reply" data-reply-for={message.id} ref={box}>
-      {all ? (
-        <div className="reply-head">
-          <b>{t("toAll", { names: all.to.map(nameOf).join(", ") })}</b>
-          {/* The Cc line, only when the envelope carries one — an empty "Cc" is a claim. */}
-          {all.cc.length > 0 ? <small>{t("ccLine", { names: all.cc.map(nameOf).join(", ") })}</small> : null}
-        </div>
-      ) : (
-        <div className="reply-head">
-          <b>{t("to", { name: toName })}</b>
-          {/* Only when it adds something — see `rowAddress`. */}
-          {toAddr ? <small>{toAddr}</small> : null}
-        </div>
-      )}
+      <div className="reply-head">
+        <b>{t("to", { name: toName })}</b>
+        {/* Only when it adds something — see `rowAddress`. */}
+        {toAddr ? <small>{toAddr}</small> : null}
+      </div>
 
       {/* FROM, and the substitution said out loud. Static text, never a control: a
           reply has a right answer — the address the sender wrote to — and offering to change it

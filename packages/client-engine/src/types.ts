@@ -1011,13 +1011,11 @@ export type EngineMutation =
    * (`sendingMailboxId`), because the account's own address is not something a compose form
    * can know.
    *
-   * `cc` and `bcc` are both DELIVERED. They ride
+   * `cc` and `bcc` are the compose fork's, and both are DELIVERED now. They ride
    * `POST /drafts`, are stored on the row, and `SendService` copies them into `OutboundMessage`
    * (cc + bcc → the SMTP RCPT list). The privacy line lives at the MIME builder, not here: cc is a
    * `Cc:` header on the sent mail, bcc is on the envelope ONLY and never a header (`imap.ts#send`).
-   * Compose fills both from the user's own fields. A reply-to-all fills `cc` with the parent's
-   * surviving Cc line (the webapp's `replyAllRecipients`); a plain reply leaves both unset, and
-   * `bcc` is never derived — no reply of any kind blind-copies anybody.
+   * A reply leaves both unset; only Compose fills them, from the user's own fields.
    */
   | {
       kind: "mail_send";
@@ -1084,7 +1082,7 @@ export type EngineMutation =
       threadId?: string | null;
       subject?: string;
       to?: EmailAddress[];
-      /** Carbon recipients (Compose, and a reply to all). A `Cc:` header on the delivered mail. */
+      /** Carbon recipients (Compose only). A `Cc:` header on the delivered mail. */
       cc?: EmailAddress[];
       /** Blind-carbon recipients (Compose only). Delivered on the envelope; never a header. */
       bcc?: EmailAddress[];
