@@ -106,6 +106,7 @@ export interface MailboxDTO {
     displayName: string | null;
     status: string;
     lastSyncAt: string | null;
+    authKind?: "password" | "oauth";
     errorCode?: "auth" | "connect" | "tls" | "timeout" | "storage" | "sync" | "unknown" | null;
     errorDetail?: string | null;
     failedAt?: string | null;
@@ -268,6 +269,21 @@ export const mailboxes: {
     update: (id: string, b: UpdateMailboxBody) => Promise<MailboxDTO>;
     organizer: (id: string) => Promise<OrganizerPeek>;
     takeover: (id: string) => Promise<MailboxTakeover>;
+    oauthStart: (b?: {
+        mailboxId?: string;
+        returnTo?: string;
+    }) => Promise<{
+        authorizeUrl: string;
+        state: string;
+    }>;
+    oauthComplete: (b: {
+        state: string;
+        code: string;
+    }) => Promise<{
+        mailbox: MailboxDTO;
+        created: boolean;
+        returnTo: string | null;
+    }>;
 } = absent;
 
 export interface OrganizerHolder {
