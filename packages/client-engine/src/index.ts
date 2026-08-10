@@ -109,6 +109,7 @@ export {
   tagsCrossView,
   threadOf,
   threadParticipants,
+  threadSubject,
   THREAD_PARTICIPANTS_MAX,
   unreadCounts,
   type EngineCounts,

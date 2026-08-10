@@ -35,6 +35,7 @@ import {
   tagsCrossView,
   threadOf,
   threadParticipants,
+  threadSubject,
   triagePiles,
   type ConsentPartition,
   type EmailAddress,
@@ -1074,6 +1075,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         initials: initialsOf(a.name || a.address),
         hue: avatarHue(a.address),
       })),
+    [presented, version],
+  );
+  /**
+   * THE CONVERSATION'S STORED NAME, for the Ohbox's grouped rows — bound here for the same
+   * reason `participantsOf` is: the view has no reader of its own. The mirror's thread row
+   * carries the subject the server named the thread with, prefixes already stripped, so the
+   * grouped row says "Webshop" where its members say "Re: Webshop". `null` while the thread
+   * row has not synced; the view falls back to the newest member's subject.
+   */
+  const threadSubjectOf = useCallback(
+    (threadId: string) => threadSubject(presented, threadId),
     [presented, version],
   );
   /**
@@ -3533,6 +3545,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 newForYou={ohbox.newForYou}
                 previouslySeen={ohbox.previouslySeen}
                 threadParticipants={participantsOf}
+                threadSubject={threadSubjectOf}
                 tags={tags}
                 now={now}
                 selectedId={selectedOhbox?.id ?? null}

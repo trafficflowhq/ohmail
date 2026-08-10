@@ -438,6 +438,25 @@ export function threadParticipants(reader: EntityReader, threadId: string): Emai
   return out.length > 1 ? out : [];
 }
 
+/**
+ * THE CONVERSATION'S NAME — the mirror's thread row's stored subject, or `null` while no
+ * thread row for this id has synced.
+ *
+ * The server names a thread at CREATE with the localized reply/forward prefixes stripped
+ * (`baseSubject`, `packages/core`), and a heal pass renamed the rows stored before that table
+ * was complete — so the stored name is already clean, and the client deliberately does NOT
+ * re-derive it: a second copy of the prefix table here would be a second definition to drift.
+ *
+ * `null` is a real state, not an error: snapshot pages carry the threads their OWN messages
+ * name, so a mirror can briefly hold a message whose thread row is a page behind. The caller
+ * falls back to a member message's subject until the row lands.
+ */
+export function threadSubject(reader: EntityReader, threadId: string): string | null {
+  const t = reader.get<{ subject?: unknown }>("thread", threadId);
+  const s = t?.subject;
+  return typeof s === "string" && s.trim() !== "" ? s : null;
+}
+
 // ── Reads: the waterline partition ─────────────────────────────────────────
 
 export interface ReadsPartition {

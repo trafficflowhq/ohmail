@@ -21,6 +21,7 @@ import {
   ReadColumn,
 } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
+import { groupSection, sendTimeOf, singletonGroup, type OhboxRowGroup } from "./ohbox-groups";
 import { PLACE_LABEL, avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
@@ -100,6 +101,7 @@ export function OhboxView({
   newForYou,
   previouslySeen,
   threadParticipants,
+  threadSubject,
   tags,
   now,
   selectedId,
@@ -141,6 +143,15 @@ export function OhboxView({
    * a view mounted without it simply shows the numeric thread badge as before.
    */
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
+  /**
+   * THE CONVERSATION'S STORED NAME — the mirror's thread row's subject, bound by the shell the
+   * way {@link threadParticipants} is. The server names a thread with the reply/forward
+   * prefixes already stripped, so a grouped row shows "Webshop" where its members say
+   * "Re: Webshop" — and the view does NOT re-clean anything: one definition of that table,
+   * server-side. `null` (thread row not yet synced) falls back to the newest member's subject.
+   * Optional: a view mounted without it — most tests, the demo — just uses the fallback.
+   */
+  threadSubject?: (threadId: string) => string | null;
   tags: TagDTO[];
   now: Date;
   selectedId: string | null;
@@ -271,7 +282,34 @@ export function OhboxView({
     .filter((m): m is EngineMessage => m != null);
   const displayPrev = previouslySeen.filter((m) => !upper.has(m.id));
 
-  // Selection and keyboard order follow what is on screen, top to bottom.
+  /**
+   * ═══ ONE ROW PER CONVERSATION, PER SECTION ═══════════════════════════════════════════════
+   *
+   * Five unread replies in one thread were five rows in "New for you" — the list rendered one
+   * row per unread message by design, and only the demo fixtures ever populated `threadCount`.
+   * `groupSection` (see `ohbox-groups.ts` for the rules) folds each section's DISPLAY list —
+   * after session placement, so a fold never fights the session order — into one row per
+   * `threadId`. New and Earlier fold independently: a thread with unreads here and history
+   * there shows one row in each. Resurfaced rows stay per-message (each pin is its own "you
+   * asked to see this again"), and the server-paged Older tail is not this client's to fold.
+   *
+   * MESSAGES REMAIN THE UNIT OF EVERYTHING BUT THE ROWS. `all` below still lists messages:
+   * the meta count, mark-all-read, the read-state machinery and the pick set all keep their
+   * message semantics — a grouped row is a rendering and a keyboard stop, not a new entity.
+   */
+  const groupedNew = groupSection(displayNew);
+  const groupedPrev = groupSection(displayPrev);
+  /** The rows on screen, top to bottom — what j/k walk and what a pick range spans. */
+  const navRows: OhboxRowGroup[] = [
+    ...displayResurfaced.map(singletonGroup),
+    ...groupedNew,
+    ...groupedPrev,
+  ];
+  /** The row holding this message, folded or not; -1 for a message not in the three groups. */
+  const rowIndexOf = (id: string | null): number =>
+    id == null ? -1 : navRows.findIndex((g) => g.members.some((m) => m.id === id));
+
+  // Selection and read-state follow the MESSAGES on screen, top to bottom.
   const all = [...displayResurfaced, ...displayNew, ...displayPrev];
   const unreadIds = all.filter((m) => m.unread).map((m) => m.id);
   /** Does "Earlier" hold any of the account's own sent mail? Gates the history-window note. */
@@ -291,8 +329,9 @@ export function OhboxView({
    * whole above the window's own top padding. Only New for you and Earlier are windowed.
    */
   const listScrollerRef = useRef<HTMLDivElement>(null);
-  const win = useListWindow({ scrollerRef: listScrollerRef, count: displayNew.length + displayPrev.length });
-  const newCount = displayNew.length;
+  // The window counts ROWS — grouped conversations — because rows are what get mounted.
+  const win = useListWindow({ scrollerRef: listScrollerRef, count: groupedNew.length + groupedPrev.length });
+  const newCount = groupedNew.length;
   const newFrom = Math.min(win.start, newCount);
   const newTo = Math.min(win.end, newCount);
   const prevFrom = Math.max(0, win.start - newCount);
@@ -324,21 +363,36 @@ export function OhboxView({
     anchor.current = null;
   }, [picked.size]);
 
+  /**
+   * A PICK IS A PICK OF THE ROW — and a row can be a conversation now. Toggling a grouped row
+   * toggles every message it stands for: the row says "⤷ 5", so a verb run on the pick must
+   * act on five messages, not on the one that happens to lead the fold. (Representative-only
+   * picking was the alternative, and it made "Move" on a five-unread conversation move one
+   * message and leave the row standing — a verb that visibly does not do what the row shows.)
+   * A message not in any row — the Older tail — is its own pick, exactly as before.
+   */
   const togglePick = useCallback((id: string) => {
+    const row = navRows[rowIndexOf(id)];
+    const ids = row ? row.members.map((m) => m.id) : [id];
     setPicked((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const allIn = ids.every((i) => next.has(i));
+      for (const i of ids) {
+        if (allIn) next.delete(i);
+        else next.add(i);
+      }
       return next;
     });
     anchor.current = id;
-  }, []);
+    // Deliberately not memoised on stability: `navRows` is rebuilt each render and this must
+    // read the rows as rendered, which is also why the deps are what they are.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navRows]);
 
-  /** Shift-click: add the inclusive range from the anchor to `id`, in list order. */
+  /** Shift-click: add the inclusive ROW range from the anchor to `id`, in list order. */
   const pickRangeTo = useCallback((id: string) => {
-    const order = all.map((m) => m.id);
-    const from = anchor.current ? order.indexOf(anchor.current) : -1;
-    const to = order.indexOf(id);
+    const from = anchor.current ? rowIndexOf(anchor.current) : -1;
+    const to = rowIndexOf(id);
     if (from < 0 || to < 0) {
       togglePick(id);
       return;
@@ -346,10 +400,11 @@ export function OhboxView({
     const [lo, hi] = from <= to ? [from, to] : [to, from];
     setPicked((prev) => {
       const next = new Set(prev);
-      for (let i = lo; i <= hi; i++) next.add(order[i]!);
+      for (let i = lo; i <= hi; i++) for (const m of navRows[i]!.members) next.add(m.id);
       return next;
     });
-  }, [all, togglePick]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navRows, togglePick]);
 
   /**
    * The selection IN LIST ORDER, which is the order every verb acts in.
@@ -808,8 +863,15 @@ export function OhboxView({
    * while this view is mounted (and disappear with it), and the `?` sheet lists them
    * because they exist, not because someone remembered to write them down.
    */
-  const order = all.map((m) => m.id);
-  const at = selected ? order.indexOf(selected.id) : -1;
+  /**
+   * j/k WALK ROWS, NOT MESSAGES. `order` holds each row's OPEN TARGET — for a conversation,
+   * its latest unread — so landing on a grouped row selects the message the row leads with,
+   * and a folded member is never a keyboard stop. `at` resolves through row MEMBERSHIP, so a
+   * selection standing on a member that stopped leading its row (a newer reply arrived) still
+   * knows which row it is on.
+   */
+  const order = navRows.map((g) => g.openTarget.id);
+  const at = rowIndexOf(selected?.id ?? null);
   const keys: KeyBinding[] = [
     {
       chord: "j",
@@ -1031,6 +1093,76 @@ export function OhboxView({
     );
   };
 
+  /** A grouped row's sender summary: the distinct unread voices, newest first. */
+  const groupSenders = (g: OhboxRowGroup): string => {
+    const pool = (g.unreadCount > 0 ? g.members.filter((m) => m.unread) : [g.latest])
+      .slice()
+      .sort((a, b) => sendTimeOf(b) - sendTimeOf(a));
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const m of pool) {
+      const key = m.from.address.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      names.push(senderName(m));
+    }
+    return names.join(", ");
+  };
+
+  /**
+   * ONE ROW FOR A CONVERSATION — and a plain {@link row} for anything that did not fold, so a
+   * section of singletons renders byte-for-byte as it always has.
+   *
+   * What the folded row shows and does:
+   *   · the conversation's STORED name (server-cleaned; see the `threadSubject` prop), falling
+   *     back to the newest member's subject while the thread row has not synced;
+   *   · the NEWEST member's snippet and time — a new reply updates the row in place;
+   *   · the distinct unread senders, the member count as the `⤷ N` the demo threads already
+   *     wear, and the same participant circles a threaded row shows today (which, per
+   *     `MessageRow`'s own precedence, stand in for the number on a multi-voice thread);
+   *   · click and ↵ act on the LATEST UNREAD member — the ordinary per-message open, so the
+   *     thread view, the dwell and the departure commit behave exactly as for a plain row, and
+   *     nothing bulk-marks the folded members read;
+   *   · `selected` is row MEMBERSHIP, so the highlight survives the lead message changing;
+   *   · no `settling` class: the settle gesture dismisses ONE message, and a conversation row
+   *     with members left has nowhere to slide.
+   */
+  const groupRow = (g: OhboxRowGroup) => {
+    if (g.members.length === 1) return row(g.members[0]!);
+    const target = g.openTarget;
+    const shown = g.latest;
+    const participants = threadParticipants ? threadParticipants(g.key) : [];
+    return (
+      <MessageRow
+        key={`t:${g.key}`}
+        id={target.id}
+        from={groupSenders(g)}
+        {...avatarOf(target)}
+        time={displayTime(shown, now)}
+        subject={threadSubject?.(g.key) ?? shown.subject}
+        preview={shown.protected ? t("protectedPreview") : shown.snippet}
+        unread={g.unreadCount > 0}
+        seen={g.unreadCount === 0}
+        selected={selected != null && g.members.some((m) => m.id === selected.id)}
+        threadCount={g.members.length}
+        participants={participants.length > 0 ? participants : undefined}
+        hasAttachment={g.members.some((m) => m.hasAttachments)}
+        protected={shown.protected != null}
+        tags={tagsOfMessage(shown, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
+        picked={g.members.every((m) => picked.has(m.id))}
+        onClick={() => {
+          if (window.matchMedia("(max-width: 900px)").matches) {
+            open(target);
+          } else if (selected != null && g.members.some((m) => m.id === selected.id)) {
+            open(target);
+          } else {
+            selectByUser(target.id);
+          }
+        }}
+      />
+    );
+  };
+
   return (
     <section className="view split view-ohbox" onClickCapture={onRangeClickCapture}>
       <ListPane
@@ -1156,16 +1288,16 @@ export function OhboxView({
           </>
         ) : null}
         {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
-        {displayNew.length > 0 && newTo > newFrom ? (
+        {groupedNew.length > 0 && newTo > newFrom ? (
           <>
             <ListGroupLabel>{t("newForYou")}</ListGroupLabel>
-            <ListRows multiSelectable ariaLabel={t("newForYou")}>{displayNew.slice(newFrom, newTo).map(row)}</ListRows>
+            <ListRows multiSelectable ariaLabel={t("newForYou")}>{groupedNew.slice(newFrom, newTo).map(groupRow)}</ListRows>
           </>
         ) : null}
-        {displayPrev.length > 0 && prevTo > prevFrom ? (
+        {groupedPrev.length > 0 && prevTo > prevFrom ? (
           <>
             <ListGroupLabel>{t("previouslySeen")}</ListGroupLabel>
-            <ListRows multiSelectable ariaLabel={t("previouslySeen")}>{displayPrev.slice(prevFrom, prevTo).map(row)}</ListRows>
+            <ListRows multiSelectable ariaLabel={t("previouslySeen")}>{groupedPrev.slice(prevFrom, prevTo).map(groupRow)}</ListRows>
           </>
         ) : null}
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
