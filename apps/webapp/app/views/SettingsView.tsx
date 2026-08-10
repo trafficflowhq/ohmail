@@ -331,9 +331,12 @@ function TagCreateRow({
  * name exactly, so `#/settings/mailboxes` would fall through to `ohbox` — making this a change to
  * the shared router as well as to this file, for a link with one consumer.
  *
- * It is read ONCE, as the initial state, and never watched. A pane the user has since clicked away
- * from must not be dragged back by a parameter still sitting in the address bar, and the caller that
- * put it there strips it as soon as it has read its own half.
+ * It is read ONCE, as the initial state, and never watched — which is the whole of why the parameter
+ * is allowed to stay in the address bar. `MailboxSection` strips the CEREMONY parameters (`oauth`,
+ * `state`, `code`, `reason`) because they are single-use, and deliberately leaves this one: a pane
+ * name is not a credential, and a value that is only consulted at mount cannot drag a user back from
+ * a pane they have since clicked to. On a reload it opens Mailboxes again, which is where somebody
+ * reloading a page about their mailboxes wants to be.
  *
  * An unrecognised value is `"general"` — the same posture `parseHash` takes for an unknown view, and
  * the reason this validates against {@link PANE_IDS} rather than casting: `pane` selects a render
