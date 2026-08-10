@@ -1953,24 +1953,6 @@ export function outboundToMail(msg: OutboundMessage, messageId: string): Mail.Op
     messageId,
     inReplyTo: msg.inReplyTo,
     references: msg.references,
-    // ── ATTACHMENTS, zero at rest ────────────────────────────────────────────────────────
-    //
-    // Mapped onto nodemailer's own `attachments` so the SAME compiled message is what
-    // `transporter.sendMail` delivers AND what `buildRaw` turns into the Sent-folder append —
-    // there is no second assembly of the bytes and no way for the delivered copy and the Sent
-    // copy to carry different files. The bytes live only in `msg.attachments` for this call; they
-    // are never written to any table (see `OutboundMessage.attachments`). Omitted entirely when
-    // absent so a plain send builds byte-identical options to before this field existed.
-    ...(msg.attachments && msg.attachments.length
-      ? {
-          attachments: msg.attachments.map((a) => ({
-            filename: a.filename,
-            content: Buffer.from(a.content),
-            contentType: a.contentType,
-            ...(a.cid ? { cid: a.cid } : {}),
-          })),
-        }
-      : {}),
   };
 }
 
