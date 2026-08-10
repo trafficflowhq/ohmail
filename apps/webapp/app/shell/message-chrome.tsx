@@ -54,33 +54,6 @@ export interface MessageChrome {
   onToggleAbsoluteTime: () => void;
   /** The message id whose inline reply editor is open, if any. */
   replyTo: string | null;
-  /**
-   * OPEN THE REPLY EDITOR ON A SPECIFIC MESSAGE — the seam a conversation SIBLING answers with.
-   *
-   * The focused message's own Reply travels the pane's `onAction("reply")` prop, which the shell
-   * resolves against the focused id. A sibling is rendered deep inside `MessagePane` (through
-   * `ConversationEntries`) and holds no such prop, so its two-verb footer retargets the editor by
-   * id through here — the same `openReply(messageId)` the shell already runs for the focused case.
-   *
-   * OPTIONAL, so the inert default and every provider-less mount keep compiling; a footer button
-   * is simply inert until the shell wires it, which is the honest degradation for a surface with
-   * no reply machine behind it (the desktop shell, a bare test).
-   */
-  openReply?: (messageId: string) => void;
-  /**
-   * FORWARD `messageId` — the entry a sibling's footer and the reader call, filled by the shell's
-   * forward model. OPTIONAL for the same reason `openReply` is: absent where there is no compose
-   * seam, and the caller is written `chrome.forward?.(id)` so it is a no-op rather than a crash.
-   */
-  forward?: (messageId: string) => void;
-  /**
-   * OPEN THE SUBJECT-RULE SHEET for `messageId` — dispatched from the message title press.
-   *
-   * A stub seam: the sheet behind it is a later slice, and this component provides only the call
-   * so that later work wires the panel in without touching the viewer. OPTIONAL, and the title is
-   * rendered as a plain heading until it is present — never a dead control.
-   */
-  openSubjectRule?: (messageId: string) => void;
   /** Both halves of what is typed in it — the markup and its plain rendering. */
   replyBody: RichValue;
   onReplyBody: (next: RichValue) => void;

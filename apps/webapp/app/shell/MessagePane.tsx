@@ -176,7 +176,6 @@ function ActionBar({
   onPanel,
   onAction,
   onScreen,
-  onTag,
 }: {
   message: EngineMessage;
   /** The clock the resurface presets are computed against — tomorrow/next week from here. */
@@ -185,12 +184,6 @@ function ActionBar({
   onPanel: (next: BarPanel | null) => void;
   onAction: (action: MessageAction) => void;
   onScreen: (anchor: HTMLElement | null) => void;
-  /**
-   * Add a tag, anchored on the control that opened the picker. ABSENT on the stream surfaces
-   * (Reads/Receipts) whose bar carries no tagging; when absent the "+Tag" verb is not in the
-   * menu, rather than a menu row that opens nothing.
-   */
-  onTag?: (anchor: HTMLElement | null) => void;
 }) {
   const t = useTranslations("ohbox");
   const tr = useTranslations("screening");
@@ -225,25 +218,26 @@ function ActionBar({
   const copy = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
 
   /**
-   * MARK UNREAD — the one read-state verb the bar carries, and only on a message that IS read.
+   * Marking read/unread — the key's own handler wherever the key exists. See the header.
    *
-   * A message is read the instant it is opened (the 2 s dwell), so a "Mark read" arm on the bar
-   * of the message you are reading is a control for the state it is already in. So that arm is
-   * gone: the read switch offers ONLY "Mark unread", and only appears when there is a read state
-   * to undo. On an unread message the control is absent (see the row below), not a no-op sitting
-   * on the bar.
+   * `press` and NOT `useBinding("u")?.run()`. The second is what this was, and it was wrong
+   * in a way only a browser showed: two presses in a row marked the message read twice,
+   * because the memoised binding array holds closures from the last SHAPE change and `u`'s
+   * shape does not change when read-state does. `press` resolves the handler when it is
+   * called, exactly as the keydown dispatcher does. See `Registry.press`.
    *
-   * It PRESSES `u` rather than dispatching its own `mark_seen`, and `press` NOT
-   * `useBinding("u")?.run()`: the memoised binding array holds closures from the last SHAPE change,
-   * and `u`'s shape does not change with read-state, so `run` would re-fire a stale handler — a bug
-   * a browser caught (two presses marked read twice). `press` resolves the handler at call time,
-   * exactly as the keydown dispatcher does, which is also what keeps `OhboxView`'s dwell pin in
-   * force — a button with its own mutation would be reverted two seconds later by that timer (see
-   * `ohbox-read-state.test.ts`). `onAction("unread")` is the fallback where `u` is not bound at all
-   * (the desktop shell, a pane mounted with no keymap provider).
+   * ── ONE BUTTON, TWO KEYS, AND THAT IS DELIBERATE ──────────────────────────────────────
+   *
+   * The KEYBOARD gets two idempotent directions (`u` unread, `⇧I` read) because a toggle over
+   * a mixed selection inverts it into a different mixed selection — see `OhboxView.markUnread`.
+   * The BUTTON is one control, because there is only one message under it and one of the two
+   * directions is always a no-op: offering both would put a dead control on the bar half the
+   * time. So the button presses whichever key is the live one, which keeps every path through
+   * `pinnedUnread` and means the button can never do something the key refuses to.
    */
-  const markUnread = () => {
-    if (!press("u")) onAction("unread");
+  const markChord = read ? "u" : "shift+i";
+  const toggleRead = () => {
+    if (!press(markChord)) onAction("unread");
   };
 
   const defer = (
@@ -378,21 +372,6 @@ function ActionBar({
     { id: "resurface", group: "defer", label: t("actionResurface"), run: () => { closeMenu(); onPanel("resurface"); } },
     { id: "screen", group: "file", label: tr("action"), run: () => { setMenuOpen(false); onScreen(moreRef.current); } },
     { id: "move", group: "file", label: t("actionMove"), run: () => { closeMenu(); onPanel("move"); } },
-    /**
-     * ADD A TAG — reachable from the bar as well as from the `+Tag` chip beside the subject, so a
-     * reader working the bar never has to leave it to reach tagging. Anchored on the More button
-     * (`moreRef`), like Screening, so the picker opens where the press was. Only when the surface
-     * can tag (`onTag` present) — the stream bar cannot, so it carries no such row. No group class:
-     * like Draft, it is only ever in the menu.
-     */
-    ...(onTag
-      ? [{
-          id: "tag",
-          label: copy("actionAddTag", "Add tag"),
-          icon: <Icon name="tag" size={13} />,
-          run: () => { closeMenu(); onTag(moreRef.current); },
-        } as MoreMenuItem]
-      : []),
     {
       id: "draft",
       label: t("actionDraftReply"),
@@ -433,26 +412,29 @@ function ActionBar({
 
         <div className="abar-g abar-read-g">
           {/*
-           * ONE DIRECTION, AND ONLY ON A MESSAGE THAT IS READ — see `markUnread` above.
+           * THE LABEL SAYS WHAT PRESSING IT WILL DO, and that is the correction.
            *
-           * A message is read the moment it is opened, so "Mark read" on the bar of the message
-           * you are reading acts on a state it is already in; that arm is gone. The control offers
-           * ONLY "Mark unread" and renders ONLY when `read`, so an unread
-           * message shows no read control at all rather than a no-op. Its keycap is `u`, read from
-           * the live registry (nothing where `u` is unbound), and the label states the verb — not
-           * a `role="switch"` reporting a state with the action hidden in a `title`.
+           * This was `role="switch"` labelled "Read", reporting the CURRENT state with the
+           * action hidden in the `title`. A switch is the right shape for a setting; read-state
+           * is a thing you DO to a message, and a control whose visible word is the state
+           * leaves the reader to work out which way pressing it goes. "Mark unread" on a read
+           * message answers that without being hovered — and it is the same sentence the
+           * keyboard's own two verbs use, so the bar and the `?` sheet read alike.
+           *
+           * The keycap follows the direction: `u` marks unread, `⇧I` marks read, and the
+           * button shows the one it is about to stand in for. `<Key>` reads the live registry,
+           * so a chord that moves takes the hint with it and a chord that is not bound here
+           * (the desktop shell, a pane with no provider) shows nothing at all.
            */}
-          {read ? (
-            <button
-              type="button"
-              className="abar-b abar-solo abar-read"
-              onClick={markUnread}
-            >
-              <span className="abar-dot" aria-hidden="true" />
-              {copy("actionMarkUnread", "Mark unread")}
-              <Key chord="u" />
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="abar-b abar-solo abar-read"
+            onClick={toggleRead}
+          >
+            <span className="abar-dot" aria-hidden="true" />
+            {read ? copy("actionMarkUnread", "Mark unread") : copy("actionMarkRead", "Mark read")}
+            <Key chord={markChord} />
+          </button>
 
           {/*
            * ICON-ONLY, and that is a measurement rather than a preference: dropping the word
@@ -649,28 +631,11 @@ export function MessagePane({
    * the right rows on the first frame instead of flashing the previous thread's.
    */
   const newestId = conversation.length ? conversation[conversation.length - 1]!.id : message.id;
-  /**
-   * ── AND WHEN THE OPENED MESSAGE ALREADY HAS A NEWER REPLY OF THE READER'S OWN ──────────────
-   *
-   * Opening a message you have just answered (the parent) puts your reply on the thread as the
-   * newest sibling — via the shell's optimistic overlay or the Sent mirror. Forcing the parent
-   * open as well would land the reader back on the message they just left; the answer is what
-   * they want to see. So when a NEWER own-sent sibling exists, the initial fold opens only
-   * `newestId` (the reply) and lets the parent stay collapsed. "Own-sent" is `from ∈ ownAddresses`
-   * — the same fold `recipientSummary` uses for "me" — so a surface that knows no addresses (the
-   * inert chrome, a bare test) treats nothing as own-sent and the parent expands exactly as before.
-   */
-  const ownSet = new Set((chrome.ownAddresses ?? []).map((a) => a.trim().toLowerCase()));
-  const hasNewerOwnReply = conversation.some(
-    (m) => m.id !== message.id && before(message, m) && ownSet.has(m.from.address.trim().toLowerCase()),
-  );
-  const initialExpanded = (): Set<string> =>
-    hasNewerOwnReply ? new Set([newestId]) : new Set([newestId, message.id]);
-  const [expanded, setExpanded] = useState<Set<string>>(initialExpanded);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set([newestId, message.id]));
   const [openedFor, setOpenedFor] = useState(message.id);
   if (openedFor !== message.id) {
     setOpenedFor(message.id);
-    setExpanded(initialExpanded());
+    setExpanded(new Set([newestId, message.id]));
   }
   const toggleExpanded = useCallback((id: string) => {
     setExpanded((prev) => {
@@ -1099,29 +1064,6 @@ export function MessagePane({
    */
   const focusedHeader = <MessageHeader message={message} now={now} onEnterReader={onEnterReader} />;
 
-  /**
-   * THE SUBJECT — and a press opens the subject-rule sheet where the shell offers one.
-   *
-   * `chrome.openSubjectRule` is the seam a later slice fills with the sheet (a rule keyed on this
-   * subject). Until it does, the subject is a plain heading — never a control that opens nothing.
-   * Where present it is a heading-styled button (`.subj-rule`, `reader.css`), so the affordance is
-   * keyboard-reachable and still reads as the title it is. Rendered once and used in both the
-   * threaded and single-message layouts so the two cannot drift.
-   */
-  const subjectTitle = chrome.openSubjectRule ? (
-    <h2>
-      <button
-        type="button"
-        className="subj-rule"
-        onClick={() => chrome.openSubjectRule!(message.id)}
-      >
-        {message.subject}
-      </button>
-    </h2>
-  ) : (
-    <h2>{message.subject}</h2>
-  );
-
   return (
     <ReadingPane
       /* NO `from`, `subject`, `chips`, `time` OR `onSender` any more — the pane composes its own
@@ -1138,7 +1080,6 @@ export function MessagePane({
           onPanel={setPanel}
           onAction={onAction}
           onScreen={(anchor) => chrome.openSenderMenu(message.id, anchor)}
-          onTag={(anchor) => onAddTag(message.id, anchor)}
         />
       }
       reply={
@@ -1172,7 +1113,7 @@ export function MessagePane({
         <>
           {/* The thread's subject once, at the top: each message wears a header rather than
               repeating the subject, and a sibling shows its own only when it diverges. */}
-          {subjectTitle}
+          <h2>{message.subject}</h2>
           {titleChrome}
           {/* `role="group"` because `aria-label` on a bare div is ignored, and a landmark
               (`<section>`) would be too loud for one part of one message. */}
@@ -1204,7 +1145,7 @@ export function MessagePane({
         // never consulting `body`) plus the attachment strip.
         <>
           {focusedHeader}
-          {subjectTitle}
+          <h2>{message.subject}</h2>
           {titleChrome}
           {focusedMessage}
         </>
