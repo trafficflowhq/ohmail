@@ -28,27 +28,6 @@ export function replySubject(parentSubject: string): string {
 }
 
 /**
- * The forward subject for an original's subject — `Fwd: ` exactly once.
- *
- * THE CLIENT OWNS THIS, and that is not an accident of layering: `SendService` builds the outgoing
- * message with `subject: d.subject` — the draft row's subject, verbatim — and adds no prefix of its
- * own. So if this were left out, a forward would go out under the original's bare subject and the
- * recipient would have no way to tell a forward from a fresh message. Everything ELSE about a
- * forward is the server's (the quoted body, the streamed attachments, the `no_forward` refusal);
- * the subject line is the one part the compose form is authoritative for, because it is the one
- * part the user may edit before sending.
- *
- * Same shape as {@link replySubject} and for the same reasons: case-insensitive, so a chain through
- * an Outlook correspondent does not accumulate `Fwd: FW: FWD: …`, and only the LEADING run of
- * prefixes is collapsed. `Fw:` and `Fwd:` are both stripped because both are in wide use, and both
- * normalise to the one form this app writes. A subject that merely contains "fw:" is untouched.
- */
-export function forwardSubject(originalSubject: string): string {
-  const bare = originalSubject.replace(/^(?:\s*fwd?\s*:\s*)+/i, "").trim();
-  return bare ? `Fwd: ${bare}` : "Fwd:";
-}
-
-/**
  * THE OPTIMISTIC SENT COPY OF A CONFIRMED SEND — built on `{status:"sent"}`, never before it.
  *
  * A confirmed `mail_send` is the mailbox's own word that the message left and was appended to
@@ -62,23 +41,8 @@ export function forwardSubject(originalSubject: string): string {
  *  · `messageIdHeader = providerMessageId` — the exact header the real Sent copy will carry, which
  *    is how the engine reconciles the two and drops this overlay when the drain delivers the row.
  *  · `folder: "Sent"` (cast — Sent is not one of the six `Destination` folders, exactly as the
- *    server files an ingested Sent twin), beside `local: true` marking it provisional.
- *
- * ── WHERE IT SURFACES, CORRECTED ───────────────────────────────────────────────────────────
- *
- * This used to say the copy "matches no pile view and reaches the surface ONLY through its
- * conversation". That was true when it was written and is NOT true now: `ohboxView`'s own-sent
- * union files every mirror row whose folder is not one of the six organised views into "Earlier",
- * and `isOwnSent` is exactly `!OHMAIL_FOLDERS.has(folder)` — which `folder: "Sent"` satisfies. So
- * the copy appears in Earlier as well as in its conversation, from the moment the send confirms
- * until the real row replaces it.
- *
- * That is the right behaviour and it needs no gate: a message the user just sent belongs in their
- * own sent history, `unread: false` keeps it out of "New for you", and the reconcile is by
- * `messageIdHeader`, so the overlay is dropped the instant the ingested row lands — the two are
- * never in the list together. The note is here because the sentence it replaces was load-bearing
- * for anyone reasoning about which surfaces can see a provisional row: the answer is any surface
- * reading the mirror, so `local` is the flag to test, never the folder.
+ *    server files an ingested Sent twin) so it matches no pile view and reaches the surface ONLY
+ *    through its conversation, beside `local: true` marking it provisional.
  *
  * Returns `null` when there is nothing to place it against — no mailbox to attribute it to — which
  * is the same refusal `effectsOf`'s `mail_send` makes, so a send that could not resolve a mailbox

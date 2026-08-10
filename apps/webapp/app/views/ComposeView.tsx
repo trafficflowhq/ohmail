@@ -405,18 +405,6 @@ export function ComposeView({
             </div>
           </div>
 
-          {/* FORWARDING — the note exists because the form would otherwise LIE BY OMISSION.
-              A forward opens with an empty body and a `Fwd:` subject, and the quoted original plus
-              its attachments are added by the SERVER at send (`send-service.ts`) — they are
-              deliberately not assembled in the browser, because a client-built quote is the seam a
-              redacted sensitive body would escape through. Without this line the user sees an empty
-              message and reasonably concludes nothing is attached to it. It says what WILL be sent,
-              not what is on screen, which is the only honest reading of this form.
-              A `<p>`, not a dismissible chip: it is a fact about the message, not a notification. */}
-          {fields.forwardOf ? (
-            <p className="compose-forwarding">{t("forwardingNote")}</p>
-          ) : null}
-
           {cardVisible ? (
             <div className="draft-card">
               <span className="draft-tag">
