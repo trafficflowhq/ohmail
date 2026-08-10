@@ -284,7 +284,9 @@ async function openImapUnderCap(
       }
     };
 
-    const meta = (imapRow.meta ?? {}) as CredMetaAuth & { host?: string; port?: number; secure?: boolean };
+    const meta = (imapRow.meta ?? {}) as CredMetaAuth & {
+      host?: string; port?: number; secure?: boolean; insecureConsent?: boolean;
+    };
     let adapter: ImapAdapter;
     try {
       const secret = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
@@ -292,6 +294,9 @@ async function openImapUnderCap(
         host: meta.host ?? "",
         port: meta.port ?? 993,
         secure: meta.secure ?? true,
+        // The connect-time plaintext consent — same threading as the worker and the send
+        // adapter, so every dialler of this credential row negotiates the way the probe proved.
+        ...(meta.insecureConsent === true ? { allowInsecure: true } : {}),
         // Read-only attachment fetch: no SMTP. Auth via the shared builder — an oauth2 mailbox mints
         // an access token, a password mailbox is byte-for-byte unchanged.
         auth: buildImapAuth(meta, secret, deps.oauth?.forMailbox(mailboxId)),

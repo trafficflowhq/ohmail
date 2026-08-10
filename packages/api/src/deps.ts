@@ -67,6 +67,15 @@ export interface ApiServices {
   push: PushService;
   /** See {@link ImapAdmissionPort}. */
   imapAdmission: ImapAdmissionPort;
+  /**
+   * The SMTP dial the connect-time SMTP probe uses. OPTIONAL with a real default
+   * (`verifySmtpLogin`, on the TLS floor) — injected by the test harness so a route test never
+   * opens a submission socket, the same way `ImapAdapter.prototype.connect` is spied for the
+   * IMAP side.
+   */
+  smtpVerify?: (
+    smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } },
+  ) => Promise<void>;
   mailbox: MailboxService;
   rules: RulesService;
   message: MessageService;

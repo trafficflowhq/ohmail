@@ -109,8 +109,17 @@ export interface CreateMailboxBody {
   address: string;
   displayName?: string;
   authKind?: "password" | "oauth";
-  imap: { host: string; port: number; secure: boolean; user: string; pass: string };
-  smtp?: { host: string; port: number; secure: boolean; user?: string; pass?: string };
+  /**
+   * `port`/`secure` are OPTIONAL, and their absence is a request: the probe walks the standard
+   * ladder (993 implicit TLS, then 143 STARTTLS) and what gets STORED is the combination it
+   * proved, not a guess. A caller that names a port is respected — the probe then only
+   * negotiates the TLS mode of that port. `allowInsecure` is the consent flag for a server the
+   * probe has proved offers no TLS at all; it is honored only after the probe re-proves that in
+   * the same call, never on the client's word. See {@link MailboxProbeVerdict}.
+   */
+  imap: { host: string; port?: number; secure?: boolean; user: string; pass: string; allowInsecure?: boolean };
+  /** `port`/`secure` optional for the same reason as the IMAP block: absence asks the probe's ladder. */
+  smtp?: { host: string; port?: number; secure?: boolean; user?: string; pass?: string };
 }
 
 export interface UpdateMailboxBody {
@@ -122,7 +131,8 @@ export interface UpdateMailboxBody {
    * where a NEW caller finds out.
    */
   status?: "connected" | "disabled";
-  imap?: TransportInput & { pass: string };
+  /** `allowInsecure` as on {@link CreateMailboxBody.imap} — a consent claim, re-proved server-side. */
+  imap?: TransportInput & { pass: string; allowInsecure?: boolean };
   smtp?: TransportInput & { pass: string };
 }
 
@@ -149,9 +159,51 @@ export interface MailboxProbeInput {
    * rather than the refresh token it was derived from.
    */
   imap:
-    | { host: string; port: number; secure: boolean; user: string; pass: string; accessToken?: undefined }
-    | { host: string; port: number; secure: boolean; user: string; accessToken: string; pass?: undefined };
+    | { host: string; port?: number; secure?: boolean; user: string; pass: string; accessToken?: undefined; allowInsecure?: boolean }
+    | { host: string; port?: number; secure?: boolean; user: string; accessToken: string; pass?: undefined; allowInsecure?: undefined };
 }
+
+/* ── WHAT A PROBE PROVES, IN DETAIL ─────────────────────────────────────────────────────── */
+
+/**
+ * Why a certificate (or the absence of one) stopped the dial — the taxonomy member `tls`
+ * split into the sentences a user can act on. `hostname_mismatch` is the only kind that may
+ * carry `suggestedHost`, and by construction it is also the only kind whose CHAIN validated:
+ * Node checks the chain before the identity, so an untrusted or expired certificate never
+ * reaches the hostname comparison. That ordering is what makes the suggestion safe to show —
+ * it always names a host the presented, publicly-trusted certificate really covers.
+ */
+export type ProbeTlsFailureKind =
+  | "hostname_mismatch"   // valid, trusted chain; wrong name — the vanity-CNAME shape
+  | "expired"
+  | "not_yet_valid"
+  | "self_signed"
+  | "untrusted"           // chain does not reach a public root
+  | "tls_unavailable"     // no TLS on any rung and no STARTTLS — the ONLY kind the consent flow may follow
+  | "generic";
+
+export interface ProbeTlsDetail {
+  kind: ProbeTlsFailureKind;
+  /** The name the presented certificate is actually for (subject CN, or its first SAN). */
+  certHost?: string;
+  /** The host we validated against — what the user typed. */
+  expectedHost?: string;
+  /**
+   * A host this same certificate DOES cover, worth suggesting: the DNS CNAME target of the
+   * entered host when the certificate covers it, else the certificate's own subject. NEVER
+   * auto-connected — the user confirms it, and the re-probe verifies strictly against it.
+   */
+  suggestedHost?: string;
+}
+
+/**
+ * The connection the probe PROVED, which is what must be stored — a probe that succeeds on
+ * `993/TLS` while the form said `143` would otherwise strand the worker on a config nobody
+ * tried. One shape for both transports. `insecure` is present only when the user consented to
+ * plaintext AND the same call re-proved the server offers no TLS (IMAP only); it becomes
+ * `meta.insecureConsent` on the credential row.
+ */
+export interface ProvenEndpoint { host: string; port: number; secure: boolean; insecure?: true }
 
 /**
  * THE THREE ANSWERS, AND WHY "STORE UNVERIFIED" IS ONE OF THEM.
@@ -175,9 +227,28 @@ export interface MailboxProbeInput {
  * A parallel vocabulary here would mean two sets of sentences for one set of failures.
  */
 export type MailboxProbeVerdict =
-  | { verdict: "ok" }
-  | { verdict: "store_unverified"; code: MailboxErrorCode }
-  | { verdict: "refuse"; code: MailboxErrorCode };
+  | { verdict: "ok"; proven?: ProvenEndpoint }
+  | { verdict: "store_unverified"; code: MailboxErrorCode; proven?: ProvenEndpoint }
+  | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail };
+
+/**
+ * The SMTP sibling of {@link MailboxProbeInput} — same discipline (plaintext password, so the
+ * implementation may not log it or any thrown error's text), different transport. There is no
+ * OAuth arm: an oauth mailbox stores no SMTP credential row at all.
+ */
+export interface SmtpProbeInput {
+  accountId: string;
+  address: string;
+  smtp: { host: string; port?: number; secure?: boolean; user: string; pass: string };
+}
+
+/**
+ * Try an SMTP login the way {@link MailboxProbe} tries an IMAP one: the standard ladder when no
+ * port is named (465 implicit TLS, then 587 STARTTLS), TLS-mode negotiation on a named port, the
+ * full certificate taxonomy — and NO consent arm: plaintext SMTP authentication is not offered
+ * at all in this flow. Implemented in `packages/api` beside the IMAP probe.
+ */
+export type SmtpProbe = (input: SmtpProbeInput) => Promise<MailboxProbeVerdict>;
 
 /**
  * Try an IMAP login. Implemented in `packages/api` — the layer that owns IMAP knowledge and the
@@ -198,6 +269,13 @@ export type MailboxProbe = (input: MailboxProbeInput) => Promise<MailboxProbeVer
  */
 export interface CreateMailboxOptions {
   probe: MailboxProbe;
+  /**
+   * OPTIONAL where `probe` is required, and the asymmetry is earned: an unprobed IMAP credential
+   * strands a mailbox invisibly (the worker fails minutes later, on another screen), while an
+   * unprobed SMTP credential fails VISIBLY at the first send, with the sender watching. The
+   * hosted routes inject it; a host that cannot dial out may omit it and keep create working.
+   */
+  smtpProbe?: SmtpProbe;
 }
 
 /**
@@ -270,6 +348,8 @@ export interface ConnectOAuthResult {
  */
 export interface UpdateMailboxOptions {
   probe: MailboxProbe;
+  /** As on {@link CreateMailboxOptions.smtpProbe}: optional, and injected by the hosted routes. */
+  smtpProbe?: SmtpProbe;
 }
 
 /**
@@ -323,13 +403,69 @@ const PROBE_REFUSAL: Record<MailboxErrorCode, { status: number; message: string;
 };
 
 /**
+ * The `tls` refusal, split by WHY the certificate (or its absence) stopped the dial. Every
+ * sentence keeps the guarantee the generic one made — the password was never sent — and adds
+ * the one fact the user (or their server's admin) can act on. The `hostname_mismatch` pair is
+ * the vanity-CNAME shape: a customer domain pointed at a provider's server, whose certificate
+ * is valid and names the provider. Naming both hosts is what turns "certificate refused" from
+ * a dead end into a one-line fix.
+ */
+const tlsRefusalMessage = (tls: ProbeTlsDetail, transport: ProbeTransport): string => {
+  const server = transport === "smtp" ? "That outgoing (SMTP) mail server" : "That mail server";
+  const proto = transport === "smtp" ? "SMTP" : "IMAP";
+  const stopped = "so we stopped before sending the password";
+  switch (tls.kind) {
+    case "hostname_mismatch": {
+      const pair = tls.certHost && tls.expectedHost
+        ? `${server}'s certificate is for ${tls.certHost}, not ${tls.expectedHost}, ${stopped}.`
+        : `${server}'s certificate does not match its hostname, ${stopped}.`;
+      return tls.suggestedHost
+        ? `${pair} Use ${tls.suggestedHost} as the ${proto} host — that is the name this server can prove.`
+        : `${pair} Check the ${proto} host with your provider.`;
+    }
+    case "expired":
+      return `${server}'s certificate has expired, ${stopped}. Ask whoever runs the server to renew it.`;
+    case "not_yet_valid":
+      return `${server}'s certificate is not valid yet, ${stopped}. Check with whoever runs the server.`;
+    case "self_signed":
+      return `${server}'s certificate is self-signed, which we cannot verify, ${stopped}. ` +
+        "Ask whoever runs the server to install a certificate from a public authority.";
+    case "untrusted":
+      return `${server}'s certificate is not issued by a trusted authority, ${stopped}. ` +
+        "Ask whoever runs the server to install a certificate from a public authority.";
+    case "tls_unavailable":
+      return `${server} offers no encryption — no TLS and no STARTTLS — ${stopped}.`;
+    case "generic":
+      return transport === "smtp"
+        ? `${server}'s certificate was refused, ${stopped}. Check the SMTP host, and whether the port expects TLS.`
+        : PROBE_REFUSAL.tls.message;
+  }
+};
+
+/**
  * The refusal a failed probe becomes. `details.reason` carries the taxonomy member so a client
  * can render its own copy; the message is the server's own sentence and is what `JoinScreen`
- * (which reads `messageOf(err)` verbatim) shows.
+ * (which reads `messageOf(err)` verbatim) shows. A `tls` refusal may carry {@link ProbeTlsDetail},
+ * which sharpens both the sentence and the details a client can build its own copy from.
  */
-const probeRefused = (code: MailboxErrorCode): ServiceError => {
+/** Which transport a probe refusal is about — the webapp uses it to blame the right field. */
+export type ProbeTransport = "imap" | "smtp";
+
+const probeRefused = (code: MailboxErrorCode, tls?: ProbeTlsDetail, transport: ProbeTransport = "imap"): ServiceError => {
   const r = PROBE_REFUSAL[code];
-  return new ServiceError("mailbox_probe_failed", r.status, r.message, { reason: code }, r.retryable);
+  let message = code === "tls" && tls ? tlsRefusalMessage(tls, transport) : r.message;
+  // The base sentences were written for the connect (IMAP) flow; an SMTP refusal must not tell
+  // the user to check an IMAP field that is fine.
+  if (transport === "smtp" && !(code === "tls" && tls)) {
+    message = message
+      .replace(/That mail server|The mail server/, "That outgoing (SMTP) mail server")
+      .replace(/\bIMAP\b/g, "SMTP");
+  }
+  return new ServiceError(
+    "mailbox_probe_failed", r.status, message,
+    { reason: code, transport, ...(tls ? { tls } : {}) },
+    r.retryable,
+  );
 };
 
 /**
@@ -446,6 +582,9 @@ const mailboxDisabled = (): ServiceError => new ServiceError(
   "This mailbox is disconnected. Reconnect it before setting new credentials.",
 );
 
+/** A port a server could actually listen on. */
+const isValidPort = (port: number): boolean => Number.isInteger(port) && port >= 1 && port <= 65535;
+
 /** Drop `undefined` values so an upsert never overwrites stored meta with them. */
 function metaOf(o: TransportInput): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -546,9 +685,12 @@ export class MailboxService {
    * that silently substituted the address for a missing `user` would prove a login the worker
    * will never make.
    *
-   * NOT PROBED: the SMTP block. It is a different transport with its own credential row, sending
-   * is not the connect flow, and dialling two servers doubles both the latency of this request
-   * and the connections we open. Named here rather than left to be discovered.
+   * THE SMTP BLOCK IS PROBED TOO when the host injects `opts.smtpProbe` (the hosted routes do).
+   * The old exemption — a different transport, sending is not the connect flow, a second dial
+   * doubles latency — was retired after a real user's SMTP host failed certificate validation
+   * at their first send, one screen and several minutes after a create that had promised them a
+   * working mailbox. Where no `smtpProbe` is injected the old behaviour stands, stated by the
+   * option's own docblock.
    */
   async create(
     ctx: ServiceContext, body: CreateMailboxBody, opts: CreateMailboxOptions,
@@ -565,6 +707,7 @@ export class MailboxService {
       throw new ServiceError("validation_failed", 400, "imap credentials are required");
     }
 
+    let provenImap: ProvenEndpoint | undefined;
     if (body.imap?.pass) {
       // A configuration the adapter could never use is refused BEFORE the dial rather than
       // reported as a mail-server failure. `metaOf` drops undefined values, so a create with no
@@ -572,8 +715,19 @@ export class MailboxService {
       // and a probe fed the same body would answer "we could not reach that mail server", which
       // is a true sentence about the wrong thing. `imapFlowOptions`' note is explicit that this
       // refusal is owed here rather than re-derived from what the adapter happens to reject.
-      if (!body.imap.host || !body.imap.port) {
-        throw new ServiceError("validation_failed", 400, "imap host and port are required");
+      // The PORT is no longer required: its absence asks the probe to walk the standard ladder
+      // (993 implicit TLS, then 143 STARTTLS) and the proven combination is what gets stored.
+      // A port that IS present still has to be one a server could listen on — `0` used to be
+      // caught by the old requiredness check as a falsy value, and dropping that check must not
+      // quietly turn an impossible port into a dial.
+      if (!body.imap.host) {
+        throw new ServiceError("validation_failed", 400, "imap host is required");
+      }
+      if (body.imap.port !== undefined && !isValidPort(body.imap.port)) {
+        throw new ServiceError("validation_failed", 400, "imap port must be an integer between 1 and 65535");
+      }
+      if (body.smtp?.port !== undefined && !isValidPort(body.smtp.port)) {
+        throw new ServiceError("validation_failed", 400, "smtp port must be an integer between 1 and 65535");
       }
 
       // NO DUPLICATE PRE-CHECK, AND THE REASON IS A GUARD IT WOULD HAVE BLINDED. An architecture
@@ -592,13 +746,48 @@ export class MailboxService {
         address,
         imap: {
           host: body.imap.host ?? "",
-          port: body.imap.port ?? 993,
-          secure: body.imap.secure ?? true,
+          // Passed through UNDEFINED rather than defaulted: an absent port is the ladder
+          // request, and a default here would silently withdraw it.
+          port: body.imap.port,
+          secure: body.imap.secure,
           user: body.imap.user ?? "",
           pass: body.imap.pass,
+          // A CLAIM, not a permission: the probe honors it only after re-proving, in this same
+          // call, that the server offers no TLS at all. See {@link ProvenEndpoint.insecure}.
+          allowInsecure: body.imap.allowInsecure === true ? true : undefined,
         },
       });
-      if (verdict.verdict === "refuse") throw probeRefused(verdict.code);
+      if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls);
+      // WHAT IS STORED IS WHAT WAS PROVED. The ladder may have succeeded on a different
+      // port/TLS mode than the body carried (or the body carried none), and storing the
+      // body's guess would hand the worker a config nobody tried. A probe fake that answers
+      // without `proven` (every pre-ladder test double) falls back to the body verbatim —
+      // exactly the old contract.
+      provenImap = verdict.proven;
+    }
+
+    // THE SMTP BLOCK IS NOW PROBED TOO, when the host injected a prober. The old exemption
+    // ("sending is not the connect flow; a second dial doubles latency") was retired the day a
+    // real user's vanity SMTP host (same CNAME shape as their IMAP one) sailed through create
+    // and failed at their first send — the connect flow's whole promise is that a stored
+    // credential has been tried. The latency cost is paid once, on an interactive submit whose
+    // user is exactly the person who benefits.
+    let provenSmtp: ProvenEndpoint | undefined;
+    const smtpPass = body.smtp ? (body.smtp.pass ?? body.imap?.pass) : undefined;
+    if (body.smtp?.host && smtpPass && opts.smtpProbe) {
+      const verdict = await opts.smtpProbe({
+        accountId: ctx.accountId,
+        address,
+        smtp: {
+          host: body.smtp.host,
+          port: body.smtp.port,
+          secure: body.smtp.secure,
+          user: body.smtp.user ?? body.imap?.user ?? "",
+          pass: smtpPass,
+        },
+      });
+      if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "smtp");
+      provenSmtp = verdict.proven;
     }
 
     const mb = await asTx(ctx).transaction(async (tx) => {
@@ -614,7 +803,17 @@ export class MailboxService {
       }).returning();
 
       if (body.imap?.pass) {
-        await this.upsertCredOn(tx, ctx, kp, row!.id, "imap", body.imap.pass, metaOf(body.imap));
+        const meta = metaOf({
+          host: body.imap.host,
+          port: provenImap?.port ?? body.imap.port,
+          secure: provenImap?.secure ?? body.imap.secure,
+          user: body.imap.user,
+        });
+        // The consent marker, written ONLY from the verdict — never from the request body. It is
+        // what every dialler reads back as `ImapConfig.allowInsecure`, so its absence on a secure
+        // mailbox is as load-bearing as its presence on a consented one.
+        if (provenImap?.insecure) meta.insecureConsent = true;
+        await this.upsertCredOn(tx, ctx, kp, row!.id, "imap", body.imap.pass, meta);
       }
       if (body.smtp) {
         // A generic IMAP mailbox often shares creds with SMTP; fall back to the IMAP
@@ -622,7 +821,10 @@ export class MailboxService {
         const pass = body.smtp.pass ?? body.imap?.pass;
         if (pass) {
           await this.upsertCredOn(tx, ctx, kp, row!.id, "smtp", pass, metaOf({
-            host: body.smtp.host, port: body.smtp.port, secure: body.smtp.secure,
+            host: body.smtp.host,
+            // Proven over guessed, as on the IMAP row above.
+            port: provenSmtp?.port ?? body.smtp.port,
+            secure: provenSmtp?.secure ?? body.smtp.secure,
             user: body.smtp.user ?? body.imap?.user,
           }));
         }
@@ -713,7 +915,7 @@ export class MailboxService {
         user, accessToken: o.accessToken,
       },
     });
-    if (verdict.verdict === "refuse") throw probeRefused(verdict.code);
+    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls);
 
     /**
      * The non-secret half of the credential, and every field here is read by a named consumer:
@@ -899,6 +1101,12 @@ export class MailboxService {
       ? await this.probedImapMeta(ctx, id, patch, opts)
       : undefined;
 
+    // The SMTP sibling, before the transaction for the same two reasons — and only when the
+    // host injected a prober; without one the write below stores the plain patch, as ever.
+    const mergedSmtp = patch.smtp?.pass && opts?.smtpProbe
+      ? await this.probedSmtpMeta(ctx, id, patch, opts.smtpProbe)
+      : undefined;
+
     return asTx(ctx).transaction(async (tx) => {
       // `FOR UPDATE`, and it is the fix for a race an independent review found.
       // Without it a credentials-only PATCH took NO lock at all — it writes `mailbox_credentials`
@@ -963,11 +1171,10 @@ export class MailboxService {
       // Passing the patch alone would store a config the probe never tried (and, before the
       // `upsertCredOn` fix below, would also erase the stored port/user/secure while doing it).
       if (patch.imap?.pass) await this.upsertCredOn(tx, ctx, kp, id, "imap", patch.imap.pass, merged ?? {});
-      // NOT PROBED, and the same exemption `create` states by name: SMTP is a different transport
-      // with its own credential row, sending is not the connect flow, and dialling a second server
-      // doubles both the latency of this request and the connections we open. The IMAP row is the
-      // one the worker logs in with and the one a mistyped password quarantines.
-      if (patch.smtp?.pass) await this.upsertCredOn(tx, ctx, kp, id, "smtp", patch.smtp.pass, metaOf(patch.smtp));
+      // PROBED when the host injects `smtpProbe`, like `create` — the same vanity-CNAME shape
+      // reaches this door via the edit form. `mergedSmtp` was dialled before this transaction
+      // opened; where no prober is injected it is the plain merge, the pre-probe behaviour.
+      if (patch.smtp?.pass) await this.upsertCredOn(tx, ctx, kp, id, "smtp", patch.smtp.pass, mergedSmtp ?? metaOf(patch.smtp));
 
       const [row] = await tx.select().from(mailboxes)
         .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId))).limit(1);
@@ -1213,11 +1420,11 @@ export class MailboxService {
 
     // Same refusal `create` owes and for the same reason: a configuration the adapter could never
     // use is rejected BEFORE the dial, rather than reported as a mail-server failure. Reachable
-    // here when a mailbox has no stored `meta` at all and the patch supplies none either.
+    // here when a mailbox has no stored `meta` at all and the patch supplies none either. The
+    // PORT may legitimately be absent — the probe walks the ladder then, as it does on create.
     const host = typeof merged.host === "string" ? merged.host : "";
-    const port = typeof merged.port === "number" ? merged.port : 0;
-    if (!host || !port) {
-      throw new ServiceError("validation_failed", 400, "imap host and port are required");
+    if (!host) {
+      throw new ServiceError("validation_failed", 400, "imap host is required");
     }
 
     const verdict = await opts.probe({
@@ -1225,13 +1432,73 @@ export class MailboxService {
       address: current.address,
       imap: {
         host,
-        port,
-        secure: typeof merged.secure === "boolean" ? merged.secure : true,
+        port: typeof merged.port === "number" ? merged.port : undefined,
+        secure: typeof merged.secure === "boolean" ? merged.secure : undefined,
         user: typeof merged.user === "string" ? merged.user : "",
         pass: patch.imap!.pass!,
+        allowInsecure: patch.imap?.allowInsecure === true ? true : undefined,
       },
     });
-    if (verdict.verdict === "refuse") throw probeRefused(verdict.code);
+    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls);
+    /**
+     * The PROVEN combination overrides the merge, exactly as on create — and a STALE consent
+     * marker is REWRITTEN, not deleted: `upsertCredOn` merges meta with jsonb `||` (right side
+     * wins PER KEY, absent keys survive), so deleting the key would leave yesterday's consent on
+     * a mailbox whose server now proves TLS — a consent that never expires on its own is the
+     * exact downgrade this rewrite exists to prevent.
+     * A mailbox that never carried the marker never gains the key, in either value.
+     */
+    if (verdict.proven) {
+      merged.port = verdict.proven.port;
+      merged.secure = verdict.proven.secure;
+      if (verdict.proven.insecure === true) merged.insecureConsent = true;
+      else if (merged.insecureConsent !== undefined) merged.insecureConsent = false;
+    }
+    return merged;
+  }
+
+  /**
+   * The SMTP sibling of {@link probedImapMeta}: merge the patch over the stored `smtp` meta,
+   * dial the merged config, and return the merge with the PROVEN port/TLS mode applied. Same
+   * ordering rules (before the transaction, 404 and disabled-refusal first), no consent marker —
+   * plaintext SMTP authentication is not offered at all.
+   */
+  private async probedSmtpMeta(
+    ctx: ServiceContext, id: string, patch: UpdateMailboxBody, smtpProbe: SmtpProbe,
+  ): Promise<Record<string, unknown>> {
+    const current = await this.ownedRow(ctx, id); // 404 before anything is dialled
+
+    const effectiveStatus = patch.status ?? current.status;
+    if (effectiveStatus === "disabled") throw mailboxDisabled();
+
+    const stored = (await asTx(ctx).select({ meta: mailboxCredentials.meta })
+      .from(mailboxCredentials)
+      .where(and(eq(mailboxCredentials.mailboxId, id), eq(mailboxCredentials.transport, "smtp")))
+      .limit(1))[0]?.meta as Record<string, unknown> | null | undefined;
+
+    const merged: Record<string, unknown> = { ...(stored ?? {}), ...metaOf(patch.smtp ?? {}) };
+
+    const host = typeof merged.host === "string" ? merged.host : "";
+    if (!host) {
+      throw new ServiceError("validation_failed", 400, "smtp host is required");
+    }
+
+    const verdict = await smtpProbe({
+      accountId: ctx.accountId,
+      address: current.address,
+      smtp: {
+        host,
+        port: typeof merged.port === "number" ? merged.port : undefined,
+        secure: typeof merged.secure === "boolean" ? merged.secure : undefined,
+        user: typeof merged.user === "string" ? merged.user : "",
+        pass: patch.smtp!.pass!,
+      },
+    });
+    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "smtp");
+    if (verdict.proven) {
+      merged.port = verdict.proven.port;
+      merged.secure = verdict.proven.secure;
+    }
     return merged;
   }
 

@@ -7,6 +7,8 @@ import type { ApiDeps } from "./deps.js";
 
 interface CredMeta extends CredMetaAuth {
   host?: string; port?: number; secure?: boolean;
+  /** Connect-time plaintext consent for a server the probe proved has no TLS. IMAP leg only. */
+  insecureConsent?: boolean;
   /** For oauth2: the SMTP coordinates, since an oauth mailbox stores NO separate smtp row. */
   smtp?: { host?: string; port?: number; secure?: boolean };
 }
@@ -76,6 +78,9 @@ export async function makeSendAdapter(deps: ApiDeps, mailboxId: string): Promise
     host: imapMeta.host ?? "",
     port: imapMeta.port ?? 993,
     secure: imapMeta.secure ?? true,
+    // The connect-time plaintext consent, threaded like the worker threads it — an IMAP append
+    // to the Sent folder of a consented no-TLS mailbox must dial the way the probe proved.
+    ...(imapMeta.insecureConsent === true ? { allowInsecure: true } : {}),
     auth: imapAuth,
     smtp: smtpConfig,
     sentDomain: domainOf(imapMeta.user),

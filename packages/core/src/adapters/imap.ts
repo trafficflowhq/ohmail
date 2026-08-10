@@ -129,7 +129,7 @@ export function imapFlowOptions(
     // so the TLS-floor guards can keep asserting the whole assembled option set. imapflow reads
     // `auth.accessToken` and issues XOAUTH2 with no password on the wire.
     host: config.host, port: config.port,
-    ...imapTlsFloor(config.host, config.secure).options,
+    ...imapTlsFloor(config.host, config.secure, config.allowInsecure === true).options,
     auth: config.auth, qresync: true, logger: opts.logger ? undefined : false,
     connectionTimeout: t.connectionMs, greetingTimeout: t.greetingMs, socketTimeout: t.socketMs,
   };
@@ -167,6 +167,31 @@ export function smtpTransportOptions(config: ImapConfig): SMTPTransport.Options 
     auth: smtp.auth,
     connectionTimeout: t.connectionMs, greetingTimeout: t.greetingMs, socketTimeout: t.socketMs,
   };
+}
+
+/**
+ * Dial an SMTP submission endpoint and AUTHENTICATE, without sending anything — the connect-time
+ * proof the SMTP probe needs, kept here because this package owns nodemailer and the TLS floor.
+ * `verify()` runs the full sequence (connect, EHLO, mandatory STARTTLS where `secure` is false,
+ * AUTH) against the complete option set from {@link smtpTransportOptions}, so what it proves is
+ * byte-identical to what a later send will do. Resolves on a completed login; throws nodemailer's
+ * error otherwise. The caller classifies; nothing here logs — the config carries a password.
+ */
+export async function verifySmtpLogin(
+  smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } },
+  timeouts?: Partial<NetTimeouts>,
+): Promise<void> {
+  const transporter = nodemailer.createTransport(smtpTransportOptions({
+    host: smtp.host, port: smtp.port, secure: smtp.secure,
+    auth: { user: smtp.auth.user, pass: smtp.auth.pass },
+    smtp,
+    ...(timeouts ? { timeouts } : {}),
+  }));
+  try {
+    await transporter.verify();
+  } finally {
+    transporter.close();
+  }
 }
 
 /**

@@ -1,6 +1,6 @@
 import type { CreateMailboxBody, UpdateMailboxBody } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
-import { makeImapProbe } from "../imap-probe.js";
+import { makeImapProbe, makeSmtpProbe } from "../imap-probe.js";
 import { makeOrganizerPeek } from "../organizer-peek.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
@@ -102,6 +102,9 @@ export const mailboxRoutes: Route[] = [
       // is a create that can store an untried password.
       const dto = await mailbox(deps).create(serviceContext(deps, req), body, {
         probe: makeImapProbe(deps),
+        // The SMTP block is tried too — a submission host whose certificate cannot be verified
+        // must refuse HERE, on the form, not at the user's first send. Same seam shape.
+        smtpProbe: makeSmtpProbe(deps),
       });
       return jsonResponse(dto, { status: 201 });
     },
@@ -122,6 +125,7 @@ export const mailboxRoutes: Route[] = [
       // re-deriving any of them.
       const dto = await mailbox(deps).update(serviceContext(deps, req), params.id!, body, {
         probe: makeImapProbe(deps),
+        smtpProbe: makeSmtpProbe(deps),
       });
       return jsonResponse(dto);
     },

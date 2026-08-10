@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
+import { resolveCname as dnsResolveCname } from "node:dns/promises";
 import { type MailboxErrorCode } from "@trafficflow/db";
-import { ImapAdapter, buildImapAuth } from "@trafficflow/core/adapters/imap";
-import { ServiceError } from "@trafficflow/services/mail";
+import { ImapAdapter, buildImapAuth, verifySmtpLogin, type ImapConfig } from "@trafficflow/core/adapters/imap";
+import {
+  ServiceError, type ProbeTlsDetail, type ProbeTlsFailureKind, type ProvenEndpoint,
+  type SmtpProbe, type SmtpProbeInput,
+} from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
 import { imapAdmission } from "./routes/shared.js";
 
@@ -58,7 +62,9 @@ import { imapAdmission } from "./routes/shared.js";
  * `nodeHostResolver`, which puts a live DNS lookup on a path many route tests exercise in an
  * environment where DNS is blocked. A guard whose result comes from the harness rather than from
  * reality is worse than a limitation stated plainly. So it is stated here, and it is true of all
- * four dialers, not only this one.
+ * four dialers, not only this one. (The `resolveCname` seam on {@link ImapProbeOptions} is NOT
+ * that check: it runs only on a hostname-mismatch refusal, to sharpen the error into a
+ * suggestion, and its failure mode is a less helpful sentence.)
  *
  * ── EVERY OTHER WRITER OF A MAILBOX CREDENTIAL, AND WHY IT DOES NOT COME THROUGH HERE ───────
  *
@@ -94,9 +100,9 @@ import { imapAdmission } from "./routes/shared.js";
 
 /** The verdict, structurally identical to `MailboxProbeVerdict` in `packages/services`. */
 export type ImapProbeVerdict =
-  | { verdict: "ok" }
-  | { verdict: "store_unverified"; code: MailboxErrorCode }
-  | { verdict: "refuse"; code: MailboxErrorCode };
+  | { verdict: "ok"; proven?: ProvenEndpoint }
+  | { verdict: "store_unverified"; code: MailboxErrorCode; proven?: ProvenEndpoint }
+  | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail };
 
 /**
  * WHAT THE PROBE IS ASKED TO TRY, and it is a UNION because there are now two kinds of credential.
@@ -126,8 +132,8 @@ export type ImapProbeVerdict =
  * produces and the builder's refusal is worth inheriting.
  */
 export type ImapProbeCredential =
-  | { host: string; port: number; secure: boolean; user: string; pass: string; accessToken?: undefined }
-  | { host: string; port: number; secure: boolean; user: string; accessToken: string; pass?: undefined };
+  | { host: string; port?: number; secure?: boolean; user: string; pass: string; accessToken?: undefined; allowInsecure?: boolean }
+  | { host: string; port?: number; secure?: boolean; user: string; accessToken: string; pass?: undefined; allowInsecure?: undefined };
 
 export interface ImapProbeInput {
   accountId: string;
@@ -289,6 +295,17 @@ export function verdictFor(err: unknown): ImapProbeVerdict {
     if (CONNECT_ERRNOS.has(code)) return { verdict: "refuse", code: "connect" };
   }
 
+  // ── THE TLS LAYER ITSELF: imapflow's own flag, set on all five of its TLS failure sites ──
+  // (`imap-flow.js`: STARTTLS absent, STARTTLS injection, a plain-socket death mid-upgrade, the
+  // upgrade timeout, and a handshake error). Most of those also carry a `code` the block above
+  // already classified; the one that carries NO code at all — "Server does not support STARTTLS"
+  // — used to fall through to `unknown`, telling the user we could not tell why, about a server
+  // whose problem is precisely nameable. Below the code checks so a named errno keeps its finer
+  // class; above the auth flag because imapflow stamps that on every failed LOGIN regardless.
+  if ((err as ErrorShape & { tlsFailed?: unknown } | null)?.tlsFailed === true) {
+    return { verdict: "refuse", code: "tls" };
+  }
+
   // ── THE FLAG: "the LOGIN command did not succeed", and nothing above it explained why. ──
   if ((err as ErrorShape | null)?.authenticationFailed === true) return { verdict: "refuse", code: "auth" };
 
@@ -306,6 +323,173 @@ export function verdictFor(err: unknown): ImapProbeVerdict {
   // A throw nobody can name is NOT permission to store. The message says we could not tell,
   // which is true, rather than picking the likeliest-sounding of four sentences.
   return { verdict: "refuse", code: "unknown" };
+}
+
+/* ── THE LADDER ────────────────────────────────────────────────────────────────────────────
+ *
+ * What a mail client is expected to do with a bare hostname: try the standard combinations in
+ * a fixed order and keep the first one that yields a valid certificate and an IMAP greeting.
+ * PLAINTEXT IS NOT ON THE LADDER — a rung that would authenticate over an unencrypted socket
+ * exists only behind the consent gate in {@link makeImapProbe}, and never as a fallback.
+ */
+
+export interface ProbeAttempt { port: number; secure: boolean }
+
+/**
+ * The dial order for one probe.
+ *
+ *  · No port          → 993 implicit TLS, then 143 STARTTLS. The standard ladder.
+ *  · Port, no mode    → that port only, canonical mode first (993 speaks TLS from the first
+ *                       byte; anything else is presumed cleartext-then-STARTTLS), then the
+ *                       OTHER mode on the same port — a user who typed a port is telling us
+ *                       where the server is, not necessarily how it negotiates. The wrong-mode
+ *                       rung costs at most one greeting timeout and only on the failure path.
+ *  · Port and mode    → exactly that, once. An explicit combination is respected verbatim —
+ *                       it is what every provider preset sends.
+ */
+export function probeAttempts(port?: number, secure?: boolean): ProbeAttempt[] {
+  if (port !== undefined) {
+    if (secure !== undefined) return [{ port, secure }];
+    return port === 993
+      ? [{ port, secure: true }, { port, secure: false }]
+      : [{ port, secure: false }, { port, secure: true }];
+  }
+  return [{ port: 993, secure: true }, { port: 143, secure: false }];
+}
+
+/* ── WHAT THE TLS LAYER SAID, PRECISELY ──────────────────────────────────────────────────── */
+
+/**
+ * "The server has no STARTTLS" — the ONE TLS failure that licenses the consent flow, so it is
+ * matched narrowly: imapflow@1.5.0's `_failSTARTTLS` throws exactly this message with
+ * `tlsFailed = true` and NO `code`; every other `tlsFailed` site attaches one.
+ */
+export const isStarttlsUnavailable = (err: unknown): boolean =>
+  (err as { tlsFailed?: unknown } | null)?.tlsFailed === true
+  && !codeOf(err)
+  && /does not support STARTTLS/i.test(
+    typeof (err as ErrorShape | null)?.message === "string" ? String((err as ErrorShape).message) : "",
+  );
+
+/**
+ * "We spoke TLS to something that answered in plaintext." OpenSSL reports it as a version
+ * mismatch, which {@link CERT_CODES} would classify as a certificate problem — but no
+ * certificate was ever presented, and for the consent gate the difference is the whole
+ * question: this is evidence of TLS being ABSENT on the port, not of TLS being broken.
+ */
+const isNotTlsListener = (err: unknown): boolean => {
+  const code = codeOf(err);
+  if (code === "ERR_SSL_WRONG_VERSION_NUMBER") return true;
+  const message = typeof (err as ErrorShape | null)?.message === "string"
+    ? String((err as ErrorShape).message) : "";
+  return code === "EPROTO" && /wrong version number/i.test(message);
+};
+
+const TLS_KIND_BY_CODE: Record<string, ProbeTlsFailureKind> = {
+  ERR_TLS_CERT_ALTNAME_INVALID: "hostname_mismatch",
+  CERT_HAS_EXPIRED: "expired",
+  CERT_NOT_YET_VALID: "not_yet_valid",
+  DEPTH_ZERO_SELF_SIGNED_CERT: "self_signed",
+  SELF_SIGNED_CERT_IN_CHAIN: "self_signed",
+  UNABLE_TO_VERIFY_LEAF_SIGNATURE: "untrusted",
+  UNABLE_TO_GET_ISSUER_CERT_LOCALLY: "untrusted",
+};
+
+interface PeerCertLike { subject?: { CN?: unknown }; subjectaltname?: unknown }
+
+/** The names on the certificate a failed identity check attached to its error. */
+function certNamesOf(err: unknown): { certHost: string | null; altNames: string[] } {
+  const cert = (err as { cert?: PeerCertLike } | null)?.cert;
+  const cn = typeof cert?.subject?.CN === "string" ? cert.subject.CN : null;
+  const san = typeof cert?.subjectaltname === "string" ? cert.subjectaltname : "";
+  const altNames = san.split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.toUpperCase().startsWith("DNS:"))
+    .map((s) => s.slice(4));
+  return { certHost: cn ?? altNames[0] ?? null, altNames };
+}
+
+/**
+ * Does this SAN/CN list cover `host`? RFC 6125 matching, wildcards in the LEFTMOST label only —
+ * `*.example.com` covers `mail.example.com`, never `example.com` and never `a.b.example.com`.
+ */
+export function certCoversHost(names: readonly string[], host: string): boolean {
+  const h = host.trim().toLowerCase().replace(/\.$/, "");
+  if (!h) return false;
+  for (const raw of names) {
+    const n = raw.trim().toLowerCase().replace(/\.$/, "");
+    if (n === h) return true;
+    if (n.startsWith("*.")) {
+      const dot = h.indexOf(".");
+      if (dot > 0 && h.slice(dot) === n.slice(1)) return true;
+    }
+  }
+  return false;
+}
+
+/** Classify a TLS-layer throw into the detail the refusal message is built from. */
+export function tlsDetailOf(err: unknown, expectedHost: string): ProbeTlsDetail {
+  if (isStarttlsUnavailable(err)) return { kind: "tls_unavailable" };
+  const kind = TLS_KIND_BY_CODE[codeOf(err)];
+  if (!kind) return { kind: "generic" };
+  if (kind !== "hostname_mismatch") return { kind };
+  const { certHost } = certNamesOf(err);
+  return { kind, expectedHost, ...(certHost ? { certHost } : {}) };
+}
+
+/** A syntactically plausible DNS name — the only shape ever surfaced as a suggestion. */
+const HOSTNAME_RE = /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+
+/**
+ * The canonical-host suggestion for a HOSTNAME MISMATCH — the vanity-CNAME shape, measured
+ * live on the first external mailbox this failed for: `mail.aberer.at` is a CNAME to
+ * `mail.mymagenta.business`, and the (publicly trusted, chain-valid) certificate it presents
+ * names the provider's hosts, that CNAME target among them.
+ *
+ * ── WHY THIS IS NOT A TRUST DECISION ──────────────────────────────────────────────────────
+ *
+ * Node validates the CHAIN before the identity, so `ERR_TLS_CERT_ALTNAME_INVALID` — the only
+ * path that reaches here — means the certificate is trusted and current, wrong only in name.
+ * The suggestion is derived from that certificate (preferring the DNS CNAME target when the
+ * certificate covers it, else the certificate's own subject), and it is only ever SHOWN: the
+ * user confirms it, the re-probe dials the confirmed name, and the handshake verifies strictly
+ * against it, floor unchanged. A spoofed DNS answer can therefore steer the SUGGESTION but
+ * never past validation — the same property Thunderbird's confirm-what-autoconfig-found flow
+ * rests on. Silently connecting to the suggestion would be the trust change; that is the line
+ * this deliberately does not cross.
+ */
+async function suggestedHostFor(
+  host: string,
+  seen: { certHost: string | null; altNames: string[] },
+  resolveCname: (host: string) => Promise<string | null>,
+): Promise<string | null> {
+  const { certHost, altNames } = seen;
+  const names = altNames.length > 0 ? altNames : certHost ? [certHost] : [];
+  const target = await resolveCname(host).catch(() => null);
+  if (
+    target && HOSTNAME_RE.test(target)
+    && target.toLowerCase() !== host.trim().toLowerCase()
+    && certCoversHost(names, target)
+  ) return target;
+  if (
+    certHost && !certHost.includes("*") && HOSTNAME_RE.test(certHost)
+    && certHost.toLowerCase() !== host.trim().toLowerCase()
+  ) return certHost;
+  return null;
+}
+
+/**
+ * The default CNAME resolver — consulted ONLY on the hostname-mismatch failure path, never on
+ * a working dial, so no route test and no healthy connect ever depends on DNS being reachable.
+ * Absence of a CNAME and a resolver failure are the same answer: no suggestion from DNS.
+ */
+async function nodeResolveCname(host: string): Promise<string | null> {
+  try {
+    const target = (await dnsResolveCname(host))[0]?.trim().replace(/\.$/, "");
+    return target ? target : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The refusal when OUR OWN budget, not the mail server, is the reason nothing was tried. */
@@ -374,9 +558,25 @@ async function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
   }
 }
 
+/** What a probe needs of an adapter — the seam the ladder tests dial through. */
+export interface ProbeDialer { connect(): Promise<void>; close(): Promise<void> }
+
 export interface ImapProbeOptions {
   maxPerAddress?: number;
   deadlineMs?: number;
+  /**
+   * Adapter construction, injectable so the LADDER — which config is dialled, in what order,
+   * and which is never dialled at all — can be asserted without a socket. The default is the
+   * real `ImapAdapter`, exactly as before.
+   */
+  adapterFactory?: (config: ImapConfig) => ProbeDialer;
+  /**
+   * One CNAME lookup, used ONLY to sharpen a hostname-mismatch refusal into a suggestion (see
+   * {@link suggestedHostFor}). This is deliberately NOT the `HostResolver` the header note
+   * declines to add: it runs on a path that has already failed, its answer can only add a
+   * sentence, and a resolver outage degrades to the plain refusal.
+   */
+  resolveCname?: (host: string) => Promise<string | null>;
 }
 
 /**
@@ -387,74 +587,367 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
   const max = opts.maxPerAddress ?? MAX_PROBES_PER_ADDRESS;
   const deadlineMs = opts.deadlineMs ?? PROBE_DEADLINE_MS;
 
+  const makeAdapter = opts.adapterFactory ?? ((config: ImapConfig): ProbeDialer => new ImapAdapter(config));
+  const resolveCname = opts.resolveCname ?? nodeResolveCname;
+
   return async (input: ImapProbeInput): Promise<ImapProbeVerdict> => {
     const key = probeAdmissionKey(input.accountId, input.address);
 
-    // ADMISSION FIRST, before a socket exists. A counter failure REFUSES rather than admitting:
-    // an uncapped dial is precisely the state the counter exists to prevent, and letting a broken
-    // counter mean "go ahead" is how a control stops controlling without anything failing.
+    // ADMISSION FIRST, before a socket exists, and ONCE for the whole ladder: the rungs dial
+    // strictly one at a time, so a ladder holds exactly one login against the provider — the
+    // property the counter caps. A counter failure REFUSES rather than admitting: an uncapped
+    // dial is precisely the state the counter exists to prevent, and letting a broken counter
+    // mean "go ahead" is how a control stops controlling without anything failing.
     if (!await imapAdmission(deps).acquire(deps.db, { mailboxId: key, max, now: deps.now() })) throw busy();
 
-    const adapter = new ImapAdapter({
-      host: input.imap.host,
-      port: input.imap.port,
-      secure: input.imap.secure,
-      // Two arms, one dialler. The password arm goes through the shared builder with no token
-      // source: it yields `{ user, pass }` here, and an oauth2 `authType` — were one ever to arrive
-      // in a request body — would THROW rather than dial with a refresh token as a password. The
-      // oauth arm is a literal, already-minted access token; see {@link ImapProbeCredential} for why
-      // it does not pretend to be a stored credential.
-      auth: input.imap.accessToken !== undefined
-        ? { user: input.imap.user, fetchAccessToken: async () => input.imap.accessToken! }
-        : buildImapAuth({ user: input.imap.user }, input.imap.pass ?? ""),
-      timeouts: PROBE_TIMEOUTS,
-    });
+    const startedAt = Date.now();
+    const budgetLeft = (): number => deadlineMs - (Date.now() - startedAt);
+
+    // Two arms, one dialler. The password arm goes through the shared builder with no token
+    // source: it yields `{ user, pass }` here, and an oauth2 `authType` — were one ever to arrive
+    // in a request body — would THROW rather than dial with a refresh token as a password. The
+    // oauth arm is a literal, already-minted access token; see {@link ImapProbeCredential} for why
+    // it does not pretend to be a stored credential.
+    const auth = input.imap.accessToken !== undefined
+      ? { user: input.imap.user, fetchAccessToken: async (): Promise<string> => input.imap.accessToken! }
+      : buildImapAuth({ user: input.imap.user }, input.imap.pass ?? "");
 
     /**
-     * Give the slot back exactly once, and only AFTER the socket is down.
+     * One rung: dial, then put the socket down before the next rung may start.
      *
-     * Releasing before the close would admit the next probe while this connection is still
-     * counted by the provider — the cap would read as enforced and would not be. The `released`
-     * flag is load-bearing for the same reason `attachments-adapter.ts` gives: a double release
-     * hands the address a permanent extra unit of budget, silently.
+     * The close is awaited on every path EXCEPT a deadline expiry — the socket we gave up on is
+     * by definition one that is not answering, so awaiting its close would reintroduce exactly
+     * the unbounded wait the deadline exists to remove. That abandoned close finishes (or the
+     * admission window's 90 s reclaim covers it), and no further rung is dialled after a
+     * deadline, so the one-login-at-a-time property survives the asymmetry.
      */
-    let released = false;
-    const closeAndRelease = async (): Promise<void> => {
-      if (released) return;
-      released = true;
-      await adapter.close().catch(() => { /* a connection that never came up has nothing to close */ });
+    const dialOnce = async (
+      attempt: ProbeAttempt, allowInsecure: boolean,
+    ): Promise<{ ok: true } | { ok: false; err: unknown; timedOut: boolean }> => {
+      const adapter = makeAdapter({
+        host: input.imap.host,
+        port: attempt.port,
+        secure: attempt.secure,
+        ...(allowInsecure ? { allowInsecure: true } : {}),
+        auth,
+        timeouts: PROBE_TIMEOUTS,
+      });
+      try {
+        await withDeadline(adapter.connect(), Math.max(1, budgetLeft()));
+      } catch (err) {
+        const timedOut = err instanceof ProbeDeadlineExceeded;
+        const close = adapter.close().catch(() => { /* a connection that never came up has nothing to close */ });
+        if (!timedOut) await close;
+        return { ok: false, err, timedOut };
+      }
+      await adapter.close().catch(() => { /* the greeting was the evidence; a noisy logout is not */ });
+      return { ok: true };
+    };
+
+    try {
+      const attempts = probeAttempts(input.imap.port, input.imap.secure);
+
+      // What the walk learns, for the one refusal reported at the end. The FIRST certificate
+      // failure wins — on the standard ladder that is 993, the rung a provider presenting a
+      // certificate at all presents it on first.
+      let certDetail: ProbeTlsDetail | null = null;
+      let certErr: unknown;
+      let starttlsAbsent = false;
+      let sawTimeout = false;
+      let fallback: ImapProbeVerdict | null = null;
+
+      for (const attempt of attempts) {
+        if (budgetLeft() < 250) { sawTimeout = true; break; }
+        const r = await dialOnce(attempt, false);
+        if (r.ok) {
+          return { verdict: "ok", proven: { host: input.imap.host, port: attempt.port, secure: attempt.secure } };
+        }
+        if (r.timedOut) { sawTimeout = true; continue; }
+
+        if (isStarttlsUnavailable(r.err)) { starttlsAbsent = true; continue; }
+
+        const v = verdictFor(r.err);
+        // Contact was made and the server declined to serve RIGHT NOW — positive evidence for
+        // exactly this combination, so it is the one stored. No later rung could learn more.
+        if (v.verdict === "store_unverified") {
+          return { ...v, proven: { host: input.imap.host, port: attempt.port, secure: attempt.secure } };
+        }
+        // The LOGIN was reached and refused: host, port and TLS mode are all PROVEN, only the
+        // password is wrong. Walking on would retry a bad password against the same account,
+        // which helps nobody and hurries providers toward a lockout.
+        if (v.verdict === "refuse" && v.code === "auth") return v;
+
+        if (v.verdict === "refuse" && v.code === "tls") {
+          if (isNotTlsListener(r.err)) {
+            // TLS spoken to a plaintext talker: evidence about the PORT, not about a
+            // certificate. It neither blocks the consent gate nor beats the generic fallback.
+            fallback = fallback ?? v;
+          } else if (!certDetail) {
+            certDetail = tlsDetailOf(r.err, input.imap.host);
+            certErr = r.err;
+          }
+          continue;
+        }
+        if (v.verdict === "refuse" && v.code === "timeout") { sawTimeout = true; continue; }
+        fallback = fallback ?? v;
+      }
+
+      /**
+       * ── THE CONSENT GATE — plaintext, never automatic, never on a server that HAS TLS ─────
+       *
+       * Dialled only when ALL of the following held in THIS call, never on the client's word:
+       *  · the caller carried the explicit consent flag AND a password (an OAuth mailbox is
+       *    refused this path by type and by the check below);
+       *  · a rung reached an IMAP greeting and the server named no STARTTLS — TLS is ABSENT;
+       *  · no rung presented a certificate, valid or not. A server whose TLS exists but fails
+       *    validation keeps its precise refusal: offering plaintext there would convert a
+       *    certificate problem into a downgrade path, which is the attack, not the fix.
+       */
+      if (
+        starttlsAbsent && !certDetail
+        && input.imap.allowInsecure === true && input.imap.pass !== undefined
+        && budgetLeft() >= 250
+      ) {
+        const port = input.imap.port ?? 143;
+        const r = await dialOnce({ port, secure: false }, true);
+        if (r.ok) {
+          return { verdict: "ok", proven: { host: input.imap.host, port, secure: false, insecure: true } };
+        }
+        if (!r.timedOut) {
+          const v = verdictFor(r.err);
+          if (v.verdict === "store_unverified") {
+            return { ...v, proven: { host: input.imap.host, port, secure: false, insecure: true } };
+          }
+          return v;
+        }
+        sawTimeout = true;
+      }
+
+      // The one refusal, ranked by how much the walk actually learned: a certificate examined
+      // beats "no TLS anywhere", beats "our clock expired", beats "nothing answered".
+      if (certDetail) {
+        const suggested = certDetail.kind === "hostname_mismatch"
+          ? await suggestedHostFor(input.imap.host, certNamesOf(certErr), resolveCname)
+          : null;
+        return {
+          verdict: "refuse", code: "tls",
+          tls: suggested ? { ...certDetail, suggestedHost: suggested } : certDetail,
+        };
+      }
+      if (starttlsAbsent) return { verdict: "refuse", code: "tls", tls: { kind: "tls_unavailable" } };
+      // A deadline is OUR clock expiring, not a code the server sent — classified here rather
+      // than fed to `verdictFor`, which would answer `unknown` and blame itself for a provider
+      // that went quiet. The user-facing outcome is `err_timeout`'s and it is accurate.
+      if (sawTimeout) return { verdict: "refuse", code: "timeout" };
+      return fallback ?? { verdict: "refuse", code: "connect" };
+    } finally {
+      // Give the slot back exactly once, after the last rung's socket is down (see `dialOnce`
+      // for the deadline asymmetry). Best-effort by necessity, never silent: a lost release
+      // leaves the counter one high until the 90 s stale window reclaims it, which is the
+      // bounded direction. `err` is a DATABASE error and carries no credential; the probe's
+      // own throw is never logged.
       try {
         await imapAdmission(deps).release(deps.db, key, deps.now());
       } catch (err) {
-        // Best-effort by necessity, never silent: a lost release leaves the counter one high
-        // until the 90 s stale window reclaims it, which is the bounded direction. `err` is a
-        // DATABASE error and carries no credential; the probe's own throw is never logged.
         deps.logger?.warn?.("imap_probe_slot_release_failed", { err: String(err) });
       }
-    };
-
-    let timedOut = false;
-    let verdict: ImapProbeVerdict;
-    try {
-      await withDeadline(adapter.connect(), deadlineMs);
-      verdict = { verdict: "ok" };
-    } catch (err) {
-      timedOut = err instanceof ProbeDeadlineExceeded;
-      // A deadline is OUR clock expiring, not a code the server sent, so it is classified here
-      // rather than fed to `verdictFor` — which would answer `unknown` and blame itself for a
-      // provider that went quiet. The user-facing outcome is `err_timeout`'s and it is accurate:
-      // the connection was accepted and then nothing came back.
-      verdict = timedOut ? { verdict: "refuse", code: "timeout" } : verdictFor(err);
-    } finally {
-      // NOT AWAITED WHEN THE DEADLINE FIRED, and this is the one asymmetry worth stating: the
-      // socket we gave up on is by definition one that is not answering, so awaiting its close
-      // would reintroduce exactly the unbounded wait the deadline exists to remove. The slot then
-      // comes back late, or not at all if the invocation is killed first — which the admission
-      // window already reclaims after 90 s. Every other path awaits it, so the common case
-      // releases synchronously and the next attempt is never refused by our own bookkeeping.
-      if (timedOut) void closeAndRelease();
-      else await closeAndRelease();
     }
-    return verdict;
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE SMTP PROBE — the other transport, same discipline
+   ══════════════════════════════════════════════════════════════════════════════════════════
+
+   Same connect-time promise as the IMAP probe (try it before storing it, say which thing
+   failed, never log a body or a throw), same ladder idea, one deliberate asymmetry: there is
+   NO consent arm. Plaintext SMTP authentication is not offered in this flow at all, so a
+   no-TLS submission host refuses with the `tls_unavailable` sentence and stops.
+
+   The classifier reads SENTENCES where the IMAP one reads codes, and that is nodemailer's
+   doing, not a choice: `smtp-connection` wraps every TLS-layer failure in a fresh Error
+   ("Error initiating TLS - …" at connect, `_actionSTARTTLS` at upgrade), so the OpenSSL code
+   and the `cert` object are gone and only the original message text survives. Pinned to
+   nodemailer@6.10.1; the specimen table in the tests is what notices a version moving it. */
+
+const smtpMessageOf = (err: unknown): string =>
+  typeof (err as ErrorShape | null)?.message === "string" ? String((err as ErrorShape).message) : "";
+
+/** SMTP replies that mean "the credentials were parsed and refused" (RFC 4954). */
+const SMTP_AUTH_RESPONSE_CODES: ReadonlySet<number> = new Set([534, 535]);
+
+/**
+ * The certificate names an SMTP failure carried. MEASURED LIVE (smtp.aberer.at, 2026-08-10):
+ * on both the 465 handshake and the 587 upgrade, nodemailer routes the identity failure
+ * through `_onSocketError` → `_formatError('ESOCKET')`, which OVERWRITES `err.code` but
+ * PRESERVES the original message, `cert`, `reason` and `host`. So the cert object is first
+ * choice, and Node's own sentence ("… is not in the cert's altnames: DNS:a, DNS:b") is the
+ * fallback for any path that really does re-wrap into a fresh Error.
+ */
+export function smtpCertNamesOf(err: unknown): { certHost: string | null; altNames: string[] } {
+  const { certHost, altNames } = certNamesOf(err);
+  if (certHost || altNames.length > 0) return { certHost, altNames };
+  const parsed = [...smtpMessageOf(err).matchAll(/DNS:([A-Za-z0-9.*-]+)/g)]
+    .map((m) => m[1]!)
+    .filter((n) => n.length > 0);
+  return { certHost: parsed[0] ?? null, altNames: parsed };
+}
+
+/**
+ * The TLS-layer classification of an SMTP dial failure, or null when TLS was not the layer.
+ *
+ * SENTENCES FIRST, code classes second — the reverse of the IMAP classifier — because
+ * nodemailer's `_formatError` stamps its own transport code (`ESOCKET`/`ECONNECTION`/`ETLS`)
+ * over whatever OpenSSL said, so the code alone reads "socket problem" about a certificate
+ * refusal. Measured live before this ordering existed: smtp.aberer.at's hostname mismatch
+ * arrived as `code: "ESOCKET"` with Node's full identity sentence intact, and the
+ * code-gated version of this function answered `connect` — a true sentence about the wrong
+ * thing, on the exact host this slice exists for.
+ */
+export function smtpTlsDetailOf(err: unknown, expectedHost: string): ProbeTlsDetail | null {
+  const message = smtpMessageOf(err);
+  const code = codeOf(err);
+  // requireTLS sent STARTTLS even unadvertised and the server answered non-2xx: no upgrade to
+  // be had. The one SMTP shape that maps to "this server offers no encryption".
+  if (/upgrading connection with STARTTLS/i.test(message)) return { kind: "tls_unavailable" };
+  if (/does not match certificate'?s altnames/i.test(message)) {
+    const { certHost } = smtpCertNamesOf(err);
+    return { kind: "hostname_mismatch", expectedHost, ...(certHost ? { certHost } : {}) };
+  }
+  if (/certificate has expired/i.test(message)) return { kind: "expired" };
+  if (/not yet valid/i.test(message)) return { kind: "not_yet_valid" };
+  if (/self[- ]signed certificate/i.test(message)) return { kind: "self_signed" };
+  if (/unable to (verify the first certificate|get local issuer certificate)/i.test(message)) {
+    return { kind: "untrusted" };
+  }
+  if (code === "ETLS" || isTlsCode(code) || /initiating TLS/i.test(message)) return { kind: "generic" };
+  return null;
+}
+
+/**
+ * The submission ladder. 465 (implicit TLS) before 587 (STARTTLS) when no port is named —
+ * RFC 8314 §3.3's preference — and mode negotiation on a named port, exactly as
+ * {@link probeAttempts} does for IMAP.
+ */
+export function smtpProbeAttempts(port?: number, secure?: boolean): ProbeAttempt[] {
+  if (port !== undefined) {
+    if (secure !== undefined) return [{ port, secure }];
+    return port === 465
+      ? [{ port, secure: true }, { port, secure: false }]
+      : [{ port, secure: false }, { port, secure: true }];
+  }
+  return [{ port: 465, secure: true }, { port: 587, secure: false }];
+}
+
+/** The non-TLS classification of an SMTP dial failure. Order mirrors {@link verdictFor}. */
+export function smtpVerdictFor(err: unknown): ImapProbeVerdict {
+  const code = codeOf(err);
+  if (code) {
+    if (TIMEOUT_ERRNOS.has(code)) return { verdict: "refuse", code: "timeout" };
+    if (CONNECT_ERRNOS.has(code) || code === "ECONNECTION" || code === "ESOCKET" || code === "EDNS") {
+      return { verdict: "refuse", code: "connect" };
+    }
+    if (code === "EAUTH") return { verdict: "refuse", code: "auth" };
+  }
+  const rc = (err as { responseCode?: unknown } | null)?.responseCode;
+  if (typeof rc === "number") {
+    if (SMTP_AUTH_RESPONSE_CODES.has(rc)) return { verdict: "refuse", code: "auth" };
+    // 421: the server was reached, said it is shutting the door right now, and proved the
+    // combination in the process — the SMTP twin of the IMAP `UNAVAILABLE` case.
+    if (rc === 421) return { verdict: "store_unverified", code: "connect" };
+  }
+  return { verdict: "refuse", code: "unknown" };
+}
+
+/** Same keyspace prefix as the IMAP probe's, own namespace — the two budgets are independent. */
+export function smtpProbeAdmissionKey(accountId: string, address: string): string {
+  return `probe:smtp:${createHash("sha256").update(`${accountId}:${address.toLowerCase()}`).digest("hex")}`;
+}
+
+export interface SmtpProbeOptions {
+  maxPerAddress?: number;
+  deadlineMs?: number;
+  /** The dial, injectable for the ladder tests. Default: {@link verifySmtpLogin} on the floor. */
+  dial?: (smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } }) => Promise<void>;
+  resolveCname?: (host: string) => Promise<string | null>;
+}
+
+/** Build the add-time SMTP probe. Injected by `routes/mailboxes.ts` beside {@link makeImapProbe}. */
+export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpProbe {
+  const max = opts.maxPerAddress ?? MAX_PROBES_PER_ADDRESS;
+  const deadlineMs = opts.deadlineMs ?? PROBE_DEADLINE_MS;
+  const dial = opts.dial
+    ?? deps.services?.smtpVerify
+    ?? ((smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } }): Promise<void> =>
+      verifySmtpLogin(smtp, PROBE_TIMEOUTS));
+  const resolveCname = opts.resolveCname ?? nodeResolveCname;
+
+  return async (input: SmtpProbeInput): Promise<ImapProbeVerdict> => {
+    const key = smtpProbeAdmissionKey(input.accountId, input.address);
+    if (!await imapAdmission(deps).acquire(deps.db, { mailboxId: key, max, now: deps.now() })) throw busy();
+
+    const startedAt = Date.now();
+    const budgetLeft = (): number => deadlineMs - (Date.now() - startedAt);
+
+    try {
+      const attempts = smtpProbeAttempts(input.smtp.port, input.smtp.secure);
+      let certDetail: ProbeTlsDetail | null = null;
+      let certErr: unknown;
+      let starttlsAbsent = false;
+      let sawTimeout = false;
+      let fallback: ImapProbeVerdict | null = null;
+
+      for (const attempt of attempts) {
+        if (budgetLeft() < 250) { sawTimeout = true; break; }
+        let failure: { err: unknown } | null = null;
+        try {
+          await withDeadline(dial({
+            host: input.smtp.host, port: attempt.port, secure: attempt.secure,
+            auth: { user: input.smtp.user, pass: input.smtp.pass },
+          }), Math.max(1, budgetLeft()));
+        } catch (err) {
+          failure = { err };
+        }
+        if (!failure) {
+          return { verdict: "ok", proven: { host: input.smtp.host, port: attempt.port, secure: attempt.secure } };
+        }
+        if (failure.err instanceof ProbeDeadlineExceeded) { sawTimeout = true; continue; }
+
+        const tls = smtpTlsDetailOf(failure.err, input.smtp.host);
+        if (tls) {
+          if (tls.kind === "tls_unavailable") { starttlsAbsent = true; continue; }
+          if (!certDetail) { certDetail = tls; certErr = failure.err; }
+          continue;
+        }
+        const v = smtpVerdictFor(failure.err);
+        if (v.verdict === "store_unverified") {
+          return { ...v, proven: { host: input.smtp.host, port: attempt.port, secure: attempt.secure } };
+        }
+        if (v.verdict === "refuse" && v.code === "auth") return v;
+        if (v.verdict === "refuse" && v.code === "timeout") { sawTimeout = true; continue; }
+        fallback = fallback ?? v;
+      }
+
+      // Same ranking as the IMAP walk: a certificate examined beats "no TLS", beats the clock,
+      // beats "nothing answered". And NO consent gate — see the section header.
+      if (certDetail) {
+        const suggested = certDetail.kind === "hostname_mismatch"
+          ? await suggestedHostFor(input.smtp.host, smtpCertNamesOf(certErr), resolveCname)
+          : null;
+        return {
+          verdict: "refuse", code: "tls",
+          tls: suggested ? { ...certDetail, suggestedHost: suggested } : certDetail,
+        };
+      }
+      if (starttlsAbsent) return { verdict: "refuse", code: "tls", tls: { kind: "tls_unavailable" } };
+      if (sawTimeout) return { verdict: "refuse", code: "timeout" };
+      return fallback ?? { verdict: "refuse", code: "connect" };
+    } finally {
+      try {
+        await imapAdmission(deps).release(deps.db, key, deps.now());
+      } catch (err) {
+        deps.logger?.warn?.("smtp_probe_slot_release_failed", { err: String(err) });
+      }
+    }
   };
 }

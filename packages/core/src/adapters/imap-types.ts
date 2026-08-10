@@ -87,6 +87,33 @@ export const TLS_FLOOR = { rejectUnauthorized: true, minVersion: "TLSv1.2" } as 
 export interface TlsFloorOptions { readonly rejectUnauthorized: true; readonly minVersion: "TLSv1.2" }
 
 /**
+ * Is `host` a literal IP address rather than a DNS name? Hand-rolled for the same reason
+ * {@link loopbackHarnessReason} is: this module may not import `node:net`. A dotted quad is v4;
+ * anything containing a colon can only be a v6 literal (RFC 952/1123 names cannot carry one).
+ */
+const isIpLiteral = (host: string): boolean => {
+  const h = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  if (h.includes(":")) return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  return m !== null && m.slice(1).every((n) => Number(n) >= 0 && Number(n) <= 255);
+};
+
+/**
+ * The SNI name for a dial, or undefined when SNI must be omitted.
+ *
+ * RFC 6066 §3 forbids an IP literal in SNI, and both `imapflow@1.5.0` (`imap-flow.js:290`) and
+ * `nodemailer@6.10.1` (`smtp-connection/index.js:61`) apply exactly this rule when deriving their
+ * own default. It is PINNED here rather than inherited because the derivation lives inside two
+ * dependencies' internals: a multi-vhost mail server presents its DEFAULT certificate to a dial
+ * with no SNI, which then fails hostname validation — a refusal indistinguishable from a genuinely
+ * wrong certificate, on a mailbox that every other client connects to fine. An explicit
+ * `servername` on the assembled option set is the difference between "the library happens to do
+ * this today" and a floor the guards can watch.
+ */
+export const sniServername = (host: string): string | undefined =>
+  isIpLiteral(host) ? undefined : host;
+
+/**
  * Why `host` is THE LOCAL TEST HARNESS and therefore exempt from the floor, or `null` if
  * it is not — the shape `transactionPoolerReason` in `packages/db/src/session-url.ts`
  * established, for the same reason: a guard that only says "no" teaches the operator
@@ -146,9 +173,12 @@ export interface ImapTlsFloorOptions {
    * `imapflow@1.5.0`: start cleartext and REQUIRE the STARTTLS upgrade before
    * authenticating. Absent when `secure`, because the library throws
    * *"Misconfiguration: Cannot set both secure=true for TLS and doSTARTTLS=true for
-   * STARTTLS."* on the pair.
+   * STARTTLS."* on the pair. ALSO absent on the consent branch (see {@link imapTlsFloor}),
+   * where its absence is what makes imapflow's upgrade opportunistic.
    */
   doSTARTTLS?: true;
+  /** SNI, pinned. See {@link sniServername}; absent only for an IP-literal host. */
+  servername?: string;
   tls?: TlsFloorOptions;
 }
 
@@ -161,6 +191,8 @@ export interface SmtpTlsFloorOptions {
   ignoreTLS?: false;
   /** Would downgrade a FAILED upgrade to "continue unencrypted". Pinned false for the same reason. */
   opportunisticTLS?: false;
+  /** SNI, pinned — `smtp-connection/index.js:61` reads it. See {@link sniServername}. */
+  servername?: string;
   tls?: TlsFloorOptions;
 }
 
@@ -175,15 +207,36 @@ export interface SmtpTlsFloorOptions {
  * `startSession()` at `:1038`, one line BEFORE `authenticate()` at `:1040`, which is the
  * ordering the whole guard rests on.
  */
-export function imapTlsFloor(host: string, secure: boolean): {
+export function imapTlsFloor(host: string, secure: boolean, allowInsecure = false): {
   options: ImapTlsFloorOptions; exemptReason: string | null;
 } {
   const exemptReason = loopbackHarnessReason(host);
   // The exempt path adds NOTHING and removes NOTHING — it declines to add the floor, so
   // the harness gets byte-identical behaviour to before the TLS floor and no new hole is invented.
   if (exemptReason) return { options: { secure }, exemptReason };
+  const servername = sniServername(host);
+  const sni = servername ? { servername } : {};
+  /**
+   * THE CONSENT BRANCH — the ONE way authentication may cross an unencrypted socket, and it is
+   * reachable only with `secure: false` AND an explicit `allowInsecure`, which every caller
+   * derives from a stored per-mailbox consent marker written by the connect flow after the
+   * PROBE PROVED the server offers no TLS at all (no implicit TLS, no STARTTLS) and the user
+   * opted in over copy that says the password and all mail travel unencrypted.
+   *
+   * It does NOT abandon the upgrade: `doSTARTTLS` is simply absent, which is imapflow's
+   * OPPORTUNISTIC mode — a consented server that later gains STARTTLS is upgraded on the next
+   * dial, with {@link TLS_FLOOR} still validating the certificate it presents. So the consented
+   * state heals toward encryption on its own and can never mask a working TLS deployment.
+   * A `secure: true` config ignores the flag entirely: an implicit-TLS dial is already
+   * encrypted from its first byte and there is nothing to consent away.
+   */
+  if (!secure && allowInsecure) {
+    return { options: { secure: false, ...sni, tls: TLS_FLOOR }, exemptReason: null };
+  }
   return {
-    options: secure ? { secure: true, tls: TLS_FLOOR } : { secure: false, doSTARTTLS: true, tls: TLS_FLOOR },
+    options: secure
+      ? { secure: true, ...sni, tls: TLS_FLOOR }
+      : { secure: false, doSTARTTLS: true, ...sni, tls: TLS_FLOOR },
     exemptReason: null,
   };
 }
@@ -203,10 +256,16 @@ export function smtpTlsFloor(host: string, secure: boolean): {
 } {
   const exemptReason = loopbackHarnessReason(host);
   if (exemptReason) return { options: { secure }, exemptReason };
+  const servername = sniServername(host);
+  const sni = servername ? { servername } : {};
+  // NO consent branch here, deliberately. The connect-time probe proves facts about the IMAP
+  // endpoint only, so a consent marker earned there licenses nothing about a different server on
+  // a different port. A consented no-TLS provider whose SMTP also lacks STARTTLS fails at send
+  // time with the tls taxonomy — the bounded, honest direction.
   return {
     options: secure
-      ? { secure: true, ignoreTLS: false, opportunisticTLS: false, tls: TLS_FLOOR }
-      : { secure: false, requireTLS: true, ignoreTLS: false, opportunisticTLS: false, tls: TLS_FLOOR },
+      ? { secure: true, ignoreTLS: false, opportunisticTLS: false, ...sni, tls: TLS_FLOOR }
+      : { secure: false, requireTLS: true, ignoreTLS: false, opportunisticTLS: false, ...sni, tls: TLS_FLOOR },
     exemptReason: null,
   };
 }
@@ -242,6 +301,16 @@ export interface ImapConfig {
    * MANDATORY upgrade rather than an opportunistic one: see {@link imapTlsFloor}.
    */
   secure: boolean;
+  /**
+   * The user CONSENTED, at connect time, to authenticating this one mailbox over a socket that
+   * never became encrypted — offered only after the probe proved the server has no TLS at all,
+   * and honored only with `secure: false`. See the consent branch in {@link imapTlsFloor} for
+   * exactly what it changes (a mandatory STARTTLS becomes an opportunistic one) and what it
+   * does not (certificate validation of any upgrade that does happen). Every dialler that
+   * builds a config from stored credential meta must thread `meta.insecureConsent` through
+   * here, or a mailbox the probe admitted will strand on its first sync.
+   */
+  allowInsecure?: boolean;
   auth: ImapAuth;
   smtp?: { host: string; port: number; secure: boolean; auth?: { user: string; pass: string } };
   sentDomain?: string;

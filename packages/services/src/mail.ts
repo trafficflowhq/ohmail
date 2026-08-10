@@ -105,6 +105,8 @@ export {
   // by ADDRESS (the `id_token` claim), so these types carry no `mailboxId`.
   type ConnectOAuthMailboxInput, type ConnectOAuthOptions, type ConnectOAuthResult,
   type MailboxProbe, type MailboxProbeInput, type MailboxProbeVerdict,
+  type SmtpProbe, type SmtpProbeInput, type ProbeTransport,
+  type ProbeTlsDetail, type ProbeTlsFailureKind, type ProvenEndpoint,
   // The gate's TYPE, so a host can state its tier. No permissive VALUE is exported from this
   // package — the only one that exists is in `apps/sidecar`, where the hosted API cannot name it.
   type MailboxAllowancePolicy,
