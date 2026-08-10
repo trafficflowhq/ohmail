@@ -276,6 +276,9 @@ export const mailboxes: {
         authorizeUrl: string;
         state: string;
     }>;
+    oauthAvailability: () => Promise<{
+        available: boolean;
+    }>;
     oauthComplete: (b: {
         state: string;
         code: string;
