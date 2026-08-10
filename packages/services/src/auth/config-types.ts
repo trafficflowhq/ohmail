@@ -118,6 +118,22 @@ export interface AuthConfig {
   stepUpWindowMs: number;      // 5 min
   /** Hard ceiling on a sliding session, from `sessions.created_at`. 90 d — see config.ts. */
   sessionAbsoluteTtlMs: number;
+  /**
+   * How long after a refresh token is CONSUMED a second presentation of that same token is read
+   * as a benign CONCURRENT rotation rather than as theft — on the COOKIE surface ONLY. See
+   * `config.ts` for the number and the security argument; `AuthService.rotateRefresh` applies it,
+   * and only when `refresh`'s `concurrentGrace` is set (the `/auth/refresh` cookie branch).
+   *
+   * It exists because reuse detection cannot, at a single instant, tell "one browser, two tabs,
+   * both refreshing at the same access-token expiry" apart from "a stolen token replayed" — the
+   * two are byte-identical on the wire. A short window keys the distinction on TIME-SINCE-CONSUMED
+   * instead: a duplicate that lands within it (the client single-flights refresh only per tab, so
+   * a second tab or a second client sharing one cookie jar races structurally) is re-rotated off
+   * the live family; anything presented after it — which is what a replayed stolen token looks
+   * like once the real client has rotated past it — still revokes the whole family. Native/bearer
+   * and the OAuth `refresh_token` grant never pass `concurrentGrace`, so they stay strict.
+   */
+  refreshReuseGraceMs: number;
   // Lockout
   maxFailures: number;
   lockoutMs: number;

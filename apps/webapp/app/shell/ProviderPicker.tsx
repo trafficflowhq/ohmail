@@ -45,10 +45,23 @@ const MANUAL: ProviderPreset = PROVIDERS.find((p) => p.manual)!;
 /** Focus/arrow order: the grid left-to-right, then the manual row. */
 const ORDER: ProviderPreset[] = [...NAMED, MANUAL];
 
-export function ProviderPicker({ value, onChange }: {
+export function ProviderPicker({ value, onChange, note, showHelp = true }: {
   /** The selected provider id, or `null` while nothing is chosen yet. */
   value: string | null;
   onChange: (id: string) => void;
+  /**
+   * Override the selected provider's own `note`. The preset note is written for the app-password
+   * path; a caller that connects the SAME provider a different way (Microsoft by sign-in, when the
+   * deployment's Entra door is armed) would otherwise render a false instruction, so it passes the
+   * sentence that path actually needs. Undefined ⇒ the preset note, unchanged for every caller that
+   * does not pass it.
+   */
+  note?: string;
+  /**
+   * Whether to show the preset's help link. That link points at the provider's app-password docs;
+   * on a path that uses no app password it is a wrong turn, so the caller drops it. Defaults true.
+   */
+  showHelp?: boolean;
 }) {
   const t = useTranslations("providerPicker");
   const labelId = useId();
@@ -130,8 +143,8 @@ export function ProviderPicker({ value, onChange }: {
         // Keyed by provider so switching re-runs the rise — the panel visibly answers
         // the click rather than silently swapping its text.
         <div className="pvp-note" id={noteId} key={selected.id}>
-          <p>{selected.note}</p>
-          {selected.helpUrl ? (
+          <p>{note ?? selected.note}</p>
+          {showHelp && selected.helpUrl ? (
             <a href={selected.helpUrl} target="_blank" rel="noreferrer noopener">
               {selected.helpLabel}
               <Icon name="open" size={11} />
