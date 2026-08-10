@@ -92,8 +92,13 @@ to, to ohmail Cloud):**
   worth attacking separately: the webview's CSP is `connect-src 'none'`; the page
   replaces `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` and
   `navigator.sendBeacon` with functions that throw; and the Cloud sync client is
-  aliased out of the bundle at build time. The Tauri capability list is empty, so
-  the interface can invoke no command, read no file and spawn no process.
+  aliased out of the bundle at build time. The main window's Tauri capability
+  list is empty, so the interface can invoke no command, read no file and spawn
+  no process. One other window has a grant — the transient one shown while an
+  update downloads — and it is a single receive-only event permission
+  (`core:event:allow-listen`) so that it can hear the local download-progress
+  event: no emit back, no command, no filesystem, and the same `connect-src
+  'none'` as everything else.
 - Because the interface is embedded **uncompressed**, you can audit a downloaded
   binary directly: `strings -a <binary> | grep -oE 'https?://[^ ]+' | sort -u`.
 - There are **no credentials** and no account — there is nothing to sign into.

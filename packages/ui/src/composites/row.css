@@ -25,19 +25,6 @@
 .row .prev{font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
 .row .badges{display:inline-flex;gap:6px;margin-left:7px;vertical-align:1px}
 
-/* thread participant circles — overlapping sender avatars replacing the `⤷ N` badge.
-   The stack overlaps by a fixed negative margin, so two or three people cost nearly the width of
-   one-and-a-half rather than growing linearly, and the row's subject never shifts as a thread
-   gains a voice. Each circle wears a ring in the row's own colour so it reads as separate from the
-   one behind it — `--edge` is set by the row-slot in both hover and selected states (see below),
-   defaulting to the panel. Reduced from the 26px `.s` avatar: a row lead, not a Screener lead. */
-.row .thread-circles{display:inline-flex;align-items:center;vertical-align:-4px;--edge:var(--panel)}
-.row .thread-circles .av.s{width:18px;height:18px;font-size:8.5px;font-weight:600;
-  margin-left:-6px;box-shadow:0 0 0 1.5px var(--edge)}
-.row .thread-circles .av.s:first-child{margin-left:0}
-.row:hover .thread-circles{--edge:var(--tint)}
-.row.sel .thread-circles{--edge:var(--float)}
-
 /* screener rows — standard anatomy + initial-avatar + suggestion chips */
 .row.srow{display:flex;gap:11px;align-items:flex-start}
 .srow .av{margin-top:1px}
@@ -52,32 +39,6 @@
   height:0 !important;padding-top:0;padding-bottom:0;
   transition:opacity .2s var(--swift), transform .25s var(--swift),
              height .3s var(--spring), padding .3s var(--spring)}
-
-/* A ROW ON ITS WAY DOWN TO "EARLIER" — a message that has just been read, wherever it was read.
-   `.out` above is the same grammar for a row leaving a list altogether (the Screener's decided
-   rows); this one is leaving a SECTION, and the next render draws it in the one below. So it
-   travels DOWNWARD rather than sideways: the direction is the information, and a row that slid
-   right would be saying "gone" about a message that is still in the list a heading away.
-
-   The collapse is what keeps the move legible for the rows AROUND it. Removing the row outright
-   would close the gap in one frame and jump everything below it up a row; taking the height to
-   zero over the same 280 ms the view waits before re-filing (`SETTLE_MS` in `OhboxView.tsx`)
-   makes that a movement instead of a jump, and gives the browser's own scroll anchoring something
-   continuous to hold on to. The two durations are one duration and must stay so — a transition
-   longer than the timer is a row that is still moving when it is redrawn somewhere else.
-
-   `pointer-events:none` because a departing row is not a target: it is under the cursor for a
-   quarter-second while shrinking away from it, and a click landing on it would select a message
-   the reader was aiming past. */
-@media (prefers-reduced-motion: no-preference){
-  .row.settling{opacity:0;transform:translateY(12px);overflow:hidden;pointer-events:none;
-    height:0 !important;padding-top:0;padding-bottom:0;
-    transition:opacity .18s var(--swift), transform .22s var(--swift),
-               height .28s var(--spring), padding .28s var(--spring)}
-}
-/* Under `prefers-reduced-motion: reduce` there is no rule at all: the row keeps its slot, unstyled
-   and unchanged, and simply appears under "Earlier" on the render the timer schedules. The move
-   still happens — it is the information — and only the travel is dropped. */
 
 /* the trailing action slot — MessageRow's `actions`, a SIBLING of the row button.
    The wrapper adds no height of its own, so a row mid-exit still collapses to nothing:
