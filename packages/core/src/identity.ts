@@ -152,8 +152,7 @@ export type FingerprintInput = Pick<
  * nothing else. That is the property that makes a BACKFILL impossible and it is why the ruling
  * prohibits one outright: `message_bodies.text` is redacted for sensitive mail, `html` is
  * `prepareHtmlForStorage`'d and capped at 256 KiB, `attachments` had no content digest before
- * this slice, and `messages.to_addresses` — written at ingest only since the recipients slice —
- * holds its `'[]'` default on every row that predates it. A batch job over stored columns would
+ * this slice, and `messages.to_addresses` is NEVER WRITTEN. A batch job over stored columns would
  * compute a DIFFERENT value than ingest does for the same message, so every row it touched would
  * insert a SECOND `messages` row the first time the mail was re-observed — and no delta removes
  * the first — a convergence break. The dual-key lookup in `planChange` is the migration path instead.

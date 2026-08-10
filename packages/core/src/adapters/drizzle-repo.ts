@@ -278,14 +278,6 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       bodyHash: input.canonical.bodyHash,
       dedupKey: input.dedupKey,
       subject: input.subject, fromAddress: input.fromAddress, date: input.date,
-      // `?? []` reproduces the two columns' own `'[]'::jsonb` default, on the same argument as
-      // `unread ?? true` below: this is the ONE place the ingest mapping for recipients is
-      // visible, and a caller with nothing to report writes what the database would have written.
-      // The value is an `EmailAddress[]`, stored as jsonb — the shape
-      // `materialize.ts#messageRowToDTO` reads and the shape `cloud-mirror.ts` writes from the
-      // DTO into the same columns of the local mail database.
-      toAddresses: input.to ?? [],
-      ccAddresses: input.cc ?? [],
       nativeLocator: input.nativeLocator,
       noAi: input.flags.no_ai, noForward: input.flags.no_forward,
       noKb: input.flags.no_kb, priority: input.flags.priority,

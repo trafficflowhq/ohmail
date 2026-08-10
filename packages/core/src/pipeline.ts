@@ -304,8 +304,7 @@ export interface CommitDeps {
  * the code that exists because of it: a batch job would compute a DIFFERENT value than ingest
  * does. `message_bodies.text` is redacted for sensitive mail, `html` has been through
  * `prepareHtmlForStorage` and a 256 KiB cap, `attachments` had no content digest before this
- * change, and `messages.to_addresses` — written at ingest only since the recipients slice — holds
- * its `'[]'` default on every row that predates it. So every backfilled row would carry a key
+ * change, and `messages.to_addresses` is NEVER WRITTEN. So every backfilled row would carry a key
  * that ingest cannot reproduce, and the first re-observation of that mail would insert a SECOND
  * `messages` row — which no delta removes, and which mints a second `threads` row too
  * because `commitChange`'s re-entry guard is `stored.threadId` and a new row has none.
@@ -888,20 +887,6 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       dedupKey: p.dedupKey,
       subject: p.normalized.subject,
       fromAddress: p.normalized.from.address,
-      // ── THE RECIPIENTS, WHICH THIS LINE IS THE FIRST TO PERSIST ──────────────────────────
-      //
-      // `messages.to_addresses` / `cc_addresses` have existed since the mail schema landed and
-      // `materialize.ts#messageRowToDTO` has always projected them, but no Cloud ingest ever wrote
-      // them. Every Cloud-ingested message therefore reached the reader as `to: []` and rendered
-      // no "To" line — and nothing failed, because an unwritten column and a message addressed to
-      // nobody are the same `[]` on the wire. The values were right here in `p.normalized` the
-      // whole time; `parseMessage` has populated them since the parser was written, and
-      // `messageFingerprint` already consumes both.
-      //
-      // Same parse, not a second reading — which is what keeps the row and the fingerprint that
-      // decides its identity from being able to disagree about who a message was sent to.
-      to: p.normalized.to,
-      cc: p.normalized.cc,
       date: p.normalized.date,
       nativeLocator: p.arrivalLocator,
       flags: p.sensitivity.flags,
@@ -1005,9 +990,8 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
         headers: p.normalized.headers,
         subject: p.normalized.subject,
         // Sender AND recipients, because the plan HAS them. The backfill can only pass the
-        // sender: `insertMessage` writes `messages.to_addresses` only from this slice onward, so
-        // the rows a backfill reaches carry `'[]'`. That asymmetry is documented on
-        // `ThreadResolutionInput.participants`.
+        // sender — `insertMessage` never writes `messages.to_addresses` — and that asymmetry is
+        // documented on `ThreadResolutionInput.participants`.
         participants: [p.normalized.from, ...p.normalized.to],
         date: p.normalized.date,
         emitMessageUpdate: false,

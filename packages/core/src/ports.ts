@@ -162,28 +162,6 @@ export interface InsertMessageInput {
   accountId: string; mailboxId: string;
   canonical: NormalizedMessage["canonical"];
   dedupKey: string; subject: string; fromAddress: string; date: Date | null;
-  /**
-   * `To:` and `Cc:`, parsed — `messages.to_addresses` / `cc_addresses`.
-   *
-   * OPTIONAL, defaulting to `[]`, which is EXACTLY the two columns' own `'[]'::jsonb` default —
-   * the same shape of default as `unread` below, so every fake repo and every earlier caller
-   * keeps its behaviour and an omission is indistinguishable from what the database would have
-   * written anyway.
-   *
-   * These columns existed, and `materialize.ts#messageRowToDTO` has always projected them into
-   * `MessageDTO.to`/`.cc`, but nothing on the Cloud ingest path ever wrote them. So every
-   * Cloud-ingested message reached the reader with `to: []` and no recipient line at all, and no
-   * test could see it: a defaulted column and a message genuinely addressed to nobody are the
-   * same value on the wire. `planChange` has had the parsed lists on `NormalizedMessage` the
-   * whole time; this field is what carries them the last step.
-   *
-   * The shape is `EmailAddress[]` — `{ name, address }` objects — because that is what the
-   * projection reads and what `apps/sidecar/src/cloud-mirror.ts` already writes into the same two
-   * columns of the local mail database from the DTO. One on-disk shape, written from two
-   * directions; a bare address array here would make the two disagree.
-   */
-  to?: EmailAddress[];
-  cc?: EmailAddress[];
   nativeLocator: NativeLocator;
   flags: { no_ai: boolean; no_forward: boolean; no_kb: boolean; priority: boolean };
   snippet?: string;                          // sensitivity-redacted preview (never an OTP)
