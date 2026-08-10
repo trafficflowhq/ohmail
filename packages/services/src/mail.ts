@@ -101,6 +101,10 @@ export {
 export {
   MailboxService, makeMailboxService, mailboxService, decryptCredential,
   type CreateMailboxBody, type UpdateMailboxBody, type TransportInput, type MailboxServiceDeps,
+  // Cloud 0009 — the OAuth consent flow's write end. `connectOAuth` resolves its target row
+  // by ADDRESS (the `id_token` claim), so these types carry no `mailboxId`.
+  type ConnectOAuthMailboxInput, type ConnectOAuthOptions, type ConnectOAuthResult,
+  type MailboxProbe, type MailboxProbeInput, type MailboxProbeVerdict,
   // The gate's TYPE, so a host can state its tier. No permissive VALUE is exported from this
   // package — the only one that exists is in `apps/sidecar`, where the hosted API cannot name it.
   type MailboxAllowancePolicy,

@@ -98,10 +98,41 @@ export type ImapProbeVerdict =
   | { verdict: "store_unverified"; code: MailboxErrorCode }
   | { verdict: "refuse"; code: MailboxErrorCode };
 
+/**
+ * WHAT THE PROBE IS ASKED TO TRY, and it is a UNION because there are now two kinds of credential.
+ *
+ * `pass` is the historical member: a password typed into the connect form. `accessToken` is the
+ * OAuth2 member — a token minted seconds ago by
+ * `POST /mailboxes/oauth/microsoft/callback`'s code exchange, before anything has been stored.
+ *
+ * ── WHY THE OAUTH ARM CARRIES A TOKEN AND NOT A REFRESH TOKEN ─────────────────────────────
+ *
+ * `ImapConfig.auth`'s oauth member carries a CALLBACK, not a token, precisely so that a long-lived
+ * connection can re-mint. A probe is one dial with one login, the token in hand is a minute old, and
+ * there is no mailbox id yet for a token provider to cache against — so the callback this builds
+ * simply returns the token it was given. Handing the probe a REFRESH token instead would mean
+ * exchanging it here, which is a second code path to the token endpoint and a second place the
+ * exchange could differ from the one that just ran.
+ *
+ * ── AND WHY IT DOES NOT GO THROUGH `buildImapAuth` ────────────────────────────────────────
+ *
+ * `buildImapAuth` is the one INTERPRETER of a stored `meta.authType`, and its whole value is that it
+ * fails closed on a row it does not recognise. There is no row here and no `meta`: this is a literal
+ * access token the caller minted. Feeding it a synthetic `{ authType: "oauth2" }` plus a fetcher
+ * factory that ignores its own `refreshToken` argument would be a lie in both directions — it would
+ * claim to have read a credential that does not exist, and it would make the factory's contract
+ * (turn a stored refresh token into a fetcher) false at one call site. The password arm still routes
+ * through the builder, because there the `{ user, pass }` shape IS what a stored password row
+ * produces and the builder's refusal is worth inheriting.
+ */
+export type ImapProbeCredential =
+  | { host: string; port: number; secure: boolean; user: string; pass: string; accessToken?: undefined }
+  | { host: string; port: number; secure: boolean; user: string; accessToken: string; pass?: undefined };
+
 export interface ImapProbeInput {
   accountId: string;
   address: string;
-  imap: { host: string; port: number; secure: boolean; user: string; pass: string };
+  imap: ImapProbeCredential;
 }
 
 /**
@@ -368,11 +399,14 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
       host: input.imap.host,
       port: input.imap.port,
       secure: input.imap.secure,
-      // The add-time probe body is password-only (oauth onboarding does not probe a typed password).
-      // Routed through the shared builder anyway, with no token source: it yields `{ user, pass }`
-      // here, and an oauth2 authType — were one ever to arrive — would THROW rather than dial with a
-      // refresh token as a password. One interpreter of `authType`, no site-local re-derivation.
-      auth: buildImapAuth({ user: input.imap.user }, input.imap.pass),
+      // Two arms, one dialler. The password arm goes through the shared builder with no token
+      // source: it yields `{ user, pass }` here, and an oauth2 `authType` — were one ever to arrive
+      // in a request body — would THROW rather than dial with a refresh token as a password. The
+      // oauth arm is a literal, already-minted access token; see {@link ImapProbeCredential} for why
+      // it does not pretend to be a stored credential.
+      auth: input.imap.accessToken !== undefined
+        ? { user: input.imap.user, fetchAccessToken: async () => input.imap.accessToken! }
+        : buildImapAuth({ user: input.imap.user }, input.imap.pass ?? ""),
       timeouts: PROBE_TIMEOUTS,
     });
 

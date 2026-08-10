@@ -139,8 +139,18 @@ export interface MailboxProbeInput {
   accountId: string;
   /** The CANONICAL address (post-{@link canonicalAddress}) — the probe's admission key, not a login. */
   address: string;
-  /** Exactly the connection this create is about to store. Not a normalised variant of it. */
-  imap: { host: string; port: number; secure: boolean; user: string; pass: string };
+  /**
+   * Exactly the connection this write is about to store. Not a normalised variant of it.
+   *
+   * A UNION, because there are two kinds of credential to try. `pass` is a typed password;
+   * `accessToken` is an OAuth2 token the CALLER minted seconds ago, before anything is stored — the
+   * oauth ceremony's equivalent of "try it before you keep it". Exactly one is present. See
+   * `packages/api/src/imap-probe.ts`, the one implementation, for why the oauth arm carries a token
+   * rather than the refresh token it was derived from.
+   */
+  imap:
+    | { host: string; port: number; secure: boolean; user: string; pass: string; accessToken?: undefined }
+    | { host: string; port: number; secure: boolean; user: string; accessToken: string; pass?: undefined };
 }
 
 /**
@@ -188,6 +198,52 @@ export type MailboxProbe = (input: MailboxProbeInput) => Promise<MailboxProbeVer
  */
 export interface CreateMailboxOptions {
   probe: MailboxProbe;
+}
+
+/**
+ * WHAT A COMPLETED OAuth CONSENT HANDS THE SERVICE. See {@link MailboxService.connectOAuth}.
+ *
+ * There is no `imap.pass`, no `authKind` and no `mailboxId` here, and each absence is load-bearing:
+ * the credential is a refresh token, the auth kind is `'oauth'` by construction (this method has no
+ * other mode), and WHICH mailbox row is written is resolved from the address rather than supplied.
+ */
+export interface ConnectOAuthMailboxInput {
+  /** The mailbox PROVIDER id the UI picked (`"outlook"`), not the token provider. */
+  provider: string;
+  /** From the `id_token` claim. The user never typed it; this method canonicalizes it. */
+  address: string;
+  displayName?: string | null;
+  oauth: {
+    /** The TOKEN provider — `"microsoft"`. `buildImapAuth` refuses any other value. */
+    provider: string;
+    /** The Azure AD tenant SEGMENT, validated before it ever reaches a URL. */
+    tenant: string;
+    /** Stored as `secret_enc`. THE credential — an oauth mailbox has no other. */
+    refreshToken: string;
+    /**
+     * The access token minted by the SAME exchange, for the probe and for nothing else. It is not
+     * stored: it expires in an hour and `MicrosoftTokenProvider` mints its own.
+     */
+    accessToken: string;
+    imap: { host: string; port: number; secure?: boolean };
+    /** One refresh token covers both transports, so these coordinates live in `meta.smtp`. */
+    smtp?: { host: string; port: number; secure?: boolean };
+  };
+}
+
+/** Required for the same reason {@link CreateMailboxOptions}'s is: a credential is tried before it is stored. */
+export interface ConnectOAuthOptions {
+  probe: MailboxProbe;
+}
+
+/**
+ * `created` distinguishes a FIRST connect from a RECONNECT, and the caller renders the difference:
+ * "Outlook connected" and "Outlook reconnected" are different things to somebody who was trying to
+ * fix a mailbox that had stopped. It is also the only signal that allowance was consumed.
+ */
+export interface ConnectOAuthResult {
+  created: boolean;
+  mailbox: MailboxDTO;
 }
 
 /**
@@ -578,6 +634,176 @@ export class MailboxService {
     });
 
     return this.toDTO(ctx, mb);
+  }
+
+  /**
+   * CONNECT OR RECONNECT AN OAuth2 MAILBOX — the write end of the consent ceremony.
+   *
+   * `POST /mailboxes` cannot serve this and neither can `PATCH /mailboxes/:id`, and the reason is
+   * not the shape of the body:
+   *
+   *  · **Nobody typed the address.** It comes from the `id_token`'s `preferred_username` claim, so
+   *    this method is handed an address rather than asked to trust one — and it therefore cannot be
+   *    told WHICH mailbox row to write. It resolves that itself.
+   *  · **A reconnect and a first connect are the same button.** A person whose consent expired
+   *    presses "Reconnect Microsoft" and signs in again; the ceremony that comes back is
+   *    indistinguishable from a first one. Two routes, or a `mailboxId` in the ceremony, would make
+   *    the caller decide something it cannot know (see cloud 0009's header on why there is no
+   *    `mailbox_id` column).
+   *
+   * ── THE ADDRESS RESOLVES THE ROW, AND mail 0021 IS WHAT MAKES THAT WELL-DEFINED ───────────
+   *
+   * `mailboxes_active_address_uq` is UNIQUE on (`account_id`, `lower(address)`) WHERE
+   * `status <> 'disabled'`, so there is AT MOST ONE live mailbox for an address. That is the whole
+   * basis of the lookup: the query cannot return two rows, so "update the existing one" has exactly
+   * one meaning. The DISABLED rows are deliberately excluded from the match — a mailbox somebody
+   * disconnected is a tombstone, and silently reviving it on a consent would resurrect a mailbox
+   * they removed. A fresh consent for a disconnected address therefore CREATES, and the index
+   * permits that (its predicate excludes the tombstone).
+   *
+   * ── AND THE INDEX IS STILL THE ENFORCER, NOT THIS LOOKUP ──────────────────────────────────
+   *
+   * The pre-read is inside the transaction and takes `FOR UPDATE` on whatever it finds, but a row
+   * that appears BETWEEN this read and the insert is caught by the 23505 → 409 mapping `create`
+   * relies on, not by the read. `create`'s own note explains why a pre-check is not the guard: it
+   * has a race the index does not, and it would blind the only test that watches the mapping.
+   *
+   * ── PROBED BEFORE STORED, LIKE EVERY OTHER CREDENTIAL WRITE ───────────────────────────────
+   *
+   * `opts.probe` is REQUIRED and `input.oauth.accessToken` is what it tries — the token the code
+   * exchange just returned. Before the transaction, for the two reasons `update` states: the API's
+   * pooled handle is `max: 1`, so a foreign dial inside a transaction pins the instance's only
+   * connection, and the transaction takes a row lock a mail server must never be able to hold.
+   *
+   * A refused probe writes NOTHING: no mailbox row, no credential, and — on the reconnect path — the
+   * existing mailbox keeps the credential it has and keeps syncing on it. That is the same property
+   * `update`'s probe buys, and it matters more here, because the thing being replaced is the only
+   * credential an oauth mailbox has.
+   */
+  async connectOAuth(
+    ctx: ServiceContext, input: ConnectOAuthMailboxInput, opts: ConnectOAuthOptions,
+  ): Promise<ConnectOAuthResult> {
+    const kp = this.requireKeyProvider();
+    const address = canonicalAddress(input.address ?? "");
+    if (!input.provider || !address) {
+      throw new ServiceError("validation_failed", 400, "provider and address are required");
+    }
+    const o = input.oauth;
+    if (!o?.refreshToken) {
+      // The ceremony completed and returned no long-lived credential. Refusing loudly rather than
+      // storing an access token that expires in an hour and can never be renewed — a mailbox that
+      // works for exactly one sync cycle is worse than one that was never created.
+      throw new ServiceError("validation_failed", 400, "an oauth mailbox requires a refresh token");
+    }
+    if (!o.imap?.host || !o.imap?.port) {
+      throw new ServiceError("validation_failed", 400, "imap host and port are required");
+    }
+
+    // The IMAP LOGIN for XOAUTH2 is the address itself, and it is deliberately not a separate
+    // field: Exchange authenticates the token's own subject, so a `user` that differed from the
+    // claim would prove a login the worker will never make. Same argument as `create`'s refusal to
+    // substitute the address for a missing `user`, reached from the other side.
+    const user = address;
+
+    const verdict = await opts.probe({
+      accountId: ctx.accountId,
+      address,
+      imap: {
+        host: o.imap.host, port: o.imap.port, secure: o.imap.secure ?? true,
+        user, accessToken: o.accessToken,
+      },
+    });
+    if (verdict.verdict === "refuse") throw probeRefused(verdict.code);
+
+    /**
+     * The non-secret half of the credential, and every field here is read by a named consumer:
+     * `host`/`port`/`secure`/`user` by `imapFlowOptions`; `authType`/`provider`/`tenant` by
+     * `buildImapAuth` — the ONE interpreter of `authType`, which turns `secret_enc` into a token
+     * callback instead of a password because of this bag; and `smtp` by `makeSendAdapter`'s oauth
+     * branch, which is where an oauth mailbox's SMTP coordinates live because one refresh token
+     * covers both transports and there is no second credential row to put them on.
+     */
+    const meta: Record<string, unknown> = {
+      host: o.imap.host,
+      port: o.imap.port,
+      secure: o.imap.secure ?? true,
+      user,
+      authType: "oauth2",
+      provider: o.provider,
+      tenant: o.tenant,
+      ...(o.smtp ? { smtp: { host: o.smtp.host, port: o.smtp.port, secure: o.smtp.secure } } : {}),
+    };
+
+    const out = await asTx(ctx).transaction(async (tx) => {
+      const [existing] = await tx.select().from(mailboxes)
+        .where(and(
+          eq(mailboxes.accountId, ctx.accountId),
+          sql`lower(${mailboxes.address}) = lower(${address})`,
+          sql`${mailboxes.status} <> 'disabled'`,
+        ))
+        .limit(1)
+        .for("update");
+
+      if (existing) {
+        const row = existing as MailboxRow;
+        /*
+         * A FRESH CONSENT ENDS THE OUTAGE EPISODE — the same four columns `update` clears, and for
+         * the same reason: `markMailboxFailed` COALESCEs `failed_at`, so a value left behind here
+         * is inherited by the NEXT, unrelated failure and reported as a multi-day outage on attempt
+         * nine. The sync block goes with it (mail 0029) — reconnecting is a request to try again,
+         * which makes the old reason unverified, and `reconcileSyncBlocks` re-writes it within one
+         * roster pass if the mailbox is still unserved.
+         *
+         * `status` is NOT asserted to be `connected` by this write beyond leaving the error state:
+         * only the worker's verified recovery says a mailbox works. What changed is that the row
+         * starts a CLEAN episode on a credential this method has just dialled successfully.
+         */
+        await tx.update(mailboxes).set({
+          status: "connected",
+          authKind: "oauth",
+          ...(input.displayName !== undefined ? { displayName: input.displayName ?? null } : {}),
+          errorCode: null, errorDetail: null, failedAt: null, retryCount: 0,
+          syncBlockedReason: null, syncBlockedSince: null,
+        }).where(and(eq(mailboxes.id, row.id), eq(mailboxes.accountId, ctx.accountId)));
+
+        await this.upsertCredOn(tx, ctx, kp, row.id, "imap", o.refreshToken, meta);
+        /*
+         * AND THE STALE PASSWORD SMTP ROW IS DROPPED, which is the one thing a naive reconnect gets
+         * wrong. A mailbox that was previously connected with a password owns an `smtp` credential
+         * row; `makeSendAdapter` prefers that row over `meta.smtp` on the PASSWORD branch only, so
+         * leaving it would be harmless there — but the row also holds an encrypted password that is
+         * now dead, and keeping a dead credential because it happens not to be read is how it gets
+         * read later. The oauth branch takes its coordinates from `meta.smtp`.
+         */
+        await tx.delete(mailboxCredentials).where(and(
+          eq(mailboxCredentials.mailboxId, row.id),
+          eq(mailboxCredentials.transport, "smtp"),
+        ));
+
+        const [fresh] = await tx.select().from(mailboxes).where(eq(mailboxes.id, row.id)).limit(1);
+        return { created: false, row: fresh as MailboxRow };
+      }
+
+      // The gate FIRST, exactly as `create` orders it: it takes the lock every later statement is
+      // serialized behind. A reconnect does NOT reach here, so re-consenting a mailbox you already
+      // have never spends allowance — only a new address does.
+      await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now());
+
+      const [created] = await tx.insert(mailboxes).values({
+        accountId: ctx.accountId,
+        provider: input.provider,
+        address,
+        displayName: input.displayName ?? null,
+        authKind: "oauth",
+      }).returning();
+      await this.upsertCredOn(tx, ctx, kp, created!.id, "imap", o.refreshToken, meta);
+      return { created: true, row: created as MailboxRow };
+    }).catch((err: unknown) => {
+      if (isActiveAddressConflict(err)) throw addressTaken();
+      throw err;
+    });
+
+    return { created: out.created, mailbox: await this.toDTO(ctx, out.row) };
   }
 
   /**
