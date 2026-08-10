@@ -16,6 +16,81 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.8.2] — 2026-08-10
+
+A follow-up to 0.8.1 about staying up when a single screen has trouble, a calmer sync line, less
+work for your machine, and reading, filing, tags and rules that behave the way you would expect.
+
+### Nothing takes the whole app down
+
+**A screen that hits trouble shows a notice in its own panel, and the rest of the app keeps
+working.** Receipts in particular could get into a state that took the window down; it no longer
+can. Whatever the screen, a failure is now contained to that screen with a short message and a way
+to try again, instead of a blank window.
+
+### The sync line is calm
+
+**No more false "stopped" or "failed".** A first sync, or a brief retry, used to flash "Sync
+stopped — sign in" or "Sync failed. Retrying." while nothing was actually wrong. The line now waits
+for a real, repeated problem before it says anything is wrong, and while your server is briefly
+refusing and the app is re-confirming, it says a quiet **Catching up…** rather than going silent or
+crying failure.
+
+### Lighter on your machine
+
+**Reading long lists of mail no longer keeps the processor busy.** Every arriving change used to
+redraw more of the list than it needed to; now a change redraws only the rows that actually
+changed, which is most of the difference between a warm laptop and a cool one when the app has been
+open a while.
+
+### Reading
+
+**A message shows its full body, and a header that names who it was to.** The reader draws the whole
+message rather than a shortened copy, and carries a header with the sender and recipients. In a
+conversation, the earlier messages fold into rows you can open one at a time over the one you came
+to read.
+
+**Tags on a message fold into one small control**, so a message with several tags no longer pushes
+its own text down the page, and **any date can be clicked for the exact time** it happened — a hover
+shows it, a click keeps it.
+
+### Read state
+
+**Screened-out and spam are marked read — on your server too, not only on this screen.** Mail you
+never asked to see was counting against you as unread. It is marked read now, and the change is
+written back to your mailbox so every other mail app agrees. **And you can mark a whole view read**
+in one action.
+
+### Tags
+
+**Your tags and the messages under them sync in full — including on an install set up before tag
+sync existed.** A tagged message that fell outside the recent-mail window the app keeps on your
+machine now still reaches this device, so a tag page is the whole tag rather than only its recent
+part.
+
+### Settings
+
+**Settings names your mailboxes and lets you manage your tags.** The Mailboxes pane lists what you
+are connected to and labels each as Cloud or Local, and you can create a tag, rename it, change its
+colour and delete it from the same place — the colours are one set, the same here as on the web.
+
+### Rules
+
+**The Rules screen is something you can search and sort.** A long list of the senders you have filed
+can be searched, grouped by where their mail goes, and worked in bulk — including revoking several
+rules at once — rather than scrolled from the top.
+
+### Signing in
+
+**Signing in from your browser no longer loops.** Linking the desktop app to a hosted account could
+bounce you back through the sign-in page instead of finishing; it now completes in place.
+
+### On the web
+
+**A "Get ohmail for desktop" prompt when you are reading on the web,** and **a folder overview** that
+shows exactly how ohmail arranges your own mailbox into its handful of folders — the same six folders
+the app files your mail into on your server.
+
 ## [0.8.1] — 2026-08-09
 
 A follow-up to 0.8.0, mostly about reading mail: how a message is drawn, how a conversation opens,
