@@ -233,38 +233,6 @@ export function htmlToPlainText(html: string): string {
     out += `${prefix()}\n`;
   };
 
-  /**
-   * A hard break — what a `<br>` means, and where the text half stops disagreeing with the html
-   * half about vertical space.
-   *
-   * A `<br>` after content flushes that content, exactly as {@link flush} does. A `<br>` on an
-   * otherwise-EMPTY line is the difference: it is a deliberate blank line — the author pressed
-   * Enter on an empty line, or twice running — and a second `<br>` renders as that gap in a mail
-   * client. So it emits the gap here too, rather than being swallowed as an empty flush is.
-   *
-   * This is the text side of the editor's line-break model. It emits a single Enter as one `<br>` (a soft line
-   * break, single-spaced) and a blank line as `<br><br>`, in ONE paragraph, instead of splitting
-   * into paragraphs whose margins the recipient reads as gaps. The html half therefore shows
-   * single breaks where the author made single breaks; this keeps the text half saying the same
-   * thing, which is the whole promise of a `multipart/alternative`.
-   *
-   * A LEADING empty break is dropped for the same reason {@link blankLine} drops a leading empty
-   * paragraph: it is a gap before the first word, not between two of them. A trailing run is
-   * capped by the final collapse, so `<br><br><br>` is one gap and not three.
-   */
-  const hardBreak = (): void => {
-    const body = line.replace(/[ \t]+/g, " ").trim();
-    const marker = lead;
-    line = "";
-    lead = "";
-    if (body === "") {
-      if (out === "") return;
-      out += `${prefix()}\n`;
-      return;
-    }
-    out += `${prefix()}${marker}${body}\n`;
-  };
-
   const emit = (s: string): void => {
     if (open.anchor) open.anchor.text += s;
     else line += s;
@@ -274,7 +242,7 @@ export function htmlToPlainText(html: string): string {
     {
       onopentag(name, attribs) {
         if (name === "br") {
-          hardBreak();
+          flush();
           return;
         }
         if (name === "a") {
