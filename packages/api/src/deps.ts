@@ -14,7 +14,12 @@ import type {
   AttachmentsService, KbService, TagsService, DraftsService, DraftingService, SendService,
   WorkflowsService,
 } from "@trafficflow/services/mail";
-import type { DraftPort, OpenSendAdapter, KekEnvIdentity, Logger } from "@trafficflow/core/mail";
+/* `OAuthTokenProvider` from the MAIL entry, never the root barrel: this file is compiled by every
+ * host, including the shipped local engine, and the root barrel's export surface reaches the model
+ * half (`ai/*`) that may never leave this workspace. The port lives in `adapters/imap-auth.ts`. */
+import type {
+  DraftPort, OpenSendAdapter, KekEnvIdentity, Logger, OAuthTokenProvider,
+} from "@trafficflow/core/mail";
 /* The spend gate's PORT, from the root barrel. `@trafficflow/db/cloud` is the half that answers,
  * and a route table must be able to say it may be handed a gate without depending on the ledger. */
 import type { AiCreditGate } from "@trafficflow/db";
@@ -325,6 +330,13 @@ export interface ApiDeps {
   session: ResolvedSession | null;
   authConfig: AuthConfig;
   keyProvider: KeyProvider;
+  /**
+   * Exchange/M365 OAuth2 token source, per invocation. Absent ⇒ this host does not do oauth: an
+   * oauth mailbox refuses at {@link buildImapAuth} rather than sending its refresh token as a
+   * password. Present (wired from `MS_OAUTH_*` when onboarding lands) ⇒ the IMAP + SMTP dialers mint
+   * access tokens through it. A password mailbox never touches it.
+   */
+  oauth?: OAuthTokenProvider;
   /** Set by `withIdempotency`; consumed by the handler's service. */
   idempotency?: IdempotencyContext | null;
   /** Typed service bag; populated as services land. */

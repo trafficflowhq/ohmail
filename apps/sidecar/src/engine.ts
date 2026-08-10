@@ -4,7 +4,7 @@ import {
   StaticKeyProvider, kekRingFingerprint,
   type KekEnvIdentity, type KeyProvider, type OpenSendAdapter, type SendAdapter,
 } from "@trafficflow/core/mail";
-import { ImapAdapter, type ImapConfig, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, buildImapAuth, type ImapConfig, type MailboxAdapter, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 // The engine's OWN resolution of the Ohbox posture, never a second reading of it. `rules.ts` owns
 // what an absent or unrecognised value means, and both hosts ask it the same question.
@@ -633,9 +633,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        physically sit on the user's own server. */
 
     /** The `(mailbox, imap)` credential row, or null when the user has not supplied one yet. */
-    const storedLogin = async (): Promise<{ secretEnc: string; keyVersion: number } | null> => {
+    const storedLogin = async (): Promise<{ secretEnc: string; keyVersion: number; meta: unknown } | null> => {
       const rows = await db
-        .select({ secretEnc: mailboxCredentials.secretEnc, keyVersion: mailboxCredentials.keyVersion })
+        .select({ secretEnc: mailboxCredentials.secretEnc, keyVersion: mailboxCredentials.keyVersion, meta: mailboxCredentials.meta })
         .from(mailboxCredentials)
         .where(and(
           eq(mailboxCredentials.mailboxId, world.mailboxId),
@@ -680,7 +680,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const row = await storedLogin();
       if (!row) return envPass ? { state: "ready", pass: envPass } : { state: "absent", pass: null };
       try {
-        return { state: "ready", pass: await keyProvider.decrypt(row.secretEnc, row.keyVersion) };
+        const secret = await keyProvider.decrypt(row.secretEnc, row.keyVersion);
+        // Route the stored row through the SHARED builder, with NO token source. A password row
+        // (the only kind a desktop install writes) returns `{ user, pass }` and this validates it;
+        // an oauth2 row THROWS here — the desktop has no token source in this phase — and is handled
+        // below as "unreadable" rather than being decrypted and dialled with a refresh token as a
+        // password. One interpreter of `authType`, on the desktop too.
+        buildImapAuth((row.meta ?? {}) as CredMetaAuth, secret);
+        return { state: "ready", pass: secret };
       } catch {
         // The thrown value is deliberately not logged and not inspected. It comes from AES-GCM
         // via a provider that also carries key material, and the only fact this code needs is

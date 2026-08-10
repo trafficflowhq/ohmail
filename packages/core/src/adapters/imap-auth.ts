@@ -48,6 +48,22 @@ export type AccessTokenFetcherFactory = (
 ) => () => Promise<string>;
 
 /**
+ * A per-process (or per-invocation) source of mailbox access tokens: the {@link
+ * AccessTokenFetcherFactory} `buildImapAuth` calls for one mailbox, bound by a host to its own
+ * caching and rotation-persist policy.
+ *
+ * It lives HERE, beside the factory type it returns, rather than in `../oauth/microsoft.js` where
+ * its one implementation does: this port is how a host that opens mailboxes NAMES its token source,
+ * so it belongs to the auth-assembly seam every host compiles — including one built from the mail
+ * half alone. The Microsoft client that fills it stays next door, and a consumer of this module can
+ * be handed a provider without being able to construct one.
+ */
+export interface OAuthTokenProvider {
+  /** The {@link AccessTokenFetcherFactory} `buildImapAuth` calls for one mailbox. */
+  forMailbox(mailboxId: string): AccessTokenFetcherFactory;
+}
+
+/**
  * An `authType` (or provider) this build cannot connect. NAMED and thrown — see the module header.
  *
  * `code` is a stable constant, not the offending value: it rides into logs through the class/code

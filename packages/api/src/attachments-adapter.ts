@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { mailboxCredentials } from "@trafficflow/db";
-import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import { ServiceError, type OpenAdapter, type AttachmentAdapter } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
 import { imapAdmission } from "./routes/shared.js";
@@ -284,15 +284,17 @@ async function openImapUnderCap(
       }
     };
 
-    const meta = (imapRow.meta ?? {}) as { host?: string; port?: number; secure?: boolean; user?: string };
+    const meta = (imapRow.meta ?? {}) as CredMetaAuth & { host?: string; port?: number; secure?: boolean };
     let adapter: ImapAdapter;
     try {
-      const pass = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
+      const secret = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
       adapter = new ImapAdapter({
         host: meta.host ?? "",
         port: meta.port ?? 993,
         secure: meta.secure ?? true,
-        auth: { user: meta.user ?? "", pass },
+        // Read-only attachment fetch: no SMTP. Auth via the shared builder — an oauth2 mailbox mints
+        // an access token, a password mailbox is byte-for-byte unchanged.
+        auth: buildImapAuth(meta, secret, deps.oauth?.forMailbox(mailboxId)),
       });
     } catch (err) {
       // A decrypt that throws happens with both slots held and no adapter to close them through.

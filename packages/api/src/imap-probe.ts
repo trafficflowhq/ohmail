@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { type MailboxErrorCode } from "@trafficflow/db";
-import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, buildImapAuth } from "@trafficflow/core/adapters/imap";
 import { ServiceError } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
 import { imapAdmission } from "./routes/shared.js";
@@ -368,7 +368,11 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
       host: input.imap.host,
       port: input.imap.port,
       secure: input.imap.secure,
-      auth: { user: input.imap.user, pass: input.imap.pass },
+      // The add-time probe body is password-only (oauth onboarding does not probe a typed password).
+      // Routed through the shared builder anyway, with no token source: it yields `{ user, pass }`
+      // here, and an oauth2 authType — were one ever to arrive — would THROW rather than dial with a
+      // refresh token as a password. One interpreter of `authType`, no site-local re-derivation.
+      auth: buildImapAuth({ user: input.imap.user }, input.imap.pass),
       timeouts: PROBE_TIMEOUTS,
     });
 

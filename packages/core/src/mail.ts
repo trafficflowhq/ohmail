@@ -44,6 +44,11 @@ export type { ClassifierInput, ClassifierResult, ClassifierPort } from "./classi
 export type {
   DraftIncoming, DraftContext, DraftInput, DraftResult, DraftPort,
 } from "./draft-port.js";
+// The token-source port, from the auth-assembly seam (`adapters/imap-auth.js`) where it is
+// defined — the same line as the two ports above: a consumer of this entry point can be handed
+// an OAuth token provider and can describe one, and the Microsoft client that implements it
+// (`oauth/microsoft.js`) is deliberately not here.
+export type { OAuthTokenProvider } from "./adapters/imap-auth.js";
 /*
  * ── AND THE QUESTION, WHICH IS MAIL-HALF CODE AND NOT MODEL CODE ──────────────────────────
  *

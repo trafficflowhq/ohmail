@@ -1,11 +1,15 @@
 import { eq } from "drizzle-orm";
 import { mailboxCredentials } from "@trafficflow/db";
-import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import type { SendAdapter } from "@trafficflow/core/mail";
 import { ServiceError } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
 
-interface CredMeta { host?: string; port?: number; secure?: boolean; user?: string }
+interface CredMeta extends CredMetaAuth {
+  host?: string; port?: number; secure?: boolean;
+  /** For oauth2: the SMTP coordinates, since an oauth mailbox stores NO separate smtp row. */
+  smtp?: { host?: string; port?: number; secure?: boolean };
+}
 
 /**
  * Build the API's send adapter (Phase 3c, R-P3-5). Unlike `makeOpenAdapter`
@@ -31,33 +35,49 @@ export async function makeSendAdapter(deps: ApiDeps, mailboxId: string): Promise
   const smtpRow = rows.find((r) => r.transport === "smtp");
 
   const imapMeta = (imapRow.meta ?? {}) as CredMeta;
-  const imapPass = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
+  const imapSecret = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
+  // The IMAP auth goes through the SHARED builder — an oauth2 row becomes the token callback here,
+  // never a password. `imapSecret` is a REFRESH TOKEN for oauth, a password otherwise.
+  const imapAuth = buildImapAuth(imapMeta, imapSecret, deps.oauth?.forMailbox(mailboxId));
 
-  // Resolve the SMTP transport: the dedicated smtp row when present, else fall back
-  // to the imap host/user + imap secret (shared-credential providers, e.g. GreenMail).
-  let smtpMeta: CredMeta;
-  let smtpPass: string;
-  if (smtpRow) {
-    smtpMeta = (smtpRow.meta ?? {}) as CredMeta;
-    smtpPass = await deps.keyProvider.decrypt(smtpRow.secretEnc, smtpRow.keyVersion);
+  // Resolve the SMTP transport. For OAUTH there is no smtp row and no static SMTP auth: one refresh
+  // token covers both transports, so the host/port/secure come from `meta.smtp` and `ImapAdapter.send`
+  // fetches a token per message. For PASSWORD, the dedicated smtp row when present, else the imap
+  // host/user + imap secret (shared-credential providers, e.g. GreenMail).
+  let smtpConfig: { host: string; port: number; secure: boolean; auth?: { user: string; pass: string } };
+  if (imapMeta.authType === "oauth2") {
+    const s = imapMeta.smtp ?? {};
+    smtpConfig = {
+      host: s.host ?? "smtp.office365.com",
+      port: s.port ?? 587,
+      secure: s.secure ?? false,
+    };
   } else {
-    smtpMeta = { host: imapMeta.host, port: 587, secure: false, user: imapMeta.user };
-    smtpPass = imapPass;
-  }
-
-  const smtpUser = smtpMeta.user ?? imapMeta.user ?? "";
-  const adapter = new ImapAdapter({
-    host: imapMeta.host ?? "",
-    port: imapMeta.port ?? 993,
-    secure: imapMeta.secure ?? true,
-    auth: { user: imapMeta.user ?? "", pass: imapPass },
-    smtp: {
+    let smtpMeta: CredMeta;
+    let smtpPass: string;
+    if (smtpRow) {
+      smtpMeta = (smtpRow.meta ?? {}) as CredMeta;
+      smtpPass = await deps.keyProvider.decrypt(smtpRow.secretEnc, smtpRow.keyVersion);
+    } else {
+      smtpMeta = { host: imapMeta.host, port: 587, secure: false, user: imapMeta.user };
+      smtpPass = imapSecret;
+    }
+    const smtpUser = smtpMeta.user ?? imapMeta.user ?? "";
+    smtpConfig = {
       host: smtpMeta.host ?? imapMeta.host ?? "",
       port: smtpMeta.port ?? 587,
       secure: smtpMeta.secure ?? false,
       // GreenMail runs with auth disabled; omit auth when there is no user to bind.
       ...(smtpUser ? { auth: { user: smtpUser, pass: smtpPass } } : {}),
-    },
+    };
+  }
+
+  const adapter = new ImapAdapter({
+    host: imapMeta.host ?? "",
+    port: imapMeta.port ?? 993,
+    secure: imapMeta.secure ?? true,
+    auth: imapAuth,
+    smtp: smtpConfig,
     sentDomain: domainOf(imapMeta.user),
   });
   // Same reason as `makeOpenAdapter`: `connect()` logs in and LISTs, so a failure after login
