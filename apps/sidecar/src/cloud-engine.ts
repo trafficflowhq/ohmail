@@ -169,7 +169,12 @@ export function enforceMirrorOwner(dataDir: string, address: string, log?: Diagn
     for (const stale of ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"]) {
       rmSync(join(dataDir, stale), { recursive: true, force: true });
     }
-    log?.("cloud_mirror_reset_on_owner_change", { prior, served });
+    // Never the addresses. Which mailbox was served before and which is served now are the exact
+    // identifying signal the sidecar log census exists to keep off the line — an operator needs to
+    // know a foreign mirror was discarded, not whose it was. The event NAME carries the WHAT; the
+    // one non-identifying fact worth a field is that a reset happened, and `prior`/`served` stay
+    // local to the decision above.
+    log?.("cloud_mirror_reset_on_owner_change", { changed: true });
   }
   mkdirSync(dataDir, { recursive: true });
   writeFileSync(ownerPath, served, { mode: 0o600 });

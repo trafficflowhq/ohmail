@@ -235,6 +235,13 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // reading `count` alone could not tell a repair that restored the tags and lit nothing from one
   // that worked.
   "tags", "messages",
+  // `changed` is the ONE non-identifying fact the Cloud mirror's owner-change reset
+  // (`apps/sidecar/src/cloud-engine.ts`) puts on its line: a literal `true` meaning a foreign
+  // mirror was discarded because the served address changed. The addresses themselves — whose
+  // mailbox was served before and whose is served now — are exactly what this census keeps OFF the
+  // line, so the emit site logs neither; the event NAME carries the WHAT, and this carries only
+  // that it happened. Structurally a boolean literal, so it can never carry content.
+  "changed",
   // `inFlight` is `StdioHost.inFlight` (`apps/sidecar/src/host.ts`), the only field the sidecar
   // needed that the Cloud census did not contain. It is a private counter that `dispatch` moves
   // with `inFlight++` / `inFlight--` and nothing else assigns, so it is structurally an integer
