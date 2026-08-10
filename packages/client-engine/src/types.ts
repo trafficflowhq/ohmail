@@ -27,22 +27,6 @@ export interface EmailAddress {
 }
 
 /**
- * ONE FILE THE COMPOSE FORM IS SENDING — bytes and nothing kept.
- *
- * It rides the `mail_send` mutation and then the send REQUEST (`POST /drafts/:id/send`), base64 so
- * a JSON body can carry it, and it is gone when the send returns: no `attachments` row, no `drafts`
- * column, nowhere. The compose surface reads a picked `File` into `contentBase64` and states the
- * total-size limit (`SEND_ATTACHMENT_MAX_TOTAL_BYTES` on the server) up front. This is the SEND
- * path only — a draft is not given attachment bytes, because nothing on the account stores them.
- */
-export interface ComposeAttachment {
-  filename: string;
-  contentType: string;
-  /** base64-encoded bytes. */
-  contentBase64: string;
-}
-
-/**
  * Real IMAP folders — identical to core `Destination` (contract §1.2).
  *
  * These five strings are the most durable copy the product writes: they are
@@ -213,19 +197,6 @@ export interface EngineMessageExtras {
    * product says so rather than pretending the presentation is the location.
    */
   physicalFolder?: string;
-  /**
-   * THIS ROW IS THE ENGINE'S OWN OPTIMISTIC SENT COPY, not a message the mirror synced.
-   *
-   * A confirmed `mail_send` materialises a provisional Sent-folder message so a reply appears in
-   * its conversation instantly, minutes before the worker's Sent-folder watch ingests the real
-   * one (see {@link OhmailEngine} and `sentOverlayMessage`). Absent on every synced row — a
-   * server DTO never carries it — so a surface reads `local === true` as "this is on its way, not
-   * yet confirmed by the mailbox" and the reconcile-by-`messageIdHeader` drops it when the real
-   * row lands. It is deliberately NOT a `folder` value: the copy sits under `folder: "Sent"`,
-   * which matches no pile view, and this flag is the only thing distinguishing it from a real
-   * ingested Sent row until reconciliation removes it.
-   */
-  local?: boolean;
 }
 
 /**
@@ -955,27 +926,15 @@ export type EngineMutation =
    * them. `null` rather than "absent" so a caller cannot forget the field and inherit
    * whatever a previous send left in scope.
    *
-   * ── THE MUTATE-TIME EFFECT IS A `sending` DRAFT; THE SENT COPY IS A CONFIRM-TIME OVERLAY ─
+   * ── WHY IT HAS NO REVERSIBLE OPTIMISTIC EFFECT ─────────────────────────────────────────
    *
-   * Every other verb here is a local edit the server later agrees with, and a rejection rolls the
-   * overlay back with nothing lost. A send is not reversible that way: a message that reached SMTP
-   * cannot be un-sent, so nothing OPTIMISTIC — applied at mutate time, before the server has
-   * answered — may assert that it arrived. The mutate-time effect is therefore ONE `draft` row at
-   * `status: "sending"`, the same state the server writes on its reservation, and NOT a Sent
-   * message row (`mutations.ts` `effectsOf`).
-   *
-   * What changed: the Sent copy IS now shown instantly, but only ONCE THE SERVER CONFIRMS the
-   * send. `POST /drafts/:id/send` answering `{status:"sent", providerMessageId}` is the mailbox's
-   * own word that the message left and was appended to Sent, so on that confirm the engine
-   * materialises a provisional Sent-folder message (`sentOverlayMessage` → the engine's overlay
-   * merge) carrying the minted `messageIdHeader`. That is not the fabrication this comment used to
-   * forbid: it is created on the confirmation, not ahead of it, and it is reconciled AWAY —
-   * dropped by `messageIdHeader` — the moment the worker's Sent-folder watch delivers the real row
-   * on a later drain, with a ~10-minute TTL as the backstop and an immediate drop if the send is
-   * rejected. So the earlier rule ("deliberately NOT a Sent-folder message row") held for the
-   * OPTIMISTIC effect and still does; the confirmed send is a different moment, and the reader's
-   * own reply appearing in the conversation in under a second is worth a row the next drain
-   * replaces with the identical real one.
+   * Every other verb here is a local edit the server later agrees with, and a rejection
+   * rolls the overlay back with nothing lost. A send is not that: a message that reached
+   * SMTP cannot be un-sent, so the overlay must never assert that it arrived. The effect is
+   * therefore ONE `draft` row at `status: "sending"` — the same state the server writes on
+   * its reservation — and deliberately NOT a Sent-folder message row. The real copy lands
+   * when the worker's Sent-folder watch ingests it, minutes later; fabricating
+   * one here would be a claim the mirror contradicts on the next drain.
    *
    * The three non-delivered outcomes are distinguishable at the call site and MUST stay
    * that way — `send_unverified` (SMTP threw and the Sent probe found nothing: genuinely
@@ -1005,22 +964,6 @@ export type EngineMutation =
        * recipient, subject, mailbox and thread are all derived from it.
        */
       inReplyTo: string | null;
-      /**
-       * THE MESSAGE BEING FORWARDED — the EXCLUSIVE PEER of {@link inReplyTo}.
-       *
-       * A forward is not a reply: it carries no `In-Reply-To`, threads onto no conversation, and
-       * goes to recipients the USER picks, so `inReplyTo` is `null` on a forward and this names the
-       * original instead. Exactly one of the two is ever non-null.
-       *
-       * The client sends only the ID. The SERVER owns the rest: given `forwardOf` it reads the
-       * original, REFUSES if it is `no_forward` (a sensitive body must never leave the account
-       * through a quote block — the OTP-leak this closes), appends the quoted original to the body,
-       * and STREAMS the original's attachments from IMAP at send time — none of which the client
-       * can be trusted to assemble, because a client-built quote is exactly the seam a redacted body
-       * would escape through. The compose surface offers a forward entry ONLY for a message that is
-       * not `no_forward`; this field is the server's second, authoritative check on the same rule.
-       */
-      forwardOf?: string | null;
       /**
        * THE DRAFT ROW THIS MESSAGE ALREADY IS, when there is one.
        *
@@ -1067,14 +1010,6 @@ export type EngineMutation =
       cc?: EmailAddress[];
       /** Blind-carbon recipients (Compose only). Delivered on the envelope; never a header. */
       bcc?: EmailAddress[];
-      /**
-       * FILES TO ATTACH — bytes, carried to the send request and never stored (see {@link
-       * ComposeAttachment}). Reply and Compose alike may set it; absent for a plain send. The http
-       * adapter puts these on `POST /drafts/:id/send`, the server decodes and hands them to the
-       * transport, and the mailbox's own Sent copy carries them because it is built from the same
-       * message. They are NOT part of the autosaved draft — a draft holds no attachment bytes.
-       */
-      attachments?: ComposeAttachment[];
     }
   | { kind: "draft_accept"; draftId: string }
   /**

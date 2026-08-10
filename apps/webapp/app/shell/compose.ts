@@ -9,7 +9,7 @@
  * owns the state machine and `canSend` — so the parsing below is testable one row at a time
  * and cannot drift into a second copy of the send rule.
  */
-import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
+import type { EmailAddress, EngineMutation } from "@ohmail/client-engine";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
 export interface ComposeFields {
@@ -63,45 +63,10 @@ export interface ComposeFields {
    * NEVER an address string — see `compose-from.ts`.
    */
   fromMailboxId: string | null;
-  /**
-   * FILES TO SEND WITH THIS MESSAGE — held in memory only, NEVER written to `localStorage`.
-   *
-   * Attachments carry bytes (base64), and the scratch buffer is a small string in this browser; a
-   * file the size of a photo would blow past a storage quota that Safari private mode refuses
-   * outright. So `writeComposeDraft` strips this field and `readComposeDraft` never restores it —
-   * the buffer's job is to survive navigation and a reload of the TEXT, and a file the user picked
-   * before reloading is re-picked, which is the honest behaviour rather than a phantom paperclip
-   * pointing at bytes that are gone. It is also NOT part of the autosaved `drafts` row — nothing on
-   * the account stores attachment bytes (§13.2/§14) — so `signatureOf`/`worthSaving` ignore it too.
-   * Optional so a buffer written before it existed reads back as a draft with no files.
-   */
-  attachments?: ComposeAttachment[];
-  /**
-   * THE MESSAGE THIS COMPOSE IS FORWARDING — an id, and nothing else.
-   *
-   * A forward is written on the ordinary compose form: the user picks recipients and may add a line
-   * above the quote, so everything the form already holds is what a forward needs. This one extra
-   * field is what turns it into a forward on the wire, and it deliberately carries no copy of the
-   * original — not its body, not its attachments, not its quote block. The SERVER reads the original
-   * from the account, refuses a `no_forward` one, builds the quote and streams the attachments from
-   * IMAP at send (`send-service.ts`); a client-assembled quote is exactly the seam a redacted
-   * sensitive body would escape through, so the client is never trusted with it.
-   *
-   * PERSISTED in the scratch buffer, unlike {@link attachments}: it is one short string, and a
-   * reload that kept the subject and the note but silently turned the message back into a plain
-   * compose would send an empty mail with "Fwd:" on it. Guarded field-wise on read like
-   * {@link fromMailboxId}, so a buffer written before this field existed restores as a plain
-   * compose.
-   *
-   * `null`/absent is the ordinary case. It is the EXCLUSIVE PEER of the mutation's `inReplyTo`,
-   * which `composePlan` keeps `null` — a forward threads onto no conversation (`types.ts`).
-   */
-  forwardOf?: string | null;
 }
 
 export const EMPTY_COMPOSE: ComposeFields = {
-  to: "", cc: "", bcc: "", subject: "", body: "", html: "", fromMailboxId: null, attachments: [],
-  forwardOf: null,
+  to: "", cc: "", bcc: "", subject: "", body: "", html: "", fromMailboxId: null,
 };
 
 /** `localStorage` key for the compose scratch buffer — one, because there is one compose. */
@@ -144,15 +109,6 @@ export function readComposeDraft(): ComposeFields {
       fromMailboxId: typeof parsed.fromMailboxId === "string" && parsed.fromMailboxId.length > 0
         ? parsed.fromMailboxId
         : null,
-      // NEVER restored — bytes are transient and are stripped on write. A restored draft starts
-      // with no files, and a file the user had picked before reloading is re-picked.
-      attachments: [],
-      // RESTORED, because it is an id rather than bytes and losing it would turn a half-written
-      // forward back into an empty message titled "Fwd: …". Guarded field-wise like
-      // `fromMailboxId`: a buffer written before this field existed reads back as a plain compose.
-      forwardOf: typeof parsed.forwardOf === "string" && parsed.forwardOf.length > 0
-        ? parsed.forwardOf
-        : null,
     };
   } catch {
     // Blocked storage, or a value some earlier version wrote in another shape. Either way an
@@ -180,11 +136,7 @@ export function writeComposeDraft(f: ComposeFields): void {
       window.localStorage.removeItem(COMPOSE_DRAFT_KEY);
       return;
     }
-    // STRIP THE ATTACHMENTS' BYTES. They are held in memory only (see `ComposeFields.attachments`):
-    // a photo's worth of base64 would blow a storage quota, and a restored buffer must not claim a
-    // paperclip pointing at bytes it no longer holds. Everything textual is persisted as before.
-    const { attachments: _drop, ...persisted } = f;
-    window.localStorage.setItem(COMPOSE_DRAFT_KEY, JSON.stringify(persisted));
+    window.localStorage.setItem(COMPOSE_DRAFT_KEY, JSON.stringify(f));
   } catch {
     /* private mode refuses writes; the draft lives in React state only */
   }
@@ -375,17 +327,6 @@ export function composePlan(
       to: anyInvalid ? [] : parsed.addresses,
       cc: anyInvalid ? [] : cc.addresses,
       bcc: anyInvalid ? [] : bcc.addresses,
-      // Files ride the send request, not the draft — carried straight onto the mutation so the
-      // adapter puts them on `POST /drafts/:id/send`. Omitted when there are none, so a plain send
-      // builds the exact request it always did. The caller hands this function the whole form, so
-      // the files reach the wire without any other call site changing.
-      ...(fields.attachments && fields.attachments.length ? { attachments: fields.attachments } : {}),
-      // THE FORWARD FORK, and it is the peer of the `inReplyTo: null` above rather than a second
-      // way of saying the same thing: this message quotes the original and carries its attachments,
-      // but it threads onto nothing and carries no `In-Reply-To`. Omitted — not sent as `null` —
-      // when there is nothing to forward, so a plain compose builds the identical request it always
-      // did and the http adapter's `if (m.forwardOf)` sees no key at all.
-      ...(fields.forwardOf ? { forwardOf: fields.forwardOf } : {}),
       ...(mailboxId ? { mailboxId } : {}),
       ...(draftId ? { draftId } : {}),
       threadId: null,

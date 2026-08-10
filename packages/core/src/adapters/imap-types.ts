@@ -488,30 +488,6 @@ export interface OutboundMessage {
   cc?: string | string[]; bcc?: string | string[];
   text: string; html?: string;
   messageId?: string; inReplyTo?: string; references?: string | string[];
-  /**
-   * FILES TO SEND — and the whole reason ohmail can attach without storing a byte.
-   *
-   * `outboundToMail` maps these straight onto nodemailer's own `attachments`, so the ONE compiled
-   * message drives BOTH the SMTP delivery AND the raw bytes appended to the Sent folder
-   * (`imap.ts#send` → `buildRaw`). The bytes therefore exist only in this in-memory object for the
-   * life of the send: they arrive in the send request, ride here, and are gone when the request
-   * returns — never a row in `attachments`, `drafts` or anywhere else (§13.2/§14, and the
-   * zero-at-rest guard in `mail-send-attach.test.ts`). Two producers fill it: the compose form's
-   * own files (bytes uploaded with the send), and a FORWARD's original parts, which the server
-   * streams from IMAP via `fetchPart` at send time and hands here without ever persisting them.
-   *
-   * `content` is the decoded bytes. nodemailer accepts a Buffer/Uint8Array for an attachment's
-   * `content`, and `cid` (set only for a forwarded inline part) lets a related image keep resolving
-   * against the quoted HTML.
-   */
-  attachments?: OutboundAttachment[];
-}
-export interface OutboundAttachment {
-  filename: string;
-  contentType: string;
-  content: Uint8Array;
-  /** A `related` inline part's Content-ID, carried so a forwarded body's `cid:` refs still resolve. */
-  cid?: string;
 }
 export interface SendResult { providerMessageId: string; sentLocator: NativeLocator; }
 
