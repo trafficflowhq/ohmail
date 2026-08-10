@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
-import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
+import { EditorContent, Extension, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import {
@@ -52,8 +52,56 @@ import {
  * — and never the case that must not, a re-render caused by the user's own typing.
  */
 
+/**
+ * ENTER IS A SINGLE LINE BREAK, NOT A NEW PARAGRAPH.
+ *
+ * ── THE BUG THIS CLOSES ──────────────────────────────────────────────────────────────────
+ *
+ * StarterKit binds Enter to "split the paragraph", so a message someone types line by line
+ * leaves as one `<p>` per line. The outbound sanitiser keeps `<p>`, and a `<p>` renders with a
+ * top/bottom margin in every mail client — so a note that looked single-spaced on screen arrives
+ * at the recipient double-spaced, a gap between every line. There is no way to close that from
+ * the html side: the one thing that would (an inline `margin:0` style) is exactly what the
+ * outbound allow-list strips, and rightly. The break has to be a `<br>` at the source.
+ *
+ * So Enter inserts a hard break — one `<br>`, single-spaced, inside the paragraph — which is
+ * what a plain-text-minded mail composer has always meant by Enter. A blank line is two of them
+ * in a row (`<br><br>`), which renders as the gap the author actually asked for. `outbound-html.ts`
+ * mirrors this into the text/plain half: one break is one newline, a doubled break is a blank
+ * line, so both parts of the alternative show the same spacing.
+ *
+ * ── WHY IT DEFERS INSIDE LISTS AND QUOTES ─────────────────────────────────────────────────
+ *
+ * Enter already has a job in a list item (start the next item) and a block quote (the built-in
+ * exit behaviour), and stealing it would break both. The handler returns `false` there, which
+ * lets the default keymap run — `ListItem.splitListItem` and the rest. The high priority is so
+ * this binding is consulted before those and can decline, rather than never being reached.
+ */
+const EnterAsHardBreak = Extension.create({
+  name: "enterAsHardBreak",
+  priority: 1000,
+  addKeyboardShortcuts() {
+    return {
+      Enter: () => {
+        // Defer wherever Enter already means something: a list item (next item), a block quote
+        // (its exit behaviour), an inline code span or the (disabled, but belt-and-braces) code
+        // block. `false` falls through to the default keymap so `splitListItem` and the rest run.
+        if (
+          this.editor.isActive("listItem") ||
+          this.editor.isActive("blockquote") ||
+          this.editor.isActive("codeBlock")
+        ) {
+          return false;
+        }
+        return this.editor.commands.setHardBreak();
+      },
+    };
+  },
+});
+
 /** The marks and nodes this editor offers, and the ones it explicitly refuses. */
 const EXTENSIONS = [
+  EnterAsHardBreak,
   StarterKit.configure({
     // Offered.
     bold: {},
@@ -176,7 +224,14 @@ export function RichEditor({
   told.current = value;
 
   const emit = useCallback((editor: Editor) => {
-    const text = editor.getText();
+    // A hard break renders as ONE newline. TipTap's `getText` has no serializer for `hardBreak`
+    // and would drop it, which since Enter now inserts a hard break (see `EnterAsHardBreak`)
+    // would erase every line break from the plain half — so `richToHtml(getText())` would no
+    // longer reproduce the document and a plain note with a single line break would report markup
+    // it does not have, sending as `multipart/alternative` when it should be text/plain. Rendering
+    // the break as `\n` keeps the round trip exact: `escapeAsParagraphs("a\nb")` is `<p>a<br>b</p>`,
+    // which is exactly what the editor holds, so `html` stays `""`.
+    const text = editor.getText({ textSerializers: { hardBreak: () => "\n" } });
     const markup = editor.isEmpty ? "" : editor.getHTML();
     const html = markup === escapeAsParagraphs(text) ? "" : markup;
     // The document's OWN serialisation, so the sync effect below can recognise this change
