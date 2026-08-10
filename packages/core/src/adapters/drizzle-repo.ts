@@ -22,16 +22,7 @@ export interface PersistedFolderCursor { uidValidity: string; uidNext: number; h
  * had been reused be treated as already known — its body was never fetched, and once the
  * enumeration drained, the new epoch's cursor was persisted past it. Permanently.
  */
-export interface KnownLocator {
-  folder: string; uid: number; uidValidity: string; messageId: string | null;
-  /**
-   * The `\Seen` state the database last observed at this locator — `flag_state.observed_seen`
-   * when a flag row exists, otherwise the read state ingest derived from the server's own flags
-   * (`!messages.unread`). This is the baseline the adapter's no-CONDSTORE flag fallback diffs
-   * the server against; see `KnownEntry.seen`.
-   */
-  seen: boolean | null;
-}
+export interface KnownLocator { folder: string; uid: number; uidValidity: string; messageId: string | null; }
 export interface PendingFolderState {
   messageId: string; desiredFolder: string; observedFolder: string;
   lastSetBy: "us" | "external"; nativeLocator: NativeLocator | null;
@@ -1232,23 +1223,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       uid: messageInstances.uid,
       uidvalidity: messageInstances.uidvalidity,
       messageIdHeader: messages.messageIdHeader,
-      // The seen baseline, for the adapter's no-CONDSTORE flag fallback (see `KnownLocator.seen`).
-      // `observed_seen` is what the server was last SEEN holding; `!unread` is what ingest
-      // derived from the server's flags before any flag row existed. Both are observations of
-      // the server, which is what a diff against the server needs — `desired_seen` is not, and
-      // using it would report the user's own pending write back as an external change.
-      observedSeen: flagState.observedSeen,
-      unread: messages.unread,
     }).from(messageInstances)
       .innerJoin(messages, eq(messages.id, messageInstances.messageId))
-      .leftJoin(flagState, eq(flagState.messageId, messageInstances.messageId))
       .where(eq(messageInstances.mailboxId, mailboxId));
     return rows.map((r) => ({
       folder: r.folder,
       uid: r.uid,
       uidValidity: r.uidvalidity != null ? String(r.uidvalidity) : "0",
       messageId: r.messageIdHeader ?? null,
-      seen: r.observedSeen ?? !r.unread,
     }));
   }
 

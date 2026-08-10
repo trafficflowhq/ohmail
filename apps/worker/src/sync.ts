@@ -114,10 +114,10 @@ export async function buildCursor(
 ): Promise<ImapCursor> {
   const folderRows = await repo.getMailboxFolders(mailboxId);
   const known = await repo.listKnownLocators(mailboxId);
-  const knownByFolder = new Map<string, Array<{ uid: number; uidValidity: string; messageId: string | null; seen: boolean | null }>>();
+  const knownByFolder = new Map<string, Array<{ uid: number; uidValidity: string; messageId: string | null }>>();
   for (const k of known) {
     const arr = knownByFolder.get(k.folder) ?? [];
-    arr.push({ uid: k.uid, uidValidity: k.uidValidity, messageId: k.messageId, seen: k.seen });
+    arr.push({ uid: k.uid, uidValidity: k.uidValidity, messageId: k.messageId });
     knownByFolder.set(k.folder, arr);
   }
   const names = new Set<string>(WATCHED_FOLDERS);
@@ -136,10 +136,7 @@ export async function buildCursor(
       // presented as known — the adapter would read a bare number as belonging to whatever epoch
       // it is looking at.
       known: epoch === "0" ? [] : [
-        // `seen` rides along as the flag baseline the no-CONDSTORE fallback diffs against
-        // (`KnownEntry.seen`). Dead-letter entries below carry none, which is correct: nothing
-        // was ever ingested for them, so no baseline can be stated and none may be diffed.
-        ...entries.filter((e) => e.uidValidity === epoch).map((e) => ({ uid: e.uid, messageId: e.messageId, seen: e.seen })),
+        ...entries.filter((e) => e.uidValidity === epoch).map((e) => ({ uid: e.uid, messageId: e.messageId })),
         // The UIDs this process has written off. They are "known" in the only sense the adapter
         // uses the word — do not fetch this again — and leaving them out is what made one poison
         // message cost a full body fetch on every cycle for ever. Epoch-matched for the same

@@ -452,17 +452,7 @@ export interface ImapAdapterOpts {
 }
 
 export interface PersistedFolderCursor { uidValidity: string; uidNext: number; highestModseq: string; }
-/**
- * One UID the adapter must not re-fetch, plus the `\Seen` state the database last observed for
- * it (`flag_state.observed_seen`, or the ingest-time flags before any flag row exists).
- *
- * `seen` is the PRIOR FLAGS the no-CONDSTORE fallback diffs against: a server that cannot
- * answer `changedSince` (Office 365 advertises no CONDSTORE) still answers a plain FLAGS fetch,
- * and a divergence from this baseline is exactly a flag change. `null`/absent means the repo
- * could not state a baseline (a dead-lettered UID, a pre-migration cursor) — such an entry is
- * never diffed, only protected from re-fetch.
- */
-export interface KnownEntry { uid: number; messageId: string | null; seen?: boolean | null; }
+export interface KnownEntry { uid: number; messageId: string | null; }
 export interface FolderCursor extends PersistedFolderCursor { known: KnownEntry[]; }
 export interface ImapCursor { folders: Record<string, FolderCursor>; }
 
