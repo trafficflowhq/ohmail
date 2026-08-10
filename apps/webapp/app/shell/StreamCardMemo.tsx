@@ -3,11 +3,11 @@
 /**
  * ONE READING-STREAM CARD, MEMOIZED ON WHAT IT DRAWS — NOT ON THE MESSAGE'S IDENTITY.
  *
- * Reads and Receipts mount an opening run of cards that grows toward the reader and never
- * unmounts (`stream-window.ts` — variable heights rule out the list column's fixed-row window,
- * and the `\Seen` observers need every card a reader could have scrolled past to stay in the
- * DOM). `content-visibility` makes the mounted cards cheap to LAY OUT and PAINT
- * (`app.css`); this is the third piece — the React RECONCILE. Every `/sync` apply bumps
+ * Reads and Receipts render a card per message and the stream is NOT windowed — only the list
+ * column is (`view-window.test.tsx`), because a card is variable-height and drives `\Seen` through
+ * scroll-coupled observers, so unmounting one out of the observed set would be both wrong and
+ * unsafe. `content-visibility` already makes the off-screen cards cheap to LAY OUT and PAINT
+ * (`app.css`); this is the other half of that cost — the React RECONCILE. Every `/sync` apply bumps
  * the engine version, the shell re-renders, and the pile comes back down and re-runs the render
  * function of every mounted card whether or not its inputs changed. On a large mailbox that is
  * thousands of card renders per poll — most of the CPU a browser tab and the desktop WebView were

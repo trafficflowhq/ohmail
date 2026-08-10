@@ -204,14 +204,19 @@ body.reading .shell {
   overflow-anchor: none;
 }
 
-/* THE READING STREAMS' MOUNTED CARDS ARE MADE CHEAP OFF-SCREEN.
-   Reads and Receipts mount an opening run of cards that grows toward the reader and never
-   unmounts (`stream-window.ts` carries that argument); this rule is the other half — the
-   browser skips layout and paint for the mounted cards that are off screen, while each card
-   keeps its box, so `getBoundingClientRect`, the IntersectionObservers and `scrollTo` all
-   behave exactly as if it were laid out. `contain-intrinsic-size: auto` remembers each card's
-   real height once measured, so the scrollbar is honest after the first pass; ~200px is the
-   first-frame guess for a card not yet seen. */
+/* THE READING STREAMS ARE NOT WINDOWED — THEY ARE MADE CHEAP OFF-SCREEN INSTEAD.
+   Reads and Receipts render a card per message beside the windowed list, and a card is
+   variable-height (a snippet clamps short, a full body to 348px) and drives `\Seen` through the
+   scroll-coupled observers, the scroll-spy and `scrollTo` in `StreamShell` — all of which read
+   the live set of `.scast` cards. Unmounting cards out of that set (a list-style window) would
+   be both incorrect (the fixed-row-height arithmetic does not fit a variable-height stream) and
+   unsafe (an observer cannot fire for a card that is not in the DOM). So every card stays
+   mounted and `content-visibility` lets the browser skip the layout and paint of the ones off
+   screen — the cost the switch was actually paying — while the card keeps its box, so
+   `getBoundingClientRect`, the IntersectionObservers and `scrollTo` all behave exactly as
+   before. `contain-intrinsic-size: auto` remembers each card's real height once measured, so the
+   scrollbar is honest after the first pass; ~200px is the first-frame guess for a card not yet
+   seen. */
 .view-reads .stream .scast,
 .view-receipts .stream .scast {
   content-visibility: auto;

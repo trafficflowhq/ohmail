@@ -29,7 +29,6 @@ import { useListWindow } from "../shell/list-window";
 import { type MessageAction } from "../shell/MessagePane";
 import { StreamShell, type StreamHandle } from "../shell/StreamShell";
 import { StreamCardMemo } from "../shell/StreamCardMemo";
-import { useStreamWindow } from "../shell/stream-window";
 
 export type ReadsChipState = null | "approved" | "corrected";
 
@@ -113,10 +112,9 @@ export function ReadsView({
   /**
    * THE LIST IS A WINDOW over `[fresh, seen]`. A desktop client's mirror is the whole mailbox,
    * so `partition.fresh`/`seen` can be tens of thousands of rows, and mapping every one of them
-   * mounted the whole pile on each visit — the cost History was windowed for. The reading
-   * stream is bounded its own way — an opening run that grows toward the reader, `stream`
-   * below — because its cards are variable-height and `useListWindow`'s fixed-row arithmetic
-   * does not fit them. The waterline and the AI chip sit inside the windowed slice.
+   * mounted the whole pile on each visit — the cost History was windowed for. Only the LIST is
+   * windowed; the reading stream keeps every card (variable height, `\Seen` on scroll) and is
+   * kept cheap off-screen in CSS. The waterline and the AI chip sit inside the windowed slice.
    */
   const win = useListWindow({ scrollerRef: listScrollerRef, count: all.length });
   const freshCount = partition.fresh.length;
@@ -124,29 +122,6 @@ export function ReadsView({
   const freshTo = Math.min(win.end, freshCount);
   const seenFrom = Math.max(0, win.start - freshCount);
   const seenTo = Math.max(0, win.end - freshCount);
-  /**
-   * THE STREAM MOUNTS AN OPENING RUN over the same `[fresh, seen]` order and grows toward the
-   * reader — `stream-window.ts` carries the whole argument (why a prefix and not a window, why
-   * `\Seen` stays intact, why growth re-arms). Mounting the pile whole was the dominant cost of
-   * switching into this view: one card per message, built before first paint, measured at
-   * 1.6–1.8 s of blocked main thread with the pile two thousand deep.
-   *
-   * A scroll to a card that is not in the DOM is a silent no-op (`StreamShell.scrollTo`), so
-   * every jump goes through `ensure` first and the scroll runs AFTER the commit that mounted
-   * the target — `pendingScroll` below is that ordering, made state instead of a race.
-   */
-  const stream = useStreamWindow({
-    total: all.length,
-    getRoot: () => streamRef.current?.element() ?? null,
-  });
-  const streamFresh = partition.fresh.slice(0, Math.min(stream.count, freshCount));
-  const streamSeen = partition.seen.slice(0, Math.max(0, stream.count - freshCount));
-  const [pendingScroll, setPendingScroll] = useState<string | null>(null);
-  useEffect(() => {
-    if (!pendingScroll) return;
-    streamRef.current?.scrollTo(pendingScroll);
-    setPendingScroll(null);
-  }, [pendingScroll]);
   // The waterline marks the fresh/seen junction; render it only when that junction is inside
   // the mounted window, so it travels with the boundary instead of pinning to the list top.
   const showWaterline = partition.waterline != null && win.start <= freshCount && win.end > freshCount;
@@ -160,25 +135,22 @@ export function ReadsView({
     markSeen(id);
   };
 
-  // Row click / tag-view jump: extend the mounted run through the card, then scroll to it
-  // once the commit has it in the DOM (see `pendingScroll` above).
+  // Row click / tag-view jump: the stream scrolls to the card.
   const jump = (id: string) => {
     seenMark(id);
     onCur(id);
-    stream.ensure(all.findIndex((m) => m.id === id));
-    setPendingScroll(id);
+    streamRef.current?.scrollTo(id);
   };
 
   useEffect(() => {
     if (!jumpTo) return;
     const timer = requestAnimationFrame(() => {
       onCur(jumpTo);
-      stream.ensure(all.findIndex((m) => m.id === jumpTo));
-      setPendingScroll(jumpTo);
+      streamRef.current?.scrollTo(jumpTo);
       onJumped();
     });
     return () => cancelAnimationFrame(timer);
-  }, [jumpTo, onCur, onJumped, stream.ensure, all]);
+  }, [jumpTo, onCur, onJumped]);
 
   /**
    * Keep the row the USER selected in view — `cur`, never `current`.
@@ -298,12 +270,12 @@ export function ReadsView({
   const loadingLabel = tb("loading");
   const failedLabel = tb("failed");
 
-  /* One memoized card per MOUNTED message — the memo keeps an apply that touched nothing from
-     re-rendering the run, and the run itself keeps a switch from mounting the pile. `bodyOf` is
-     called here (not inside the memo) because the body can change without the message reference
-     changing; its PRIMITIVE fields are what the card compares on. The verbs, the html viewer and
-     the fold-table art all live inside `StreamCardMemo`, gated on `expanded`/`current`, so they
-     mount for one card, not two hundred. */
+  /* One memoized card per message — the stream is not windowed, so this is what keeps an apply
+     that touched nothing from re-rendering the whole pile. `bodyOf` is called here (not inside the
+     memo) because the body can change without the message reference changing; its PRIMITIVE fields
+     are what the card compares on. The verbs, the html viewer and the fold-table art all live
+     inside `StreamCardMemo`, gated on `expanded`/`current`, so they mount for one card, not two
+     hundred. */
   const card = (m: EngineMessage) => {
     const body = bodyOf(m);
     return (
@@ -409,10 +381,7 @@ export function ReadsView({
            rendered viewer is ready as it arrives. `hydrateBody` is idempotent + single-flight,
            so it composes with the current-card fetch above without double-spending. */
         onNear={hydrateBody}
-        /* The run length is part of the key: growth mounts NEW cards, and both of the shell's
-           observers re-scan on this value — without it a card mounted by a growth commit would
-           never hydrate on approach and never mark itself seen. */
-        contentKey={`${stream.count}:${all.map((m) => m.id).join(",")}`}
+        contentKey={all.map((m) => m.id).join(",")}
       >
         <div className="stream-top">
           <h1>{t("title")}</h1>
@@ -427,20 +396,12 @@ export function ReadsView({
           </span>
           <span>{t("hintSeen")}</span>
         </div>
-        {streamFresh.map(card)}
-        {/* The waterline marks the fresh/seen junction, so it renders once the run has reached
-            it — a junction drawn below cards that are not the last fresh ones would lie. */}
-        {partition.waterline && stream.count >= freshCount ? (
+        {partition.fresh.map(card)}
+        {partition.waterline ? (
           <Waterline label={t("waterline")} meta={partition.waterline.meta} />
         ) : null}
-        {streamSeen.map(card)}
-        {/* The growth sentinel, then the reserved height standing in for the unmounted tail —
-            the scrollbar still says how much mail there is. Both invisible furniture. */}
-        <div ref={stream.sentinelRef} data-stream-sentinel aria-hidden />
-        {stream.tailPx > 0 ? <div aria-hidden data-stream-tail style={{ height: stream.tailPx }} /> : null}
-        {/* The end-of-pile line is a CLAIM ("that's everything"), so it is only made once
-            everything is actually mounted above it. */}
-        {stream.count >= all.length ? <div className="tail-row">{t("streamTail")}</div> : null}
+        {partition.seen.map(card)}
+        <div className="tail-row">{t("streamTail")}</div>
       </StreamShell>
     </section>
   );
