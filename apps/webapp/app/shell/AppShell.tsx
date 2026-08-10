@@ -119,12 +119,9 @@ import {
   dispatchScreeningChange,
   planScreeningChange,
   senderScreening,
-  worstStatus,
   type ScreeningDest,
   type ScreeningScope,
 } from "./sender-screening";
-import { SubjectRuleSheet, type SubjectRuleState } from "./SubjectRuleSheet";
-import { planSubjectRule, subjectRuleContext, subjectRuleToast } from "./subject-rule";
 import { senderHitOf } from "./sender-hit";
 import {
   go, goScreener, goTag, goTriage, useHashRoute,
@@ -939,10 +936,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [senderMenu, setSenderMenu] = useState<SenderMenuState | null>(null);
   const [senderAudit, setSenderAudit] = useState<SenderAuditState | null>(null);
-  /* The subject-rule sheet — the finer sibling of the sender popover, opened from a message's
-     title. It lives here for the reason every overlay here does: `MessagePane` is mounted TWICE
-     while the reader is open, so a sheet held per-pane would be two sheets. */
-  const [subjectRule, setSubjectRule] = useState<SubjectRuleState | null>(null);
   /* The inline reply. The id and the text live HERE, not in `MessagePane`, because
      that pane is mounted twice whenever the reader is open — see `message-chrome.tsx`. */
   const [replyTo, setReplyTo] = useState<string | null>(null);
@@ -1307,10 +1300,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       setFr(null);
       setRailOpen(false);
       setSenderMenu(null);
-      // The subject sheet is anchored to a message in the view being left, so it closes with the
-      // rest of the overlays. Left open it would float over the new view holding a token count read
-      // from a sender the reader is no longer looking at.
-      setSubjectRule(null);
       setShortcutsOpen(false);
       setReplyTo(null);
       if (route.view !== "screener") setScreenerFull(false);
@@ -1866,64 +1855,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const openSenderMenu = useCallback((messageId: string, anchor: HTMLElement | null) => {
     setSenderMenu({ messageId, ...placePicker(anchor) });
   }, []);
-
-  /**
-   * OPEN THE SUBJECT-RULE SHEET — from a message's title, and from the sender popover's last row.
-   *
-   * `chrome.openSubjectRule` has been a declared seam with nothing behind it since the reading
-   * surface landed; this fills it. The anchor is the pressed element where there is one — the title
-   * button dispatches `openSubjectRule(id)` with no element, so the sheet is placed by
-   * `placePicker(null)`, exactly as a keyboard-invoked tag picker is.
-   *
-   * It CLOSES the sender popover, because the subject sheet replaces it: they answer the same
-   * question about different halves of one message and two open sheets is two questions.
-   */
-  const openSubjectRule = useCallback((messageId: string, anchor: HTMLElement | null = null) => {
-    setSenderMenu(null);
-    setSubjectRule({ messageId, ...placePicker(anchor) });
-  }, []);
-
-  /**
-   * WRITE THE TWO-TERM RULE, AND SAY ONLY WHAT THE SERVER CONFIRMED.
-   *
-   * The plan comes from `subject-rule.ts`; this dispatches it. The RULE mutation is awaited and the
-   * moves are not — the same split `dispatchScreeningChange` documents at length, for the same
-   * reason: a `move` that fails rolls its own row back on screen, while "future mail files there
-   * too" is a claim about the server that a refusal falsifies. The fixtures adapter never refuses,
-   * so a toast fired on click would be green in every test and wrong on a live account.
-   *
-   * Dispatched here rather than inside the sheet so the sheet stays a pure render of a plan, and so
-   * the awaiting is testable without a DOM.
-   */
-  const confirmSubjectRule = useCallback(
-    (messageId: string, term: string, dest: ScreeningDest) => {
-      setSubjectRule(null);
-      const ctx = subjectRuleContext(reader, messageId);
-      if (!ctx) return;
-      const plan = planSubjectRule(ctx, term, dest);
-      const place = PLACE_LABEL[dest] ?? dest;
-      const rules = plan.ruleMutations.map((m) => engine.mutate(m));
-      for (const m of plan.mutations) {
-        if (!plan.ruleMutations.includes(m)) void engine.mutate(m);
-      }
-      void Promise.all(rules).then((results) => {
-        const key = subjectRuleToast(plan, worstStatus(results));
-        // The count is `matched`, not `outOfPlace`: the sentence is about the mail the rule NAMES,
-        // which is what the confirm row showed. Reporting the smaller number afterwards would read
-        // as the rule having done less than it said.
-        toast(t.has(`screening.${key}`)
-          ? t(`screening.${key}`, { sender: ctx.address, place, count: plan.matched, term: plan.term })
-          : key === "subjectAlready"
-            ? `You already had that rule. Nothing changed.`
-            : key === "subjectRuleFailed"
-              ? `That rule wasn't saved. Nothing has moved.`
-              : key === "subjectRuleQueued"
-                ? `Rule saved here. We'll send it when you're back online.`
-                : `Mail from ${ctx.address} with »${plan.term}« in the subject now files to ${place}.`);
-      });
-    },
-    [engine, reader, toast, t],
-  );
 
   /**
    * Clicking a sender's circle or address, on ANY surface that shows one.
@@ -2646,11 +2577,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     // Above the popover: the audit panel is opened FROM the sheet and replaces it, so it is
     // the innermost thing on screen whenever it exists.
     [senderAudit != null, () => setSenderAudit(null)],
-    // Above the sender popover for the same reason the audit panel is: the subject sheet is opened
-    // FROM it and replaces it, so whenever both flags could be true the subject sheet is the thing
-    // on screen. (It closes the popover on open, so in practice they are never both set — the
-    // ordering is here so that stays a property of this list rather than of one callback.)
-    [subjectRule != null, () => setSubjectRule(null)],
     [senderMenu != null, () => setSenderMenu(null)],
     [picker != null, () => setPicker(null)],
     [fr != null, () => setFr(null)],
@@ -3239,9 +3165,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       // knew nothing about.
       draftReply: draftReplyChrome,
       openSenderMenu,
-      // The title press. The seam was declared with no implementation, so the viewer rendered the
-      // subject as a plain heading; supplying it is what turns the title into the control.
-      openSubjectRule: (messageId: string) => openSubjectRule(messageId, null),
       openAttachmentPreview: (messageId: string, attachmentId: string) =>
         setPreviewFor({ messageId, attachmentId }),
       conversationOf,
@@ -3249,7 +3172,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       attachments, remoteImages,
     }),
     [ownAddresses, absoluteTime, replyTo, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
-      openSenderMenu, openReply, forwardMessage, openSubjectRule,
+      openSenderMenu, openReply, forwardMessage,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
   );
 
@@ -3258,14 +3181,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const senderMenuFor = useMemo(
     () => (senderMenu ? senderScreening(reader, senderMenu.messageId) : null),
     [senderMenu, reader, version],
-  );
-
-  // Same shape and the same `version` dep as above, for the same reason: a message whose row has
-  // just been moved out from under the sheet closes it rather than rendering an empty one, and a
-  // memo that forgot `version` would show a stale token count after a sync drain.
-  const subjectRuleFor = useMemo(
-    () => (subjectRule ? subjectRuleContext(reader, subjectRule.messageId) : null),
-    [subjectRule, reader, version],
   );
 
   /**
@@ -4057,19 +3972,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           sender={senderMenuFor}
           onChoose={(dest, scope, makeRule) => changeScreening(senderMenu!.messageId, dest, scope, makeRule)}
           onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope)}
-          onSubjectRule={() => openSubjectRule(senderMenu!.messageId, null)}
           onClose={() => setSenderMenu(null)}
-        />
-      ) : null}
-      {/* The finer sibling: from this address AND with this in the subject. Resolved above so a
-          sender whose last message has just been moved closes the sheet instead of rendering an
-          empty one. */}
-      {subjectRuleFor ? (
-        <SubjectRuleSheet
-          state={subjectRule!}
-          ctx={subjectRuleFor}
-          onConfirm={(term, dest) => confirmSubjectRule(subjectRule!.messageId, term, dest)}
-          onClose={() => setSubjectRule(null)}
         />
       ) : null}
 

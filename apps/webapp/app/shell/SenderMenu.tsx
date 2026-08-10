@@ -79,21 +79,12 @@ export function SenderMenu({
   sender,
   onChoose,
   onOpenDetail,
-  onSubjectRule,
   onClose,
 }: {
   state: SenderMenuState;
   sender: SenderScreening;
   onChoose: (dest: ScreeningDest, scope: ScreeningScope, makeRule: boolean) => void;
   onOpenDetail: (scope: ScreeningScope) => void;
-  /**
-   * OPEN THE SUBJECT-RULE SHEET for this sender — the row below the detail link.
-   *
-   * OPTIONAL, so every existing mount of this component keeps compiling and simply does not offer
-   * the row. That is the honest degradation rather than a dead control, and it is the same shape
-   * `chrome.openSubjectRule` uses one layer up.
-   */
-  onSubjectRule?: () => void;
   onClose: () => void;
 }) {
   const t = useTranslations("screening");
@@ -290,26 +281,6 @@ export function SenderMenu({
       <button type="button" className="sm-detail" onClick={() => onOpenDetail(scope)}>
         {t("auditOpen", { count: subject.messages.length })}
       </button>
-
-      {/* ── SPLIT THIS SENDER BY SUBJECT ──────────────────────────────────────────────────────
-          The row that admits this sheet's limit. Everything above it decides where ALL of an
-          address's mail goes, and one sender who sends two kinds of mail has no answer here: the
-          five destinations file the invoice with the nightly alerts whichever one is pressed.
-
-          It is offered ONLY at address scope. A domain scope is the opposite direction — wider, not
-          finer — and the server refuses a subject term on a domain rule, so offering it here would
-          present a choice that ends in a 400.
-
-          It is a LINK to the finer sheet and not a control that writes anything, so it sits below the
-          destinations with the detail link rather than among them: pressing it asks a different
-          question, it does not answer this one. Same `.sm-detail` styling for that reason. */}
-      {onSubjectRule && scope === "sender" ? (
-        <button type="button" className="sm-detail" onClick={onSubjectRule}>
-          {t.has("subjectRuleOpen")
-            ? t("subjectRuleOpen")
-            : "Only some of their mail? Make a rule on the subject too"}
-        </button>
-      ) : null}
 
       {/* ── THE FOOTER, WHICH NOW HAS THREE TRUE SENTENCES INSTEAD OF TWO ────────────────
           A Screener-held sender goes through the endpoint that promotes a rule. Past the gate,

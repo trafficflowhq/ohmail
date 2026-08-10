@@ -102,43 +102,6 @@ export interface Rule {
    */
   provenance: "manual" | "migrated" | "promoted" | "seeded-from-sent";
   enabled: boolean;
-  /**
-   * A SECOND TERM, AND IT IS A CONJUNCTION — `null` for every rule that does not carry one.
-   *
-   * One sender sends two kinds of mail. `info@` at a small host sends the invoice AND the nightly
-   * `[NinjaFirewall]` alert, and until this a sender rule could only say "all of it goes to Reads",
-   * which files the invoice with the alerts. This is the other half of what the user means: *from
-   * this address AND with this in the subject*.
-   *
-   * ── IT MAY ONLY EVER NARROW ────────────────────────────────────────────────────────────────
-   *
-   * {@link matches} reads it as an EXTRA term the message must satisfy, never as an alternative
-   * one, and it reads it for EVERY kind rather than only for `sender`. Both halves of that are
-   * deliberate:
-   *
-   *  · A present term can only make a rule fire LESS often than it did. So no value of this field
-   *    can admit a sender the same rule without it would have refused, which is what makes adding
-   *    the column safe next to the consent gate. There is no branch below where a term WIDENS a
-   *    match, and there must never be one.
-   *  · `RulesService` only accepts a term on `kind: "sender"`, but `kind` reaches the evaluator
-   *    through an unvalidated `as` cast off a bare `text` column (see {@link rank}), so a
-   *    `domain`/`header` row carrying a term IS representable. Honouring it there is the
-   *    fail-closed reading: the alternative — ignore the term for kinds the API does not offer —
-   *    would make such a row match EVERY subject while its own data says it is specific. A stored
-   *    term is always applied.
-   *
-   * `null` and `""` both mean "no term" here, and the database forbids the second
-   * (`rules_subject_contains_nonempty`, mail 0050) so that absence has ONE representation at rest.
-   * This function still treats an empty or whitespace-only string as absent rather than as a
-   * substring test that always passes, because a constraint added by a migration is not a
-   * guarantee about a value that arrives from somewhere else.
-   *
-   * REQUIRED on the type, not optional. `drizzle-repo.ts#listRules` is the only production
-   * construction site and a named field cannot be forgotten there; a `?` would let a future
-   * producer drop the term silently, which defeats the feature at exactly the moment somebody
-   * reaches for it.
-   */
-  subjectContains: string | null;
 }
 
 /**
@@ -276,30 +239,6 @@ const EFFECT_RANK: Readonly<Record<RuleEffect, number>> = { deny: 0, allow: 1 };
  */
 const KIND_RANK: Readonly<Record<RuleKind, number>> = { sender: 0, domain: 1, header: 2 };
 /**
- * SPECIFICITY WITHIN ONE KIND: a rule carrying a subject term outranks one that does not.
- *
- * This clause is the reason the feature works at all, and it sits directly BELOW `kind` because it
- * refines a claim about the same principal rather than changing which principal is named. A
- * subject-carrying `sender` rule beats a bare `sender` rule; it does not beat nothing, and it never
- * reaches across kinds (a `domain` rule with a term still loses to any `sender` rule).
- *
- * Without it, the ordinary case is a coin toss. The user has "from info@… → Ohbox" and adds "from
- * info@… AND subject contains [NinjaFirewall] → Reads": same priority, same effect, same kind, same
- * provenance, so the winner would fall through to the `id` tie-break — two random UUIDs. Half the
- * accounts would see the new rule work and half would see it do nothing, with no way to tell which
- * from the surface. The more specific of two statements about one sender has to win.
- *
- * The direction is also what makes the pair COMPOSABLE rather than contradictory: the narrow rule
- * takes the mail it names and the broad rule keeps the rest, which is precisely what somebody
- * writing the second rule is asking for. Reversing it would make the broad rule swallow everything
- * and the narrow one unreachable.
- *
- * `drizzle-repo.ts#listRules` states this same clause in SQL, in the same position, and the pg test
- * sorts the adapter's output with {@link compareRules} and requires that nothing moves — the two
- * expressions of one order are not allowed to disagree.
- */
-const subjectRank = (r: Rule): number => (subjectTermOf(r) === null ? 1 : 0);
-/**
  * What the user typed beats what we imported for them, which beats what we learned.
  *
  * `seeded-from-sent` sorts LAST, below `promoted`, and the tie it breaks is a real one: a user
@@ -338,7 +277,7 @@ function finitePriority(p: number): number {
 
 /**
  * Ascending = wins. Priority (numeric, user-facing) → deny over allow → sender over domain over
- * header → with a subject term over without one → manual over migrated over promoted → `id`.
+ * header → manual over migrated over promoted → `id`.
  *
  * `id` is the final NON-SEMANTIC tie-break and is compared with `<`/`>` rather than
  * `localeCompare`: a locale-dependent collation is not a stable order across two machines.
@@ -353,12 +292,6 @@ export function compareRules(a: Rule, b: Rule): number {
   const kind = rank(KIND_RANK, a.kind) - rank(KIND_RANK, b.kind);
   if (kind !== 0) return kind;
 
-  // Below `kind` and above `provenance`: it refines a claim about the same principal, so it must
-  // not reach across kinds, and it must outrank provenance — the pair this exists for is two
-  // `manual` rules for one address, where provenance separates nothing.
-  const subject = subjectRank(a) - subjectRank(b);
-  if (subject !== 0) return subject;
-
   const provenance = rank(PROVENANCE_RANK, a.provenance) - rank(PROVENANCE_RANK, b.provenance);
   if (provenance !== 0) return provenance;
 
@@ -368,69 +301,6 @@ export function compareRules(a: Rule, b: Rule): number {
 function domainOf(addr: string): string {
   const i = addr.indexOf("@");
   return i >= 0 ? addr.slice(i + 1) : "";
-}
-
-/**
- * THE WHITESPACE A SUBJECT TERM IS TRIMMED OF, and it is deliberately NOT what
- * `String.prototype.trim` strips.
- *
- * Six characters — space, tab, newline, carriage return, form feed, vertical tab — because the SQL
- * side of this decision can express exactly those and no more. `rules_subject_contains_nonempty`
- * (mail 0050) and `drizzle-repo.ts#listRules`' `ORDER BY` both read
- * `subject_contains ~ '[^ \t\n\r\f\v]'`, so a term is "blank" in Postgres precisely when it is
- * blank under this class.
- *
- * `trim()` strips more than that — U+00A0, U+2028, the Unicode space separators — so using it here
- * would make Postgres and this file disagree about one shape of row: a term of a single non-breaking
- * space would rank as SPECIFIC in SQL and read as ABSENT here, which is the narrow rule winning the
- * tie and then matching every subject. That is the one failure this column must be incapable of, so
- * the two predicates are written from the same six characters and verified equal against real
- * Postgres over every one of them (`rules-subject.pg.test.ts`).
- *
- * Anchored at both ends with a single pass, so it is a trim and not a strip: interior whitespace is
- * part of the term ("Alert: brute force" is a legitimate thing to match on).
- */
-const SUBJECT_TERM_TRIM = /^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g;
-
-/**
- * The rule's subject term, case-folded and trimmed — or `null` when it does not carry one.
- *
- * THE ONE PLACE "does this rule have a subject term?" IS ANSWERED. {@link matches} and
- * {@link subjectRank} both consult it, and they must agree: a rule the matcher treats as
- * subject-bearing has to be the same rule the order ranks as more specific, or the narrow rule wins
- * the tie and then declines to fire — which files nothing anywhere and looks like the column is
- * being ignored.
- *
- * `null`, `""` and a blank string all answer `null`. The database forbids the last two
- * (`rules_subject_contains_nonempty`, mail 0050), and this is still written to handle them, because
- * a CHECK constrains rows the migration reached and says nothing about a value handed to this
- * function by a caller — a fixture, a `sidecar` mirror row, an older client's echo. A blank term
- * read as a substring test would pass on almost every subject, so "absent" is the only safe reading.
- */
-function subjectTermOf(r: Rule): string | null {
-  const raw = r.subjectContains;
-  if (typeof raw !== "string") return null;
-  const term = raw.replace(SUBJECT_TERM_TRIM, "").toLowerCase();
-  return term.length === 0 ? null : term;
-}
-
-/**
- * Does the message's subject satisfy the rule's subject term?
- *
- * `true` when there is no term — the term is a CONJUNCTION and an absent conjunct is satisfied, so
- * every rule written before mail 0050 keeps its exact pre-column behaviour.
- *
- * Case-folded substring, and deliberately nothing cleverer. No regex (a user-supplied pattern is a
- * ReDoS on the ingest path and nobody typing `[NinjaFirewall]` means a character class), no unicode
- * normalisation and no whitespace collapsing (the subject is compared as it was received; a term
- * that does not appear literally does not match). `subject` is `string` on
- * {@link NormalizedMessage} — `mime.ts` writes `""` for an absent header — so an absent subject
- * simply satisfies no term, which is the fail-closed direction for a narrowing conjunct.
- */
-function subjectSatisfies(r: Rule, msg: NormalizedMessage): boolean {
-  const term = subjectTermOf(r);
-  if (term === null) return true;
-  return msg.subject.toLowerCase().includes(term);
 }
 
 /**
@@ -444,19 +314,8 @@ function subjectSatisfies(r: Rule, msg: NormalizedMessage): boolean {
  * `hasOwnProperty` rather than `Boolean(msg.headers[name])`: `message_bodies.headers` comes back
  * through `JSON.parse` and therefore inherits from `Object.prototype`, so a rule
  * whose `match` is `constructor` or `toString` matched EVERY message under the old test.
- *
- * ── AND ONE MORE TERM, WHICH IS A CONJUNCT AND NOT A BRANCH ─────────────────────────────────
- *
- * `subject_contains` (mail 0050) is checked FIRST and for every kind, so it is impossible to add a
- * kind below that forgets it. It is an `AND`, so it can only ever make this function return `false`
- * where it used to return `true` — never the reverse. See {@link Rule.subjectContains} for why a
- * term is honoured even on the kinds `RulesService` refuses to write one for.
  */
 function matches(r: Rule, msg: NormalizedMessage, author: string | null): boolean {
-  // Placed above the switch rather than inside the `sender` arm: a conjunct that lives in one arm is
-  // a conjunct the next arm can be written without, and the failure that produces is a rule whose
-  // stored term does nothing — indistinguishable from the column not shipping.
-  if (!subjectSatisfies(r, msg)) return false;
   switch (r.kind) {
     case "sender":
       return author !== null && r.match.toLowerCase() === author;

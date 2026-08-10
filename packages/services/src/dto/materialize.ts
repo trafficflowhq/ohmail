@@ -79,7 +79,6 @@ export function ruleRowToDTO(r: typeof rules.$inferSelect): RuleDTO {
     priority: r.priority,
     provenance: r.provenance as RuleDTO["provenance"],
     enabled: r.enabled,
-    subjectContains: r.subjectContains ?? null,
     stats: { hits: r.hits, lastHitAt: iso(r.lastHitAt), demotions: r.demotions },
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),

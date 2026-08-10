@@ -707,29 +707,9 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
      * the right answer for a request the server would answer 400. It is unreachable from the
      * sheet (a domain-less address is never offered domain scope) and is here so that it stays
      * unreachable rather than becoming a rule matching every malformed sender.
-     *
-     * TWO MORE REFUSALS, both by the same mechanism and both about `subjectContains`:
-     *
-     *  · a term on a NON-`sender` kind — `RulesService.validSubjectContains` answers 400, so the
-     *    honest local answer is a rejection with nothing sent;
-     *  · a term that is a STRING but trims to nothing. `""` is a substring of every subject, so
-     *    storing one literally is a rule that matches everything while its row reads as specific,
-     *    and the server refuses it for that reason. Dropping the field and creating a BARE rule
-     *    instead would be the silent widening the service's own note refuses: the surface asked for
-     *    "just the ones whose subject matches" and the mirror would show a rule covering all of the
-     *    sender's mail — an optimistic row that is a different rule from the one requested. An
-     *    explicit `null`/`undefined` still means "no term" and creates the ordinary bare rule.
-     *
-     * All three refusals are unreachable from the surfaces — the subject sheet is always about one
-     * message's sender and normalizes its term — and all three are written so that they STAY
-     * unreachable rather than becoming a rule that quietly means something else.
      */
     case "rule_create": {
       if (m.match === "") return [];
-      const raw = m.subjectContains;
-      const term = typeof raw === "string" ? raw.trim() : "";
-      if (typeof raw === "string" && term === "") return [];
-      if (term !== "" && m.ruleKind !== "sender") return [];
       const rule: RuleDTO = {
         id: ctx.uuid(),
         kind: m.ruleKind,
@@ -738,10 +718,6 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         priority: 0,
         provenance: "manual",
         enabled: true,
-        // TRIMMED, and `""` collapses to `null` — the same normalisation
-        // `RulesService.validSubjectContains` applies, so the optimistic row and the echoed row
-        // carry the same string rather than one with the user's trailing space and one without.
-        subjectContains: term === "" ? null : term,
         stats: { hits: 0, lastHitAt: null, demotions: 0 },
         createdAt: iso,
         updatedAt: iso,

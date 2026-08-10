@@ -18,39 +18,12 @@ const FOLDERS: Destination[] = [
 ];
 const FOLDER_SET = new Set<string>(FOLDERS);
 
-/**
- * The ceiling on a subject term, mirroring the `rules_subject_contains_nonempty` CHECK (mail 0050).
- *
- * Both layers, deliberately: the CHECK is what holds for every writer including a future importer,
- * and this is what turns a violation into a 400 the client can render instead of a 500 from a
- * constraint the API never mentioned. They must agree — a service limit ABOVE the CHECK is a
- * database error dressed as a validated request.
- */
-export const MAX_SUBJECT_CONTAINS_CHARS = 200;
-
 export interface CreateRuleBody {
   kind: string;
   match: string;
   destination: string;
   priority?: number;
   enabled?: boolean;
-  /**
-   * THE SECOND TERM — *from this address AND with this in the subject*. Absent or `null` for a rule
-   * with one term, which is every rule that existed before mail 0050.
-   *
-   * `kind: "sender"` ONLY, and a term on any other kind is a 400 rather than a silently dropped
-   * field. The reason is not squeamishness about scope: a domain rule narrowed by subject is a
-   * coherent thing to want, but nothing composes one — the subject sheet is opened from ONE
-   * message and offers that message's sender — so accepting it would be an untested wire shape
-   * whose only reachable caller is a hand-written request. `header` is refused for the same reason
-   * the engine's `rule_create` has no `header` arm: it names no principal.
-   *
-   * Stored VERBATIM after trimming, and matched case-folded by
-   * `core/src/rules.ts#subjectSatisfies`. The case the user typed is preserved because the rules
-   * surface and the sender sheet both quote it back at them — folding at rest would show somebody
-   * `[ninjafirewall]` for a token they read off their own mail as `[NinjaFirewall]`.
-   */
-  subjectContains?: string | null;
   /**
    * ALSO APPLY THIS RULE TO MAIL THAT IS ALREADY FILED — **defaults to TRUE**.
    *
@@ -123,7 +96,6 @@ export class RulesService {
     const match = this.validMatch(body.match);
     const priority = this.validPriority(body.priority);
     const applyRetro = this.validApplyRetro(body.applyRetro);
-    const subjectContains = this.validSubjectContains(body.subjectContains, kind);
 
     return asTx(ctx).transaction(async (tx) => {
       const [row] = await tx.insert(rules).values({
@@ -131,10 +103,6 @@ export class RulesService {
         kind, match, destination, priority,
         enabled: body.enabled ?? true,
         provenance: "manual",
-        // NULL is the resting state and the only representation of "no second term" — see the
-        // migration's CHECK. `validSubjectContains` has already turned `""` and a whitespace-only
-        // string into `null`, so this can never insert a term that matches every subject.
-        subjectContains,
         // The request, not the work. `NULL` means nobody ever asked this rule to reach mail
         // already on disk, which is the honest state for a rule created with `applyRetro: false`
         // and for every rule that existed before this column did.
@@ -202,21 +170,6 @@ export class RulesService {
    *
    * Only when the destination actually changes. A PATCH that flips `enabled` or nudges
    * `priority` re-applies nothing, because nothing about where this rule sends mail moved.
-   *
-   * ── AND A SUBJECT TERM CHANGE IS THE SAME KIND OF EVENT (mail 0050) ────────────────────
-   *
-   * `subject_contains` decides WHICH mail this rule is about, so editing it re-opens the backlog
-   * exactly as a destination change does — and in both directions. NARROWING (adding or tightening
-   * a term) leaves mail the rule already moved sitting somewhere it no longer claims; WIDENING
-   * (clearing it) brings mail into scope that the pass has never examined. Neither is fixed by the
-   * arrival path, because that only ever sees new mail.
-   *
-   * So the retro state is reset for a term change on the same reasoning as a retarget: cursor and
-   * marker cleared rather than the request merely re-stamped, because a stale cursor would skip
-   * everything before it. Note the honest limit, which is the one the copy must never overstate: a
-   * message the NARROWED rule moved to the old destination is not moved BACK by this — the pass
-   * writes desired-state for messages a rule now claims and never un-files one it has stopped
-   * claiming. Only some other rule, or the user, moves that mail again.
    */
   async update(
     ctx: ServiceContext, id: string, patch: PatchRuleBody,
@@ -235,33 +188,11 @@ export class RulesService {
       // destination change" is answered against the row this update is about to replace rather
       // than against a value the caller supplied. A PATCH that sets the destination it already
       // has re-applies nothing, which is what makes a habit-click cheap.
-      //
-      // `kind` and `subjectContains` join the read for mail 0050. The kind is needed because
-      // `validSubjectContains` refuses a term on anything but `sender` and a PATCH need not carry
-      // the kind at all — validating against the caller's absent field instead of the stored row
-      // is how a domain rule acquires a subject term the API says it will not accept.
-      const [before] = await tx.select({
-        destination: rules.destination, kind: rules.kind, subjectContains: rules.subjectContains,
-      }).from(rules)
+      const [before] = await tx.select({ destination: rules.destination }).from(rules)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId))).limit(1);
-
-      if (patch.subjectContains !== undefined) {
-        set.subjectContains = this.validSubjectContains(
-          patch.subjectContains,
-          // The kind AFTER this patch: a single request may legally move a rule from `domain` to
-          // `sender` and give it a term in the same breath.
-          (set.kind as string | undefined) ?? before?.kind ?? "sender",
-        );
-      }
-
-      // Either half of "which mail does this rule claim, and where does it send it" moving is a
-      // retroactive event. Compared against the STORED value, so a PATCH that re-sends the term it
-      // already has costs nothing — the habit-click argument above, applied to the second term.
-      const destinationMoved = set.destination !== undefined
-        && set.destination !== before?.destination;
-      const subjectMoved = set.subjectContains !== undefined
-        && (set.subjectContains ?? null) !== (before?.subjectContains ?? null);
-      const retargeted = before !== undefined && (destinationMoved || subjectMoved);
+      const retargeted = before !== undefined
+        && set.destination !== undefined
+        && set.destination !== before.destination;
       if (retargeted && applyRetro) {
         set.retroRequestedAt = ctx.now();
         set.retroDoneAt = null;
@@ -404,61 +335,6 @@ export class RulesService {
       throw new ServiceError("validation_failed", 400, "applyRetro must be a boolean");
     }
     return v;
-  }
-
-  /**
-   * The second term, or `null`. Four refusals and one normalisation, and the ORDER matters.
-   *
-   *  · `undefined`/`null` ⇒ `null`. Absent means "an ordinary one-term rule"; an explicit `null` is
-   *    a PATCH CLEARING the term, which is a legitimate edit and the only way to widen a narrow rule
-   *    back to its whole sender.
-   *  · A non-string is a 400, never a coercion. `subjectContains: 0` stringified to `"0"` would be
-   *    a rule matching every subject containing a zero, which is not what any caller meant.
-   *  · **A STRING THAT TRIMS TO NOTHING IS A 400, NOT A COERCION TO `null`** — and this line was the
-   *    other way round for an hour, so the reasoning is worth keeping. `""` is a substring of EVERY
-   *    subject, so a blank term stored literally is a rule that matches everything while its row
-   *    reads as specific; that is what the migration's CHECK refuses. Coercing it to `null` here is
-   *    not dangerous in the same way (the result is a bare rule, which is the pre-column behaviour),
-   *    but it is a SILENT WIDENING of exactly the request the caller made: the subject sheet says
-   *    "file just the ones whose subject matches" and the account would get a rule filing all of
-   *    that sender's mail. Refusing is the only answer that cannot surprise anybody, and it makes
-   *    the three layers — CHECK, service, engine — agree on one meaning per input. An explicit
-   *    `null` remains the way to say "no term", so nothing legitimate is unreachable.
-   *  · Over {@link MAX_SUBJECT_CONTAINS_CHARS} is a 400 — checked AFTER trimming, so trailing
-   *    whitespace does not decide it — mirroring the CHECK so the ceiling is a validation error and
-   *    not a constraint violation surfacing as a 500.
-   *  · A term on any kind but `sender` is a 400. It is refused rather than dropped because
-   *    silently discarding a field the caller sent is how a client ends up believing it wrote a
-   *    narrow rule and getting a broad one. See {@link CreateRuleBody.subjectContains} for why the
-   *    other kinds are not offered at all.
-   *
-   * `kind` is the kind the row will HAVE after this write, resolved by the caller — never the
-   * caller's `patch.kind`, which may be absent on a PATCH.
-   */
-  private validSubjectContains(v: unknown, kind: string): string | null {
-    if (v === undefined || v === null) return null;
-    if (typeof v !== "string") {
-      throw new ServiceError("validation_failed", 400, "subjectContains must be a string or null");
-    }
-    const term = v.trim();
-    if (term.length === 0) {
-      throw new ServiceError(
-        "validation_failed", 400,
-        "subjectContains must not be blank — send null to remove the subject term",
-      );
-    }
-    if (term.length > MAX_SUBJECT_CONTAINS_CHARS) {
-      throw new ServiceError(
-        "validation_failed", 400,
-        `subjectContains must be at most ${MAX_SUBJECT_CONTAINS_CHARS} characters`,
-      );
-    }
-    if (kind !== "sender") {
-      throw new ServiceError(
-        "validation_failed", 400, "subjectContains is only valid on a sender rule",
-      );
-    }
-    return term;
   }
 }
 

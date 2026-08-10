@@ -576,25 +576,6 @@ export interface RuleDTO {
    */
   provenance: "manual" | "migrated" | "promoted" | "seeded-from-sent";
   enabled: boolean;
-  /**
-   * THE RULE'S SECOND TERM, or `null` — *from this address AND with this in the subject*.
-   *
-   * A conjunction the server evaluates, never something a surface here applies itself: a present
-   * term makes the rule fire less often and nothing about it can admit a sender. Two surfaces would
-   * be dishonest without it, which is why it is on the mirror rather than server-side only:
-   *
-   *  · the rules list renders one row per rule, and two rules for one address differing only by
-   *    subject term would read as identical duplicates — with two Revoke buttons nobody could tell
-   *    apart;
-   *  · the sender sheet's rule ladder retargets an existing rule for the address instead of writing
-   *    a second one, and a narrow subject rule must NOT be the row it retargets (that would silently
-   *    widen a rule the user deliberately narrowed). The ladder needs to see the term to skip it.
-   *
-   * OPTIONAL on the type, and this is the one field on `RuleDTO` that is. An older server does not
-   * send it, and a mirror row that predates the column must read as "no term" rather than as a
-   * parse failure — `undefined` and `null` mean the same thing to every reader here.
-   */
-  subjectContains?: string | null;
   stats: { hits: number; lastHitAt: ISODateTime | null; demotions: number };
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
@@ -1243,23 +1224,6 @@ export type EngineMutation =
        */
       match: string;
       destination: Folder;
-      /**
-       * A SECOND TERM ON THE RULE — *from this address AND with this in the subject*.
-       *
-       * Absent for the ordinary one-term rule every existing caller writes. Present only from the
-       * subject sheet, which is reached by pressing a message's title and offers the repeating token
-       * it detected in that sender's other subjects.
-       *
-       * `ruleKind: "sender"` ONLY — the server answers 400 for a term on a domain rule, and
-       * `mutationEffects` yields no effects for that combination so the engine rejects it locally
-       * with nothing on the wire. It is unreachable from the sheet (which is always about one
-       * message's sender) and the refusal is here so it stays unreachable rather than becoming a
-       * silently-broadened rule.
-       *
-       * Sent as typed, matched case-folded by the server. The case is preserved because both
-       * surfaces quote the term back at the user, who read it off their own mail.
-       */
-      subjectContains?: string | null;
       /**
        * ALSO APPLY THIS RULE TO MAIL THAT IS ALREADY FILED.
        *

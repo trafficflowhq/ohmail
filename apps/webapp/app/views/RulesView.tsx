@@ -145,25 +145,10 @@ export function groupByDestination(rules: readonly RuleDTO[]): RuleGroup[] {
 }
 
 /**
- * The rule's SECOND term, trimmed — or `""` when it carries none (mail 0050).
- *
- * One accessor rather than four inline `?? ""`s, because "does this rule have a subject term" is
- * asked by the row, the search, the confirm and the bulk copy, and a reading that drifts between
- * them is a rule the list describes differently depending on which control you touched. The
- * whitespace class is `core/src/rules.ts#SUBJECT_TERM_TRIM`'s, so this file agrees with the router
- * about which values mean "no term".
- */
-export function subjectTermOf(rule: RuleDTO): string {
-  return (rule.subjectContains ?? "").replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, "");
-}
-
-/**
  * The rules a search box and a destination facet leave standing. Search is a case-insensitive
- * substring over `rule.match` — the address or domain a person recognises — AND over the subject
- * term, because a subject rule is the one kind whose defining feature is not its address: somebody
- * hunting for "the NinjaFirewall rule" types the token, and before mail 0050 there was nothing else
- * to type. The origin and destination are still excluded: they are chrome, not what anybody searches
- * for. An empty or whitespace query matches everything, and `"all"` is every destination.
+ * substring over `rule.match` — the address or domain a person recognises — and nothing else:
+ * the origin and destination are chrome, not what someone types when hunting for a sender. An
+ * empty or whitespace query matches everything, and `"all"` is every destination.
  */
 export function filterRules(
   rules: readonly RuleDTO[],
@@ -174,9 +159,7 @@ export function filterRules(
   return rules.filter(
     (r) =>
       (facet === "all" || r.destination === facet) &&
-      (q === "" ||
-        r.match.toLowerCase().includes(q) ||
-        subjectTermOf(r).toLowerCase().includes(q)),
+      (q === "" || r.match.toLowerCase().includes(q)),
   );
 }
 
@@ -209,33 +192,6 @@ export interface RulesViewProps {
 export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
   const t = useTranslations("rules");
   const toast = useToast();
-
-  /**
-   * A key not yet in `messages/en.json` falls back to the SAME wording here — `en.json` wins the
-   * moment it exists, so this is a shim with one exit and not a second source of copy. Same device
-   * `MessagePane` uses.
-   */
-  const copy = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
-
-  /**
-   * WHAT A RULE SAYS, IN ONE LINE — and for a subject rule that is TWO terms, not one.
-   *
-   * `what.sender` renders "mail from x@y.com". A rule carrying `subjectContains` says something
-   * strictly narrower, and rendering it with the same string is the defect this exists to close: two
-   * rules for one address — the broad one and the `[NinjaFirewall]` one — would appear as identical
-   * rows with identical Change and Revoke buttons, and revoking "the wrong one" would be a coin toss
-   * a person could not even see they were making.
-   *
-   * The conjunction is spelled out rather than abbreviated to a chip, because the term is the thing
-   * the reader has to check character by character: a rule that is one letter off looks right and
-   * files nothing.
-   */
-  const whatOf = (rule: RuleDTO): string => {
-    const base = t(`what.${rule.kind}`, { match: rule.match });
-    const term = subjectTermOf(rule);
-    if (term === "") return base;
-    return copy("whatSubject", `${base} with »${term}« in the subject`);
-  };
   const [open, setOpen] = useState<OpenAction>(null);
   const [query, setQuery] = useState("");
   const [facet, setFacet] = useState<Folder | "all">("all");
@@ -389,7 +345,7 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
 
       {open?.mode === "revoke" && target ? (
         <div className="rules-confirm">
-          <b className="what">{whatOf(target)}</b>
+          <b className="what">{t(`what.${target.kind}`, { match: target.match })}</b>
           <span>{t("revokeExplain")}</span>
           <span className="acts">
             <Button
@@ -410,7 +366,7 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
 
       {open?.mode === "retarget" && target ? (
         <div className="rules-confirm">
-          <b className="what">{whatOf(target)}</b>
+          <b className="what">{t(`what.${target.kind}`, { match: target.match })}</b>
           <span>{t("retargetExplain")}</span>
           <span className="acts">
             {/* The CURRENT destination is not offered — re-filing mail where it already goes is a
@@ -450,7 +406,7 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
                 be with every row mounted. `aria-hidden` because this is geometry. */}
             {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
             {filtered.slice(win.start, win.end).map((rule) => {
-              const what = whatOf(rule);
+              const what = t(`what.${rule.kind}`, { match: rule.match });
               const origin = t(`origin.${rule.provenance}`);
               const meta = rule.enabled
                 ? t("meta", { origin, date: ruleDate(rule.createdAt) })

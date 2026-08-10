@@ -412,12 +412,6 @@ async function applyUpsert(tx: Tx, world: LocalWorld, ch: SyncChange, now: Date,
         priority: r.priority ?? 0,
         provenance: r.provenance ?? "manual",
         enabled: r.enabled ?? true,
-        // The rule's second term. `?? null` and not omission: this object is ALSO the
-        // `onConflictDoUpdate` set, so leaving the key out would make a term that was CLEARED in
-        // Cloud persist for ever in the local mirror — the row would keep filing a narrow slice of
-        // the sender's mail after the user had widened the rule back to all of it. A mirror that
-        // cannot un-set a field is not a mirror.
-        subjectContains: r.subjectContains ?? null,
         hits: stats.hits ?? 0,
         lastHitAt: asDate(stats.lastHitAt),
         demotions: stats.demotions ?? 0,
