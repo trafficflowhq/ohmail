@@ -171,6 +171,26 @@ export function domainOfAddress(address: string): string | null {
  * only decides PRESENTATION, and presenting a sender's mail in the Ohbox when one rule says
  * Ohbox and another says Screened is the reading that shows the user their mail; the reverse
  * hides mail on account of a rule they can no longer see the effect of.
+ *
+ * ── A SUBJECT-NARROWED RULE COUNTS AS A DECISION ABOUT THE WHOLE SENDER (mail 0050) ────────
+ *
+ * `subject_contains` is deliberately NOT read here, and that is a ruling rather than an omission —
+ * it decides the dormancy cutline, so it is worth stating rather than leaving to be rediscovered.
+ *
+ * A rule saying *from `info@` AND subject contains `[NinjaFirewall]` → Reads* narrows PLACEMENT for
+ * a slice of that sender's mail. It does not narrow ADMISSION: writing it is the user saying they
+ * know this sender and want their mail organised, which is exactly the thing this index exists to
+ * record. So the sender is treated as decided, and the cutline leaves them alone rather than parking
+ * them back in the Screener queue for going quiet — which is what reading the term here would do,
+ * and it would do it to a sender the user has demonstrably answered for.
+ *
+ * The RESIDUAL, named: the `Folder` recorded for that sender is the narrow rule's destination, which
+ * is only true of the messages the term names. That is tolerable for the same reason the
+ * more-permissive-wins rule above is tolerable — this index decides PRESENTATION and never routing
+ * (the router reads `core/src/rules.ts`, which does apply the conjunction) — and where the account
+ * carries both a narrow and a bare rule for one address the permissive reading picks the one that
+ * shows the user their mail. What must never be added here is a term check that flips a decided
+ * sender back to undecided.
  */
 export function consentIndex(rules: readonly RuleDTO[]): ConsentIndex {
   const bySender = new Map<string, Folder>();

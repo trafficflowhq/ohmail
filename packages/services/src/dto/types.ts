@@ -457,6 +457,16 @@ export interface RuleDTO {
   /** `seeded-from-sent`: written by the onboarding seed for someone the user had written to. */
   provenance: "manual" | "migrated" | "promoted" | "seeded-from-sent";
   enabled: boolean;
+  /**
+   * The rule's SECOND term, or `null` — *from this address AND with this in the subject* (mail
+   * 0050). A conjunction, never an alternative: a present term only ever makes the rule fire less
+   * often. Offered on `kind: "sender"` only; see `RulesService.validSubjectContains`.
+   *
+   * It is on the DTO because two surfaces cannot tell the truth without it: the rules list would
+   * render two rules for one address identically, and the sender sheet's rule ladder would retarget
+   * a narrow subject rule when the user changed a broad sender's destination.
+   */
+  subjectContains: string | null;
   stats: { hits: number; lastHitAt: ISODateTime | null; demotions: number };
   createdAt: ISODateTime;
   updatedAt: ISODateTime;

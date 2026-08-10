@@ -88,11 +88,35 @@ export function ruleMatchesSender(rule: RuleDTO, address: string): boolean {
 }
 
 /**
+ * Does the rule's SECOND term (mail 0050) also hold for this subject? `true` when it has none.
+ *
+ * A conjunction, so it is asked in ADDITION to {@link ruleMatchesSender} and never instead of it. It
+ * exists because this module's `rule` attribution makes a claim in the present tense — *a rule sends
+ * mail from here to this place* — and for a subject rule that claim is only true of the messages
+ * whose subject matches. Without this, opening the detail view for `info@` would label the invoice
+ * "filed by a rule" and name the `[NinjaFirewall]` rule, which is the one thing this module's own
+ * header says it must never do: assert something about the router that the mirror cannot see.
+ *
+ * Case-folded substring, matching `core/src/rules.ts#subjectSatisfies`. A blank term reads as no term
+ * for the same reason it does there — the CHECK forbids storing one, and this code is handed values
+ * the CHECK never saw.
+ */
+export function ruleSubjectHolds(rule: RuleDTO, subject: string): boolean {
+  const term = (rule.subjectContains ?? "").replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, "");
+  if (term === "") return true;
+  return subject.toLowerCase().includes(term.toLowerCase());
+}
+
+/**
  * Attribute a set of messages. The rules are read ONCE for the whole set, not per message.
  *
  * A sender rule is preferred over a domain rule when both agree with the folder, because that
  * is the more specific TRUE statement to show a person — not because it reproduces the
  * router's precedence, which this module explicitly does not attempt.
+ *
+ * A rule carrying a SUBJECT TERM is only ever offered for a message whose subject satisfies it
+ * ({@link ruleSubjectHolds}) — the conjunction, checked per message rather than per sender, which is
+ * why the rules are filtered here and not once for the whole set.
  */
 export function attributeMessages(
   reader: EntityReader, messages: readonly EngineMessage[],
@@ -107,9 +131,17 @@ export function attributeMessages(
       return { message, attribution: { kind: "gate", suggestion: row?.ai ?? null } };
     }
     const hits = rules.filter(
-      (r) => r.destination === message.folder && ruleMatchesSender(r, message.from.address),
+      (r) => r.destination === message.folder
+        && ruleMatchesSender(r, message.from.address)
+        && ruleSubjectHolds(r, message.subject ?? ""),
     );
-    const rule = hits.find((r) => r.kind === "sender") ?? hits[0];
+    // Among the rules that hold, the one carrying a subject term is the more specific TRUE statement
+    // — and it is also the one the router would pick (`compareRules`' specificity clause), so
+    // preferring it costs nothing this module refuses to do: it is still only ever reporting a rule
+    // that AGREES with where the message already is.
+    const rule = hits.find((r) => r.kind === "sender" && (r.subjectContains ?? "").trim() !== "")
+      ?? hits.find((r) => r.kind === "sender")
+      ?? hits[0];
     return { message, attribution: rule ? { kind: "rule", rule } : { kind: "arrival" } };
   });
 }

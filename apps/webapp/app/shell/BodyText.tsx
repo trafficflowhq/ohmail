@@ -17,10 +17,27 @@
  * lines that say who wrote what — arrived with its `>` markers rendered as literal characters and
  * every level of quoting flattened into the same tone, so it was impossible to tell the writer's
  * new words from the four replies underneath them. {@link classifyLine} reads the quote depth off
- * each line, {@link toBlocks} groups the lines a depth at a time, and each quoted block is drawn
- * with a quiet left rule, a step of indent and a more muted tone per level, with the attribution
- * lines set apart as separators. The sender's own line breaks INSIDE a block still survive, under
+ * each line, {@link toBlocks} groups the lines a depth at a time, {@link toTree} folds the blocks
+ * into one container per quoted run with deeper runs nested inside, and each level is drawn with
+ * a single quiet left rule and a more muted tone, with the attribution lines set apart as
+ * separators. The sender's own line breaks INSIDE a block still survive, under
  * `white-space: pre-line` — the same paragraph-rhythm rule as before, unchanged.
+ *
+ * ── AND THEN THE BARS FRAGMENTED THE THREAD THEY WERE DRAWN TO JOIN ─────────────────────
+ *
+ * The first cut of the quote rendering wrapped EVERY BLOCK in its own `.msg-quote`. A quoted
+ * message is many blocks — a `>`-blank line between two quoted paragraphs ends one block and
+ * starts the next — so a coherent quoted mail rendered as a picket fence: one short bar per
+ * paragraph with a gap between each, and a depth change opened yet another sibling bar at
+ * another indent. An Exchange reply chain three hops deep read as dozens of disconnected
+ * bar-marked chunks — the reported defect, verbatim.
+ *
+ * So blocks are folded into a TREE before they are rendered: contiguous quoted material shares
+ * one `.msg-quote` per level, a deeper run nests inside the shallower one, and only depth-0
+ * prose — an inline reply — closes the containers. One rule per level, running unbroken down
+ * everything quoted at that level, is how every native mail client draws a chain. The nesting
+ * is real DOM nesting now, which is why {@link MAX_QUOTE_DEPTH} exists: a pathological
+ * `">".repeat(50000)` line must clamp to a handful of wrappers, not build fifty thousand.
  *
  * ── WHY THIS IS A RENDER-TIME COMPONENT AND NOT AN INGEST STEP ────────────────────────────
  *
@@ -132,6 +149,47 @@ function toBlocks(lines: ClassifiedLine[]): Block[] {
 }
 
 /**
+ * How deep the RENDERED nesting may go. Content deeper than this renders inside the deepest
+ * container — the words always survive; only the count of wrappers is clamped. Real mail
+ * rarely quotes past three or four levels, so the clamp is invisible on anything a person
+ * wrote and load-bearing on `">".repeat(50000)`, which would otherwise become fifty thousand
+ * nested elements built synchronously on the thread that paints the app.
+ */
+const MAX_QUOTE_DEPTH = 6;
+
+/** One paragraph (or attribution line) of the rendered body. */
+interface ParagraphNode { kind: "para"; block: Block }
+/** One quote container: everything quoted at `depth` within one contiguous quoted run. */
+interface QuoteNode { kind: "quote"; depth: number; children: BodyNode[] }
+type BodyNode = ParagraphNode | QuoteNode;
+/**
+ * Fold the flat block list into the tree the reader actually means.
+ *
+ * A stack of open containers tracks the current quote depth. Each block either continues the
+ * container at its depth (a second quoted paragraph joins the FIRST one's container — this is
+ * the merge that ends the one-bar-per-paragraph fragmentation), opens deeper containers (a
+ * reply hop nests inside the history it quotes), or closes containers (the depth dropped, or
+ * depth-0 prose — an inline reply — ended the quoted run altogether). Blank lines never reach
+ * this function; they end BLOCKS in `toBlocks`, and deliberately not containers, because a
+ * blank quoted line separates a quoted message's paragraphs, not the message.
+ */
+function toTree(blocks: Block[]): BodyNode[] {
+  const top: BodyNode[] = [];
+  const stack: QuoteNode[] = [];
+  for (const block of blocks) {
+    const depth = Math.min(block.depth, MAX_QUOTE_DEPTH);
+    while (stack.length > depth) stack.pop();
+    while (stack.length < depth) {
+      const quote: QuoteNode = { kind: "quote", depth: stack.length + 1, children: [] };
+      (stack.length === 0 ? top : stack[stack.length - 1]!.children).push(quote);
+      stack.push(quote);
+    }
+    (depth === 0 ? top : stack[stack.length - 1]!.children).push({ kind: "para", block });
+  }
+  return top;
+}
+
+/**
  * A CANDIDATE, NOT A DECISION.
  *
  * This matches anything shaped like `scheme:rest`, INCLUDING `javascript:` and `data:`. That is
@@ -197,7 +255,7 @@ function anchorFor(candidate: string): { href: string; label: string } | null {
 }
 
 /** One paragraph's worth of text, with its safe URLs turned into anchors. */
-function linkify(block: string, keyBase: number): ReactNode[] {
+function linkify(block: string, keyBase: string): ReactNode[] {
   const out: ReactNode[] = [];
   let cursor = 0;
   let n = 0;
@@ -243,31 +301,32 @@ function linkify(block: string, keyBase: number): ReactNode[] {
  * its class (`.msg-body`, `.hm-body`), which are what the existing pane and screener
  * assertions select on, and what carries the surface's own type scale.
  */
+function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
+  return nodes.map((node, i) => {
+    const key = `${keyPrefix}${i}`;
+    if (node.kind === "quote") {
+      // One container per quoted run per level, so the left rule runs unbroken down the whole
+      // quoted message instead of restarting at every paragraph. `data-quote-depth` still
+      // carries the level for styling hooks and tests; the recursion is bounded by
+      // MAX_QUOTE_DEPTH, enforced where the tree is built.
+      return (
+        <div className="msg-quote" data-quote-depth={node.depth} key={key}>
+          {renderNodes(node.children, `${key}-`)}
+        </div>
+      );
+    }
+    const cls = node.block.attribution ? "msg-attribution" : "msg-p";
+    return (
+      <p className={cls} key={key}>
+        {linkify(node.block.text, key)}
+      </p>
+    );
+  });
+}
+
 export function BodyText({ text }: { text: string }) {
   // CRLF is what an IMAP body actually carries; normalise before splitting on lines, or a
   // blank line is `\r\n\r\n` and every paragraph boundary is missed.
   const lines = (text ?? "").replace(/\r\n?/g, "\n").split("\n").map(classifyLine);
-  const blocks = toBlocks(lines);
-
-  return (
-    <>
-      {blocks.map((block, i) => {
-        const cls = block.attribution ? "msg-attribution" : "msg-p";
-        const para = (
-          <p className={cls} key={block.depth === 0 ? i : undefined}>
-            {linkify(block.text, i)}
-          </p>
-        );
-        if (block.depth === 0) return para;
-        // A quoted block: a quiet left rule, a step of indent and a more muted tone, keyed by
-        // depth. NOT nested wrappers — sibling blocks with depth-scaled indent read as nesting
-        // and stay flat in the DOM, which is what keeps a pathological ">>>>>" chain cheap.
-        return (
-          <div className="msg-quote" data-quote-depth={block.depth} key={i}>
-            {para}
-          </div>
-        );
-      })}
-    </>
-  );
+  return <>{renderNodes(toTree(toBlocks(lines)), "b")}</>;
 }
