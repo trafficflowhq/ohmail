@@ -92,6 +92,8 @@ export {
 // Selectors.
 export {
   bodyOf,
+  isOwnSent,
+  isResurfaced,
   messageDisplayTime,
   messagesIn,
   ohboxView,
@@ -105,6 +107,8 @@ export {
   triagePiles,
   tagsCrossView,
   threadOf,
+  threadParticipants,
+  THREAD_PARTICIPANTS_MAX,
   unreadCounts,
   type EngineCounts,
   type OhboxView,
