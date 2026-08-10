@@ -51,7 +51,7 @@ export class ApiError extends Error {
 export const OFFLINE_CODE = "network_unreachable";
 
 interface RequestOptions {
-    method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+    method?: "GET" | "POST" | "PATCH" | "DELETE";
     body?: unknown;
     headers?: Record<string, string>;
     signal?: AbortSignal;
@@ -423,21 +423,6 @@ export const consent: {
             observed: number;
         }>;
     }>;
-} = absent;
-
-export interface AwayResponderWire {
-    enabled: boolean;
-    subject: string | null;
-    body: string | null;
-    startsAt: string | null;
-    endsAt: string | null;
-    audience: "screened_in" | "everyone";
-    updatedAt: string | null;
-}
-
-export const away: {
-    state: () => Promise<AwayResponderWire>;
-    save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderWire>;
 } = absent;
 
 export const account: {

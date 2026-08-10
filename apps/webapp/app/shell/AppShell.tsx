@@ -87,7 +87,6 @@ import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
 import { useComposeAutosave } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
-import { AwayResponderRow } from "./AwayResponderRow";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
   composePlan,
@@ -3904,21 +3903,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                     setBlockRemoteImages={consent.setBlockRemoteImages}
                   />
                 )}
-                /* THE AWAY RESPONDER. Gated on "is there a server to ask" and NOT on
-                   `consent.known`, unlike the two rows above: it holds no consent state and loads
-                   its own row, so it has nothing to flash the wrong way round. But the server gate
-                   is required, and for a stronger reason than the auto-suggest row's — the SENDER is
-                   a pass in the hosted worker, so a standalone install drawing this control would
-                   store a configuration that answers nobody, which is the built-and-unreachable
-                   shape this slice exists to remove, reintroduced one layer up.
-
-                   Read off `autoOptIn.supported`, not by calling `apiConfigured()` here, for the
-                   reason the block above gives at length: one answer to that question in this file,
-                   and this shared shell does not import the Cloud API client. The row itself does —
-                   it is a separate module, like `consent-state`, and it is the mirror's api-client
-                   stand-in that makes that safe. Withheld from the demo for the reason every
-                   injected pane is: there is no mailbox to answer mail from. */
-                awaySection={demo || !autoOptIn.supported ? undefined : <AwayResponderRow />}
                 billingSection={demo ? undefined : billingSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has
                    something true to say here and no API to say it with. The live body comes

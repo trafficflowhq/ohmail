@@ -1,9 +1,5 @@
 /**
- * THE MAIL-DOMAIN SCHEMA — the 43 tables a mailbox needs, and the only half that ships.
- *
- * (The number said 41 while the partition said 42, which is what a count kept in prose does. The
- * authority is the schema-split test, which asserts the count as a literal against the
- * declarations in this file; this line is a summary of that and must follow it.)
+ * THE MAIL-DOMAIN SCHEMA — the 41 tables a mailbox needs, and the only half that ships.
  *
  * ── WHY THIS FILE IS SEPARATE FROM ITS CLOUD SIBLING ──────────────────────────────────────
  *
@@ -681,34 +677,6 @@ export const rules = pgTable("rules", {
    * `evaluateRules`.
    */
   subjectContains: text("subject_contains"),
-
-  /* ── mail 0052 — THE OTHER HALF OF THE SAME REQUIREMENT: THE MESSAGE TEXT ───────
-   *
-   * `subject_contains` above splits one sender by subject. Some senders defeat that by writing
-   * the SAME subject on every message — "Notification", "Alert" — and putting the distinguishing
-   * text in the body. This column is the same conjunction one field deeper: *from this address
-   * AND with this in the message text*.
-   *
-   * Everything the 0050 comment says holds here unchanged, deliberately: NULL is the resting
-   * state, there is no backfill and can never be one, `core/src/rules.ts#matches` reads it as an
-   * EXTRA term above the kind switch so a present term can only make a rule fire LESS often, and
-   * the CHECK (`rules_body_contains_nonempty`) makes NULL the only representation of "no term".
-   *
-   * ── WHAT IT IS MATCHED AGAINST, WHICH IS THE ONE NEW DECISION ──────────────────
-   *
-   * The message's canonical PLAIN TEXT: `NormalizedMessage.textBody` on arrival, which is the
-   * byte-identical string `message_bodies.text` stores (mailparser's text part, or its html→text
-   * derivation for html-only mail). The retroactive passes read that stored column back, so
-   * arrival and retro consult the SAME haystack. A message whose body is not on disk reads as
-   * `""`, which satisfies no term — the fail-closed direction for a narrowing conjunct: the rule
-   * declines to fire and the mail stays where it is.
-   *
-   * In the order, a body term counts exactly as a subject term does — below `kind`, above
-   * `provenance` — with the subject clause ranked first, so a rule carrying both terms outranks
-   * subject-only, which outranks body-only, which outranks bare. Same 200-char ceiling: a term
-   * is a needle, and the haystack being bigger is not a licence to store a bigger needle.
-   */
-  bodyContains: text("body_contains"),
 }, (t) => ({
   /**
    * The owed-work probe, run once per account per worker cycle. Without it that is a full scan
@@ -1131,74 +1099,8 @@ export const awayResponders = pgTable("away_responders", {
   body: text("body"),
   startsAt: timestamp("starts_at", { withTimezone: true }),
   endsAt: timestamp("ends_at", { withTimezone: true }),
-  /**
-   * WHO GETS AN AUTOMATIC REPLY — `'screened_in'` (the default) or `'everyone'` (mail 0051).
-   *
-   * `screened_in` means only a sender the account has already let past the Screener: a message
-   * still HELD in `ohmail/Screener` gets no reply. That is the default because the Screener is a
-   * consent gate in both directions — a stranger who has not been admitted has not been told
-   * anything about this account, and an away reply tells them somebody is travelling and that the
-   * address is live and read by a person. `everyone` is the explicit opposite choice, and it is
-   * only ever reachable by someone changing this field.
-   *
-   * NOT NULL with a default rather than a nullable column, because unlike every `account_settings`
-   * flag this one is not an on/off — an absent value would have to mean one of the two members, and
-   * a reader that guessed differently from the writer would widen an audience nobody widened. The
-   * CHECK (a closed two-member enum) lives in the migration.
-   */
-  audience: text("audience").notNull().default("screened_in"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ uqAccount: unique().on(t.accountId) }));   // one row per account ⇒ PUT upserts
-
-/**
- * THE AT-MOST-ONCE RECORD FOR AUTOMATIC REPLIES (mail 0051) — one row per
- * `(account, sender, enablement episode)`, and the UNIQUE is the guard rather than a diagnostic.
- *
- * ── WHAT AN "EPISODE" IS, AND WHY IT IS `responder_updated_at` ────────────────────────────────
- *
- * The requirement is at most one automatic reply per sender per enablement. A boolean "replied"
- * flag cannot express that: somebody comes back, turns the responder off, travels again next
- * month, and every correspondent from the first trip is permanently silenced. So the episode key is
- * the responder row's own `updated_at` — the instant of the PUT that produced the current
- * configuration. Turning the responder on again is a PUT, which moves `updated_at`, which starts a
- * new episode, which lets each sender be answered once more.
- *
- * The consequence to know about: ANY edit is a new episode, including a typo fix to the body while
- * away. Somebody who corrects their message mid-trip may answer a correspondent from earlier in
- * that trip a second time. That is the deliberate trade — the alternative keys (a separate
- * `enabled_at`, a nullable episode id) all reintroduce the permanent-silence failure the moment the
- * two columns disagree, and being answered twice is recoverable where never being answered is not.
- *
- * ── THE ROW IS WRITTEN BEFORE THE SEND, NEVER AFTER ─────────────────────────────────────────
- *
- * SMTP is not transactional, so the choice is at-most-once or at-least-once and there is no third
- * option. Claiming first makes a crash between the claim and the send cost ONE unsent reply;
- * claiming after would make it cost a duplicate reply to a stranger, forever, every time the pass
- * re-ran. `INSERT … ON CONFLICT DO NOTHING` returning zero rows IS the "somebody already answered
- * this sender" branch — there is no read-then-write window for two workers to race through.
- *
- * `sender` is the lowercased envelope author, never a display name. There is no FK to `messages`:
- * the record has to outlive the message it was triggered by (an expunge must not un-answer a
- * sender), and `message_id` is carried only as evidence, nullable, with no reference.
- */
-export const awayResponderSent = pgTable("away_responder_sent", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  accountId: uuid("account_id").notNull(),
-  sender: text("sender").notNull(),
-  responderUpdatedAt: timestamp("responder_updated_at", { withTimezone: true }).notNull(),
-  /** The message that triggered it, as evidence. Nullable, NO foreign key — see the header. */
-  messageId: uuid("message_id"),
-  /** The minted `<uuid@domain>` of the reply we sent, so a Sent-folder copy is attributable. */
-  mintedMessageId: text("minted_message_id"),
-  sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({
-  // THE GUARD. Not an index for speed — the ON CONFLICT target that makes "reply once" a
-  // property of the schema instead of a property of the pass's control flow. Named explicitly
-  // (rather than letting drizzle derive one) because the migration creates it by name.
-  uqEpisode: uniqueIndex("away_responder_sent_episode_uq")
-    .on(t.accountId, t.sender, t.responderUpdatedAt),
-  ixAccount: index("away_responder_sent_account_idx").on(t.accountId),
-}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Migration 0011 — attachment METADATA only. The BLOB bytes are NEVER
@@ -1692,29 +1594,6 @@ export const accountSettings = pgTable("account_settings", {
    * separately and overrides the proxy for them; this flag governs pictures only.
    */
   blockRemoteImagesAt: timestamp("block_remote_images_at", { withTimezone: true }),
-  /**
-   * THE INTERFACE LANGUAGE — `'en' | 'de'`, or NULL for "nobody has chosen" (mail 0053). The CHECK
-   * (enum, closed) lives in the migration.
-   *
-   * The only column on this row that is neither a timestamp nor a switch, and the only one whose
-   * value a CLIENT resolves rather than a service. What reads it: `GET /consent` sends it, and the
-   * client adopts it at boot — which is the whole feature, because "my account is in German" has to
-   * hold on a machine that has never seen this account.
-   *
-   * **NULL is not `'en'`, and collapsing the two would break the one guard that matters.** A device
-   * remembers its own language in `localStorage` (the standalone install has nothing else, and the
-   * sign-in screen has no account yet). The rule is: an account preference WINS over the device's,
-   * and an account with no preference LEAVES THE DEVICE ALONE. Storing `'en'` for everyone who never
-   * opened the selector would make every boot on a German-set browser silently reset to English —
-   * so the default is never stored, exactly as `dormancyDays` is not, and `setLocale` maps a request
-   * for the default back to NULL.
-   *
-   * A FAILED read is not "English": `consent-state.ts` leaves the field null, which means "keep the
-   * device's language". That is the safe direction here in the same way MANUAL is for
-   * `blockRemoteImagesAt` — the cost of guessing wrong is an interface somebody cannot read, and the
-   * device's own remembered choice is a better guess than the product default.
-   */
-  locale: text("locale"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -1726,5 +1605,5 @@ export const accountSettings = pgTable("account_settings", {
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const mailSchema = {
-  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, accountSettings,
+  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, accountSettings,
 };

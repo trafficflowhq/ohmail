@@ -627,49 +627,9 @@ function isKnownAuthor(author: string | null, knownSenders: ReadonlySet<string>)
  * Reads branch below can claim it — the same Receipts-before-Reads ordering the older signals had.
  */
 function machineSent(msg: NormalizedMessage): boolean {
-  return autoReplySuppression(msg.headers, msg.from.address) !== null;
-}
-
-/**
- * WHY AN AUTOMATIC REPLY MUST NOT BE SENT TO THIS MESSAGE'S AUTHOR — or `null` when nothing in the
- * headers or the address says so. The header/address half of the away responder's suppression set.
- *
- * ── IT IS `machineSent` UNDER A NAME THAT SAYS WHAT IT DECIDES ────────────────────────────────
- *
- * The three tests are exactly the three {@link machineSent} has always run, in the same order, and
- * `machineSent` is now a call to this — so there is ONE implementation, not a copy in the worker.
- * That matters more here than the usual tidiness argument: an auto-reply sent to a mailing list is
- * delivered to every subscriber, and an auto-reply sent to another responder is an unbounded loop
- * between two mail systems. A second, drifting encoding of "this was generated, not typed" is
- * precisely how one of those ships.
- *
- * The reason it returns a REASON rather than a boolean is that the caller has to be able to report
- * which guard held — a suppression nobody can attribute is indistinguishable from a pass that never
- * ran, and the away responder's whole safety claim is a set of guards each of which has been watched
- * to fire.
- *
- *  · `list_mail` — {@link isBulkSend}: `List-Unsubscribe`, `List-Unsubscribe-Post`, `List-Id`,
- *    `Feedback-ID`, or `Precedence: bulk`. ANY one is enough. Broader than RFC 3834's minimum on
- *    purpose: replying to a list is the loudest possible failure, and it is public.
- *  · `auto_submitted` — RFC 3834's own loop stop. `Auto-Submitted: no` explicitly means "a human
- *    wrote this" and therefore does NOT count, which is why presence alone is the wrong test.
- *  · `service_sender` — {@link isServiceSender}: `no-reply@`, `bounce@`, `postmaster@` and the rest.
- *    A reply to one of these reaches nobody at best and a bounce loop at worst.
- *
- * This function knows nothing about a database. The suppressions that need one — the account's own
- * addresses, sensitivity flags, the at-most-once record — are the caller's, and are applied there.
- */
-export type AutoReplySuppression = "list_mail" | "auto_submitted" | "service_sender";
-
-export function autoReplySuppression(
-  headers: Readonly<Record<string, unknown>>, fromAddress: string,
-): AutoReplySuppression | null {
-  if (isBulkSend(headers)) return "list_mail";
-  if (headerValues(headers, "auto-submitted")?.some((v) => !/^no$/i.test(v.trim())) ?? false) {
-    return "auto_submitted";
-  }
-  if (isServiceSender(fromAddress)) return "service_sender";
-  return null;
+  if (isBulkSend(msg.headers)) return true;
+  if (headerValues(msg.headers, "auto-submitted")?.some((v) => !/^no$/i.test(v.trim())) ?? false) return true;
+  return isServiceSender(msg.from.address);
 }
 
 /**

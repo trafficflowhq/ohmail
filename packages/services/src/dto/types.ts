@@ -522,12 +522,6 @@ export interface AwayResponderDTO {
   body: string | null;
   startsAt: ISODateTime | null;
   endsAt: ISODateTime | null;
-  /**
-   * Who gets an automatic reply. `'screened_in'` — the default, and what the default-disabled shape
-   * reports — restricts it to senders already past the Screener; `'everyone'` includes a
-   * first-contact stranger still held there. Never null: see the column's note in `schema-mail.ts`.
-   */
-  audience: "screened_in" | "everyone";
   updatedAt: ISODateTime | null;  // null when never configured (default disabled shape)
 }
 

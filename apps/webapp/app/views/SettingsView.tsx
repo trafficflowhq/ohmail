@@ -369,7 +369,6 @@ export function SettingsView({
   screeningSection,
   dormancySection,
   remoteImagesSection,
-  awaySection,
   desktopSection,
 }: {
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
@@ -538,23 +537,6 @@ export function SettingsView({
    */
   remoteImagesSection?: ReactNode;
   /**
-   * THE AWAY RESPONDER, injected — and the only injected node whose feature SENDS MAIL.
-   *
-   * The same seam as {@link autoSuggestSection}: it reads and writes `GET/PUT /away-responder`
-   * through `app/api-client`, which this shared, desktop-mirrored file may not name.
-   *
-   * Absent is the RIGHT default here in a way it is not for the reading preferences above, and the
-   * reason is the product rather than the plumbing: the responder is Cloud-only (the sender is a
-   * pass in the hosted worker), so a standalone install has nothing that could send a reply. A
-   * control drawn there would store a configuration and answer nobody — which is the exact
-   * built-and-unreachable shape this whole slice exists to remove, reintroduced one layer up.
-   *
-   * It sits in the SCREENER pane, last, and that is not filing by convenience: its one real
-   * decision is whether a sender the Screener is still holding gets answered, so it belongs beside
-   * the posture that decides who is held.
-   */
-  awaySection?: ReactNode;
-  /**
    * WHICH DOOR THIS INSTALL CAME IN BY — the desktop app's own pane, injected.
    *
    * The mirror image of {@link accountSection}. That one is absent on the desktop because a
@@ -585,9 +567,7 @@ export function SettingsView({
   // Screener, Rules, Tags) -> account administration (Subscription, Security, Account) -> facts
   // (About). Each group moves from what the app IS to the user, through what it DOES with their
   // mail, to what governs the account, and ends on facts that are not controls at all.
-  const screenerPane = Boolean(
-    screeningSection || dormancySection || autoSuggestSection || awaySection || seedSection,
-  );
+  const screenerPane = Boolean(screeningSection || dormancySection || autoSuggestSection || seedSection);
   const panes: Array<[PaneId, string]> = [
     ["general", t("general")],
     ["notifications", t("notifications")],
@@ -795,10 +775,6 @@ export function SettingsView({
               {screeningSection}
               {dormancySection}
               {autoSuggestSection}
-              {/* The away responder, after the controls about what the Screener SHOWS and after the
-                  one that can spend, because it is the only one that SENDS. Its own decision is
-                  about the senders the posture above is holding. */}
-              {awaySection}
               {seedSection ? (
                 <>
                   <SettingsSubhead>{seedSection.label}</SettingsSubhead>

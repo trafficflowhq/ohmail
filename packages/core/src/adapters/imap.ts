@@ -2001,10 +2001,6 @@ export function outboundToMail(msg: OutboundMessage, messageId: string): Mail.Op
     messageId,
     inReplyTo: msg.inReplyTo,
     references: msg.references,
-    // Spread rather than assigned, so a message with no extra headers produces byte-identical
-    // options to the ones this function produced before the field existed — `headers: undefined`
-    // and an absent key are the same to MailComposer, but not to a test comparing the object.
-    ...(msg.headers !== undefined ? { headers: { ...msg.headers } } : {}),
     // ── ATTACHMENTS, zero at rest ────────────────────────────────────────────────────────
     //
     // Mapped onto nodemailer's own `attachments` so the SAME compiled message is what
