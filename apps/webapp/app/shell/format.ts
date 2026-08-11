@@ -72,11 +72,16 @@ function monthShort(d: Date): string {
  *
  * ── WHICH OF THESE SIX ARE TRANSLATED IS A PRODUCT DECISION, NOT A MECHANICAL ONE ──────────────
  *
- * `Ohbox` and `Screener` keep their names in every language: they are what this product IS — a
- * coined word and the signature feature — and a reader who is told about "the Screener" in a review,
- * a changelog or a support thread has to find that word in their own interface. `Reads`, `Receipts`,
- * `Screened` and `Spam` are plain function, and German has ordinary words for all four. The
- * catalogue is where each choice lives, and `de.json`'s glossary header records it.
+ * `Ohbox`, `Screener`, `Spam` and `Reads` keep their names in every language. The first two are what
+ * this product IS — a coined word and the signature feature — and a reader who is told about "the
+ * Screener" in a review, a changelog or a support thread has to find that word in their own
+ * interface. `Reads` is here for a different reason and it is the one that changed: German has no
+ * plain one-word noun for it (every candidate is either literary or a coinage), and the pile is a
+ * REAL FOLDER named `Reads` on the reader's own IMAP server — a German name in the client would not
+ * match what they see in every other mail app. `Receipts` → `Belege` and `Screened` → `Aussortiert`
+ * translate, because those are ordinary German words for exactly what the piles hold.
+ *
+ * The catalogue is where each choice lives; `test/locale-catalog.test.ts` is where it is enforced.
  */
 const PLACE_EN = {
   ohbox: "Ohbox",
