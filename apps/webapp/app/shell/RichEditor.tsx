@@ -10,29 +10,38 @@ import {
 } from "./rich-text";
 
 /**
- * THE COMPOSE AND REPLY EDITOR — eight things it can do, and a list of what it refuses.
+ * THE COMPOSE AND REPLY EDITOR — eight controls, and a list of what they refuse.
  *
  * ── THE GRAMMAR IS THE PRODUCT DECISION ──────────────────────────────────────────────────
  *
- * Bold, italic, strike, link, bullet list, numbered list, block quote, inline code. No fonts,
- * no colours, no sizes, no alignment, no tables, no images. That is not a first cut waiting to
- * be extended — it is the same list the server's outbound-HTML sanitiser will accept, and the
- * two are one decision written in two places because they are enforced at two different trust
- * boundaries. A control offered here that the server strips would be a button that silently
- * does nothing, which is worse than no button.
+ * Bold, italic, strike, link, bullet list, numbered list, block quote, and code — an inline
+ * mark for a selection inside ONE line, a code BLOCK for one that spans lines (see
+ * {@link applyCode}). No fonts, no colours, no sizes, no alignment, no tables, no images. That
+ * is not a first cut waiting to be extended — it is the same list the server's outbound-HTML
+ * sanitiser will accept, and the two are one decision written in two places because they are
+ * enforced at two different trust boundaries. A control offered here that the server strips
+ * would be a button that silently does nothing, which is worse than no button.
  *
- * The refusals are stated as configuration rather than left to the defaults. `StarterKit`
- * ships headings, horizontal rules and code BLOCKS, and every one of them would round-trip
- * through the editor, look right on screen, and then be discarded by the sanitizer on the way
- * out. Switching them off here is what makes the editor's own behaviour honest.
+ * THE INVARIANT RUNS BOTH WAYS, AND THAT IS WHAT ADMITTED THE CODE BLOCK. `StarterKit`'s
+ * `codeBlock` was switched off here *because* `outbound-html.ts` had `code` in its allowlist
+ * and no `pre` — so the only honest way to offer it was to move both ends together: the node
+ * here, `pre` there, and the `<pre>` rendering in `htmlToPlainText` that keeps the two parts of
+ * a `multipart/alternative` saying the same thing. Either half alone is a defect: the node
+ * without the tag is a control whose output the server flattens into a run-on line, and the tag
+ * without the node is an allowlist entry nothing can produce.
+ *
+ * The remaining refusals are stated as configuration rather than left to the defaults.
+ * `StarterKit` ships headings and horizontal rules, and both would round-trip through the
+ * editor, look right on screen, and then be discarded by the sanitizer on the way out.
+ * Switching them off here is what makes the editor's own behaviour honest.
  *
  * ── MARKDOWN INPUT RULES COME FREE, AND THAT IS WHY THEY ARE HERE ────────────────────────
  *
- * `**bold**`, `- `, `1. `, `> ` and `` `code` `` are TipTap's own input rules, shipped with
- * the extensions above. They are the reason this editor needs almost no toolbar: somebody who
- * writes mail in Markdown never has to look at one, and somebody who does not can press the
- * buttons. Cmd/Ctrl+B and +I are likewise the extensions'; Cmd/Ctrl+K is ours, below, because
- * a link needs a destination and TipTap has no opinion about where that comes from.
+ * `**bold**`, `- `, `1. `, `> `, `` `code` `` and ```` ``` ```` are TipTap's own input rules,
+ * shipped with the extensions above. They are the reason this editor needs almost no toolbar:
+ * somebody who writes mail in Markdown never has to look at one, and somebody who does not can
+ * press the buttons. Cmd/Ctrl+B and +I are likewise the extensions'; Cmd/Ctrl+K is ours, below,
+ * because a link needs a destination and TipTap has no opinion about where that comes from.
  *
  * ── HOW IT TALKS TO THE SCRATCH BUFFERS ──────────────────────────────────────────────────
  *
@@ -84,8 +93,9 @@ const EnterAsHardBreak = Extension.create({
     return {
       Enter: () => {
         // Defer wherever Enter already means something: a list item (next item), a block quote
-        // (its exit behaviour), an inline code span or the (disabled, but belt-and-braces) code
-        // block. `false` falls through to the default keymap so `splitListItem` and the rest run.
+        // (its exit behaviour) and the code block, where Enter is a newline in the source and
+        // three of them in a row is how you leave. `false` falls through to the default keymap
+        // so `splitListItem`, `CodeBlock`'s own `exitOnTripleEnter` and the rest all run.
         if (
           this.editor.isActive("listItem") ||
           this.editor.isActive("blockquote") ||
@@ -112,11 +122,15 @@ const EXTENSIONS = [
     orderedList: {},
     listItem: {},
     blockquote: {},
+    // The block half of the Code control. Admitted in the same commit that put `pre` into
+    // `outbound-html.ts`'s allowlist and taught `htmlToPlainText` to render one — see the
+    // header. Its options are the shipped defaults: `exitOnTripleEnter` is how you leave a
+    // block from the keyboard, and `EnterAsHardBreak` defers to it.
+    codeBlock: {},
     // REFUSED, each because the sanitizer drops it on the way out and a control that
     // silently does nothing is worse than an absent one.
     heading: false,
     horizontalRule: false,
-    codeBlock: false,
     // `Link` is configured separately below; StarterKit's copy would win otherwise.
     link: false,
     // Underline has no plain-text rendering and no place in mail — it reads as a dead link.
@@ -375,10 +389,31 @@ export function RichEditor({
     className ?? "",
   ].filter(Boolean).join(" ");
 
+  /**
+   * `rte-body` — THE MIDDLE LINK OF THE CHAIN, AND THE REASON THE BOX HAD A DEAD ZONE.
+   *
+   * `EditorContent` renders a plain `<div>` of its own and appends ProseMirror's
+   * `contenteditable` INSIDE it (`@tiptap/react`, `PureEditorContent.render`). So the flex
+   * child of `.rte` is that div — not the surface — and it was unclassed: `.compose-editor
+   * .rte-surface{flex:1}` in `app.css` therefore named an element whose parent was not a flex
+   * container, which is a declaration that computes and does nothing. The surface stayed at its
+   * content height, the panel kept the rest, and a click below the first line landed on the
+   * wrapper rather than on anything editable — a 220px box that only took a click on the line
+   * of text in it. Reported as "the textbox can't be clicked fully, only the first text line".
+   *
+   * The fix is the chain, not a handler: `.rte` → `.rte-body` → `.rte-surface` are all flex
+   * columns that pass the height down, so the contenteditable genuinely fills its box. Once it
+   * does, nothing else is needed — a click inside a `contenteditable` is the browser's own
+   * caret placement, and ProseMirror maps it to the nearest document position, which for a
+   * click in the padding under the last line is the end of that line. A click-to-focus handler
+   * would have been the other option and it is the wrong one: it fights the browser for
+   * selection, breaks click-and-drag, and would have left the real defect — a one-line-tall
+   * surface inside a frame at least 220px tall — in place underneath it.
+   */
   return (
     <div className={cls}>
       <Toolbar editor={editor} editable={editable} />
-      <EditorContent editor={editor} onKeyDown={onEditorKeyDown} />
+      <EditorContent editor={editor} className="rte-body" onKeyDown={onEditorKeyDown} />
     </div>
   );
 }
@@ -417,7 +452,11 @@ function Toolbar({ editor, editable }: { editor: Editor | null; editable: boolea
       bold: e?.isActive("bold") ?? false,
       italic: e?.isActive("italic") ?? false,
       strike: e?.isActive("strike") ?? false,
-      code: e?.isActive("code") ?? false,
+      // ONE button, two constructs, so its pressed state has to answer for both — a caret
+      // sitting in a code block with an unlit Code button is a control that says the text is
+      // not code while the text is code, and pressing it would then be the only way to find
+      // out that it toggles the block off.
+      code: (e?.isActive("code") ?? false) || (e?.isActive("codeBlock") ?? false),
       link: e?.isActive("link") ?? false,
       bullet: e?.isActive("bulletList") ?? false,
       ordered: e?.isActive("orderedList") ?? false,
@@ -463,7 +502,7 @@ function Toolbar({ editor, editable }: { editor: Editor | null; editable: boolea
       {btn("bold", active.bold, () => editor.chain().focus().toggleBold().run())}
       {btn("italic", active.italic, () => editor.chain().focus().toggleItalic().run())}
       {btn("strike", active.strike, () => editor.chain().focus().toggleStrike().run())}
-      {btn("code", active.code, () => editor.chain().focus().toggleCode().run())}
+      {btn("code", active.code, () => applyCode(editor))}
       {btn("link", active.link, () => promptForLink(editor, t("linkPrompt")))}
       {btn("bullet", active.bullet, () => editor.chain().focus().toggleBulletList().run())}
       {btn("ordered", active.ordered, () => editor.chain().focus().toggleOrderedList().run())}
@@ -477,6 +516,95 @@ const TOOLBAR_GLYPHS: Record<string, string> = {
   bold: "B", italic: "I", strike: "S", code: "‹›",
   link: "↗", bullet: "•", ordered: "1.", quote: "❝",
 };
+
+/**
+ * DOES THE SELECTION COVER MORE THAN ONE LINE?
+ *
+ * TWO WAYS IT CAN, and reading only the first is the bug this predicate exists to close. The
+ * obvious one is a selection touching more than one block — two paragraphs, two list items. The
+ * one that actually bit is a selection inside a SINGLE paragraph that contains hard breaks,
+ * which is what almost every multi-line message here is: `EnterAsHardBreak` makes Enter a `<br>`
+ * rather than a paragraph split, so "five lines pasted into a reply" is one `<p>` with four
+ * `<br>`s in it. A predicate that only compared the two ends' blocks would call that one line
+ * and hand it to the inline mark, which is the reported defect exactly.
+ *
+ * COUNTED BY WALKING, not by comparing `$from.sameParent($to)`, and the difference is not
+ * academic: under an AllSelection both ends resolve to the DOCUMENT, so `sameParent` is true
+ * across a whole three-paragraph message and Select-All + Code would have kept the bug in the
+ * one case people reach for first.
+ *
+ * `nodesBetween` visits a node at `p` only while it overlaps `[from, to)`, so a break sitting
+ * immediately after the selection is not counted — selecting exactly one line of a multi-line
+ * paragraph is a one-line selection, which is the answer a person expects.
+ */
+function selectionCoversLines(editor: Editor): boolean {
+  const { doc, selection } = editor.state;
+  if (selection.empty) return false;
+  let blocks = 0;
+  let broken = false;
+  doc.nodesBetween(selection.from, selection.to, (node) => {
+    if (node.isTextblock) blocks += 1;
+    if (node.type.name === "hardBreak") broken = true;
+  });
+  return blocks > 1 || broken;
+}
+
+/**
+ * THE CODE BUTTON — one control, and which of the two code constructs it means.
+ *
+ * ── THE DEFECT ───────────────────────────────────────────────────────────────────────────
+ *
+ * It used to run `toggleCode()` unconditionally, and `code` is an INLINE MARK. A mark applies
+ * to text runs, and a multi-line selection is several text runs with structure between them —
+ * so marking it produced a separate shaded box per line, nothing at all on the blank ones (a
+ * blank line has no text to mark), and the paragraph margins or line breaks showing through
+ * between them as gaps. Reported as "adding a code format applies it… with spaces in between,
+ * only for lines that have text", which is an exact description of what an inline mark does to
+ * a block of code. There was no way to ask for the thing that was actually wanted, because
+ * `codeBlock` was switched off.
+ *
+ * ── THE RULE ─────────────────────────────────────────────────────────────────────────────
+ *
+ * A selection inside one line is inline code — `filename.txt` in a sentence, which is what the
+ * mark is for. A selection covering more than one line is ONE code block. Nothing else changes
+ * meaning with the selection, so this is the only command that has to ask.
+ *
+ * ── WHY THE BLOCK IS BUILT FROM TEXT RATHER THAN BY `setCodeBlock()` ─────────────────────
+ *
+ * `setCodeBlock` is `setBlockType`, which retypes each textblock it finds — so a selection over
+ * three paragraphs gives THREE `<pre>` elements, one per paragraph, and the gaps the user
+ * complained about come back in a different costume. Replacing the range with a single node
+ * built from `textBetween(from, to, "\n", "\n")` gives one block for any selection, and it is
+ * also the only form that is exact about the hard-break case: the same `"\n"` stands for a
+ * block boundary and for a `<br>`, which is precisely the equivalence the rest of this file
+ * (and `htmlToPlainText`) already keeps. Marks inside the selection are dropped, which is not a
+ * loss but the node's own rule — `codeBlock` declares `marks: ""`, and bold inside a code block
+ * is not a thing a mail client would render anyway.
+ */
+function applyCode(editor: Editor): void {
+  // Already in a block: the button is a toggle. `toggleCodeBlock` lifts it back to a paragraph
+  // and turns the block's newlines back into hard breaks (`HardBreak` is the schema's
+  // `linebreakReplacement`), so the round trip loses no line the author typed.
+  if (editor.isActive("codeBlock")) {
+    editor.chain().focus().toggleCodeBlock().run();
+    return;
+  }
+  const { from, to } = editor.state.selection;
+  const text = selectionCoversLines(editor)
+    ? editor.state.doc.textBetween(from, to, "\n", "\n")
+    : "";
+  // Whitespace-only, or one line, or no selection at all — the inline mark, including the
+  // empty-selection case where it sets a stored mark the next characters typed will carry.
+  // Guarded on the text and not only on the line count because ProseMirror refuses an empty
+  // text node, so a selection of two blank lines must not become a code block of nothing.
+  if (text.trim() === "") {
+    editor.chain().focus().toggleCode().run();
+    return;
+  }
+  editor.chain().focus()
+    .insertContentAt({ from, to }, { type: "codeBlock", content: [{ type: "text", text }] })
+    .run();
+}
 
 /**
  * Ask for a link target and set it, or clear the link when the answer is empty.

@@ -21,9 +21,9 @@ import { Parser } from "htmlparser2";
  *
  * ── THE GRAMMAR IS DELIBERATELY SMALL, AND SMALLNESS IS THE FEATURE ──────────────────────
  *
- * Bold, italic, strike, links, ordered and bullet lists, block quotes and inline code. No
- * images, no tables, no styles, no classes, no fonts and no colours. Two consequences worth
- * stating because they are load-bearing rather than incidental:
+ * Bold, italic, strike, links, ordered and bullet lists, block quotes, inline code and code
+ * blocks. No images, no tables, no styles, no classes, no fonts and no colours. Two consequences
+ * worth stating because they are load-bearing rather than incidental:
  *
  *   · There is no `img`, so there is no way for a composed message to carry an inline `data:`
  *     payload. That is the mechanism behind the 2026-08-01 storage outage, arriving from the
@@ -39,6 +39,12 @@ import { Parser } from "htmlparser2";
  * undefined selects them, silently. Every field this module cares about is therefore stated,
  * including the ones whose value equals the default, so that a reader can see the whole policy
  * in one place and a test can mutate any single line of it and watch a fixture go red.
+ *
+ * FROZEN IS NOT THE SAME AS FIXED. The list changes when the editor's grammar changes, and only
+ * then, and only in the same commit: `pre` is here because `RichEditor.tsx` now offers a code
+ * block, and it arrived together with the `<pre>` case in {@link htmlToPlainText} below. An
+ * entry added on its own would widen what a hostile client may post for no gain, and an editor
+ * node added on its own would be a control whose output this function flattens.
  */
 
 /**
@@ -71,7 +77,10 @@ const ALLOWED_TAGS = [
   "a",
   "ul", "ol", "li",
   "blockquote",
-  "code",
+  // `code` is the inline mark; `pre` is the block, and the editor emits the pair as
+  // `<pre><code>…</code></pre>`. `pre` alone would still be admitted from a paste, and
+  // `htmlToPlainText` renders it the same way either way.
+  "code", "pre",
 ] as const;
 
 /**
@@ -143,7 +152,14 @@ export function sanitizeOutboundHtml(html: string): string {
   return sanitizeHtml(html, POLICY);
 }
 
-/** Block-level tags: each one starts on a fresh line in the text rendering. */
+/**
+ * Block-level tags: each one starts on a fresh line in the text rendering.
+ *
+ * `pre` is deliberately NOT here. It is a block, but the generic path flushes a line and then
+ * lets {@link htmlToPlainText}'s whitespace collapsing run over the content — which is exactly
+ * the one thing a code block may not survive. It gets its own branch, before this set is
+ * consulted.
+ */
 const BLOCKS = new Set(["p", "ul", "ol", "li", "blockquote"]);
 
 /**
@@ -151,8 +167,12 @@ const BLOCKS = new Set(["p", "ul", "ol", "li", "blockquote"]);
  *
  * ── WHY THIS IS HAND-WRITTEN AND WHY THAT IS NOT THE USUAL MISTAKE ───────────────────────
  *
- * It runs on the OUTPUT of {@link sanitizeOutboundHtml}, over a grammar of thirteen tags this
- * module defines. It is not a general html-to-text converter and must never be used as one: its
+ * It runs on the OUTPUT of {@link sanitizeOutboundHtml}, over exactly the tags {@link
+ * ALLOWED_TAGS} names. The count is deliberately NOT restated here: this line used to say "a
+ * grammar of thirteen tags", and `git log -L` on the literal shows it has one commit in its
+ * history — so the list was fifteen entries long on the day that sentence was written, and a
+ * restated number is a claim that is wrong the moment it is copied and that nothing can check.
+ * It is not a general html-to-text converter and must never be used as one: its
  * input is already known-safe and known-small, and its output is `text/plain`, so its worst
  * possible failure is ugly text rather than injection. What it is NOT is a hand-written PARSER —
  * walking markup with regular expressions is how ugly text becomes wrong text — so the tags come
@@ -173,6 +193,13 @@ const BLOCKS = new Set(["p", "ul", "ol", "li", "blockquote"]);
  *   · Emphasis, strike and inline code render as their text with no markers. Inventing `**` or
  *     backticks would put characters in the message that the sender did not type and that a
  *     reader has no way to tell from literal ones.
+ *   · `<pre>` renders VERBATIM — its own line breaks, its own indentation, no fence around it.
+ *     Same rule as the line above (no invented characters), and the one place in this function
+ *     where whitespace is meaning rather than layout: a code block whose leading spaces were
+ *     collapsed is not the same program. It is also the only construct exempt from the blank-run
+ *     collapse at the bottom, because two blank lines between two functions is how a great deal
+ *     of real code is written and the alternative half of a `multipart/alternative` may not
+ *     silently reformat it.
  */
 export function htmlToPlainText(html: string): string {
   /** The output, built as lines so block boundaries are decided in one place. */
@@ -200,6 +227,23 @@ export function htmlToPlainText(html: string): string {
    * intervening call, which is exactly the truth here: the parser may have written to it.
    */
   const open: { anchor: { href: string; text: string } | null } = { anchor: null };
+
+  /**
+   * Open `<pre>` elements, and the raw characters seen inside the outermost one.
+   *
+   * A DEPTH rather than a boolean because a nested `<pre>` — which the sanitizer permits, since
+   * it allowlists tags and not their arrangement — would otherwise close the outer block on the
+   * inner one's end tag and spill the rest of the code into the prose path.
+   */
+  let preDepth = 0;
+  let preText = "";
+  /**
+   * Where each rendered code block sits in {@link out}, so the blank-run collapse at the bottom
+   * can be applied to everything EXCEPT these. Recorded as offsets rather than by re-parsing
+   * the result: the output is plain text with nothing left in it to distinguish code from prose,
+   * which is the point of the rendering and also why the exemption has to be carried along.
+   */
+  const codeSpans: Array<[number, number]> = [];
 
   const prefix = (): string => "> ".repeat(quoteDepth);
 
@@ -270,9 +314,44 @@ export function htmlToPlainText(html: string): string {
     else line += s;
   };
 
+  /**
+   * A finished code block, written out line by line with the quote prefix and NOTHING else.
+   *
+   * Three normalisations, and each is what a renderer of the html half already does, so keeping
+   * them is what keeps the two parts equal rather than what makes them differ:
+   *   · `\r\n`/`\r` become `\n`. A stray carriage return is a byte no reader sees.
+   *   · ONE leading newline is dropped — html's own rule for the character immediately after
+   *     `<pre>`, which every browser applies and which a paste routinely carries.
+   *   · Trailing blank lines go. They are invisible in the html half, and the alternative
+   *     ending in six of them reads as a mistake somebody made.
+   * Interior whitespace — indentation, alignment, blank lines between blocks — is untouched.
+   */
+  const flushPre = (raw: string): void => {
+    const body = raw.replace(/\r\n?/g, "\n").replace(/^\n/, "").replace(/\n+$/, "");
+    if (body === "") return;
+    const start = out.length;
+    for (const l of body.split("\n")) out += `${prefix()}${l}\n`;
+    codeSpans.push([start, out.length]);
+  };
+
   const parser = new Parser(
     {
       onopentag(name, attribs) {
+        // PRE FIRST, and everything inside it is text. A `<code>`, a `<br>` or a stray `<p>`
+        // that a paste put inside a code block is structure the author cannot see and did not
+        // ask for; only the characters are the code.
+        if (name === "pre") {
+          if (preDepth === 0) {
+            flush();
+            preText = "";
+          }
+          preDepth += 1;
+          return;
+        }
+        if (preDepth > 0) {
+          if (name === "br") preText += "\n";
+          return;
+        }
         if (name === "br") {
           hardBreak();
           return;
@@ -311,10 +390,24 @@ export function htmlToPlainText(html: string): string {
       },
 
       ontext(text) {
+        // Verbatim inside a code block: the collapse below is what turns two spaces into one,
+        // and in code the second space is the message.
+        if (preDepth > 0) {
+          preText += text;
+          return;
+        }
         emit(text.replace(/\s+/g, " "));
       },
 
       onclosetag(name) {
+        if (preDepth > 0) {
+          if (name !== "pre") return;
+          preDepth -= 1;
+          if (preDepth > 0) return;
+          flushPre(preText);
+          preText = "";
+          return;
+        }
         if (name === "a") {
           const a = open.anchor;
           open.anchor = null;
@@ -352,10 +445,30 @@ export function htmlToPlainText(html: string): string {
   parser.end();
   // Anything after the last block boundary, and any anchor left open by malformed input.
   if (open.anchor) line += open.anchor.text.trim();
+  // A `<pre>` the input never closed: its characters are still the author's.
+  if (preDepth > 0) flushPre(preText);
   flush();
 
-  // One trailing newline at most: a mail body that ends in six blank lines reads as a mistake.
-  return out.replace(/\n{3,}/g, "\n\n").replace(/\n+$/, "");
+  /**
+   * One trailing newline at most, and no run of blank lines anywhere — a mail body that ends in
+   * six blank lines reads as a mistake — EXCEPT inside a code block.
+   *
+   * The exemption is not a nicety. Two blank lines between two top-level definitions is how
+   * Python is conventionally written and is ordinary in most other languages, and a collapse
+   * applied over the whole output would silently reflow a snippet the author pasted — the text
+   * half quietly saying something the html half does not. So the collapse runs over the prose
+   * BETWEEN the recorded code spans and leaves their bytes alone. The spans are in the order
+   * they were written and cannot overlap, so one pass over them is the whole of it.
+   */
+  const collapse = (s: string): string => s.replace(/\n{3,}/g, "\n\n");
+  let result = "";
+  let cursor = 0;
+  for (const [start, end] of codeSpans) {
+    result += collapse(out.slice(cursor, start)) + out.slice(start, end);
+    cursor = end;
+  }
+  result += collapse(out.slice(cursor));
+  return result.replace(/\n+$/, "");
 }
 
 /**

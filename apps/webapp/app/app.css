@@ -1796,15 +1796,17 @@ textarea.c-input:read-only {
   background: var(--canvas);
   margin-top: 4px;
   /* THE DOMINANT SURFACE. `.rte` is already a flex column, so this takes the panel's slack and
-     the surface inside takes the box's. The 220px floor is what a short window falls back to;
-     the old fixed 150px is gone, because on a tall window it left the message a letterbox with
-     empty panel underneath it. */
+     the surface inside takes the box's — through `.rte-body`, which is the link that used to be
+     missing (see the chain in THE RICH EDITOR block below). The 220px floor is what a short
+     window falls back to; the old fixed 150px is gone, because on a tall window it left the
+     message a letterbox with empty panel underneath it. */
   flex: 1 1 auto;
   min-height: 220px;
 }
+/* The fill is declared once, on `.rte-body`/`.rte-surface`. Stating it a second time here is
+   what made the original defect invisible: `flex: 1` on an element whose parent was not a flex
+   container reads like the mechanism and is a no-op. Only the compose-specific type is left. */
 .compose-editor .rte-surface {
-  flex: 1;
-  min-height: 0;
   padding: 4px 16px 14px;
   font-size: 13.5px;
   line-height: 1.65;
@@ -3873,6 +3875,24 @@ textarea.c-input:read-only {
   flex-direction: column;
   min-width: 0;
 }
+/* ── THE CHAIN THAT MAKES THE SURFACE FILL ITS BOX ───────────────────────────────────────
+   THREE elements, not two, and the middle one is why compose had a dead zone. `EditorContent`
+   renders a wrapper `<div>` and appends ProseMirror's `contenteditable` inside it, so the flex
+   child of `.rte` is that wrapper — the surface is its grandchild. The wrapper carried no class
+   and no flex, so it stayed at content height whatever the box around it did: `.compose-editor`
+   was 220px+ tall, the editable inside it was one line, and a click anywhere below that first
+   line hit a plain div, which is not editable and takes no caret. `RichEditor.tsx` now names it
+   `rte-body`, and all three links pass the height down. Break any one and the dead zone returns.
+
+   No click-to-focus handler, deliberately: with the surface actually filling the frame a click
+   in its padding is the browser's own caret placement inside a `contenteditable`, which lands
+   at the end of the nearest line. A synthetic focus would fight it for click-and-drag. */
+.rte-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .rte-bar {
   display: flex;
   flex-wrap: wrap;
@@ -3928,6 +3948,18 @@ textarea.c-input:read-only {
 
 .rte-surface {
   position: relative;
+  /* The bottom of the chain above: the editable takes the wrapper's height, so the WHOLE frame
+     is the thing that takes a click.
+
+     NO `min-height` HERE, and that is a correction rather than an omission. This rule first
+     carried `min-height: 0` — harmless-looking, since every surface declares its own floor in a
+     more specific rule and specificity would win in a browser. It does not win in jsdom, whose
+     computed style takes the LAST declaration: `reply-ergonomics.test.ts` reads the reply floor
+     through `getComputedStyle` and went red with `expected '0' to be '240px'` the moment this
+     rule was added below it. The floor was never needed here anyway — `flex-grow` is what makes
+     the surface fill, and `min-height: auto` on a flex item is its content height, which for an
+     editor is exactly right. One floor per surface, declared on that surface. */
+  flex: 1 1 auto;
   padding: 4px 13px 12px;
   outline: none;
   font-size: 13.5px;
@@ -3986,6 +4018,33 @@ textarea.c-input:read-only {
   background: var(--tint2);
   padding: 0.1em 0.32em;
   border-radius: 5px;
+}
+/* THE CODE BLOCK — the other half of the Code button, and it must not look like a row of the
+   inline marks above. One shaded block with the lines inside it, so a snippet reads as a
+   snippet; `white-space: pre-wrap` keeps the author's line breaks and indentation while still
+   wrapping a line too long for the column, which is the only choice that neither truncates code
+   nor widens the message. `overflow-wrap` steps back from the surface's `anywhere` to
+   `break-word`: both break an over-long token as a last resort, but `anywhere` also lets the
+   block's min-content width fall to one character, and a code block is a flex item in a column
+   that has other things to size against. */
+.rte-surface pre {
+  margin: 0 0 0.7em;
+  padding: 0.62em 0.8em;
+  border-radius: 9px;
+  background: var(--tint2);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+  line-height: 1.5;
+}
+/* The `<code>` inside carries the block's shading, not a second box of its own. */
+.rte-surface pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  font-family: inherit;
 }
 .rte-surface a {
   color: var(--accent);
