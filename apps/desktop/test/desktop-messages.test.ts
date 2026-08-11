@@ -99,7 +99,13 @@ function payloadTsxDirs(): string[] {
         "the extraction is broken, not the payload",
     );
   }
-  const dirs = payload.filter((e) => e.ext?.includes(".tsx")).map((e) => e.from);
+  // Test directories are published (their .tsx joined the payload when the desktop grew a
+  // component test) but they are not SOURCES — this scan asks what the shipped interface
+  // reads, and a test's key literals are fixtures, not reads. Without this filter a test
+  // that mentions `t("a.b")` as an example mints an "a" namespace nothing serves.
+  const dirs = payload
+    .filter((e) => e.ext?.includes(".tsx") && !e.from.endsWith("/test"))
+    .map((e) => e.from);
   if (dirs.length < 4) {
     throw new Error(
       `the .tsx extension filter matched ${dirs.length} PAYLOAD entr${dirs.length === 1 ? "y" : "ies"} — ` +
