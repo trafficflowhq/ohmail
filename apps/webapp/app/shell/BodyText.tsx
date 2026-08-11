@@ -58,8 +58,26 @@
  *
  * Deliberately a plain `<a>` and never `next/link`: `next/link` prefetches, and a message body
  * that fetches anything on render is the tracker-pixel behaviour the product exists to stop.
+ *
+ * ── AND THE TRAILING HISTORY IS FOLDED, BECAUSE THE READER HAS READ IT ────────────────────
+ *
+ * A reply carries the whole chain under it, and the chain is usually what the reader just came
+ * from. So the TRAILING top-level quote run — plus the attribution paragraph(s) that introduce
+ * it — is collapsed behind a quiet chip and rendered only when asked for
+ * ({@link splitTrailingHistory} decides; the component holds the state). Three deliberate limits:
+ *
+ *   · ONLY the trailing run. A quote the writer answered inline — prose after it — is part of
+ *     the letter, and folding it would hide the words the reply is about.
+ *   · NEVER on a body that is nothing but quote (a fully-quoted forward): collapsing the only
+ *     content would empty the pane behind a chip.
+ *   · Collapsed means NOT IN THE DOM, not hidden by style — a folded tracking URL must not
+ *     become an anchor until the reader asks for the history it sits in.
+ *
+ * This is the NATIVE path only. The framed HTML path (`MessageBody`'s iframe) shows the sender's
+ * own markup, where the quoted history is the sender's document and stays as sent.
  */
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { liveCopy } from "./locale";
 
 /**
  * Leading email quote markers — up to a little indent, then one or more `>` each optionally
@@ -187,6 +205,49 @@ function toTree(blocks: Block[]): BodyNode[] {
     (depth === 0 ? top : stack[stack.length - 1]!.children).push({ kind: "para", block });
   }
   return top;
+}
+
+/**
+ * The toggle's two labels. `liveCopy` and not `useTranslations`, for the same reason as
+ * `MessageBody.COPY`: this component renders bare — no intl provider — in a dozen unit tests,
+ * and the hook throws without one. `test/locale-shim-parity.test.ts` holds this table and the
+ * `bodyText` catalogue namespace to the same key set and the same English sentences.
+ */
+const EN = {
+  show: "Show history",
+  hide: "Hide history",
+};
+export const COPY: typeof EN = liveCopy("bodyText", EN);
+
+/**
+ * The fold's one decision: which top-level nodes are "the trailing quoted history"?
+ *
+ * The LAST top-level node must be a quote run (`toTree` has already merged contiguous quoted
+ * material, so a trailing history is exactly one node), and every attribution paragraph sitting
+ * immediately above it — "On … wrote:", a Von/Gesendet/Betreff header block — introduces that
+ * history and folds with it. `null` means "do not fold", and it is the answer whenever the lead
+ * would hold no fresh words: a fully-quoted forward, a bare attribution over a quote, an empty
+ * body. Collapsing those would put the whole message behind a chip.
+ *
+ * Mid-message quotes are lead BY CONSTRUCTION: a quote run with depth-0 prose after it is not
+ * the last node, so it never reaches the fold. That is the inline-reply case, and it stays on
+ * screen with the words that answer it.
+ */
+function splitTrailingHistory(
+  nodes: BodyNode[],
+): { lead: BodyNode[]; history: BodyNode[] } | null {
+  const last = nodes[nodes.length - 1];
+  if (!last || last.kind !== "quote") return null;
+  let start = nodes.length - 1;
+  while (start > 0) {
+    const prev = nodes[start - 1]!;
+    if (prev.kind === "para" && prev.block.attribution) start -= 1;
+    else break;
+  }
+  const lead = nodes.slice(0, start);
+  const hasProse = lead.some((n) => n.kind === "para" && !n.block.attribution);
+  if (!hasProse) return null;
+  return { lead, history: nodes.slice(start) };
 }
 
 /**
@@ -325,8 +386,37 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
 }
 
 export function BodyText({ text }: { text: string }) {
+  /**
+   * The fold's state keys on the MESSAGE TEXT, not on the component instance: `open` is only
+   * true while the text it was opened for is the text on screen. The pane reuses one mounted
+   * `BodyText` as the reader moves between messages, and a plain `useState(false)` would carry
+   * one mail's expansion onto the next — history the reader never asked for, on a message they
+   * have not read. Comparing against the same string the mirror handed down is an identity
+   * check in practice and correct even when it is not.
+   */
+  const [openedFor, setOpenedFor] = useState<string | null>(null);
   // CRLF is what an IMAP body actually carries; normalise before splitting on lines, or a
   // blank line is `\r\n\r\n` and every paragraph boundary is missed.
   const lines = (text ?? "").replace(/\r\n?/g, "\n").split("\n").map(classifyLine);
-  return <>{renderNodes(toTree(toBlocks(lines)), "b")}</>;
+  const nodes = toTree(toBlocks(lines));
+  const split = splitTrailingHistory(nodes);
+  if (split === null) return <>{renderNodes(nodes, "b")}</>;
+  const open = openedFor === text;
+  return (
+    <>
+      {renderNodes(split.lead, "b")}
+      {/* A real <button> — Enter and Space come with the element; `aria-expanded` reports the
+          fold. Collapsed history is NOT RENDERED rather than hidden: nothing in it (including
+          its anchors) exists until the reader asks. */}
+      <button
+        type="button"
+        className="msg-history-toggle"
+        aria-expanded={open}
+        onClick={() => setOpenedFor(open ? null : text)}
+      >
+        {open ? COPY.hide : COPY.show}
+      </button>
+      {open ? renderNodes(split.history, "h") : null}
+    </>
+  );
 }

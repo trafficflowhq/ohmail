@@ -104,6 +104,17 @@
 /* The line that says who wrote the block below — never the sender's words, so it is set apart
    and quieted, like `.msg-body-state` but inline with the thread. */
 .msg-attribution{margin:0 0 8px;color:var(--ink3);font-size:.92em;overflow-wrap:anywhere}
+/* THE FOLDED HISTORY'S HANDLE. `BodyText.tsx` collapses the trailing quoted run behind this
+   chip; it stands where the history begins and reads in the quiet register of the in-header
+   "details" toggle — product chrome, never the sender's words. A hairline ring rather than a
+   fill, so a letter that ends in a chip still ends in air; the 14px below is `.msg-quote`'s own
+   step, so expanding does not reflow the lead. */
+.msg-history-toggle{display:inline-flex;align-items:center;border:1px solid var(--hair);
+  background:none;border-radius:99px;padding:3px 10px;margin:0 0 14px;
+  font:inherit;font-size:11.5px;line-height:1.5;color:var(--ink2);cursor:pointer;
+  transition:background .15s var(--swift),color .15s var(--swift)}
+.msg-history-toggle:hover{background:var(--tint);color:var(--ink)}
+.msg-history-toggle:last-child{margin-bottom:0}
 /* A link in mail is the accent, quietly: coloured ink and a hairline underline rather than the
    browser's blue. `overflow-wrap` is inherited from `.msg-p`, so a 300-character tracking URL
    breaks inside the anchor instead of pushing the panel. */

@@ -1716,6 +1716,10 @@
     "plain": "Als Text anzeigen",
     "plainTitle": "Diese Nachricht als Text in der Schrift der App anzeigen"
   },
+  "bodyText": {
+    "show": "Verlauf anzeigen",
+    "hide": "Verlauf ausblenden"
+  },
   "attachments": {
     "count": "{count, plural, one {# Anhang} other {# Anhänge}}",
     "groupAria": "Anhänge",

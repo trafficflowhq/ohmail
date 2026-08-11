@@ -1716,6 +1716,10 @@
     "plain": "Show as text",
     "plainTitle": "Show this message as text, in the app's own type"
   },
+  "bodyText": {
+    "show": "Show history",
+    "hide": "Hide history"
+  },
   "attachments": {
     "count": "{count, plural, one {# attachment} other {# attachments}}",
     "groupAria": "Attachments",
