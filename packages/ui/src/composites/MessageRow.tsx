@@ -8,6 +8,18 @@ export interface MessageRowTag {
   hue: TagHueName;
 }
 
+/**
+ * How many faces a thread row's lead may show.
+ *
+ * A hard visual cap, not a restatement of the selector's: `row.css` holds the stack to the
+ * width of ONE avatar whatever the count, and it does that by shrinking the circles as the
+ * count rises (30 → two at 22px → three at 20px). A fourth would be a sliver of a face, and
+ * a slot that grew instead would push a thread row's text out of line with the singleton rows
+ * above and below it. Whatever the caller hands over, three is what is drawn; the rest of the
+ * conversation is already spoken for by the `⤷ N` count beside the subject.
+ */
+export const THREAD_CIRCLES_MAX = 3;
+
 export interface MessageRowProps {
   /** Stable id, stamped as data-id (and used by useSeenOnScroll). */
   id: string;
@@ -49,13 +61,23 @@ export interface MessageRowProps {
   dull?: boolean;
   threadCount?: number;
   /**
-   * THREAD PARTICIPANTS — the people in this conversation, replacing the numeric thread badge.
+   * THREAD PARTICIPANTS — the people in this conversation, as the row's LEAD.
    *
-   * Up to three overlapping sender circles, newest voice first, computed by
-   * `threadParticipants` and never derived in the row. Present and non-empty ⇒ the circles render
-   * in place of the `⤷ N` badge; absent or empty ⇒ the numeric badge stays. The slot is a fixed,
-   * overlap-bounded width (a negative-margin stack), so a two- and a three-person thread cost the
-   * row the same space and the subject beside it never shifts.
+   * A row about several people wears several faces: two or more entries here put an overlapping
+   * stack of smaller circles where {@link avatarInitial}'s single circle would stand, newest
+   * voice first. The caller chooses the people (the Ohbox uses the same voices its sender line
+   * names) and this component only draws them — same {@link Avatar}, same address-keyed hue, so
+   * a face is the same colour here as everywhere else in the app.
+   *
+   * THE STACK DOES NOT REPLACE THE `⤷ N` COUNT, and the two are not the same statement: the
+   * circles say WHO is in the conversation, the count says HOW MANY messages are folded into
+   * the row. They are wanted together precisely in the case the stack is capped
+   * ({@link THREAD_CIRCLES_MAX}) — which is also why there is no "+N" circle here: the count
+   * beside the subject is already the overflow, and a second number would be a second idiom.
+   *
+   * FEWER THAN TWO ⇒ NOTHING CHANGES. One participant is not a conversation of people, so the
+   * row falls back to the ordinary single full-size circle and renders byte-for-byte as a row
+   * with no participants at all. Every list that passes none is untouched.
    */
   participants?: { initials: string; hue: number }[];
   hasAttachment?: boolean;
@@ -141,19 +163,7 @@ export function MessageRow(props: MessageRowProps) {
   } = props;
 
   const badges: ReactNode[] = [];
-  // the participant circles REPLACE the numeric badge when present — "who is in this
-  // conversation" carries more than "how many mails", and a same-sender thread (the selector
-  // answers `[]` for it) keeps the count. `aria-hidden` like the badge it stands in for: the
-  // thread hint is decorative, and the row's own `aria-label` already names sender and subject.
-  if (participants && participants.length > 0)
-    badges.push(
-      <span className="thread-circles" key="thread" aria-hidden="true">
-        {participants.map((p, i) => (
-          <Avatar key={i} initials={p.initials} hue={p.hue} size="s" />
-        ))}
-      </span>,
-    );
-  else if (threadCount) badges.push(<Badge key="thread">⤷ {threadCount}</Badge>);
+  if (threadCount) badges.push(<Badge key="thread">⤷ {threadCount}</Badge>);
   if (hasAttachment) badges.push(<Badge key="attach" icon="clip" />);
   if (props.protected)
     badges.push(
@@ -174,9 +184,31 @@ export function MessageRow(props: MessageRowProps) {
       </Badge>,
     );
 
+  /**
+   * THE ROW'S LEAD — a stack of the conversation's faces, or one sender's circle, or nothing.
+   *
+   * See {@link MessageRowProps.participants}: two or more people make the stack, and anything
+   * less falls through to the single circle so a one-voice thread and a plain message render
+   * identically. Both leads occupy the same box (`row.css` pins the stack to one avatar's
+   * width), so the `.srow` flex layout — and every row's text column with it — is the same
+   * whichever one is drawn. `aria-hidden` on the stack for the same reason each `Avatar`
+   * carries it: the faces are decorative, and the row's `aria-label` already names the sender.
+   */
+  const stack = (participants ?? []).slice(0, THREAD_CIRCLES_MAX);
+  const lead =
+    stack.length > 1 ? (
+      <span className="av-stack" aria-hidden="true">
+        {stack.map((p, i) => (
+          <Avatar key={`${p.initials}-${i}`} initials={p.initials} hue={p.hue} size="s" />
+        ))}
+      </span>
+    ) : avatarInitial !== undefined ? (
+      <Avatar initials={avatarInitial} hue={avatarHue} />
+    ) : null;
+
   const cls = [
     "row",
-    avatarInitial !== undefined ? "srow" : null,
+    lead !== null ? "srow" : null,
     seen ? "seen" : null,
     justSeen ? "justseen" : null,
     selected ? "sel" : null,
@@ -235,9 +267,9 @@ export function MessageRow(props: MessageRowProps) {
       {...selection}
       onClick={onClick}
     >
-      {avatarInitial !== undefined ? (
+      {lead !== null ? (
         <>
-          <Avatar initials={avatarInitial} hue={avatarHue} />
+          {lead}
           <span className="sr-main">{body}</span>
         </>
       ) : (

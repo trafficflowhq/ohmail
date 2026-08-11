@@ -155,10 +155,11 @@ export function OhboxView({
   newForYou: EngineMessage[];
   previouslySeen: EngineMessage[];
   /**
-   * THE PEOPLE IN A ROW'S CONVERSATION, for its participant circles — bound to the engine's
-   * reader by the shell (this view has none) and mapped to `{initials, hue}`. Called per rendered
-   * row that carries a `threadId`; `[]` for a message with no real multi-message thread. Optional:
-   * a view mounted without it simply shows the numeric thread badge as before.
+   * THE PEOPLE IN A ROW'S CONVERSATION, for its lead circles — bound to the engine's reader by
+   * the shell (this view has none) and mapped to `{initials, hue}`. Called per rendered row that
+   * carries a `threadId`; `[]` for a message with no real multi-message thread. A LOOKUP, not a
+   * scan: the shell indexes every thread once per engine version, so calling it per row is free.
+   * Optional — a view mounted without it leads every row with the one sender's circle.
    */
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
   /**
@@ -1296,9 +1297,20 @@ export function OhboxView({
     return { label, avatar: sentAvatarOf(r) };
   };
 
+  /**
+   * A message's circle in the participant-stack's shape — the SAME derivation the row's own
+   * lead uses ({@link avatarOf}: the display name's initial, the hue keyed on the address), so
+   * a person is one letter and one colour whether they lead a row or stand in its stack.
+   */
+  const circleOf = (m: EngineMessage): { initials: string; hue: number } => {
+    const a = avatarOf(m);
+    return { initials: a.avatarInitial, hue: a.avatarHue };
+  };
+
   const row = (m: EngineMessage) => {
     // the conversation's people, computed by the shell's bound selector and never in the row.
-    // Only for a threaded row; `[]` (⇒ the numeric badge stays) for a single-sender thread or none.
+    // Only for a threaded row; `[]` for a single-sender thread or none, and the row then leads
+    // with the one full-size circle it always did.
     const participants = m.threadId && threadParticipants ? threadParticipants(m.threadId) : [];
     // see `sentLabelOf`: an own-sent row is labelled by its recipient, circle included; the
     // address slot stays empty (the writer's own address is the fact being replaced).
@@ -1320,7 +1332,10 @@ export function OhboxView({
       // read here, answered, or read on another mail client. See `slideOut`.
       className={settling.has(m.id) ? "settling" : undefined}
       threadCount={m.threadCount}
-      participants={participants.length > 0 ? participants : undefined}
+      /* An own-sent row's circle is the RECIPIENT's and stays that way: the row is about the
+         person it went to, and a participant stack would take the one face "Me → Nora Lindt"
+         exists to show. The thread is still counted beside the subject. */
+      participants={sent ? undefined : participants}
       hasAttachment={m.hasAttachments}
       protected={m.protected != null}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
@@ -1349,21 +1364,35 @@ export function OhboxView({
     );
   };
 
-  /** A grouped row's sender summary: the distinct unread voices, newest first. */
-  const groupSenders = (g: OhboxRowGroup): string => {
+  /**
+   * THE VOICES A GROUPED ROW SPEAKS FOR — one message per distinct sender, newest first.
+   *
+   * The unread members while the conversation is waiting (what is unanswered is what the row is
+   * for), else the newest member alone once it has all been read.
+   *
+   * Returns the MESSAGES rather than their names because two things are derived from this list
+   * and they must not drift: the sender line ({@link groupSenders}) and the row's lead circles.
+   * A row whose text reads "Ada Lund, Bo Ek" and whose faces are somebody else's would be two
+   * answers to one question.
+   */
+  const groupVoices = (g: OhboxRowGroup): EngineMessage[] => {
     const pool = (g.unreadCount > 0 ? g.members.filter((m) => m.unread) : [g.latest])
       .slice()
       .sort((a, b) => sendTimeOf(b) - sendTimeOf(a));
     const seen = new Set<string>();
-    const names: string[] = [];
+    const out: EngineMessage[] = [];
     for (const m of pool) {
       const key = m.from.address.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      names.push(senderName(m));
+      out.push(m);
     }
-    return names.join(", ");
+    return out;
   };
+
+  /** A grouped row's sender summary: the distinct unread voices, newest first. */
+  const groupSenders = (g: OhboxRowGroup): string =>
+    groupVoices(g).map(senderName).join(", ");
 
   /**
    * ONE ROW FOR A CONVERSATION — and a plain {@link row} for anything that did not fold, so a
@@ -1373,9 +1402,9 @@ export function OhboxView({
    *   · the conversation's STORED name (server-cleaned; see the `threadSubject` prop), falling
    *     back to the newest member's subject while the thread row has not synced;
    *   · the NEWEST member's snippet and time — a new reply updates the row in place;
-   *   · the distinct unread senders, the member count as the `⤷ N` the demo threads already
-   *     wear, and the same participant circles a threaded row shows today (which, per
-   *     `MessageRow`'s own precedence, stand in for the number on a multi-voice thread);
+   *   · the distinct unread senders on the sender line, THOSE SAME PEOPLE as the row's lead
+   *     circles (see `participants` below), and the member count as the `⤷ N` beside the
+   *     subject — who and how many, said once each;
    *   · click and ↵ act on the LATEST UNREAD member — the ordinary per-message open, so the
    *     thread view, the dwell and the departure commit behave exactly as for a plain row, and
    *     nothing bulk-marks the folded members read;
@@ -1392,7 +1421,22 @@ export function OhboxView({
     if (g.members.length === 1) return row(g.members[0]!);
     const target = g.openTarget;
     const shown = g.latest;
-    const participants = threadParticipants ? threadParticipants(g.key) : [];
+    const voices = groupVoices(g);
+    /**
+     * THE ROW'S FACES, and they are the SENDER LINE's people whenever there are people on it.
+     *
+     * Two sources, one precedence, and the order matters. A waiting conversation names its
+     * distinct unread senders — so the circles are those senders, from the members the view
+     * already holds. A conversation that has all been read names only its newest voice, which
+     * is one face and not a conversation, so the row falls back to the mirror's own answer for
+     * who is in the thread (`threadParticipants`, newest first) — the whole history, including
+     * the members this section is not showing.
+     *
+     * `MessageRow` draws nothing for fewer than two, which is the same "there is no
+     * conversation of people here" both sources already agree on.
+     */
+    const participants =
+      voices.length > 1 ? voices.map(circleOf) : threadParticipants ? threadParticipants(g.key) : [];
     /**
      * THE NEWEST MEMBER IS THE ACCOUNT'S OWN REPLY — the conversation ends, so far, with the
      * reader's own words, and the row says who they went to rather than showing the reader
@@ -1428,7 +1472,9 @@ export function OhboxView({
         seen={g.unreadCount === 0}
         selected={selected != null && g.members.some((m) => m.id === selected.id)}
         threadCount={g.members.length}
-        participants={participants.length > 0 ? participants : undefined}
+        /* the Me → recipient rule wins the circle for the same reason it wins the sender line:
+           see the singleton row above. */
+        participants={sentLeads ? undefined : participants}
         hasAttachment={g.members.some((m) => m.hasAttachments)}
         protected={shown.protected != null}
         tags={tagsOfMessage(shown, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}

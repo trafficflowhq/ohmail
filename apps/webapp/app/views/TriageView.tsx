@@ -104,6 +104,7 @@ export function TriageView({
   onStartFR,
   messageOf,
   tags,
+  threadParticipants,
   now,
   onOpen,
   hydrateBody,
@@ -126,6 +127,14 @@ export function TriageView({
    * (`fixtures-adapter.ts`), and those cannot be opened by anything.
    */
   messageOf: (messageId: string) => EngineMessage | null;
+  /**
+   * THE PEOPLE IN A ROW'S CONVERSATION, for its lead circles — bound to the engine's reader by
+   * the shell (this view has none) and mapped to `{initials, hue}`. A LOOKUP into the shell's
+   * per-version thread index, so calling it per row costs nothing; `[]` for a message whose
+   * thread has no second voice in it, and the row then leads with the one sender's circle it
+   * always did. Optional, so a view mounted without it (the demo, most tests) is unchanged.
+   */
+  threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
   tags: TagDTO[];
   now: Date;
   /** The reader sheet — the narrow-width tap, where there is no reading column. */
@@ -219,6 +228,7 @@ export function TriageView({
         from={senderName(m)}
         address={rowAddress(m)}
         {...avatarOf(m)}
+        participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
         time={pile === "resurface" ? when : displayTime(m, now)}
         subject={m.subject}
         preview={m.protected ? undefined : m.snippet}

@@ -70,6 +70,7 @@ function readColumnHidden(): boolean {
 export function HistoryView({
   messages,
   tags,
+  threadParticipants,
   now,
   onOpen,
   hydrateBody,
@@ -78,6 +79,14 @@ export function HistoryView({
   onMarkAllRead,
 }: {
   messages: readonly EngineMessage[];
+  /**
+   * THE PEOPLE IN A ROW'S CONVERSATION, for its lead circles — bound to the engine's reader by
+   * the shell (this view has none) and mapped to `{initials, hue}`. A LOOKUP into the shell's
+   * per-version thread index, so calling it per row costs nothing; `[]` for a message whose
+   * thread has no second voice in it, and the row then leads with the one sender's circle it
+   * always did. Optional, so a view mounted without it (the demo, most tests) is unchanged.
+   */
+  threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
   tags: TagDTO[];
   now: Date;
   /** The reader sheet, in place — the narrow-width tap, where there is no reading column. */
@@ -170,6 +179,7 @@ export function HistoryView({
                   from={senderName(m)}
                   address={rowAddress(m)}
                   {...avatarOf(m)}
+                  participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
                   time={displayTime(m, now)}
                   subject={m.subject}
                   preview={m.snippet}

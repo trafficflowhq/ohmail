@@ -29,6 +29,7 @@ import { useStreamWindow } from "../shell/stream-window";
 export function ReceiptsView({
   messages,
   tags,
+  threadParticipants,
   now,
   cur,
   onCur,
@@ -44,6 +45,14 @@ export function ReceiptsView({
 }: {
   /** Every receipt, already in display order. Flat — the shell flattens `receiptsByDay`. */
   messages: EngineMessage[];
+  /**
+   * THE PEOPLE IN A ROW'S CONVERSATION, for its lead circles — bound to the engine's reader by
+   * the shell (this view has none) and mapped to `{initials, hue}`. A LOOKUP into the shell's
+   * per-version thread index, so calling it per row costs nothing; `[]` for a message whose
+   * thread has no second voice in it, and the row then leads with the one sender's circle it
+   * always did. Optional, so a view mounted without it (the demo, most tests) is unchanged.
+   */
+  threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
   tags: TagDTO[];
   now: Date;
   cur: string | null;
@@ -200,6 +209,7 @@ export function ReceiptsView({
       from={senderName(m)}
       address={rowAddress(m)}
       {...avatarOf(m)}
+      participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
       time={displayTime(m, now)}
       subject={m.subject}
       preview={m.snippet}

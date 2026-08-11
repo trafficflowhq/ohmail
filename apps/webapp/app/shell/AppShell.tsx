@@ -34,7 +34,7 @@ import {
   sendingMailboxId,
   tagsCrossView,
   threadOf,
-  threadParticipants,
+  threadParticipantsIndex,
   threadSubject,
   triagePiles,
   type ConsentPartition,
@@ -209,6 +209,15 @@ const PILE_IDS: string[] = ["ohbox", "reads", "receipts", "screener", ...Object.
  */
 const LOCATE_FLASH_MS = 1600;
 const LOCATE_TIMEOUT_MS = 2000;
+
+/**
+ * "No conversation of people here", as ONE array for the whole app.
+ *
+ * Most rows in most lists are not threads, so this is the answer nearly every lookup gives. A
+ * fresh `[]` each time would be a new prop identity on every render of every row — see
+ * `participantsOf`.
+ */
+const NO_PARTICIPANTS: { initials: string; hue: number }[] = [];
 
 /**
  * WHERE A MESSAGE OPENS — the decision, with nothing else in it.
@@ -1108,17 +1117,33 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     [ohbox],
   );
   /**
-   * THE CONVERSATION'S PEOPLE, for a row's participant circles — bound to the presented
-   * reader here because `OhboxView` has no reader of its own, and mapped to `{initials, hue}` with
-   * the same helpers every other avatar in the app uses, so a face is the same colour everywhere.
+   * THE CONVERSATION'S PEOPLE, for a row's lead circles — bound to the presented reader here
+   * because the views have no reader of their own, and mapped to `{initials, hue}` with the same
+   * helpers every other avatar in the app uses, so a face is the same colour everywhere.
+   *
+   * BUILT ONCE PER VERSION, NOT ONCE PER ROW, and that is the whole reason the index selector
+   * exists. Every mail list in the app draws these circles now — Ohbox, Reads, Receipts, History,
+   * Triage, Tag — so the per-thread selector's mirror scan would run once per mounted row per
+   * render: O(mirror × rows), on the largest structure the client holds, for a decoration. One
+   * pass fills the map; a row's lookup is a `Map.get`, and the mapped shape is built here so a
+   * render allocates nothing per row either.
+   *
+   * The empty answer is a SHARED CONSTANT so that a thread with no conversation of people in it
+   * gives the same array reference on every render — a fresh `[]` per row per render is a new
+   * prop identity, which is exactly what defeats a memo further down.
    */
+  const participantIndex = useMemo(() => {
+    const out = new Map<string, { initials: string; hue: number }[]>();
+    for (const [threadId, people] of threadParticipantsIndex(presented))
+      out.set(
+        threadId,
+        people.map((a) => ({ initials: initialsOf(a.name || a.address), hue: avatarHue(a.address) })),
+      );
+    return out;
+  }, [presented, version]);
   const participantsOf = useCallback(
-    (threadId: string) =>
-      threadParticipants(presented, threadId).map((a) => ({
-        initials: initialsOf(a.name || a.address),
-        hue: avatarHue(a.address),
-      })),
-    [presented, version],
+    (threadId: string) => participantIndex.get(threadId) ?? NO_PARTICIPANTS,
+    [participantIndex],
   );
   /**
    * THE CONVERSATION'S STORED NAME, for the Ohbox's grouped rows — bound here for the same
@@ -3645,6 +3670,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
             {effectiveView === "reads" ? (
               <ReadsView
+                threadParticipants={participantsOf}
                 partition={partition}
                 tags={tags}
                 now={now}
@@ -3666,6 +3692,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
             {effectiveView === "receipts" ? (
               <ReceiptsView
+                threadParticipants={participantsOf}
                 messages={receipts}
                 tags={tags}
                 now={now}
@@ -3746,6 +3773,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
             {effectiveView === "triage" ? (
               <TriageView
+                threadParticipants={participantsOf}
                 piles={piles}
                 pile={route.triagePile}
                 onPile={goTriage}
@@ -3777,6 +3805,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
             {effectiveView === "tag" && tagGroup ? (
               <TagView
+                threadParticipants={participantsOf}
                 tag={tagGroup.tag}
                 messages={tagGroup.messages}
                 tags={tags}
@@ -3800,6 +3829,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
             {effectiveView === "history" ? (
               <HistoryView
+                threadParticipants={participantsOf}
                 messages={history}
                 tags={tags}
                 now={now}

@@ -452,14 +452,53 @@ export const THREAD_PARTICIPANTS_MAX = 3;
  * the mailbox.
  */
 export function threadParticipants(reader: EntityReader, threadId: string): EmailAddress[] {
-  const members = reader
-    .list<EngineMessage>("message")
-    .filter((m) => m.threadId === threadId);
+  return participantsOfMembers(
+    reader.list<EngineMessage>("message").filter((m) => m.threadId === threadId),
+  );
+}
+
+/**
+ * EVERY THREAD'S PEOPLE IN ONE PASS — the same answer as {@link threadParticipants}, for callers
+ * that need MANY of them.
+ *
+ * {@link threadParticipants} scans the whole mirror to answer about one thread, which is the right
+ * shape for a handful of rows and the wrong one for a list: five list surfaces asking per row is
+ * O(mirror × rows) on every render, and the mirror is the largest thing the client holds. This
+ * walks the messages ONCE, buckets them by thread and answers every thread at the same cost as
+ * answering one. A caller memoizes it on the engine version and then reads rows out of the map in
+ * constant time.
+ *
+ * Threads with no conversation of people in them — one member, or several from one sender — are
+ * ABSENT from the map rather than present with `[]`, so a missing key and an empty answer are the
+ * same thing and a lookup needs no second check.
+ *
+ * Both forms share {@link participantsOfMembers}, which is the point: two implementations of
+ * "who is in this conversation" would be two answers, and the one the row draws would depend on
+ * which surface drew it.
+ */
+export function threadParticipantsIndex(reader: EntityReader): Map<string, EmailAddress[]> {
+  const byThread = new Map<string, EngineMessage[]>();
+  for (const m of reader.list<EngineMessage>("message")) {
+    if (!m.threadId) continue;
+    const members = byThread.get(m.threadId);
+    if (members) members.push(m);
+    else byThread.set(m.threadId, [m]);
+  }
+  const out = new Map<string, EmailAddress[]>();
+  for (const [threadId, members] of byThread) {
+    const people = participantsOfMembers(members);
+    if (people.length > 0) out.set(threadId, people);
+  }
+  return out;
+}
+
+/** The shared core of both forms above: a thread's members in, its distinct senders out. */
+function participantsOfMembers(members: EngineMessage[]): EmailAddress[] {
   if (members.length <= 1) return [];
-  members.sort(byDateDesc);
+  const sorted = members.slice().sort(byDateDesc);
   const seen = new Set<string>();
   const out: EmailAddress[] = [];
-  for (const m of members) {
+  for (const m of sorted) {
     const key = senderKey(m.from.address);
     if (seen.has(key)) continue;
     seen.add(key);
