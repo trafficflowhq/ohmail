@@ -513,30 +513,14 @@ body.reading .shell {
    cannot hold a centred row and an address on the same line without ellipsising away the part
    that moves. Flat fills, no backdrop-filter, no decorative gradient; the tones are the strip's
    own, unchanged, so the two shapes cannot disagree about how loud a state is. */
-/* ONE BREAKPOINT, NOT TWO NUMBERS THAT HAPPEN TO LINE UP.
-
-   "Exactly one of the two shapes is ever on screen" is the claim above, and it used to be
-   spelled as a pair of independent queries: `min-width: 901px` hid the strip, `max-width: 900px`
-   hid the rail slot. Between them they leave a gap. A viewport of 900.5px matches NEITHER — and
-   fractional widths are ordinary, not exotic: browser zoom, a device pixel ratio that does not
-   divide evenly, a window dragged to an odd size on a scaled display all produce them. At any
-   width in that gap BOTH copies were displayed, so the same sentence stood on screen twice and
-   two `role="status"` regions announced it to a screen reader in turn — the precise failure the
-   `display:none` approach was chosen to prevent.
-
-   Stated as one query it cannot happen: the narrow arrangement is the base case, and the single
-   `min-width` swaps both halves together. Whatever a browser decides that query means at a
-   fractional width, it means the same thing for both declarations, so the two can no longer
-   disagree about which of them is the visible copy. */
-.rail-sync-slot {
-  display: none;
-}
 @media (min-width: 901px) {
   .sync-bar {
     display: none;
   }
+}
+@media (max-width: 900px) {
   .rail-sync-slot {
-    display: block;
+    display: none;
   }
 }
 .rail-sync {
@@ -3060,10 +3044,8 @@ textarea.c-input:read-only {
     margin: 0 auto;
     padding: 14px 20px 8px;
   }
-  /* The same size the list-pane title carries (`packages/ui` `list-pane.css`) — this is the same
-     pile label, drawn by the stream instead of the list, and it must not be a second number. */
   .stream-top h1 {
-    font-size: 20px;
+    font-size: 22px;
     font-weight: 600;
     letter-spacing: -0.025em;
     margin: 0;
@@ -3078,9 +3060,9 @@ textarea.c-input:read-only {
   .view .vhead {
     padding: 14px 20px 10px;
   }
-  /* No `.view .vhead h1` size here. The title is one size at every width and `list-pane.css`
-     declares it; a per-breakpoint override is what made it two. The padding above still narrows,
-     because the PANE tightens on a phone — the label does not. */
+  .view .vhead h1 {
+    font-size: 22px;
+  }
   .view .grouplabel,
   .view .rows {
     padding-left: 8px;
@@ -3379,81 +3361,6 @@ textarea.c-input:read-only {
 }
 @keyframes mbx-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .mbx-spin { animation: none; } }
-
-/* ================= the boot silhouette =================
-   The other waiting affordance, filed beside the spinner because they answer the same question
-   at two different lengths and share one reduced-motion rule between them (see `BootSkeleton.tsx`
-   for when either is drawn).
-
-   It is the app's OWN geometry — the deck's 224px rail column, the deck's 16px gutter, `.row`'s
-   12px/14px inset — reproduced in tinted bars, so the window fills in where it is about to fill
-   in rather than settling somewhere else afterwards. The numbers below are the deck's and the
-   row's, restated here rather than shared, because this must not inherit a future change to the
-   real ones: a silhouette that tracks the list would be one more thing to keep in step, and the
-   only property it needs is "close enough that nothing jumps". */
-.boot-sk { display: flex; gap: 16px; width: 100%; min-width: 0; }
-.boot-sk-rail {
-  flex: none;
-  width: 224px;
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-  padding: 22px 12px 18px 16px;
-  border-radius: 20px;
-  background: var(--panel);
-  box-shadow: var(--lift-1);
-}
-.boot-sk-list { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
-.boot-sk-row { padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; }
-/* `--tint2` and `--tint` are the two quietest fills in the system, and both are alpha over the
-   surface — so this reads correctly in either theme without a second palette, and never as a
-   grey rectangle on a dark canvas. */
-.boot-sk-bar {
-  display: block;
-  height: 9px;
-  border-radius: 999px;
-  background: var(--tint2);
-  animation: boot-sk-breathe 2s var(--swift) infinite;
-}
-.boot-sk-who { height: 10px; }
-.boot-sk-line { height: 8px; background: var(--tint); }
-/* A breath, not a shimmer. A travelling highlight is the convention and it is the wrong one
-   here: it draws the eye to a surface with nothing on it, for a wait that can legitimately run
-   a hundred seconds. Opacity alone, slowly, says "not yet" and then lets go of the attention. */
-@keyframes boot-sk-breathe {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-/* The shape survives without the breath — the same answer `.mbx-spin` gives above, and for the
-   same reason: the affordance is the thing, the motion is only how it is drawn. */
-@media (prefers-reduced-motion: reduce) {
-  .boot-sk-bar { animation: none; }
-}
-/* Narrow: the deck is one column and the rail is a drawer, so a rail silhouette beside the list
-   would be describing a layout this width does not have. */
-@media (max-width: 900px) {
-  .boot-sk-rail { display: none; }
-}
-/* IN A LIST'S EMPTY BLOCK (the browser tab's cold mirror). `.empty` is centred, padded for a
-   sentence and — inside `.rows` — already carries the list's own 14px gutter, so the silhouette
-   drops its own horizontal inset and lands its bars exactly on the rows they stand in for. */
-.empty .boot-sk { margin-top: 22px; }
-.empty .boot-sk-row { padding-left: 0; padding-right: 0; }
-
-/* AS THE WINDOW ITSELF (the standalone client, before an engine has served). The sentence stays
-   centred where it has always been and the geometry goes BEHIND it: `.gate` is a centring flex
-   column, so a skeleton in its flow would push the card off-centre and then move it again when
-   the engine came up. Out of flow, the card never moves at all — the window simply gains a
-   backdrop after the grace. Dimmed, because it is scenery for a sentence, not the subject. */
-.gate-boot { position: relative; }
-.gate-boot > .boot-sk {
-  position: absolute;
-  inset: 16px;
-  opacity: 0.55;
-  pointer-events: none;
-}
-.gate-boot > .gate-card { position: relative; z-index: 1; }
-
 /* A button label never breaks — "Reconnect Microsoft" on two lines inside its own capsule is
    the cramped wrapping the screenshot showed. The row makes room by wrapping BETWEEN items. */
 .mbx-btn { font-size: 12px; padding: 5px 12px; white-space: nowrap; flex: none; }
@@ -4591,79 +4498,3 @@ textarea.c-input:read-only {
    the panel's own `gate-actions` spacing here. */
 .draft-confirm .set-note-inline,
 .compose-confirm .set-note-inline { padding: 0 0 9px; margin: 0; }
-
-/* ================= drag-to-file (a list row, dragged onto the rail) =================
-   The gesture's chrome only — the semantics are the existing verbs (`shell/drag-file.ts`).
-   The ghost is the row in hand: sender, subject, and a count when several travel. Quiet by
-   register: no rotation, no oversize shadow — a floating-layer card at 95% opacity beside
-   the pointer. A rail row lights ONLY over a legal drop, with the app's own "armed"
-   treatment (tint + inset accent hairline, the `.compose-cta.on` grammar); an illegal one
-   stays exactly as it is — the gesture is an offer, not a scold. The landed target holds
-   the accent wash for 360ms (`drop-hit`) and the rail's own .15s transition releases it.
-   Motion: the highlight is a color/background change riding `.ritem`'s existing transition;
-   the ghost's spring-back and settle transitions are set inline by drag-file.ts and only
-   when the device does not prefer reduced motion — with it, every exit is instant. */
-body.dnd-active {
-  cursor: grabbing;
-  user-select: none;
-  -webkit-user-select: none;
-}
-body.dnd-active * { cursor: grabbing !important; }
-.drag-ghost {
-  position: fixed;
-  left: 0;
-  top: 0;
-  z-index: var(--z-toast);
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  max-width: 320px;
-  padding: 6px 11px;
-  background: var(--float);
-  border-radius: 9px;
-  box-shadow: var(--lift-3);
-  opacity: 0.95;
-  pointer-events: none;
-  font-size: 12.5px;
-  line-height: 1.3;
-  white-space: nowrap;
-}
-.drag-ghost .dg-count {
-  flex: 0 0 auto;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: 11px;
-  font-weight: 600;
-}
-.drag-ghost .dg-from {
-  flex: 0 0 auto;
-  font-weight: 600;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 140px;
-}
-.drag-ghost .dg-subj {
-  flex: 0 1 auto;
-  min-width: 0;
-  color: var(--ink3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ritem.drop-ok {
-  color: var(--ink);
-  background: var(--tint2);
-  box-shadow: inset 0 0 0 1.5px var(--accent-hair);
-}
-.ritem.drop-hit {
-  color: var(--ink);
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1.5px var(--accent-hair);
-}

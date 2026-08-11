@@ -569,21 +569,3 @@ export function tagsOfMessage(m: EngineMessage, tags: TagDTO[]): TagDTO[] {
 export function hueOf(tag: TagDTO): TagHueName {
   return TAG_HUES.includes(tag.hue as TagHueName) ? (tag.hue as TagHueName) : "moss";
 }
-
-/**
- * The waterline's stamp — WHEN the reader last left the stream, as "Mon 18:40" in their
- * locale. The engine stores the instant (`WaterlineMeta.at`), never display strings, so the
- * two streams format it here through one function rather than each composing its own. An
- * unparseable instant yields "" and the caller renders the line with no meta — a line with a
- * wrong time would be a claim, a line without one is just the line.
- */
-export function waterlineStamp(atIso: string, locale: string): string {
-  const at = new Date(atIso);
-  if (Number.isNaN(at.getTime())) return "";
-  return new Intl.DateTimeFormat(locale, {
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(at);
-}
