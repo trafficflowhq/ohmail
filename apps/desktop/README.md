@@ -337,7 +337,7 @@ verification; the cost was a second data directory for the same mailbox and an
 update path that could never hand over between them, which is a permanent fork in
 every path the app touches in exchange for a convenience while testing.
 
-The version is **`0.8.0`**, bare, in every place it is written: `tauri.conf.json`,
+The version is **`0.9.0`**, bare, in every place it is written: `tauri.conf.json`,
 `Cargo.toml`, `Cargo.lock`, `package.json`, and the macOS `Info.plist`. The
 `-preview` suffix earlier builds carried is retired — it marked "this build
 cannot update itself yet", and this build ships the auto-updater, so the claim is

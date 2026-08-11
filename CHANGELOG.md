@@ -16,6 +16,98 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.9.0] — 2026-08-11
+
+The release that stops assuming your mail is in English and your mailbox speaks a password.
+Microsoft 365 and Outlook.com sign in the way those accounts are meant to, the whole interface
+speaks German, and conversations arrive in the Ohbox as conversations rather than as a scatter of
+replies.
+
+### Microsoft 365 and Outlook.com
+
+**Connect an Outlook account by signing in to Microsoft, not by typing a password.** Settings has a
+Connect Outlook entry that hands you to Microsoft's own sign-in and comes back with the mailbox
+connected — no app password, no dug-out server names. An account that refuses password sign-in to
+mail clients could not be connected at all before this release; now it can.
+
+**A mailbox that has fallen out can be reconnected with nothing to type**, and the return from
+Microsoft finishes the job on whatever screen it lands on rather than only the one it started from.
+
+### German
+
+**The whole interface is available in German**, and the language is a property of your account
+rather than of the machine in front of you. Set it once and the next device you sign in on is
+already in German; leave it alone and each device keeps following its own system setting. Settings →
+General has the selector.
+
+Dates, times and counts follow the language, and a sentence that has no German translation yet falls
+back to English rather than showing you the name of a missing phrase.
+
+### Conversations
+
+**A back-and-forth arrives in the Ohbox as one row, not as one row per reply.** Opening it shows the
+newest message with the earlier ones folded above it, each openable in place.
+
+### Getting around
+
+**Switching between the Ohbox, Reads, Receipts and the Screener is immediate** — the view you asked
+for is drawn from what is already on your machine instead of waiting for the network — and a change
+you make on one device reaches your others noticeably sooner.
+
+### Writing
+
+**Reply all** is in the reply control, on `shift`+`R`, and it is offered only when there is actually
+more than one person to answer. Replies keep the editor in view as you type and quote the message
+you are answering without the wall of angle brackets plain-text mail arrives with. A reply names the
+address it is going out from, and says so plainly when the address it arrived at is disconnected and
+another one has to stand in; a new message lets you choose.
+
+**Attachments and forwarding are finished**: attach files to a new message or a reply, forward a
+message with its attachments intact, and see what you sent appear in your Sent folder immediately
+rather than after the next sync.
+
+### Screening
+
+**A rule can now match on the subject or on the words in a message, not only on the sender.** That
+covers the mail where the address changes every time but the subject does not — receipts, alerts,
+newsletters sent through a rotating relay.
+
+### Away
+
+**An away autoresponder.** You write the subject and the message, and choose who gets it: only
+senders you have already let past the Screener (the default), or everyone who writes. Each person is
+answered once, from the mailbox they wrote to, and mailing lists, no-reply addresses, security mail
+and your own addresses are never answered at all.
+
+While it is on, the Ohbox says so at the top of the pile — an autoresponder you have forgotten about
+is worse than none.
+
+### Reading
+
+**Plain-text mail with quoted history reads as nested quotes** rather than a bar in front of every
+line, and **addresses written in a non-Latin script are shown the way their owner wrote them**
+instead of the punycode the protocol carries them in.
+
+**Marking a message unread does what it says everywhere** — the row comes back, the count agrees,
+and the change reaches your server so every other mail app agrees too.
+
+### Connecting a mailbox
+
+**The connect screen works out your server's settings and tells you plainly when it cannot.** It
+detects whether the server wants an encrypted connection and on which port; when a certificate is
+refused it names the actual reason and, where the certificate is issued for a different name,
+suggests the address that would work. A server that offers no encryption at all can still be used,
+but only after you have been told and have said yes.
+
+### Sync and reliability
+
+- A mailbox that has never synced is worked on first, so a newly connected account fills in promptly
+  instead of waiting behind mailboxes that are already up to date.
+- A sync that resumes after an interruption picks up from a point that is still current, rather than
+  replaying from a stale one.
+- Read and unread marks made in Outlook are adopted rather than overwritten.
+- Long mailbox addresses no longer squash the controls beside them.
+
 ## [0.8.2] — 2026-08-10
 
 A follow-up to 0.8.1 about staying up when a single screen has trouble, a calmer sync line, less
@@ -892,7 +984,11 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.0
+[0.8.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.8.2
+[0.8.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.8.1
+[0.8.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.8.0
 [0.7.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.3
 [0.7.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.2
 [0.7.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.7.1

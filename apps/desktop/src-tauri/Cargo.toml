@@ -1,6 +1,6 @@
 [package]
 name = "ohmail"
-version = "0.8.2"
+version = "0.9.0"
 description = "ohmail — consent-first email. Windows/Linux preview shell."
 authors = ["TrafficFlow GmbH <support@ohmail.app>"]
 license = "GPL-3.0-or-later"
