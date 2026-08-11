@@ -1,17 +1,20 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import {
+  LINK_CODE_EVENT,
   MENU_NAVIGATE_EVENT,
   MENU_COMMANDS,
   MENU_COMMAND_EVENT,
   MENU_VIEWS,
   badgeCount,
+  codeOfLinkPayload,
   notify,
   onMenuCommand,
   onMenuNavigate,
+  openWeb,
   setBadge,
   commandOfMenuPayload,
   viewOfMenuPayload,
@@ -334,5 +337,130 @@ describe("the menu's commands", () => {
 
   it("is silent when there is no shell to listen to", async () => {
     await expect(onMenuCommand(() => undefined)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * ═══ THE SIGN-IN COMMITMENT GOING OUT, AND THE HANDOFF CODE COMING BACK ═════════════════════
+ *
+ * Signing a hosted install in used to end with somebody reading a code off a browser page and
+ * retyping it. It now ends with a press in the browser, and two things cross this boundary for
+ * that to be safe:
+ *
+ *  · OUT — a 43-character commitment the mail engine invented, passed BESIDE a place key. The
+ *    window still names no address: the shell owns the scheme, the host, the path and the
+ *    parameter's spelling, and refuses a value that is not challenge-shaped rather than opening
+ *    the page without it.
+ *  · IN — the handoff code a scheme activation carried, on its own event, which the window sends
+ *    down the same bridge the retyped code has always gone down. The shell claims nothing.
+ *
+ * ── THE MUTATIONS THESE CASES WERE WATCHED AGAINST ──────────────────────────────────────────
+ *
+ *  · drop `challenge` from `openWeb`'s payload           → the first case goes red, and that is the
+ *    one that matters most: the page would mint an UNBOUND code while the engine went on holding a
+ *    verifier, and every party would believe the binding was on;
+ *  · send `{ key, challenge: undefined }` unconditionally → the second case goes red;
+ *  · accept an empty or non-string payload as a code      → the refusal case goes red;
+ *  · register a listener per call instead of swapping the handler → the "one listener" case goes
+ *    red, which is the shape that answers one activation from several stale mounts at once.
+ */
+describe("the browser handoff, at the window's edge", () => {
+  /** Challenge-shaped: 43 characters of base64url, which is what a SHA-256 digest encodes to. */
+  const CHALLENGE = "0123456789abcdefghijklmnopqrstuvwxyzABCDEF_";
+
+  it("passes the commitment beside the place, never an address", async () => {
+    const shell = shellAnswering();
+    expect(CHALLENGE).toHaveLength(43);
+    await openWeb("link-desktop", CHALLENGE);
+    expect(shell.asked).toEqual([
+      { command: "open_link", payload: { key: "link-desktop", challenge: CHALLENGE } },
+    ]);
+  });
+
+  it("omits the field entirely when there is no commitment to pass", async () => {
+    const shell = shellAnswering();
+    await openWeb("link-desktop");
+    await openWeb("account");
+    /* Absent, not `undefined`. The shell's `Option<String>` and "no such parameter" are the same
+       fact, and a caller that always sent the key would make the one page that takes one look like
+       every page — which is what `desktop-mailboxes.test.ts` also pins from the other side. */
+    expect(shell.asked).toEqual([
+      { command: "open_link", payload: { key: "link-desktop" } },
+      { command: "open_link", payload: { key: "account" } },
+    ]);
+  });
+
+  it("reads a code out of both payload shapes and refuses everything that is not one", () => {
+    expect(codeOfLinkPayload("abc123")).toBe("abc123");
+    expect(codeOfLinkPayload({ payload: "abc123" })).toBe("abc123");
+    // Trimmed rather than refused: a value the runtime wrapped in whitespace is still the code.
+    expect(codeOfLinkPayload("  abc123  ")).toBe("abc123");
+    for (const nothing of ["", "   ", null, undefined, 3, {}, { payload: 3 }, { payload: "" }]) {
+      expect(codeOfLinkPayload(nothing), String(JSON.stringify(nothing))).toBeNull();
+    }
+  });
+
+  /**
+   * ONE SHELL-SIDE LISTENER FOR THE LIFE OF THE WINDOW, and the latest handler wins.
+   *
+   * The sign-in screen mounts every time somebody picks the hosted door, and there is no way to
+   * take a listener off — that would cost `core:event:allow-unlisten`, a SECOND core permission
+   * this window is deliberately not granted. So a registration per mount would stack listeners in
+   * the shell, and one activation would be answered by every stale mount at once, each holding an
+   * old mount's props.
+   */
+  it("keeps one listener and swaps the handler behind it", async () => {
+    vi.resetModules();
+    const native = await import("../src/native.js");
+    const shell = shellAnswering();
+
+    const first: string[] = [];
+    const second: string[] = [];
+    await native.onLinkCode((c) => first.push(c));
+    const live = (c: string): void => { second.push(c); };
+    await native.onLinkCode(live);
+
+    const listens = shell.asked.filter((a) => a.command === "plugin:event|listen");
+    expect(listens, "a second registration reached the shell").toHaveLength(1);
+    expect(listens[0]!.payload!.event).toBe(native.LINK_CODE_EVENT);
+    expect(listens[0]!.payload!.target).toEqual({ kind: "Any" });
+
+    shell.emit(native.LINK_CODE_EVENT, "code-1");
+    expect(first, "a superseded handler still answered").toEqual([]);
+    expect(second).toEqual(["code-1"]);
+
+    // Clearing a handler that is NOT the live one changes nothing — the screen that registered it
+    // is long gone, and taking the live screen off the air would be the bug.
+    native.offLinkCode((c: string) => first.push(c));
+    shell.emit(native.LINK_CODE_EVENT, "code-2");
+    expect(second).toEqual(["code-1", "code-2"]);
+
+    // Clearing the live one stops answering, and the shell is untouched either way.
+    native.offLinkCode(live);
+    shell.emit(native.LINK_CODE_EVENT, "code-3");
+    expect(second).toEqual(["code-1", "code-2"]);
+    expect(shell.asked.filter((a) => a.command === "plugin:event|listen")).toHaveLength(1);
+  });
+
+  it("delivers nothing for a payload that is not a code", async () => {
+    vi.resetModules();
+    const native = await import("../src/native.js");
+    const shell = shellAnswering();
+    const got: string[] = [];
+    await native.onLinkCode((c) => got.push(c));
+
+    shell.emit(native.LINK_CODE_EVENT, "");
+    shell.emit(native.LINK_CODE_EVENT, null);
+    shell.emit(native.LINK_CODE_EVENT, 7);
+    expect(got).toEqual([]);
+  });
+
+  it("is silent when there is no shell", async () => {
+    vi.resetModules();
+    const native = await import("../src/native.js");
+    await expect(native.onLinkCode(() => undefined)).resolves.toBeUndefined();
+    await expect(native.openWeb("link-desktop", CHALLENGE)).resolves.toBeUndefined();
+    // The statically imported copy names the same channel as the freshly loaded one.
+    expect(native.LINK_CODE_EVENT).toBe(LINK_CODE_EVENT);
   });
 });

@@ -512,7 +512,97 @@ export async function enterCloudDoorWithCode(address: string, code: string): Pro
   return signInToCloudWithCode(address, code, settled);
 }
 
-/** The handoff sign-in on its own, for the door that is already chosen. */
+/**
+ * What starting a browser handoff produced: the commitment to put in the page's URL, or a problem.
+ *
+ * `challenge` is the PUBLIC half of a PKCE pair the ENGINE invented and whose secret half never
+ * leaves that process. It is not a credential and nothing here can do anything with it except hand
+ * it to the shell, which decides what page it goes on.
+ */
+export interface HandoffStart {
+  challenge: string | null;
+  status: EngineStatus | null;
+  problem: string | null;
+}
+
+/**
+ * START A BROWSER HANDOFF: configure the door if it is not already, then ask the engine for a
+ * commitment.
+ *
+ * ── THE ORDER IS FORCED, AND GETTING IT WRONG IS SILENT ─────────────────────────────────────
+ *
+ * The verifier lives in the ENGINE's memory, and `engine_configure` REPLACES the engine — it stops
+ * the process that is running and starts a new one. So the door has to be configured BEFORE the
+ * pair is minted, never between minting it and claiming the code: a reconfigure in that window
+ * takes the verifier with it, and the code the browser is showing becomes unclaimable by anybody.
+ * Nothing fails loudly when that happens. The account answers the same sentence it answers an
+ * expired code with, because telling the two apart is exactly what it refuses to do.
+ *
+ * That is why this function does the configure itself rather than leaving it to the sign-in that
+ * follows, and why {@link signInToCloudWithCode} — which does NOT reconfigure — is the only sign-in
+ * that may be used to finish a handoff this started. `DoorChooser` remembers that it started one.
+ *
+ * A door that is already chosen and serving is left alone: signing in again on a configured
+ * install is one request, and restarting the engine to change nothing would take somebody's mail
+ * off the screen for the length of a first launch.
+ */
+export async function beginBrowserSignIn(
+  address: string,
+  /** True when the door is already configured and serving — the Settings pane's "Sign in". */
+  configured = false,
+): Promise<HandoffStart> {
+  const trimmedAddress = address.trim();
+  if (!trimmedAddress) return { challenge: null, status: null, problem: "Your ohmail address is missing." };
+  if (!trimmedAddress.includes("@")) {
+    return { challenge: null, status: null, problem: "That does not look like a mailbox address." };
+  }
+
+  let settled: EngineStatus | null = null;
+  if (!configured) {
+    try {
+      await engineConfigure({ mode: "cloud", cloudUrl: CLOUD_URL, address: trimmedAddress });
+    } catch (err) {
+      return { challenge: null, status: null, problem: sentence(err) };
+    }
+    settled = await settle();
+    if (settled.state !== "serving") {
+      return { challenge: null, status: settled, problem: stalled(settled) };
+    }
+  }
+
+  try {
+    const res = await bridgeFetch("/cloud/signin/challenge", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    if (!res.ok) return { challenge: null, status: settled, problem: await refusal(res) };
+    const body = (await res.json()) as { challenge?: unknown };
+    const challenge = typeof body.challenge === "string" ? body.challenge : "";
+    /* A missing or empty commitment is a REFUSAL rather than "open the page anyway". The page
+       without one mints a code any program that claimed `ohmail://` could spend, and this app
+       would still be waiting for a link — so the honest answer is to say the handoff could not be
+       started and leave the password and retype paths, both of which work. */
+    if (!challenge) {
+      return {
+        challenge: null,
+        status: settled,
+        problem: "The mail engine did not start a browser sign-in. Type the code in instead.",
+      };
+    }
+    return { challenge, status: settled, problem: null };
+  } catch (err) {
+    return { challenge: null, status: settled, problem: sentence(err) };
+  }
+}
+
+/**
+ * The handoff sign-in on its own, for the door that is already chosen.
+ *
+ * ALSO the only sign-in that may finish a handoff {@link beginBrowserSignIn} started, on a fresh
+ * install as well as a configured one — see that function for why a second `engine_configure` here
+ * would silently discard the verifier the whole handoff rests on.
+ */
 export async function signInToCloudWithCode(
   address: string,
   code: string,

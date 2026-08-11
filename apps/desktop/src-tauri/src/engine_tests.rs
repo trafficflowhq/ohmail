@@ -1833,3 +1833,127 @@ fn the_browser_can_only_be_sent_where_this_table_says() {
     assert_eq!(link_for(""), None);
     assert_eq!(link_for("Account"), None);
 }
+
+/// THE ONE PLACE A VALUE FROM THE WINDOW REACHES AN ADDRESS, AND THE GATE ON IT.
+///
+/// `link_url_for` is where the sign-in commitment is appended. The window contributes 43 characters
+/// of base64url and nothing else — not the parameter name, not the `?`, not the page. Every case
+/// below is a way that could stop being true.
+#[test]
+fn a_commitment_may_be_appended_to_one_page_and_must_be_one() {
+    const GOOD: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEF_";
+    assert_eq!(GOOD.len(), 43, "the fixture is not a challenge-shaped string");
+
+    // Absent and blank are the page as it has always been — the retype flow, unchanged.
+    assert_eq!(link_url_for("link-desktop", None).unwrap(), "https://ohmail.app/link-desktop");
+    assert_eq!(link_url_for("link-desktop", Some("")).unwrap(), "https://ohmail.app/link-desktop");
+    assert_eq!(link_url_for("link-desktop", Some("   ")).unwrap(), "https://ohmail.app/link-desktop");
+
+    // Present and well formed: exactly one parameter, spelled here.
+    assert_eq!(
+        link_url_for("link-desktop", Some(GOOD)).unwrap(),
+        format!("https://ohmail.app/link-desktop?challenge={GOOD}"),
+    );
+    // …and a stray newline from a copy is trimmed rather than reported as a fault nobody can see.
+    assert_eq!(
+        link_url_for("link-desktop", Some(&format!("  {GOOD}\n"))).unwrap(),
+        format!("https://ohmail.app/link-desktop?challenge={GOOD}"),
+    );
+
+    /* A MALFORMED COMMITMENT IS A REFUSAL AND NEVER A PLAIN PAGE. Opening the page without it
+       would mint an UNBOUND code while this app went on holding a verifier — every party believing
+       the binding was on, and the code spendable by whatever claimed the scheme. */
+    for bad in [
+        GOOD[..42].to_string(),                       // one short
+        format!("{GOOD}a"),                           // one long
+        format!("{}=", &GOOD[..42]),                  // base64 padding is not base64url
+        format!("{}+", &GOOD[..42]),                  // nor is the standard alphabet
+        format!("{}&next=x", &GOOD[..36]),            // a second parameter smuggled in, at length
+        format!("{}#frag", &GOOD[..38]),              // a fragment, at length
+        format!("{}%2F", &GOOD[..40]),                // percent-encoding, at length
+        "https://elsewhere.test/steal".to_string(),
+    ] {
+        assert!(
+            link_url_for("link-desktop", Some(&bad)).is_err(),
+            "link_url_for admitted {bad:?} as a commitment",
+        );
+    }
+
+    // And it is ONE page. Every other row administers an account and takes no parameter; a
+    // commitment aimed at one of them is a caller doing something this app does not do.
+    for (key, _) in LINKS {
+        if key == "link-desktop" {
+            continue;
+        }
+        assert!(
+            link_url_for(key, Some(GOOD)).is_err(),
+            "{key} accepted a sign-in commitment",
+        );
+        // …while the plain call is untouched.
+        assert_eq!(link_url_for(key, None).unwrap(), link_for(key).unwrap());
+    }
+
+    // An unknown key is still a refusal, with or without a commitment.
+    assert!(link_url_for("nowhere", None).is_err());
+    assert!(link_url_for("nowhere", Some(GOOD)).is_err());
+
+    /* THE APPEND ASSUMES NO FRAGMENT ON THIS ROW, so the assumption is asserted rather than
+       remembered. `?` after a `#` is part of the fragment and never reaches the server — the page
+       would load unbound and the button would never appear, which looks like a server fault. */
+    assert!(
+        !link_for("link-desktop").unwrap().contains('#'),
+        "the link-desktop row grew a fragment; the query would land inside it",
+    );
+}
+
+/// EVERY `ohmail://` LINK ON THE MACHINE ARRIVES HERE, so this is a grammar and not an extraction.
+///
+/// Registering a scheme means a mail body, a chat message or a web page can all send this process a
+/// link. The parser answers exactly one shape and refuses everything else — in particular it does
+/// not go looking for a `code=` inside a link whose action it does not recognise, and it does not
+/// choose between two of them.
+#[test]
+fn only_one_shape_of_link_carries_a_handoff_code() {
+    // The shape the page composes, and the trailing-slash variant the platform may hand over.
+    assert_eq!(code_from_link("ohmail://link?code=abc123").as_deref(), Some("abc123"));
+    assert_eq!(code_from_link("ohmail://link/?code=abc123").as_deref(), Some("abc123"));
+    // Percent-encoding is decoded, because `encodeURIComponent` composed it.
+    assert_eq!(code_from_link("ohmail://link?code=a%2Fb").as_deref(), Some("a/b"));
+    // `+` is NOT a space here: that is HTML form encoding, and reading it as one would corrupt a
+    // code that legitimately contained it.
+    assert_eq!(code_from_link("ohmail://link?code=a+b").as_deref(), Some("a+b"));
+
+    for refused in [
+        "",
+        "ohmail://link",                       // no query at all
+        "ohmail://link?",                      // …nor an empty one
+        "ohmail://link?code=",                 // an empty code is not a code
+        "ohmail://open?code=abc",              // a different action
+        "ohmail://link/deeper?code=abc",       // …and a deeper path is a different action too
+        "ohmail://?code=abc",                  // no action
+        "ohmail://link?token=abc",             // the wrong key
+        "ohmail://link?code=abc&next=x",       // an extra key beside it
+        "ohmail://link?next=x&code=abc",       // …in either order
+        "ohmail://link?code=a&code=b",         // two answers is no answer
+        "ohmail://link?code=abc#frag",         // a fragment
+        "ohmail://link?codee=abc",             // a key that merely starts the same
+        "https://ohmail.app/link?code=abc",    // not this scheme
+        "OHMAIL://link?code=abc",              // the scheme is matched exactly, not case-folded
+        "ohmail://link?code=%zz",              // broken percent-encoding
+        "ohmail://link?code=a%00b",            // a control character in the value
+        "ohmail://link?code=a b",              // …or whitespace
+        "ohmail://link?codeabc",               // a query with no `=` at all
+    ] {
+        assert!(code_from_link(refused).is_none(), "code_from_link accepted {refused:?}");
+    }
+
+    // Bounded for the reason the hosted claim bounds it: a real code is nowhere near this, and an
+    // unbounded value from a scheme handler is free work for whoever wants to send a megabyte.
+    let long = "x".repeat(513);
+    assert!(code_from_link(&format!("ohmail://link?code={long}")).is_none());
+    let at_bound = "x".repeat(512);
+    assert_eq!(
+        code_from_link(&format!("ohmail://link?code={at_bound}")).as_deref(),
+        Some(at_bound.as_str()),
+    );
+}

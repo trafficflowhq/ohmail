@@ -27,13 +27,14 @@
  * providers actually work) are still written down exactly once.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@ohmail/ui";
 
 import { ProviderPicker } from "../../webapp/app/shell/ProviderPicker";
 import { providerById } from "../../webapp/app/shell/providers";
 import {
   EMPTY_LOCAL,
+  beginBrowserSignIn,
   enterCloudDoor,
   enterCloudDoorWithCode,
   enterLocalDoor,
@@ -42,7 +43,11 @@ import {
   type DoorResult,
   type LocalDoorFields,
 } from "./doors.js";
-import { openWeb } from "./native.js";
+import { offLinkCode, onLinkCode, openWeb } from "./native.js";
+
+/** What the app says when the platform would not spawn a browser. Same sentence Settings uses. */
+const NO_BROWSER =
+  "This Mac would not open a browser. The page is at ohmail.app/link-desktop.";
 
 /** Which of the three cards is on screen. `doors` is where a fresh install starts. */
 type Step = "doors" | "local" | "cloud";
@@ -72,6 +77,23 @@ export function DoorChooser({
   const [step, setStep] = useState<Step>(start);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  /**
+   * THE ADDRESS A BROWSER HANDOFF WAS STARTED FOR, or null when none has been.
+   *
+   * Two jobs, and the first one is not a nicety. It selects which sign-in a code goes to:
+   * `enterCloudDoorWithCode` begins with `engine_configure`, which REPLACES the engine — and the
+   * verifier the whole handoff rests on lives in that process's memory. Reconfiguring after the
+   * commitment has been published throws it away, and the account then answers a perfectly good
+   * code with the same sentence it gives an expired one, because telling those apart is exactly
+   * what it refuses to do. So once a handoff has started, both the deep link AND a retyped code
+   * take the sign-in that does not touch the engine's lifetime.
+   *
+   * It holds the ADDRESS rather than a flag because the engine is now configured for that address
+   * and nothing afterwards will reconfigure it. Editing the field once the browser has been sent
+   * off must not quietly sign a session in against a mailbox this install is not mirroring; the
+   * value the handoff was started with is the one that stays true.
+   */
+  const [handedOff, setHandedOff] = useState<string | null>(null);
 
   /* One attempt at a time, and the result travels up whole. A door attempt restarts the engine
      and can take tens of seconds on a first run, so a second press while the first is in flight
@@ -84,6 +106,41 @@ export function DoorChooser({
       const result = await run();
       setProblem(result.problem);
       if (!result.problem) onEntered(result);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * START THE BROWSER HANDOFF — configure the door, mint the commitment, open the page.
+   *
+   * Three things in one press, and they have to be in this order: the engine must exist before it
+   * can invent a verifier, and the verifier must exist before the page is opened, or the page mints
+   * a code nothing on this machine can spend. `beginBrowserSignIn` owns the ordering; this owns
+   * what the person sees while it happens.
+   *
+   * A refusal from the shell is reported here WITH the address, because somebody who cannot be sent
+   * to the page can still walk to it — and the retype field is still on screen underneath.
+   */
+  const startHandoff = async (address: string): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      const started = await beginBrowserSignIn(address, cloudAction === "signIn");
+      if (!started.challenge) {
+        setProblem(started.problem ?? "The browser sign-in could not be started.");
+        return;
+      }
+      /* SET BEFORE THE BROWSER IS OPENED, and it stays set even if opening fails: by this point the
+         engine HAS been configured and IS holding a verifier, so a code submitted afterwards must
+         not go down a path that would restart it. */
+      setHandedOff(address.trim());
+      try {
+        await openWeb("link-desktop", started.challenge);
+      } catch {
+        setProblem(NO_BROWSER);
+      }
     } finally {
       setBusy(false);
     }
@@ -124,19 +181,12 @@ export function DoorChooser({
             }
             onSubmitCode={(address, code) =>
               attempt(() =>
-                cloudAction === "signIn"
-                  ? signInToCloudWithCode(address, code)
+                cloudAction === "signIn" || handedOff !== null
+                  ? signInToCloudWithCode(handedOff ?? address, code)
                   : enterCloudDoorWithCode(address, code),
               )
             }
-            onOpenBrowser={() =>
-              /* Same shape and same sentence style as Settings' `NO_BROWSER`: a refusal from the
-                 shell is reported here, with the address, because a person who cannot be sent to
-                 the page can still walk to it. */
-              void openWeb("link-desktop").catch(() =>
-                setProblem("This Mac would not open a browser. The page is at ohmail.app/link-desktop."),
-              )
-            }
+            onOpenBrowser={(address) => void startHandoff(address)}
           />
         )}
       </div>
@@ -342,6 +392,19 @@ function LocalDoor({
  * account, and that is not always where somebody is standing — a fresh Mac, a borrowed machine,
  * a person who has just installed this and has never opened ohmail.app. Offering the alternative
  * as the default would make the common case the one with an extra step in it.
+ *
+ * ── AND THE BROWSER PATH NO LONGER ASKS ANYBODY TO COPY A CODE ──────────────────────────────
+ *
+ * Pressing "Open ohmail.app" now hands the browser a commitment the mail engine on this machine
+ * invented, so the code that page mints is spendable only by this install. That is what makes it
+ * safe for the page to hand the code straight back over the `ohmail://` scheme — a scheme any
+ * program on the machine may claim, and one that authenticates nobody — and it is why the button
+ * on the page can exist at all.
+ *
+ * THE FIELD STAYS. A scheme handler can be missing, claimed by something that does nothing
+ * visible, or simply not fire, and a screen whose only way forward is a button in another
+ * application is a dead end. The page shows the code as well as the button; this shows the field
+ * as well as the explanation, and the two paths reach the same request.
  */
 function CloudDoor({
   busy,
@@ -361,13 +424,58 @@ function CloudDoor({
   onCancel?: () => void;
   onSubmit: (address: string, password: string, totp: string) => void;
   onSubmitCode: (address: string, code: string) => void;
-  onOpenBrowser: () => void;
+  onOpenBrowser: (address: string) => void;
 }) {
   const [address, setAddress] = useState("");
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
   const [handoff, setHandoff] = useState("");
   const [viaBrowser, setViaBrowser] = useState(false);
+
+  /**
+   * WHAT AN ACTIVATION NEEDS THAT AN ACTIVATION CANNOT CARRY: the address.
+   *
+   * The deep link carries the code and nothing else — deliberately, since a link is composed by
+   * whatever opened it. The address is this install's own answer to "which mailbox is this", typed
+   * into the field above, and it is read through a ref so the one live handler always sees what is
+   * on screen rather than what was on screen when it was registered.
+   *
+   * `onSubmitCode` is in here for a sharper reason than convenience: the parent's version of it
+   * decides — from state the parent updates when the handoff starts — whether the code goes to the
+   * sign-in that reconfigures the engine or the one that does not. A handler holding the version it
+   * was mounted with would take the first, restart the engine, and discard the verifier the code is
+   * bound to. Same fact, one render later, and the handoff fails with nothing on screen saying why.
+   */
+  const live = useRef({ address, viaBrowser, onSubmitCode });
+  live.current = { address, viaBrowser, onSubmitCode };
+
+  /**
+   * ANSWER THE SCHEME while this screen is the one on show.
+   *
+   * Registered once and cleared on unmount — `native.ts` keeps a single shell-side listener for the
+   * life of the window and swaps the handler behind it, because taking a listener off would cost a
+   * second core permission this window is deliberately not granted.
+   *
+   * The code is put IN THE FIELD as well as submitted. Somebody who pressed a button in another
+   * application and came back to this one should be able to see what arrived — and if the sign-in
+   * is refused, the value they would otherwise have to fetch again is already where they can retry
+   * with it.
+   */
+  useEffect(() => {
+    const answer = (code: string): void => {
+      /* Only on the branch that asked for it. A person who switched back to the password form has
+         a password half-typed in front of them, and submitting a sign-in under them would be this
+         screen acting on an event from another application. */
+      if (!live.current.viaBrowser) return;
+      setHandoff(code);
+      live.current.onSubmitCode(live.current.address, code);
+    };
+    void onLinkCode(answer);
+    return () => offLinkCode(answer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- registered once; state is read
+    // through `live` so the handler cannot go stale, and re-registering per render would swap the
+    // shell's handler on every keystroke.
+  }, []);
 
   return (
     <form
@@ -404,17 +512,21 @@ function CloudDoor({
       {viaBrowser ? (
         <>
           <p className="join-hint">
-            Open ohmail.app in your browser, sign in there if you are not already, and it will
-            show you a short code. Type it here. The code works once and lasts a couple of
-            minutes.
+            Your browser opens ohmail.app. Sign in there if you are not already, then press
+            “Open ohmail” on that page and this app comes forward signed in.
           </p>
           <div className="join-actions">
-            <Button type="button" onClick={onOpenBrowser} disabled={busy}>
+            <Button type="button" onClick={() => onOpenBrowser(address)} disabled={busy}>
               Open ohmail.app
             </Button>
           </div>
 
-          <label className="join-label" htmlFor="cloud-handoff">Code from the browser</label>
+          {/* THE FALLBACK STAYS ON SCREEN. See this component's header: a scheme handler can be
+              missing or claimed by something that does nothing visible, and the page shows the
+              code beside the button for exactly this. Nothing about typing it in has changed. */}
+          <label className="join-label" htmlFor="cloud-handoff">
+            Or type the code the page shows
+          </label>
           <input
             id="cloud-handoff"
             className="join-input join-code"
@@ -425,6 +537,9 @@ function CloudDoor({
             value={handoff}
             onChange={(e) => setHandoff(e.target.value)}
           />
+          <p className="join-hint">
+            The code works once and lasts a couple of minutes.
+          </p>
         </>
       ) : (
         <>

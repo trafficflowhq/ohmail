@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   CLOUD_URL,
   EMPTY_LOCAL,
+  beginBrowserSignIn,
   enterCloudDoor,
   enterCloudDoorWithCode,
   enterLocalDoor,
@@ -372,6 +373,130 @@ describe("door two, entered with a code from the browser", () => {
     expect(result.problem).toBeNull();
     expect(asked.some((a) => a.command === "engine_configure")).toBe(false);
     expect(asked.find((a) => a.command === "engine_request")!.payload!.url).toBe("/cloud/signin");
+  });
+});
+
+/**
+ * STARTING THE HANDOFF — the half that has to happen before the browser is opened at all.
+ *
+ * ── THE ORDER IS THE WHOLE OF IT, AND GETTING IT WRONG IS SILENT ────────────────────────────
+ *
+ * The PKCE verifier the handoff rests on lives in the ENGINE's memory, and `engine_configure`
+ * REPLACES the engine. So the door has to be configured BEFORE the commitment is minted, and
+ * nothing may reconfigure between minting it and claiming the code: a restart in that window takes
+ * the verifier with it, and the account then answers a perfectly good code with the same sentence
+ * it gives an expired one — because telling those two apart is exactly what it refuses to do.
+ *
+ * Nothing fails loudly when the order is wrong. That is why it is a test rather than a comment.
+ *
+ * ── THE MUTATIONS THESE CASES WERE WATCHED AGAINST ──────────────────────────────────────────
+ *
+ *  · mint the commitment before the configure → the ordering case goes red;
+ *  · configure on a door that is already serving → the "signIn" case goes red (an install whose
+ *    mail is on screen would lose it for the length of a restart to change nothing);
+ *  · return the page's address anyway when the engine answered no challenge → the refusal case
+ *    goes red, and that is the one that would ship an UNBOUND code to a scheme anybody can claim.
+ */
+describe("starting a browser handoff", () => {
+  /** As `shellThatWorks`, but the bridge answers the challenge route with a commitment. */
+  function shellThatMints(challenge: string | null, status: EngineStatus = { ...SERVING, mode: "cloud" }): Asked[] {
+    const asked: Asked[] = [];
+    host.__TAURI_INTERNALS__ = {
+      invoke: async (command, payload) => {
+        asked.push({ command, payload });
+        if (command === "engine_configure") return { state: "starting", mode: status.mode };
+        if (command === "engine_status") return status;
+        if (command === "engine_request") {
+          return encode(200, JSON.stringify(challenge === null ? {} : { challenge }));
+        }
+        throw new Error(`unexpected command ${command}`);
+      },
+    };
+    return asked;
+  }
+
+  const CHALLENGE = "0123456789abcdefghijklmnopqrstuvwxyzABCDEF_";
+
+  it("configures the door FIRST, then mints the commitment, on a fresh install", async () => {
+    const asked = shellThatMints(CHALLENGE);
+    const started = await beginBrowserSignIn("  mila@ohmail.app  ");
+    expect(started.problem).toBeNull();
+    expect(started.challenge).toBe(CHALLENGE);
+
+    const configureAt = asked.findIndex((a) => a.command === "engine_configure");
+    const mintAt = asked.findIndex(
+      (a) => a.command === "engine_request" && a.payload!.url === "/cloud/signin/challenge",
+    );
+    expect(configureAt, "the door was never configured").toBeGreaterThanOrEqual(0);
+    expect(mintAt, "the commitment was never minted").toBeGreaterThanOrEqual(0);
+    expect(configureAt, "the commitment was minted before the engine it lives in existed")
+      .toBeLessThan(mintAt);
+
+    expect(asked[configureAt]!.payload!.config).toEqual({
+      mode: "cloud", cloudUrl: CLOUD_URL, address: "mila@ohmail.app",
+    });
+    expect(asked[mintAt]!.payload!.method).toBe("POST");
+  });
+
+  it("touches nothing on a door that is already chosen and serving", async () => {
+    const asked = shellThatMints(CHALLENGE);
+    const started = await beginBrowserSignIn("mila@ohmail.app", true);
+    expect(started.challenge).toBe(CHALLENGE);
+    // A configure here would restart the engine — and take somebody's mail off the screen for the
+    // length of a first launch — to change nothing at all.
+    expect(asked.some((a) => a.command === "engine_configure")).toBe(false);
+    expect(asked.map((a) => a.payload?.url)).toEqual(["/cloud/signin/challenge"]);
+  });
+
+  it("REFUSES rather than answering a page with no commitment on it", async () => {
+    const asked = shellThatMints(null);
+    const started = await beginBrowserSignIn("mila@ohmail.app", true);
+    /* The page without a commitment mints a code any program that claimed `ohmail://` could spend,
+       while this install goes on waiting for a link — every party believing the binding is on. The
+       honest answer is that the handoff could not be started, with the retype field still on
+       screen behind it. */
+    expect(started.challenge).toBeNull();
+    expect(started.problem).toMatch(/Type the code in instead/);
+    expect(asked.map((a) => a.payload?.url)).toEqual(["/cloud/signin/challenge"]);
+  });
+
+  it("refuses a missing or malformed address before it configures anything", async () => {
+    const asked = shellThatMints(CHALLENGE);
+    expect((await beginBrowserSignIn("")).problem).toMatch(/address is missing/);
+    expect((await beginBrowserSignIn("not-an-address")).problem).toMatch(/does not look like/);
+    expect(asked).toHaveLength(0);
+  });
+
+  it("says what the engine said when the mint is refused", async () => {
+    const asked: Asked[] = [];
+    host.__TAURI_INTERNALS__ = {
+      invoke: async (command, payload) => {
+        asked.push({ command, payload });
+        if (command === "engine_status") return { ...SERVING, mode: "cloud" };
+        if (command === "engine_request") {
+          return encode(409, '{"error":{"code":"already_signed_in","message":"this install already holds a session"}}', "Conflict");
+        }
+        throw new Error(`unexpected command ${command}`);
+      },
+    };
+    const started = await beginBrowserSignIn("mila@ohmail.app", true);
+    expect(started.challenge).toBeNull();
+    // The ENGINE's own words, not a category — the same rule every other refusal on this screen
+    // follows.
+    expect(started.problem).toBe("this install already holds a session");
+  });
+
+  it("reports an engine that was reconfigured and never came up", async () => {
+    host.__TAURI_INTERNALS__ = {
+      invoke: async (command) => {
+        if (command === "engine_configure") return { state: "starting", mode: "cloud" };
+        if (command === "engine_status") return { state: "failed", mode: "cloud", reason: "another copy is running" };
+        throw new Error(`unexpected command ${command}`);
+      },
+    };
+    const started = await beginBrowserSignIn("mila@ohmail.app");
+    expect(started.challenge).toBeNull();
+    expect(started.problem).toBe("another copy is running");
   });
 });
 

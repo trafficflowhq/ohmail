@@ -1,3 +1,5 @@
+import { createHash, randomBytes } from "node:crypto";
+
 import type { CloudTokens } from "./cloud-auth.js";
 import type { Diagnostic } from "./log.js";
 
@@ -20,6 +22,32 @@ import type { Diagnostic } from "./log.js";
  * a session for about two minutes and only once. The password path stays the default; this is
  * the alternative, not the replacement, because it needs a browser signed in to the account and
  * that is not always where somebody is standing.
+ *
+ * ── AND WHY THAT CODE NO LONGER HAS TO BE RETYPED ─────────────────────────────────────────────
+ *
+ * A code a person carries in their fingers is safe because nothing but a person can read it off a
+ * screen. Handing it back over a URL scheme is not: `ohmail://` is claimed by whichever program on
+ * the machine registered it, and nothing authenticates that. So before the browser is opened this
+ * process invents a VERIFIER — 32 random bytes, base64url, 43 characters — keeps it in memory, and
+ * publishes only `sha256(verifier)` as the CHALLENGE that travels in the page's URL. The account
+ * binds the code it mints to that digest, and refuses to spend it for any caller that cannot
+ * produce the verifier the digest was made from. A program that intercepts the scheme therefore
+ * receives a code it cannot use, and a failed attempt does not consume it either.
+ *
+ * Three properties of the verifier are load-bearing and each one is a rule about this file:
+ *
+ *  · it is generated HERE and never leaves this process except as the claim's own field. It is
+ *    not a parameter of the sign-in body, so no caller over the bridge can supply one — the
+ *    engine uses the verifier it is holding or none at all;
+ *  · it is never a log field. The diagnostics here carry a step name and an HTTP status, and
+ *    nothing that could be exchanged for a session;
+ *  · it dies with the process. That is not a defect to work around: a code minted against a
+ *    challenge whose verifier no longer exists is a code nobody can spend, which is exactly the
+ *    property that makes it safe to send over a scheme in the first place.
+ *
+ * The retype path is UNCHANGED and coexists with it. A code minted with no challenge is claimed
+ * with no verifier, exactly as it always was; the hosted side decides which of the two it is
+ * looking at from the row, at mint, and never afterwards.
  *
  * ── THE TWO STEPS, AND THE FIELD NAME THAT IS NOT THE ONE YOU EXPECT ──────────────────────────
  *
@@ -97,6 +125,52 @@ export interface CloudSignInOptions {
   /** Injected for tests; production dials the real hosted API. */
   fetchImpl?: typeof fetch;
   log?: Diagnostic;
+  /**
+   * The PKCE verifier this install is holding, if it minted one before opening the browser.
+   *
+   * ON THE OPTIONS AND NOT ON THE REQUEST, and that placement is the whole of the rule. The
+   * request is JSON that arrived over the bridge; the options are composed by the engine from its
+   * own memory. Putting the verifier on the request shape would mean any caller that can reach
+   * `POST /cloud/signin` could name the verifier a code is claimed with — which is precisely the
+   * capability the binding exists to withhold from whoever intercepted the scheme.
+   *
+   * Absent is not a lesser call. It is the retype flow, where the code was minted unbound and is
+   * claimed exactly as it was before any of this existed.
+   */
+  verifier?: string;
+}
+
+/**
+ * A PKCE pair: the secret this process keeps, and the commitment it is willing to publish.
+ *
+ * `verifier` is 32 bytes from the platform CSPRNG, base64url — 43 characters, the same length and
+ * alphabet the challenge has, which is a coincidence of SHA-256 also being 32 bytes and not a
+ * relationship between them. `challenge` is `base64url(sha256(utf8(verifier)))`, and the encoding
+ * is PINNED rather than incidental: the hosted side compares it against a digest it computes the
+ * same way over the same string, so a hex digest, a padded base64 or a hash of the DECODED bytes
+ * would each produce a well-formed value that can never match.
+ */
+export interface DesktopLinkPair {
+  readonly verifier: string;
+  readonly challenge: string;
+}
+
+/**
+ * The commitment for a verifier — the digest, and nothing else about it.
+ *
+ * Exported because it is the half of the contract most likely to drift, and the drift is silent:
+ * every wrong encoding still produces 43-ish characters of plausible-looking text, and the only
+ * symptom is a handoff that is refused with the same sentence an expired code gets. It is
+ * asserted directly against the hosted side's own `hashToken`.
+ */
+export function challengeFor(verifier: string): string {
+  return createHash("sha256").update(verifier, "utf8").digest("base64url");
+}
+
+/** A fresh pair. The caller keeps `verifier` and publishes `challenge`; see the file header. */
+export function newDesktopLinkPair(): DesktopLinkPair {
+  const verifier = randomBytes(32).toString("base64url");
+  return { verifier, challenge: challengeFor(verifier) };
 }
 
 /**
@@ -179,7 +253,16 @@ export async function cloudSignIn(
   // to seal, retry or remember: the pair comes back in the body, exactly as the native branch
   // of `POST /auth/refresh` answers, and the caller seals it the way it seals every other pair.
   if (handoff) {
-    const res = await post("/auth/desktop-claim", { code: handoff }, "claim");
+    // THE FIELD IS OMITTED RATHER THAN SENT EMPTY when this install holds no verifier. The hosted
+    // side reads an absent verifier as the real predicate "this code was minted unbound", and an
+    // empty string is not that — it is a claim to hold the verifier for the digest of "", which is
+    // a challenge somebody could deliberately mint. Two shapes, and the difference is a refusal.
+    const verifier = trimmed(opts.verifier);
+    const res = await post(
+      "/auth/desktop-claim",
+      verifier ? { code: handoff, verifier } : { code: handoff },
+      "claim",
+    );
     const body = await readJson(res);
     if (!res.ok) {
       opts.log?.("cloud_signin_refused", { status: res.status, reason: "the hosted service refused the code" });

@@ -42,7 +42,13 @@ path = "src/main.rs"
 # It is not dead code either way: `cargo test --features local-engine` is what
 # proves the lifecycle, and those tests start real processes.
 default = []
-local-engine = ["dep:keyring", "dep:getrandom", "dep:tauri-plugin-notification"]
+local-engine = [
+    "dep:keyring",
+    "dep:getrandom",
+    "dep:tauri-plugin-notification",
+    "dep:tauri-plugin-deep-link",
+    "dep:tauri-plugin-single-instance",
+]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -199,6 +205,40 @@ getrandom = { version = "0.3", optional = true }
 # nothing may be, since this binary is conveyed under GPL-3.0 and an AGPL
 # dependency in the shared half would force publishing the hosted service too.
 tauri-plugin-notification = { version = "2", optional = true }
+
+# THE `ohmail://` SCHEME, AND THE TWO PLUGINS THAT MAKE IT ONE APP RATHER THAN
+# SEVERAL.
+#
+# Signing a desktop install in used to end with a person reading a code off a
+# browser page and retyping it into the app. The code is now handed back over a
+# registered URL scheme instead, which needs two capabilities this process does
+# not otherwise have:
+#
+#  · `tauri-plugin-deep-link` registers `ohmail://` with the platform (an
+#    Info.plist entry on macOS, a registry key on Windows, a MimeType in the
+#    .desktop file on Linux — all generated from `plugins.deep-link` in
+#    tauri.engine.conf.json) and delivers an activation to this process as an
+#    event rather than as an argv the app has to interpret;
+#  · `tauri-plugin-single-instance` is what makes a scheme activation reach the
+#    RUNNING app on Windows and Linux. Without it the platform launches a SECOND
+#    copy of ohmail holding the link — a copy whose engine has no PKCE verifier,
+#    so the handoff would fail, and which would then fight the first one for the
+#    engine's data directory lock. macOS delivers to the running instance itself
+#    and needs neither; the plugin is registered on all three because the
+#    behaviour it produces is the one macOS already has.
+#
+# BOTH ARE OPTIONAL AND BOTH ARE OFF IN THE PREVIEW, for the reason the keystore
+# and the notification centre are: the interface preview has no account and no
+# sign-in, so a scheme registered for it would be a claim on a machine-wide
+# namespace made by a build that cannot answer it. The scheme is declared in the
+# engine build's config overlay, not in the base config, so the preview's bundle
+# registers nothing at all.
+#
+# MIT OR Apache-2.0, both of them and everything they pull in — nothing here is
+# copyleft and nothing may be, since this binary is conveyed under GPL-3.0 and an
+# AGPL dependency in the shared half would force publishing the hosted service.
+tauri-plugin-deep-link = { version = "2", optional = true }
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"], optional = true }
 
 [dev-dependencies]
 # The signature-verification biting test signs nothing at test time — it verifies

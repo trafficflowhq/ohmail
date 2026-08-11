@@ -39,6 +39,20 @@ export const MENU_NAVIGATE_EVENT = "menu:navigate";
 export const MENU_COMMAND_EVENT = "menu:command";
 
 /**
+ * The event the shell emits when an `ohmail://link?code=…` activation arrives.
+ *
+ * A THIRD channel rather than a third name on one of the menu's, for the reason those two are
+ * separate from each other: the payloads are different kinds of value, and each union is closed on
+ * its own terms. A menu payload is one of a fixed list this bundle knows; this one is an opaque
+ * server-minted string this bundle deliberately does not pattern-check. Sharing an event would mean
+ * a shell one version ahead could turn one into the other.
+ *
+ * What arrives is the handoff CODE and never a token — the shell claims nothing, and the window
+ * sends the code down the same bridge the retyped one has always gone down.
+ */
+export const LINK_CODE_EVENT = "link:code";
+
+/**
  * The views the menu can reach, in the order it lists them — and therefore the order their
  * ⌘1…⌘5 accelerators run in.
  *
@@ -109,11 +123,25 @@ export type WebPlace = (typeof WEB_PLACES)[number];
  * Nothing is fetched here and nothing is fetched by the shell: the browser makes the request, as
  * itself, with its own session. A refusal — no browser, a platform that would not spawn one —
  * comes back as a rejection for the caller to show.
+ *
+ * ── `challenge` IS A VALUE, AND STILL NOT A URL ─────────────────────────────────────────────
+ *
+ * The sign-in page needs one parameter: the public half of a PKCE pair whose secret half is in the
+ * engine's memory, which is what makes the code that page mints safe to hand back over the
+ * `ohmail://` scheme. This window does not compose that address. It passes the place and the 43
+ * characters, and the SHELL decides the scheme, the host, the path, the `?`, the parameter's name
+ * and whether this key may carry one at all — refusing a value that is not challenge-shaped rather
+ * than opening the page without it, because a page opened without the commitment mints an UNBOUND
+ * code while this app goes on holding a verifier.
+ *
+ * Omitted for every other place, and the field is then absent from the payload rather than sent
+ * empty: the shell's `Option<String>` and "no such parameter" are the same fact, and a caller that
+ * always sent the key would make the exception look like the rule.
  */
-export async function openWeb(place: WebPlace): Promise<void> {
+export async function openWeb(place: WebPlace, challenge?: string): Promise<void> {
   const shell = internals();
   if (!shell) return;
-  await shell.invoke(OPEN_COMMAND, { key: place });
+  await shell.invoke(OPEN_COMMAND, challenge ? { key: place, challenge } : { key: place });
 }
 
 interface TauriInternals {
@@ -183,6 +211,71 @@ export async function onMenuNavigate(go: (view: MenuView) => void): Promise<void
  */
 export async function onMenuCommand(run: (command: MenuCommand) => void): Promise<void> {
   await listen(MENU_COMMAND_EVENT, commandOfMenuPayload, run);
+}
+
+/**
+ * The handoff code a `link:code` payload carried, or null when it carried none.
+ *
+ * ── WHY THIS ONE IS NOT A CLOSED UNION, UNLIKE THE TWO ABOVE ────────────────────────────────
+ *
+ * A menu payload names one of a list this bundle knows, so an unknown name is refused. A handoff
+ * code is a server-minted opaque string, and a shape assertion here would be a second, quieter
+ * definition of what the account issues — one that keeps working until the issuer changes and then
+ * refuses every valid code with a sentence nobody can see. `doors.ts` declines the same assertion
+ * for the same reason, and the shell's own parser has already refused every link that is not
+ * exactly `ohmail://link?code=…`.
+ *
+ * So what is checked here is what a TYPE cannot be trusted for across a process boundary: that it
+ * is a non-empty string. Everything else is the engine's answer to make.
+ */
+export function codeOfLinkPayload(payload: unknown): string | null {
+  const raw =
+    typeof payload === "string"
+      ? payload
+      : typeof (payload as { payload?: unknown } | null)?.payload === "string"
+        ? (payload as { payload: string }).payload
+        : null;
+  const code = raw === null ? "" : raw.trim();
+  return code.length > 0 ? code : null;
+}
+
+/**
+ * ONE SHELL-SIDE LISTENER FOR THE LIFE OF THE WINDOW, and the latest handler wins.
+ *
+ * ── WHY THIS IS NOT THE SAME SHAPE AS THE MENU'S TWO ────────────────────────────────────────
+ *
+ * `onMenuNavigate` and `onMenuCommand` are registered once by `DesktopGate`, which mounts once, so
+ * a plain registration is correct there. The sign-in screen is different: it is mounted whenever
+ * somebody picks the hosted door and unmounted when they go back, which can happen several times
+ * in a session. Registering per mount would stack listeners in the SHELL, and every stale one
+ * would fire on the next activation — each holding an old mount's props, so one code would be
+ * submitted several times against different closures.
+ *
+ * Unregistering is not available and that is deliberate rather than an oversight: taking a listener
+ * off costs `core:event:allow-unlisten`, a SECOND core permission for this window, and the window's
+ * grant is one receive-only permission on purpose. So the registration happens once and the handler
+ * is swapped behind it — which is the behaviour the screen wants anyway, since the mount a person
+ * is looking at is the one that should answer.
+ */
+let linkCodeHandler: ((code: string) => void) | null = null;
+let linkCodeListening = false;
+
+/**
+ * Run `run` when a scheme activation hands this window a handoff code.
+ *
+ * Same contract as {@link onMenuNavigate}: never rejects on a missing shell, because this bundle is
+ * also loaded outside the app, and there is simply nothing to listen to there.
+ */
+export async function onLinkCode(run: (code: string) => void): Promise<void> {
+  linkCodeHandler = run;
+  if (linkCodeListening) return;
+  linkCodeListening = true;
+  await listen(LINK_CODE_EVENT, codeOfLinkPayload, (code) => linkCodeHandler?.(code));
+}
+
+/** Stop answering activations — the mount that registered is going away and none replaced it. */
+export function offLinkCode(run: (code: string) => void): void {
+  if (linkCodeHandler === run) linkCodeHandler = null;
 }
 
 /** One `plugin:event|listen`, shared by the two menu channels. */

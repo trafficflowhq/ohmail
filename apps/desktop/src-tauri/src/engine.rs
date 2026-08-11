@@ -2824,6 +2824,66 @@ pub fn link_for(key: &str) -> Option<&'static str> {
     LINKS.iter().find(|(name, _)| *name == key).map(|(_, url)| *url)
 }
 
+/// The key whose page may carry a PKCE commitment, and the only one.
+///
+/// Named as a constant rather than written twice, because the whole safety argument for appending
+/// ANYTHING to one of these addresses rests on it being this one page: `/link-desktop` is where a
+/// code is minted, and the challenge is what makes that code worthless to anybody but this
+/// process. Appending a parameter to `privacy` or `billing` would be a value from the window
+/// shaping a URL, which is the thing [`LINKS`] exists to prevent.
+#[cfg(feature = "local-engine")]
+const LINK_DESKTOP_KEY: &str = "link-desktop";
+
+/// A sign-in commitment and nothing else: 43 characters of base64url, which is what the SHA-256 of
+/// anything is once base64url-encoded without padding.
+///
+/// EXACT, not a bound. There is one thing this value may be — the digest of the verifier the mail
+/// engine is holding — and every other shape is a caller doing something else, so this is a gate
+/// and not a sanitiser. It admits no `%`, no `&`, no `=` and no `#`, which is also what makes the
+/// append below safe without an encoder: a value that passes this test is already its own
+/// percent-encoding.
+#[cfg(feature = "local-engine")]
+fn is_challenge(value: &str) -> bool {
+    value.len() == 43
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// The address a key names, with the desktop link's optional commitment appended.
+///
+/// ── THE WINDOW STILL NAMES A PLACE. IT NOW ALSO NAMES A VALUE, AND THAT IS NOT THE SAME THING ──
+///
+/// The page passes a KEY and, for exactly one key, a challenge — never a URL, never a host, never
+/// a parameter name. This function owns the scheme, the host, the path, the `?`, the parameter's
+/// spelling and the rule about what may follow it. What the caller contributes is 43 characters
+/// from a fixed alphabet, which cannot introduce a second parameter, a fragment, a credential or
+/// another origin.
+///
+/// A MALFORMED CHALLENGE IS A REFUSAL, not a plain page. Opening `/link-desktop` without the
+/// commitment would mint an UNBOUND code — one that any program which claimed `ohmail://` could
+/// spend — while the app went on holding a verifier and believing the handoff was bound. Every
+/// party would think the binding was on. Refusing puts the disagreement in front of the one person
+/// who can do something about it, and the retype path is still on the screen behind it.
+#[cfg(feature = "local-engine")]
+pub fn link_url_for(key: &str, challenge: Option<&str>) -> Result<String, String> {
+    let url = link_for(key).ok_or_else(|| format!("ohmail: {key} is not a place this app opens"))?;
+    let Some(challenge) = challenge.map(str::trim).filter(|c| !c.is_empty()) else {
+        return Ok(url.to_string());
+    };
+    if key != LINK_DESKTOP_KEY {
+        return Err(format!("ohmail: {key} is not a page that takes a sign-in commitment"));
+    }
+    if !is_challenge(challenge) {
+        return Err("ohmail: that sign-in commitment is not one this app produced".to_string());
+    }
+    // No `#` in this row, so there is no fragment to insert before — asserted in `engine_tests.rs`
+    // rather than assumed, because `mailboxes` DOES carry one and a later editor could give this
+    // row a route too. A `?` appended after a fragment is part of the fragment and never reaches
+    // the server, which would be a silently unbound page.
+    Ok(format!("{url}?challenge={challenge}"))
+}
+
 /// Open one of [`LINKS`] in the user's own browser.
 ///
 /// The platform's own opener, by process rather than by a plugin: `open` on macOS, `xdg-open` on
@@ -2832,10 +2892,15 @@ pub fn link_for(key: &str) -> Option<&'static str> {
 /// itself, with its own cookies. The engine-bearing build already spawns a process (the engine),
 /// so this adds no capability to the artifact that was not already there; the PREVIEW compiles
 /// none of it.
+///
+/// `challenge` is the second parameter and it is NOT a step towards a URL argument — see
+/// [`link_url_for`], which owns every character of the address and admits 43 base64url characters
+/// after one parameter name of its own choosing, for one key.
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
-fn open_link(key: String) -> Result<(), String> {
-    let url = link_for(&key).ok_or_else(|| format!("ohmail: {key} is not a place this app opens"))?;
+fn open_link(key: String, challenge: Option<String>) -> Result<(), String> {
+    let target = link_url_for(&key, challenge.as_deref())?;
+    let url: &str = &target;
 
     #[cfg(target_os = "macos")]
     let mut command = {
@@ -2864,6 +2929,162 @@ fn open_link(key: String) -> Result<(), String> {
         .map_err(|err| format!("ohmail: this computer would not open a browser ({err})"))
 }
 
+// ═══ THE WAY BACK IN: `ohmail://link?code=…` ═════════════════════════════════════════════════
+//
+// The browser half of signing in mints a one-use handoff code. Until now the only way that code
+// could reach this app was a person reading it and retyping it, because a URL scheme is claimed by
+// whichever program on the machine registered it and NOTHING authenticates that claim. What makes
+// the scheme usable is that the code is bound before it exists: the engine invents a PKCE verifier,
+// keeps it in its own memory, and the page carries only `sha256(verifier)`, so the account refuses
+// to spend the code for any caller that cannot produce the verifier. A program that intercepts the
+// link gets a string it cannot exchange for anything, and a failed attempt does not consume it.
+//
+// ── THIS PROCESS DOES NOT CLAIM THE CODE. IT ANNOUNCES IT. ──────────────────────────────────
+//
+// The code goes to the WINDOW as an event, and the window sends it down the bridge to the engine —
+// the same path the retyped code has always taken, and the same path the mailbox password takes.
+// The shell composes no credential, holds none in its memory and stores none, which is the rule
+// `engine_configure` already refuses payloads to protect. So this adds NO new capability: the
+// window's grant is unchanged, and the one permission involved (`core:event:allow-listen`) is the
+// one the menu already uses.
+//
+// ── A COLD LAUNCH CANNOT COMPLETE A HANDOFF, AND THAT IS THE DESIGN RATHER THAN A GAP ───────
+//
+// An activation that STARTS the app arrives at a process whose engine has just been spawned and
+// holds no verifier — the verifier died with the previous engine, if there ever was one. Such a
+// code is bound to a commitment nobody can answer, so it is unspendable by this app and by anyone
+// else; announcing it into a window that is not listening yet loses nothing that was worth
+// anything. The person presses the button again, or types the code, and both work.
+
+/// The event the shell emits when a scheme activation carried a handoff code.
+///
+/// A third channel beside `menu:navigate` and `menu:command`, for the reason those two are separate
+/// from each other: the payloads are different KINDS of value and the frontend validates each on
+/// its own terms. Folding a credential-shaped payload into a union that also carries route names
+/// would be the one place a stale shell could turn one into the other.
+#[cfg(feature = "local-engine")]
+pub const LINK_CODE_EVENT: &str = "link:code";
+
+/// The scheme this app registers, and the single action it answers on it.
+///
+/// Registered from `tauri.engine.conf.json` — the ENGINE build's overlay only, so the interface
+/// preview claims nothing machine-wide. The action is checked here rather than trusted, because
+/// registering a scheme means every `ohmail://…` on the machine arrives at this process.
+#[cfg(feature = "local-engine")]
+const LINK_SCHEME: &str = "ohmail";
+#[cfg(feature = "local-engine")]
+const LINK_ACTION: &str = "link";
+/// The ONE query key a link may carry. Not a first key among others — the only one.
+#[cfg(feature = "local-engine")]
+const LINK_CODE_KEY: &str = "code";
+/// The same bound the hosted claim applies. A real code is `generateToken()`-shaped and nowhere
+/// near it; anything longer is somebody sending a megabyte through a scheme handler.
+#[cfg(feature = "local-engine")]
+const LINK_CODE_MAX: usize = 512;
+
+/// One percent-decoded query value, or `None` if the encoding is malformed.
+///
+/// `+` is left ALONE rather than turned into a space: that convention belongs to HTML form
+/// encoding, not to RFC 3986, and `encodeURIComponent` — which is what composes this link — never
+/// emits one. Reading it as a space would silently corrupt a code that legitimately contained it.
+#[cfg(feature = "local-engine")]
+fn percent_decode(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = raw.get(i + 1..i + 3)?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// The handoff code an activation carried, or `None` for every link that is not exactly one.
+///
+/// ── IT IS A GRAMMAR, NOT AN EXTRACTION ──────────────────────────────────────────────────────
+///
+/// Registering `ohmail://` means every such link on the machine — from a mail body, a chat message,
+/// a web page — is delivered here. So this refuses everything it does not recognise instead of
+/// finding a `code=` somewhere inside it: one action, one query key, no fragment, no repetition.
+/// `ohmail://link?code=A&code=B` is refused rather than resolved to either, because a reader that
+/// picks one of two answers is a reader an attacker can aim.
+///
+/// The VALUE's shape is deliberately not asserted beyond a length bound and a ban on control
+/// characters. The code is a server-minted opaque string, and a format assertion here would be a
+/// second, quieter definition of what the account issues — the kind that keeps working until the
+/// issuer changes and then refuses every valid code with a sentence nobody can see. `doors.ts`
+/// declines the same assertion for the same reason.
+#[cfg(feature = "local-engine")]
+pub fn code_from_link(raw: &str) -> Option<String> {
+    let rest = raw.strip_prefix(&format!("{LINK_SCHEME}://"))?;
+    // A fragment is refused rather than trimmed: this app answers no link that has one, and
+    // trimming would accept `ohmail://link?code=x#anything` as though the tail were not there.
+    if rest.contains('#') {
+        return None;
+    }
+    let (action, query) = rest.split_once('?')?;
+    // `ohmail://link?…` and `ohmail://link/?…` are the same activation — the trailing slash is the
+    // platform's, not the sender's. Anything else in the path is a different action.
+    if action.trim_end_matches('/') != LINK_ACTION {
+        return None;
+    }
+    let mut found: Option<String> = None;
+    for pair in query.split('&') {
+        let (key, value) = pair.split_once('=')?;
+        // EVERY key is checked, not just until one matches: an unknown parameter beside the code
+        // means this link was composed by something that does not know what this app answers.
+        if key != LINK_CODE_KEY || found.is_some() {
+            return None;
+        }
+        let decoded = percent_decode(value)?;
+        if decoded.is_empty()
+            || decoded.len() > LINK_CODE_MAX
+            || decoded.chars().any(|c| c.is_control() || c.is_whitespace())
+        {
+            return None;
+        }
+        found = Some(decoded);
+    }
+    found
+}
+
+/// Hand a scheme activation to the window, and bring the window to the front.
+///
+/// The order is deliberate. The window is raised whatever the link said — somebody has just pressed
+/// a button in their browser and expects this app, and a link this process refuses is still a
+/// reason to show the screen that explains what to do instead. The EVENT is only emitted for a link
+/// this app answers.
+///
+/// A failed emit is not worth taking a mail client down for: the window may be closing, and the
+/// cost is a handoff that has to be retried by hand — which is the fallback the screen is already
+/// showing.
+#[cfg(feature = "local-engine")]
+fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
+    use tauri::{Emitter, Manager};
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    match code_from_link(raw) {
+        // NEVER the code itself, here or in any other line this process writes: it is worth a
+        // session for two minutes, and a log file outlives that by a great deal.
+        Some(code) => {
+            log_line(format_args!("a sign-in link arrived and was handed to the window"));
+            let _ = app.emit(LINK_CODE_EVENT, code);
+        }
+        None => log_line(format_args!(
+            "a link arrived on this app's scheme that it does not answer; ignored"
+        )),
+    }
+}
+
 /// The window's grant, and the whole of it.
 ///
 /// Added at runtime rather than as a file in `capabilities/`, because a file there is compiled into
@@ -2879,7 +3100,7 @@ fn open_link(key: String) -> Result<(), String> {
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, open one of a fixed list of ohmail.app pages in the user's own browser, and listen for the shell's own events. Nothing else: no filesystem, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), and listen for the shell's own events — including the handoff code an ohmail:// activation carried. Nothing else: no filesystem, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
   "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-open-link", "core:event:allow-listen"]
 }"#;
@@ -2895,6 +3116,33 @@ const LOCAL_ENGINE_CAPABILITY: &str = r#"{
 #[cfg(feature = "local-engine")]
 pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
+        /* SINGLE INSTANCE FIRST, AND THE ORDER IS LOAD-BEARING RATHER THAN TIDY.
+         *
+         * This plugin decides whether the process it is running in is the FIRST one; a second copy
+         * hands its arguments to the first and exits. Registered after another plugin, that exit
+         * happens after the other plugin has already set something up, which is how a second copy
+         * of a mail client briefly touches the engine's data directory before quitting.
+         *
+         * It is what makes a scheme activation reach the app that is already open on Windows and
+         * Linux, where the platform otherwise launches a new copy holding the link. Its `deep-link`
+         * feature forwards those arguments into the deep-link plugin below, so the activation
+         * arrives on ONE path on all three platforms rather than two that could disagree — the
+         * callback here therefore does not re-parse `argv`, and only brings the window forward,
+         * because a second copy of ohmail being asked to open is a person looking for this one. */
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        /* THE SCHEME. Registration is declarative — `plugins.deep-link.desktop.schemes` in
+         * `tauri.engine.conf.json`, which the bundler turns into an Info.plist entry, a registry
+         * key or a .desktop MimeType — and this line is what delivers an activation to
+         * [`announce_link`] (hooked up in `manage`). The PREVIEW compiles neither, and its config
+         * overlay declares no scheme, so it claims nothing machine-wide. */
+        .plugin(tauri_plugin_deep_link::init())
         // The notification plugin, registered HERE rather than in `main.rs`, so it is in the
         // engine-bearing build and out of the preview's dependency graph entirely — the preview
         // has no mail and therefore nothing to announce. The webview is granted the `notify`
@@ -2911,10 +3159,29 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         ])
 }
 
-/// Hand the shell to the window, and grant the window the seven commands.
+/// Hand the shell to the window, grant the window the seven commands, and start listening for
+/// `ohmail://` activations.
+///
+/// The deep-link listener is registered HERE rather than from `Builder::setup`, and that is forced
+/// rather than chosen: a menu is installed from `setup`, a second `setup` on the same builder
+/// REPLACES the first with nothing failing to say so, and `menu.rs` owns the one there is. This
+/// function already receives the built `App`, which is all `on_open_url` needs.
 #[cfg(feature = "local-engine")]
 pub fn manage(app: &tauri::App, shell: Arc<Shell>) {
     use tauri::Manager;
+    use tauri_plugin_deep_link::DeepLinkExt;
+
+    // EVERY url the activation carried, each judged on its own. The platform may deliver more than
+    // one, and "the first one wins" would be a rule an attacker could aim by prepending a link this
+    // app refuses. `announce_link` answers each independently and emits only for the ones it
+    // recognises.
+    let handle = app.handle().clone();
+    app.deep_link().on_open_url(move |event| {
+        for url in event.urls() {
+            announce_link(&handle, url.as_str());
+        }
+    });
+
     app.manage(shell);
     if let Err(err) = app.add_capability(LOCAL_ENGINE_CAPABILITY) {
         // Fatal, and loudly. A window that cannot call the bridge is a window that renders nothing

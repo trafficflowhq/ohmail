@@ -305,12 +305,12 @@ describe("the Rust side", () => {
     expect(main).not.toMatch(/reqwest|hyper|tokio::net/);
   });
 
-  it("depends on tauri plus exactly three plugins, only two of which ship, defaults minus compression", () => {
+  it("depends on tauri plus exactly five plugins, only two of which ship, defaults minus compression", () => {
     expect(cargo).toMatch(/^tauri = \{ version = "2", default-features = false, features = \[$/m);
     // Uncompressed embedding is what makes `strings <installer> | grep http`
     // a real audit rather than a look at a brotli blob.
     expect(cargo).not.toMatch(/"compression"/);
-    // The plugins are an ALLOW-LIST, not "none": a FOURTH `tauri-plugin-` appearing must fail
+    // The plugins are an ALLOW-LIST, not "none": a SIXTH `tauri-plugin-` appearing must fail
     // this until someone decides it belongs. Scanned over the runtime `[dependencies]` only —
     // `[dev-dependencies]` never ship in the binary.
     const depsStart = cargo.indexOf("[dependencies]");
@@ -318,15 +318,26 @@ describe("the Rust side", () => {
     const runtime = cargo.slice(depsStart, devStart >= 0 ? devStart : undefined);
     const plugins = [...runtime.matchAll(/^(tauri-plugin-[a-z-]+)\b/gm)].map((m) => m[1]).sort();
     expect(plugins).toEqual([
+      // `ohmail://`, and the two halves it needs: one registers the scheme and delivers an
+      // activation, the other makes that activation reach the copy of the app that is already
+      // running instead of launching a second one holding the link.
+      "tauri-plugin-deep-link",
       "tauri-plugin-dialog",
       "tauri-plugin-notification",
+      "tauri-plugin-single-instance",
       "tauri-plugin-updater",
     ]);
-    /* AND THE THIRD IS NOT IN THE PUBLISHED BUILD. The notification centre is reached only from
-       the engine build's `notify` command, so it is optional and enabled by `local-engine` — the
-       preview has no mail and nothing to announce. Asserting the plugin list alone would have let
-       an unconditional dependency in under a name that looks the same in a diff. */
+    /* AND THREE OF THEM ARE NOT IN THE PUBLISHED PREVIEW. The notification centre is reached only
+       from the engine build's `notify` command, and the two scheme plugins only from a sign-in the
+       preview does not have — all three are optional and enabled by `local-engine`. Asserting the
+       plugin list alone would have let an unconditional dependency in under a name that looks the
+       same in a diff, which for the scheme plugins would mean the preview REGISTERING `ohmail://`
+       on a machine and then answering nothing on it. */
     expect(cargo).toMatch(/^tauri-plugin-notification = \{ version = "2", optional = true \}$/m);
+    expect(cargo).toMatch(/^tauri-plugin-deep-link = \{ version = "2", optional = true \}$/m);
+    expect(cargo).toMatch(
+      /^tauri-plugin-single-instance = \{ version = "2", features = \["deep-link"\], optional = true \}$/m,
+    );
     for (const shipped of ["tauri-plugin-dialog", "tauri-plugin-updater"]) {
       expect(runtime, `${shipped} must stay unconditional — it ships in every build`)
         .toMatch(new RegExp(`^${shipped} = "2"$`, "m"));
@@ -413,9 +424,24 @@ describe("the Rust side", () => {
     // updater's `plugins` config as a `serde_json::Value`, so the crate references
     // serde_json in every build now and it is a direct, non-optional dependency.
     // It compiles nothing new — tauri already pulls it — so the graph is unchanged.
-    expect(cargo).toMatch(
-      /^local-engine = \["dep:keyring", "dep:getrandom", "dep:tauri-plugin-notification"\]$/m,
-    );
+    /* THE FEATURE LIST IS READ OFF THE `local-engine = [...]` LITERAL RATHER THAN MATCHED AS ONE
+       LINE. It outgrew a readable line when the URL scheme landed, and a whole-literal regex has
+       to be retyped from the diff every time an entry moves. What matters is the SET: an optional
+       dependency added to `[dependencies]` and not enabled here is a crate the local build cannot
+       use, and one added here without `optional = true` is a crate the PREVIEW links against. */
+    const feature = /^local-engine = \[([\s\S]*?)^\]$/m.exec(cargo)?.[1] ?? "";
+    const enabled = [...feature.matchAll(/"([^"]+)"/g)].map((m) => m[1]!).sort();
+    expect(enabled, "the local-engine feature list has stopped matching this reader").toEqual([
+      "dep:getrandom",
+      "dep:keyring",
+      // The `ohmail://` scheme handler, and the "one copy of this app" rule that makes an
+      // activation reach the copy already running rather than launching a second one. Optional for
+      // the reason the keystore is: the preview has no account to sign in to, so a build that
+      // registered the scheme would be claiming a machine-wide namespace it cannot answer.
+      "dep:tauri-plugin-deep-link",
+      "dep:tauri-plugin-notification",
+      "dep:tauri-plugin-single-instance",
+    ]);
     expect(cargo).toMatch(/^serde_json = "1"$/m);
     // The keystore dependencies stay optional: the preview has no business being
     // linked against the OS keystore at all — it stores nothing, so it needs
@@ -494,9 +520,19 @@ describe("the Rust side", () => {
     /* AND `open_link` TAKES A KEY. The parameter's type is the whole of the safety argument —
        a `url: String` here would be a way out of the webview into the user's browser with an
        address the page chose. The table it resolves against lives in Rust, which is also what
-       keeps the bundle free of any host name at all. */
-    expect(engine).toMatch(/fn open_link\(key: String\)/);
+       keeps the bundle free of any host name at all.
+
+       THE SECOND PARAMETER IS NAMED HERE RATHER THAN THE ASSERTION BEING LOOSENED. `challenge`
+       is 43 characters of base64url the sign-in page needs and the shell validates
+       (`link_url_for`, `is_challenge`) before it appends a parameter it spells itself. It is the
+       ONLY value the window may contribute to an address, it reaches ONE key, and a malformed one
+       is a refusal rather than a page opened without it — all four properties are asserted in
+       `engine_tests.rs`. A THIRD parameter, or a rename that let something else through, still
+       fails here. */
+    expect(engine).toMatch(/fn open_link\(key: String, challenge: Option<String>\)/);
     expect(engine).not.toMatch(/fn open_link\([^)]*url/);
+    // The window's value never becomes the address: `open_link` resolves through the table.
+    expect(engine).toMatch(/fn link_url_for\(key: &str, challenge: Option<&str>\)/);
 
     /* THE ONE RUNTIME PERMISSION, AND ONLY THE ONE. The window may HEAR the shell's events —
        which is how a chosen menu item reaches the frontend's navigation — and has no matching
@@ -577,6 +613,87 @@ describe("the Rust side", () => {
     // And the window still names no address itself: that is the claim the artifact scan rests on.
     expect(native).not.toMatch(/https?:\/\//);
     for (const r of rows) expect(r.url.startsWith("https://ohmail.app/"), r.key).toBe(true);
+  });
+
+  /**
+   * THE `ohmail://` SCHEME BELONGS TO THE ENGINE BUILD AND TO NOTHING ELSE.
+   *
+   * Registering a URL scheme is a claim on a machine-wide namespace: from that moment every
+   * `ohmail://…` on the computer — from a mail body, a chat message, a web page — is delivered to
+   * whichever program registered it. The interface preview has no account, no sign-in and no
+   * engine, so a preview that registered it would take the name and answer nothing on it, on
+   * machines that may also have the real app installed.
+   *
+   * The split is DECLARATIVE and therefore checkable without a Rust toolchain: the scheme is in the
+   * engine build's config overlay and must not be in the base config, and both plugins that
+   * implement it are compiled only under `local-engine`.
+   */
+  it("registers its URL scheme in the engine build only", () => {
+    const base = readJson("src-tauri/tauri.conf.json") as never as {
+      plugins?: Record<string, unknown>;
+    };
+    const overlay = readJson("src-tauri/tauri.engine.conf.json") as never as {
+      plugins?: { "deep-link"?: { desktop?: { schemes?: string[] } } };
+    };
+
+    // The preview claims nothing. Asserted on the KEY rather than on the whole `plugins` object,
+    // because the updater's entry legitimately lives there and must stay.
+    expect(Object.keys(base.plugins ?? {})).toEqual(["updater"]);
+
+    // The engine build claims exactly one scheme, and it is the product's own name.
+    expect(overlay.plugins?.["deep-link"]?.desktop?.schemes).toEqual(["ohmail"]);
+
+    /* AND THE HANDLING IS BEHIND THE SAME FEATURE. `engine.rs` is the module the preview does not
+       compile, so both plugin registrations being in it is what makes the split a property of the
+       binary rather than of a config file somebody could copy. `main.rs` is compiled into every
+       build and must name neither. */
+    const engine = read("src-tauri/src/engine.rs");
+    expect(engine).toMatch(/tauri_plugin_deep_link::init\(\)/);
+    expect(engine).toMatch(/tauri_plugin_single_instance::init\(/);
+    expect(main).not.toMatch(/deep_link|single_instance/);
+
+    /* SINGLE INSTANCE FIRST, and this is an ordering the compiler cannot check. That plugin is
+       what decides a second copy of the app should hand over its arguments and exit; registered
+       after another plugin, the exit happens after that plugin has already set something up — a
+       second copy of a mail client briefly touching the engine's data directory on its way out. */
+    expect(
+      engine.indexOf("tauri_plugin_single_instance::init("),
+      "the single-instance plugin must be registered before every other plugin",
+    ).toBeLessThan(engine.indexOf("tauri_plugin_deep_link::init()"));
+    expect(engine.indexOf("tauri_plugin_single_instance::init("))
+      .toBeLessThan(engine.indexOf("tauri_plugin_notification::init()"));
+  });
+
+  /**
+   * THE EVENT NAME IS WRITTEN DOWN IN TWO LANGUAGES, like the menu's two and the link table.
+   *
+   * A Rust binary and a TypeScript bundle share no artifact to import a constant from, so the name
+   * of the channel a handoff code arrives on exists twice. Drift is silent in the worst possible
+   * way: the shell emits, nothing is listening, and the app simply never comes forward signed in —
+   * which is indistinguishable from a scheme that was never registered, from a browser that did
+   * not fire the link, and from a code the account refused.
+   */
+  it("the shell and the window agree on the channel a handoff code arrives on", () => {
+    const engine = read("src-tauri/src/engine.rs");
+    const native = read("src/native.ts");
+    const rust = /pub const LINK_CODE_EVENT: &str = "([^"]+)";/.exec(engine)?.[1];
+    const js = /export const LINK_CODE_EVENT = "([^"]+)";/.exec(native)?.[1];
+    expect(rust, "LINK_CODE_EVENT has stopped matching in engine.rs").toBeDefined();
+    expect(js, "LINK_CODE_EVENT has stopped matching in native.ts").toBeDefined();
+    expect(js).toBe(rust);
+
+    // It is a THIRD channel, not one of the menu's two. A code and a route name are different
+    // kinds of value, and the frontend validates each on its own terms.
+    const menuEvents = [
+      /export const MENU_NAVIGATE_EVENT = "([^"]+)";/.exec(native)?.[1],
+      /export const MENU_COMMAND_EVENT = "([^"]+)";/.exec(native)?.[1],
+    ];
+    expect(menuEvents).not.toContain(js);
+
+    /* THE CODE IS NEVER LOGGED BY THE SHELL. It is worth a session for two minutes and a log file
+       outlives that by a great deal, so the line that records an activation says only that one
+       happened. Asserted as "no `log_line` in this module interpolates the code binding". */
+    expect(engine).not.toMatch(/log_line\(format_args!\([^)]*\{code\}/);
   });
 
   /**
