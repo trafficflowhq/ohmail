@@ -117,13 +117,28 @@ export function useComposeAutosave(opts: {
   const saved = useRef<string | null>(null);
   /** One save at a time: a second create while the first is in flight is a second row. */
   const inFlight = useRef(false);
+  /**
+   * WHICH FORM THE IN-FLIGHT SAVE BELONGS TO — bumped by `adopt`, `release` and `discard`.
+   *
+   * The debounce is two seconds and a create takes a round trip, so there is a real window in
+   * which the form is abandoned WHILE ITS FIRST SAVE IS ON THE WIRE: press Discard, or Send, at
+   * 2.01s. `release()` clears `draftId`, the create then confirms, and the old code adopted its
+   * `entityId` — pointing the next compose at a row nobody asked for, or, once the view had
+   * unmounted, leaving that row on the account with no surface that knows about it. It is
+   * invisible: the Drafts list simply grows a copy of a message you discarded or sent.
+   *
+   * Cancel is what makes the window easy to hit, which is why it is closed in the same slice.
+   */
+  const epoch = useRef(0);
 
   const adopt = useCallback((id: string, f: ComposeFields) => {
+    epoch.current += 1;
     setDraftId(id);
     saved.current = signatureOf(f);
   }, []);
 
   const release = useCallback(() => {
+    epoch.current += 1;
     setDraftId(null);
     saved.current = null;
   }, []);
@@ -147,6 +162,7 @@ export function useComposeAutosave(opts: {
     const timer = window.setTimeout(() => {
       if (inFlight.current) return;
       inFlight.current = true;
+      const era = epoch.current;
       void (async () => {
         try {
           /* Parsed HERE and not by `composePlan`, because the two answer different questions. The
@@ -167,6 +183,17 @@ export function useComposeAutosave(opts: {
             to, cc, bcc,
           });
           if (result.status !== "confirmed") return;
+          /* THE FORM WAS ABANDONED WHILE THIS WAS IN FLIGHT — see `epoch`. A CREATE is undone,
+             because the row it just made belongs to a message that has been discarded, sent or
+             replaced and nothing on screen will ever refer to it again. An UPDATE is left alone:
+             `discard` already deleted that row (the delete is what the user asked for), and
+             `release` deliberately keeps it (a send turned it into a sent message). */
+          if (era !== epoch.current) {
+            if (draftId === null && result.entityId) {
+              await engine.mutate({ kind: "draft_discard", draftId: result.entityId });
+            }
+            return;
+          }
           // ADOPTED, not assumed. `entityId` is the server's id and is present only on a
           // confirmed create; without it the next pass would create a second row, which is the
           // whole failure this hook exists to avoid.

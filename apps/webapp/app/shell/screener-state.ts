@@ -312,26 +312,6 @@ export function useScreenerState(
    * partition want, and is exactly the behaviour every caller had before this parameter existed.
    */
   presented?: EntityReader,
-  /**
-   * WILL A SCREEN-OUT OR A SPAM PRESS ACTUALLY SEND THE ONE-CLICK UNSUBSCRIBE? — the account
-   * switch (mail 0054) ANDed with "this build has a service that can" (`AppShell`'s
-   * `autoUnsubscribeDiscloses`).
-   *
-   * It changes ONE thing: whether the two demoting toasts state the consequence. Nothing here
-   * sends, nothing here is gated on it, and no mutation looks at it — the server reads its own
-   * row at the seam, which is what makes the switch enforceable rather than advisory.
-   *
-   * The Screener says this AFTER the press rather than before it, and that is a departure from the
-   * sender sheet's confirm which is worth being explicit about. The Screener IS the triage loop:
-   * one key per stranger, dozens in a sitting, and a confirm in front of every `n` and `x` would
-   * make the queue unusable — which is why the disclosure that has to be a gate lives on the
-   * sheet, where a click can widen to a whole domain at once. What this owes is that the thing
-   * happening is visible while it can still be undone, and the toast carries the undo.
-   *
-   * **Defaults to TRUE, so a caller that has not been taught about the switch still says it.** The
-   * failure to avoid is the silent one: a decision that quietly leaves a mailing list.
-   */
-  autoUnsubscribe = true,
 ): ScreenerState {
   const t = useTranslations("screener");
   // The past-the-gate branch of `commit` speaks the sender-sheet's own sentences (`toastRuled`,
@@ -546,25 +526,11 @@ export function useScreenerState(
     bump();
     if (opts.quiet) return;
     const target = scopeText(sender, opts.scope);
-    /**
-     * THE UNSUBSCRIBE SENTENCE, ON THE TWO DEMOTING TOASTS ONLY.
-     *
-     * `screened` and `spam` are the whole of the endpoint's `no`, which is the whole of what arms
-     * the pass: `screener-service.ts` calls `unsubscribe.onScreenOut` on `decision === "no"`, and
-     * the service narrows again to the two reject folders itself. The three mail destinations are
-     * a KEEP and must never carry this sentence — `ohmail/Reads` and `ohmail/Receipts` were
-     * deliberately removed from the actionable set, so claiming it there would be false as well as
-     * alarming.
-     *
-     * Passed as an ICU `select` argument rather than by choosing between two message keys, so the
-     * German catalogue cannot end up with the two halves of one sentence in different orders.
-     */
-    const unsub = autoUnsubscribe ? "true" : "false";
     const message =
       dest === "screened"
-        ? t("toastScreened", { target, read: read ? "true" : "false", unsub })
+        ? t("toastScreened", { target, read: read ? "true" : "false" })
         : dest === "spam"
-          ? t("toastSpam", { target: displayAddress(sender.from.address), unsub })
+          ? t("toastSpam", { target: displayAddress(sender.from.address) })
           : t("toastFiled", {
               dest: DECISION_DONE_LABEL[dest],
               read: read ? "true" : "false",
@@ -774,18 +740,7 @@ export function useScreenerState(
           n("screened") ? t("bulkScreened", { count: n("screened") }) : null,
           n("spam") ? t("bulkSpam", { count: n("spam") }) : null,
         ].filter(Boolean);
-        // The sentence is owed only if this batch actually DEMOTED somebody. A run of Ohbox,
-        // Reads and Receipts arms nothing, and appending it there would be false — those three
-        // are a KEEP, and Reads and Receipts were deliberately removed from the unsubscribe
-        // service's actionable set.
-        //
-        // BOTH REJECTS ARE COUNTED, and `spam` is not defensive padding: this control used to
-        // exclude spam from what it applies, and no longer does (see the predicate below). A
-        // condition written on `screened` alone would silently say nothing about a batch of
-        // twelve spam verdicts — the largest single hand-off to the mechanism this surface can
-        // make — which is the disclosure failing precisely where it matters most.
-        const unsub = autoUnsubscribe && n("screened") + n("spam") > 0 ? "true" : "false";
-        return t("toastBulkDecided", { count: snaps.length, parts: parts.join(" · "), unsub });
+        return t("toastBulkDecided", { count: snaps.length, parts: parts.join(" · ") });
       },
       // `dest !== "screener"` is the second half of the same rule the paragraph above states, and
       // it is load-bearing rather than defensive: the server's `hold` arrives here as `screener`,
@@ -821,11 +776,7 @@ export function useScreenerState(
     bulk(
       () => "spam",
       scopeOf,
-      // The highest-volume path to the mechanism there is — forty senders in one press, every one
-      // of them a reject — so this summary is where the sentence matters most, not least.
-      (snaps) => t("toastBulkSpam", {
-        count: snaps.length, unsub: autoUnsubscribe ? "true" : "false",
-      }),
+      (snaps) => t("toastBulkSpam", { count: snaps.length }),
     );
 
   /**

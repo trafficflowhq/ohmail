@@ -28,11 +28,6 @@
  *     sheet before it runs, not discovered afterwards. It is therefore a CONFIRM and
  *     not a toast — the same construction `RulesView` uses for revoke, and for the same
  *     reason: a sentence shown after the act is not a disclosure.
- *
- *     Since mail 0054 it is also conditional on the ACCOUNT having left auto-unsubscribe on, and
- *     on the build having an unsubscribe service to run — see {@link autoUnsubscribe}. An empty
- *     confirm is not a harmless extra step; it is the thing that teaches people to click through
- *     the real one.
  *  3. **A way into the detail view** — every message from this address or domain and what
  *     accounts for where it sits (`sender-audit.ts`).
  *
@@ -86,7 +81,6 @@ export function SenderMenu({
   onChoose,
   onOpenDetail,
   onSubjectRule,
-  autoUnsubscribe = true,
   onClose,
 }: {
   state: SenderMenuState;
@@ -101,22 +95,6 @@ export function SenderMenu({
    * `chrome.openSubjectRule` uses one layer up.
    */
   onSubjectRule?: () => void;
-  /**
-   * WILL A SCREEN-OUT ACTUALLY SEND THE ONE-CLICK REQUEST? — the account switch (mail 0054) and
-   * the build, ANDed together one layer up (`AppShell#autoUnsubscribeDiscloses`).
-   *
-   * It is the SECOND half of the confirm's condition. `ScreeningPlan.unsubscribes` answers whether
-   * this PATH arms the mechanism, which is a fact about the code; this answers whether the
-   * mechanism is armed at all, which is a fact about the account and the deployment. Both have to
-   * be true or the sheet is asking somebody to consent to something that will not happen — and a
-   * confirm people learn is empty is how a real one gets clicked through.
-   *
-   * **Defaults to TRUE, and the default is the disclosure.** Every mount that has not been taught
-   * about the switch keeps asking, which is what this sheet did before the switch existed; the
-   * failure to avoid is the silent one, where a stale caller drops a warning about an irreversible
-   * request that is still being sent.
-   */
-  autoUnsubscribe?: boolean;
   onClose: () => void;
 }) {
   const t = useTranslations("screening");
@@ -161,11 +139,9 @@ export function SenderMenu({
   const preview = confirm ? planScreeningChange(sender, confirm, scope, makeRule) : null;
 
   const commit = (dest: ScreeningDest) => {
-    // The disclosure is owed exactly when the wire will arm auto-unsubscribe AND the mechanism is
-    // armed at all. `ScreeningPlan.unsubscribes` decides the first — the one place that condition
-    // about the PATH lives — and {@link autoUnsubscribe} the second; see its note for why the two
-    // are separate questions rather than one flag pushed down into the planner.
-    if (autoUnsubscribe && planScreeningChange(sender, dest, scope, makeRule).unsubscribes) {
+    // The disclosure is owed exactly when the wire will arm auto-unsubscribe, and
+    // `ScreeningPlan.unsubscribes` is the one place that condition is decided.
+    if (planScreeningChange(sender, dest, scope, makeRule).unsubscribes) {
       setConfirm(dest);
       return;
     }

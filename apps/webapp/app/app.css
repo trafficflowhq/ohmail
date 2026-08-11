@@ -1774,6 +1774,14 @@ body.reading .shell {
   font-size: 11.5px;
   color: var(--ink2);
 }
+/* ABANDONING THE MESSAGE — the Drafts list's confirm panel, in the compose foot.
+   Same panel as `.draft-confirm` (declared with it, so the two cannot drift), sitting above
+   `.send-row` at the panel's own width: the question is about the whole message, so it is not
+   squeezed in beside the button that asked it. `margin-top: auto` on `.compose-foot` still
+   pins the pair to the bottom edge. */
+.compose-confirm {
+  margin-top: 14px;
+}
 /* THE FORWARDING NOTE — a fact about the outgoing message, sitting with the header rows it
    qualifies rather than down beside Send. Muted and small like `.send-note`, because it is the
    same register: something true about this send that the form cannot show. */
@@ -4058,13 +4066,31 @@ body.reading .shell {
 /* ── Drafts ─────────────────────────────────────────────────────────────────────────────
    A row is TWO controls, not one: the whole rectangle opens the draft, and Discard sits at the
    end of it. They are siblings rather than nested for the reason `AttachmentStrip` gives — a
-   button inside a button is invalid markup and the browser picks the target for you. */
+   button inside a button is invalid markup and the browser picks the target for you.
+
+   ── THE CONFIRM GETS ITS OWN TRACK, AND THAT IS THE WHOLE FIX ──────────────────────────
+   The row was ONE `nowrap` flex line holding the draft button AND, when open, the confirm
+   panel at `flex: 1 0 100%`. That declaration reads like "take the full width" and is not:
+   it is a 100% flex-basis that refuses to shrink, next to a `flex: 1 1 0` sibling whose
+   scaled shrink factor is zero — so nothing absorbs the overflow. Measured in a browser at a
+   560px pane: the draft button went from 449px wide to 24px (its own padding; the subject's
+   own box measured 0), and the panel hung 34px past the row's right edge. Pressing Discard
+   made the draft you were about to delete vanish and pushed the question off the pane.
+
+   A grid puts the confirm on a row of its own, so the draft above it keeps the full width and
+   the panel is stretched to the column rather than overflowing it. `.draft-row-main` is the
+   flex line that remains — the two controls that ARE side by side. */
 .draft-row {
+  display: grid;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--hair-soft);
+}
+.draft-row-main {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--hair-soft);
+  min-width: 0;
 }
 .draft-row:last-child { border-bottom: 0; }
 .draft-open {
@@ -4142,10 +4168,18 @@ body.reading .shell {
 }
 .draft-discard:hover { color: var(--accent-ink); background: var(--accent-soft); }
 /* The confirm takes the whole row's width so the sentence above the buttons is readable —
-   a two-press delete whose explanation is squeezed into a corner is a one-press delete. */
-.draft-confirm {
-  flex: 1 0 100%;
+   a two-press delete whose explanation is squeezed into a corner is a one-press delete.
+   `min-width: 0` and NOT a flex declaration: it is a grid item now (see `.draft-row`), which
+   stretches to the column by default and therefore cannot outgrow the pane the way the
+   `flex: 1 0 100%` it replaces did. */
+.draft-confirm,
+.compose-confirm {
+  min-width: 0;
   padding: 10px 12px 12px;
   border-radius: 12px;
   background: var(--accent-soft);
 }
+/* The sentence sits directly above the two buttons; the settings variant's 12px bottom pad is
+   the panel's own `gate-actions` spacing here. */
+.draft-confirm .set-note-inline,
+.compose-confirm .set-note-inline { padding: 0 0 9px; margin: 0; }

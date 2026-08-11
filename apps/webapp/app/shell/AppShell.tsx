@@ -91,11 +91,11 @@ import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
 import { useComposeAutosave } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
-import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
+  clearComposeDraft,
   composePlan,
   readComposeDraft,
   writeComposeDraft,
@@ -970,28 +970,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * metered auto-suggest batch below, so this also stops the spender from being offered senders
    * the cutline had already ruled out as not-work.
    */
-  /**
-   * WILL SCREENING A SENDER OUT ALSO UNSUBSCRIBE FROM THEIR LIST, ON THIS BUILD, FOR THIS ACCOUNT?
-   *
-   * The single answer every disclosure in this shell reads — the sender sheet's pre-click confirm
-   * and the Screener's toasts — so the sentence and the sending can never come apart. Two
-   * conditions, and they are independent facts rather than belt and braces:
-   *
-   *  · `consent.autoUnsubscribe` — the ACCOUNT's switch (mail 0054), which is what the server
-   *    itself reads at the seam. Resting TRUE, so a failed `GET /consent` keeps the disclosure
-   *    exactly as it was before the switch existed rather than silently dropping it.
-   *  · `!consent.standalone` — the BUILD. A standalone install wires no unsubscribe service into
-   *    its screener at all (`apps/sidecar`'s bag has no `unsubscribe` entry), so a decision there
-   *    sends nothing whatever the account row says. Without this clause the desktop would warn
-   *    about a request it structurally cannot make.
-   *
-   * The demo is deliberately NOT excluded: `standalone` is false there, and the demo's job is to
-   * show what the product does.
-   */
-  const autoUnsubscribeDiscloses = consent.autoUnsubscribe && !consent.standalone;
-  const screener = useScreenerState(
-    engine, version, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
-  );
+  const screener = useScreenerState(engine, version, toast, suggestions.suggestions, presented);
   /**
    * The opt-in's quote, bound to the SAME list the automatic batch will slice.
    *
@@ -1950,6 +1929,27 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     writeComposeDraft(next);
   }, []);
   const sendCompose = useCallback(() => mailSend.send(plan.mutation), [mailSend, plan]);
+
+  /**
+   * ABANDONING THE COMPOSE — the row, the buffer and the form, in that order.
+   *
+   * `ComposeView` decides whether to ask first (`worthSaving`); this is what happens once the
+   * answer is yes, and it has to be the shell's because the draft id is. All three copies of the
+   * message are named here on purpose — the account row (`autosave.discard`), the `localStorage`
+   * scratch buffer (`clearComposeDraft`) and the in-memory form — because leaving any one of them
+   * is a message the user threw away coming back: the row would sit in Drafts, and the buffer
+   * would refill the form the next time Compose opened.
+   *
+   * `discard` is not awaited. It is fire-and-forget for the same reason `discardDraft` above is:
+   * the delete is queued through the engine, which owns the retry, and holding the view open
+   * until the wire answers would make leaving a message feel like a network operation.
+   */
+  const cancelCompose = useCallback(() => {
+    void autosave.discard();
+    setCompose(EMPTY_COMPOSE);
+    clearComposeDraft();
+    go("ohbox");
+  }, [autosave, go]);
 
   /**
    * FORWARDING A MESSAGE — the compose surface's entry, and the client half of the sensitive gate.
@@ -4000,6 +4000,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 plan={plan}
                 send={mailSend.stateOf(COMPOSE_SEND_KEY)}
                 onSend={sendCompose}
+                onCancel={cancelCompose}
               />
             ) : null}
 
@@ -4111,25 +4112,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                   <RemoteImagesRow
                     blocked={consent.blockRemoteImages}
                     setBlockRemoteImages={consent.setBlockRemoteImages}
-                  />
-                )}
-                /* AUTO-UNSUBSCRIBE ON SCREEN-OUT. Gated on BOTH `consent.known` and
-                   `autoOptIn.supported`, and each gate answers a different question.
-
-                   `known` is the flash argument the two rows above make, pointing the other way:
-                   this switch rests ON, so drawing it before the server has answered would show it
-                   ON to an account that turned it OFF — and somebody who then left it alone would
-                   believe they had chosen the state they were merely shown.
-
-                   `supported` (i.e. `apiConfigured()`) is the structural one, and it is why this is
-                   not simply `known`: a standalone install wires no unsubscribe service into its
-                   screener at all, so nothing there could be switched off. A control drawn on that
-                   build would store nothing and govern nothing. Withheld from the demo like every
-                   other injected pane. */
-                autoUnsubscribeSection={demo || !consent.known || !autoOptIn.supported ? undefined : (
-                  <AutoUnsubscribeRow
-                    on={consent.autoUnsubscribe}
-                    setBlockAutoUnsubscribe={consent.setBlockAutoUnsubscribe}
                   />
                 )}
                 /* THE AWAY RESPONDER — its OWN Settings section since it became the one control in
@@ -4358,7 +4340,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           state={senderMenu!}
           sender={senderMenuFor}
           onChoose={(dest, scope, makeRule) => changeScreening(senderMenu!.messageId, dest, scope, makeRule)}
-          autoUnsubscribe={autoUnsubscribeDiscloses}
           onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope)}
           onSubjectRule={() => openSubjectRule(senderMenu!.messageId, null)}
           onClose={() => setSenderMenu(null)}

@@ -93,27 +93,45 @@ export function DraftsView({
               const to = recipientLine(d);
               return (
                 <div key={d.id} className="draft-row" data-id={d.id}>
-                  <button
-                    type="button"
-                    className="draft-open"
-                    onClick={() => onOpen(d)}
-                    title={t("openTitle")}
-                  >
-                    <span className="draft-line">
-                      <b className="draft-subject">{d.subject.trim() || t("noSubject")}</b>
-                      <span className="draft-when">{stamp(d.updatedAt, now)}</span>
-                    </span>
-                    <span className="draft-line">
-                      {/* WHO IT IS FOR, or the honest absence. A draft with no recipient is the
-                          commonest kind of unfinished message and the list must not pretend
-                          otherwise by leaving the line blank. */}
-                      <span className="draft-to">{to || t("noRecipient")}</span>
-                      {repliesHere(d) ? <span className="draft-badge">{t("isReply")}</span> : null}
-                    </span>
-                    <span className="draft-preview">{preview(d.body)}</span>
-                  </button>
+                  {/* THE TWO CONTROLS THAT ARE ACTUALLY SIDE BY SIDE, and only those. The
+                      confirm below is a SIBLING of this line, not a third item in it — see
+                      `.draft-row` in `app.css` for what it cost to have it inside. */}
+                  <div className="draft-row-main">
+                    <button
+                      type="button"
+                      className="draft-open"
+                      onClick={() => onOpen(d)}
+                      title={t("openTitle")}
+                    >
+                      <span className="draft-line">
+                        <b className="draft-subject">{d.subject.trim() || t("noSubject")}</b>
+                        <span className="draft-when">{stamp(d.updatedAt, now)}</span>
+                      </span>
+                      <span className="draft-line">
+                        {/* WHO IT IS FOR, or the honest absence. A draft with no recipient is the
+                            commonest kind of unfinished message and the list must not pretend
+                            otherwise by leaving the line blank. */}
+                        <span className="draft-to">{to || t("noRecipient")}</span>
+                        {repliesHere(d) ? <span className="draft-badge">{t("isReply")}</span> : null}
+                      </span>
+                      <span className="draft-preview">{preview(d.body)}</span>
+                    </button>
+                    {/* THE TRIGGER STAYS ON SCREEN WHILE THE QUESTION IS OPEN — `RulesView`'s
+                        idiom, and the reason is the same: it was SWAPPED for the confirm, so
+                        the row lost its only trailing control and the panel took its place in
+                        the flex line. A disclosure that keeps its trigger can also be closed
+                        from the same place it was opened. */}
+                    <button
+                      type="button"
+                      className="draft-discard"
+                      aria-expanded={confirming === d.id}
+                      onClick={() => setConfirming(confirming === d.id ? null : d.id)}
+                    >
+                      {t("discard")}
+                    </button>
+                  </div>
                   {confirming === d.id ? (
-                    <div className="draft-confirm">
+                    <div className="draft-confirm" role="group" aria-label={t("discardConfirm")}>
                       {/* SAID BEFORE THE ACT, not after. A draft is the only copy of an unsent
                           message and the delete is real. */}
                       <p className="set-note-inline">{t("discardWhat")}</p>
@@ -129,15 +147,7 @@ export function DraftsView({
                         </Button>
                       </div>
                     </div>
-                  ) : (
-                    <button
-                      type="button"
-                      className="draft-discard"
-                      onClick={() => setConfirming(d.id)}
-                    >
-                      {t("discard")}
-                    </button>
-                  )}
+                  ) : null}
                 </div>
               );
             })

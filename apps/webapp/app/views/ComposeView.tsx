@@ -63,6 +63,7 @@ import {
 } from "../shell/RecipientField";
 import { ComposeAttach } from "../components/ComposeAttach";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
+import { worthSaving } from "../shell/compose-autosave";
 import type { ResolvedFrom } from "../shell/compose-from";
 
 export function ComposeView({
@@ -74,6 +75,7 @@ export function ComposeView({
   plan,
   send,
   onSend,
+  onCancel,
 }: {
   engine: OhmailEngine;
   draft: EngineDraft | null;
@@ -92,6 +94,17 @@ export function ComposeView({
   plan: ComposePlan;
   send: SendState;
   onSend: () => void;
+  /**
+   * THROW THIS MESSAGE AWAY AND LEAVE — the form, the local buffer and the account row that
+   * autosave wrote, in one press.
+   *
+   * It is the shell's because the row is: this view has never known the draft's id (autosave
+   * lives in `AppShell`), and a cancel that only cleared the FORM would leave the message on
+   * the account for the user to find in Drafts afterwards, which is the failure being closed.
+   * The question of whether to ask first is this view's, because it is the surface that can see
+   * whether there is anything worth asking about — see `cancel` below.
+   */
+  onCancel: () => void;
 }) {
   const t = useTranslations("compose");
   const toast = useToast();
@@ -206,8 +219,41 @@ export function ComposeView({
    * `onSend` the button does, so the lock, the empty-body guard and the recipient rule apply
    * identically; there is no second path to SMTP.
    */
+  /**
+   * ── CANCELLING, AND THE TWO THINGS IT MEANS ─────────────────────────────────────────────
+   *
+   * There was no way to abandon a compose from the compose surface at all. Escape LEFT the view
+   * and the autosaved row stayed on the account, so throwing a message away meant going to
+   * Drafts and discarding it there — a second surface, after the fact, for a decision taken
+   * here.
+   *
+   * Nothing worth keeping ⇒ this closes and deletes the row, with no question: there is no
+   * sentence to write about an empty form, and `worthSaving` is the SAME predicate that decided
+   * whether to write a row in the first place, so "nothing was worth saving" and "there is
+   * nothing to confirm" cannot drift apart.
+   *
+   * Anything written ⇒ the Drafts list's two-press idiom, in the panel's foot. Not an undo
+   * toast: `DELETE /drafts/:id` is a real delete and the row is the only copy of an unsent
+   * message, so an undo affordance would be offering something the product cannot do.
+   */
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const cancel = useCallback(() => {
+    if (worthSaving(fields)) setConfirmCancel(true);
+    else onCancel();
+  }, [fields, onCancel]);
+
   useKeyBindings([
-    { chord: "Escape", group: "app", label: t("keyLeave"), inInput: true, run: () => go("ohbox") },
+    /* ONE Escape binding, branching — never two competing ones. It is the escape cascade's own
+       rule read at view scope: close the innermost thing that is open, which is the confirm
+       while it is up and the view otherwise. Escape therefore NEVER destroys a message; the
+       press that does is the one labelled with what it does. */
+    {
+      chord: "Escape",
+      group: "app",
+      label: confirmCancel ? t("keyCloseConfirm") : t("keyLeave"),
+      inInput: true,
+      run: () => { if (confirmCancel) setConfirmCancel(false); else go("ohbox"); },
+    },
     {
       chord: "mod+Enter",
       group: "message",
@@ -533,6 +579,26 @@ export function ComposeView({
               onChange={(next) => onFields({ ...fields, attachments: next })}
               disabled={inFlight}
             />
+            {/* THE QUESTION SITS ABOVE THE ROW IT WAS ASKED FROM, at full panel width — the
+                Drafts list's panel, and deliberately not a modal: Compose was moved OUT of a
+                dialog the keyboard could not leave, and putting one back to ask about
+                abandoning a message would be the same mistake in a smaller box. */}
+            {confirmCancel ? (
+              <div className="compose-confirm" role="group" aria-label={t("cancelConfirm")}>
+                <p className="set-note-inline">{t("cancelWhat")}</p>
+                <div className="gate-actions">
+                  <Button
+                    variant="primary"
+                    onClick={() => { setConfirmCancel(false); onCancel(); }}
+                  >
+                    {t("cancelConfirm")}
+                  </Button>
+                  <Button variant="ghost" onClick={() => setConfirmCancel(false)}>
+                    {t("cancelKeep")}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
             <div className="send-row">
               <Button
                 variant="primary"
@@ -541,6 +607,19 @@ export function ComposeView({
                 onClick={() => onSend()}
               >
                 {send.phase === "sending" ? t("sending") : t("send")}
+              </Button>
+              {/* BESIDE SEND, because the two are the ways this message can end and a reader
+                  deciding between them should not have to look in two places. Disabled in
+                  flight for the reason every other input is: a message that is on its way to
+                  somebody is not a message to delete the row of. */}
+              <Button
+                variant="ghost"
+                className="compose-cancel"
+                disabled={inFlight}
+                aria-expanded={confirmCancel}
+                onClick={cancel}
+              >
+                {t("cancel")}
               </Button>
               {/* AN EMPTY SUBJECT SENDS — see `composePlan`. Said here, before the press, rather
                   than as a modal after it. */}
