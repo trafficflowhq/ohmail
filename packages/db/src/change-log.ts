@@ -230,16 +230,57 @@ export async function recordChanges(tx: LedgerTx, changes: readonly ChangeInput[
   return seqs;
 }
 
+/** Both ends of an account's retained change log. Both `null` ⇔ the log is empty. */
+export interface SeqBounds {
+  /** The lowest retained seq — the floor a resuming cursor must not have fallen below. */
+  min: bigint | null;
+  /** The highest committed seq — the ceiling no legitimate cursor can be above. */
+  max: bigint | null;
+}
+
+/**
+ * THE TWO HORIZONS OF AN ACCOUNT'S CHANGE LOG, FROM ONE STATEMENT.
+ *
+ * `SyncService.getChanges` needs both on every resuming request: a cursor below `min` names
+ * changes that no longer exist, and a cursor above `max` names changes that never existed. Both
+ * are unrecoverable and both answer 410, so the client re-snapshots.
+ *
+ * ONE aggregate rather than two round trips, and that is a correctness property as well as a
+ * cost one: the floor and the ceiling come from the same read of the same table, so they cannot
+ * be evaluated against two different states of the log and disagree about which side of the
+ * window a cursor sits on.
+ *
+ * No transaction and no lock. `change_log` is append-only in the product — the sole statement
+ * that ever removes a row is the account erasure in `account-deletion-service.ts`, which takes
+ * the account with it — so `max` is monotonically non-decreasing for any account that still has
+ * a client, and `min` only ever rises. A concurrent writer between this read and the caller's
+ * page read can therefore only widen the window, never narrow it, which is the direction that
+ * turns a would-be 410 into a plain empty 200. The reverse — a false 410 on a healthy cursor —
+ * would need `max` to go BACKWARDS, which no code path does.
+ */
+export async function seqBounds(tx: Tx, accountId: string): Promise<SeqBounds> {
+  const rows = await tx
+    .select({
+      min: sql<string | null>`min(${changeLog.seq})`,
+      max: sql<string | null>`max(${changeLog.seq})`,
+    })
+    .from(changeLog)
+    .where(eq(changeLog.accountId, accountId));
+  const row = rows[0];
+  return {
+    min: row?.min == null ? null : BigInt(row.min),
+    max: row?.max == null ? null : BigInt(row.max),
+  };
+}
+
 /**
  * The lowest `seq` still retained in the change log for an account, or `null`
  * when the log is empty. SyncService uses this to detect a cursor that has
  * fallen behind the retention horizon (→ 410 cursor_expired).
+ *
+ * Delegates to {@link seqBounds} so there is ONE query behind both horizons; a second copy of
+ * the aggregate is a second place for the account predicate to be got wrong.
  */
 export async function minRetainedSeq(tx: Tx, accountId: string): Promise<bigint | null> {
-  const rows = await tx
-    .select({ min: sql<string | null>`min(${changeLog.seq})` })
-    .from(changeLog)
-    .where(eq(changeLog.accountId, accountId));
-  const m = rows[0]?.min;
-  return m == null ? null : BigInt(m);
+  return (await seqBounds(tx, accountId)).min;
 }

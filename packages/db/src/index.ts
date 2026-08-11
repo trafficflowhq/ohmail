@@ -37,8 +37,8 @@ export const DB_VERSION = "0.0.0";
 export * from "./schema-mail.js";
 
 export {
-  allocateSeq, allocateSeqRange, recordChange, recordChanges, minRetainedSeq,
-  type Tx, type LedgerTx, type EntityType, type ChangeOp, type ChangeInput,
+  allocateSeq, allocateSeqRange, recordChange, recordChanges, minRetainedSeq, seqBounds,
+  type Tx, type LedgerTx, type EntityType, type ChangeOp, type ChangeInput, type SeqBounds,
 } from "./change-log.js";
 export {
   claimIdempotencyKey, readIdempotencyKey, pruneIdempotencyKeys,

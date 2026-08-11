@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, exists, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import {
-  approvals, changeLog, drafts, messageStates, messages, messageTags, minRetainedSeq,
+  approvals, changeLog, drafts, messageStates, messages, messageTags, seqBounds,
   routingDecisions, rules, tags, type EntityType,
 } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
@@ -188,14 +188,50 @@ export class SyncService {
     // since omitted / "0" ⇒ bootstrap (full replay from seq 0).
     const sinceSeq = opts.since && opts.since !== "0" ? this.decodeCursor(opts.since) : 0n;
 
-    // Retention horizon: a non-bootstrap cursor that has fallen
-    // below the oldest retained change can never be reconstructed → 410.
+    // ── BOTH ENDS OF THE CURSOR WINDOW, FROM ONE READ ────────────────────────────────────────
+    //
+    // A resuming cursor is only serviceable when it names a point INSIDE this account's log.
+    // There are two ways out of it, and only the first used to be checked:
+    //
+    //  · BELOW the floor — the changes between the cursor and the oldest retained row are gone
+    //    and cannot be reconstructed;
+    //  · ABOVE the ceiling — the cursor names a seq the account never issued, so `seq > since`
+    //    matches nothing NOW AND FOREVER. That answered 200 with an empty delta on every poll,
+    //    for the life of the mirror: the client kept its cursor (an empty page returns `since`
+    //    unchanged), never learned another change, and every optimistic edit appeared to revert
+    //    as its overlay drained onto a mirror that could no longer be updated. Nothing errored,
+    //    nothing logged, and no surface in the product could show it — measured live on an
+    //    account whose mirror held seq 2173 against a log whose max was 1684.
+    //
+    // Both are unrecoverable in the same way and get the same answer, which is the one the
+    // client already knows how to act on: 410 `cursor_expired` → discard, re-snapshot, adopt a
+    // fresh cursor. See `OhmailEngine.drain` (browser and desktop share it) and the sidecar
+    // mirror's `drainSync`.
+    //
+    // THE RACE POSTURE IS "TOLERATE IT IN THE SAFE DIRECTION". These bounds are read in one
+    // statement of their own, not in a transaction with the page read below. A change that
+    // commits in between only RAISES `max`, so the worst it can do is let a cursor that was
+    // momentarily above the ceiling through — a single extra empty 200, self-healing on the
+    // next poll. The failure this replaces is empty-FOREVER; a transient empty-200 is not the
+    // same class of thing, and serializing the reader against every writer on the account to
+    // remove it would cost far more than it buys. A FALSE 410 would need `max(seq)` to move
+    // BACKWARDS, which nothing but account erasure does — and that takes the account with it.
+    //
+    // `sinceSeq === 0n` is the bootstrap and skips all of it, which is what keeps a brand-new
+    // account's first poll a plain empty 200 rather than a 410: an empty log has no ceiling to
+    // be above, and the cursor an empty account is handed decodes back to 0.
     if (sinceSeq > 0n) {
-      const minSeq = await minRetainedSeq(db, accountId);
+      const { min: minSeq, max: maxSeq } = await seqBounds(db, accountId);
       if (minSeq != null && minSeq > sinceSeq + 1n) {
         throw new ServiceError(
           "cursor_expired", 410,
           "sync cursor is older than the retention horizon; re-bootstrap with since=0",
+        );
+      }
+      if (maxSeq == null || sinceSeq > maxSeq) {
+        throw new ServiceError(
+          "cursor_expired", 410,
+          "sync cursor is ahead of this account's change log; re-bootstrap with since=0",
         );
       }
     }
