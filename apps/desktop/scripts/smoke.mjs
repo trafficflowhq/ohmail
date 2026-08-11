@@ -348,6 +348,15 @@ function installShellStub(window) {
         if (url === "/mailboxes" || url.startsWith("/mailboxes?")) {
           return Promise.resolve(frame(200, "OK", mailboxList()));
         }
+        /* The away-responder notice reads its state at boot the same way the mailbox
+           list is read: one GET, render-only, parsed as `{enabled, audience}`. A
+           disabled responder is the honest stub — the preview has none — and keeps
+           the boot free of 404s. */
+        if (url === "/away-responder") {
+          return Promise.resolve(
+            frame(200, "OK", { enabled: false, audience: "screened_in", body: "" }),
+          );
+        }
         /* RECORDED, not silently 404'd into a console error the checks would then
            report as a product defect. A surface that starts calling a second route
            at boot has to be modelled here; until it is, this says so by name. */
