@@ -143,11 +143,11 @@ export interface ApiServices {
    * has none, which is the local engine.
    *
    * It is deps-level rather than a route constant because `routes/drafts.ts` is the ONE send
-   * handler and both hosts mount it. `apps/api-vercel` declares
-   * `SEND_ATTACHMENT_MAX_TOTAL_BYTES` — its serverless body limit expressed in raw bytes.
-   * `apps/sidecar` declares `null`: it runs `SendService` in the same process as its own SMTP
-   * dial, so nothing between the compose form and the wire imposes a request-body limit and the
-   * only ceiling that exists is the mail server's own (`mailboxes.smtp_max_size_bytes`, mail 0055).
+   * handler and both hosts mount it. The hosted deployment declares
+   * `SEND_ATTACHMENT_MAX_TOTAL_BYTES` — its serverless body limit expressed in raw bytes. A local
+   * install declares `null`: it runs `SendService` in the same process as its own SMTP dial, so
+   * nothing between the compose form and the wire imposes a request-body limit and the only
+   * ceiling that exists is the mail server's own (`mailboxes.smtp_max_size_bytes`, mail 0055).
    *
    * ABSENT is neither of those — it is a host that has not been read, and
    * {@link SendDeps.surfaceMaxTotalBytes} resolves it to the same 3 MB constant rather than to

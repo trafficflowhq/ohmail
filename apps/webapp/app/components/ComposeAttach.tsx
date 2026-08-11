@@ -31,9 +31,9 @@ import { Button, Icon } from "@ohmail/ui";
 import type { ComposeAttachment } from "@ohmail/client-engine";
 
 /**
- * THE HOSTED SURFACE'S OWN CEILING on total attachment bytes — the mirror of
- * `SEND_ATTACHMENT_MAX_TOTAL_BYTES` in `packages/services`, kept as a literal rather than imported
- * so the webapp pulls in no server module.
+ * THE HOSTED SURFACE'S OWN CEILING on total attachment bytes — the mirror of the constant the
+ * hosted send handler enforces, kept as a literal rather than imported so this bundle pulls in no
+ * server module.
  *
  * It is a fact about the REQUEST PIPELINE and not about mail: attachment bytes travel base64 on one
  * JSON request, so their total has to clear the hosted API's serverless body limit (~4.5 MB) with
@@ -45,9 +45,9 @@ export const COMPOSE_ATTACH_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
  * THE CEILING THIS FORM MAY PROMISE — the smaller of what the request can carry and what the
  * sending mailbox's own server said it will accept.
  *
- * The mirror of `effectiveAttachmentCap` in `packages/services/src/send-service.ts`, and it has to
- * be: a number stated here that the server would refuse is a claim the product cannot keep, which
- * is the whole reason the copy renders this value instead of a literal.
+ * It is a MIRROR of the rule the send itself applies, and it has to be: a number stated here that
+ * the send would refuse is a claim the product cannot keep, which is the whole reason the copy
+ * renders this value instead of a literal.
  *
  * `mailboxMax` is the submission server's own RFC 1870 `SIZE` announcement, forwarded from
  * `GET /mailboxes` through the resolved From. The interesting case is the STINGY provider, not the
