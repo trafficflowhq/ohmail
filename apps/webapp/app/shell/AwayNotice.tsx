@@ -4,7 +4,7 @@
  * THE AWAY RESPONDER'S OHBOX NOTICE — the tell for the one thing this product does that sends
  * mail on its own.
  *
- * `AwayResponderRow` (Settings → Screener) is the control; this is its visibility. Without it,
+ * `AwayResponderRow` (Settings → Away responder) is the control; this is its visibility. Without it,
  * the only state in which mail leaves the account unprompted was legible on exactly one settings
  * pane and nowhere else — least of all on the pane its owner spends the day on. The notice is one
  * quiet line: the fact, the audience it is true for, and the way to the control.
@@ -33,9 +33,10 @@
  * audiences would be false for one of them.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { apiConfigured, away as awayApi, type AwayResponderWire } from "../api-client";
+import type { AwayTransport } from "./AwayResponderRow";
 import { go } from "./routing";
 
 type Audience = AwayResponderWire["audience"];
@@ -70,22 +71,39 @@ export interface AwayNoticeState {
 
 /**
  * One `GET /away-responder` per shell mount, gated like the settings row: `active` is the
- * shell's `!demo && autoOptIn.supported`, and `apiConfigured()` is re-checked here so a
- * standalone install asks nothing even if a caller ever mis-wires the flag.
+ * shell's `!demo && awaySupported`, and when no host transport is supplied `apiConfigured()` is
+ * re-checked here so a standalone install asks nothing even if a caller ever mis-wires the flag.
+ *
+ * `transport` is the same seam the settings row takes ({@link AwayTransport}) and exists for the
+ * same install: the desktop on its HOSTED door, where the row is real and reached over the pipe
+ * rather than over a socket this window is forbidden to open. Absent ⇒ the hosted client, which is
+ * what a browser tab has.
  */
-export function useAwayNotice(active: boolean): AwayNoticeState {
+export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayNoticeState {
   const [state, setState] = useState<{ on: boolean; audience: Audience }>({
     on: false,
     audience: "screened_in",
   });
 
+  /* Through a ref so the effect below keeps its `[active]` deps — ONE read per shell mount is the
+     whole design, and a transport identity that changed between renders would re-issue it. */
+  const held = useRef(transport);
+  held.current = transport;
+
   useEffect(() => {
-    if (!active || !apiConfigured()) return;
+    /* `active` FIRST, and this order is load-bearing rather than tidy: an inactive shell must not
+       so much as NAME the Cloud client. On a standalone install that binding is a stub whose every
+       property refuses, and a suite that mocks `../api-client` throws on the read itself — which is
+       exactly how this was caught, by three unrelated tests, after a version of this effect
+       resolved the transport before it checked the gate. */
+    if (!active) return;
+    const via = held.current ?? (apiConfigured() ? awayApi : null);
+    if (!via) return;
     let alive = true;
     void (async () => {
       try {
-        const wire = await awayApi.state();
-        if (alive) setState({ on: wire.enabled, audience: wire.audience });
+        const loaded = await via.state();
+        if (alive) setState({ on: loaded.enabled, audience: loaded.audience });
       } catch {
         // No server, or a refused read: the notice stays absent, which is the surface this
         // slice found — never a claim the server has not made.
@@ -102,13 +120,18 @@ export function useAwayNotice(active: boolean): AwayNoticeState {
 }
 
 /**
- * The deep link `initialPaneFromUrl` reads at mount: `?settings=screener` names the pane, the
+ * The deep link `initialPaneFromUrl` reads at mount: `?settings=away` names the pane, the
  * hash names the view. `replaceState` for the parameter (no history entry for a URL edit that
  * is half of one navigation), then the ordinary `go` for the view change itself.
+ *
+ * It was `screener` for as long as the control was that pane's last row. The responder has its
+ * own section now (`SettingsView`'s `away` pane), and this affordance is the one place in the
+ * product that promises to land on it — a stale pane name here would still open Settings, on a
+ * pane that no longer holds the control, which is the failure this line exists to prevent.
  */
 function openAwaySettings(): void {
   const url = new URL(window.location.href);
-  url.searchParams.set("settings", "screener");
+  url.searchParams.set("settings", "away");
   window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   go("settings");
 }

@@ -207,6 +207,32 @@ export function suggestDoorFor(status: EngineStatus | null): SuggestDoor {
   return null;
 }
 
+/**
+ * WHETHER THIS INSTALL MAY CONFIGURE AN AWAY RESPONDER — a decision, so it is a function here and
+ * not a condition buried in a render, for the reason `gateFor` and `suggestDoorFor` are.
+ *
+ * It is NOT the same question as `suggestDoorFor`, even though the two agree on every status they
+ * have ever been shown. That one is about SPENDING: never offer a purchase control with no ledger
+ * behind it. This one is about a SENDER, and the rule is stronger than "the control would refuse".
+ *
+ *  · STANDALONE. The engine on this machine would answer `GET/PUT /away-responder` perfectly well
+ *    out of its own database, and that is exactly why the check has to be here rather than left to
+ *    the route. Nothing on this door SENDS the reply: the responder is a scheduled pass in the
+ *    hosted service, whose module map publishes four entry points and not that one — a rule its own
+ *    build holds rather than one somebody remembers. An always-on replier cannot live in an app
+ *    that only runs while its window is open. So the control is absent, and a stored configuration
+ *    that answers nobody is impossible rather than merely unlikely.
+ *  · HOSTED, SIGNED IN. The account is real, the engine forwards this endpoint to it with the
+ *    bearer, and the hosted worker sends from the row that is written. Identical to a browser tab
+ *    with one hop more.
+ *  · HOSTED, NOT SIGNED IN — or no door yet, or no answer from the shell. `null`, like the suggest
+ *    control's: every read would be refused, and a settings pane whose only state is an error about
+ *    something it cannot fix from inside itself is worse than no pane.
+ */
+export function awayDoorFor(status: EngineStatus | null): "cloud" | null {
+  return status?.mode === "cloud" && status.credentialState === "ready" ? "cloud" : null;
+}
+
 /** What the local door's form collects. Every field is what the user typed, untrimmed. */
 export interface LocalDoorFields {
   /** The preset's id — `providerById` in the shared shell resolves it to hosts and ports. */
@@ -300,8 +326,30 @@ export function handoffProblem(address: string, code: string): string | null {
  * that a slow first start is not reported as a failure; short enough that an engine which will
  * never serve — a directory another copy already holds, a migration that failed — is said out
  * loud rather than spun on.
+ *
+ * ── WHY THIS IS MINUTES AND NOT SECONDS ───────────────────────────────────────────────────────
+ *
+ * It was thirty seconds, and thirty seconds was chosen against a cold-disk open — measured at well
+ * under a second on an established mirror. What it did not cover is Postgres CRASH RECOVERY, which
+ * happens inside the engine's database open and is bounded by the size of the write-ahead log
+ * rather than by the mailbox. An engine whose previous run left a large log replays it before it
+ * can serve anything: measured at roughly 305 MB/s, so a directory that had accumulated tens of
+ * gigabytes took near two minutes to come up, every launch, and was reported here as an engine that
+ * had failed to start.
+ *
+ * That log is now bounded — the engine checkpoints on a timer while it runs, which it never used to
+ * do — so an install made after this change never accumulates one. What the budget still has to
+ * cover is the ONE launch that heals an install which grew a large log before it: recovery ends in
+ * a checkpoint, after which the directory is small and every later launch is sub-second. Cutting
+ * that launch short is the worst possible move, because a recovery that does not finish leaves the
+ * log exactly as it found it and the next launch is longer.
+ *
+ * Note what this bound does and does not do. It ends a WAIT and returns the last status seen; it
+ * never stops or kills the engine, which goes on starting either way. So the cost of it being too
+ * large is a slower sentence about a genuinely dead engine, and the cost of it being too small is
+ * telling somebody their mail engine failed while it is busy repairing itself.
  */
-export const SETTLE_MS = 30_000;
+export const SETTLE_MS = 180_000;
 const POLL_MS = 250;
 
 /**
@@ -486,7 +534,97 @@ export async function enterCloudDoorWithCode(address: string, code: string): Pro
   return signInToCloudWithCode(address, code, settled);
 }
 
-/** The handoff sign-in on its own, for the door that is already chosen. */
+/**
+ * What starting a browser handoff produced: the commitment to put in the page's URL, or a problem.
+ *
+ * `challenge` is the PUBLIC half of a PKCE pair the ENGINE invented and whose secret half never
+ * leaves that process. It is not a credential and nothing here can do anything with it except hand
+ * it to the shell, which decides what page it goes on.
+ */
+export interface HandoffStart {
+  challenge: string | null;
+  status: EngineStatus | null;
+  problem: string | null;
+}
+
+/**
+ * START A BROWSER HANDOFF: configure the door if it is not already, then ask the engine for a
+ * commitment.
+ *
+ * ── THE ORDER IS FORCED, AND GETTING IT WRONG IS SILENT ─────────────────────────────────────
+ *
+ * The verifier lives in the ENGINE's memory, and `engine_configure` REPLACES the engine — it stops
+ * the process that is running and starts a new one. So the door has to be configured BEFORE the
+ * pair is minted, never between minting it and claiming the code: a reconfigure in that window
+ * takes the verifier with it, and the code the browser is showing becomes unclaimable by anybody.
+ * Nothing fails loudly when that happens. The account answers the same sentence it answers an
+ * expired code with, because telling the two apart is exactly what it refuses to do.
+ *
+ * That is why this function does the configure itself rather than leaving it to the sign-in that
+ * follows, and why {@link signInToCloudWithCode} — which does NOT reconfigure — is the only sign-in
+ * that may be used to finish a handoff this started. `DoorChooser` remembers that it started one.
+ *
+ * A door that is already chosen and serving is left alone: signing in again on a configured
+ * install is one request, and restarting the engine to change nothing would take somebody's mail
+ * off the screen for the length of a first launch.
+ */
+export async function beginBrowserSignIn(
+  address: string,
+  /** True when the door is already configured and serving — the Settings pane's "Sign in". */
+  configured = false,
+): Promise<HandoffStart> {
+  const trimmedAddress = address.trim();
+  if (!trimmedAddress) return { challenge: null, status: null, problem: "Your ohmail address is missing." };
+  if (!trimmedAddress.includes("@")) {
+    return { challenge: null, status: null, problem: "That does not look like a mailbox address." };
+  }
+
+  let settled: EngineStatus | null = null;
+  if (!configured) {
+    try {
+      await engineConfigure({ mode: "cloud", cloudUrl: CLOUD_URL, address: trimmedAddress });
+    } catch (err) {
+      return { challenge: null, status: null, problem: sentence(err) };
+    }
+    settled = await settle();
+    if (settled.state !== "serving") {
+      return { challenge: null, status: settled, problem: stalled(settled) };
+    }
+  }
+
+  try {
+    const res = await bridgeFetch("/cloud/signin/challenge", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    if (!res.ok) return { challenge: null, status: settled, problem: await refusal(res) };
+    const body = (await res.json()) as { challenge?: unknown };
+    const challenge = typeof body.challenge === "string" ? body.challenge : "";
+    /* A missing or empty commitment is a REFUSAL rather than "open the page anyway". The page
+       without one mints a code any program that claimed `ohmail://` could spend, and this app
+       would still be waiting for a link — so the honest answer is to say the handoff could not be
+       started and leave the password and retype paths, both of which work. */
+    if (!challenge) {
+      return {
+        challenge: null,
+        status: settled,
+        problem: "The mail engine did not start a browser sign-in. Type the code in instead.",
+      };
+    }
+    return { challenge, status: settled, problem: null };
+  } catch (err) {
+    return { challenge: null, status: settled, problem: sentence(err) };
+  }
+}
+
+/**
+ * The handoff sign-in on its own, for the door that is already chosen.
+ *
+ * ALSO the only sign-in that may finish a handoff {@link beginBrowserSignIn} started, on a fresh
+ * install as well as a configured one — see that function for why a second `engine_configure` here
+ * would silently discard the verifier the whole handoff rests on.
+ */
 export async function signInToCloudWithCode(
   address: string,
   code: string,

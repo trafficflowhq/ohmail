@@ -41,7 +41,7 @@ import { hueOf } from "../shell/format";
 import { LanguageRow } from "../shell/LanguageRow";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
-type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "billing" | "tags" | "rules" | "about" | "security" | "account" | "desktop";
+type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "away" | "billing" | "tags" | "rules" | "about" | "security" | "account" | "desktop";
 
 /**
  * The notification channels, and why this list is here rather than in the fixtures.
@@ -344,7 +344,7 @@ function TagCreateRow({
  * branch, and a value from a URL that matched none of them would render an empty settings screen.
  */
 export const PANE_IDS: readonly PaneId[] = [
-  "general", "notifications", "mailboxes", "screener", "billing", "tags", "rules",
+  "general", "notifications", "mailboxes", "screener", "away", "billing", "tags", "rules",
   "about", "security", "account", "desktop",
 ];
 
@@ -370,7 +370,6 @@ export function SettingsView({
   screeningSection,
   dormancySection,
   remoteImagesSection,
-  autoUnsubscribeSection,
   awaySection,
   desktopSection,
 }: {
@@ -540,26 +539,6 @@ export function SettingsView({
    */
   remoteImagesSection?: ReactNode;
   /**
-   * AUTO-UNSUBSCRIBE ON SCREEN-OUT, injected — the Screener pane's fourth control.
-   *
-   * It belongs to the SCREENER and not to General, unlike {@link remoteImagesSection} directly
-   * above: what it governs is a consequence of a screening decision, so the place somebody looks
-   * for it is the pane where they set what screening does.
-   *
-   * It renders AFTER {@link autoSuggestSection} and BEFORE {@link awaySection}, which is an
-   * escalation and not an accident: the two above it change what the Screener shows and what it
-   * may spend, this one makes a request to a stranger, and the responder below it sends mail. A
-   * control whose consequence leaves the building sits below every control whose does not.
-   *
-   * The same injection seam as {@link autoSuggestSection}: it writes `PATCH /consent/settings`
-   * through `app/api-client` and through the shell's `useConsentState` (so the sender sheet and the
-   * Screener stop disclosing a request that will no longer be made), neither of which this shared,
-   * desktop-mirrored file may name. Absent ⇒ no row, which is the honest state on a standalone
-   * install: its engine wires no unsubscribe service at all, so there is nothing there to switch
-   * off.
-   */
-  autoUnsubscribeSection?: ReactNode;
-  /**
    * THE AWAY RESPONDER, injected — and the only injected node whose feature SENDS MAIL.
    *
    * The same seam as {@link autoSuggestSection}: it reads and writes `GET/PUT /away-responder`
@@ -571,9 +550,19 @@ export function SettingsView({
    * control drawn there would store a configuration and answer nobody — which is the exact
    * built-and-unreachable shape this whole slice exists to remove, reintroduced one layer up.
    *
-   * It sits in the SCREENER pane, last, and that is not filing by convenience: its one real
-   * decision is whether a sender the Screener is still holding gets answered, so it belongs beside
-   * the posture that decides who is held.
+   * ── IT HAS ITS OWN PANE, AND IT USED TO BE THE SCREENER PANE'S LAST ROW ─────────────────────
+   *
+   * The old filing had a real argument behind it — the responder's one live decision is whether a
+   * sender the Screener is still holding gets answered, so it sat beside the posture that decides
+   * who is held. What that argument left out is that this is the only control in the product that
+   * makes the app SEND MAIL, and "where do I turn that off" is a question people ask of a menu.
+   * Buried as the fifth block of a pane about who reaches the Ohbox, it was findable only by
+   * somebody who already knew where it was.
+   *
+   * So it is its own section, immediately after the Screener — the neighbour it argues with, not
+   * the pane it hides in. The node is the WHOLE pane here, not a row inside a shared one, which is
+   * why an absent node removes the nav entry rather than leaving an empty pane behind: see the
+   * `panes` list below.
    */
   awaySection?: ReactNode;
   /**
@@ -607,9 +596,11 @@ export function SettingsView({
   // Screener, Rules, Tags) -> account administration (Subscription, Security, Account) -> facts
   // (About). Each group moves from what the app IS to the user, through what it DOES with their
   // mail, to what governs the account, and ends on facts that are not controls at all.
+  /* `awaySection` is NOT one of these any more — it has a pane of its own below. It was in this
+     list for as long as it was a row inside the Screener pane, and leaving it here after the move
+     would summon an EMPTY Screener pane on any surface that wires the responder and nothing else. */
   const screenerPane = Boolean(
-    screeningSection || dormancySection || autoSuggestSection || autoUnsubscribeSection
-      || awaySection || seedSection,
+    screeningSection || dormancySection || autoSuggestSection || seedSection,
   );
   const panes: Array<[PaneId, string]> = [
     ["general", t("general")],
@@ -624,6 +615,13 @@ export function SettingsView({
     // mailbox brings. Present IFF the shell wired any of its nodes; the demo passes none, so the
     // pane does not exist there, structurally, rather than rendering empty.
     ...(screenerPane ? [["screener", t("screener")] as [PaneId, string]] : []),
+    // THE AWAY RESPONDER, immediately after the Screener and before Rules. It is the one control
+    // in the product that makes the app SEND MAIL on its own, so it gets a name in the menu rather
+    // than a row at the foot of a neighbouring pane — and it stands next to the Screener because
+    // its one live decision is about the senders the Screener is holding. Present IFF the shell
+    // wired the node, which is the whole of the Cloud-only rule: a standalone install has no hosted
+    // worker to send the reply, so there is no entry rather than an entry onto a dead control.
+    ...(awaySection ? [["away", t("away")] as [PaneId, string]] : []),
     // BEFORE Tags. A tag is something the user chose to make; a rule is something the
     // product made on their behalf while they were deciding about a sender, and that is the
     // one that has to be findable. Present only where the shell wired it — a nav entry
@@ -815,20 +813,17 @@ export function SettingsView({
               cost money), and the door back to the sent-mail review at the foot. Each node is absent
               on Desktop and the demo — the pane itself is withheld from the nav when all four are.
               The seed section renders its own copy under its own subhead; its `node` brings no
-              `SettingsSection` of its own, because this one wraps the whole pane. */}
+              `SettingsSection` of its own, because this one wraps the whole pane.
+
+              THE AWAY RESPONDER IS NO LONGER HERE. It was the last row of this section; it has its
+              own pane below. Anything that puts it back has to remove it from there in the same
+              edit — two live controls over one `PUT /away-responder` each hold their own draft, and
+              whichever is saved second silently overwrites the other with a stale one. */}
           {pane === "screener" ? (
             <SettingsSection>
               {screeningSection}
               {dormancySection}
               {autoSuggestSection}
-              {/* Auto-unsubscribe, below the two that change what the Screener shows and the one
-                  that can spend, because this is the first one whose consequence leaves the
-                  building — a request to a stranger, with no undo once it has gone. */}
-              {autoUnsubscribeSection}
-              {/* The away responder, after the controls about what the Screener SHOWS and after the
-                  one that can spend, because it is the only one that SENDS MAIL. Its own decision
-                  is about the senders the posture above is holding. */}
-              {awaySection}
               {seedSection ? (
                 <>
                   <SettingsSubhead>{seedSection.label}</SettingsSubhead>
@@ -837,6 +832,9 @@ export function SettingsView({
               ) : null}
             </SettingsSection>
           ) : null}
+          {/* THE AWAY RESPONDER'S OWN PANE. One injected node, wrapped like every other list here —
+              the node is a set of `SettingsRow`s and brings no section of its own. */}
+          {pane === "away" ? <SettingsSection>{awaySection}</SettingsSection> : null}
           {pane === "about" ? aboutSection : null}
           {pane === "security" ? securitySection : null}
           {pane === "account" ? accountSection : null}
