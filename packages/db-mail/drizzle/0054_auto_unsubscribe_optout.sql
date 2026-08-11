@@ -1,0 +1,67 @@
+-- AUTO-UNSUBSCRIBE ON SCREEN-OUT — and the column stores the OPT-OUT, not the opt-in.
+--
+-- What the switch governs is already shipping and has been unattended: screening a waiting sender
+-- out, or pressing the Screener's spam verb, hands the mail that decision just re-routed to the
+-- RFC 8058 one-click unsubscribe path. One request per list, per mailbox, ever; only where the
+-- sender published `List-Unsubscribe` AND `List-Unsubscribe-Post`; never `mailto:`; sent from the
+-- server so the reader's address and reading times stay out of the sender's log. That request
+-- leaves the building on somebody's behalf and cannot be recalled, so it needs a switch — and
+-- until this column there was none.
+--
+-- ══ NULL IS THE DEFAULT AND THE DEFAULT IS ON ══════════════════════════════════════════════
+--
+-- `block_auto_unsubscribe_at` NULL means "a screen-out still unsubscribes". NOT NULL means this
+-- account asked it to stop, and the instant is when they asked.
+--
+-- The alternative spelling — `auto_unsubscribe_at`, an opt-IN — was rejected for the reason
+-- `block_remote_images_at` states one column over, and here it is sharper rather than weaker: the
+-- feature is ALREADY ON for every account that exists, so an opt-in column would silently turn it
+-- OFF for all of them on the day it deployed. A migration that changes what the product does to
+-- everybody, in order to add a control, is the one shape a settings column may not have.
+--
+-- No backfill, and the refusal is the same one 0048 makes: `UPDATE account_settings SET
+-- block_auto_unsubscribe_at = now()` would be a perfectly truthful statement about nobody — no
+-- account has asked for this — and it would freeze every one of them on a position they never
+-- chose. The only rows in this column belong to people who deliberately turned it off.
+--
+-- ══ WHICH DIRECTION AN UNKNOWN ANSWER TAKES, AND WHY IT IS NOT 0048'S ══════════════════════
+--
+-- For remote images the unknown answer resolves AWAY from the default, because the cost of
+-- guessing wrong is loading a sender's content for somebody who opted out. Here the two costs are
+-- not symmetric in that direction. Reading an unknown as OFF would mean the sheet stops telling
+-- people that a screen-out also leaves the list, while the server — which reads the row directly
+-- and has no unknown — goes on sending the requests. An undisclosed irreversible action is worse
+-- than a disclosure of one that turns out not to run, so the client's resting value is ON: it
+-- says what the server will do, and only a successful read carrying a stored opt-out moves it.
+--
+-- The SERVER never guesses. `UnsubscribeService.onScreenOut` reads this column inside the same
+-- request that would send, so the switch is enforced where the request is made rather than where
+-- it is described. The manual button on a single message is deliberately NOT gated by it: that is
+-- a person pressing unsubscribe on a message in front of them, which is not automatic anything.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO CHECK, NO INDEX ═══════════════════════════════════════════════
+--
+-- `ADD COLUMN IF NOT EXISTS`, nullable, no default: a catalog-only change on a table with one row
+-- per account, so a replay is a no-op and a partially-applied window costs nothing. No CHECK —
+-- 0030's rule, a timestamp closes no set. No index: the column is read off a row already fetched
+-- by primary key and is never a predicate. `ADD COLUMN` inherits the table's grants.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → API. `consentSettings` selects whole `account_settings` rows, so an API deployed
+-- ahead of this answers Postgres 42703 on `GET /consent` and on `PATCH /consent/settings` — the
+-- whole consent surface, which onboarding runs through, not just this switch. The health marker
+-- `["account_settings","block_auto_unsubscribe_at"]` turns that into a `503 schema_incomplete`
+-- naming this file. No worker half: nothing in the sync worker reads or writes it, and the one
+-- production caller of the automatic path is the screen-out inside the API.
+--
+-- A CLIENT older than the API ignores a field it does not know and keeps showing the disclosure,
+-- which is what the server is still doing. A client NEWER than the API reads `undefined` and does
+-- the same, for the reason given above. Neither needs the other to ship first.
+--
+-- ROLLBACK is `ALTER TABLE account_settings DROP COLUMN block_auto_unsubscribe_at`, which costs
+-- the stored opt-outs and returns every account to unsubscribing on screen-out. Like 0048's, that
+-- is a rollback whose safe direction is not simply dropping the column: the API has to go back
+-- first, or it will send requests for the people who asked it not to.
+
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "block_auto_unsubscribe_at" timestamp with time zone;

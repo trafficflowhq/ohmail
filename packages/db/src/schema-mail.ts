@@ -1700,6 +1700,31 @@ export const accountSettings = pgTable("account_settings", {
    */
   blockRemoteImagesAt: timestamp("block_remote_images_at", { withTimezone: true }),
   /**
+   * AUTO-UNSUBSCRIBE ON SCREEN-OUT — the OPT-OUT, and the second column on this row spelled that
+   * way (mail 0054).
+   *
+   * NULL (and no row) = the product default: screening a waiting sender out, or the Screener's
+   * spam verb, hands the mail that decision re-routed to the RFC 8058 one-click path — one request
+   * per list per mailbox, only where the sender published `List-Unsubscribe-Post`, never
+   * `mailto:`, sent server-side. NOT NULL = this account asked it to stop, and the instant is when.
+   *
+   * The opt-out spelling is not a style choice here the way it is arguable for
+   * {@link blockRemoteImagesAt}: the behaviour is ALREADY ON for every account that exists, so an
+   * opt-in column would have turned it off for all of them on deploy.
+   *
+   * **The reader is `UnsubscribeService.onScreenOut` — the AUTOMATIC entry point — and nothing
+   * else.** The manual button on one open message is a person pressing unsubscribe on mail in
+   * front of them, and gating that on a switch named "auto" would make a control mean something
+   * its label does not say.
+   *
+   * A failed CLIENT read resolves to ON, which is the opposite direction from
+   * {@link blockRemoteImagesAt} and is deliberate: what the client does with this value is decide
+   * whether to DISCLOSE an irreversible outbound request the server is going to make anyway, so
+   * "I do not know" must not silently drop the disclosure. The server has no unknown — it reads
+   * this column in the same request that would send.
+   */
+  blockAutoUnsubscribeAt: timestamp("block_auto_unsubscribe_at", { withTimezone: true }),
+  /**
    * THE INTERFACE LANGUAGE — `'en' | 'de'`, or NULL for "nobody has chosen" (mail 0053). The CHECK
    * (enum, closed) lives in the migration.
    *
