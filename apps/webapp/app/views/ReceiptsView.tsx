@@ -10,24 +10,30 @@
  * Order still comes from the shell's `receiptsByDay` flatten — newest day first, newest within
  * a day — so nothing about the sequence changed, only what is drawn between the rows.
  *
- * Seen-marking goes through the shell's `mark_seen` mutation, so it reaches `\Seen` on the
- * user's own IMAP server; the local `justSeen` set below is only the fade, not the state.
+ * Like Reads, the pile carries NO per-row unread status: rows and cards are dotless, and
+ * newness is position relative to this view's OWN waterline ("new since last visit" —
+ * `view_meta` "receipts_waterline", independent of Reads'). Scroll-past still feeds
+ * per-message `\Seen` through `mark_seen` (the eventual sweep; the `justSeen` set below is
+ * dedup, not state), and LEAVING the view commits the waterline in one anchored
+ * `feed_mark_seen` via `onLeaveSeen`.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
-import type { EngineMessage, MessageBody, TagDTO } from "@ohmail/client-engine";
-import { Kbd, ListPane, ListRows, MessageRow } from "@ohmail/ui";
+import { useLocale, useTranslations } from "next-intl";
+import type { EngineMessage, MessageBody, TagDTO, WaterlineMeta } from "@ohmail/client-engine";
+import { Kbd, ListPane, ListRows, MessageRow, Waterline } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
-import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, waterlineStamp } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
 import { type MessageAction } from "../shell/MessagePane";
-import { StreamShell, type StreamHandle } from "../shell/StreamShell";
+import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/StreamShell";
 import { StreamCardMemo } from "../shell/StreamCardMemo";
 import { useStreamWindow } from "../shell/stream-window";
 
 export function ReceiptsView({
   messages,
+  waterline = null,
+  freshCount,
   tags,
   threadParticipants,
   absoluteTime,
@@ -38,6 +44,7 @@ export function ReceiptsView({
   unreadCount,
   isUnread,
   markSeen,
+  onLeaveSeen,
   bodyOf,
   hydrateBody,
   jumpTo,
@@ -47,6 +54,18 @@ export function ReceiptsView({
 }: {
   /** Every receipt, already in display order. Flat — the shell flattens `receiptsByDay`. */
   messages: EngineMessage[];
+  /**
+   * THIS VIEW'S OWN LINE — `view_meta` "receipts_waterline", never Reads'. Null (a first
+   * visit, a harness) renders no line and every row is above it, exactly as Reads behaves
+   * before its line exists.
+   */
+  waterline?: WaterlineMeta | null;
+  /**
+   * How many of `messages` sit ABOVE the line — computed by the shell from the SAME
+   * partition that reads the meta, so the junction the view draws and the count it states
+   * cannot disagree. Absent ⇒ everything is fresh (`messages.length`).
+   */
+  freshCount?: number;
   /**
    * THE PEOPLE IN A ROW'S CONVERSATION, for its lead circles — bound to the engine's reader by
    * the shell (this view has none) and mapped to `{initials, hue}`. A LOOKUP into the shell's
@@ -69,10 +88,12 @@ export function ReceiptsView({
   now: Date;
   cur: string | null;
   onCur: (id: string) => void;
-  /** Engine unread minus the client seen-overlay. */
+  /** The engine's unread count for the pile — drives Mark-all-read only, never a row. */
   unreadCount: number;
   isUnread: (m: EngineMessage) => boolean;
   markSeen: (id: string) => void;
+  /** The leave-commit — one anchored `feed_mark_seen` for THIS view. See `ReadsView`. */
+  onLeaveSeen?: (commit: { upToId: string; messageIds: string[] }) => void;
   /** The card's text and what it is — `bodyOf` over the live mirror. */
   bodyOf: (m: EngineMessage) => MessageBody;
   /** Ask for one message's body. `retry` marks a human asking again — see `ReadsView`. */
@@ -88,8 +109,10 @@ export function ReceiptsView({
   const t = useTranslations("receipts");
   const tr = useTranslations("reads");
   const tb = useTranslations("body");
+  const locale = useLocale();
   const streamRef = useRef<StreamHandle>(null);
   const listScrollerRef = useRef<HTMLDivElement>(null);
+  /** Dedup for the per-card sweep — a card marks itself once per visit. No longer any visual. */
   const [justSeen, setJustSeen] = useState<Set<string>>(() => new Set());
   /**
    * THE CARD WHOSE VERBS ARE SHOWING — the one the reader has EXPANDED, and never the one the
@@ -101,6 +124,28 @@ export function ReceiptsView({
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const all = messages;
+  const allRef = useRef(all);
+  allRef.current = all;
+  const onLeaveSeenRef = useRef(onLeaveSeen);
+  onLeaveSeenRef.current = onLeaveSeen;
+  /** The stream's leave report → the waterline commit. Same derivation as `ReadsView`. */
+  const onStreamLeave = useCallback((s: StreamLeaveState) => {
+    const fn = onLeaveSeenRef.current;
+    if (!fn || !s.drove || !s.newestSeenId) return;
+    const order = allRef.current;
+    const a = order.findIndex((m) => m.id === s.newestSeenId);
+    if (a < 0) return;
+    const b = s.bottomVisibleId ? order.findIndex((m) => m.id === s.bottomVisibleId) : -1;
+    const end = b >= a ? b : a;
+    fn({
+      upToId: s.newestSeenId,
+      messageIds: order.slice(a, end + 1).filter((m) => m.unread).map((m) => m.id),
+    });
+  }, []);
+  /** Where the line sits in the flat list; everything is fresh until the shell says otherwise. */
+  const fresh = Math.min(freshCount ?? all.length, all.length);
+  const wlStamp = waterline?.at ? waterlineStamp(waterline.at, locale) : "";
+  const wlMeta = waterline?.meta ?? (wlStamp ? tr("waterlineMeta", { stamp: wlStamp }) : undefined);
   /**
    * THE LIST IS A WINDOW, not the whole pile. Receipts is a working set on most accounts, but a
    * standalone desktop client's mirror is the whole mailbox, and `all.map(row)` mounted every
@@ -110,6 +155,12 @@ export function ReceiptsView({
    * of switching into this view, exactly as it was for Reads.
    */
   const win = useListWindow({ scrollerRef: listScrollerRef, count: all.length });
+  // The windowed slice, split at the line's junction exactly as `ReadsView` splits its window.
+  const freshFrom = Math.min(win.start, fresh);
+  const freshTo = Math.min(win.end, fresh);
+  const seenFrom = Math.max(0, win.start - fresh);
+  const seenTo = Math.max(0, win.end - fresh);
+  const showWaterline = waterline != null && win.start <= fresh && win.end > fresh;
   const stream = useStreamWindow({
     total: all.length,
     getRoot: () => streamRef.current?.element() ?? null,
@@ -214,6 +265,30 @@ export function ReceiptsView({
   const loadingLabel = tb("loading");
   const failedLabel = tb("failed");
 
+  /* One memoized card per MOUNTED message — same shape as `ReadsView.card`. */
+  const card = (m: EngineMessage) => {
+    const body = bodyOf(m);
+    return (
+      <StreamCardMemo
+        key={m.id}
+        m={m}
+        now={now}
+        current={current === m.id}
+        expanded={expandedId === m.id}
+        unread={isUnread(m)}
+        bodyText={body.text}
+        bodyState={body.state}
+        bodyHtml={body.html}
+        bodyLoadedRemote={body.loadedRemoteContent}
+        loadingLabel={loadingLabel}
+        failedLabel={failedLabel}
+        onSelect={onCur}
+        onToggle={onToggle}
+        onAction={onAction}
+      />
+    );
+  };
+
   const row = (m: EngineMessage) => (
     <MessageRow
       key={m.id}
@@ -226,9 +301,10 @@ export function ReceiptsView({
       subject={m.subject}
       preview={m.snippet}
       amount={m.amount}
-      unread={isUnread(m) || justSeen.has(m.id)}
-      justSeen={justSeen.has(m.id)}
-      seen={!isUnread(m) && !justSeen.has(m.id)}
+      /* `data-unseen` for the sweep; NO dot, no seen/justseen weights — newness is position
+         relative to the line, exactly as in Reads. */
+      unread={isUnread(m)}
+      dotless
       selected={current === m.id}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
       onClick={() => jump(m.id)}
@@ -239,7 +315,8 @@ export function ReceiptsView({
     <section className="view split view-receipts">
       <ListPane
         title={t("title")}
-        meta={t("meta", { count: unreadCount })}
+        /* "New since last visit" — the fresh side of the line, never an unread count. */
+        meta={t("meta", { count: fresh })}
         action={
           onMarkAllRead ? (
             <MarkAllRead
@@ -265,13 +342,16 @@ export function ReceiptsView({
           </>
         }
       >
-        <ListRows>
-          {/* Rows above and below the window as reserved height — the scrollbar and scroll
-              position stay what they would be with every row mounted. See `useListWindow`. */}
-          {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
-          {all.slice(win.start, win.end).map(row)}
-          {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
-        </ListRows>
+        {/* Rows above and below the window as reserved height — the scrollbar and scroll
+            position stay what they would be with every row mounted (`useListWindow`). The
+            windowed sequence is split at the line's junction, exactly as in `ReadsView`:
+            the fresh slice, the waterline when the junction is inside the window, the seen
+            slice. */}
+        {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+        <ListRows>{all.slice(freshFrom, freshTo).map(row)}</ListRows>
+        {showWaterline ? <Waterline label={tr("waterline")} meta={wlMeta} /> : null}
+        <ListRows>{all.slice(fresh + seenFrom, fresh + seenTo).map(row)}</ListRows>
+        {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         {/* No-collapse rule: every receipt is a real row above. */}
         <div className="tail-row">{t("tail")}</div>
       </ListPane>
@@ -281,6 +361,7 @@ export function ReceiptsView({
         ariaLabel={t("streamAria")}
         onCurrentChange={onCur}
         onSeen={seenMark}
+        onLeave={onStreamLeave}
         /* The run length is part of the key: growth mounts NEW cards, and the seen observer
            re-scans on this value — without it a card mounted by a growth commit would never
            mark itself seen. */
@@ -288,7 +369,7 @@ export function ReceiptsView({
       >
         <div className="stream-top">
           <h1>{t("title")}</h1>
-          <span className="meta num">{t("meta", { count: unreadCount })}</span>
+          <span className="meta num">{t("meta", { count: fresh })}</span>
         </div>
         <div className="stream-hints">
           <span>
@@ -299,29 +380,14 @@ export function ReceiptsView({
           </span>
           <span>{tr("hintSeen")}</span>
         </div>
-        {all.slice(0, stream.count).map((m) => {
-          const body = bodyOf(m);
-          return (
-            <StreamCardMemo
-              key={m.id}
-              m={m}
-              now={now}
-              current={current === m.id}
-              expanded={expandedId === m.id}
-              unread={isUnread(m) || justSeen.has(m.id)}
-              justSeen={justSeen.has(m.id)}
-              bodyText={body.text}
-              bodyState={body.state}
-              bodyHtml={body.html}
-              bodyLoadedRemote={body.loadedRemoteContent}
-              loadingLabel={loadingLabel}
-              failedLabel={failedLabel}
-              onSelect={onCur}
-              onToggle={onToggle}
-              onAction={onAction}
-            />
-          );
-        })}
+        {all.slice(0, Math.min(stream.count, fresh)).map(card)}
+        {/* The line marks the fresh/seen junction in the stream, so it renders once the run
+            has reached it — a junction drawn below cards that are not the last fresh ones
+            would lie. Same rule, same shape, as `ReadsView`. */}
+        {waterline && stream.count >= fresh ? (
+          <Waterline label={tr("waterline")} meta={wlMeta} />
+        ) : null}
+        {all.slice(fresh, stream.count).map(card)}
         {/* Growth sentinel, then the reserved height standing in for the unmounted tail. */}
         <div ref={stream.sentinelRef} data-stream-sentinel aria-hidden />
         {stream.tailPx > 0 ? <div aria-hidden data-stream-tail style={{ height: stream.tailPx }} /> : null}

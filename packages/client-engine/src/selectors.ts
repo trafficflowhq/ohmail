@@ -3,9 +3,11 @@ import { zonedDayNumber, zonedFields } from "./zone.js";
 import {
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
+  waterlineIdOf,
   type EmailAddress,
   type EngineDraft,
   type EngineMessage,
+  type FeedView,
   type Folder,
   type MessageBody,
   type MessageBodyRecord,
@@ -553,23 +555,37 @@ export function threadSubject(reader: EntityReader, threadId: string): string | 
   return typeof s === "string" && s.trim() !== "" ? s : null;
 }
 
-// ── Reads: the waterline partition ─────────────────────────────────────────
+// ── The streams: the waterline partition ───────────────────────────────────
 
-export interface ReadsPartition {
+export interface FeedPartition {
   waterline: WaterlineMeta | null;
-  /** Arrived since the last visit — everything above (and including) the waterline anchor. */
+  /** Arrived since the last visit — everything strictly ABOVE the waterline anchor. */
   fresh: EngineMessage[];
-  /** Below the waterline — already seen on a previous visit. */
+  /** At and below the anchor — the anchor was on screen when the reader last left. */
   seen: EngineMessage[];
 }
 
-export function readsPartition(reader: EntityReader): ReadsPartition {
-  const all = messagesIn(reader, FOLDER_OF_VIEW.reads);
-  const waterline = reader.get<WaterlineMeta>("view_meta", "reads_waterline") ?? null;
+/**
+ * One partition for both reading streams, around the view's own waterline row
+ * (`waterlineIdOf` — the same mapping the `feed_mark_seen` effect writes through).
+ *
+ * The cut is EXCLUSIVE: `newestSeenId` was on screen at the end of the last visit, so it
+ * belongs BELOW the line — a leave at the top of the pile yields `fresh: []`, the line above
+ * everything, which is the honest "nothing new since you were here". An anchor the pile no
+ * longer holds (moved, deleted) degrades to everything-fresh: presenting seen mail as new is
+ * recoverable, presenting unseen mail as old loses it.
+ */
+export function feedPartition(reader: EntityReader, view: FeedView): FeedPartition {
+  const all = messagesIn(reader, FOLDER_OF_VIEW[view]);
+  const waterline = reader.get<WaterlineMeta>("view_meta", waterlineIdOf(view)) ?? null;
   if (!waterline) return { waterline: null, fresh: all, seen: [] };
-  const idx = all.findIndex((m) => m.id === waterline.afterId);
+  const idx = all.findIndex((m) => m.id === waterline.newestSeenId);
   if (idx < 0) return { waterline, fresh: all, seen: [] };
-  return { waterline, fresh: all.slice(0, idx + 1), seen: all.slice(idx + 1) };
+  return { waterline, fresh: all.slice(0, idx), seen: all.slice(idx) };
+}
+
+export function readsPartition(reader: EntityReader): FeedPartition {
+  return feedPartition(reader, "reads");
 }
 
 // ── Receipts: grouped by day ───────────────────────────────────────────────

@@ -5,6 +5,7 @@ import { sendingMailboxId } from "./selectors.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
 import {
   CursorExpiredError,
+  FOLDER_OF_VIEW,
   MutationRejectedError,
   encodeSeqCursor,
   isProtectedMessage,
@@ -1871,9 +1872,12 @@ export class OhmailEngine {
       }
     }
     if (m.kind === "feed_mark_seen" && m.messageIds === undefined) {
+      // The mark-the-whole-feed form: every unread id of the VIEW'S folder, so the wire PATCHes
+      // exactly the set the optimistic effect flips — per `FeedView`, no longer Reads-only.
+      const folder = FOLDER_OF_VIEW[m.view ?? "reads"];
       const ids = this.read()
         .list<EngineMessage>("message")
-        .filter((msg) => msg.folder === "ohmail/Reads" && msg.unread)
+        .filter((msg) => msg.folder === folder && msg.unread)
         .map((msg) => msg.id);
       return { ...m, messageIds: ids };
     }
@@ -1979,6 +1983,24 @@ export class OhmailEngine {
         try {
           await this.syncFresh();
         } catch { /* see above — the write landed; the mirror catches up on the next poll */ }
+      }
+      /**
+       * `view_meta` EFFECTS OUTLIVE THE OVERLAY — written into the mirror before the overlay
+       * drops, because nothing else will ever write them: `/sync` has no `view_meta` entity
+       * type at all (a Cloud account can never receive such a row — `fixtures-adapter.ts`
+       * documents the same fact from the other side). Without this, a waterline committed by
+       * `feed_mark_seen` existed only for the milliseconds its own mutation was in flight —
+       * on a live account the line evaporated on every confirm, which is why Reads' "seen up
+       * to here" never held still outside the demo. `putLocal` (seq 0, outside the seq
+       * guard) is the channel local-only rows already use (`message_body`); on the fixtures
+       * adapter the same entity also arrived authoritatively via the echo, so this write is
+       * value-identical there and idempotent.
+       */
+      const confirmed = this.overlays.get(p.id);
+      if (confirmed) {
+        for (const e of confirmed) {
+          if (e.type === "view_meta") await this.store.putLocal("view_meta", e.id, e.entity);
+        }
       }
       this.overlays.delete(p.id);
       // THE SENT COPY IS MATERIALISED HERE, on the confirmation and not before it — the send is

@@ -1,17 +1,19 @@
 "use client";
 
 /**
- * Reads — list left, skim stream right. Scroll-marks-seen runs through
- * the engine (`feed_mark_seen`, preserving the waterline anchor), the
- * scroll-spy keeps list and stream in step, and the pending-AI chip
- * carries the classification approval flow.
+ * Reads — list left, skim stream right. The pile carries NO per-row unread status: rows and
+ * cards are dotless, and newness is position relative to the waterline ("new since last
+ * visit"). Scroll-past and dwell still feed per-message `\Seen` through the engine (the
+ * eventual sweep), the LEAVE of the view commits the waterline in one anchored
+ * `feed_mark_seen` (`onLeaveSeen` — the reliability floor), the scroll-spy keeps list and
+ * stream in step, and the pending-AI chip carries the classification approval flow.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import type {
   EngineMessage,
+  FeedPartition,
   MessageBody,
-  ReadsPartition,
   TagDTO,
 } from "@ohmail/client-engine";
 import {
@@ -27,9 +29,10 @@ import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf } from
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
 import { type MessageAction } from "../shell/MessagePane";
-import { StreamShell, type StreamHandle } from "../shell/StreamShell";
+import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/StreamShell";
 import { StreamCardMemo } from "../shell/StreamCardMemo";
 import { useStreamWindow } from "../shell/stream-window";
+import { waterlineStamp } from "../shell/format";
 
 export type ReadsChipState = null | "approved" | "corrected";
 
@@ -53,7 +56,7 @@ export function ReadsView({
   chipState,
   onChipState,
   markSeen,
-  isSeen,
+  onLeaveSeen,
   bodyOf,
   hydrateBody,
   jumpTo,
@@ -61,7 +64,7 @@ export function ReadsView({
   onAction,
   onMarkAllRead,
 }: {
-  partition: ReadsPartition;
+  partition: FeedPartition;
   /**
    * THE PEOPLE IN A ROW'S CONVERSATION, for its lead circles — bound to the engine's reader by
    * the shell (this view has none) and mapped to `{initials, hue}`. A LOOKUP into the shell's
@@ -89,7 +92,16 @@ export function ReadsView({
   onChipState: (s: Exclude<ReadsChipState, null>) => void;
   /** Mark one Reads message seen through the engine. */
   markSeen: (id: string) => void;
-  isSeen: (m: EngineMessage) => boolean;
+  /**
+   * THE LEAVE-COMMIT — the reliability floor under the per-card sweep. Called once, as the
+   * view unmounts (= the route changed away), with the waterline anchor ("the top of what
+   * was on screen") and the unread ids the visit actually displayed. The view computes both
+   * from `StreamShell`'s tracked range; the shell turns them into ONE anchored
+   * `feed_mark_seen`. Never called for a visit no human scrolled — `StreamShell` reports
+   * `drove: false` and this view then keeps its hands off the engine entirely. Optional:
+   * a harness without a shell mounts nothing behind it and nothing fires.
+   */
+  onLeaveSeen?: (commit: { upToId: string; messageIds: string[] }) => void;
   /** The card's text and what it is — `bodyOf` over the live mirror. */
   bodyOf: (m: EngineMessage) => MessageBody;
   /**
@@ -116,8 +128,10 @@ export function ReadsView({
 }) {
   const t = useTranslations("reads");
   const tb = useTranslations("body");
+  const locale = useLocale();
   const streamRef = useRef<StreamHandle>(null);
   const listScrollerRef = useRef<HTMLDivElement>(null);
+  /** Dedup for the per-card sweep — a card marks itself once per visit. No longer any visual. */
   const [justSeen, setJustSeen] = useState<Set<string>>(() => new Set());
   /**
    * THE CARD WHOSE VERBS ARE SHOWING — the one the reader has EXPANDED, not the scroll-spy's
@@ -131,6 +145,31 @@ export function ReadsView({
     () => [...partition.fresh, ...partition.seen],
     [partition.fresh, partition.seen],
   );
+  const allRef = useRef(all);
+  allRef.current = all;
+  const onLeaveSeenRef = useRef(onLeaveSeen);
+  onLeaveSeenRef.current = onLeaveSeen;
+  /**
+   * The stream's leave report → the waterline commit. The anchor is the newest card the
+   * visit displayed; the flip set is the unread ids from that card down to the BOTTOM of
+   * the final screen — the contiguous run the reader scrolled through, including the last
+   * screenful the exit-through-the-top observer can structurally never reach. Bounded by
+   * the viewport, never the pile: what was below the final screen was not displayed and is
+   * not flipped. Refs, because this fires while the view is unmounting.
+   */
+  const onStreamLeave = useCallback((s: StreamLeaveState) => {
+    const fn = onLeaveSeenRef.current;
+    if (!fn || !s.drove || !s.newestSeenId) return;
+    const order = allRef.current;
+    const a = order.findIndex((m) => m.id === s.newestSeenId);
+    if (a < 0) return;
+    const b = s.bottomVisibleId ? order.findIndex((m) => m.id === s.bottomVisibleId) : -1;
+    const end = b >= a ? b : a;
+    fn({
+      upToId: s.newestSeenId,
+      messageIds: order.slice(a, end + 1).filter((m) => m.unread).map((m) => m.id),
+    });
+  }, []);
   /**
    * THE LIST IS A WINDOW over `[fresh, seen]`. A desktop client's mirror is the whole mailbox,
    * so `partition.fresh`/`seen` can be tens of thousands of rows, and mapping every one of them
@@ -172,6 +211,16 @@ export function ReadsView({
   // the mounted window, so it travels with the boundary instead of pinning to the list top.
   const showWaterline = partition.waterline != null && win.start <= freshCount && win.end > freshCount;
   const unreadCount = all.filter((m) => m.unread).length;
+  /**
+   * WHAT THE PANE COUNTS: "new since last visit" — the fresh side of the line — never an
+   * unread count. The rows are dotless here; per-row read state is not this pile's language,
+   * so a number derived from it would be a signal the view itself no longer shows.
+   */
+  const newCount = freshCount;
+  /** The line's stamp: fixture-authored on the demo, formatted from the commit instant live. */
+  const wlStamp = partition.waterline?.at ? waterlineStamp(partition.waterline.at, locale) : "";
+  const wlMeta =
+    partition.waterline?.meta ?? (wlStamp ? t("waterlineMeta", { stamp: wlStamp }) : undefined);
   const current = cur ?? all.find((m) => m.unread)?.id ?? all[0]?.id ?? null;
 
   const seenMark = (id: string) => {
@@ -297,9 +346,10 @@ export function ReadsView({
       {...rowStamp(m, now, absoluteTime, onToggleTime)}
       subject={m.subject}
       preview={m.snippet}
-      unread={m.unread || justSeen.has(m.id)}
-      justSeen={justSeen.has(m.id)}
-      seen={isSeen(m) && !justSeen.has(m.id)}
+      /* `data-unseen` for the sweep; NO dot, no seen/justseen weights — the pile is the
+         reading pile, and a row's newness is its position relative to the line. */
+      unread={m.unread}
+      dotless
       selected={current === m.id}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
       onClick={() => jump(m.id)}
@@ -335,8 +385,7 @@ export function ReadsView({
         now={now}
         current={current === m.id}
         expanded={expandedId === m.id}
-        unread={m.unread || justSeen.has(m.id)}
-        justSeen={justSeen.has(m.id)}
+        unread={m.unread}
         bodyText={body.text}
         bodyState={body.state}
         bodyHtml={body.html}
@@ -375,7 +424,7 @@ export function ReadsView({
     <section className="view split view-reads">
       <ListPane
         title={t("title")}
-        meta={t("meta", { count: unreadCount })}
+        meta={t("meta", { count: newCount })}
         action={
           onMarkAllRead ? (
             <MarkAllRead
@@ -415,7 +464,7 @@ export function ReadsView({
           ))}
         </ListRows>
         {showWaterline ? (
-          <Waterline label={t("waterline")} meta={partition.waterline!.meta} />
+          <Waterline label={t("waterline")} meta={wlMeta} />
         ) : null}
         <ListRows>{partition.seen.slice(seenFrom, seenTo).map(row)}</ListRows>
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
@@ -427,6 +476,7 @@ export function ReadsView({
         ariaLabel={t("streamAria")}
         onCurrentChange={onCur}
         onSeen={seenMark}
+        onLeave={onStreamLeave}
         /* The viewport-intent body fetch (B.3): a card nearing the fold hydrates so its
            rendered viewer is ready as it arrives. `hydrateBody` is idempotent + single-flight,
            so it composes with the current-card fetch above without double-spending. */
@@ -438,7 +488,7 @@ export function ReadsView({
       >
         <div className="stream-top">
           <h1>{t("title")}</h1>
-          <span className="meta num">{t("meta", { count: unreadCount })}</span>
+          <span className="meta num">{t("meta", { count: newCount })}</span>
         </div>
         <div className="stream-hints">
           <span>
@@ -453,7 +503,7 @@ export function ReadsView({
         {/* The waterline marks the fresh/seen junction, so it renders once the run has reached
             it — a junction drawn below cards that are not the last fresh ones would lie. */}
         {partition.waterline && stream.count >= freshCount ? (
-          <Waterline label={t("waterline")} meta={partition.waterline.meta} />
+          <Waterline label={t("waterline")} meta={wlMeta} />
         ) : null}
         {streamSeen.map(card)}
         {/* The growth sentinel, then the reserved height standing in for the unmounted tail —

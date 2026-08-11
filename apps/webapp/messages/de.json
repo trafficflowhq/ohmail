@@ -265,6 +265,7 @@
     "title": "Reads",
     "meta": "{count} neu",
     "waterline": "Bis hierher gesehen",
+    "waterlineMeta": "letzter Besuch · {stamp}",
     "tail": "Vorbeiscrollen markiert einen Beitrag als gesehen.",
     "streamTail": "Keine älteren ungelesenen Beiträge.",
     "hintMove": "bewegen",

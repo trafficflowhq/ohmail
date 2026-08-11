@@ -364,7 +364,9 @@ export const reads: MessageFixture[] = [
 ];
 
 export const readsWaterline: WaterlineFixture = {
-  afterId: "f12",
+  // f13 is the newest of the three issues Mila had already seen on her Monday visit,
+  // so the line draws above it: f1–f12 arrived since, f13–f15 sit below the line.
+  newestSeenId: "f13",
   label: "Seen up to here",
   meta: "last visit · Mon 18:40",
 };

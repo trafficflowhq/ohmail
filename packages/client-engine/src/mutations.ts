@@ -12,6 +12,7 @@ import {
   type ScreenerSenderDTO,
   type TagDTO,
   type WaterlineMeta,
+  waterlineIdOf,
 } from "./types.js";
 
 /**
@@ -463,9 +464,14 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     case "feed_mark_seen": {
+      // THE VIEW'S FOLDER, BY CONSTRUCTION — the whole point of the widened verb. An id from
+      // any other folder is dropped here exactly as the wire-parity rule on `mark_seen` below
+      // demands, and the waterline row is the VIEW'S own (`waterlineIdOf`), so leaving Receipts
+      // can never move Reads' line.
+      const view = m.view ?? "reads";
       const feed = reader
         .list<EngineMessage>("message")
-        .filter((msg) => msg.folder === "ohmail/Reads");
+        .filter((msg) => msg.folder === FOLDER_OF_VIEW[view]);
       const targets = m.messageIds
         ? feed.filter((msg) => m.messageIds!.includes(msg.id))
         : feed.filter((msg) => msg.unread);
@@ -479,16 +485,16 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         id: msg.id,
         entity: { ...msg, unread: false, lastReadAt: iso, updatedAt: iso },
       }));
-      const newest = [...feed].sort((a, b) => Date.parse(b.date ?? "0") - Date.parse(a.date ?? "0"))[0];
-      const afterId = m.upToId ?? newest?.id;
-      if (afterId) {
-        const now = ctx.now();
-        const hh = String(now.getUTCHours()).padStart(2, "0");
-        const mm = String(now.getUTCMinutes()).padStart(2, "0");
+      // THE LINE MOVES ONLY ON AN EXPLICIT ANCHOR. `upToId` is the leave commit — the newest
+      // message that was on screen, above which the line renders (`WaterlineMeta`). A sweep
+      // that passes ids alone leaves the line where the last visit put it: "new since last
+      // visit" may not drift mid-visit. The anchor must be IN the view's folder — an anchor
+      // the partition could not find would draw no line at all.
+      if (m.upToId && feed.some((msg) => msg.id === m.upToId)) {
         effects.push({
           type: "view_meta",
-          id: "reads_waterline",
-          entity: { afterId, label: "Seen up to here", meta: `last visit · ${hh}:${mm}` } satisfies WaterlineMeta,
+          id: waterlineIdOf(view),
+          entity: { newestSeenId: m.upToId, at: iso } satisfies WaterlineMeta,
         });
       }
       return effects;

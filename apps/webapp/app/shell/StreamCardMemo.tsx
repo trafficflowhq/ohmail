@@ -27,7 +27,7 @@
  * them; `unread` is the one mutable bit and is already folded into the `unread` prop. The body
  * arrives as PRIMITIVES (not the object `bodyOf` mints fresh each call), so a hydration flips
  * exactly the card that hydrated. The callbacks are stable (`useCallback`/state setters in the
- * view), and the per-card facts (`current`, `expanded`, `justSeen`) are booleans, so a selection or
+ * view), and the per-card facts (`current`, `expanded`) are booleans, so a selection or
  * expand re-renders that one card and no other. `now` is `useMemo`'d on `demo` in the shell.
  *
  * The inline `onToggle`/`onAction`/`bodySlot`/`art` closures are built INSIDE this component, so
@@ -54,10 +54,8 @@ export interface StreamCardMemoProps {
   current: boolean;
   /** The reader has this card open (the verbs show, the clamp lifts). A boolean, same reason. */
   expanded: boolean;
-  /** The unread dot; folds in `justSeen` so a fresh mark fades in place. */
+  /** Stamps `data-unseen` for the seen-on-scroll sweep. Draws nothing — see `StreamCard`. */
   unread: boolean;
-  /** Fades the dot after a seen-mark. A boolean, so only the newly-seen card re-renders. */
-  justSeen: boolean;
   /** Body PRIMITIVES, not the fresh object `bodyOf` returns — see the header. */
   bodyText: string;
   bodyState: MessageBody["state"];
@@ -74,7 +72,7 @@ export interface StreamCardMemoProps {
 }
 
 function StreamCardMemoInner({
-  m, now, current, expanded, unread, justSeen,
+  m, now, current, expanded, unread,
   bodyText, bodyState, bodyHtml, bodyLoadedRemote, loadingLabel, failedLabel,
   onSelect, onToggle, onAction,
 }: StreamCardMemoProps) {
@@ -102,7 +100,6 @@ function StreamCardMemoInner({
       bodySlot={bodySlot}
       art={art}
       unread={unread}
-      justSeen={justSeen}
       current={current}
       onSelect={onSelect}
       onToggle={(open) => onToggle(m.id, open)}
@@ -128,7 +125,6 @@ function areEqual(a: StreamCardMemoProps, b: StreamCardMemoProps): boolean {
     a.current === b.current &&
     a.expanded === b.expanded &&
     a.unread === b.unread &&
-    a.justSeen === b.justSeen &&
     a.bodyText === b.bodyText &&
     a.bodyState === b.bodyState &&
     a.bodyHtml === b.bodyHtml &&

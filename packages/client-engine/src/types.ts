@@ -793,11 +793,42 @@ export interface TriageItemDTO {
   resurfaceAt?: string;
 }
 
-/** `view_meta` id "reads_waterline" — the Reads seen-up-to-here marker. */
+/**
+ * The reading streams a waterline exists for. The Ohbox is deliberately not one of
+ * them: it keeps per-row unread state, while these two piles carry no per-row newness
+ * at all — the line is their only signal.
+ */
+export type FeedView = "reads" | "receipts";
+
+/**
+ * Each stream's `view_meta` row id. One mapping, shared by the `feed_mark_seen`
+ * effect that writes the line and the partition selector that reads it, so the two
+ * can never disagree about where a view's waterline lives.
+ */
+export function waterlineIdOf(view: FeedView): string {
+  return view === "reads" ? "reads_waterline" : "receipts_waterline";
+}
+
+/**
+ * `view_meta` ids "reads_waterline" / "receipts_waterline" — a stream's
+ * seen-up-to-here marker, one row per {@link FeedView}.
+ *
+ * `newestSeenId` is the newest message that was on screen when the reader last left
+ * the view, and the line renders directly ABOVE it: that message was seen, so it may
+ * not present as "new since last visit". Everything strictly newer is above the line.
+ * This is deliberately EXCLUSIVE — the old inclusive reading (line after the anchor)
+ * could never say "everything here is old news", because the anchor itself stayed
+ * above the line after a visit that had plainly seen it.
+ *
+ * `at` is when the line was committed (leave time); the views format it in the
+ * reader's locale. `label`/`meta` are authored copy on the demo fixture only — a
+ * live commit writes no display strings into the mirror.
+ */
 export interface WaterlineMeta {
-  afterId: string;
-  label: string;
-  meta: string;
+  newestSeenId: string;
+  at?: ISODateTime;
+  label?: string;
+  meta?: string;
 }
 
 // ── views ──────────────────────────────────────────────────────────────────
@@ -972,22 +1003,53 @@ export type EngineMutation =
    * folder, so deleting one moves no mail — the surface has to say that before it asks.
    */
   | { kind: "tag_delete"; tagId: string }
+  /**
+   * A READING STREAM'S SEEN-STATE — the \Seen sweep and the waterline, one verb for both piles.
+   *
+   * `view` names which stream ({@link FeedView}; absent ⇒ `reads`, which is every caller that
+   * predates Receipts having a line). It is ONE widened verb and deliberately not a second one:
+   * the effect filters its flips to `FOLDER_OF_VIEW[view]` BY CONSTRUCTION and writes that
+   * view's own `view_meta` row ({@link waterlineIdOf}), so Reads' line cannot move because
+   * Receipts was left, and an id from any other folder is dropped locally exactly as the
+   * Reads-only version dropped it.
+   *
+   * TWO ACTS, SEPARABLE ON PURPOSE:
+   *
+   *  - `messageIds` is the \Seen sweep — the flips reach the user's own IMAP server via the
+   *    per-message PATCH loop. Absent ⇒ filled at mutate() time with every unread id in the
+   *    view's folder (the mark-the-whole-feed form).
+   *  - `upToId` is the waterline commit — the anchor the line will render directly ABOVE
+   *    ({@link WaterlineMeta.newestSeenId}). ABSENT MEANS THE LINE DOES NOT MOVE. The line is
+   *    "new since last visit", so it must hold still for the whole visit and move exactly once,
+   *    when the reader leaves; the per-message sweep passes ids only, and the leave commit
+   *    passes both. (It used to default to the newest message, which let every dwell-mark drag
+   *    the line around mid-visit.)
+   *
+   * The waterline is CLIENT STATE: `/sync` has no `view_meta` entity type, so nothing about the
+   * line crosses the wire — only the PATCHes do. The engine persists the meta past the
+   * overlay's own lifetime (see `dispatch`), which is what makes the line survive its mutation
+   * confirming on a live account.
+   */
   | {
       kind: "feed_mark_seen";
-      /** Waterline anchor; defaults to the newest Reads message. */
+      /** Which stream's folder and waterline. Absent ⇒ `reads`. */
+      view?: FeedView;
+      /** Waterline anchor — the newest message that was on screen. Absent ⇒ the line stays put. */
       upToId?: string;
-      /** Filled by the engine at mutate() time: the unread Reads ids to flip. */
+      /** Filled by the engine at mutate() time: the unread ids of the view's folder to flip. */
       messageIds?: string[];
     }
   /**
-   * FOLDER-AGNOSTIC read-state — the mutation `feed_mark_seen` could not be.
+   * FOLDER-AGNOSTIC read-state — the one thing `feed_mark_seen` still is not.
    *
-   * `feed_mark_seen` is the Reads WATERLINE, and its optimistic effect drops every id outside
-   * `ohmail/Reads` by construction while its wire side would PATCH anything. Outside Reads the
-   * two halves therefore disagree — the server flips a message the local overlay did not — so
-   * reusing it for the Ohbox or Receipts would have produced a row that stays bold until the
-   * next drain and then silently changes under the cursor. This one flips exactly the ids it is
-   * given, wherever they live, and its wire side sends exactly the same list.
+   * `feed_mark_seen` is a STREAM's verb: its optimistic effect drops every id outside its
+   * view's folder by construction (now per-{@link FeedView}, no longer Reads-only) while its
+   * wire side would PATCH anything. Outside that folder the two halves disagree — the server
+   * flips a message the local overlay did not — so reusing it for the Ohbox, or for any
+   * cross-view selection, would produce a row that stays bold until the next drain and then
+   * silently changes under the cursor. This one flips exactly the ids it is given, wherever
+   * they live, and its wire side sends exactly the same list. It also never touches a
+   * waterline, which is what makes it safe for surfaces that are not streams.
    *
    * `unread` and not a `seen` verb: it is the field the mutation sets, on the wire and in the
    * mirror, so `u` (toggle unread) and "mark selection read" are one mutation with two values

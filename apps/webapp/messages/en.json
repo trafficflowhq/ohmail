@@ -265,6 +265,7 @@
     "title": "Reads",
     "meta": "{count} new",
     "waterline": "Seen up to here",
+    "waterlineMeta": "last visit · {stamp}",
     "tail": "Scrolling past an item marks it seen.",
     "streamTail": "No older unread items.",
     "hintMove": "move",

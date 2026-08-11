@@ -26,9 +26,15 @@ export interface StreamCardProps {
   body: string;
   /** Inline figure rendered at the [[img]] marker. */
   art?: ReactNode;
+  /**
+   * Stamps `data-unseen` for the seen-on-scroll observer — and DRAWS NOTHING.
+   *
+   * The reading streams carry no per-card unread status: newness is a card's position
+   * relative to the waterline, so the dot this used to render is gone. The attribute
+   * stays because the observer is the eventual `\Seen` sweep and selects on it —
+   * read-state still flows to the user's own IMAP server; it just is not card chrome.
+   */
   unread?: boolean;
-  /** Fades the unread dot in place after seen-marking. */
-  justSeen?: boolean;
   /** Scroll-spy current card — raised to lift-2. */
   current?: boolean;
   /** Clamp height in px; the card only clamps if meaningfully taller. */
@@ -101,7 +107,6 @@ export function StreamCard({
   body,
   art,
   unread,
-  justSeen,
   current,
   clampHeight = SC_CLAMP,
   expandLabel = "Expand",
@@ -239,7 +244,6 @@ export function StreamCard({
     open ? "open" : null,
     showViewer ? "viewer" : null,
     current ? "cur" : null,
-    justSeen ? "justseen" : null,
   ]
     .filter(Boolean)
     .join(" ");
@@ -257,7 +261,6 @@ export function StreamCard({
     >
       <div className="sc-head">
         <div className="sc-line">
-          {unread ? <span className="dot-unread" /> : null}
           <b>{from}</b>
           {address ? <span className="addr">{address}</span> : null}
           {amount ? <span className="amt num">{amount}</span> : null}

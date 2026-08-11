@@ -102,8 +102,12 @@ export interface MessageFixture {
 /* ------------------------------------------------- reads-specific bits */
 
 export interface WaterlineFixture {
-  /** The waterline sits directly after this message id. */
-  afterId: string;
+  /**
+   * The newest message the reader had on screen at the end of their last visit —
+   * the waterline renders directly ABOVE it, so this message and everything older
+   * sit below the line. Mirrors `WaterlineMeta.newestSeenId` in the client engine.
+   */
+  newestSeenId: string;
   label: string;
   meta: string;
 }

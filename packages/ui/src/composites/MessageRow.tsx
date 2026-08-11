@@ -75,6 +75,20 @@ export interface MessageRowProps {
   /** Receipts: right-aligned amount. */
   amount?: string;
   unread?: boolean;
+  /**
+   * DROP THE ROW'S OWN NEWNESS SIGNAL — for lists whose newness lives on a waterline.
+   *
+   * Reads and Receipts carry no per-row unread status: the pile IS the reading pile, and
+   * "new" means "above the line", not "this row is bold". A dotless row still stamps
+   * `data-unseen` from `unread`, because the seen-on-scroll observer is the eventual
+   * `\Seen` sweep and it selects on that attribute — the STATE keeps flowing to the
+   * user's own IMAP server; only the per-row rendering of it is dropped. `seen` and
+   * `justSeen` are ignored under this flag for the same reason: a quieter-ink read row
+   * is per-row read status by other means.
+   *
+   * Absent ⇒ the row is exactly what it always was, dot and all — the Ohbox's contract.
+   */
+  dotless?: boolean;
   /** Seen styling (quiet ink, lighter weights). */
   seen?: boolean;
   /** The unread dot fades in place after being marked seen. */
@@ -195,6 +209,7 @@ export function MessageRow(props: MessageRowProps) {
     preview,
     amount,
     unread,
+    dotless,
     seen,
     justSeen,
     selected,
@@ -272,8 +287,8 @@ export function MessageRow(props: MessageRowProps) {
   const cls = [
     "row",
     lead !== null ? "srow" : null,
-    seen ? "seen" : null,
-    justSeen ? "justseen" : null,
+    !dotless && seen ? "seen" : null,
+    !dotless && justSeen ? "justseen" : null,
     selected ? "sel" : null,
     picked ? "picked" : null,
     dull ? "dull" : null,
@@ -303,7 +318,7 @@ export function MessageRow(props: MessageRowProps) {
   const body = (
     <>
       <span className="row-top">
-        {unread ? <span className="dot-unread" /> : null}
+        {unread && !dotless ? <span className="dot-unread" /> : null}
         <span className="who">{from}</span>
         {address ? <span className="addr">{address}</span> : null}
         {/* See `onToggleTime`: `data-stamp` is the hit target the row's own press looks for, and

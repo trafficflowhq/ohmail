@@ -27,8 +27,9 @@ import {
   ohboxView,
   physicalFolderOf,
   presentationReader,
-  readsPartition,
+  feedPartition,
   receiptsByDay,
+  waterlineIdOf,
   draftsList,
   rulesList,
   senderKey,
@@ -45,8 +46,10 @@ import {
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
+  type FeedView,
   type Folder,
   type OhmailView,
+  type WaterlineMeta,
   type SearchHit,
   type TagDTO,
   type TriagePileEntry,
@@ -930,7 +933,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
   const ohbox = useMemo(() => ohboxView(presented), [presented, version]);
-  const partition = useMemo(() => readsPartition(presented), [presented, version]);
+  const partition = useMemo(() => feedPartition(presented, "reads"), [presented, version]);
   /**
    * Receipts is a FLAT list, exactly as Reads is — no day headings.
    *
@@ -942,6 +945,16 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const receipts = useMemo(
     () => receiptsByDay(presented, now).flatMap((g) => g.items),
     [presented, version, now],
+  );
+  /**
+   * Receipts' OWN waterline partition — `view_meta` "receipts_waterline", independent of
+   * Reads' by construction (`waterlineIdOf`). `feedPartition` walks `messagesIn` in the same
+   * date order the day-flatten above preserves, so `fresh.length` is a junction into
+   * `receipts` and not a parallel ordering that could drift.
+   */
+  const receiptsPartition = useMemo(
+    () => feedPartition(presented, "receipts"),
+    [presented, version],
   );
   const piles = useMemo(() => triagePiles(presented), [presented, version]);
   const tagGroups = useMemo(() => tagsCrossView(presented), [presented, version]);
@@ -1580,7 +1593,18 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   // survives a reload, because it is backed by a row.
   const receiptsIsUnread = useCallback((m: EngineMessage) => m.unread, []);
   const receiptsUnread = receipts.filter(receiptsIsUnread).length;
-  const readsUnread = [...partition.fresh, ...partition.seen].filter((m) => m.unread).length;
+  /**
+   * WHAT THE RAIL COUNTS FOR THE STREAMS: "new since last visit" — the fresh side of each
+   * view's line — never an unread count. Reads and Receipts carry no per-row unread status,
+   * so an unread badge there would be a number derived from a signal the piles themselves no
+   * longer show, and it would keep demanding attention for mail that is simply old. The
+   * fresh count is the line's own statement, it goes quiet when a visit ends, and
+   * `rail.readsTitle` ("{count} new") has said exactly this all along. `receiptsUnread`
+   * above survives for Mark-all-read only (Reads computes its own inside the view) — that
+   * control is about `\Seen` on the user's other clients, not about this pile's newness.
+   */
+  const readsNew = partition.fresh.length;
+  const receiptsNew = receiptsPartition.fresh.length;
 
   /* ── route transitions: overlays close, pending screener work lands ── */
   const prevRoute = useRef(route);
@@ -2818,16 +2842,44 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     [onBulkAction, openBulkTagPicker, planBulkScreening, onBulkScreen],
   );
 
+  /**
+   * The per-card sweep writer for Reads — ids ONLY, never an anchor. The waterline is "new
+   * since last visit": it must hold still for the whole visit and move exactly once, on the
+   * way out ({@link commitFeedSeen}). This used to re-send the current anchor with every
+   * dwell-mark, which meant a first mark on a line-less pile MINTED a line mid-visit and the
+   * partition reshuffled under the reader.
+   */
   const readsMarkSeen = useCallback(
     (id: string) => {
-      void engine.mutate({
-        kind: "feed_mark_seen",
-        messageIds: [id],
-        upToId: partition.waterline?.afterId ?? id,
-      });
+      void engine.mutate({ kind: "feed_mark_seen", view: "reads", messageIds: [id] });
     },
-    [engine, partition.waterline?.afterId],
+    [engine],
   );
+
+  /**
+   * THE LEAVE-COMMIT, both streams — one anchored `feed_mark_seen` per departure, the
+   * reliability floor under the per-card observers. The views hand up the anchor ("the top
+   * of what was on screen") and the unread ids their final screen covered; this reads the
+   * CURRENT meta at invocation time (the view is unmounting; its render-time partition is
+   * already history) and skips entirely when nothing would change — a leave that flips
+   * nothing and moves nothing is not worth a wire round-trip and the drain that follows it.
+   */
+  const commitFeedSeen = useCallback(
+    (view: FeedView) =>
+      (commit: { upToId: string; messageIds: string[] }) => {
+        const held = engine.read().get<WaterlineMeta>("view_meta", waterlineIdOf(view));
+        if (commit.messageIds.length === 0 && held?.newestSeenId === commit.upToId) return;
+        void engine.mutate({
+          kind: "feed_mark_seen",
+          view,
+          upToId: commit.upToId,
+          messageIds: commit.messageIds,
+        });
+      },
+    [engine],
+  );
+  const commitReadsSeen = useMemo(() => commitFeedSeen("reads"), [commitFeedSeen]);
+  const commitReceiptsSeen = useMemo(() => commitFeedSeen("receipts"), [commitFeedSeen]);
 
   /**
    * The Screener row that speaks for `m`, in `segment`.
@@ -3340,17 +3392,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               total: allOhbox.length,
             }),
           },
+          /* The streams count "new since last visit" — the fresh side of each view's own
+             waterline — never unread. See the `readsNew` derivation for the whole argument. */
           {
             id: "reads",
             label: t("rail.reads"),
-            count: readsUnread,
-            title: t("rail.readsTitle", { count: readsUnread }),
+            count: readsNew,
+            title: t("rail.readsTitle", { count: readsNew }),
           },
           {
             id: "receipts",
             label: t("rail.receipts"),
-            count: receiptsUnread,
-            title: t("rail.readsTitle", { count: receiptsUnread }),
+            count: receiptsNew,
+            title: t("rail.readsTitle", { count: receiptsNew }),
           },
         ],
       },
@@ -3446,7 +3500,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         ],
       },
     ],
-    [t, ohbox.newForYou.length, allOhbox.length, readsUnread, receiptsUnread, screener.waitingCount, piles, tagGroups, tags, createTagAlone],
+    [t, ohbox.newForYou.length, allOhbox.length, readsNew, receiptsNew, screener.waitingCount, piles, tagGroups, tags, createTagAlone],
   );
 
   /**
@@ -4013,7 +4067,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 chipState={chipState}
                 onChipState={setChipState}
                 markSeen={readsMarkSeen}
-                isSeen={(m) => !m.unread}
+                onLeaveSeen={commitReadsSeen}
                 bodyOf={bodyOfMessage}
                 hydrateBody={hydrateBody}
                 jumpTo={jump?.view === "reads" ? jump.id : null}
@@ -4029,6 +4083,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 messages={receipts}
+                waterline={receiptsPartition.waterline}
+                freshCount={receiptsNew}
                 tags={tags}
                 now={now}
                 cur={receiptsCur}
@@ -4036,6 +4092,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 unreadCount={receiptsUnread}
                 isUnread={receiptsIsUnread}
                 markSeen={(id) => markSeen([id], false)}
+                onLeaveSeen={commitReceiptsSeen}
                 bodyOf={bodyOfMessage}
                 hydrateBody={hydrateBody}
                 jumpTo={jump?.view === "receipts" ? jump.id : null}

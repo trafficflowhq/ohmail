@@ -58,6 +58,8 @@ export {
   type UnsubscribeRefusal,
   type UnsubscribeResult,
   type WaterlineMeta,
+  type FeedView,
+  waterlineIdOf,
 } from "./types.js";
 
 // Consent, the dormancy cutline, and History — presentation by who wrote, not by where it sits.
@@ -111,6 +113,7 @@ export {
   messageDisplayTime,
   messagesIn,
   ohboxView,
+  feedPartition,
   readsPartition,
   receiptsByDay,
   draftsList,
@@ -128,7 +131,7 @@ export {
   unreadCounts,
   type EngineCounts,
   type OhboxView,
-  type ReadsPartition,
+  type FeedPartition,
   type ReceiptsDayGroup,
   type ScreenerSegments,
   type TagGroup,
