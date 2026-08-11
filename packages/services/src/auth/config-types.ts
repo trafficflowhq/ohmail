@@ -13,6 +13,26 @@
  * `AuthConfig` from there has to move.
  */
 
+/**
+ * WHICH DOOR A SESSION CAME THROUGH, for the two decisions that differ by door.
+ *
+ *  · `cookie` — the browser. The token lives in `tf_refresh`, HttpOnly, `Path=/auth/refresh`,
+ *    host-only, in a jar shared by every tab. This is the STRICT surface for lifetimes and the
+ *    DEFAULT everywhere a surface is not stated: see `surfaceTtls` in `config.ts` for why the
+ *    fall-through has to land here and not on the native branch.
+ *  · `native` — a bearer client holding its token privately: the desktop app's sidecar over the
+ *    `POST /auth/refresh` body branch, and the OAuth `refresh_token` grant.
+ *
+ * It is NOT the same axis as `refresh`'s `concurrentGrace`, and the two must not be collapsed
+ * into one flag however tempting the symmetry looks. Their strict ends point in OPPOSITE
+ * directions: the strict LIFETIME is the cookie one (shorter), while the strict REUSE response is
+ * the native one (no grace at all). One flag would have to weaken one of them, and deriving grace
+ * from a surface that defaults to `cookie` would hand the OAuth grant a grace window it has never
+ * had — a public-client replay buying a parallel credential, which is exactly what confining the
+ * grace to the browser prevents.
+ */
+export type SessionSurface = "cookie" | "native";
+
 export interface AuthConfig {
   /**
    * WebAuthn Relying-Party id (bare host, no scheme, no port). SINGLE-valued by
@@ -102,7 +122,24 @@ export interface AuthConfig {
   oauthClients: Record<string, { redirectUris: string[] }>;
   // Lifetimes (ms)
   accessTtlMs: number;
+  /**
+   * The ROLLING refresh window of the COOKIE surface — and the value every unqualified reader
+   * gets, which is deliberate: it is the SHORTER of the two, so a caller that never learned about
+   * surfaces cannot accidentally hand out the long one. `cookies.ts` reads exactly this for the
+   * `tf_refresh` / `tf_resume` / `tf_owner` `Max-Age`, so the browser's copy and the server's
+   * stored refresh row can never describe different windows.
+   *
+   * Rolling means rolling: every rotation re-issues it from NOW, and with
+   * {@link sessionAbsoluteTtlMs} null on this surface nothing bounds the chain from the session's
+   * creation. See `config.ts` for the number and the argument.
+   */
   refreshTtlMs: number;
+  /**
+   * The same window for the NATIVE/BEARER surface. Longer, because the desktop app rotates on
+   * every launch and being signed out of your own mail client is the failure this exists to
+   * prevent; see `config.ts`.
+   */
+  nativeRefreshTtlMs: number;
   loginTokenTtlMs: number;
   webauthnChallengeTtlMs: number;
   oauthCodeTtlMs: number;
@@ -116,8 +153,19 @@ export interface AuthConfig {
    */
   desktopLinkTtlMs: number;
   stepUpWindowMs: number;      // 5 min
-  /** Hard ceiling on a sliding session, from `sessions.created_at`. 90 d — see config.ts. */
-  sessionAbsoluteTtlMs: number;
+  /**
+   * Hard ceiling on a rolling COOKIE session, measured from `sessions.created_at` —
+   * or `null` for NO ceiling, which is what a genuinely rolling window means and what
+   * ohmail.app runs. See `config.ts` for why the cookie surface gives its ceiling up.
+   *
+   * `null` is not "unset". `rotateRefresh` reads it as an explicit decision and skips the cap
+   * entirely; any non-null value is still enforced, on whichever surface carries it, and
+   * `session-lifetime.test.ts` pins that enforcement against a config that sets one — so this
+   * staying null on the shipped surfaces never becomes a quietly dead code path.
+   */
+  sessionAbsoluteTtlMs: number | null;
+  /** The same ceiling for the NATIVE/BEARER surface. `null` — see `config.ts`. */
+  nativeSessionAbsoluteTtlMs: number | null;
   /**
    * How long after a refresh token is CONSUMED a second presentation of that same token is read
    * as a benign CONCURRENT rotation rather than as theft — on the COOKIE surface ONLY. See

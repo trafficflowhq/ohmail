@@ -1,8 +1,43 @@
 import { StaticKeyProvider, scryptHasher } from "./crypto.js";
 import { assertOriginConfig } from "./origins.js";
-import type { AuthConfig } from "./config-types.js";
+import type { AuthConfig, SessionSurface } from "./config-types.js";
 
 const MIN = 60_000;
+
+/** The two lifetimes a rotation needs, resolved for one surface. */
+export interface SurfaceTtls {
+  /** The rolling refresh window, re-issued from `now` on every rotation. */
+  refreshTtlMs: number;
+  /** The ceiling from `sessions.created_at`, or `null` for none. */
+  absoluteTtlMs: number | null;
+}
+
+/**
+ * Resolve the session lifetimes for a surface — THE ONLY PLACE THE DEFAULT IS DECIDED.
+ *
+ * ── THE DEFAULT IS THE STRICTER SURFACE, AND THE SHAPE OF THIS FUNCTION IS THE ENFORCEMENT ──
+ *
+ * The dangerous version of this file is one line different: `surface === "cookie" ? cookie :
+ * native`. It reads identically, passes every test that names a surface, and makes the
+ * FALL-THROUGH the 400-day native branch — so every caller that forgets the argument, every new
+ * route, every future refresh path, silently hands a browser a near-indefinite session. The
+ * failure is invisible: the sessions work, nothing errors, and the only symptom is a credential
+ * that outlives its window by a factor of four.
+ *
+ * So the test is written the other way round: `native` is the value that must be ASKED FOR by
+ * name, and everything else — including `undefined` from a caller that never heard of surfaces —
+ * lands on the cookie window. There is exactly one default in the codebase and it is the `=
+ * "cookie"` below; `rotateRefresh` and `refresh` pass their surface straight through rather than
+ * defaulting again, so there is no second place for the two to disagree.
+ *
+ * `session-lifetime.test.ts` pins both halves: the no-argument call resolves to the cookie
+ * window, and flipping this default to `native` turns it red.
+ */
+export function surfaceTtls(cfg: AuthConfig, surface: SessionSurface = "cookie"): SurfaceTtls {
+  return surface === "native"
+    ? { refreshTtlMs: cfg.nativeRefreshTtlMs, absoluteTtlMs: cfg.nativeSessionAbsoluteTtlMs }
+    : { refreshTtlMs: cfg.refreshTtlMs, absoluteTtlMs: cfg.sessionAbsoluteTtlMs };
+}
 
 export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin"> = {
   inviteCodes: new Set<string>(),
@@ -14,14 +49,71 @@ export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin">
   publicSignupCap: null,
   oauthClients: { "tf-macos": { redirectUris: ["trafficflow://auth"] } },
   accessTtlMs: 15 * MIN,
-  refreshTtlMs: 30 * 24 * 60 * MIN,
-  // The hard ceiling on a SLIDING session. Rotation renews the 30-day refresh window on every
-  // use, so a mail client somebody opens weekly would otherwise stay signed in for ever — and
-  // a token stolen from such a browser would be a permanent credential. 90 days is the
-  // Fastmail/Notion/Linear-class number: long enough that no ordinary user ever meets it,
-  // short enough that an abandoned or stolen session dies on its own. Measured from
-  // `sessions.created_at` in `rotateRefresh`.
-  sessionAbsoluteTtlMs: 90 * 24 * 60 * MIN,
+  // ── HOW LONG A SESSION LIVES, PER SURFACE ───────────────────────────────────────────────────
+  //
+  // NINETY DAYS, ROLLING, ON THE BROWSER. Every rotation re-issues the window from now, and
+  // `sessionAbsoluteTtlMs` below is `null`, so a browser that is used stays signed in — full
+  // stop. That is the product decision: this is a MAIL CLIENT, and a mail client that signs you
+  // out on a schedule is one you stop trusting with your mail. The ninety days is the IDLE bound,
+  // the only bound left: stop using a browser for a quarter of a year and it is signed out.
+  //
+  // What that gives up, stated plainly because it is a real loss: a refresh token stolen from a
+  // browser that keeps being used no longer dies on its own. Before this, the 90-day absolute cap
+  // ended such a session at most a quarter after it began, whatever the thief did. What still
+  // ends it: any sign-out (`revokeFamily` kills the family), revoking the device, a password
+  // change, and reuse detection the moment the thief and the real client both present a token
+  // outside the ten-second grace — which is the likely outcome of a stolen browser credential
+  // actually being USED, because two holders of one rotating chain collide by construction.
+  // The cap was never the thing catching theft; it was a timer that also signed out honest
+  // people, and the honest people met it far more often than a thief did.
+  refreshTtlMs: 90 * 24 * 60 * MIN,
+  // FOUR HUNDRED DAYS, ROLLING, ON THE NATIVE/BEARER SURFACE — the desktop app. It is the same
+  // decision taken further, because the desktop case is stronger: the sidecar rotates on every
+  // launch (`apps/sidecar/src/cloud-auth.ts` refreshes through the body branch), so the window is
+  // re-issued each time the app is opened and a rolling 400 days is indefinite in practice for
+  // anyone who opens their mail within a year. An installed app that demands a password and a
+  // six-digit code because it sat unopened over a summer is the same failure as the sign-out
+  // above, minus the browser's excuse of being a shared jar.
+  //
+  // 400 rather than "no expiry at all": the row keeps a real `expires_at`, so the schema, the
+  // reaper and the admin console go on reading a date instead of a null that every one of them
+  // would have to learn to special-case. Nothing about the desktop's lifetime needed a migration.
+  nativeRefreshTtlMs: 400 * 24 * 60 * MIN,
+  // ── THE ABSOLUTE CAP, GIVEN UP ON BOTH SHIPPED SURFACES ──────────────────────────────────────
+  //
+  // This was 90 days, measured from `sessions.created_at`, and it made "rolling" false: a browser
+  // used every day was signed out on the ninetieth day regardless. A cap and a rolling window are
+  // not two safety features that add up — the cap is the thing that decides, and while it stood
+  // the refresh TTL only chose how fast an IDLE session died. Keeping it while claiming a rolling
+  // 90-day session would have published a sentence the code contradicts on day 91.
+  //
+  // `null` on both surfaces, and the mechanism it turns off is still live and still tested:
+  // `rotateRefresh` enforces any non-null value it is given, on either surface, and
+  // `session-lifetime.test.ts` proves that against an overriding config. A deployment that wants
+  // a ceiling sets one; ohmail.app does not.
+  sessionAbsoluteTtlMs: null,
+  nativeSessionAbsoluteTtlMs: null,
+  // ── WHAT A HOME-SCREEN PWA ACTUALLY KEEPS, so nobody re-derives it from browser folklore ─────
+  //
+  // The rolling window above is the SERVER's promise. Whether a browser still holds the cookie to
+  // spend it is a separate question with a different answer per platform, and these four facts are
+  // the whole of it:
+  //
+  //  · iOS partitions an installed (`display: standalone`) web app's cookie jar from Safari's.
+  //    The first sign-in INSIDE the installed app is therefore unavoidable — the Safari session
+  //    that installed it does not carry over. That is a one-time cost at install, not a recurring
+  //    sign-out, and no server-side lifetime can remove it.
+  //  · ITP's seven-day cap applies to storage written by SCRIPT (`document.cookie`,
+  //    localStorage, IndexedDB). Cookies written by the SERVER in a `Set-Cookie` header are
+  //    exempt from it — which is what all five of ours are, HttpOnly included. This is why the
+  //    session lives in a server-set cookie and why nothing about it may migrate into script
+  //    storage for convenience.
+  //  · Home-screen apps are exempt from the unused-site purge that would otherwise evict a site
+  //    left untouched for weeks.
+  //  · With those three, persistence is bounded by the window above rather than by the browser:
+  //    the jar keeps `tf_refresh` for its `Max-Age`, and each rotation re-issues that `Max-Age`.
+  //    So an installed PWA opened at least once a quarter stays signed in indefinitely, and the
+  //    desktop app opened at least once a year does too.
   // ── THE REFRESH-ROTATION GRACE WINDOW (COOKIE SURFACE ONLY) ─────────────────────────────────
   //
   // TEN SECONDS, and it is short on purpose. A browser shares ONE cookie jar across every tab and
@@ -50,7 +142,10 @@ export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin">
   // THE RESIDUAL, STATED (OAuth 2.0 Security BCP / RFC 9700 §4.14.2): an attacker who can replay a
   // stolen cookie refresh token WITHIN ten seconds of the real rotation gets a distinct live tip
   // that then rotates on its own chain — a parallel session that survives until the family is
-  // revoked (a sign-out) or `sessionAbsoluteTtlMs`. It requires real-time exfiltration AND hitting
+  // revoked (a sign-out, a device revocation, or the next reuse detection outside this window).
+  // That list no longer ends with `sessionAbsoluteTtlMs`, which is now null: the backstop this
+  // paragraph used to name is gone, and the remaining ends are all ACTIONS rather than a timer.
+  // It requires real-time exfiltration AND hitting
   // one ten-second window per rotation, and it is confined to the browser cookie surface. Shrinking
   // it further would start signing honest multi-tab users out again; that is the trade this number
   // buys, made deliberately and only where the race is real.
