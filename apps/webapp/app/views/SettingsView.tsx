@@ -373,6 +373,7 @@ export function SettingsView({
   screeningSection,
   dormancySection,
   remoteImagesSection,
+  autoUnsubscribeSection,
   awaySection,
   desktopSection,
   initialPane,
@@ -543,6 +544,31 @@ export function SettingsView({
    */
   remoteImagesSection?: ReactNode;
   /**
+   * AUTO-UNSUBSCRIBE ON SCREEN-OUT, injected — the Screener pane's fourth control.
+   *
+   * It belongs to the SCREENER and not to General, unlike {@link remoteImagesSection} directly
+   * above: what it governs is a consequence of a screening decision, so the place somebody looks
+   * for it is the pane where they set what screening does.
+   *
+   * It renders LAST of the pane's behaviour controls, after {@link autoSuggestSection}, which is
+   * an escalation rather than an accident: the two above it change what the Screener shows and
+   * what it may spend, and this one makes a request to a stranger. A control whose consequence
+   * leaves the building sits below every control whose does not.
+   *
+   * It stays in this pane rather than following {@link awaySection} into one of its own, and the
+   * difference is what the control is ABOUT. The responder is a feature you go and configure; this
+   * is a consequence of a decision made here, and the sentence it governs is the one the Screener's
+   * own toasts print. Somebody looking for it is looking for where screening is set up.
+   *
+   * The same injection seam as {@link autoSuggestSection}: it writes `PATCH /consent/settings`
+   * through `app/api-client` and through the shell's `useConsentState` (so the sender sheet and the
+   * Screener stop disclosing a request that will no longer be made), neither of which this shared,
+   * desktop-mirrored file may name. Absent ⇒ no row, which is the honest state on a standalone
+   * install: its engine wires no unsubscribe service at all, so there is nothing there to switch
+   * off.
+   */
+  autoUnsubscribeSection?: ReactNode;
+  /**
    * THE AWAY RESPONDER, injected — and the only injected node whose feature SENDS MAIL.
    *
    * The same seam as {@link autoSuggestSection}: it reads and writes `GET/PUT /away-responder`
@@ -619,7 +645,8 @@ export function SettingsView({
      list for as long as it was a row inside the Screener pane, and leaving it here after the move
      would summon an EMPTY Screener pane on any surface that wires the responder and nothing else. */
   const screenerPane = Boolean(
-    screeningSection || dormancySection || autoSuggestSection || seedSection,
+    screeningSection || dormancySection || autoSuggestSection || autoUnsubscribeSection
+      || seedSection,
   );
   const panes: Array<[PaneId, string]> = [
     ["general", t("general")],
@@ -828,9 +855,10 @@ export function SettingsView({
 
           {/* THE SCREENER PANE — every control about the mail a connected mailbox brings, in one
               section: the posture first, then the dormancy dial (both about what the Screener SHOWS
-              and neither spends), then the auto-suggest opt-in (LAST, because it is the one that can
-              cost money), and the door back to the sent-mail review at the foot. Each node is absent
-              on Desktop and the demo — the pane itself is withheld from the nav when all four are.
+              and neither spends), then the auto-suggest opt-in (because it is the one that can cost
+              money), then auto-unsubscribe (because it is the one whose consequence leaves the
+              building), and the door back to the sent-mail review at the foot. Each node is absent
+              on Desktop and the demo — the pane itself is withheld from the nav when all five are.
               The seed section renders its own copy under its own subhead; its `node` brings no
               `SettingsSection` of its own, because this one wraps the whole pane.
 
@@ -843,6 +871,16 @@ export function SettingsView({
               {screeningSection}
               {dormancySection}
               {autoSuggestSection}
+              {/* Auto-unsubscribe, below the two that change what the Screener SHOWS and the one
+                  that can spend, because it is the only one left in this pane whose consequence
+                  leaves the building — a request to a stranger, with no undo once it has gone.
+
+                  It stays in the Screener pane rather than following the away responder into a
+                  pane of its own, and the difference is what the control is ABOUT. The responder
+                  is a feature you configure; this is a consequence of a decision made here, and
+                  the sentence it governs is the one the Screener's own toasts print. Somebody
+                  looking for it is looking for where screening is set up. */}
+              {autoUnsubscribeSection}
               {seedSection ? (
                 <>
                   <SettingsSubhead>{seedSection.label}</SettingsSubhead>

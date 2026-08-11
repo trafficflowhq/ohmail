@@ -390,13 +390,13 @@
     "delete": "Löschen",
     "today": "heute",
     "toastFiled": "{dest} — einsortiert{read, select, true { · als gelesen markiert} other {}}. Künftige Post von {target} geht automatisch dorthin.",
-    "toastScreened": "Aussortiert — {target}.{read, select, true { Zurückgehaltene Post als gelesen markiert.} other {}}",
-    "toastSpam": "Als Spam markiert — {target}.",
+    "toastScreened": "Aussortiert — {target}.{read, select, true { Zurückgehaltene Post als gelesen markiert.} other {}}{unsub, select, true { ohmail meldet dich dort auch ab, sofern der Absender Ein-Klick-Abmeldung anbietet.} other {}}",
+    "toastSpam": "Als Spam markiert — {target}.{unsub, select, true { ohmail meldet dich dort auch ab, sofern der Absender Ein-Klick-Abmeldung anbietet.} other {}}",
     "toastUndo": "Rückgängig",
     "toastUndone": "{count, plural, one {Rückgängig — 1 wartet wieder.} other {Rückgängig — # warten wieder.}}",
     "toastUndoExpired": "Zu spät — diese Entscheidung ist schon raus.",
-    "toastBulkDecided": "{count} entschieden — {parts}",
-    "toastBulkSpam": "{count} nach Spam verschoben",
+    "toastBulkDecided": "{count} entschieden — {parts}{unsub, select, true {. ohmail meldet dich bei den Abgelehnten auch ab, sofern sie Ein-Klick-Abmeldung anbieten.} other {}}",
+    "toastBulkSpam": "{count} nach Spam verschoben{unsub, select, true {. ohmail meldet dich dort auch ab, sofern sie Ein-Klick-Abmeldung anbieten.} other {}}",
     "toastAllowed": "Zugelassen — {count} zurückgehaltene und künftige Post von {sender} gehen nach {dest}.",
     "toastReleased": "{dest} — {count} zurückgehaltene Nachrichten von {sender} freigegeben. Es wurde keine Regel angelegt, künftige Post bleibt also unverändert.",
     "toastNotSpamOhbox": "Kein Spam — in die Ohbox einsortiert. {sender} ist jetzt zugelassen.",
@@ -659,6 +659,13 @@
       "on": "Bilder in einer Nachricht laden beim Öffnen, über den Proxy von ohmail.",
       "off": "Jede Nachricht fragt zuerst. Drück „Bilder anzeigen“, um sie zu laden.",
       "microcopy": "So oder so kommen Bilder über unseren Proxy, ein Absender sieht deine Adresse also nie — und ein Zählpixel wird gar nicht erst geholt.",
+      "failed": "Das ließ sich nicht speichern — versuch es nochmal."
+    },
+    "autoUnsub": {
+      "title": "Abmelden, wenn ich aussortiere oder als Spam markiere",
+      "on": "Wer aussortiert wird, bekommt auch die Abmeldung geschickt — sofern der Absender Ein-Klick-Abmeldung anbietet.",
+      "off": "Die Post wird einsortiert, geschickt wird nichts.",
+      "microcopy": "Eine Anfrage pro Liste, einmal, von unseren Servern — deine Adresse und deine Lesezeiten bleiben so aus dem Log des Absenders heraus. Für Absender ohne Ein-Klick-Link wird nur einsortiert und nichts geschickt, und eine schon geschickte Anfrage lässt sich nicht zurückholen.",
       "failed": "Das ließ sich nicht speichern — versuch es nochmal."
     },
     "dormancy": {
