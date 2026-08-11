@@ -66,6 +66,7 @@ import {
 } from "./sender-screening";
 import { PLACE_LABEL } from "./format";
 import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "./idn";
+import { activeFormatZone } from "./locale";
 import { useAppLocale } from "./LocaleContext";
 import {
   DECISION_DONE_LABEL,
@@ -341,13 +342,17 @@ export function useScreenerState(
   const reader = engine.read();
   // The QUEUE, from the projected mirror. See the `presented` parameter.
   const queueReader = presented ?? reader;
-  /* THE DERIVED ROWS CARRY WORDS: a derived sender's stamp ("Mo", "2. Aug") and a screened-out
-     sender's date are minted by the selector, not by a view, so it has to be told which language to
-     name them in. The memo re-keys on the locale, so a switch re-derives the segments in the same
-     render rather than leaving yesterday's stamps in English until the next mutation. */
+  /* THE DERIVED ROWS CARRY WORDS AND A CLOCK: a derived sender's stamp ("Mo", "2. Aug") and a
+     screened-out sender's date are minted by the selector, not by a view, so it has to be told
+     which language to name them in AND which zone to read them in. The engine defaults the zone to
+     UTC because it has no reader to ask; this is the call site that has one, and without it the
+     Screener would keep showing the two-hours-behind stamps every other pile has stopped showing.
+     The memo re-keys on the locale, so a switch re-derives the segments in the same render rather
+     than leaving yesterday's stamps in English until the next mutation; the zone is resolved once
+     per session and is not a dependency. */
   const locale = useAppLocale()?.locale ?? "en";
   const segments = useMemo(
-    () => screenerSegments(queueReader, undefined, locale),
+    () => screenerSegments(queueReader, undefined, locale, activeFormatZone()),
     [queueReader, version, locale],
   );
   const s = store.current;

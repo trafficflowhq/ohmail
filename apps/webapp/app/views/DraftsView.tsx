@@ -41,6 +41,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineDraft } from "@ohmail/client-engine";
 import { Button, InfoNote, ListPane, ListRows } from "@ohmail/ui";
+import { displayTime } from "../shell/format";
 
 /** "you, and two others" — the recipients, as a line, or the empty-string for none. */
 function recipientLine(d: EngineDraft): string {
@@ -105,7 +106,7 @@ export function DraftsView({
                     >
                       <span className="draft-line">
                         <b className="draft-subject">{d.subject.trim() || t("noSubject")}</b>
-                        <span className="draft-when">{stamp(d.updatedAt, now)}</span>
+                        <span className="draft-when">{displayTime({ date: d.updatedAt }, now)}</span>
                       </span>
                       <span className="draft-line">
                         {/* WHO IT IS FOR, or the honest absence. A draft with no recipient is the
@@ -170,19 +171,15 @@ function preview(body: string): string {
   return line.length > 140 ? `${line.slice(0, 140)}…` : line;
 }
 
-/**
- * When it was last touched. Deliberately coarse: a draft list is answering "what was I writing",
- * and a minute-accurate stamp on something nobody sent invites the reader to treat it as a record.
+/* WHEN IT WAS LAST TOUCHED — through `displayTime`, which is the shell's one stamp.
+ *
+ * This was a private `stamp()` here: its own day-banding, its own hardcoded English month table,
+ * and its own `getUTC*` reads. It therefore carried both defects the shared stamp had already had
+ * fixed — a German reader saw "Aug", and every reader saw the server's clock rather than their
+ * own — and it would have gone on carrying them, because a formatter that is not the seam is not
+ * touched when the seam is. That is the whole argument for there being exactly one.
+ *
+ * What changed on screen: a draft touched within the last six days now names its weekday ("Sat")
+ * where it used to give a date ("8 Aug"). That is the same rule every other list in the product
+ * follows, and it is coarser rather than finer, which is what the old comment here was protecting.
  */
-function stamp(iso: string, now: Date): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const day = (x: Date) => Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate());
-  const ago = Math.round((day(now) - day(d)) / 86_400_000);
-  if (ago === 0) {
-    return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
-  }
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const s = `${d.getUTCDate()} ${months[d.getUTCMonth()]}`;
-  return d.getUTCFullYear() === now.getUTCFullYear() ? s : `${s} ${d.getUTCFullYear()}`;
-}

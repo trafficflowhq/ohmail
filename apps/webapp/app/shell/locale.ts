@@ -206,6 +206,70 @@ export function activeFormatLocale(): AppLocale {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE ZONE DIMENSION — one seam, beside the locale one, for the same reason.
+
+   The product showed TWO clocks at once. `AboutSection`, `MailboxSection` and `BillingSection`
+   render account dates through `toLocaleDateString`, which reads the reader's own zone; every MAIL
+   stamp — the row time, the hover title, the resurface label, the Screener's derived rows — was
+   formatted with `timeZone: "UTC"`. A reader in Zurich saw a message that arrived at 16:32 stamped
+   "14:32", two hours behind the account dates on the same screen.
+
+   Storage does not move: every instant on the wire and in the mirror is UTC, and `bubbleUpAt` is
+   still a UTC instant the worker compares against `now`. What this seam decides is only the zone an
+   instant is READ in — and the answer is the reader's, everywhere, once.
+
+   ── WHY A MODULE-LEVEL RESOLUTION AND NOT A HOOK ────────────────────────────────────────────
+
+   Exactly the argument {@link activeFormatLocale} is here for: `format.ts` is a function library
+   that `screener-state.ts` calls from inside a reducer and `AppShell` from inside a toast callback,
+   and `messageDisplayTime` is called once per visible row from a selector in another package.
+   Threading a zone through all of that as a prop is ten signatures; this is one.
+
+   ── AND WHY IT RESOLVES ITSELF RATHER THAN WAITING TO BE TOLD ───────────────────────────────
+
+   The locale register rests at `null` and each host injects, because a locale is a CHOICE. A zone
+   is not: it is a property of the machine the reader is looking at, and `Intl.DateTimeFormat()
+   .resolvedOptions().timeZone` already knows it in the browser, in the desktop webview and in Node.
+   Resting on a host injection would mean a host that forgets silently renders UTC again — which is
+   the bug. So the resting answer is the platform's own zone, resolved once (constructing a
+   `DateTimeFormat` is the expensive part) and cached until something injects.
+
+   {@link setActiveFormatZone} is that injection. It exists for tests — a stamp assertion must not
+   depend on the TZ of the machine running the suite, and the DST guards need a zone that HAS a DST
+   rule — and it is the hook a future "show times in the mailbox's zone" preference would use.
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** What a platform that cannot name its own zone falls back to. Never reached in a browser. */
+export const FALLBACK_FORMAT_ZONE = "UTC";
+
+let activeZone: string | null = null;
+
+/** The IANA zone every mail time renders in — the reader's own, resolved once. */
+export function activeFormatZone(): string {
+  if (activeZone === null) {
+    try {
+      activeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || FALLBACK_FORMAT_ZONE;
+    } catch {
+      /* No ICU zone data at all. UTC is wrong for most readers and right for nobody, but it is a
+         clock rather than a crash, and every stamp in the product used to be exactly this. */
+      activeZone = FALLBACK_FORMAT_ZONE;
+    }
+  }
+  return activeZone;
+}
+
+/**
+ * Render for a named zone instead of the platform's. `null` drops back to the platform.
+ *
+ * Synchronous and immediate, like {@link setActiveCatalog}: the formatter caches in `format.ts` and
+ * `selectors.ts` are keyed by zone, so a switch is visible on the next call rather than on the next
+ * reload.
+ */
+export function setActiveFormatZone(zone: string | null): void {
+  activeZone = zone;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
    THE FALLBACK MERGE — declared HERE rather than beside the loader, because both hosts need it and
    only one of them has the loader.
 

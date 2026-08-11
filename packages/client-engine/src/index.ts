@@ -91,6 +91,18 @@ export {
   type IndexedDbMirrorStoreOptions,
 } from "./idb.js";
 
+// An instant as a wall clock in the reader's zone, and back. The one place that arithmetic lives —
+// `selectors.ts` bands stamps with it and `apps/webapp/app/shell/format.ts` mints its resurface
+// horizons with it, rather than each keeping a copy that drifts on a DST edge.
+export {
+  zonedDayNumber,
+  zonedFields,
+  zonedInstant,
+  zonedWeekday,
+  type ZonedFields,
+  type ZonedWallClock,
+} from "./zone.js";
+
 // Selectors.
 export {
   bodyOf,

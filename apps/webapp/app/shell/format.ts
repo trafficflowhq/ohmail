@@ -8,16 +8,19 @@ import {
   isOwnSent,
   messageDisplayTime,
   VIEW_OF_FOLDER,
+  zonedFields,
+  zonedInstant,
+  zonedWeekday,
   type EmailAddress,
   type EngineMessage,
   type TagDTO,
 } from "@ohmail/client-engine";
 import { TAG_HUES, type TagHueName } from "@ohmail/ui";
 import { displayAddress } from "./idn";
-import { activeFormatLocale, liveCopy } from "./locale";
+import { activeFormatLocale, activeFormatZone, liveCopy } from "./locale";
 
 /**
- * THE DAY AND MONTH NAMES, FROM `Intl` AND STILL IN UTC.
+ * THE DAY AND MONTH NAMES, FROM `Intl`, IN THE READER'S LOCALE AND THE READER'S ZONE.
  *
  * These were two hardcoded English arrays, and they are on screen: `resurfaceLabel` renders
  * "Fri 09:00" in a toast and on a Triage row, `fullDateTime` renders "Tue 5 Aug 2026, 14:32" as the
@@ -27,35 +30,51 @@ import { activeFormatLocale, liveCopy } from "./locale";
  * abbreviation rules are not ours to invent — German shortens Tuesday to "Di" and September to
  * "Sept." with a full stop, and a hand-written table gets that wrong in a way nobody reviews.
  *
- * **`timeZone: "UTC"` is preserved, and that is deliberate rather than an oversight.** Every
- * formatter in this file reads in UTC and the file's own header says why: the fixtures and the whole
- * test surface are stamped in UTC, and a locale-relative render would put a different instant on
- * screen for every reader. Localising the WORDS is not localising the CLOCK — this slice changes
- * which language the day is named in and nothing about which day it is.
+ * ── `timeZone: "UTC"` USED TO STAND HERE, WITH A PARAGRAPH DEFENDING IT ────────────────────────
  *
- * Cached per locale, because constructing a `DateTimeFormat` is the expensive part and these are
- * called once per visible row.
+ * It said the UTC read was "deliberate rather than an oversight", on the grounds that the fixtures
+ * and the test surface are stamped in UTC and that localising the words is not localising the
+ * clock. The second half is true and the conclusion was wrong, and the product said so: three
+ * settings sections (`AboutSection`, `MailboxSection`, `BillingSection`) render account dates
+ * through `toLocaleDateString`, which is the reader's zone. So the interface showed TWO clocks at
+ * once, and the mail — the half a reader actually navigates by — was the one that was wrong. A
+ * message that arrived at 16:32 was stamped "14:32" for a reader in Zurich, and a message that
+ * arrived after their midnight was named with the previous day's weekday.
+ *
+ * A test surface stamped in UTC is an argument for TELLING the formatters which zone to read in,
+ * not for pinning them to the server's. That is `activeFormatZone()` in `locale.ts`, beside
+ * `activeFormatLocale()`; the tests inject `"UTC"` and keep every expectation they had.
+ *
+ * Cached per locale AND zone, because constructing a `DateTimeFormat` is the expensive part, these
+ * are called once per visible row, and an injected zone has to be visible on the next call.
  */
 const DAY_NAMES = new Map<string, Intl.DateTimeFormat>();
 const MONTH_NAMES = new Map<string, Intl.DateTimeFormat>();
 
 function namer(cache: Map<string, Intl.DateTimeFormat>, opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
   const locale = activeFormatLocale();
-  const found = cache.get(locale);
+  const zone = activeFormatZone();
+  const key = `${locale}|${zone}`;
+  const found = cache.get(key);
   if (found) return found;
-  const made = new Intl.DateTimeFormat(locale, { ...opts, timeZone: "UTC" });
-  cache.set(locale, made);
+  const made = new Intl.DateTimeFormat(locale, { ...opts, timeZone: zone });
+  cache.set(key, made);
   return made;
 }
 
-/** "Fri" / "Fr" — the short weekday of an instant, read in UTC, in the active locale. */
+/** "Fri" / "Fr" — the short weekday of an instant, in the reader's zone and the active locale. */
 function weekdayShort(d: Date): string {
   return namer(DAY_NAMES, { weekday: "short" }).format(d);
 }
 
-/** "Aug" / "Aug." — the short month of an instant, read in UTC, in the active locale. */
+/** "Aug" / "Aug." — the short month of an instant, in the reader's zone and the active locale. */
 function monthShort(d: Date): string {
   return namer(MONTH_NAMES, { month: "short" }).format(d);
+}
+
+/** An instant's wall clock where the reader is standing — the one call the stamps below share. */
+function readerFields(d: Date): ReturnType<typeof zonedFields> {
+  return zonedFields(d, activeFormatZone());
 }
 
 /**
@@ -114,9 +133,10 @@ function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
 
+/** "16:32" — the wall clock an instant shows where the reader is. */
 export function clockOf(iso: string): string {
-  const d = new Date(iso);
-  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+  const f = readerFields(new Date(iso));
+  return `${pad(f.hour)}:${pad(f.minute)}`;
 }
 
 /**
@@ -125,11 +145,13 @@ export function clockOf(iso: string): string {
  * fixture behind them; this stays as the app-side name every view already imports, and
  * delegates so the two can never drift apart.
  */
-export function displayTime(m: EngineMessage, now: Date): string {
-  /* The active locale, so "Mon" reads "Mo" for a German reader. The engine keeps English as its
-     default — it has no catalogue and its own tests assert the English stamps — and this is the
-     seam that supplies the reader s. */
-  return messageDisplayTime(m, now, activeFormatLocale());
+export function displayTime(m: Pick<EngineMessage, "time" | "date">, now: Date): string {
+  /* The active locale, so "Mon" reads "Mo" for a German reader, and the active ZONE, so the bands
+     ("today", "this week", dated) fall on the reader's midnights. The engine defaults the locale to
+     English — it has no catalogue and its own tests assert the English stamps — and defaults the
+     zone to nothing at all, on purpose: see `messageDisplayTime`. This is the seam that supplies
+     both. */
+  return messageDisplayTime(m, now, activeFormatZone(), activeFormatLocale());
 }
 
 /**
@@ -186,60 +208,98 @@ export function metaLine(...parts: Array<string | null | undefined>): string {
   return parts.filter((p): p is string => typeof p === "string" && p !== "").join(" · ");
 }
 
-/** "Fri 09:00" from an ISO instant (or the raw string when not ISO). */
+/** "Fri 09:00" from an ISO instant (or the raw string when not ISO), read where the reader is. */
 export function resurfaceLabel(when: string): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(when)) return when;
   const d = new Date(when);
-  return `${weekdayShort(d)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
-}
-
-/** The resurface fallback: the next Friday 09:00 UTC after `base` (the keyboard/palette default). */
-export function nextFridayNine(base: Date): string {
-  const d = new Date(base);
-  let diff = (5 - d.getUTCDay() + 7) % 7;
-  if (diff === 0) diff = 7;
-  d.setUTCDate(d.getUTCDate() + diff);
-  d.setUTCHours(9, 0, 0, 0);
-  return d.toISOString();
+  const f = readerFields(d);
+  return `${weekdayShort(d)} ${pad(f.hour)}:${pad(f.minute)}`;
 }
 
 /**
  * ═══ THE RESURFACE HORIZONS ═════════════════════════════════════════════════════════════
  *
- * The action carries a chosen instant now, so the presets are computed here rather than baked
- * at the one call site `nextFridayNine` used to serve. All land at 09:00 UTC — the same clock
- * `nextFridayNine` picked and the hour every stored `bubbleUpAt` uses, so `resurfaceLabel`
- * reads them back the same way whichever preset produced them.
+ * The action carries a chosen instant, so the presets are computed here rather than baked at the
+ * one call site `nextFridayNine` used to serve. All four land at 09:00 IN THE READER'S ZONE, and
+ * `resurfaceLabel` reads them back the same way whichever preset produced them.
+ *
+ * ── WHY 09:00 MOVED, WHICH IS THE HALF THAT IS EASY TO MISS ─────────────────────────────────
+ *
+ * These used to mint 09:00 UTC, and while every stamp in the product was ALSO read in UTC that was
+ * self-consistent: the reader picked "tomorrow" and the label said "09:00". The moment the display
+ * side reads the reader's zone, a 09:00Z instant renders as "11:00" to a reader in Zurich in
+ * summer — the product would offer a morning and deliver a late morning, having been told which
+ * one it meant. So the wall clock is what is fixed at 09:00 and the INSTANT is what varies:
+ * 07:00Z in CEST, 08:00Z in CET.
+ *
+ * Storage is unchanged. `bubbleUpAt` is still a UTC instant on the wire and in the mirror, and the
+ * worker still compares instants — it never sees a wall clock and does not need to.
+ *
+ * ── AND WHY THE ARITHMETIC IS `zonedInstant` AND NOT AN OFFSET ──────────────────────────────
+ *
+ * "Add two hours" is right for half the year. `zonedInstant` asks the platform what the offset
+ * actually is at the instant being minted, which is the only version that survives 29 March and
+ * 25 October; the day arithmetic below stays in CALENDAR fields (`day + diff`), which `Date.UTC`
+ * normalizes across month and year ends, so no branch of it is counting 86 400 000 milliseconds
+ * and hoping every day has that many.
  */
 
-/** Tomorrow, 09:00 UTC. */
+/** 09:00 on a calendar day in the reader's zone, as the UTC instant that is. */
+function nineOn(zone: string, year: number, month: number, day: number): string {
+  return zonedInstant({ year, month, day, hour: 9 }, zone).toISOString();
+}
+
+/** How many days forward from `base` the coming `weekday` is — never 0, so today is next week's. */
+function daysUntil(base: Date, zone: string, weekday: number): number {
+  const diff = (weekday - zonedWeekday(base, zone) + 7) % 7;
+  return diff === 0 ? 7 : diff;
+}
+
+/** The resurface fallback: the coming Friday, 09:00 where the reader is (keyboard/palette default). */
+export function nextFridayNine(base: Date): string {
+  const zone = activeFormatZone();
+  const f = zonedFields(base, zone);
+  return nineOn(zone, f.year, f.month, f.day + daysUntil(base, zone, 5));
+}
+
+/** Tomorrow, 09:00 where the reader is. */
 export function tomorrowNine(base: Date): string {
-  const d = new Date(base);
-  d.setUTCDate(d.getUTCDate() + 1);
-  d.setUTCHours(9, 0, 0, 0);
-  return d.toISOString();
+  const zone = activeFormatZone();
+  const f = zonedFields(base, zone);
+  return nineOn(zone, f.year, f.month, f.day + 1);
 }
 
-/** The coming Monday, 09:00 UTC — and never "later today": a Monday resolves to the next one. */
+/** The coming Monday, 09:00 — and never "later today": a Monday resolves to the next one. */
 export function nextWeekNine(base: Date): string {
-  const d = new Date(base);
-  let diff = (1 - d.getUTCDay() + 7) % 7; // 1 = Monday
-  if (diff === 0) diff = 7;
-  d.setUTCDate(d.getUTCDate() + diff);
-  d.setUTCHours(9, 0, 0, 0);
-  return d.toISOString();
+  const zone = activeFormatZone();
+  const f = zonedFields(base, zone);
+  return nineOn(zone, f.year, f.month, f.day + daysUntil(base, zone, 1));
 }
 
-/** A picked calendar day ("YYYY-MM-DD" from an `<input type="date">`) at 09:00 UTC. */
+/** A picked calendar day ("YYYY-MM-DD" from an `<input type="date">`) at 09:00 where the reader is. */
 export function dayNine(day: string): string {
-  const d = new Date(day);
-  d.setUTCHours(9, 0, 0, 0);
-  return d.toISOString();
+  const zone = activeFormatZone();
+  const picked = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
+  /* The input's own format is the fast path and it is already a CALENDAR day — parsing it through
+     `new Date` would read it as UTC midnight and, for a reader far enough east, name the day
+     before. Anything else is treated as an instant and asked which of the reader's days it falls
+     on; an unparseable one throws here exactly as it used to throw on `toISOString`. */
+  const f = picked
+    ? { year: Number(picked[1]), month: Number(picked[2]), day: Number(picked[3]) }
+    : zonedFields(new Date(day), zone);
+  return nineOn(zone, f.year, f.month, f.day);
 }
 
-/** The "YYYY-MM-DD" a date input wants, from an ISO instant — used to floor the picker at tomorrow. */
+/**
+ * The "YYYY-MM-DD" a date input wants, from an ISO instant — used to floor the picker at tomorrow.
+ *
+ * The READER's calendar day, not the instant's UTC one, and the difference is not cosmetic: 09:00
+ * in Auckland is 21:00 the previous day in UTC, so slicing the ISO string would floor the picker a
+ * day early and let a reader there choose a horizon that has already passed.
+ */
 export function dayValue(iso: string): string {
-  return iso.slice(0, 10);
+  const f = readerFields(new Date(iso));
+  return `${String(f.year).padStart(4, "0")}-${pad(f.month)}-${pad(f.day)}`;
 }
 
 /**
@@ -372,19 +432,22 @@ export function firstName(m: EngineMessage): string {
  * reader gets when they want the exact instant, so it carries the year and never abbreviates
  * to a weekday.
  *
- * UTC, like every other formatter in this file (`clockOf`, `resurfaceLabel`): the fixtures and
- * the whole test surface are stamped and read in UTC, and a locale-relative render would put a
- * different instant on screen for every reader. Empty string for a message with no `Date:`
- * header — there is no instant to name, exactly as `displayTime` answers "" — so a caller
- * interpolating it prints nothing rather than "Invalid Date".
+ * The reader's zone, like every other formatter in this file (`clockOf`, `resurfaceLabel`,
+ * `displayTime`) — this is the value a reader opens precisely to check an exact time against
+ * their own clock, so it is the one place a UTC render would be most obviously wrong. Note the
+ * DATE moves with it, not only the hour: 22:10 UTC on the 4th is 00:10 on the 5th in Zurich.
+ * Empty string for a message with no `Date:` header — there is no instant to name, exactly as
+ * `displayTime` answers "" — so a caller interpolating it prints nothing rather than
+ * "Invalid Date".
  */
 export function fullDateTime(m: EngineMessage): string {
   if (!m.date) return "";
   const d = new Date(m.date);
   if (Number.isNaN(d.getTime())) return "";
+  const f = readerFields(d);
   return (
-    `${weekdayShort(d)} ${d.getUTCDate()} ${monthShort(d)} ` +
-    `${d.getUTCFullYear()}, ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
+    `${weekdayShort(d)} ${f.day} ${monthShort(d)} ` +
+    `${f.year}, ${pad(f.hour)}:${pad(f.minute)}`
   );
 }
 

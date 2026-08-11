@@ -1,4 +1,5 @@
 import type { EntityReader } from "./store.js";
+import { zonedDayNumber, zonedFields } from "./zone.js";
 import {
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
@@ -27,7 +28,7 @@ import {
  */
 
 /**
- * THE DAY AND MONTH NAMES THIS FILE MINTS, FROM `Intl`, IN UTC, IN WHATEVER LOCALE THE CALLER NAMES.
+ * THE DAY AND MONTH NAMES THIS FILE MINTS, FROM `Intl`, IN THE CALLER'S LOCALE AND THE READER'S ZONE.
  *
  * Three hardcoded English arrays stood here and they are the most-repeated words in the product:
  * every message row that is not from today renders one ({@link messageDisplayTime}), every Receipts
@@ -40,19 +41,23 @@ import {
  * web app is the caller that passes a reader's locale (`app/shell/format.ts`, `AppShell`,
  * `screener-state.ts`).
  *
- * `timeZone: "UTC"` on all of them, because every instant here is read with `getUTC*` — see
- * `messageDisplayTime`'s bands. Naming a day in German does not move the day.
+ * THE ZONE IS A PARAMETER TOO, and unlike the locale it has no default here. It used to be the
+ * literal `"UTC"`, matched by `getUTC*` everywhere below, and that was wrong on screen: a reader in
+ * Zurich saw a message that arrived at 16:32 stamped "14:32", and a message that arrived after
+ * their midnight named as the previous weekday. Which day a message is named on is a property of
+ * where the reader is standing, not of the server that stored it. Storage is untouched — every
+ * instant in the mirror is still UTC.
  *
- * Cached by locale-and-shape: constructing a formatter is the expensive part and these are called
- * once per visible row.
+ * Cached by locale-and-zone-and-shape: constructing a formatter is the expensive part and these are
+ * called once per visible row.
  */
 const NAMERS = new Map<string, Intl.DateTimeFormat>();
 
-function named(locale: string, opts: Intl.DateTimeFormatOptions, d: Date): string {
-  const key = `${locale}|${opts.weekday ?? ""}|${opts.month ?? ""}`;
+function named(locale: string, opts: Intl.DateTimeFormatOptions, d: Date, zone: string): string {
+  const key = `${locale}|${zone}|${opts.weekday ?? ""}|${opts.month ?? ""}`;
   let fmt = NAMERS.get(key);
   if (!fmt) {
-    fmt = new Intl.DateTimeFormat(locale, { ...opts, timeZone: "UTC" });
+    fmt = new Intl.DateTimeFormat(locale, { ...opts, timeZone: zone });
     NAMERS.set(key, fmt);
   }
   return fmt.format(d);
@@ -62,10 +67,16 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-/** UTC midnights apart. Positive = in the past; negative = dated in the future. */
-function daysAgo(d: Date, now: Date): number {
-  const day = (x: Date) => Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate());
-  return Math.round((day(now) - day(d)) / 86_400_000);
+/**
+ * Midnights apart IN THE READER'S ZONE. Positive = in the past; negative = dated in the future.
+ *
+ * The reader's midnights and not UTC's, because that is what "today" and "yesterday" mean to the
+ * person reading. Banded on UTC, every message a Zurich reader received between their midnight and
+ * 01:00 (02:00 in summer) was stamped with yesterday's weekday, and a message from 01:30 on the 1st
+ * of a month was dated to the last day of the previous one.
+ */
+function daysAgo(d: Date, now: Date, zone: string): number {
+  return zonedDayNumber(now, zone) - zonedDayNumber(d, zone);
 }
 
 /**
@@ -92,10 +103,22 @@ function daysAgo(d: Date, now: Date): number {
  *
  * A FUTURE date (a resurfaced or scheduled row) takes the dated branch too: `daysAgo` goes
  * negative, and "Fri" for something that has not happened yet reads as the past.
+ *
+ * ── THE ZONE IS REQUIRED, AND THAT IS THE POINT OF IT ───────────────────────────────────
+ *
+ * Every band here is a statement about the reader's calendar, so it cannot be computed without
+ * knowing which calendar that is. A DEFAULT would make the wrong answer the quiet one: a call site
+ * that forgot would render a stamp — a plausible, well-formatted, two-hours-wrong stamp — and
+ * nothing in the type system, the suite or the screen would say so. That is precisely how the UTC
+ * version survived as long as it did. So there is no default, and a call site without a zone does
+ * not compile; the engine's own tests pass `"UTC"` explicitly, which is what makes their UTC
+ * expectations a choice rather than an accident.
  */
 export function messageDisplayTime(
   m: Pick<EngineMessage, "time" | "date">,
   now: Date,
+  /** The IANA zone the reader is in. REQUIRED — see above. */
+  zone: string,
   /** Which language to name the day and month in. English by default — see {@link named}. */
   locale = "en",
 ): string {
@@ -104,12 +127,13 @@ export function messageDisplayTime(
   const d = new Date(m.date);
   if (Number.isNaN(d.getTime())) return "";
 
-  const ago = daysAgo(d, now);
-  if (ago === 0) return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
-  if (ago >= 1 && ago <= 6) return named(locale, { weekday: "short" }, d);
+  const f = zonedFields(d, zone);
+  const ago = daysAgo(d, now, zone);
+  if (ago === 0) return `${pad2(f.hour)}:${pad2(f.minute)}`;
+  if (ago >= 1 && ago <= 6) return named(locale, { weekday: "short" }, d, zone);
 
-  const stamp = `${d.getUTCDate()} ${named(locale, { month: "short" }, d)}`;
-  return d.getUTCFullYear() === now.getUTCFullYear() ? stamp : `${stamp} ${d.getUTCFullYear()}`;
+  const stamp = `${f.day} ${named(locale, { month: "short" }, d, zone)}`;
+  return f.year === zonedFields(now, zone).year ? stamp : `${stamp} ${f.year}`;
 }
 
 /** Server list order (contract §5.2): date desc, id desc. */
@@ -565,29 +589,34 @@ export interface ReceiptsDayGroup {
  * lower case in both languages, so the first letter is raised to match the weekday and date labels
  * beside it, which `Intl` capitalises itself.
  */
-function dayLabel(date: Date, now: Date, locale: string): string {
-  const sameDay =
-    date.getUTCFullYear() === now.getUTCFullYear() &&
-    date.getUTCMonth() === now.getUTCMonth() &&
-    date.getUTCDate() === now.getUTCDate();
-  if (sameDay) {
+function dayLabel(date: Date, now: Date, locale: string, zone: string): string {
+  const ageDays = daysAgo(date, now, zone);
+  if (ageDays === 0) {
     const today = new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(0, "day");
     return today.charAt(0).toUpperCase() + today.slice(1);
   }
-  const ageDays = Math.floor((Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) -
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())) / 86_400_000);
-  if (ageDays <= 6) return named(locale, { weekday: "long" }, date);
-  return `${date.getUTCDate()} ${named(locale, { month: "short" }, date)}`;
+  if (ageDays <= 6) return named(locale, { weekday: "long" }, date, zone);
+  return `${zonedFields(date, zone).day} ${named(locale, { month: "short" }, date, zone)}`;
 }
 
+/**
+ * `zone` and `locale` both default, and unlike {@link messageDisplayTime} that is deliberate: the
+ * grouping this returns is the ORDER Receipts renders in, and the flattening call site discards the
+ * labels (`AppShell` — "the selector's `label` is no longer rendered anywhere"). Ordering is a
+ * property of the sort, not of the zone. The defaults keep this package's own tests asserting the
+ * UTC groupings they were written against; a caller that puts these labels on screen passes the
+ * reader's zone, exactly as `screener-state.ts` does for the Screener's stamps.
+ */
 export function receiptsByDay(
   reader: EntityReader, now: Date,
   /** Which language the day headings are named in. English by default — see {@link named}. */
   locale = "en",
+  /** Which zone the day boundaries fall in. */
+  zone = "UTC",
 ): ReceiptsDayGroup[] {
   const groups: ReceiptsDayGroup[] = [];
   for (const m of messagesIn(reader, FOLDER_OF_VIEW.receipts)) {
-    const label = dayLabel(m.date ? new Date(m.date) : now, now, locale);
+    const label = dayLabel(m.date ? new Date(m.date) : now, now, locale, zone);
     const last = groups[groups.length - 1];
     if (last && last.label === label) last.items.push(m);
     else groups.push({ label, items: [m] });
@@ -635,12 +664,14 @@ export function senderKey(address: string): string {
  * `hydrateBody` has run for this id, and `bodyState` tells the preview which of the four
  * situations it is in so it can never present a truncation as the mail.
  */
-function heldOf(reader: EntityReader, m: EngineMessage, now: Date, locale: string): ScreenerHeldMail {
+function heldOf(
+  reader: EntityReader, m: EngineMessage, now: Date, locale: string, zone: string,
+): ScreenerHeldMail {
   const body = bodyOf(reader, m);
   return {
     id: m.id,
     subject: m.subject,
-    time: messageDisplayTime(m, now, locale),
+    time: messageDisplayTime(m, now, zone, locale),
     body: body.text,
     bodyState: body.state,
     // Carried so the preview can render the mail the way the reading pane does. `bodyOf`
@@ -714,6 +745,14 @@ export function screenerSegments(
   reader: EntityReader, now: Date = new Date(),
   /** Which language the derived rows' stamps are named in. English by default — see {@link named}. */
   locale = "en",
+  /**
+   * Which zone those stamps are read in. Defaults to UTC for the reason {@link receiptsByDay}'s
+   * does — this package's own tests assert UTC stamps and there is no reader here to ask. The web
+   * app passes the reader's zone at the one call site that renders these rows
+   * (`app/shell/screener-state.ts`); `unreadCounts` below does not, and does not need to, because
+   * it reads `.length` and never a stamp.
+   */
+  zone = "UTC",
 ): ScreenerSegments {
   const grouped: Record<ScreenerSegment, Map<string, EngineMessage[]>> = {
     waiting: new Map(),
@@ -761,16 +800,20 @@ export function screenerSegments(
           segment,
           from: rep.from,
           initial: (name.trim()[0] ?? "?").toUpperCase(),
-          time: messageDisplayTime(rep, now, locale),
+          time: messageDisplayTime(rep, now, zone, locale),
           scope: "sender",
           // DEGRADATION: no classifier runs client-side and `/sync` carries no
           // suggestion, so a derived row has none. `GET /screener` still returns
           // `aiSuggestion` for desktop/native and for enrichment later.
           ai: null,
           // Oldest first — the order every preview renders, and ALL of them.
-          held: [...newestFirst].reverse().map((m) => heldOf(reader, m, now, locale)),
+          held: [...newestFirst].reverse().map((m) => heldOf(reader, m, now, locale, zone)),
           ...(segment === "screened_out" && repDate
-            ? { screenedOn: `${repDate.getUTCDate()} ${named(locale, { month: "short" }, repDate)}` }
+            ? {
+                screenedOn:
+                  `${zonedFields(repDate, zone).day} ` +
+                  `${named(locale, { month: "short" }, repDate, zone)}`,
+              }
             : {}),
           derived: true,
           gatePhysical,
