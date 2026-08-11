@@ -16,6 +16,122 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.9.1] — 2026-08-11
+
+Mostly about the app getting out of your way: it stops doing work it had already
+finished, starts promptly on an install that had been running a while, and closes when
+you close it. The rest is the reading and writing surfaces catching up with the rest of
+the app.
+
+### Lighter, quicker to start, and it quits when asked
+
+**The app no longer re-reads your whole mailbox every twenty seconds.** When it is signed
+in to a hosted account, the pass that fetches message bodies recorded its finishing
+position in a way it then read back as "not started", so a walk that had completed began
+again on the next poll, and on every poll after that, for the life of the run. Nothing was
+ever wrong with the mail — the same rows were written back over themselves — but the work
+never stopped. It now records that it has finished, and afterwards fetches only the bodies
+this device is actually missing.
+
+**A slow launch is fixed at the cause.** The local database keeps a write-ahead log, and
+nothing was trimming it while the app ran; on an install that had accumulated a large one,
+starting up meant replaying the whole log before the window appeared, which on the worst
+installs took close to two minutes. The log is now trimmed periodically, so it does not
+reach that size. The launch also waits long enough for a recovery that is genuinely under
+way to finish, instead of reporting a healthy engine that is repairing itself as one that
+failed to start — and cutting that short was the worst thing to do, because an unfinished
+recovery leaves the log where it was and makes the next start longer still.
+
+**Quitting no longer kills work in progress.** With a hosted account the sync now stops at
+the next page or batch when you quit or sign out, and the app waits for it to finish
+before closing the database. It used to queue behind a sync that was still starting new
+work, miss its shutdown grace, and be killed outright.
+
+### Reading
+
+**A message you have read leaves New straight away.** Marking a message read moves the row
+out of New and updates the count immediately, without waiting for the server to answer.
+
+**A conversation's row is led by the people in it**, on every list, rather than by whichever
+message happened to be last.
+
+**Every mail time is shown in your own timezone.** Times in lists and in open messages used
+to be drawn as UTC, so a message that arrived at 16:32 could be stamped 14:32.
+
+**Hovering a date names the exact day and time, and one press changes the whole list.**
+Relative dates are easy to read and cannot say *which* Saturday; pressing any date in a
+list switches every date in it — and the open message with it — to the exact form, and back.
+A message that carries no date of its own gets neither, rather than an empty promise.
+
+### Screening and unsubscribing
+
+**Unsubscribing when you screen someone out is visible in Settings and can be turned off.**
+Under Screener there is now a switch for it, with what it does written beside it: one
+request per list, once, sent from our servers so your address and your reading times stay
+out of the sender's log. Senders who offer no one-click link are filed and nothing is sent
+for them, and a request already sent cannot be taken back.
+
+**The notice that tells you an unsubscribe went out now covers marking mail as spam,** not
+only screening a sender out — the request was already being sent in both cases.
+
+### Tags
+
+**Ten tag colours** instead of three, and **the Tag control moved into the row's action
+pill**, beside the other things you can do to a message.
+
+### Writing
+
+**Recipients are chips, and a reply's audience can be edited.** Addresses in To, Cc and Bcc
+are separate items you can remove one at a time and move between fields with the keyboard,
+and a reply no longer commits you to the recipients it chose.
+
+**Cancelling a message asks where you are writing it.** The question appears at the message
+rather than in the middle of the screen, and it says plainly that discarding deletes what
+you have written on your account as well as here, and cannot be undone.
+
+**The address you are replying from is a control you can change,** not a fixed line with a
+notice attached.
+
+### Resurface
+
+**"Now" is one of the choices.** Resurface offered Tomorrow, Next week and a date picker
+and no way to say *now*; it does, and the message comes back to the top immediately.
+
+**A scheduled resurface arrives on a standalone install too.** Bringing a message back at
+its due time was done by the hosted service, so an install with no hosted account never did
+it at all.
+
+**A resurfaced message is pinned on every device, not only the one that asked.** The pin
+used to exist only on the screen that pressed the button, and disappeared from it a moment
+later.
+
+### Settings
+
+**The away responder has its own section** rather than sitting inside another one — and a
+hosted account reached from the desktop app now has the responder at all.
+
+**Mailboxes says where a hosted mailbox is managed and opens it,** and can show **how many
+messages each mailbox holds**.
+
+### Signing in
+
+**Linking the app to a hosted account no longer means retyping a code.** The browser hands
+the code back to the app directly; the app keeps a secret the browser never sees and proves
+it when it claims the code, so a program that intercepts the handover holds something it
+cannot spend. Typing the code in by hand still works and is unchanged.
+
+### Sync
+
+**A resume point the server can no longer honour is refused rather than answered emptily.**
+A device holding a position ahead of the server's history used to receive an empty answer
+for ever, and quietly stop receiving mail; it is now told to start again.
+
+### German
+
+**Two of the view names read plainer in German.** Reads is called Reads, and Resurface is
+"Wieder auftauchen" — the words it uses elsewhere for the same action, so the pile and the
+button that fills it now agree.
+
 ## [0.9.0] — 2026-08-11
 
 The release that stops assuming your mail is in English and your mailbox speaks a password.
@@ -996,7 +1112,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.1
 [0.9.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.0
 [0.8.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.8.2
 [0.8.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.8.1
