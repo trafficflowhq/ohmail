@@ -1167,6 +1167,8 @@
     "again": "Show me another code",
     "working": "Working…",
     "expiresIn": "This code works once, and stops working in {seconds} seconds.",
+    "openApp": "Open ohmail",
+    "openAppFallback": "If nothing opens, type the code in instead:",
     "step1": "Go back to ohmail on your Mac.",
     "step2": "Type the code above into “Code from the browser” and press Sign in.",
     "safety": "Nobody from ohmail will ever ask you for this code. If somebody did, close this page — the code is a way into your mail.",

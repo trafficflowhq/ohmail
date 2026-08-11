@@ -207,7 +207,9 @@ export const auth: {
         loginToken: string;
         code: string;
     }) => Promise<AuthenticatedSession>;
-    desktopLink: () => Promise<{
+    desktopLink: (b?: {
+        challenge?: string;
+    }) => Promise<{
         code: string;
         expiresIn: number;
     }>;
