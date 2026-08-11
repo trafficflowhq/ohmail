@@ -367,6 +367,7 @@ export interface ConsentStateWire {
     seedConfirmedAt: string | null;
     screeningResetAt: string | null;
     dormancyDays: number;
+    screeningBaselineAt?: string | null;
     autoSuggestAt?: string | null;
     blockRemoteImagesAt?: string | null;
     blockAutoUnsubscribeAt?: string | null;
