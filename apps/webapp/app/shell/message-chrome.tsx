@@ -14,11 +14,17 @@
  * takes fifteen would make the seam harder to see, not easier.
  */
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { BODY_FETCH_TIMEOUT_MS, type EngineMessage, type MessageBody } from "@ohmail/client-engine";
+import {
+  BODY_FETCH_TIMEOUT_MS,
+  type AddressBookEntry,
+  type EngineMessage,
+  type MessageBody,
+} from "@ohmail/client-engine";
 import type { AttachmentsChrome } from "./attachments";
 import type { SendState } from "./mail-send";
 import { EMPTY_RICH, type RichValue } from "./rich-text";
 import type { DraftReplyChrome } from "./InlineReply";
+import type { ReplyEnvelopeEdit } from "./compose-from";
 import type { RemoteImagesChrome } from "./remote-images";
 
 export interface MessageChrome {
@@ -91,6 +97,23 @@ export interface MessageChrome {
   /** Both halves of what is typed in it — the markup and its plain rendering. */
   replyBody: RichValue;
   onReplyBody: (next: RichValue) => void;
+  /**
+   * THE REPLY'S AUDIENCE AS EDITED — `null` while the computed envelope stands.
+   *
+   * It travels with `replyBody` and for the identical reason: the pane is mounted TWICE
+   * while the reader is open, and two copies of who a reply goes to is how one editor's
+   * head and the other's envelope stop agreeing. `onReplyEnvelope` is OPTIONAL like
+   * `openReply` — absent on the inert default, and then `InlineReply` renders the head as a
+   * plain statement rather than a dead button.
+   */
+  replyEnvelope: ReplyEnvelopeEdit | null;
+  onReplyEnvelope?: (next: ReplyEnvelopeEdit) => void;
+  /**
+   * `addressBook(reader)` for the reply's recipient rows — the same ranked, local-mirror
+   * candidates the compose To field offers. Absent ⇒ no suggestions, which is a cold mirror
+   * and every engine-less mount, and the rows still take typed addresses.
+   */
+  addressBook?: readonly AddressBookEntry[];
   closeReply: () => void;
   /**
    * Send the open reply to `messageId`. It takes the id rather than closing over
@@ -241,6 +264,7 @@ const MessageChromeContext = createContext<MessageChrome>({
   replyTo: null,
   replyBody: EMPTY_RICH,
   onReplyBody: noop,
+  replyEnvelope: null,
   closeReply: noop,
   sendReply: noop,
   replySendState: () => ({ phase: "idle" }),

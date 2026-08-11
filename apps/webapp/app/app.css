@@ -2013,6 +2013,88 @@ body.reading .shell {
   background: var(--tint);
 }
 
+/* ── Recipient chips ───────────────────────────────────────────────────────────────────
+   Every settled recipient is a chip; the input after them holds only what is being typed
+   (`RecipientField` — the value stays ONE wire string underneath). Chips and input share a
+   wrapping flex line, so a long recipient list grows the row downward like every mail
+   client's, and the `.c-field` hairline still runs under the whole of it. */
+.rcp-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  border-radius: 8px;
+}
+/* A chip from another row is over this field — the drop target says so. The palette's tint,
+   not an invented outline color: it is the same "this is where it lands" wash the suggestion
+   highlight uses. */
+.rcp-box.drop {
+  background: var(--tint);
+}
+/* The listbox wrapper exists for the accessibility tree only; `display: contents` keeps the
+   chips in the box's own flex flow so they wrap WITH the input rather than above it. */
+.rcp-chips {
+  display: contents;
+}
+.rcp-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--tint);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+  cursor: grab;
+  user-select: none;
+}
+.rcp-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* An entry that does not parse — the field's error idiom (`.c-error`'s surface; this palette
+   has no red), so a chip that would block Send looks like the line that will explain why. */
+.rcp-chip.bad {
+  background: var(--accent-soft);
+}
+.rcp-chip b {
+  font-weight: 600;
+}
+.rcp-chip .rcp-chip-addr {
+  color: var(--ink3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A chip showing only the address wears it in the chip's own ink — the address IS the label
+   then, not an annotation beside one. */
+.rcp-chip .rcp-chip-addr:first-child {
+  color: var(--ink);
+}
+/* The remove affordance — a mouse target only (`aria-hidden`; Backspace on the chip is the
+   keyboard path), so it is a styled span rather than a nested focusable inside the option. */
+.rcp-chip-x {
+  align-self: center;
+  padding: 0 1px;
+  color: var(--ink3);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+.rcp-chip-x:hover {
+  color: var(--ink);
+}
+/* The input takes the rest of the line and never shrinks below a typeable width — mid-list
+   it wraps to its own line instead. */
+.rcp-input {
+  flex: 1 1 120px;
+  min-width: 120px;
+  width: auto;
+}
+
 /* ── The located row ───────────────────────────────────────────────────────────────────
    Opening a search result moves the cursor and navigates; this is what says WHICH row you
    were taken to. A brief wash that fades, not a persistent state: the cursor is what means
@@ -3524,6 +3606,43 @@ body.reading .shell {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* THE HEAD IS A BUTTON NOW — pressing the audience opens it for editing (`InlineReply`).
+   It keeps the head's exact anatomy (the class rides along), sheds the UA button chrome, and
+   says what pressing does in a quiet trailing hint rather than by looking like a control:
+   the sentence is still the content, the affordance is the cursor, the hint and focus. */
+.reply-head-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  color: inherit;
+}
+.reply-head-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.reply-head-edit {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink3);
+}
+.reply-head-btn:hover .reply-head-edit {
+  color: var(--ink);
+}
+/* The opened audience: the compose header's own field rows, inside the reply's recessed
+   head area. The rows bring their `.c-field` chrome with them; this only spaces the block
+   the way the head it replaces was spaced. */
+.reply-rcpt {
+  margin-bottom: 10px;
+}
+.reply-rcpt .c-field {
+  font-size: 12.5px;
 }
 /* WHICH ADDRESS IS ANSWERING. One recessed line under the "Reply to …" head, in the
    head's own type size — it is context for the editor, not a heading of its own. */

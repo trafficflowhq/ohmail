@@ -172,8 +172,13 @@ export function writeReplyDraft(messageId: string, value: RichValue): void {
  *     here rather than on the wire, where `POST /drafts` would already have written a row
  *     before `POST /drafts/:id/send` answered 400.
  *
- * A reply needs neither check: `Engine.enrich` derives both from the parent, and a parent the
- * mirror does not know produces no effects and is rejected by the engine with nothing sent.
+ * A reply needs neither check when its envelope is DERIVED: `Engine.enrich` fills both from
+ * the parent, and a parent the mirror does not know produces no effects and is rejected by
+ * the engine with nothing sent. A reply whose recipients were EDITED carries them — and then
+ * an empty or unparseable set is `to: []` (`replyEnvelopePlan`, the same emptying rule as
+ * `composePlan`) and is refused here, at the one predicate every caller consults. Present-
+ * but-empty and absent are different statements on purpose: absent means "enrich decides",
+ * empty means "the user removed or mistyped every recipient", and only the second may block.
  */
 export function canSend(state: SendState, m: MailSend): boolean {
   if (state.phase === "sending" || state.phase === "queued") return false;
@@ -181,6 +186,8 @@ export function canSend(state: SendState, m: MailSend): boolean {
   if (m.inReplyTo === null) {
     if (!m.mailboxId) return false;
     if (!m.to || m.to.length === 0) return false;
+  } else if (m.to !== undefined && m.to.length === 0) {
+    return false;
   }
   return true;
 }

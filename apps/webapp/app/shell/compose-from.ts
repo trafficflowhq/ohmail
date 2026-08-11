@@ -47,6 +47,7 @@
  */
 
 import type { EmailAddress } from "@ohmail/client-engine";
+import { parseRecipients } from "./compose";
 
 /** One mailbox, as a From line is entitled to know it. */
 export interface FromOption {
@@ -331,4 +332,106 @@ export function replyAllRecipients(
   // Reader unknown: one listed recipient is (almost always) the reader — see the header.
   if (mine.size === 0 && parent.to.length + cc.length < 2) return null;
   return { to: [parent.from, ...toOthers], cc: ccOthers };
+}
+
+/* ── the editable reply envelope ───────────────────────────────────────────────────────── */
+
+/**
+ * WHAT THE USER TYPED OVER THE COMPUTED AUDIENCE — three wire strings, or `null` for a head
+ * nobody has opened.
+ *
+ * `null` is load-bearing: it means "the computed envelope applies", and the computed path
+ * below is byte-for-byte what `sendReply` always built — so a reply whose recipients were
+ * never touched sends exactly what it sent before this field existed. The strings are the
+ * same comma-separated wire shape `ComposeFields.to` holds, edited by the same chip field.
+ */
+export interface ReplyEnvelopeEdit {
+  to: string;
+  cc: string;
+  bcc: string;
+}
+
+/** The reply envelope as it would go on the wire, plus the entries that refused to parse. */
+export interface ReplyEnvelopePlan {
+  /** `null` ⇒ the field stays off the mutation and `Engine.enrich` keeps owning the default. */
+  to: EmailAddress[] | null;
+  cc: EmailAddress[] | null;
+  bcc: EmailAddress[] | null;
+  invalid: { to: string[]; cc: string[]; bcc: string[] };
+}
+
+/**
+ * ONE envelope for a reply — the computed audience, or the user's edit of it.
+ *
+ * The same discipline as `composePlan` and for the same reason: `InlineReply` judges the lock
+ * with this and `AppShell.sendReply` builds the wire from it, so the head, the button and the
+ * envelope cannot be three opinions.
+ *
+ * ── UNTOUCHED (`edit === null`) ──────────────────────────────────────────────────────────
+ *
+ * Exactly the derivation `sendReply` has always made: `replyAllRecipients` for a reply-all,
+ * `replyRecipients` for the self-authored plain case, `null` otherwise so `Engine.enrich`
+ * keeps deriving `[parent.from]`. **`bcc` is NEVER derived** — no reply of any kind
+ * blind-copies anybody (`types.ts`), whatever the parent's recipient lists held. A blind
+ * recipient exists only when somebody typed one.
+ *
+ * ── EDITED ───────────────────────────────────────────────────────────────────────────────
+ *
+ * The strings are parsed with the compose form's own parser and the compose form's own rule:
+ * a typo in ANY row empties the whole envelope rather than sending the valid subset. The
+ * emptied `to` is what `canSend` refuses — an edited reply always CARRIES its recipient set,
+ * so "recipients present but empty" is expressible and refused, unlike the untouched path
+ * where an absent `to` means "enrich decides".
+ */
+export function replyEnvelopePlan(
+  parent: { from: EmailAddress; to: readonly EmailAddress[]; cc?: readonly EmailAddress[] } | null,
+  ownAddresses: readonly string[],
+  replyAll: boolean,
+  edit: ReplyEnvelopeEdit | null,
+): ReplyEnvelopePlan {
+  const none = { to: [], cc: [], bcc: [] };
+  if (edit === null) {
+    const all = replyAll && parent ? replyAllRecipients(parent, ownAddresses) : null;
+    const to = all ? all.to : parent ? replyRecipients(parent, ownAddresses) : null;
+    return { to, cc: all && all.cc.length > 0 ? all.cc : null, bcc: null, invalid: none };
+  }
+  const to = parseRecipients(edit.to);
+  const cc = parseRecipients(edit.cc);
+  const bcc = parseRecipients(edit.bcc);
+  const anyInvalid = to.invalid.length + cc.invalid.length + bcc.invalid.length > 0;
+  return {
+    to: anyInvalid ? [] : to.addresses,
+    cc: anyInvalid || cc.addresses.length === 0 ? null : cc.addresses,
+    bcc: anyInvalid || bcc.addresses.length === 0 ? null : bcc.addresses,
+    invalid: { to: to.invalid, cc: cc.invalid, bcc: bcc.invalid },
+  };
+}
+
+/**
+ * The plan's recipient fields exactly as the mutation carries them. One spread, used by BOTH
+ * the lock (`InlineReply` → `canSend`) and the wire (`AppShell.sendReply`) — a key present in
+ * one and absent in the other is how a button and an envelope drift apart.
+ */
+export function replyEnvelopeOnWire(
+  plan: ReplyEnvelopePlan,
+): { to?: EmailAddress[]; cc?: EmailAddress[]; bcc?: EmailAddress[] } {
+  return {
+    ...(plan.to !== null ? { to: plan.to } : {}),
+    ...(plan.cc !== null ? { cc: plan.cc } : {}),
+    ...(plan.bcc !== null ? { bcc: plan.bcc } : {}),
+  };
+}
+
+/**
+ * Addresses → the one wire string the chip field edits — the PREFILL when a reply head opens.
+ *
+ * A display name rides along only when `parseRecipients` can read it back: the split is blind
+ * to quoting, so a name containing a separator or an angle bracket ("Doe, John") would come
+ * back as two broken entries. Such a name is dropped and the bare address kept — the envelope
+ * is the address; the name is sugar the parent's headers still hold.
+ */
+export function formatRecipientLine(list: readonly EmailAddress[]): string {
+  return list
+    .map((a) => (a.name && !/[<>,;"]/.test(a.name) ? `${a.name} <${a.address}>` : a.address))
+    .join(", ");
 }

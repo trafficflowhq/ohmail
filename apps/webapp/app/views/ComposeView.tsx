@@ -54,7 +54,13 @@ import { displayAddress } from "../shell/idn";
 import { canSend, type SendState } from "../shell/mail-send";
 import { RichEditor } from "../shell/RichEditor";
 import { SendStatus } from "../shell/SendStatus";
-import { RecipientField } from "../shell/RecipientField";
+import {
+  RecipientField,
+  focusMovedChip,
+  gatedInvalid,
+  moveRecipient,
+  type RecipientMove,
+} from "../shell/RecipientField";
 import { ComposeAttach } from "../components/ComposeAttach";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
 import type { ResolvedFrom } from "../shell/compose-from";
@@ -153,6 +159,33 @@ export function ComposeView({
   const ccBccOpen = showCcBcc || fields.cc.trim() !== "" || fields.bcc.trim() !== "";
   const ccShownInvalid = gatedInvalid(fields.cc, ccFocused, plan.cc.invalid);
   const bccShownInvalid = gatedInvalid(fields.bcc, bccFocused, plan.bcc.invalid);
+
+  /**
+   * ── A CHIP CHANGING ROWS IS ONE STATE CHANGE ───────────────────────────────────────────
+   *
+   * Drag To→Cc (or the Alt+arrow equivalent) removes from one string and inserts into
+   * another. Done as two `onChange` calls, each would spread a STALE copy of the other row
+   * and the second write would undo the first — so the move arrives here whole and
+   * `moveRecipient` produces all three rows in one object for one `onFields`. Focus follows
+   * the chip; a keyboard move that strands focus on the row the chip just left is a
+   * mouse-only interaction wearing an `aria` costume.
+   *
+   * Starting a DRAG opens the hidden Cc/Bcc rows: a drop target that is not on screen cannot
+   * be dropped on, and the keyboard path (Alt+↓) reveals them anyway by making the row
+   * non-empty — `ccBccOpen` derives from the values, so both paths converge.
+   */
+  const moveChip = useCallback(
+    (mv: RecipientMove) => {
+      const next = moveRecipient({ to: fields.to, cc: fields.cc, bcc: fields.bcc }, mv);
+      if (!next) return;
+      onFields({ ...fields, ...next });
+      focusMovedChip(`compose-${mv.to}`, mv.entry);
+    },
+    [fields, onFields],
+  );
+  const onChipDrag = useCallback((active: boolean) => {
+    if (active) setShowCcBcc(true);
+  }, []);
 
   const book = useMemo(
     () => addressBook(engine.read(), { exclude: from.address ? [from.address] : [] }),
@@ -305,6 +338,9 @@ export function ComposeView({
                 invalid={shownInvalid.length > 0}
                 describedBy={shownInvalid.length > 0 ? "compose-to-error" : undefined}
                 onFocusChange={setToFocused}
+                row="to"
+                onMove={moveChip}
+                onDragActive={onChipDrag}
               />
               {/* THE AFFORDANCE IS IN THE ROW IT ACTS ON, at its right edge.
                   It had a strip of its own between To and Subject — a full-width row whose
@@ -356,6 +392,9 @@ export function ComposeView({
                     invalid={ccShownInvalid.length > 0}
                     describedBy={ccShownInvalid.length > 0 ? "compose-cc-error" : undefined}
                     onFocusChange={setCcFocused}
+                    row="cc"
+                    onMove={moveChip}
+                    onDragActive={onChipDrag}
                   />
                 </div>
                 {ccShownInvalid.length > 0 ? (
@@ -378,6 +417,9 @@ export function ComposeView({
                     invalid={bccShownInvalid.length > 0}
                     describedBy={bccShownInvalid.length > 0 ? "compose-bcc-error" : undefined}
                     onFocusChange={setBccFocused}
+                    row="bcc"
+                    onMove={moveChip}
+                    onDragActive={onChipDrag}
                   />
                 </div>
                 {bccShownInvalid.length > 0 ? (
@@ -518,21 +560,12 @@ export function ComposeView({
   );
 }
 
-/**
- * The invalid entries a field should SHOW, withholding the one still being typed.
- *
- * The To field has its own literal copy of this above (it is the surface the bug was reported
- * against); Cc and Bcc share this. An entry is "still being typed" when the field has focus and the
- * value does not already end in a comma — a trailing comma means the user committed it and moved
- * on, so its error is shown. It is a DISPLAY gate only: `composePlan` empties the mutation on any
- * invalid entry regardless, so nothing here can loosen the send guard.
+/*
+ * `gatedInvalid` — the invalid entries a field should SHOW, withholding the one still being
+ * typed — moved to `RecipientField.tsx`, because the reply's recipient rows need the same
+ * gate. The To field keeps its own literal copy above (it is the surface the bug was
+ * reported against); Cc and Bcc import the shared one.
  */
-function gatedInvalid(raw: string, focused: boolean, invalid: string[]): string[] {
-  const stillTyping = focused && !/,\s*$/.test(raw) ? (raw.split(",").pop() ?? "").trim() : null;
-  return stillTyping === null || stillTyping === ""
-    ? invalid
-    : invalid.filter((entry) => entry !== stillTyping);
-}
 
 /** Bold the source spans of the grounding line, like the prototype. */
 function DraftGrounding({ text }: { text: string }) {
