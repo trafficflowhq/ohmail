@@ -3,11 +3,11 @@ import {
   type Change, type ClassifierPort, type CreditGate, type Logger, type OhboxPolicy,
 } from "@trafficflow/core/mail";
 import {
-  WATCHED_FOLDERS, MessageGoneError, parseRef,
+  WATCHED_FOLDERS, MessageGoneError, parseRef, FILING_BATCH_MAX,
   type ImapCursor, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
-import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import type { WorkerRepo, PendingFolderState } from "@trafficflow/core/adapters/drizzle-repo";
 import { ClassifierFaultError } from "./classifier-fault.js";
 import {
   DeadLetterLedger, classifyIngestFault, nextAttemptAfter,
@@ -182,8 +182,23 @@ function siteOf(ch: Change): { folder: string; uidValidity: string; uid: number 
  * mailbox is now drained in bounded batches (see `DEFAULT_SYNC_BATCH_MAX_MESSAGES`), and the
  * caller re-kicks instead of waiting out `pollIntervalMs` — which for a mailbox of any size is
  * the difference between one opaque multi-hour cycle and a series of short, observable ones.
+ *
+ * ── TWO BACKLOGS, AND THEY ARE DELIBERATELY NOT ONE FLAG ────────────────────────────────────
+ *
+ * `hasBacklog` is about INBOUND mail the adapter has not handed over. `owesFiling` is about
+ * OUTBOUND intent this mailbox has not put on its server — filing that hit
+ * {@link RECONCILE_MOVES_PER_CYCLE}. The caller re-kicks on either, which is what turns the
+ * filing budget into a rotation rather than a delay: the mailbox goes to the back of the serial
+ * queue and comes round again after every other one has had its turn, instead of holding the
+ * queue until its whole backlog drains (a 583-second monopoly, measured) or waiting a full poll
+ * interval per 500 messages.
+ *
+ * They are separate because ONE of them also means "the first import is finished".
+ * `stampInitialImportComplete` fires on `!hasBacklog`, and a mailbox whose owner is mid-triage
+ * would never have earned that stamp if a filing queue could hold the flag high — the import
+ * would read as permanently partial for a reason that has nothing to do with importing.
  */
-export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolean }> {
+export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
   const { repo, adapter, accountId, mailboxId, classifier, credits, ohboxPolicy, ohboxBar, log } = deps;
   const deadLetters = deps.deadLetters ?? new DeadLetterLedger();
   const version = deps.buildVersion ?? buildVersionOf(process.env);
@@ -402,9 +417,9 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
   // `retryFailedMessages` for both reasons.
   if (deferred.size === 0) await retryFailedMessages(deps, deadLetters, version);
 
-  await reconcileMailbox(deps);
+  const { owesMore } = await reconcileMailbox(deps);
   if (firstDeferredError !== null) throw firstDeferredError;
-  return { hasBacklog: batch.hasBacklog ?? false };
+  return { hasBacklog: batch.hasBacklog ?? false, owesFiling: owesMore };
 }
 
 /**
@@ -665,66 +680,199 @@ function epochAware(fc: PersistedFolderCursor, observed: string | undefined): Pe
  * if the message already left its expected source (a prior run moved it before crashing), we
  * defer to the next changesSince, which adopts the completed move.
  */
-export async function reconcileMailbox(deps: SyncDeps): Promise<void> {
-  await reconcileFolders(deps);
+export async function reconcileMailbox(deps: SyncDeps): Promise<{ owesMore: boolean }> {
+  const owesMore = await reconcileFolders(deps);
   await reconcileFlags(deps);
+  return { owesMore };
 }
 
-async function reconcileFolders(deps: SyncDeps): Promise<void> {
-  const { repo, adapter, accountId, mailboxId } = deps;
-  const pending = await repo.listPendingFolderStates(mailboxId);
-  for (const p of pending) {
+/**
+ * Pending moves ONE CYCLE MAY FILE, and the reason this queue finally has a bound.
+ *
+ * `listPendingFolderStates` had no limit for its whole life, which three separate comments in
+ * this tree already called a defect in a shared path. Measured on a production mailbox: one
+ * screening session left 1 137 rows pending, and draining them took 583 seconds inside the
+ * worker's SERIAL cycle — during which twelve other mailboxes received no mail at all. The
+ * per-message IMAP cost is what made that expensive and batching is what fixes it; the bound is
+ * what stops it being a monopoly again the day somebody triages ten thousand messages.
+ *
+ * ── WHY A BUDGET AND NOT MORE CONCURRENCY ────────────────────────────────────────────────────
+ *
+ * One organizer per mailbox is the product's central invariant and the serial cycle is how this
+ * process honours it. A budget rotates the queue without touching that: the cycle files what it
+ * can, reports that it still owes work, and the caller re-kicks — so the SAME mailbox comes round
+ * again after every other mailbox has had its turn, instead of before any of them has.
+ *
+ * 500 is the batched path's ten chunks, which at the measured cost is a few seconds of IMAP —
+ * short enough that no other mailbox waits on it, large enough that an ordinary day's filing
+ * finishes in one pass and never touches the re-kick at all.
+ */
+export const RECONCILE_MOVES_PER_CYCLE = 500;
+
+/**
+ * Execute our intended moves, grouped by (source folder → destination) and filed in batches.
+ *
+ * Returns whether the budget was reached with rows still pending, which the caller turns into a
+ * re-kick. See {@link RECONCILE_MOVES_PER_CYCLE} for the bound and
+ * {@link MailboxAdapter.moveMany} for what a batch is allowed to assume.
+ *
+ * ── THE FALLBACK IS THE DESIGN, NOT A SAFETY NET ────────────────────────────────────────────
+ *
+ * `moveMany` answers `batched: false` for every group it cannot prove equivalent to moving each
+ * member on its own, and it answers it BEFORE writing anything. Everything below therefore has
+ * exactly two shapes — a batch that fully succeeded, or a group that goes through the untouched
+ * per-message path — and never a half-filed group whose remainder someone has to track. A throw
+ * takes the same fallback for the same reason: per-message is where a single message earns its
+ * own verdict and its own `reconcile.move.failed` row.
+ */
+async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
+  const { repo, mailboxId } = deps;
+  // One row over the budget, so "there is more" is a fact about the queue rather than a guess
+  // from a full page.
+  const pending = await repo.listPendingFolderStates(mailboxId, RECONCILE_MOVES_PER_CYCLE + 1);
+  const owesMore = pending.length > RECONCILE_MOVES_PER_CYCLE;
+  const work = owesMore ? pending.slice(0, RECONCILE_MOVES_PER_CYCLE) : pending;
+
+  /** Rows that need an IMAP move, keyed by the (source folder → destination) they share. */
+  const groups = new Map<string, PendingFolderState[]>();
+  for (const p of work) {
     if (p.lastSetBy !== "us") continue;                       // user-wins: never revert an external move
     if (p.desiredFolder === p.observedFolder) {
       await repo.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
       continue;
     }
     if (!p.nativeLocator) continue;
-    try {
-      const newLoc = await adapter.move(p.nativeLocator, p.desiredFolder);
-      await repo.updateLocator(p.messageId, newLoc);
-      await repo.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
-      await repo.recordAudit(
-        accountId, "reconcile.move",
-        { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
-        { action: "move", locator: newLoc, toFolder: p.nativeLocator.folder },
-      );
-    } catch (err) {
-      if (err instanceof MessageGoneError) {
-        // Already moved (crash between IMAP move and DB update). Leave pending; next changesSince adopts it.
-        continue;
-      }
-      // ── ONE MESSAGE'S FAILURE MUST NOT ABANDON THE PASS ──────────────────────────────────
-      //
-      // This used to rethrow, which took the whole reconcile pass with it: every OTHER pending
-      // move, and — because `reconcileFlags` runs after this function — every pending `\Seen`
-      // push too. One message the server will not let us move meant nothing else moved either,
-      // every cycle, for as long as that message stayed pending.
-      //
-      // That was survivable only while a stuck move erased itself: the ingest path used to
-      // declare such a move complete on seeing its destination copy, so the row stopped being
-      // pending. It no longer does — a move is complete when the source is GONE — so a row whose
-      // expunge keeps failing now stays in this queue, and rethrowing would make one unhappy
-      // message a mailbox-wide outage.
-      //
-      // The retry itself is cheap and, importantly, no longer destructive: the adapter reads the
-      // destination before it writes, so a repeat costs one SEARCH and cannot leave another copy
-      // behind. It is unbounded in TIME, though, which is why the failure is recorded rather than
-      // swallowed — an audit row per cycle is what makes a permanently stuck message visible
-      // instead of silent.
-      await repo.recordAudit(
-        accountId,
-        "reconcile.move.failed",
-        {
-          messageId: p.messageId,
-          from: p.nativeLocator,
-          to: p.desiredFolder,
-          error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
-        },
-        null,
-      );
-      continue;
+    const key = `${p.nativeLocator.folder}${p.desiredFolder}`;
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(p); else groups.set(key, [p]);
+  }
+
+  for (const group of groups.values()) {
+    for (let i = 0; i < group.length; i += FILING_BATCH_MAX) {
+      const chunk = group.slice(i, i + FILING_BATCH_MAX);
+      if (await fileChunk(deps, chunk)) continue;
+      for (const p of chunk) await fileOne(deps, p);
     }
+  }
+  return owesMore;
+}
+
+/**
+ * File one chunk in a batch, or report that it was not filed at all.
+ *
+ * `false` means NOTHING WAS WRITTEN TO THE DATABASE for this chunk and the caller owes every
+ * member to {@link fileOne}. That is true even when the adapter threw after moving some of them:
+ * the per-message retry finds those gone from the source, raises {@link MessageGoneError}, and
+ * leaves the row pending for `changesSince` to adopt — which is the same convergence the
+ * per-message path has always relied on for a crash between the IMAP move and the DB write.
+ */
+async function fileChunk(deps: SyncDeps, chunk: PendingFolderState[]): Promise<boolean> {
+  const { repo, adapter, accountId } = deps;
+  if (typeof adapter.moveMany !== "function") return false;
+  const first = chunk[0]!;
+  const srcFolder = first.nativeLocator!.folder;
+  const toFolder = first.desiredFolder;
+  // A locator already sitting at its destination is the per-message path's problem to reason
+  // about, not a batch's: `moveMany` refuses a same-folder group outright.
+  if (srcFolder === toFolder) return false;
+  // Two rows naming ONE locator would collapse to a single UID in the batch and both would be
+  // told they landed at the same place. It cannot arise from one mailbox's data, and if it ever
+  // does, the per-message path gives each row its own answer.
+  const refs = new Set(chunk.map((p) => p.nativeLocator!.ref));
+  if (refs.size !== chunk.length) return false;
+
+  let result;
+  try {
+    result = await adapter.moveMany(chunk.map((p) => p.nativeLocator!), toFolder);
+  } catch {
+    return false;
+  }
+  if (!result.batched) return false;
+
+  const audits: Array<{ action: string; payload: unknown; inverse: unknown }> = [];
+  for (const p of chunk) {
+    const ref = p.nativeLocator!.ref;
+    const newLoc = result.moved.get(ref);
+    // NOT NAMED IN `moved` ⇒ LEAVE THE ROW PENDING, and `moved` is the only thing worth asking.
+    // A member is unnamed for exactly one reason that matters — it was gone from the source, the
+    // batch's form of `MessageGoneError` — and the response to that is the same skip the
+    // per-message path performs: write nothing, and let `changesSince` adopt whatever really
+    // happened to it. Cross-checking `result.gone` as well would be a second reading of one fact,
+    // with a branch no test can redden.
+    if (!newLoc) continue;
+    await repo.updateLocator(p.messageId, newLoc);
+    await repo.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
+    // The audit rows are written together, AFTER the state they describe. One INSERT instead of
+    // fifty, and the same rows a per-message pass would have written — the admin surface and the
+    // inverse both read this table and neither can tell which path filed the mail.
+    audits.push({
+      action: "reconcile.move",
+      payload: { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
+      inverse: { action: "move", locator: newLoc, toFolder: p.nativeLocator!.folder },
+    });
+  }
+  if (audits.length > 0) await recordAudits(repo, accountId, audits);
+  return true;
+}
+
+/** Fan an audit batch out to whichever of the two repo shapes this deployment has. */
+async function recordAudits(
+  repo: SyncDeps["repo"], accountId: string,
+  rows: Array<{ action: string; payload: unknown; inverse: unknown }>,
+): Promise<void> {
+  if (typeof repo.recordAuditMany === "function") {
+    await repo.recordAuditMany(accountId, rows);
+    return;
+  }
+  for (const r of rows) await repo.recordAudit(accountId, r.action, r.payload, r.inverse);
+}
+
+/** The per-message path, unchanged: one move, its own verdict, its own audit row. */
+async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
+  const { repo, adapter, accountId } = deps;
+  try {
+    const newLoc = await adapter.move(p.nativeLocator!, p.desiredFolder);
+    await repo.updateLocator(p.messageId, newLoc);
+    await repo.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
+    await repo.recordAudit(
+      accountId, "reconcile.move",
+      { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
+      { action: "move", locator: newLoc, toFolder: p.nativeLocator!.folder },
+    );
+  } catch (err) {
+    if (err instanceof MessageGoneError) {
+      // Already moved (crash between IMAP move and DB update). Leave pending; next changesSince adopts it.
+      return;
+    }
+    // ── ONE MESSAGE'S FAILURE MUST NOT ABANDON THE PASS ──────────────────────────────────
+    //
+    // This used to rethrow, which took the whole reconcile pass with it: every OTHER pending
+    // move, and — because `reconcileFlags` runs after this function — every pending `\Seen`
+    // push too. One message the server will not let us move meant nothing else moved either,
+    // every cycle, for as long as that message stayed pending.
+    //
+    // That was survivable only while a stuck move erased itself: the ingest path used to
+    // declare such a move complete on seeing its destination copy, so the row stopped being
+    // pending. It no longer does — a move is complete when the source is GONE — so a row whose
+    // expunge keeps failing now stays in this queue, and rethrowing would make one unhappy
+    // message a mailbox-wide outage.
+    //
+    // The retry itself is cheap and, importantly, no longer destructive: the adapter reads the
+    // destination before it writes, so a repeat costs one SEARCH and cannot leave another copy
+    // behind. It is unbounded in TIME, though, which is why the failure is recorded rather than
+    // swallowed — an audit row per cycle is what makes a permanently stuck message visible
+    // instead of silent.
+    await repo.recordAudit(
+      accountId,
+      "reconcile.move.failed",
+      {
+        messageId: p.messageId,
+        from: p.nativeLocator,
+        to: p.desiredFolder,
+        error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      },
+      null,
+    );
   }
 }
 

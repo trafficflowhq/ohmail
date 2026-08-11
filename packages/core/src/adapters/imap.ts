@@ -24,6 +24,7 @@ import {
   type OutboundMessage, type SendResult, type FetchedPart, type FetchPartOptions,
   type FetchRawOptions, type NetTimeouts, type FetchByUidOptions, type TargetedFetch,
   type ImapAuth, type ImapOAuthAuth, type ResolvedImapAuth,
+  FILING_BATCH_MAX, type MoveManyResult,
 } from "./imap-types.js";
 import {
   makeLeaseIo, makeLeasePeekIo,
@@ -1724,6 +1725,169 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       }
     }
     return { folder: toFolder, ref: makeRef(dstUidValidity, dstUid) };
+  }
+
+  /**
+   * File a GROUP of messages that share a source folder and a destination, in a handful of
+   * round trips instead of a handful PER MESSAGE. See {@link MailboxAdapter.moveMany} for the
+   * contract and {@link FILING_BATCH_MAX} for why the caller must still chunk.
+   *
+   * ── THE COST THIS EXISTS TO REMOVE, MEASURED ───────────────────────────────────────────────
+   *
+   * {@link move} is five IMAP commands per message, and three of them are mailbox SELECTs that no
+   * adapter-level log ever showed: `getMailboxLock` re-SELECTs whenever the path changes, and the
+   * sequence source → destination → source changes it twice. Against real hosts that came to
+   * 0.30–0.51 s per message — a screening session of 1 137 decisions took 583 seconds of IMAP
+   * time, during which the worker's serial cycle served no other mailbox. The work itself is
+   * trivial; the round trips are the whole bill.
+   *
+   * A batch pays the same five commands ONCE for up to {@link FILING_BATCH_MAX} messages: one
+   * FETCH of the whole UID set, one SEARCH at the destination, one `UID MOVE` of the whole set.
+   *
+   * ── WHAT IT REFUSES TO DO, AND WHY THAT IS THE POINT ───────────────────────────────────────
+   *
+   * This is a fast path, not a second implementation of {@link move}. It answers
+   * `batched: false` — and writes nothing at all — whenever the group is not one it can prove is
+   * equivalent to moving each message on its own:
+   *
+   *  · **The server lacks MOVE or UIDPLUS.** Without MOVE there is a COPY/EXPUNGE window per
+   *    message; without UIDPLUS there is no `COPYUID`, so the destination UIDs would have to be
+   *    recovered by fingerprint, which is the per-message work this function exists to avoid.
+   *  · **Anything at the destination shares a Message-ID with anything in the group.** This is the
+   *    pre-check {@link move} performs, asked once for the whole group instead of once per
+   *    message. A hit means at least one member needs the fingerprint verify, the adopt path or a
+   *    refusal — all three per-message decisions — so the whole chunk goes back to {@link move}.
+   *    Note the asymmetry is deliberate: a MISS proves no member has a candidate, which is the
+   *    branch on which {@link move} does a plain move and nothing else.
+   *  · **`COPYUID` did not name every message.** A partial map cannot say where the unnamed ones
+   *    landed, and a locator we cannot name is the failure `move`'s verify was rewritten to
+   *    prevent.
+   *
+   * The refusal costs at most the three commands already spent; it never leaves a half-filed
+   * group, because it happens strictly BEFORE the `UID MOVE`.
+   *
+   * ── CRASH AND PARTIAL FAILURE ──────────────────────────────────────────────────────────────
+   *
+   * `UID MOVE` is atomic per message and the caller commits nothing until this returns, so the
+   * states a crash can leave are exactly the states {@link move} can leave, and they resolve the
+   * same way: a message the server moved but the database still calls pending is GONE from the
+   * source, so the next pass's FETCH does not return its UID, it is reported in `gone`, the
+   * caller leaves the row pending, and `changesSince` adopts the completed move. A message the
+   * server did not move is still in the source and is filed by the next batch. Nothing here can
+   * produce a second copy: unlike COPY, `MOVE` has no window in which both exist.
+   *
+   * ── WHY THE MESSAGE-ID SEARCH IS ONE COMMAND AND NOT `n` ───────────────────────────────────
+   *
+   * `OR HEADER MESSAGE-ID a HEADER MESSAGE-ID b …`, which imapflow builds as a nested binary
+   * tree. At {@link FILING_BATCH_MAX} ids the command is a few kilobytes — well inside what
+   * servers accept — and it is why the chunk size is a constant here rather than "as many as are
+   * pending". A group of 1 137 in one command would be ~70 KB and would be refused by hosts that
+   * cap the command line, which is a failure that only appears on large backlogs, i.e. exactly
+   * the case this path is for.
+   *
+   * Members whose envelope carries NO Message-ID contribute nothing to the search, which matches
+   * {@link move} exactly: it computes `candidates` as the empty set for a null Message-ID rather
+   * than searching for one.
+   */
+  async moveMany(
+    locators: readonly NativeLocator[], toFolder: string,
+  ): Promise<MoveManyResult> {
+    const empty: MoveManyResult = { batched: false, moved: new Map(), gone: [] };
+    if (locators.length === 0) return { batched: true, moved: new Map(), gone: [] };
+    if (locators.length > FILING_BATCH_MAX) {
+      throw new Error(`moveMany: ${locators.length} exceeds FILING_BATCH_MAX (${FILING_BATCH_MAX}); the caller must chunk`);
+    }
+    const srcFolder = locators[0]!.folder;
+    if (locators.some((l) => l.folder !== srcFolder)) {
+      throw new Error("moveMany: every locator must share one source folder");
+    }
+    if (srcFolder === toFolder) {
+      throw new Error("moveMany: source and destination are the same folder");
+    }
+
+    const caps = await this.capabilities();
+    // No atomic MOVE ⇒ a per-message COPY/EXPUNGE window. No UIDPLUS ⇒ no COPYUID, so the
+    // destination UIDs would have to be recovered per message by fingerprint. Either way the
+    // per-message path is the correct one and this refuses before touching anything.
+    if (!caps.move || !caps.uidplus) return empty;
+
+    const srcPath = this.toServerPath(srcFolder);
+    const dstPath = this.toServerPath(toFolder);
+    const wanted = new Map<number, NativeLocator>();
+    for (const loc of locators) wanted.set(parseRef(loc.ref).uid, loc);
+
+    // Step 1: the existence probe and the Message-IDs, for the whole set, under one source lock.
+    const present = new Map<number, string | null>();
+    {
+      const lock = await this.client.getMailboxLock(srcPath);
+      try {
+        const rows = await this.client.fetchAll(
+          [...wanted.keys()].join(","), { uid: true, envelope: true }, { uid: true },
+        );
+        for (const r of rows) {
+          if (!wanted.has(r.uid)) continue;         // a server answering outside the set it was asked
+          present.set(r.uid, r.envelope?.messageId ?? null);
+        }
+      } finally {
+        lock.release();
+      }
+    }
+    // A UID the server did not return is GONE — the batch's {@link MessageGoneError}, reported
+    // rather than thrown because one vanished message must not cost the other forty-nine.
+    const gone = [...wanted.keys()].filter((uid) => !present.has(uid)).map((uid) => wanted.get(uid)!);
+    if (present.size === 0) return { batched: true, moved: new Map(), gone };
+
+    // Step 2: the destination pre-check, asked ONCE for the whole group. See the header.
+    const ids = [...present.values()]
+      .filter((id): id is string => typeof id === "string" && id.trim() !== "")
+      .map((id) => id.replace(/[<>]/g, "").trim())
+      .filter((id) => id !== "");
+    let dstUidValidity: bigint;
+    {
+      const lock = await this.client.getMailboxLock(dstPath);
+      try {
+        dstUidValidity = (this.client.mailbox as MailboxObject).uidValidity;
+        if (ids.length > 0) {
+          const found = await this.client.search(
+            ids.length === 1
+              ? { header: { "message-id": ids[0]! } }
+              : { or: ids.map((id) => ({ header: { "message-id": id } })) },
+            { uid: true },
+          );
+          // ANY hit sends the whole chunk back to the per-message path — see the header.
+          if (Array.isArray(found) && found.length > 0) return empty;
+        }
+      } finally {
+        lock.release();
+      }
+    }
+
+    // Step 3: one `UID MOVE` for the set. Atomic per message, so there is no window in which a
+    // message exists in both folders and no expunge of our own to get wrong.
+    const uids = [...present.keys()];
+    const moved = new Map<string, NativeLocator>();
+    {
+      const lock = await this.client.getMailboxLock(srcPath);
+      try {
+        const res = await this.client.messageMove(uids, dstPath, { uid: true });
+        if (!res || typeof res === "boolean") return empty;
+        const map = res.uidMap;
+        // A map that does not name every message cannot say where the unnamed ones landed. The
+        // per-message path can recover that by fingerprint; this one refuses instead — and it may,
+        // because the messages HAVE moved and the caller commits nothing, so the next pass sees
+        // them gone from the source and adopts them through `changesSince`.
+        if (!map || map.size !== uids.length) return empty;
+        const validity = res.uidValidity ?? dstUidValidity;
+        for (const uid of uids) {
+          const dstUid = map.get(uid);
+          if (dstUid == null) return empty;
+          moved.set(wanted.get(uid)!.ref, { folder: toFolder, ref: makeRef(validity, dstUid) });
+        }
+      } finally {
+        lock.release();
+      }
+    }
+    return { batched: true, moved, gone };
   }
 
   /**

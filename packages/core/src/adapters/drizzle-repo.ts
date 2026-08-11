@@ -198,7 +198,28 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   resolveMessageFailure(
     mailboxId: string, site: { folder: string; uidValidity: string; uid: number },
   ): Promise<void>;
-  listPendingFolderStates(mailboxId: string): Promise<PendingFolderState[]>;
+  /**
+   * Desired-state rows still owed an IMAP move.
+   *
+   * `limit` is the reconciler's per-cycle budget and it comes with an ORDER BY, because the two
+   * are one feature: an unordered LIMIT reads PostgreSQL's PHYSICAL row order, which moves under
+   * UPDATE and VACUUM, so the same rows could be handed over pass after pass while others waited
+   * for ever. Oldest desired-state first is both fair and the order a person expects — the mail
+   * they filed first reaches their server first. Absent ⇒ unbounded, which is what every caller
+   * outside the reconciler wants.
+   */
+  listPendingFolderStates(mailboxId: string, limit?: number): Promise<PendingFolderState[]>;
+  /**
+   * Append MANY audit rows in one INSERT.
+   *
+   * Same rows, same columns, same order as `recordAudit` would have written them one at a time —
+   * this exists only because the batched filing path produces up to a chunk's worth at once and a
+   * round trip each is the cost it was written to remove. OPTIONAL on the port so alternative
+   * repos and test fakes keep compiling; a caller that does not find it falls back to the loop.
+   */
+  recordAuditMany?(
+    accountId: string, rows: ReadonlyArray<{ action: string; payload: unknown; inverse: unknown }>,
+  ): Promise<void>;
   /** Read-state rows still owed an IMAP `\Seen` write (mail 0024). */
   listPendingFlagStates(mailboxId: string): Promise<PendingFlagState[]>;
   upsertFlagState(messageId: string, s: FlagStateRow): Promise<void>;
@@ -856,6 +877,16 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     });
   }
 
+  /** {@link WorkerRepo.recordAuditMany} — the same rows, one INSERT. */
+  async recordAuditMany(
+    accountId: string, rows: ReadonlyArray<{ action: string; payload: unknown; inverse: unknown }>,
+  ): Promise<void> {
+    if (rows.length === 0) return;
+    await this.db.insert(auditLog).values(rows.map((r) => ({
+      accountId, action: r.action, payload: r.payload ?? null, inverse: r.inverse ?? null,
+    })));
+  }
+
   /**
    * Append a delta-log row in the AMBIENT transaction: allocateSeq + insert.
    *
@@ -1265,12 +1296,16 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }));
   }
 
-  async listPendingFolderStates(mailboxId: string): Promise<PendingFolderState[]> {
-    const rows = await this.db.select({
+  async listPendingFolderStates(mailboxId: string, limit?: number): Promise<PendingFolderState[]> {
+    const base = this.db.select({
       messageId: folderState.messageId, desiredFolder: folderState.desiredFolder, observedFolder: folderState.observedFolder,
       lastSetBy: folderState.lastSetBy, nativeLocator: messages.nativeLocator,
     }).from(folderState).innerJoin(messages, eq(messages.id, folderState.messageId))
-      .where(and(eq(messages.mailboxId, mailboxId), eq(folderState.reconcileStatus, "pending")));
+      .where(and(eq(messages.mailboxId, mailboxId), eq(folderState.reconcileStatus, "pending")))
+      // ORDERED WHETHER OR NOT IT IS LIMITED — see the port's doc. A LIMIT over physical row
+      // order is a queue that can starve, and the ordering costs nothing on the unbounded call.
+      .orderBy(asc(folderState.updatedAt), asc(folderState.messageId));
+    const rows = await (limit != null ? base.limit(limit) : base);
     return rows.map((r) => ({
       messageId: r.messageId, desiredFolder: r.desiredFolder, observedFolder: r.observedFolder,
       lastSetBy: r.lastSetBy as "us" | "external", nativeLocator: (r.nativeLocator as NativeLocator | null) ?? null,

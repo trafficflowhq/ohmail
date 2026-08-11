@@ -422,6 +422,42 @@ export const DEFAULT_SYNC_BATCH_MAX_MESSAGES = 200;
 export const DEFAULT_SYNC_BATCH_MAX_BYTES = 32 * 1024 * 1024;
 
 /**
+ * How many messages one {@link MailboxAdapter.moveMany} call may carry.
+ *
+ * ── WHY THERE IS A CEILING AT ALL, WHEN A BIGGER ONE IS STRICTLY FASTER ────────────────────
+ *
+ * The destination pre-check is a single `OR HEADER MESSAGE-ID …` command holding one term per
+ * member. At 50 that command is roughly 3 KB; at 1 137 — the size of a real screening session
+ * measured against a production mailbox — it would be about 70 KB, and a server that caps the
+ * command line refuses it. That failure would appear ONLY on large backlogs, which is precisely
+ * the case the batched path exists for, so the ceiling is the difference between a fast path and
+ * a fast path that breaks when it matters. The `UID MOVE` set has the same shape and the same
+ * ceiling covers it.
+ *
+ * 50 is not a tuned number and does not need to be: the cost is ~5 commands per CHUNK, so at 50
+ * the per-message cost is already 0.1 commands and doubling the chunk halves a number that has
+ * stopped mattering. It is chosen to keep both commands comfortably small on the least
+ * accommodating server rather than to squeeze the last round trip out of the most capable one.
+ */
+export const FILING_BATCH_MAX = 50;
+
+/**
+ * What {@link MailboxAdapter.moveMany} answers. `batched: false` means NOTHING WAS WRITTEN and
+ * the caller owes the whole group to {@link MailboxAdapter.move}; there is no partial outcome.
+ *
+ * `moved` is keyed by the SOURCE locator's `ref` — the caller holds locators, not bare UIDs, and
+ * a ref is the only key that stays meaningful across the epoch it names.
+ */
+export interface MoveManyResult {
+  /** True ⇒ `moved` and `gone` together account for every locator passed in. */
+  batched: boolean;
+  /** Source `ref` → the locator the message now has at the destination. */
+  moved: Map<string, NativeLocator>;
+  /** Members the source folder no longer holds — the batch's `MessageGoneError`. */
+  gone: NativeLocator[];
+}
+
+/**
  * How many Sent messages the connect-time kickstart reads, newest first.
  *
  * ENVELOPE ONLY — no `source: true` — so this is a metadata fetch and not the memory hazard
@@ -680,6 +716,32 @@ export interface MailboxAdapter {
   ensureFolders(): Promise<void>;
   changesSince(cursor: ImapCursor): Promise<ChangeBatch>;
   move(locator: NativeLocator, toFolder: string): Promise<NativeLocator>;
+  /**
+   * File a GROUP of messages that share a source folder and a destination, in a handful of round
+   * trips instead of a handful PER MESSAGE.
+   *
+   * ── WHAT THE CALLER IS PROMISED, STATED AS AN EQUIVALENCE ─────────────────────────────────
+   *
+   * When `batched` is true, the server's folders end up in the state calling {@link move} once
+   * per member would have produced, and `moved` names where each one landed. When `batched` is
+   * false, **NOTHING WAS WRITTEN** and the caller must fall back to {@link move} for every member
+   * of the group — the implementation refuses whenever it cannot prove the equivalence, and it
+   * always refuses before it writes. There is deliberately no third answer: a partial batch would
+   * make the caller reason about which half it still owes, which is the bookkeeping this method
+   * exists to remove.
+   *
+   * `gone` carries the members whose UID the source folder no longer holds — the batch's form of
+   * {@link MessageGoneError}, reported rather than thrown so one vanished message does not cost
+   * the rest of the group. The caller leaves those rows pending exactly as it does for the throw,
+   * and `changesSince` adopts whatever really happened to them.
+   *
+   * The group must not exceed {@link FILING_BATCH_MAX}; the caller chunks. A source folder equal
+   * to the destination, or a group spanning two source folders, is a caller bug and throws.
+   *
+   * OPTIONAL on the interface, on `scanSentRecipients`' rule: a backend that does not implement it
+   * simply never gets the fast path, and every fake adapter keeps compiling.
+   */
+  moveMany?(locators: readonly NativeLocator[], toFolder: string): Promise<MoveManyResult>;
   /**
    * Write the `\Seen` flag on ONE message — the other half of organize-in-place.
    *
