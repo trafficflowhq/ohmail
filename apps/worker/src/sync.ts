@@ -742,7 +742,13 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
       continue;
     }
     if (!p.nativeLocator) continue;
-    const key = `${p.nativeLocator.folder}${p.desiredFolder}`;
+    // `JSON.stringify` of the PAIR, not the two names joined by a separator. A folder name comes
+    // from the mail server and may contain any character a delimiter could be chosen from, so a
+    // joined key can collide across two different pairs — and the obvious unambiguous separator is
+    // a NUL, which cannot be written here: a single raw NUL anywhere in a source file makes every
+    // grep-family tool skip the WHOLE file silently, which this repository has already paid for
+    // once. The array form is unambiguous and printable.
+    const key = JSON.stringify([p.nativeLocator.folder, p.desiredFolder]);
     const bucket = groups.get(key);
     if (bucket) bucket.push(p); else groups.set(key, [p]);
   }
