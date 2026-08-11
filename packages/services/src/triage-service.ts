@@ -12,7 +12,17 @@ const asDb = (tx: Tx): Db => tx as unknown as Db;
 
 export interface TriageSetBody {
   state: TriageState;
-  bubbleUpAt?: string;   // required when state === "bubbled_up"
+  /**
+   * REQUIRED for `bubbled_up`, and FORCED NULL for every other state — including `resurfaced`,
+   * which is the one where a client might plausibly send one.
+   *
+   * Dropped rather than refused: a client that sends a timestamp with `resurfaced` is not making
+   * a different request, it is over-specifying this one. Storing it would be the harm — the
+   * worker's due-scan selects on `bubble_up_at`, so a resurfaced row carrying a future date is a
+   * second flip waiting to happen, and every surface that renders the column (`triagePiles`'
+   * `resurfaceAt`) would read it as "still scheduled".
+   */
+  bubbleUpAt?: string;
 }
 
 /** Idempotency handle threaded in by the route; the row is written IN the setState tx. */
@@ -40,9 +50,13 @@ export interface PowerThroughView {
 /**
  * TriageService. The bottom-pile states (`reply_later`, `set_aside`,
  * `bubbled_up`, `muted`) live in `message_states`; every transition is user-wins
- * (no If-Match) and emits a `message_state` `update` change through the same
- * `change_log` seam SyncService reads. The Reply Run and Power Through are pure
- * read views over these states + the Imbox — no separate write logic.
+ * (no If-Match) and emits a `message_state` `update` change — plus the `message` update its
+ * DTO's embedded `triage` needs — through the same `change_log` seam SyncService reads. The
+ * Reply Run and Power Through are pure read views over these states + the Imbox — no separate
+ * write logic.
+ *
+ * `resurfaced` is settable here too, and it is NOT a bottom pile: it pins the row at the top of
+ * the Ohbox. See {@link TriageService.resurfaceNow} and `dto/types.ts#TriageState`.
  */
 export class TriageService {
   /**
@@ -75,8 +89,35 @@ export class TriageService {
         set: { state: b.state, bubbleUpAt, updatedAt: now },
       }).returning({ id: messageStates.id });
 
-      const seqBig = await recordChange(tx, {
+      await recordChange(tx, {
         accountId: ctx.accountId, entityType: "message_state", entityId: row!.id, op: "update", meta: null,
+      });
+
+      /**
+       * ── AND THE MESSAGE, BECAUSE ITS DTO EMBEDS THIS STATE ────────────────────────────────
+       *
+       * `MessageDTO.triage` is a projection of the row just written, so a delta that moves the
+       * row without re-emitting its projection leaves every mirror internally inconsistent: the
+       * `message_state` entity says one thing and the `message` entity's `triage` field, applied
+       * at an earlier seq and never touched again, goes on saying another.
+       *
+       * That is not a theoretical inconsistency. `selectors.ts#isResurfaced` — the whole of how
+       * the Ohbox pins a resurfaced row — reads `message.triage.state`, and the client joins
+       * nothing: `apply.ts` is a keyed upsert per (type,id) and has no business deriving one
+       * entity from another. So with only the `message_state` change on the wire, a resurfaced
+       * row pinned on the device that set it (its optimistic effect writes BOTH entities —
+       * `mutations.ts`) and pinned nowhere else, including on this device after the overlay was
+       * dropped. The two halves of the mutation meant different things.
+       *
+       * Emitted for EVERY state, not just `resurfaced`: the projection is stale after any of
+       * them, and a conditional here would be a second rule about when `message.triage` can be
+       * trusted. `MessageService.markSeen` already emits the pair for the same reason.
+       *
+       * SECOND, so the returned seq is the highest of the two — a caller that echoes it as
+       * `X-Sync-Seq` is naming the point at which BOTH changes are visible.
+       */
+      const seqBig = await recordChange(tx, {
+        accountId: ctx.accountId, entityType: "message", entityId: messageId, op: "update", meta: null,
       });
 
       // Materialize the DTO INSIDE the tx (reads the uncommitted upsert) so the
@@ -114,6 +155,18 @@ export class TriageService {
   }
   bubbleUp(ctx: ServiceContext, messageId: string, untilTs: string): Promise<MessageStateDTO> {
     return this.setState(ctx, messageId, { state: "bubbled_up", bubbleUpAt: untilTs });
+  }
+  /**
+   * RESURFACE NOW — the horizon chooser's fourth answer, and the only one that is not a date.
+   *
+   * Deliberately NOT `bubbleUp(ctx, id, <a moment ago>)`. That spelling depends on a bubble-up
+   * pass to mean anything, and the pass is not a promise the product can make at this latency:
+   * it runs inside the worker's cycle behind a 60s gate, and a standalone desktop install runs no
+   * worker at all. So "now" writes the state the schedule exists to reach, in one transaction,
+   * and the row is pinned by the time the response is written.
+   */
+  resurfaceNow(ctx: ServiceContext, messageId: string): Promise<MessageStateDTO> {
+    return this.setState(ctx, messageId, { state: "resurfaced" });
   }
   mute(ctx: ServiceContext, messageId: string): Promise<MessageStateDTO> {
     return this.setState(ctx, messageId, { state: "muted" });

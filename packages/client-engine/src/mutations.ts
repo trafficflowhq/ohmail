@@ -307,7 +307,10 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       const state: MessageStateDTO = {
         messageId: m.messageId,
         state: m.state,
-        bubbleUpAt: m.bubbleUpAt ?? null,
+        // The wire keeps `bubbleUpAt` for exactly one state, so the overlay must too — the
+        // server drops it on every other state, and an overlay showing a date the next delta
+        // then removes would be the two halves of one mutation disagreeing.
+        bubbleUpAt: m.state === "bubbled_up" ? m.bubbleUpAt ?? null : null,
         setAt: iso,
         updatedAt: iso,
       };

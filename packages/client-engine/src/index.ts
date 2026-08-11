@@ -53,6 +53,7 @@ export {
   type TagDTO,
   type TriageItemDTO,
   type TriageState,
+  type TriageWireState,
   type UnsubscribeHeaderState,
   type UnsubscribeRefusal,
   type UnsubscribeResult,

@@ -183,9 +183,30 @@ export interface SensitivityFlags {
 
 export type TriageState = "none" | "reply_later" | "set_aside" | "bubbled_up" | "muted";
 
+/**
+ * EVERY STATE THAT CROSSES THE WIRE — {@link TriageState} plus `resurfaced`.
+ *
+ * The extra member is kept OUT of `TriageState` itself, and that separation is load-bearing
+ * rather than tidy. `TriageState` is this client's word for A BOTTOM PILE: `TriageItemDTO.pile`
+ * is literally `Exclude<TriageState, "none" | "muted">`, and `selectors.ts#triagePiles` files
+ * every member of it into one of three lists. A resurfaced message belongs to NO pile — it is
+ * pinned at the TOP of the Ohbox (`ohboxView.resurfaced`) — so widening `TriageState` would
+ * invite a fourth pile that must never exist.
+ *
+ * It has always been settable by the SERVER (`bubbleUpPass` writes it when a scheduled resurface
+ * comes due) and is now settable by a client too, for "resurface this now" — a horizon that
+ * `bubbled_up` cannot express, because a past `bubbleUpAt` pins nothing until some worker pass
+ * runs and a standalone desktop install runs none.
+ */
+export type TriageWireState = TriageState | "resurfaced";
+
 export interface MessageStateDTO {
   messageId: string;
-  state: TriageState;
+  /**
+   * {@link TriageWireState} and not {@link TriageState}: the server has always been able to serve
+   * `resurfaced` here, so the narrower type was a claim the wire never honoured.
+   */
+  state: TriageWireState;
   bubbleUpAt: ISODateTime | null;
   setAt: ISODateTime;
   updatedAt: ISODateTime;
@@ -834,7 +855,12 @@ export const VIEW_OF_FOLDER: Record<Folder, OhmailView> = {
  */
 export type EngineMutation =
   | { kind: "move"; messageId: string; folder: Folder }
-  | { kind: "triage_set"; messageId: string; state: TriageState; bubbleUpAt?: ISODateTime | null }
+  /**
+   * `state: "resurfaced"` is the "Now" horizon and takes no `bubbleUpAt` — the server forces it
+   * null, and so does the optimistic effect, so the two halves agree. See
+   * {@link TriageWireState}.
+   */
+  | { kind: "triage_set"; messageId: string; state: TriageWireState; bubbleUpAt?: ISODateTime | null }
   | {
       kind: "screener_decide";
       senderId: string;

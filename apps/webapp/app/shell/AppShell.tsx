@@ -2388,6 +2388,21 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           toast(t("ohbox.toastResurface", { when: resurfaceLabel(when) }));
           break;
         }
+        case "resurface_now":
+          /**
+           * "NOW" IS A STATE, NOT A DATE, and that is the only thing separating this arm from
+           * the one above it.
+           *
+           * `bubbled_up` with a past `bubbleUpAt` would pin nothing until a bubble-up pass ran,
+           * and the pass is not a promise this product can make at this latency — it is gated
+           * inside the worker's cycle, and a standalone desktop install runs no worker at all.
+           * So the mutation asks for the state the schedule exists to reach, the server writes
+           * it in one transaction, and `ohboxView.resurfaced` has the row on the next drain.
+           * No `bubbleUpAt`: there is no schedule to spend.
+           */
+          void engine.mutate({ kind: "triage_set", messageId: m.id, state: "resurfaced" });
+          toast(t("ohbox.toastResurfaceNow"));
+          break;
         default: {
           // RESURFACE AT A CHOSEN INSTANT — the bar's popover feeds the day here. The wire has
           // always carried an arbitrary `bubbleUpAt`; this is the caller that fills it with

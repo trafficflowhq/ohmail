@@ -58,6 +58,18 @@ export type MessageAction =
    * reason `move:${MoveTarget}` is: every pass-through of `onAction` keeps compiling unchanged.
    */
   | `resurface:${string}`
+  /**
+   * RESURFACE NOW — the horizon chooser's fourth answer, and a different KIND of answer from the
+   * other three.
+   *
+   * Not `resurface:<a moment ago>`, and the distinction is the whole point. The three dated
+   * answers all write `bubbled_up` with a future instant and wait for a bubble-up pass to flip
+   * them; a past instant in that same variant would be a promise nobody keeps — the pass is gated
+   * behind the worker's cycle, and a standalone desktop install runs no worker. So "now" is its
+   * own member, dispatching the direct `resurfaced` transition the server accepts, and the row is
+   * pinned by the time the request returns.
+   */
+  | "resurface_now"
   | "draft"
   | "unread"
   | `move:${MoveTarget}`;
@@ -370,6 +382,11 @@ function ActionBar({
      * `bubbleUpAt` uses, so the label reads back the same). "Pick a date" is the native date
      * input, floored at tomorrow so the picker cannot choose a horizon in the past. Each choice
      * closes the panel and dispatches `resurface:<iso>`; the shell mutates and states the day.
+     *
+     * FOUR NOW, and the fourth is first because it is the only one that costs nothing to change
+     * your mind about. "Now" dispatches `resurface_now` — a state, not a date; see
+     * {@link MessageAction}. It is separated from the three horizons by nothing but order: the
+     * question the strip asks is still "when?", and "now" is an answer to it.
      */
     const tomorrow = tomorrowNine(now);
     const nextWeek = nextWeekNine(now);
@@ -381,6 +398,16 @@ function ActionBar({
       <div className="abar">
         <div className="abar-panel">
           <span className="abar-lab">{t("resurfaceWhen")}</span>
+          <button
+            type="button"
+            className="abar-b abar-solo"
+            onClick={() => {
+              onPanel(null);
+              onAction("resurface_now");
+            }}
+          >
+            {t("resurfaceNow")}
+          </button>
           <button type="button" className="abar-b abar-solo" onClick={() => pick(tomorrow)}>
             {t("resurfaceTomorrow")}
           </button>

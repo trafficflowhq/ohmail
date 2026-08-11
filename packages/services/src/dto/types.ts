@@ -23,7 +23,30 @@ export interface Page<T> {
   nextCursor: Cursor | null;   // null ⇒ last page
 }
 
-export type TriageState = "none" | "reply_later" | "set_aside" | "bubbled_up" | "muted";
+/**
+ * Every state a `message_states` row can hold.
+ *
+ * `none` plus the four bottom piles, and then `resurfaced` — which is the odd one, in a way
+ * worth stating: it is not a pile at all, it is a PIN AT THE TOP OF THE OHBOX
+ * (`selectors.ts#ohboxView`), cleared back to `none` the moment the row is marked read
+ * (`MessageService.markSeen`).
+ *
+ * It was on this wire before it was in this union — `bubbleUpPass` has written it since the
+ * resurface pin first shipped, and
+ * `materialize.ts` has cast the column to this type the whole time, so every resurfaced row the
+ * API has ever served carried a `state` the type said was impossible. Naming it here is the
+ * smaller half of that correction; the larger half is that a client may now ASK for it.
+ *
+ * ── WHY A CLIENT MAY SET IT DIRECTLY ──────────────────────────────────────────────────────
+ *
+ * "Resurface this now" has no honest spelling in `bubbled_up`. A past `bubbleUpAt` pins nothing
+ * until a bubble-up pass runs; that pass is gated at 60s in the worker's cycle and a standalone
+ * desktop install never runs it at all — so "now" would mean "in a minute, or never". The state
+ * the schedule EXISTS TO REACH is reachable in one transaction, so that is what the client asks
+ * for. `bubbleUpAt` is null on it in both directions: there is no schedule to spend.
+ */
+export type TriageState =
+  | "none" | "reply_later" | "set_aside" | "bubbled_up" | "muted" | "resurfaced";
 
 export interface MessageStateDTO {
   messageId: string;
@@ -428,6 +451,37 @@ export interface MailboxDTO {
    * `apps/webapp/app/shell/mail-state.ts` states the rule it applies.
    */
   pendingMoves: number;
+  /**
+   * HOW MUCH MAIL IS IN THIS MAILBOX — and the only OPT-IN field on this DTO.
+   *
+   * ── WHY IT IS OPTIONAL WHEN EVERY OTHER NUMBER HERE IS NOT ──────────────────────────
+   *
+   * `pendingMoves` one field up is unconditional because it is a filtered aggregate over one
+   * mailbox's outstanding filings — a small, bounded set. This is an aggregate over the
+   * account's ENTIRE `messages` table, and `GET /mailboxes` is a polled route:
+   * `apps/webapp/app/shell/MailStateProvider.tsx` reads it every 30 s in every open tab to
+   * derive the status strip, and the Settings pane reads it every 10 s while it is on screen.
+   * Neither poller wants this number. Shipping it unconditionally would put a full scan of a
+   * mailbox's history behind a heartbeat.
+   *
+   * So the server computes it only for `GET /mailboxes?counts=1`, in ONE statement grouped by
+   * mailbox and scoped to the account in that same statement, and this field is ABSENT
+   * otherwise. `messages_account_mailbox_unread_idx` is `(account_id, mailbox_id, unread)`, so
+   * its leading column serves the scope predicate and the grouping key is the second.
+   *
+   * ── ABSENT AND `0` ARE DIFFERENT ANSWERS, AND A CLIENT MUST NOT CONFLATE THEM ────────
+   *
+   * `0` means the mailbox holds no mail — a real state, and the one a freshly connected
+   * mailbox is in for its whole first import. ABSENT means nobody asked, which is every
+   * response the two pollers above receive and every response from a server older than this
+   * field. A renderer therefore reads it with `typeof === "number"` and shows NOTHING when it
+   * is absent — never "0 messages", which would tell somebody their mail had vanished
+   * because a status poll happened to be the last read to land.
+   *
+   * Whole mail, unread or not: the question is how much is in there. The index's third column
+   * is not filtered on.
+   */
+  messageCount?: number;
   folders?: MailboxFolderSummary[];
   createdAt: ISODateTime;
   // NOTE: intentionally NO credential field — creds are envelope-encrypted at rest

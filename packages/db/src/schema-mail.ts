@@ -874,8 +874,15 @@ export const messageStates = pgTable("message_states", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),
   messageId: uuid("message_id").notNull().references(() => messages.id),
-  state: text("state").notNull().default("none"),       // none|reply_later|set_aside|bubbled_up|muted
-  bubbleUpAt: timestamp("bubble_up_at", { withTimezone: true }),  // required when state='bubbled_up'
+  // none|reply_later|set_aside|bubbled_up|muted|resurfaced. `resurfaced` is NOT a bottom pile —
+  // it pins the row at the top of the Ohbox, and it is written both by the worker's bubble-up
+  // pass when a schedule comes due and directly by "Resurface now". Free text, no CHECK: the
+  // closed set lives in `services/src/dto/types.ts#TriageState`.
+  state: text("state").notNull().default("none"),
+  // Set for state='bubbled_up' and NULL for every other state, including 'resurfaced' — the
+  // worker's due-scan selects on this column, so a date left on a resurfaced row is a second
+  // flip waiting to happen.
+  bubbleUpAt: timestamp("bubble_up_at", { withTimezone: true }),
   setAt: timestamp("set_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
