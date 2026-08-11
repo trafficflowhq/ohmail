@@ -1168,30 +1168,42 @@ export function ScreenerView({
                 },
               ]}
             />
-            {segment === "waiting" && state.waitingCount > 0 ? (
+            {/* THE STRIP APPEARS FOR THE BULK CONTROLS **OR** FOR THE ALLOWANCE LINE, and the
+                two conditions are genuinely different — which is what this wrapper used to get
+                wrong. `waitingCount > 0` is right for the buttons (a bulk control may not outlive
+                the thing it acts on) and exactly backwards for the line under them: `aiCreditNode`
+                exists to explain an exhausted allowance, and an empty queue is when that
+                explanation is most worth having, not least. Resolving the last waiting sender took
+                both the remaining balance and the plan offer off the screen, contradicting this
+                prop's own contract. */}
+            {segment === "waiting" && (state.waitingCount > 0 || aiCreditNode) ? (
               <div className="scn-bulk">
-                {/* A BULK CONTROL MAY NOT OUTLIVE THE THING IT ACTS ON.
-                    Gated on `suggestedCount`, never on `waitingCount`: with no suggestions
-                    this button used to file every waiting stranger into the Ohbox and
-                    promote a rule for each, while its label said it was applying
-                    suggestions the user was never shown. `markAllSpam` says exactly what it
-                    does and needs no such gate. */}
-                {state.suggestedCount > 0 ? (
-                  <Button kbdHint="a" onClick={() => state.applyAll(scopeOf)}>
-                    {t("applyAll", {
-                      count: state.suggestedCount,
-                      piles: pileList(state.suggestedDests, t),
-                    })}
+                {state.waitingCount > 0 ? (
+                  <>
+                  {/* A BULK CONTROL MAY NOT OUTLIVE THE THING IT ACTS ON.
+                      Gated on `suggestedCount`, never on `waitingCount`: with no suggestions
+                      this button used to file every waiting stranger into the Ohbox and
+                      promote a rule for each, while its label said it was applying
+                      suggestions the user was never shown. `markAllSpam` says exactly what it
+                      does and needs no such gate. */}
+                  {state.suggestedCount > 0 ? (
+                    <Button kbdHint="a" onClick={() => state.applyAll(scopeOf)}>
+                      {t("applyAll", {
+                        count: state.suggestedCount,
+                        piles: pileList(state.suggestedDests, t),
+                      })}
+                    </Button>
+                  ) : null}
+                  {/* Its own control and not a branch of the one above, because the two are
+                      opposite acts: this one BUYS advice, that one ACTS on advice already
+                      bought. They are both visible while some senders have a suggestion and
+                      others do not, which is the ordinary state of a queue being worked. */}
+                  {suggestNode ?? (suggest ? <SuggestControl control={suggest} /> : null)}
+                  <Button variant="ghost" kbdHint="s" onClick={() => state.markAllSpam(scopeOf)}>
+                    {t("markAllSpam")}
                   </Button>
+                  </>
                 ) : null}
-                {/* Its own control and not a branch of the one above, because the two are
-                    opposite acts: this one BUYS advice, that one ACTS on advice already
-                    bought. They are both visible while some senders have a suggestion and
-                    others do not, which is the ordinary state of a queue being worked. */}
-                {suggestNode ?? (suggest ? <SuggestControl control={suggest} /> : null)}
-                <Button variant="ghost" kbdHint="s" onClick={() => state.markAllSpam(scopeOf)}>
-                  {t("markAllSpam")}
-                </Button>
                 {/* THE ALLOWANCE, one line under the control that spends it — last in the strip
                     and full-width, so it reads as a footnote to the row rather than as a fourth
                     button in it. It renders itself away when there is nothing worth saying, so

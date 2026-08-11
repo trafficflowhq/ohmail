@@ -769,6 +769,39 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   "account_settings_locale_supported",
 ];
 
+/**
+ * A CHECK marker probed by its DEFINITION, not merely by its name.
+ *
+ * `[conname, definitionSubstring]` — the constraint must exist AND `pg_get_constraintdef` must
+ * contain the substring, case-sensitively.
+ *
+ * ── WHY A THIRD KIND OF CHECK MARKER EXISTS AT ALL ──────────────────────────────────────────
+ *
+ * {@link SCHEMA_CHECK_MARKERS} probes for a NAME, which is exactly right when the migration
+ * CREATES the constraint: absent name, absent migration. It is blind to the other shape a
+ * constraint migration takes — **replacing** a constraint under its existing name, which is the
+ * only way PostgreSQL lets a CHECK be amended (`DROP … IF EXISTS` then `ADD` under the same
+ * name). Both names are then present on a database that never took the migration, the count
+ * matches, `/health` answers `schemaOk: true`, and the host stays in rotation while the
+ * constraint it is relying on still holds the OLD rule.
+ *
+ * Cloud `0011_trial_credits` is that shape and is the reason this list exists: it teaches the
+ * ledger's sign and source rules the word `trial_grant` and adds no column, no index and no new
+ * name. Deployed against a database still on `0010`, every trial grant is rejected by a CHECK
+ * from inside the webhook's transaction — the subscription mirror rolls back with it, every
+ * retry 500s for three days, and the account gets neither its mirrored trial nor the allowance
+ * the product advertises. Health, meanwhile, reports the schema as complete.
+ *
+ * ── AND WHY A SUBSTRING RATHER THAN THE WHOLE DEFINITION ────────────────────────────────────
+ *
+ * `pg_get_constraintdef` renders a normalized form, not the SQL that was typed: literals acquire
+ * `::character varying` casts, `IN (…)` becomes `= ANY (ARRAY[…])`, and the exact spelling is a
+ * PostgreSQL version's business rather than this repository's. Pinning the whole string would be
+ * a probe that fails on a server upgrade. A substring naming the VOCABULARY the migration added
+ * survives that and still cannot be satisfied by the old definition, which is the whole question.
+ */
+export type CheckDefinitionMarker = readonly [conname: string, definitionSubstring: string];
+
 /* `EXPECTED_MARKERS` — the BOTH-HALVES count — moved to `./health-cloud.js` with the list it
  * derives from. {@link MAIL_EXPECTED_MARKERS} below is what this module can compute on its own. */
 
@@ -1060,10 +1093,16 @@ export async function probeDatabase(
    * a database missing the other half is correct rather than incomplete.
    */
   columnMarkers: ReadonlyArray<SchemaMarker> = MAIL_SCHEMA_MARKERS,
+  /**
+   * Constraints whose DEFINITION is probed — see {@link CheckDefinitionMarker}. Defaults to none,
+   * because every entry so far names a Cloud table and this module ships in the desktop engine.
+   */
+  checkDefinitionMarkers: ReadonlyArray<CheckDefinitionMarker> = [],
 ): Promise<HealthProbe> {
   const started = Date.now();
   const expected =
-    columnMarkers.length + SCHEMA_INDEX_MARKERS.length + SCHEMA_CHECK_MARKERS.length;
+    columnMarkers.length + SCHEMA_INDEX_MARKERS.length + SCHEMA_CHECK_MARKERS.length +
+    checkDefinitionMarkers.length;
   try {
     const result = await db.execute(
       sql`select 1 as one,
@@ -1093,17 +1132,36 @@ export async function probeDatabase(
                      and c.conname in (${sql.join(
                        SCHEMA_CHECK_MARKERS.map((n) => sql`${n}`),
                        sql`, `,
-                     )})) as check_markers`,
+                     )})) as check_markers,
+                 -- The CHECK-DEFINITION half: the same catalog again, asking a different
+                 -- question. A migration that REPLACES a constraint under its existing name is
+                 -- invisible to the name probe above — both names are present on a database that
+                 -- never ran it — so this reads the rendered definition and looks for the
+                 -- vocabulary the migration added. A literal FALSE when the list is empty keeps
+                 -- the subselect valid and its count at 0 for a host that passes none.
+                 (select count(*) from pg_constraint c
+                    join pg_class t on t.oid = c.conrelid
+                    join pg_namespace n on n.oid = t.relnamespace
+                   where n.nspname = 'public' and c.contype = 'c'
+                     and (${checkDefinitionMarkers.length > 0
+                       ? sql.join(
+                         checkDefinitionMarkers.map(([name, needle]) =>
+                           sql`(c.conname = ${name} and position(${needle} in pg_get_constraintdef(c.oid)) > 0)`),
+                         sql` or `,
+                       )
+                       : sql`false`
+                     })) as check_def_markers`,
     );
     const dbLatencyMs = Date.now() - started;
     const row = rowsOf<{
       one: number; pg_trgm: boolean; schema_markers: number | string; index_markers: number | string;
-      check_markers: number | string;
+      check_markers: number | string; check_def_markers: number | string;
     }>(result)[0];
     if (!row || Number(row.one) !== 1) return { kind: "empty", dbLatencyMs };
-    // One total across all three probes — see `SCHEMA_INDEX_MARKERS` for why they are not three.
+    // One total across all four probes — see `SCHEMA_INDEX_MARKERS` for why they are not four.
     const markersFound =
-      Number(row.schema_markers) + Number(row.index_markers) + Number(row.check_markers);
+      Number(row.schema_markers) + Number(row.index_markers) + Number(row.check_markers) +
+      Number(row.check_def_markers);
     return {
       kind: "probed",
       dbLatencyMs,
@@ -1213,7 +1271,13 @@ export const healthRoutes: Route[] = [
       const expectedMarkers = fullCensus
         ? fullCensus.expected
         : MAIL_EXPECTED_MARKERS;
-      const probe = await probeDatabase(deps.db, fullCensus ? fullCensus.markers : MAIL_SCHEMA_MARKERS);
+      const probe = await probeDatabase(
+        deps.db,
+        fullCensus ? fullCensus.markers : MAIL_SCHEMA_MARKERS,
+        // A mail-tier host passes none: every entry so far names a Cloud table, and a local
+        // engine's database is complete without them.
+        fullCensus ? fullCensus.checkDefinitions : [],
+      );
       if (probe.kind === "unreachable") {
         return healthResponse(503, {
           ok: false,

@@ -1,4 +1,4 @@
-import type { SchemaMarker } from "./health.js";
+import type { SchemaMarker, CheckDefinitionMarker } from "./health.js";
 
 /**
  * WHERE THE BOTH-HALVES SCHEMA CENSUS IS REGISTERED, and why it is registered rather than
@@ -31,6 +31,11 @@ import type { SchemaMarker } from "./health.js";
  */
 export interface SchemaCensus {
   markers: ReadonlyArray<SchemaMarker>;
+  /**
+   * Constraints probed by DEFINITION rather than by name — the shape a REPLACEMENT migration
+   * takes, which every name-keyed catalog is blind to. Cloud `0011` is why this field exists.
+   */
+  checkDefinitions: ReadonlyArray<CheckDefinitionMarker>;
   expected: number;
   through: string;
 }

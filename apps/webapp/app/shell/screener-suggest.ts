@@ -420,6 +420,49 @@ const HYDRATE_LIMIT = 200;
  */
 export const AUTO_BATCH_SIZE = 10;
 
+/* ── THE SPEND ANNOUNCEMENT ───────────────────────────────────────────────────────────────
+ *
+ * A purchase here changes a number that OTHER surfaces are showing — the account's remaining AI
+ * allowance, rendered one line under the control that just spent it. That line is not part of
+ * this file's tree and cannot be: it reads `GET /billing/subscription`, and `app/shell` may not
+ * call the Cloud client. It is injected, it fetches once on mount, and nothing remounts it when
+ * a sibling spends — so it went on claiming the balance the session started with, including
+ * claiming credits at zero and withholding the exhausted-trial offer until a full reload.
+ *
+ * The narrowest thing that fixes it is a notification, not a shared store: this file already
+ * knows the exact moment the server reported a new balance, and every listener only needs to be
+ * told to re-read. No state crosses the seam, so the shell still holds no billing knowledge and
+ * the notice remains the only thing that knows what a balance means.
+ *
+ * Module scope rather than context, because the emitter is a hook the shell instantiates once
+ * and the listener is a node handed to it from outside — there is no component that contains
+ * both. `subscribe` returns its own unsubscribe, so a listener's `useEffect` cleanup is the whole
+ * lifecycle.
+ *
+ * NOT a poll and not a heartbeat: it fires only after a request that actually moved money. */
+const creditListeners = new Set<() => void>();
+
+/**
+ * Be told when a purchase in this client has just changed the account's AI balance.
+ *
+ * @returns the unsubscribe, so `useEffect(() => onCreditsSpent(fn), [fn])` is the whole wiring.
+ */
+export function onCreditsSpent(listener: () => void): () => void {
+  creditListeners.add(listener);
+  return () => { creditListeners.delete(listener); };
+}
+
+/**
+ * Fire the listeners. Copied before iterating (a listener may unsubscribe from inside itself) and
+ * each call is isolated — a surface that throws while refreshing must not fail the purchase that
+ * has already succeeded.
+ */
+function announceSpend(): void {
+  for (const listener of [...creditListeners]) {
+    try { listener(); } catch { /* a display's failure is not a purchase's failure */ }
+  }
+}
+
 export function useScreenerSuggestions(opts: {
   /** Is the Screener on screen? Hydration is deferred until it is. */
   active: boolean;
@@ -979,6 +1022,9 @@ export function useScreenerSuggestions(opts: {
               // same event, with the moving one winning the reader's attention.
               setProgress(null);
               const why = wire.messageFor(err, t("suggest.failed"));
+              // A HALTED RUN STILL SPENT. Announced before the toast, so the allowance line and
+              // the summary describe the same account at the same moment.
+              if (charged > 0) announceSpend();
               if (gotSuggestions.length > 0) {
                 setNotice(t("suggest.stoppedAt", { done: gotSuggestions.length, total, reason: why }));
                 toast(summarize(
@@ -1020,6 +1066,11 @@ export function useScreenerSuggestions(opts: {
           // CLEARED, not left at `{done: total}`. A full track that never goes away is a claim
           // that work is still in flight; the completed run's numbers are in the toast.
           setProgress(null);
+          // ONCE PER RUN, not once per chunk: the balance a person acts on is the one this
+          // purchase ended at, and a re-read per chunk would be N requests to show N−1 numbers
+          // nobody had time to read. Guarded on `charged`, so a run the gate refused outright
+          // (nothing bought, nothing debited) does not send every listener to the server.
+          if (charged > 0) announceSpend();
           toast(summarize(
             {
               suggestions: gotSuggestions, charged, ...(stopped ? { stopped } : {}), skipped: gotSkipped,

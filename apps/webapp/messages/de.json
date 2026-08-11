@@ -1443,7 +1443,7 @@
     "aiBetaNote": "Die verwaltete KI ist verbunden. Dieser Schalter macht sie aus; deine Regeln laufen so oder so und übernehmen, wenn das KI-Budget aufgebraucht ist.",
     "chooseTitle": "Tarif wählen",
     "changeTitle": "Tarif wechseln",
-    "trialNote": "Du bist in der Testphase. Wähl einen Tarif, um danach weiterzumachen — bis dahin fällt nichts an.",
+    "trialNote": "Du bist in der Testphase. Wähl einen Tarif, um weiterzumachen — bis zum Ende fällt nichts an. Da die Testphase bereits ein Abo ist, öffnet eine Tarifkarte das Zahlungsportal: dort hinterlegst du eine Karte und wählst die Stufe für dasselbe Abo.",
     "perMonth": "{price} $/Monat",
     "planMeta": "{mailboxes} Postfächer · {credits} KI-Budget",
     "current": "Aktuell",
@@ -1480,6 +1480,7 @@
     "canceled": "Die KI ist aus, seit das Abo beendet wurde. Deine Regeln laufen weiter.",
     "paused": "Die KI ist aus, solange das Abo pausiert ist. Deine Regeln laufen weiter.",
     "suspended": "Die KI ist für dieses Konto aus. Schreib uns, wir klären das.",
+    "aiOff": "Verwaltete KI ist für dieses Konto ausgeschaltet. In den Einstellungen in der KI-Zeile wieder einschalten; deine Regeln laufen so oder so weiter.",
     "startPlan": "Abo starten",
     "seePlan": "Abo ansehen"
   },

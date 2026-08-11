@@ -30,7 +30,20 @@
  */
 export type EntitlementReason =
   | "suspended" | "no_subscription" | "trialing" | "active"
-  | "past_due_grace" | "past_due" | "unpaid" | "canceled" | "paused";
+  | "past_due_grace" | "past_due" | "unpaid" | "canceled" | "paused"
+  /*
+   * The account owner's own AI switch, off. Unlike every other member, it is not a subscription
+   * state at all — which is exactly why it is here rather than only in {@link AiRefusalReason}.
+   *
+   * `entitlementsFor` may be handed the switch, and when it is, its `aiEnabled` is the FULL
+   * spendability predicate rather than the subscription's half of it. Without a word for this
+   * case that boolean could only go false with a reason describing a perfectly healthy
+   * subscription, and a surface reading it would explain a refusal by offering a plan the
+   * customer already has. The gate keeps answering it from its own short-circuit read, which is
+   * why the two do not disagree: same string, same meaning, one produced before the subscription
+   * read and one after.
+   */
+  | "ai_disabled";
 
 /**
  * Why a spend was refused.

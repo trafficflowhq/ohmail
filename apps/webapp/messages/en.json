@@ -1443,7 +1443,7 @@
     "aiBetaNote": "Managed AI is connected. This switch turns it off; your rules run either way, and take over when your AI actions run out.",
     "chooseTitle": "Choose a plan",
     "changeTitle": "Change plan",
-    "trialNote": "You are on the trial. Pick a plan to continue when it ends — no charge until then.",
+    "trialNote": "You are on the trial. Pick a plan to keep going — no charge until it ends. Because the trial is already a subscription, a plan card opens the billing portal, where you add a card and choose the tier on the same subscription.",
     "perMonth": "${price}/mo",
     "planMeta": "{mailboxes} mailboxes · {credits} AI actions",
     "current": "Current",
@@ -1480,6 +1480,7 @@
     "canceled": "AI is off since the subscription ended. Your rules keep running.",
     "paused": "AI is off while the subscription is paused. Your rules keep running.",
     "suspended": "AI is off on this account. Write to us and we will sort it out.",
+    "aiOff": "Managed AI is switched off for this account. Turn it back on in the AI row of Settings; your rules keep running either way.",
     "startPlan": "Start a plan",
     "seePlan": "See your plan"
   },
