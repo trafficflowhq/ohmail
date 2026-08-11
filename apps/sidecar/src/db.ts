@@ -1,10 +1,11 @@
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { mailSchema } from "@trafficflow/db/mail";
 import { MAIL_JOURNAL, adoptBaseline } from "@trafficflow/db/journal";
+import type { Diagnostic } from "./log.js";
 
 /**
  * THE LOCAL MIRROR: PGlite ON DISK, migrated by the SAME sequence production runs — over the
@@ -60,14 +61,59 @@ import { MAIL_JOURNAL, adoptBaseline } from "@trafficflow/db/journal";
 
 export type LocalDb = PgliteDatabase<typeof mailSchema>;
 
+/**
+ * WHAT OPENING THE MIRROR COST, in wall-clock milliseconds, split by phase.
+ *
+ * Returned rather than logged, because {@link openLocalDb} has no logger and giving it one would
+ * put a second diagnostic seam in a function whose whole job is a database handle. The two
+ * constructors that call it own the line — see `engine.ts` and `cloud-engine.ts`'s `boot_phases`.
+ *
+ * `Date.now()` and not `performance.now()`, matching the drain timing in `engine.ts` and the
+ * mailbox-attach phases the server-side sync reports: these are multi-second quantities read by a
+ * human, and one clock across the codebase is worth more here than sub-millisecond resolution.
+ *
+ * The three sum to slightly less than the whole call — `mkdirSync`, the lock and the `drizzle()`
+ * wrapper sit between them and are sub-millisecond — which is why the constructors also report
+ * their own total rather than adding these up.
+ */
+export interface OpenTimings {
+  /**
+   * `new PGlite(dir)` to the moment it can answer a statement.
+   *
+   * On a large on-disk mirror this is where a cold launch spends its time: the WASM module is
+   * instantiated, the data directory is mounted into the emulated filesystem, and Postgres runs
+   * its own startup (including WAL replay if the previous exit was not clean).
+   */
+  pgliteOpenMs: number;
+  /** {@link adoptBaseline} — a metadata read on an established mirror, a no-op on a fresh one. */
+  adoptBaselineMs: number;
+  /** The migrator. Zero new migrations still costs a read of the journal and of the ledger table. */
+  migrateMs: number;
+}
+
 export interface OpenLocalDb {
   db: LocalDb;
   /** The ohmail directory the caller named. */
   dataDir: string;
   /** The PGDATA inside it — `<dataDir>/pgdata`. See {@link PGDATA_SUBDIR}. */
   pgDataDir: string;
+  /** What this open cost, by phase. See {@link OpenTimings}. */
+  timings: OpenTimings;
+  /**
+   * Take a write-ahead-log checkpoint now, returning how many segments it reclaimed. Runs on its own
+   * interval while the database is open; exposed because a periodic side effect nothing can call is
+   * a periodic side effect nothing can check. See {@link checkpointWal}.
+   */
+  checkpoint(): Promise<number>;
   /** Flush and release. Idempotent — shutdown paths call it from more than one place. */
   close(): Promise<void>;
+}
+
+/** Everything optional about opening the local database. */
+export interface OpenLocalDbOptions {
+  log?: Diagnostic;
+  /** How often to checkpoint while open. Production takes {@link CHECKPOINT_INTERVAL_MS}. */
+  checkpointIntervalMs?: number;
 }
 
 /**
@@ -93,6 +139,94 @@ export class DataDirLockedError extends Error {
 }
 
 export const LOCK_FILE = "sidecar.lock";
+
+/**
+ * HOW OFTEN TO CHECKPOINT WHILE THE APP IS OPEN. See {@link checkpointWal} for why anything has to.
+ *
+ * Five minutes is Postgres's own `checkpoint_timeout` default — this is standing in for the process
+ * that would have honoured it, so it keeps its number rather than inventing one.
+ */
+export const CHECKPOINT_INTERVAL_MS = 5 * 60_000;
+
+/** WAL segment files in a data directory. `pg_wal` also holds `archive_status/`, which is not one. */
+function walSegments(pgDataDir: string): number {
+  try {
+    return readdirSync(join(pgDataDir, "pg_wal")).filter((f) => /^[0-9A-F]{24}$/.test(f)).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * CHECKPOINT, BECAUSE NOTHING ELSE WILL WHILE THE APP IS RUNNING.
+ *
+ * PGlite runs Postgres as a SINGLE-USER STANDALONE BACKEND — `pg_stat_activity.backend_type` says
+ * so in as many words — and standalone means no postmaster, which means none of the background
+ * processes exist: no checkpointer, no bgwriter, no autovacuum launcher. Both settings that are
+ * supposed to bound `pg_wal` are instructions TO THE CHECKPOINTER: `max_wal_size` is the threshold
+ * at which the WAL writer asks it for one, and `checkpoint_timeout` is the interval it wakes on.
+ * With nobody to receive either, **no checkpoint is taken for as long as the process lives**, and
+ * every segment ever written stays on disk. Measured: 200 MB of churn against a fresh PGlite left
+ * `pg_control_checkpoint()` still naming initdb's redo segment, one 1 MB file per megabyte written.
+ *
+ * ── WHAT ALREADY WORKS, AND SO IS NOT DONE HERE ───────────────────────────────────────────────
+ *
+ * Two paths do checkpoint, and both were measured before this was written, because a redundant
+ * checkpoint dressed up as a fix is worse than none. A clean `close()` runs Postgres's shutdown
+ * checkpoint (170 segments → 64), and a start over a directory left by a CRASH runs the
+ * end-of-recovery one (170 → 64 again). So the boundaries of a run are covered by Postgres itself
+ * and there is deliberately no checkpoint at open or at close here.
+ *
+ * What neither covers is the MIDDLE of a run, and a desktop mail app is open for days. That is the
+ * whole exposure: an install whose engine had been up for hours held tens of gigabytes of `pg_wal`
+ * beside a database of a fraction the size, because nothing between the first write and the last
+ * would ever reclaim a segment. So the interval is what is added, and nothing else.
+ *
+ * ── COST ──────────────────────────────────────────────────────────────────────────────────────
+ *
+ * An explicit `CHECKPOINT` is performed inline when there is no postmaster to hand it to, and it
+ * does the whole job: the redo pointer advances and `RemoveOldXlogFiles` unlinks everything below
+ * it beyond the `min_wal_size` pool. Measured at 77 ms to reclaim 131 MB, and near-instant when
+ * there is nothing to reclaim, against a queue this shares with the app's own reads.
+ *
+ * It never throws at the caller. A database that cannot checkpoint is still a database that serves
+ * mail, and the boundary checkpoints above remain as the backstop.
+ */
+async function checkpointWal(
+  client: PGlite,
+  pgDataDir: string,
+  log: Diagnostic | undefined,
+  stillOpen: () => boolean,
+): Promise<number> {
+  const began = Date.now();
+  const before = walSegments(pgDataDir);
+  try {
+    await client.exec("CHECKPOINT;");
+  } catch (err) {
+    // A tick that fired just before the close is the ordinary way this throws, and a quit is not a
+    // failure. `stillOpen` is read AFTER the await, which is the only moment that can tell the two
+    // apart — checking before it would report the race as an error on every clean shutdown.
+    if (!stillOpen()) return 0;
+    log?.("local_db_checkpoint_failed", {
+      err,
+      reason: "the write-ahead log could not be checkpointed; the database is open and serving, " +
+        "and the next attempt is one interval away",
+    });
+    return 0;
+  }
+  const dropped = before - walSegments(pgDataDir);
+  // Only when it reclaimed something. A settled install checkpoints an almost empty log every few
+  // minutes, and a line saying so each time is noise around the one occasion it is not.
+  if (dropped > 0) {
+    log?.("local_db_checkpointed", {
+      dropped,
+      totalMs: Date.now() - began,
+      reason: "write-ahead log segments reclaimed; nothing else takes a checkpoint while this " +
+        "process is running",
+    });
+  }
+  return dropped;
+}
 
 /** Is `pid` a live process this user can see? `kill(pid, 0)` is the portable probe. */
 function alive(pid: number): boolean {
@@ -146,32 +280,70 @@ function lockDataDir(dataDir: string): () => void {
  * PGlite instances on one directory corrupt it even inside one process, and two on one directory
  * across processes is what {@link lockDataDir} refuses.
  */
-export async function openLocalDb(dataDir: string): Promise<OpenLocalDb> {
+export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}): Promise<OpenLocalDb> {
+  const log = opts.log;
   mkdirSync(dataDir, { recursive: true });
   const unlock = lockDataDir(dataDir);
   const pgDataDir = join(dataDir, PGDATA_SUBDIR);
   let client: PGlite;
   try {
+    const tOpen = Date.now();
     client = new PGlite(pgDataDir);
+    // AWAITED HERE ON PURPOSE, AND IT CHANGES NOTHING EXCEPT WHERE THE COST IS ATTRIBUTED.
+    //
+    // `new PGlite()` returns before the database is usable — the WASM instantiation, the data
+    // directory mount and Postgres' own startup are deferred behind `waitReady`, which the FIRST
+    // statement then awaits implicitly. Without this line every millisecond of that lands inside
+    // `adoptBaseline`, whose own work is one metadata read, and the phase breakdown below would
+    // name the wrong phase. The total is identical either way: the same promise is awaited, once,
+    // a few microseconds earlier.
+    await client.waitReady;
+    const pgliteOpenMs = Date.now() - tOpen;
     const db = drizzle(client, { schema: mailSchema });
     // ONE JOURNAL, and the loop is gone with the second one: a `for` over a one-element list is
     // an invitation to put the other element back. `adoptBaseline` still runs — it is a no-op on
     // a brand-new local database (the `fresh` cell of its truth table), and a code path only
     // production takes is a code path nothing checks.
+    const tAdopt = Date.now();
     await adoptBaseline(db, MAIL_JOURNAL);
+    const adoptBaselineMs = Date.now() - tAdopt;
+    const tMigrate = Date.now();
     await migrate(db, {
       migrationsFolder: MAIL_JOURNAL.dir,
       migrationsSchema: MAIL_JOURNAL.migrationsSchema,
     });
+    const migrateMs = Date.now() - tMigrate;
     let closed = false;
+    const checkpoint = async (): Promise<number> =>
+      (closed ? 0 : checkpointWal(client, pgDataDir, log, () => !closed));
+
+    /* The checkpointer this database does not otherwise have. `unref` so it can never be the reason
+       a process stays alive, and a fresh timer per tick rather than `setInterval` so a slow
+       checkpoint cannot have a second one queued behind it. */
+    const every = opts.checkpointIntervalMs ?? CHECKPOINT_INTERVAL_MS;
+    let tick: ReturnType<typeof setTimeout> | null = null;
+    const schedule = (): void => {
+      if (closed) return;
+      tick = setTimeout(() => {
+        void checkpoint().finally(schedule);
+      }, every);
+      tick.unref?.();
+    };
+    schedule();
+
     return {
       db,
       dataDir,
       pgDataDir,
+      timings: { pgliteOpenMs, adoptBaselineMs, migrateMs },
+      checkpoint,
       close: async () => {
         if (closed) return;
         closed = true;
+        if (tick) clearTimeout(tick);
+        tick = null;
         try {
+          // Postgres takes its own shutdown checkpoint here, which is why there is not one of ours.
           await client.close();
         } finally {
           unlock();

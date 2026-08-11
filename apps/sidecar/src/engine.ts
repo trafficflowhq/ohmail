@@ -477,11 +477,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   const now = config.now ?? ((): Date => new Date());
   const address = config.address ?? config.imap.auth.user;
 
+  // ── THE BOOT CLOCK ────────────────────────────────────────────────────────────────────────
+  //
+  // The shell shows "Opening your mailbox" for exactly as long as this function is awaited: both
+  // doors serve the bridge only after the constructor returns (`main.ts`), so every second the
+  // window spends on that screen is a second spent between here and the `boot_phases` line at the
+  // bottom. It brackets the WHOLE function, which is what makes the phases below answerable —
+  // whatever the four named phases do not account for is the remainder, and a remainder that
+  // dominates is itself the finding.
+  const tBoot = Date.now();
   const opened: OpenLocalDb = await openLocalDb(config.dataDir);
   try {
     const db = opened.db;
+    const tWorld = Date.now();
     const world = await ensureLocalWorld(db, { address, ...(config.displayName ? { displayName: config.displayName } : {}), now: now() });
     const session = await mintLaunchSession(db, world, now());
+    // The two identity writes, together: the mailbox row this install serves and the launch
+    // session the shell will authenticate with. Measured as one phase because they are one
+    // question — what it costs to establish who this launch is — and neither is separable from
+    // the other in the failure this instrumentation exists to attribute.
+    const worldMs = Date.now() - tWorld;
     if (session.revoked > 0) log("stale_sessions_revoked", { count: session.revoked });
 
     // rpID/origin are required by `makeAuthConfig` and validated at construction. Nothing local
@@ -1149,6 +1164,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       }, config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
       timer.unref?.();
     };
+
+    // ── WHERE THE "OPENING YOUR MAILBOX" SECONDS WENT ─────────────────────────────────────
+    //
+    // Measurement only: nothing above this line behaves differently for its sake. The four named
+    // phases are the awaited work this constructor is made of, and `totalReadyMs` brackets all of
+    // it, so `totalReadyMs` minus the four is the unnamed remainder — the AI assembly, the key
+    // ring, the credential resolution and the route table. Naming the phases rather than folding
+    // them into one duration is the whole point: `mailbox_attached` in the worker exists because a
+    // single start-to-finish number could not say which phase dominated.
+    //
+    // Emitted at constructor exit rather than per phase, deliberately. A phase line written as
+    // each phase completes would report progress on a launch that never finishes, but it would
+    // also put four more lines on every ordinary launch, and the question this answers — which
+    // phase owns the wait — is only answerable once all of them have a number.
+    log("boot_phases", {
+      pgliteOpenMs: opened.timings.pgliteOpenMs,
+      adoptBaselineMs: opened.timings.adoptBaselineMs,
+      migrateMs: opened.timings.migrateMs,
+      worldMs,
+      totalReadyMs: Date.now() - tBoot,
+    });
 
     return {
       app,

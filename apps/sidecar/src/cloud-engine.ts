@@ -10,7 +10,12 @@ import { ensureLocalWorld, mintLaunchSession, type LocalWorld } from "./identity
 import {
   createCloudAuth, loadSealedTokens, sealTokens, type CloudAuth, type CloudTokens,
 } from "./cloud-auth.js";
-import { cloudSignIn, CloudSignInError, type CloudSignInRequest } from "./cloud-signin.js";
+import {
+  cloudSignIn,
+  CloudSignInError,
+  newDesktopLinkPair,
+  type CloudSignInRequest,
+} from "./cloud-signin.js";
 import { createCloudMirror, CLOUD_SYNC_TYPES, type CloudMirror } from "./cloud-mirror.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
@@ -65,8 +70,30 @@ import type { Diagnostic } from "./log.js";
  * and the only way out was for the shell to obtain a token pair from somewhere it has no way to
  * reach. So this engine now comes up in a PRE-AUTH state and serves two things:
  *
- *   · `GET  /health`        — public, and says `signedIn: false` so the shell can render the door;
- *   · `POST /cloud/signin`  — `{email, password, totp}`, the two-step hosted sign-in.
+ *   · `GET  /health`                   — public, and says `signedIn: false` so the shell can render
+ *                                        the door;
+ *   · `POST /cloud/signin/challenge`   — mint the PKCE pair for a browser handoff; answers the
+ *                                        CHALLENGE and keeps the verifier here;
+ *   · `POST /cloud/signin`             — `{email, password, totp}` or `{handoffCode}`.
+ *
+ * ── THE VERIFIER LIVES IN THIS PROCESS'S MEMORY AND NOWHERE ELSE ─────────────────────────────
+ *
+ * `POST /cloud/signin/challenge` is what makes a code safe to hand back over the `ohmail://`
+ * scheme instead of through a person's fingers: it invents a PKCE pair, answers with the public
+ * half, and holds the secret half in the binding below. The account binds the code the browser
+ * mints to that digest, so a program that claims the scheme first receives a code it cannot spend.
+ *
+ * The verifier is a `let` in this closure — not a row, not a file, not a field on any response.
+ * Three consequences, all deliberate:
+ *
+ *  · **It cannot be supplied from the wire.** `POST /cloud/signin` reads a body that has no
+ *    verifier field at all; the claim is made with what this process is holding or with nothing.
+ *    A caller that could name the verifier would be a caller that could spend an intercepted code.
+ *  · **It dies with the engine.** A reconfigure REPLACES this process, so a handoff has to be
+ *    started after the door is configured, not before. That is a real constraint on the window's
+ *    ordering and it is written down in `doors.ts` where the ordering lives.
+ *  · **It is cleared on a successful sign-in**, so a second handoff mints a second pair rather
+ *    than reusing a commitment the browser has already published.
  *
  * Everything else answers `409 not_signed_in`. Deliberately NOT the mirror: after a sign-out the
  * mirror still holds the previous account's mail, and serving it to a signed-out window would be a
@@ -120,6 +147,12 @@ export interface CloudSidecar {
   online(): boolean;
   /** Is there a session at all? False on a pre-auth launch and after a sign-out. */
   signedIn(): boolean;
+  /**
+   * Is the mirror mid-pull right now? For the shutdown line, which used to report only the stdio
+   * host's in-flight request count — a number that is zero precisely when a drain is what the quit
+   * is waiting for, so it said "nothing in flight" about the thing holding everything up.
+   */
+  mirrorDraining(): boolean;
 }
 
 const json = (body: unknown, status = 200): Response =>
@@ -185,19 +218,29 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
   const log = config.log;
   const now = config.now ?? ((): Date => new Date());
 
+  // ── THE BOOT CLOCK — the same bracket `engine.ts` puts round its own constructor ─────────
+  //
+  // Started before `enforceMirrorOwner` because the shell is already showing "Opening your
+  // mailbox" by then: the window waits on this whole function, so the total has to include the
+  // mirror-owner check, and on a launch that DOES discard a foreign mirror it includes the delete.
+  const tBoot = Date.now();
+
   // The mirror belongs to exactly one hosted account; discard it whole if the served address has
   // changed. Must run before the database is opened — see {@link enforceMirrorOwner}.
   enforceMirrorOwner(config.dataDir, config.address, log);
 
-  const opened: OpenLocalDb = await openLocalDb(config.dataDir);
+  const opened: OpenLocalDb = await openLocalDb(config.dataDir, { ...(log ? { log } : {}) });
   try {
     const db = opened.db;
+    const tWorld = Date.now();
     const world = await ensureLocalWorld(db, {
       address: config.address,
       ...(config.displayName ? { displayName: config.displayName } : {}),
       now: now(),
     });
     const session = await mintLaunchSession(db, world, now());
+    // One phase, both identity writes — see the same two lines in `engine.ts`.
+    const worldMs = Date.now() - tWorld;
 
     // ── TOKENS: SEALED WINS OVER ENVIRONMENT, THE SAME PRECEDENCE THE IMAP CREDENTIAL FOLLOWS ──
     //
@@ -224,6 +267,16 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       proxy: WriteThroughProxy;
     }
     let authed: Authed | null = null;
+
+    /**
+     * THE PKCE VERIFIER FOR A BROWSER HANDOFF — this process's memory, and the whole of where it
+     * lives. See the file header for why it is here rather than on the sign-in body.
+     *
+     * `null` until `POST /cloud/signin/challenge` mints one. A second mint REPLACES it rather than
+     * keeping both: the browser page a person is looking at is the last one that was opened, and
+     * remembering an older commitment would only make a code from an abandoned page claimable.
+     */
+    let linkVerifier: string | null = null;
 
     const activate = (tokens: CloudTokens): Authed => {
       const auth = createCloudAuth({
@@ -299,7 +352,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const signOut = async (): Promise<void> => {
       const live = authed;
       authed = null;
-      live?.mirror.stop();
+      // AWAITED. A drain that outlived the sign-out would go on writing the previous account's mail
+      // into a database this process has just declared signed out.
+      await live?.mirror.stop();
       try {
         rmSync(sealPath, { force: true });
       } catch (err) {
@@ -342,6 +397,34 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // Both are addressed to THIS process over the pipe the shell already holds. The password and
       // the code are read here, exchanged for a token pair, sealed, and never seen again — the
       // shell composes no credential and stores none.
+      // ── HALF ONE OF THE BROWSER HANDOFF: THE COMMITMENT ───────────────────────────────────
+      //
+      // Answers the CHALLENGE and keeps the verifier. The window passes the challenge to the shell,
+      // which appends it to the `link-desktop` address it already owns — so the code the browser
+      // mints is spendable only by this process, and the `ohmail://` link that carries it back is
+      // worth nothing to whatever else on the machine may have claimed the scheme.
+      //
+      // Behind the same launch bearer as everything below, and refused once signed in for the
+      // reason the sign-in itself is: there is nothing to hand off to an install that already
+      // holds a session, and minting a commitment would leave a live code bound to a process
+      // nobody is waiting on.
+      if (req.method === "POST" && path === "/cloud/signin/challenge") {
+        if (authed) {
+          return json(
+            { error: { code: "already_signed_in", message: "this install already holds a session" } },
+            409,
+          );
+        }
+        const pair = newDesktopLinkPair();
+        linkVerifier = pair.verifier;
+        // The CHALLENGE is a log-safe fact — it is the value that is about to travel in a URL —
+        // and the verifier is not logged here or anywhere else. Neither is emitted as a field:
+        // `challenge` is not on the allowlist, so writing it would be dropped rather than shown,
+        // and a line that says a handoff was started is the whole of what an operator needs.
+        log?.("cloud_link_challenge_minted", { mailboxId: world.mailboxId });
+        return json({ challenge: pair.challenge });
+      }
+
       if (req.method === "POST" && path === "/cloud/signin") {
         if (authed) {
           return json(
@@ -362,6 +445,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
               baseUrl: config.cloudUrl,
               ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
               ...(log ? { log } : {}),
+              // FROM THE BINDING ABOVE, NEVER FROM `body`. The verifier is an OPTION and not a
+              // request field precisely so that this line is the only way one can reach the claim
+              // — a caller over the bridge names the code and nothing else about how it is spent.
+              ...(linkVerifier ? { verifier: linkVerifier } : {}),
             },
             body,
           );
@@ -375,6 +462,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // session that survives until the next quit and then silently is not there — better to say
         // so now, while the person who typed the password is still looking at the app.
         if (keyProvider) await sealTokens(sealPath, keyProvider, tokens);
+        // SPENT. The commitment it was made against belongs to a code that has just been consumed,
+        // so keeping it would only mean a later handoff silently reusing a digest the browser has
+        // already published. Cleared on success only: a claim that FAILED did not consume the code
+        // (the hosted side's binding is a predicate on the burn), and the person whose browser is
+        // still showing that code must be able to press the button again.
+        linkVerifier = null;
         const live = activate(tokens);
         log?.("cloud_signed_in", { mailboxId: world.mailboxId });
         // NOT AWAITED, and for the reason the launch path does not await it either: a first pull of
@@ -460,6 +553,18 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       return proxy.forward(req);
     };
 
+    // The same line the local door emits, from the door this install actually launched. Both are
+    // needed: the two constructors share `openLocalDb` and nothing else, so a wait that shows up
+    // on one and not the other is the difference between a database problem and an engine one.
+    // See `engine.ts` for what the phases are and why they are one line.
+    log?.("boot_phases", {
+      pgliteOpenMs: opened.timings.pgliteOpenMs,
+      adoptBaselineMs: opened.timings.adoptBaselineMs,
+      migrateMs: opened.timings.migrateMs,
+      worldMs,
+      totalReadyMs: Date.now() - tBoot,
+    });
+
     return {
       db,
       world,
@@ -467,13 +572,19 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       handle,
       signedIn: () => authed !== null,
       online: () => authed !== null && authed.mirror.online(),
+      mirrorDraining: () => authed !== null && authed.mirror.draining(),
       async start() {
         // A pre-auth launch has nothing to pull. Not an error and not a no-op worth logging: the
         // engine already said so once, at assembly.
         await authed?.mirror.start();
       },
       async stop() {
-        authed?.mirror.stop();
+        // THE AWAIT IS THE FIX. `opened.close()` hands PGlite a close that queues behind whatever
+        // the mirror has already asked it to do, so closing while a drain was still enqueuing pages
+        // meant the close waited on a walk that had no idea it should stop — past the shell's grace
+        // period, and the process was killed instead of leaving. Now the drain is asked to stop and
+        // this waits for it to be out of the database before the close is issued.
+        await authed?.mirror.stop();
         await opened.close();
       },
     };

@@ -248,6 +248,29 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // and cannot carry content. It is on the census because a `shutdown` line that cannot say
   // whether requests were still in flight cannot say whether the shutdown dropped work.
   "inFlight",
+  // `mirrorDraining` is the OTHER half of the same `shutdown` line, and it is here because
+  // `inFlight` alone was misleading rather than merely incomplete: the Cloud mirror's pull is not a
+  // stdio request, so `inFlight` reads 0 in exactly the case where the mirror is what the quit is
+  // waiting for. A literal boolean read off `CloudMirror.draining()` (`inflight !== null`), so it
+  // is structurally content-free — the same shape and the same argument as `changed` above.
+  "mirrorDraining",
+  // ── The desktop engine's BOOT phases (`boot_phases`), added WITH the call sites ──
+  //
+  // The attach-phase paragraph above, applied before the fact rather than after it. Both sidecar
+  // doors serve the bridge only once their constructor returns, so the window's "Opening your
+  // mailbox" screen lasts exactly as long as that constructor — and, as with the attach phases, a
+  // single start-to-finish number could not say WHICH phase owned it. These five can: `pgliteOpenMs` is
+  // the WASM instantiation plus Postgres' own startup on the local mirror, `adoptBaselineMs` and
+  // `migrateMs` the two schema passes, `worldMs` the mailbox row and the launch session, and
+  // `totalReadyMs` the whole constructor — so the four subtracted from the total are the unnamed
+  // remainder, which is a reading rather than a guess.
+  //
+  // All five are `Date.now()` deltas, the same clock `cycles`/`totalMs`/`slowestMs` above use.
+  // Structurally integers from a clock: they name no mailbox, no address and no path, and the
+  // data directory deliberately stays off the line for the reason `serving` dropped `dataDir`.
+  // NAMED rather than folded into `totalMs`, on this file's own rule — five durations under one
+  // key is not a claim a reviewer can check.
+  "pgliteOpenMs", "adoptBaselineMs", "migrateMs", "worldMs", "totalReadyMs",
   // ── retry, failure and circuit accounting ──
   "attempt", "attempts", "consecutiveFailures", "maxSyncFailures", "consecutiveFaults",
   "opens", "open", "threshold", "circuit", "cooldownMs", "retryAt", "retryInMs",
