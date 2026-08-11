@@ -326,8 +326,30 @@ export function handoffProblem(address: string, code: string): string | null {
  * that a slow first start is not reported as a failure; short enough that an engine which will
  * never serve — a directory another copy already holds, a migration that failed — is said out
  * loud rather than spun on.
+ *
+ * ── WHY THIS IS MINUTES AND NOT SECONDS ───────────────────────────────────────────────────────
+ *
+ * It was thirty seconds, and thirty seconds was chosen against a cold-disk open — measured at well
+ * under a second on an established mirror. What it did not cover is Postgres CRASH RECOVERY, which
+ * happens inside the engine's database open and is bounded by the size of the write-ahead log
+ * rather than by the mailbox. An engine whose previous run left a large log replays it before it
+ * can serve anything: measured at roughly 305 MB/s, so a directory that had accumulated tens of
+ * gigabytes took near two minutes to come up, every launch, and was reported here as an engine that
+ * had failed to start.
+ *
+ * That log is now bounded — the engine checkpoints on a timer while it runs, which it never used to
+ * do — so an install made after this change never accumulates one. What the budget still has to
+ * cover is the ONE launch that heals an install which grew a large log before it: recovery ends in
+ * a checkpoint, after which the directory is small and every later launch is sub-second. Cutting
+ * that launch short is the worst possible move, because a recovery that does not finish leaves the
+ * log exactly as it found it and the next launch is longer.
+ *
+ * Note what this bound does and does not do. It ends a WAIT and returns the last status seen; it
+ * never stops or kills the engine, which goes on starting either way. So the cost of it being too
+ * large is a slower sentence about a genuinely dead engine, and the cost of it being too small is
+ * telling somebody their mail engine failed while it is busy repairing itself.
  */
-export const SETTLE_MS = 30_000;
+export const SETTLE_MS = 180_000;
 const POLL_MS = 250;
 
 /**

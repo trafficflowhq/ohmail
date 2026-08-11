@@ -206,11 +206,22 @@ impl Default for Timings {
 /// How long the engine gets to finish leaving after its stdin is closed, before it is killed.
 ///
 /// A judgement, not a measurement. What it has to cover is the engine's documented shutdown
-/// order — finish in-flight requests, close IMAP, close the database — and the one unbounded term
-/// in it is a sync cycle already in progress, which the engine stops re-entering but does not
-/// cancel. Long enough that an ordinary quit is never killed; short enough that quitting the app
-/// is not something a user waits on. The escalation is a hard kill of a process that may be
-/// mid-write, which is the whole reason there is a grace period at all.
+/// order — finish in-flight requests, close IMAP, close the database. Long enough that an ordinary
+/// quit is never killed; short enough that quitting the app is not something a user waits on. The
+/// escalation is a hard kill of a process that may be mid-write, which is the whole reason there is
+/// a grace period at all.
+///
+/// This used to name "a sync cycle already in progress, which the engine stops re-entering but does
+/// not cancel" as the one unbounded term, and on the hosted door that term is gone: the cloud
+/// mirror's pull is now cancellable, checks the ask between pages, and the engine waits for it to be
+/// out of the database before closing it — so what a quit waits for there is one request and one
+/// page. The database close itself takes Postgres' shutdown checkpoint, which the engine's periodic
+/// checkpointing keeps small; measured at well under a tenth of a second for a bounded log.
+///
+/// The term SURVIVES on the standalone door, whose IMAP sync cycle is still only stopped from being
+/// re-entered. Five seconds is not chosen to cover that cycle and never was — it is chosen so an
+/// ordinary quit is never killed, and a quit that lands mid-cycle there is still the case this
+/// escalation exists for.
 pub const STOP_GRACE: Duration = Duration::from_secs(5);
 
 /// How often the supervisor looks at the child. Small enough to be invisible, large enough to
