@@ -1125,6 +1125,31 @@ body.reading .shell {
   font-size: 11.5px;
   color: var(--ink3);
 }
+/* WHAT THE AI ALLOWANCE IS DOING. `flex-basis: 100%` puts it on its own line under the bulk
+   strip's buttons — the same device `.scn-sg-note` uses — so it is a footnote to that row and
+   never a fourth control in it. Same 11.5px/--ink3 as every other quiet line here: the sentence
+   has to be findable at the moment it matters and must not compete with the button that spends. */
+.scn-ai-credits {
+  flex-basis: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--ink3);
+}
+/* The way to the plan, as a link and not a button: it navigates, it buys nothing, and the loudest
+   thing in a spending surface must stay the thing that spends. */
+.scn-ai-cta {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
 /* The auto-work opt-in's confirm, in the General pane. Indented under the row it belongs to and
    sharing that row's price and note type with the manual purchase above — one presentation for
    "here is what the server says this costs", wherever it is being asked. */

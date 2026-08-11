@@ -148,7 +148,7 @@ import { ReadsView, type ReadsChipState } from "../views/ReadsView";
 import { ReceiptsView } from "../views/ReceiptsView";
 import { ScreenerView } from "../views/ScreenerView";
 import { SearchView } from "../views/SearchView";
-import { SettingsView, type MailboxEntity, type NotificationsMeta } from "../views/SettingsView";
+import { SettingsView, type MailboxEntity, type NotificationsMeta, type PaneId } from "../views/SettingsView";
 import { TagView } from "../views/TagView";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
@@ -465,6 +465,7 @@ export function AppShell({
   screeningSection,
   screenerSuggest,
   awayTransport,
+  aiCredits,
   onUnread,
 }: {
   demo: boolean;
@@ -609,6 +610,23 @@ export function AppShell({
    */
   awayTransport?: AwayTransport;
   /**
+   * WHAT THE ACCOUNT'S AI ALLOWANCE IS DOING, said where AI actions are bought.
+   *
+   * The same seam as {@link screenerSuggest} and for the identical reason: the answer comes from
+   * `GET /billing/subscription`, and this shared shell may not call `app/api-client` — it is
+   * published, and the mirror does not contain that module. A standalone install has no account
+   * and no allowance, so it hands in nothing and the line simply does not exist there.
+   *
+   * A FUNCTION rather than a node, because the offer this line makes ("start a plan") is
+   * worthless without somewhere to land, and WHERE it lands is this file's business. `go()` is a
+   * module export the Cloud client could import — the constraint is not reachability, it is that
+   * "Settings, on the Subscription pane" is a two-part act here: a hash change AND a one-shot
+   * pane request the settings view reads at its own mount. A node that only had `go()` would land
+   * people on General; a node given both would be a second copy of the shell's navigation living
+   * outside it. So the shell hands down the finished act and the injected node presses it.
+   */
+  aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
+  /**
    * HOW MANY PIECES OF MAIL ARE WAITING FOR YOU — published, for a surface outside the page.
    *
    * The number the Ohbox's rail row already shows, handed out so a shell that has a dock icon
@@ -640,6 +658,7 @@ export function AppShell({
             screeningSection={screeningSection}
             screenerSuggest={screenerSuggest}
             awayTransport={awayTransport}
+            aiCredits={aiCredits}
             onUnread={onUnread}
           />
         </MailStateHost>
@@ -684,7 +703,7 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, onUnread }: {
+function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, aiCredits, onUnread }: {
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
   billingSection?: ReactNode;
@@ -698,6 +717,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   }) => ReactNode;
   awayTransport?: AwayTransport;
+  aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
   onUnread?: (unread: number) => void;
 }) {
   const demo = useDemoMode();
@@ -1017,6 +1037,41 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     spam: null,
   });
   const [screenerFull, setScreenerFull] = useState(false);
+  /**
+   * A ONE-SHOT REQUEST FOR WHICH SETTINGS PANE TO OPEN ON, set by a link that promises one.
+   *
+   * The Screener's AI-credit line offers "start a plan", and an offer that lands on Settings →
+   * General is an offer that has not been kept. `SettingsView` reads this once, at ITS mount, so
+   * it decides where the person starts and never where they stay.
+   *
+   * It has to be CLEARED, and WHEN is the whole difficulty. The settings view unmounts when the
+   * user navigates away (`effectiveView === "settings" ? … : null`), so a value left set would
+   * re-select Subscription on every later visit to Settings — a link pressed once quietly
+   * becoming a preference.
+   *
+   * **Clearing "whenever the route is not settings" is the version that does not work**, and it
+   * fails in the one direction that matters. `openSettingsPane` sets the request and then calls
+   * `go()`, which writes `location.hash`; the hashchange is asynchronous, so the very next render
+   * still has the OLD route. That effect would fire with `route.view === "screener"`, clear the
+   * request, and the settings view would mount a moment later with nothing to read — the offer
+   * silently landing on General, which is exactly the broken promise it exists to prevent.
+   *
+   * So the clear is on the way OUT, tracked by a ref: arm while the settings view is up, clear on
+   * the first render after it goes. `null` hands the choice back to the deep-link parameter,
+   * which is what every other mount uses.
+   */
+  const [settingsPane, setSettingsPane] = useState<PaneId | null>(null);
+  const settingsWasOpen = useRef(false);
+  const openSettingsPane = useCallback((pane: PaneId): void => {
+    setSettingsPane(pane);
+    go("settings");
+  }, []);
+  useEffect(() => {
+    if (route.view === "settings") { settingsWasOpen.current = true; return; }
+    if (!settingsWasOpen.current) return;
+    settingsWasOpen.current = false;
+    setSettingsPane(null);
+  }, [route.view]);
   /**
    * THE READER IS A MESSAGE NOW, NOT A BOOLEAN.
    *
@@ -3892,6 +3947,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                         absorb: suggestions.absorb,
                       })
                 }
+                /* WHAT THE ALLOWANCE IS DOING, under the control that spends it. Bound here
+                   rather than inside the view for the reason every injected node is: the answer
+                   comes from the Cloud API, which this shared file may not call. The offer's
+                   destination is bound HERE too — `openSettingsPane("billing")` — so the shell
+                   keeps its routing and the injected node keeps its transport. Withheld on the
+                   demo, which has no account and therefore no allowance to describe. */
+                aiCreditNode={
+                  demo || !aiCredits
+                    ? undefined
+                    : aiCredits({ onStartPlan: () => openSettingsPane("billing") })
+                }
                 segment={route.screenerSegment}
                 selection={scnSel}
                 onSelect={(segment, id) => setScnSel((s) => ({ ...s, [segment]: id }))}
@@ -4188,6 +4254,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                     aboutSection
                   )
                 }
+                /* WHERE THE SCREENER'S OFFER LANDS. Read once at THIS view's mount and cleared
+                   when the view goes away — see `settingsPane` above — so it decides the pane
+                   exactly once and the person is free to click elsewhere afterwards. */
+                initialPane={settingsPane ?? undefined}
               />
             ) : null}
             </ViewBoundary>

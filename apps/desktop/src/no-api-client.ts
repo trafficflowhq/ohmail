@@ -142,6 +142,7 @@ export interface SubscriptionStatus {
         mailboxes: number;
         monthlyCredits: number;
     }>;
+    trialCredits?: number;
 }
 
 export const auth: {

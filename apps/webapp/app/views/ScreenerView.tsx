@@ -584,6 +584,7 @@ export function ScreenerView({
   state,
   suggest,
   suggestNode,
+  aiCreditNode,
   segment,
   selection,
   settled,
@@ -616,6 +617,22 @@ export function ScreenerView({
    * two ways to ask the same question with different words on them.
    */
   suggestNode?: ReactNode;
+  /**
+   * WHAT THE ACCOUNT'S AI ALLOWANCE IS DOING — one line under whichever control is offered above.
+   *
+   * Injected for the same reason both controls are: the answer is a billing read, and this file
+   * is compiled into a binary that has no account. It is deliberately SEPARATE from
+   * {@link suggest} rather than a field on it — the control describes a PURCHASE (these senders,
+   * this price, this button) and this describes the account's standing (what is left, or why
+   * nothing can be spent and what would change that). Folding the second into the first would
+   * mean the sentence could only be shown while a ladder was open, which is precisely the moment
+   * a person has already decided to spend.
+   *
+   * Rendered whether or not there is anything to buy, and that is the point of putting it beside
+   * the resting state too: an exhausted allowance is most worth saying on the visit where the
+   * suggest control has nothing to offer and no explanation for it.
+   */
+  aiCreditNode?: ReactNode;
   /**
    * The remote-image consent chrome, threaded to every held preview so the Screener's
    * "Show images" path is the reading pane's, unchanged. ABSENT on a client with no server
@@ -1175,6 +1192,11 @@ export function ScreenerView({
                 <Button variant="ghost" kbdHint="s" onClick={() => state.markAllSpam(scopeOf)}>
                   {t("markAllSpam")}
                 </Button>
+                {/* THE ALLOWANCE, one line under the control that spends it — last in the strip
+                    and full-width, so it reads as a footnote to the row rather than as a fourth
+                    button in it. It renders itself away when there is nothing worth saying, so
+                    the ordinary case (AI on, plenty of allowance) is an unchanged strip. */}
+                {aiCreditNode}
               </div>
             ) : null}
             {/* HOW FAR THE BULK HAS GOT. `applyAll` and `markAllSpam` dispatch one row every

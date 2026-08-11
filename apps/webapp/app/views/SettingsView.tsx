@@ -41,7 +41,10 @@ import { hueOf } from "../shell/format";
 import { LanguageRow } from "../shell/LanguageRow";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
-type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "away" | "billing" | "tags" | "rules" | "about" | "security" | "account" | "desktop";
+/* Exported so a caller that LINKS to a pane can name one — `AppShell`'s `openSettingsPane`, and
+ * through it the Screener's "start a plan" offer. A string union rather than a free `string`:
+ * `pane` selects a render branch, so a name nothing matches is an empty settings screen. */
+export type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "away" | "billing" | "tags" | "rules" | "about" | "security" | "account" | "desktop";
 
 /**
  * The notification channels, and why this list is here rather than in the fixtures.
@@ -372,6 +375,7 @@ export function SettingsView({
   remoteImagesSection,
   awaySection,
   desktopSection,
+  initialPane,
 }: {
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
   notifications: NotificationsMeta | null;
@@ -579,13 +583,28 @@ export function SettingsView({
    * `settings` namespace does not own. Absent ⇒ no nav entry and no pane, structurally.
    */
   desktopSection?: { label: string; node: ReactNode };
+  /**
+   * WHICH PANE TO OPEN ON, when the caller that sent the user here knows where they are going.
+   *
+   * The deep link ({@link initialPaneFromUrl}) answers the same question for a REDIRECT arriving
+   * from outside the app. This answers it for a link INSIDE it — the Screener's "start a plan"
+   * offer, which is a promise about a specific pane and would be a broken one if it landed on
+   * General and left the person to find Subscription themselves.
+   *
+   * Read once, as the initial state, exactly as the URL is, and for the same reason: this is where
+   * somebody STARTS, not where they are pinned. Clicking another pane must work, and a watched
+   * prop would drag them back.
+   */
+  initialPane?: PaneId;
 }) {
   const t = useTranslations("settings");
   /** The `tag` namespace owns what a tag IS; `settings` owns this pane's chrome. */
   const tg = useTranslations("tag");
   const toast = useToast();
   const { preference, setTheme } = useTheme();
-  const [pane, setPane] = useState<PaneId>(initialPaneFromUrl);
+  // The caller's request wins over the URL's, and both are read ONCE. A caller that says nothing
+  // leaves the deep link in charge, which is every mount but the one the Screener's offer causes.
+  const [pane, setPane] = useState<PaneId>(() => initialPane ?? initialPaneFromUrl());
   const [channels, setChannels] = useState(NOTIFICATION_CHANNELS);
   const [vips, setVips] = useState<string[] | null>(null);
   const [learned, setLearned] = useState<"open" | "accepted" | "dismissed">("open");

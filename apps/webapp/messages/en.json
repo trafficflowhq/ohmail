@@ -99,7 +99,7 @@
     "plan_solo": "Solo",
     "plan_plus": "Plus",
     "plan_pro": "Pro",
-    "trialNote": "The 14-day trial needs no card and runs the deterministic rules — screening, filing, Reads, Receipts, Resurface. Managed AI actions (drafts and pre-suggestions) start with the subscription, so nothing is spent on your behalf during the trial.",
+    "trialNote": "The 14-day trial needs no card and runs the whole product — screening, filing, Reads, Receipts, Resurface — plus {credits} AI actions to try the drafts and the Screener's suggestions with. Use them up and the rules carry on; the monthly allowance starts with the subscription.",
     "alreadySubscribed": "This account is on {plan} ({status}).",
     "openOhmail": "Open ohmail",
     "later": "Do this later",
@@ -946,7 +946,7 @@
     "titleB": "No card.",
     "when": "Open now: start today and the fourteen days start with you.",
     "lede": "Every tier starts with the whole trial — your own mailboxes, the Screener, real folders, always-on sync, push and the web app. Everything the product does with rules.",
-    "terms": "The managed AI actions begin when a subscription does — the trial never spends them. And there is nothing to cancel: give no card, and after fourteen days the trial simply ends."
+    "terms": "It comes with 500 AI actions, so the drafts and the Screener's suggestions are yours to try; the monthly allowance begins when a subscription does. And there is nothing to cancel: give no card, and after fourteen days the trial simply ends."
   },
   "pricing": {
     "title": "Desktop is free. The cloud is optional.",
@@ -981,7 +981,7 @@
     "proMailboxes": "50 mailboxes",
     "proActions": "~20,000 AI actions/mo",
     "cloudCta": "Choose {tier}",
-    "trialNote": "Every tier starts with the 14 days above — no card, rules-only; the managed AI actions begin when the subscription does.",
+    "trialNote": "Every tier starts with the 14 days above — no card, and 500 AI actions to try. The monthly allowance begins when the subscription does.",
     "annualNote": "Two months free when billed annually.",
     "footerLine": "You keep your mail either way — it lives on your server, in ordinary folders.",
     "desktopNotify": "Keep me posted"
@@ -1091,7 +1091,7 @@
     "q6": "Which providers work?",
     "a6": "Any IMAP mailbox: your own domain at Metanet or Infomaniak, iCloud, Gmail, Outlook, a self-hosted server. If it speaks IMAP, ohmail organizes it in place. Native Exchange sync over Microsoft Graph is on the roadmap; Microsoft 365 connects over IMAP, like every other mailbox here.",
     "q7": "Is there a trial for Cloud?",
-    "a7": "Yes — 14 days, no card. It is the whole product except the managed AI actions: rules, sync, push and the web app all run, and the included AI actions begin when a subscription does. Desktop needs no trial at all; it is simply free.",
+    "a7": "Yes — 14 days, no card. It is the whole product: rules, sync, push and the web app all run, and it comes with 500 AI actions so the drafts and the Screener's suggestions are yours to try. Spend those and mail keeps flowing rules-only; the monthly allowance begins when a subscription does. Desktop needs no trial at all; it is simply free.",
     "q8": "Desktop or Cloud — what’s the real difference?",
     "a8": "The same model, the same vocabulary, and deliberately not the same privacy posture — that is the honest difference. Desktop is free and fully standalone: all processing local, no account, no artificial limits. It is a real mail client on all three platforms — it connects to your own IMAP server and organizes your mailbox on your machine, and because your mail is on your own disk it is there to read with the network down. Your own AI key or a local model is still to come. Cloud adds the web app, push notifications, always-on processing while your computer sleeps, and AI included from $9 a month — and it holds a copy of your mail on our servers to do that. The same download does either one; which door you take is a choice inside the app. Both are open today."
   },
@@ -1459,7 +1459,21 @@
     "continue": "Continue",
     "cancel": "Cancel",
     "noFactor": "This account has no second factor yet, and the billing portal requires one.",
-    "aiOnTrial": "Starts with your subscription. The trial never spends AI actions."
+    "aiOnTrial": "Your trial's AI actions are used up. A plan brings a monthly allowance."
+  },
+  "aiCredits": {
+    "trialLeft": "{count, plural, one {1 AI action} other {# AI actions}} left on your trial.",
+    "trialSub": "Yours for the trial. These are not refilled — a plan brings a monthly allowance.",
+    "trialSpent": "Your trial's AI actions are used up. Your rules keep running; a plan brings a monthly allowance.",
+    "noPlan": "AI actions come with a plan. Your rules keep running without one.",
+    "spent": "This period's AI actions are used up. Your rules keep running, and the allowance returns when the plan renews.",
+    "pastDue": "AI is off until the last payment goes through. Your rules keep running.",
+    "unpaid": "AI is off while the subscription is unpaid. Your rules keep running.",
+    "canceled": "AI is off since the subscription ended. Your rules keep running.",
+    "paused": "AI is off while the subscription is paused. Your rules keep running.",
+    "suspended": "AI is off on this account. Write to us and we will sort it out.",
+    "startPlan": "Start a plan",
+    "seePlan": "See your plan"
   },
   "shortcuts": {
     "goPile": "Go to {pile}",
