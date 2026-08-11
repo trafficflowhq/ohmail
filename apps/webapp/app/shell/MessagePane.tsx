@@ -12,7 +12,7 @@ import { Button, Chip, Icon, InfoNote, Kbd, ProtectedBlock, ReadingPane } from "
 import { AttachmentStrip } from "../components/AttachmentStrip";
 import { isPreviewable } from "../components/AttachmentPreview";
 import { MessageBody } from "../components/MessageBody";
-import { ConversationEntries, ConversationHead } from "./Conversation";
+import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
 import { PLACE_LABEL, dayNine, dayValue, hueOf, nextWeekNine, tagsOfMessage, tomorrowNine } from "./format";
 import { replyAllRecipients } from "./compose-from";
@@ -789,71 +789,23 @@ export function MessagePane({
   const showConversation = conversation.length > 0;
 
   /**
-   * ── WHICH SIBLINGS ARE OPEN — THE COLLAPSE STATE, AND WHY IT STARTS WHERE IT DOES ─────────
-   *
-   * A thread renders one row per message with every body already loaded (see `hydrateThread`
-   * below and `MessageCard`); this Set is only which of those rows are UNFOLDED. It opens on two
-   * ids: the NEWEST message, because a thread you return to should show its latest, and the
-   * message you OPENED — which is usually the newest, but is an older one when a search result
-   * or a deep link put you there, and in that case both ride in expanded so the reader lands on
-   * the message they asked for AND sees the freshest reply.
-   *
-   * `newestId` is read from the conversation, whose MEMBERSHIP is stable across mirror bumps
-   * (only bodies hydrate), so the reset keys on the opened message alone — the recommended
-   * "adjust state when a prop changes" pattern rather than an effect, so a thread swap paints
-   * the right rows on the first frame instead of flashing the previous thread's.
-   */
-  const newestId = conversation.length ? conversation[conversation.length - 1]!.id : message.id;
-  /**
-   * ── AND WHEN THE OPENED MESSAGE ALREADY HAS A NEWER REPLY OF THE READER'S OWN ──────────────
-   *
-   * Opening a message you have just answered (the parent) puts your reply on the thread as the
-   * newest sibling — via the shell's optimistic overlay or the Sent mirror. Forcing the parent
-   * open as well would land the reader back on the message they just left; the answer is what
-   * they want to see. So when a NEWER own-sent sibling exists, the initial fold opens only
-   * `newestId` (the reply) and lets the parent stay collapsed. "Own-sent" is `from ∈ ownAddresses`
-   * — the same fold `recipientSummary` uses for "me" — so a surface that knows no addresses (the
-   * inert chrome, a bare test) treats nothing as own-sent and the parent expands exactly as before.
-   */
-  const ownSet = new Set((chrome.ownAddresses ?? []).map((a) => a.trim().toLowerCase()));
-  const hasNewerOwnReply = conversation.some(
-    (m) => m.id !== message.id && before(message, m) && ownSet.has(m.from.address.trim().toLowerCase()),
-  );
-  const initialExpanded = (): Set<string> =>
-    hasNewerOwnReply ? new Set([newestId]) : new Set([newestId, message.id]);
-  const [expanded, setExpanded] = useState<Set<string>>(initialExpanded);
-  const [openedFor, setOpenedFor] = useState(message.id);
-  if (openedFor !== message.id) {
-    setOpenedFor(message.id);
-    setExpanded(initialExpanded());
-  }
-  const toggleExpanded = useCallback((id: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  /**
    * ── ASK FOR THE WHOLE CONVERSATION'S BODIES, ONCE, IN ONE REQUEST ───────────────────────
    *
-   * THIS IS WHAT MAKES COLLAPSE HONEST. A sibling starts folded (see `MessageCard`), but its
-   * body is fetched HERE, on open, alongside every other message on the thread — so unfolding a
-   * row reveals a body already in the mirror with no new request, and a collapsed row is a
-   * message the reader has in hand rather than a placeholder for one they would have to go and
-   * get. Collapse changes what is drawn, never what is loaded, which is why a folded thread
-   * withholds nothing (see `Conversation.tsx`).
+   * THIS IS WHAT MAKES THE PANELS HONEST. Every sibling's
+   * body is fetched HERE, on open, alongside every other message on the thread — so a panel
+   * (`ConversationPanels`) draws a body already in the mirror with no request of its own, and
+   * every message on the thread is mail the reader has in hand rather than a placeholder for
+   * some they would have to go and get. The panels change what is drawn, never what is loaded,
+   * which is why a thread withholds nothing (see `Conversation.tsx`).
    *
    * Keyed on the joined id list rather than on `conversation`, which is a fresh array on every
    * render (see above — it is computed inline on purpose). An array dep would re-fire this on
    * every mirror version bump, and every bump is caused by the very writes this call produces.
    *
-   * IT LIVES HERE RATHER THAN IN `ConversationEntries`, WHICH IS WHERE IT USED TO LIVE, because
-   * that component is mounted TWICE per thread — the siblings above the opened message and the
-   * siblings below it are two lists — so an effect inside it asked twice for one act of opening
-   * one conversation. This is the only place that holds the whole thread.
+   * IT LIVES HERE RATHER THAN IN THE MAPPER, WHICH IS WHERE IT ONCE LIVED (as
+   * `ConversationEntries`, then mounted TWICE per thread — two lists, above and below the
+   * opened message — so an effect inside it asked twice for one act of opening one
+   * conversation). This is the only place that holds the whole thread.
    *
    * THE OPENED MESSAGE IS NOT IN THE LIST. The shell hydrates the selected id itself, and
    * urgently (`AppShell`, keyed on `readerFor`/`selectedOhbox`), so that the body which IS the
@@ -879,15 +831,15 @@ export function MessagePane({
   /**
    * OPEN A THREAD AT ITS LATEST MESSAGE — instant, no animation.
    *
-   * A conversation renders oldest→newest (`ConversationEntries` above/below the focused
+   * A conversation renders oldest→newest (`ConversationPanels`, one full-body panel per
    * message), so a fresh render sits at the TOP, on the oldest mail, and the reader has to
    * scroll down to reach what just arrived. This puts the newest on screen the moment the
    * pane paints.
    *
    * The FOCUS is NOT remapped — `message` stays the id that was opened (ActionBar, reply,
    * read-state and selection all key on it). The anchor is purely a scroll position: the LAST
-   * `[data-conv-id]` element in the stack, which is the newest sibling (or the focused message
-   * itself when it is the newest).
+   * `[data-conv-id]` element in the stack — the newest PANEL (or the focused message's own
+   * panel when it is the newest).
    *
    * `scrollTop` is assigned DIRECTLY rather than via `scrollIntoView`, for two reasons: it
    * moves ONE scroller instead of every scrollable ancestor, and it is instant regardless of
@@ -946,6 +898,26 @@ export function MessagePane({
         scroller = scroller.parentElement;
       }
       if (!scroller) return;
+      /**
+       * SQUARE THE SCROLL GEOMETRY, so the flush bottom line is exact. Engines snap the
+       * maximum scroll offset to whole pixels, but the panel stack's height is fractional —
+       * so scrolled to the end, the last panel could rest a sub-pixel off the columns'
+       * shared baseline, or leave a hairline of canvas under itself. The last PANEL absorbs
+       * that fraction as ≤1px of inner bottom padding, making content height − viewport an
+       * integer; its own surface swallows the remainder and the flush edge stays exact.
+       * Reset first so the measurement is of the unpadded stack; only when the stack
+       * actually overflows, because a non-scrolling thread has no maximum offset to square
+       * (and jsdom, which reports zero-height rects, takes that branch and stays inert).
+       */
+      last.style.paddingBottom = "0px";
+      const stackH = conv.getBoundingClientRect().height;
+      const portH = scroller.getBoundingClientRect().height;
+      if (stackH > portH) {
+        const residue = (stackH - portH) % 1;
+        let pad = (1 - residue) % 1;
+        if (pad < 0.02 || pad > 0.98) pad = 0;
+        last.style.paddingBottom = `${pad.toFixed(3)}px`;
+      }
       scroller.scrollTop =
         last.getBoundingClientRect().top -
         scroller.getBoundingClientRect().top +
@@ -1282,119 +1254,134 @@ export function MessagePane({
     <h2>{message.subject}</h2>
   );
 
+  const bodyNoteFailed = body.state === "failed" || stalled;
+
+  /**
+   * THE PILL, BUILT ONCE AND MOUNTED ONCE — the same element in both layouts, so the bar the
+   * single message parks in `ReadingPane`'s actions slot and the bar at the foot of the thread
+   * wrapper cannot drift apart. `pill-snapshot.test.ts` pins its rendered markup to the bytes
+   * captured before the viewer redesign: the wrapper around the bar changed, the bar did not.
+   * It is bound to `message` — the OPENED id — on every surface; opening an older message via
+   * search keeps the verbs on that message, never on the newest panel.
+   */
+  const actionBar = (
+    <ActionBar
+      message={message}
+      now={now}
+      panel={panel}
+      onPanel={setPanel}
+      onAction={onAction}
+      onScreen={(anchor) => chrome.openSenderMenu(message.id, anchor)}
+      onTag={(anchor) => onAddTag(message.id, anchor)}
+    />
+  );
+
+  const replyEditor = replying ? (
+    <InlineReply
+      /* NO `context` AND NO `now` ANY MORE. The editor was handed the whole
+         conversation (or `[message]`) to render in its own scroller; the pane above
+         owns that job now, so the editor takes the message it is answering and
+         nothing else — the `to` line, the draft key and `canSend` are all it needs
+         a message FOR. */
+      message={message}
+      /* Whether this editor answers EVERYONE on the message — set by the open
+         (`openReply(id, true)`), read here so the head names the same audience the
+         send will carry. Absent chrome field means a plain reply. */
+      replyAll={chrome.replyAll === true}
+      value={chrome.replyBody}
+      send={chrome.replySendState(message.id)}
+      onChange={chrome.onReplyBody}
+      onClose={chrome.closeReply}
+      onSend={() => chrome.sendReply(message.id)}
+      /* The audience, editable: the edit strings and their reporter live on the chrome
+         beside the body (mounted-twice — `message-chrome.tsx`), and the book feeds the
+         rows' suggestions. `onEnvelope` absent on the inert chrome keeps the head a
+         plain statement there. */
+      envelope={chrome.replyEnvelope}
+      onEnvelope={chrome.onReplyEnvelope}
+      book={chrome.addressBook}
+      /* The AI drafter's offer renders inside the editor the draft lands in — see
+         `InlineReply`. Absent where there is no drafter: the desktop shell, and any
+         harness that mounts a pane without the shell. */
+      draftReply={chrome.draftReply}
+    />
+  ) : undefined;
+
+  /**
+   * ── A SINGLE MESSAGE KEEPS THE `ReadingPane` ANATOMY ─────────────────────────────────────
+   *
+   * One `<article class="msg">` filling the wrapper — the panel IS the message, so the article
+   * grammar holds. NO `from`, `subject`, `chips`, `time` OR `onSender` any more: the pane
+   * composes its own `MessageHeader`, subject and chips in the children slot, so `ReadingPane`
+   * renders no from-line and there is exactly one header per message. What stays is what is
+   * ABOUT the message rather than part of it: the body-state note, the action bar and the
+   * reply slot.
+   */
+  if (!showConversation) {
+    return (
+      <ReadingPane
+        bodyNote={bodyNote}
+        bodyNoteFailed={bodyNoteFailed}
+        actions={actionBar}
+        reply={replyEditor}
+      >
+        {focusedHeader}
+        {subjectTitle}
+        {titleChrome}
+        {focusedMessage}
+      </ReadingPane>
+    );
+  }
+
+  /**
+   * ── THE THREAD DOES NOT ROUTE THROUGH `ReadingPane` — an article cannot wrap N panels ────
+   *
+   * The wrapper below is the scrolling column: every message on the conversation is its own
+   * full-width, full-body panel (`.pm`), oldest first, sitting directly on the canvas — the
+   * `.read-col` drops its panel skin for this case (`message.css`). No peek rows, no counts,
+   * no "show earlier": every panel is the mail itself (`ConversationPanels`).
+   *
+   *   · The SUBJECT opens the column once (`.conv-lede`) — panels wear a heading only when
+   *     theirs diverges — and it scrolls away with the thread; the lede is the first element
+   *     on the columns' shared top line.
+   *   · The FOCUSED panel is composed here (the protected rule decided first, the hydrated
+   *     body, the attachment strip, the body-state line) and slotted into its chronological
+   *     place; `aria-current` marks it, and the focus is never remapped.
+   *   · The PILL and the reply dock are direct children of the wrapper, AFTER the panels, so
+   *     `.msg-actions`' sticky rule pins the one bar at the foot of the scrolling column
+   *     exactly as it pins inside `.msg` — and the editor docks under it, one copy, below the
+   *     conversation.
+   *
+   * `role="group"` because `aria-label` on a bare div is ignored, and a landmark
+   * (`<section>`) would be too loud for one part of one view.
+   */
   return (
-    <ReadingPane
-      /* NO `from`, `subject`, `chips`, `time` OR `onSender` any more — the pane composes its own
-         `MessageHeader`, subject and chips in the children slot below, so `ReadingPane` renders
-         no from-line and there is exactly one header per message. What stays is what is ABOUT the
-         message rather than part of it: the body-state note, the action bar and the reply slot. */
-      bodyNote={bodyNote}
-      bodyNoteFailed={body.state === "failed" || stalled}
-      actions={
-        <ActionBar
-          message={message}
-          now={now}
-          panel={panel}
-          onPanel={setPanel}
-          onAction={onAction}
-          onScreen={(anchor) => chrome.openSenderMenu(message.id, anchor)}
-          onTag={(anchor) => onAddTag(message.id, anchor)}
-        />
-      }
-      reply={
-        replying ? (
-          <InlineReply
-            /* NO `context` AND NO `now` ANY MORE. The editor was handed the whole
-               conversation (or `[message]`) to render in its own scroller; the pane above
-               owns that job now, so the editor takes the message it is answering and
-               nothing else — the `to` line, the draft key and `canSend` are all it needs
-               a message FOR. */
-            message={message}
-            /* Whether this editor answers EVERYONE on the message — set by the open
-               (`openReply(id, true)`), read here so the head names the same audience the
-               send will carry. Absent chrome field means a plain reply. */
-            replyAll={chrome.replyAll === true}
-            value={chrome.replyBody}
-            send={chrome.replySendState(message.id)}
-            onChange={chrome.onReplyBody}
-            onClose={chrome.closeReply}
-            onSend={() => chrome.sendReply(message.id)}
-            /* The audience, editable: the edit strings and their reporter live on the chrome
-               beside the body (mounted-twice — `message-chrome.tsx`), and the book feeds the
-               rows' suggestions. `onEnvelope` absent on the inert chrome keeps the head a
-               plain statement there. */
-            envelope={chrome.replyEnvelope}
-            onEnvelope={chrome.onReplyEnvelope}
-            book={chrome.addressBook}
-            /* The AI drafter's offer renders inside the editor the draft lands in — see
-               `InlineReply`. Absent where there is no drafter: the desktop shell, and any
-               harness that mounts a pane without the shell. */
-            draftReply={chrome.draftReply}
-          />
-        ) : undefined
-      }
-    >
-      {/* THE CONVERSATION IN THE MESSAGE — one ROW per message, every body already loaded.
-          Oldest first; the message you opened keeps the full anatomy and its own accent rule,
-          and its siblings are collapsible peek rows (see `MessageCard`). The newest and the
-          opened message start expanded, so a reader lands on what they asked for and the latest
-          reply — never on a count standing in for mail they cannot reach. */}
-      {showConversation ? (
-        <>
-          {/* The thread's subject once, at the top: each message wears a header rather than
-              repeating the subject, and a sibling shows its own only when it diverges. */}
-          {subjectTitle}
-          {titleChrome}
-          {/* `role="group"` because `aria-label` on a bare div is ignored, and a landmark
-              (`<section>`) would be too loud for one part of one message. */}
-          <div className="conv" role="group" aria-label={tc("conversationAria")} ref={convRef}>
-            <ConversationHead count={conversation.length} />
-            <ConversationEntries
-              messages={conversation.filter((m) => before(m, message))}
-              threadSubject={message.subject}
-              now={now}
-              expanded={expanded}
-              onToggle={toggleExpanded}
-            />
-            <div className="conv-focus" data-conv-id={message.id} aria-current="true">
+    <div className="conv" role="group" aria-label={tc("conversationAria")} ref={convRef}>
+      <div className="conv-lede">
+        {subjectTitle}
+        {titleChrome}
+      </div>
+      <ConversationPanels
+        messages={conversation}
+        focusedId={message.id}
+        threadSubject={message.subject}
+        now={now}
+        focusedPanel={
+          <article className="pm conv-focus" data-conv-id={message.id} aria-current="true">
+            <div className="pm-in">
               {focusedHeader}
               {focusedMessage}
+              {bodyNote ? (
+                <p className={bodyNoteFailed ? "msg-body-state warn" : "msg-body-state"} role="status">
+                  {bodyNote}
+                </p>
+              ) : null}
             </div>
-            <ConversationEntries
-              messages={conversation.filter((m) => m.id !== message.id && !before(m, message))}
-              threadSubject={message.subject}
-              now={now}
-              expanded={expanded}
-              onToggle={toggleExpanded}
-            />
-          </div>
-        </>
-      ) : (
-        // A single message: header, subject, chips, then the body. `focusedMessage` is the same
-        // expression the thread's focused row uses — `focusedBody` (protected rule decided first,
-        // never consulting `body`) plus the attachment strip.
-        <>
-          {focusedHeader}
-          {subjectTitle}
-          {titleChrome}
-          {focusedMessage}
-        </>
-      )}
-    </ReadingPane>
+          </article>
+        }
+      />
+      <div className="msg-actions">{actionBar}</div>
+      {replyEditor ? <div className="reply-dock">{replyEditor}</div> : null}
+    </div>
   );
-}
-
-/**
- * Is `m` earlier in the conversation than the opened message?
- *
- * The comparison is on the ORDER `threadOf` already sorted by — date, id as the tiebreak —
- * rather than on dates alone, so a thread whose messages share a timestamp (a seeded or
- * imported chain) still splits at exactly one place and never renders a message twice or
- * not at all. The opened message itself is never "before" itself.
- */
-function before(m: EngineMessage, focused: EngineMessage): boolean {
-  const tm = m.date ? Date.parse(m.date) : 0;
-  const tf = focused.date ? Date.parse(focused.date) : 0;
-  if (tm !== tf) return tm < tf;
-  return m.id < focused.id;
 }

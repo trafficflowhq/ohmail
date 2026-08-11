@@ -3474,10 +3474,11 @@ textarea.c-input:read-only {
 }
 
 /* ================= the conversation =============================
-   The rest of the thread, oldest first, inside the open message. Siblings reuse the Blanc
-   `.hmail` card — the same card the Screener uses for held mail, so "a message inside a
-   message" looks the same wherever the product does it — one shade quieter, because a
-   lift-1 card sitting inside the lift-1 reading pane reads as two competing surfaces.
+   The thread as a COLUMN OF PANELS. `.conv` is the wrapper `MessagePane` renders instead of a
+   `ReadingPane` article when a conversation exists: every message is its own full-width,
+   full-body panel (`.pm`) on the canvas, oldest first — no peek rows, no counts, nothing
+   standing in for mail. The `.read-col` drops its panel skin for this case and stays the one
+   scroller (`packages/ui` message.css); the panels are separated by the canvas itself.
 
    NO INNER SCROLLER, ANYWHERE. `.read-col` and `.reader` already
    scroll; nesting a second scroller inside them is a trap on a phone and for a keyboard, and
@@ -3485,92 +3486,125 @@ textarea.c-input:read-only {
    used to be the reply editor's own 190px `.reply-context`, which existed so the editor could
    stay reachable below a deep chain. That copy of the conversation is gone — a reply must not
    repeat the message that is already on screen — and the editor scrolls itself
-   into view on open instead — see `InlineReply`. So the rule has no exceptions left. */
-.conv {
-  margin: 0 0 4px;
-}
-.conv-head {
-  font-size: 11px;
-  color: var(--ink3);
-  margin: 0 0 13px;
-}
-.conv .hmail {
-  box-shadow: var(--lift-0);
-  border-radius: 16px;
-  padding: 15px 19px 16px;
-  margin-bottom: 14px;
-}
-.conv .hmail h3 {
-  font-size: 14.5px;
-  margin: 5px 0 8px;
-}
-.conv .hmail .hm-body {
-  font-size: 13px;
-  color: var(--ink2);
-}
-/* The message you opened is set in full-weight prose while its siblings collapse to a muted
-   13px peek — that difference in scale and weight IS which one is focused, so it carries no
-   side rule, no border and no colour-only cue. The focused message sits flush in the column;
-   the siblings are the inset cards, which is the reading order stated as layout. */
-.conv > .conv-focus {
-  margin: 0 0 16px;
-}
-@media (max-width: 560px) {
-  .conv .hmail {
-    padding: 13px 15px 14px;
-  }
-}
+   into view on open instead — see `InlineReply`. So the rule has no exceptions left.
 
-/* ── A COLLAPSED SIBLING: THE WHOLE CARD IS ONE PEEK-ROW BUTTON ──────────────────────────────
-   Monogram, name, a one-line peek of the body and the stamp, on one line at every width. The
-   card owns no padding of its own here — the button does — so the hover fill reaches the card's
-   rounded edge. `min-width:0` on the peek is what lets `text-overflow:ellipsis` bite; the name
-   and stamp are `flex:none` so the stamp never wraps and the peek is the only thing that gives. */
-.conv .hmail.hm-collapsed {
-  padding: 0;
-}
-.hm-peekrow {
+   FLUSH AT BOTH ENDS. The wrapper carries no vertical padding, so the lede rests its top edge
+   on the columns' shared top line and — scrolled to the end — the column bottoms out on the
+   same baseline the neighbouring panels end on. The sub-pixel remainder engines would leave at
+   the maximum scroll offset is absorbed as ≤1px of padding inside the LAST panel, by the same
+   anchor effect that opens the thread at its newest message (`MessagePane`). Flush, sticky and
+   scroll-to-latest are LIVE-ONLY facts — jsdom applies no layout, so the live pass is the
+   acceptance for this block, not the unit suite. */
+.conv {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+}
+.conv > * {
+  flex: none;
+}
+/* The thread's subject (and the focused message's signal/tag marks) open the column once —
+   set like the panel content: same centred measure, no panel of its own, scrolls away. */
+.conv-lede {
   width: 100%;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  padding: 12px 19px;
-  border-radius: inherit;
-  transition: background 0.15s var(--swift);
+  max-width: 688px;
+  margin: 0 auto 14px;
+  padding: 2px 30px 0;
 }
-.hm-peekrow:hover {
-  background: var(--tint);
-}
-.hm-peekrow .hm-name {
-  flex: none;
+.conv-lede h2 {
+  font-size: 24px;
   font-weight: 600;
-  font-size: 12.5px;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+  margin: 0;
 }
-.hm-peekrow .hm-peek {
-  flex: 1;
-  min-width: 0;
-  font-size: 12.5px;
-  color: var(--ink3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.conv-lede .msg-marks {
+  margin-top: 8px;
 }
-.hm-peekrow .t {
-  flex: none;
-  margin-left: 2px;
-  font-size: 11px;
-  color: var(--ink3);
-  font-variant-numeric: tabular-nums;
+/* ── A MESSAGE'S PANEL — every message on the thread wears the same one ──────────────────────
+   The reading column's own treatment (`--panel`, 20px radius, lift-1), full width of the
+   wrapper, content centred on the reading measure inside. The 12px of canvas between panels is
+   the thread's rhythm; the LAST panel drops it so the column can rest flush on the bottom
+   line (the pill's flow box follows it — see `.msg-actions` in packages/ui message.css). */
+.pm {
+  background: var(--panel);
+  border-radius: 20px;
+  box-shadow: var(--lift-1);
+  margin: 0 0 12px;
+}
+.conv > article.pm:last-of-type {
+  margin-bottom: 0;
+}
+.pm-in {
+  max-width: 688px;
+  margin: 0 auto;
+  padding: 26px 30px 30px;
+}
+/* A panel's diverging subject — only a renamed branch prints one (`Conversation.tsx`). */
+.pm h3 {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+  margin: 12px 0 0;
+  text-wrap: balance;
+}
+/* A sibling panel's mail, at the same scale the focused prose gets — one thread, one type.
+   (The focused panel's body keeps `.msg-body`, which `conversation.test.ts` holds to exactly
+   one per surface; this class is the sibling's slot for the same viewer.) */
+.pm-body {
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  margin-top: 14px;
+}
+.conv .conv-focus .msg-body {
+  margin-top: 14px;
+}
+/* The focused message is one panel among equals — `aria-current` marks it for machines and
+   its position in the column for people; it carries no side rule, no border and no
+   colour-only cue (guarded by `conversation.test.ts`). */
+.conv > .conv-focus {
+  margin: 0 0 12px;
+}
+/* THE ONE PILL, AT THE FOOT OF THE COLUMN. A direct child of the wrapper, after the panels, so
+   the sticky rule in packages/ui message.css pins it to the scrollport bottom exactly as it
+   does inside `.msg`; only the horizontal geometry is stated here — the bar rides the same
+   centred measure the panel content uses. (`margin-top` stays the ui rules': the flex fill in
+   the reading column, 24px in the overlay, 34px static while a reply is open.) */
+.conv > .msg-actions {
+  width: 100%;
+  max-width: 688px;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 0 30px;
+}
+/* The editor docks at the same measure. The dock itself spans the column (its pinned ground
+   must reach edge to edge — reader.css); the card inside it lines up with the panels. */
+.conv > .reply-dock > .reply {
+  max-width: 688px;
+  margin-left: auto;
+  margin-right: auto;
+}
+/* THE READER OVERLAY hosts the same wrapper: cap and centre it where there is no column, and
+   keep the pill legible — the overlay's resting fade (`reader.css`) restores on hover of the
+   `.msg` article, which a thread does not have, so the wrapper carries its own restore. */
+.reader .conv {
+  max-width: 748px;
+  margin: 0 auto;
+}
+.reader .conv:hover .msg-actions .abar-row,
+.reader .conv:hover .msg-actions .abar-panel,
+.reader .conv:focus-within .msg-actions .abar-row,
+.reader .conv:focus-within .msg-actions .abar-panel {
+  opacity: 1;
 }
 @media (max-width: 560px) {
-  .hm-peekrow {
-    padding: 11px 15px;
+  .pm-in {
+    padding: 20px 18px 24px;
+  }
+  .conv-lede {
+    padding: 2px 18px 0;
   }
 }
 

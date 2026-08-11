@@ -1,43 +1,34 @@
 "use client";
 
 /**
- * THE CONVERSATION, RENDERED — ONE ROW PER MESSAGE, COLLAPSIBLE.
+ * THE CONVERSATION, RENDERED — ONE FULL-BODY PANEL PER MESSAGE.
  *
  * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
  *
  * Threading reached the mirror and the reader never showed it: opening a message that was one
  * of three on its thread rendered one body and no thread count. The data half shipped; the UI
- * half was never in scope. That half is here now — and then a second problem appeared once it
- * worked: a thread of ordinary business letters rendered as a tall stack of full letters, each
- * complete, with the reader made to scroll past the ones they had read to reach the one they
- * wanted. Every message legible, and the thread as a whole unreadable.
+ * half was never in scope. That half is here. It then went through two shapes: a stack of full
+ * letters inside ONE article (legible per message, unreadable as a thread), then collapsible
+ * peek rows over loaded bodies. The peek rows are gone with the viewer redesign: a thread is a
+ * column of PANELS now — every message a full-width panel on the canvas, oldest first, the
+ * wrapper the one scroller — so nothing on a thread is one press away from being mail.
  *
- * ── COLLAPSE OVER LOADED BODIES ─────────────────────────────────────────────────────────────
+ * ── PANELS OVER LOADED BODIES ───────────────────────────────────────────────────────────
  *
- * A conversation renders one collapsible ROW per message. This replaces an earlier design that
- * rendered every message in full, one stacked under the next — legible per message, unreadable
- * as a thread. Collapse is safe here for one specific reason, and the distinction is exact:
+ * Every panel's body is already LOADED when it renders (`MessagePane` fires one `hydrateThread`
+ * for the whole conversation), so this mapper draws mail that is in hand — no fetch per panel,
+ * no placeholder for mail the reader cannot reach. The anti-placeholder guard in
+ * `conversation.test.ts` holds the stronger line the redesign bought: exactly
+ * conversation-length distinct panels, each with its body ON SCREEN, and any peek row,
+ * "N earlier" aggregate or count line goes red.
  *
- *   · Every message's body is LOADED on open (`MessagePane` fires one `hydrateThread` for the
- *     whole conversation), so a collapsed row is a message already in hand, one press from being
- *     read, with NO fetch on expand.
- *   · Every message is an individually-visible ROW carrying its own sender, stamp and one-line
- *     peek — never a "3 older messages" count standing in for mail the reader cannot reach.
+ * ── ONE LIST, FLAT, WITH THE FOCUSED PANEL SLOTTED IN ───────────────────────────────────
  *
- * Nothing is withheld and nothing is aggregated behind a count. The anti-placeholder guard in
- * `conversation.test.ts` holds that line: the collapsed default must render exactly
- * conversation-length distinct rows, and a mutation that aggregates older ones behind a count
- * goes red. A comment asserting the opposite of the behaviour is a well-known failure shape,
- * which is why this describes what the code does rather than what it used to.
- *
- * ── ONE LIST, ONE DENSITY, ONE PLACE ─────────────────────────────────────────────────────
- *
- * A sibling renders as {@link MessageCard} — the Blanc `.hmail` card the Screener uses for held
- * mail, so "a message rendered inside another message" looks the same wherever the product does
- * it. Collapsed it is a single button row; expanded it wears the same {@link MessageHeader} the
- * focused message wears and draws its body through the same {@link MessageBody}, so a sibling
- * inherits the sanitizer, the sandboxed frame, remote-content blocking and dark adaptation with
- * nothing re-implemented and nothing to keep in step.
+ * The mapper walks the WHOLE conversation once, oldest first. The opened message's panel is
+ * composed by `MessagePane` (it owns the focused body expression, the protected rule and the
+ * attachment strip) and handed in as `focusedPanel`; every other message renders as
+ * {@link MessageCard}. One list rather than the old above/below split, so "which one am I
+ * reading" is a position in one column, marked by `aria-current` on the focused panel.
  *
  * ── BOTH SIDES OF THE THREAD ────────────────────────────────────────────────────────────
  *
@@ -50,60 +41,54 @@
  *
  * ── STATE LIVES ABOVE, THIS COMPONENT IS RENDER-ONLY ────────────────────────────────────────
  *
- * Which rows are open, and the toggle that opens them, come down as props from `MessagePane` —
- * the one place that holds the whole thread. `ConversationEntries` maps its slice of the
- * conversation to cards and asks for nothing; the body hydration and the scroll anchor both live
- * in `MessagePane` for the same reason (this list is mounted TWICE per thread, above and below
- * the focused message, so an effect here would fire twice for one open).
+ * The body hydration and the open-at-latest scroll anchor both live in `MessagePane` — the one
+ * place that holds the whole thread. This mapper asks for nothing.
  */
+import { Fragment, type ReactNode } from "react";
 import { MessageCard, subjectKey } from "./MessageCard";
-import { useTranslations } from "next-intl";
 import type { EngineMessage } from "@ohmail/client-engine";
 
-/** How deep this conversation is. */
-export function ConversationHead({ count }: { count: number }) {
-  const t = useTranslations("reply");
-  return <p className="conv-head num">{t("conversationCount", { count })}</p>;
-}
-
-export function ConversationEntries({
+export function ConversationPanels({
   messages,
+  focusedId,
+  focusedPanel,
   threadSubject,
   now,
-  expanded,
-  onToggle,
 }: {
-  /**
-   * The entries to render, OLDEST FIRST — the SIBLINGS only. The opened message keeps the
-   * full message anatomy and is rendered by `MessagePane` itself, between the two halves of
-   * this list, which is what makes "which one am I reading" answerable without a legend.
-   */
+  /** The WHOLE conversation, OLDEST FIRST — the focused message included. */
   messages: EngineMessage[];
-  /** The subject already on screen as the message's own heading — see `subjectKey`. */
+  /** Which message was opened. Its panel is `focusedPanel`; the id is never remapped. */
+  focusedId: string;
+  /**
+   * The opened message's panel, composed by `MessagePane` — the full anatomy with the
+   * protected rule decided first, the hydrated body and the attachment strip.
+   */
+  focusedPanel: ReactNode;
+  /** The subject already on screen as the thread's own heading — see `subjectKey`. */
   threadSubject?: string;
   now: Date;
-  /** Which sibling ids are unfolded — owned by `MessagePane`. */
-  expanded: ReadonlySet<string>;
-  /** Fold or unfold one sibling. */
-  onToggle: (id: string) => void;
 }) {
   if (messages.length === 0) return null;
   const alreadySaid = threadSubject ? subjectKey(threadSubject) : null;
 
   return (
     <>
-      {messages.map((m) => (
-        <MessageCard
-          key={m.id}
-          message={m}
-          now={now}
-          collapsed={!expanded.has(m.id)}
-          onToggle={() => onToggle(m.id)}
-          // A renamed branch of a thread prints its own heading; a "Re: …" of the same subject
-          // does not repeat under the h2 that already says it.
-          showSubject={alreadySaid !== subjectKey(m.subject)}
-        />
-      ))}
+      {messages.map((m) =>
+        m.id === focusedId ? (
+          // A keyed Fragment, so the focused panel lands FLAT in the column — the wrapper's
+          // direct-child geometry (`.conv > …`) must see one article per message.
+          <Fragment key={m.id}>{focusedPanel}</Fragment>
+        ) : (
+          <MessageCard
+            key={m.id}
+            message={m}
+            now={now}
+            // A renamed branch of a thread prints its own heading; a "Re: …" of the same subject
+            // does not repeat under the h2 that already says it.
+            showSubject={alreadySaid !== subjectKey(m.subject)}
+          />
+        ),
+      )}
     </>
   );
 }

@@ -1,31 +1,30 @@
 "use client";
 
 /**
- * THE PER-MESSAGE CARD, AND THE HEADER EVERY MESSAGE WEARS.
+ * THE PER-MESSAGE PANEL, AND THE HEADER EVERY MESSAGE WEARS.
  *
- * ── COLLAPSE OVER LOADED BODIES ─────────────────────────────────────────────────────────────
+ * ── PANELS OVER LOADED BODIES ───────────────────────────────────────────────────────────────
  *
- * A conversation renders one row PER MESSAGE, and every one of those messages has its body
+ * A conversation renders one panel PER MESSAGE, and every one of those messages has its body
  * already in the mirror: `MessagePane` hydrates the whole thread on open (`hydrateThread`), so
- * nothing here is withheld, gated behind a fetch, or replaced by a "N older" placeholder. A
- * collapsed row is a MESSAGE the reader can open with one press and read instantly, not a count
- * standing in for mail they cannot reach — which is the placeholder the product forbids. What
- * collapse buys is that a ten-message thread is ten legible rows instead of ten full letters
- * stacked into one scroll, with the newest (and whatever the reader opened) already open.
+ * nothing here is withheld, gated behind a fetch, or replaced by a "N older" placeholder. The
+ * peek-row fold this file used to carry is gone with the viewer redesign: every message on the
+ * thread shows its body, full width, and the wrapper is the one scroller — a thread is a column
+ * of letters again, but each on its OWN panel, separated by the canvas, so the stack reads as a
+ * conversation rather than as one unbroken scroll.
  *
  * ── TWO SHARED PIECES ───────────────────────────────────────────────────────────────────────
  *
  *  · {@link MessageHeader} — avatar, sender name, address (which is the SCREENING control, so it
  *    stays a real button), the relative stamp with the absolute date on hover, and a recipients
  *    line that a "details" press expands into the full To/Cc list, the exact date and where the
- *    message physically sits. Worn by the focused message (composed by `MessagePane`) and by an
- *    expanded sibling alike, so a message reads the same wherever it is.
+ *    message physically sits. Worn by the focused message (composed by `MessagePane`) and by a
+ *    sibling panel alike, so a message reads the same wherever it is.
  *
- *  · {@link MessageCard} — a conversation SIBLING, collapsible. Collapsed is a single button
- *    row (monogram · name · one-line peek · stamp); expanded is the header, the subject when it
+ *  · {@link MessageCard} — a conversation SIBLING's panel: the header, the subject when it
  *    diverges from the thread's, and the body through the very same {@link MessageBody} the
- *    focused message uses. One `<article class="hmail">` per message, reusing the Blanc card the
- *    Screener already stacks — no bordered variant is minted, because Blanc is shadow-sculpted.
+ *    focused message uses. One `<article class="pm">` per message — the panel treatment every
+ *    message on the thread wears, the focused one included.
  */
 import { type ReactNode, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -68,21 +67,18 @@ function fullRecipient(r: EmailAddress, own: ReadonlySet<string>, me: string): s
  *
  * Reads `ownAddresses` and `openSenderMenu` off the chrome rather than as props, for the reason
  * the whole chrome exists: the pane is mounted twice and holds no engine hook, and the header is
- * rendered inside both mounts. `onEnterReader` and `onCollapse` are the two things a CALLER
- * varies — the reader affordance on the split-column focused message, and the collapse control
- * an expanded sibling needs — so those come as props.
+ * rendered inside both mounts. `onEnterReader` is the one thing a CALLER varies — the reader
+ * affordance on the split-column focused message — so it comes as a prop. (`onCollapse` left
+ * with the peek rows: there is no fold to operate any more.)
  */
 export function MessageHeader({
   message,
   now,
   onEnterReader,
-  onCollapse,
 }: {
   message: EngineMessage;
   now: Date;
   onEnterReader?: () => void;
-  /** Present only on an expanded SIBLING: the chevron that folds it back to a peek row. */
-  onCollapse?: () => void;
 }) {
   const tm = useTranslations("message");
   const tr = useTranslations("screening");
@@ -165,17 +161,6 @@ export function MessageHeader({
               <Icon name="open" size={13} />
             </button>
           ) : null}
-          {onCollapse ? (
-            <button
-              type="button"
-              className="msg-collapse"
-              aria-expanded={true}
-              aria-label={tm("collapse", { sender: name })}
-              onClick={onCollapse}
-            >
-              <Icon name="chev" size={12} />
-            </button>
-          ) : null}
         </span>
       </div>
       {summary.empty ? null : (
@@ -225,85 +210,20 @@ export function MessageHeader({
 }
 
 /**
- * A CONVERSATION SIBLING. Collapsed by default unless the pane opened it; the pane owns which
- * rows are open (a `Set`) and hands down `collapsed` and the toggle, so this component holds no
- * expansion state of its own and is pure over its props.
- *
- * Expanding renders the body from `chrome.bodyOf` — the record `hydrateThread` already filled on
- * open — so there is NO new network fetch on a toggle. The body travels through the same
- * {@link MessageBody} the focused message uses, so a sibling inherits the sanitizer, the sandbox
- * and remote-content blocking with nothing re-implemented.
+ * A CONVERSATION SIBLING'S PANEL. Pure over its props — there is no fold state left anywhere:
+ * the panel renders its body, always, from `chrome.bodyOf` — the record `hydrateThread` already
+ * filled on open — so rendering a thread performs NO fetch per panel. The body travels through
+ * the same {@link MessageBody} the focused message uses, so a sibling inherits the sanitizer,
+ * the sandboxed frame, remote-content blocking and dark adaptation with nothing re-implemented.
  */
 export function MessageCard({
   message,
   now,
-  collapsed,
-  onToggle,
   showSubject,
 }: {
   message: EngineMessage;
   now: Date;
-  collapsed: boolean;
-  onToggle: () => void;
   /** Render the subject as an `<h3>` — only when it diverges from the thread's own heading. */
-  showSubject: boolean;
-}) {
-  const tm = useTranslations("message");
-  const chrome = useMessageChrome();
-  const name = senderName(message);
-  const rel = displayTime(message, now);
-  const abs = fullDateTime(message);
-  const showAbs = chrome.absoluteTime && !!abs;
-
-  if (collapsed) {
-    return (
-      <article className="hmail hm-collapsed" data-conv-id={message.id}>
-        {/* THE WHOLE ROW IS THE TOGGLE — one button, no button-in-button, so the collapsed row
-            has no nested sender menu to fight it. `aria-expanded` reports the fold. */}
-        <button
-          type="button"
-          className="hm-peekrow"
-          aria-expanded={false}
-          aria-label={tm("expand", { sender: name })}
-          onClick={onToggle}
-        >
-          <Avatar initials={initialsOf(name)} hue={avatarHue(message.from.address)} size="s" />
-          <b className="hm-name">{name}</b>
-          <span className="hm-peek">{message.snippet}</span>
-          {/* Read-only here — the whole row is the fold toggle, so the stamp cannot own a click of
-              its own — but it still follows the shared absolute-time flip and shows the exact
-              instant on hover, so every stamp in the thread reads in one form together. */}
-          {rel ? (
-            <time
-              className="t num"
-              dateTime={message.date ?? undefined}
-              title={(showAbs ? rel : abs) || undefined}
-            >
-              {showAbs ? abs : rel}
-            </time>
-          ) : null}
-        </button>
-      </article>
-    );
-  }
-
-  return <ExpandedSibling message={message} now={now} onToggle={onToggle} showSubject={showSubject} />;
-}
-
-/**
- * The expanded arm, split out so its hooks (`useBodyStalled`) live under a stable component
- * rather than after the `collapsed` early-return above, where the rules of hooks would be
- * violated the moment a row toggled.
- */
-function ExpandedSibling({
-  message,
-  now,
-  onToggle,
-  showSubject,
-}: {
-  message: EngineMessage;
-  now: Date;
-  onToggle: () => void;
   showSubject: boolean;
 }) {
   const tb = useTranslations("body");
@@ -328,50 +248,52 @@ function ExpandedSibling({
     ) : null;
 
   return (
-    <article className="hmail" data-conv-id={message.id}>
-      <MessageHeader message={message} now={now} onCollapse={onToggle} />
-      {showSubject ? <h3>{message.subject}</h3> : null}
-      <div className="hm-body hm-rich">
-        <MessageBody
-          messageId={message.id}
-          text={body.text}
-          html={body.html}
-          remoteLoaded={
-            body.loadedRemoteContent ||
-            (chrome.remoteImages?.auto ?? false) ||
-            (chrome.remoteImages?.consented(message.id) ?? false)
-          }
-          imageProxy={chrome.remoteImages ? chrome.remoteImages.proxyFor(message.id) : null}
-          onLoadRemote={
-            chrome.remoteImages && !chrome.remoteImages.auto
-              ? () => chrome.remoteImages!.consent(message.id)
-              : undefined
-          }
-        />
-      </div>
-      {loadingNote}
-      {failedNote}
-      {/* THE SIBLING'S OWN VERBS — Reply and Forward, dispatched through the SAME chrome the
-          focused message's bar uses, so answering (or forwarding) an older message in the thread
-          does not first require making it the focused one. Deliberately NOT a second ActionBar: a
-          full bar per expanded sibling would stack the file / defer / read machinery onto a
-          message the reader is only glancing back at. Reply retargets the editor to THIS id;
-          Forward hands THIS id to the forward model. Each button appears only where the shell has
-          wired its verb — a footer of dead controls is exactly what this file refuses elsewhere. */}
-      {chrome.openReply || chrome.forward ? (
-        <div className="hm-foot">
-          {chrome.openReply ? (
-            <button type="button" className="hm-verb" onClick={() => chrome.openReply!(message.id)}>
-              {verb("siblingReply", "Reply")}
-            </button>
-          ) : null}
-          {chrome.forward ? (
-            <button type="button" className="hm-verb" onClick={() => chrome.forward!(message.id)}>
-              {verb("siblingForward", "Forward")}
-            </button>
-          ) : null}
+    <article className="pm" data-conv-id={message.id}>
+      <div className="pm-in">
+        <MessageHeader message={message} now={now} />
+        {showSubject ? <h3>{message.subject}</h3> : null}
+        <div className="pm-body">
+          <MessageBody
+            messageId={message.id}
+            text={body.text}
+            html={body.html}
+            remoteLoaded={
+              body.loadedRemoteContent ||
+              (chrome.remoteImages?.auto ?? false) ||
+              (chrome.remoteImages?.consented(message.id) ?? false)
+            }
+            imageProxy={chrome.remoteImages ? chrome.remoteImages.proxyFor(message.id) : null}
+            onLoadRemote={
+              chrome.remoteImages && !chrome.remoteImages.auto
+                ? () => chrome.remoteImages!.consent(message.id)
+                : undefined
+            }
+          />
         </div>
-      ) : null}
+        {loadingNote}
+        {failedNote}
+        {/* THE SIBLING'S OWN VERBS — Reply and Forward, dispatched through the SAME chrome the
+            focused message's bar uses, so answering (or forwarding) an older message in the thread
+            does not first require making it the focused one. Deliberately NOT a second ActionBar: a
+            full bar per panel would stack the file / defer / read machinery onto a message the
+            reader is only glancing back at. Reply retargets the editor to THIS id; Forward hands
+            THIS id to the forward model. Each button appears only where the shell has wired its
+            verb — a footer of dead controls is exactly what this file refuses elsewhere. */}
+        {chrome.openReply || chrome.forward ? (
+          <div className="hm-foot">
+            {chrome.openReply ? (
+              <button type="button" className="hm-verb" onClick={() => chrome.openReply!(message.id)}>
+                {verb("siblingReply", "Reply")}
+              </button>
+            ) : null}
+            {chrome.forward ? (
+              <button type="button" className="hm-verb" onClick={() => chrome.forward!(message.id)}>
+                {verb("siblingForward", "Forward")}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </article>
   );
 }

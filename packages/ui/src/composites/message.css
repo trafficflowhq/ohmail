@@ -11,6 +11,18 @@
   min-width:0;min-height:0;overflow-y:auto;padding-bottom:0;
   background:var(--panel);border-radius:20px;box-shadow:var(--lift-1);
 }
+/* THE WRAPPER GOES TRANSPARENT WHEN THE THREAD TAKES OVER.
+ *
+ * A single message is ONE panel filling the column, so the column IS the panel and paints it.
+ * A thread is N panels (`.conv` — the wrapper `MessagePane` renders instead of an article;
+ * an article cannot wrap N panels), and a stack of lift-1 panels inside a lift-1 panel is two
+ * competing surfaces — so the column keeps only its job as the scroller and hands the paper to
+ * the panels. No vertical padding: the thread is FLUSH at both ends of the scroll — the lede's
+ * top edge rests on the columns' shared top line, and the last panel bottoms out on the same
+ * baseline the rail and list panels end on (the sub-pixel remainder is absorbed inside the
+ * last panel — see the anchor effect in `MessagePane`). The 2px sides keep the panels' own
+ * hairline ring (`--lift-1`'s first layer) inside the scrollport instead of shaving it off. */
+.read-col:has(> .conv){background:none;border-radius:0;box-shadow:none;padding:0 2px}
 /* THE MESSAGE FILLS THE COLUMN EVEN WHEN THE MAIL DOES NOT.
  *
  * A two-line message is a two-line box, so a bar parked at the end of it sits wherever the text
@@ -20,8 +32,13 @@
  * pin it on a long message. ONE geometry for both cases: pinned and at rest are the same 12px.
  *
  * Scoped to `.read-col >` deliberately. The reader overlay's card is sized by its own content
- * and must not be stretched, and the Screener's `.scn-read` hosts its own bar. */
+ * and must not be stretched, and the Screener's `.scn-read` hosts its own bar.
+ *
+ * The thread wrapper gets the same fill for the same reason: a two-message thread must park
+ * the one pill at the column's foot, not in the middle of the canvas. (`.conv` is already a
+ * flex column — app.css — so only the fill is stated here.) */
 .read-col > .msg{min-height:100%;display:flex;flex-direction:column}
+.read-col > .conv{min-height:100%}
 .read-col .msg-actions{margin-top:auto}
 /* THE MESSAGE, AND THE TWO THINGS IT PUBLISHES TO ITS OWN PARTS.
  *
@@ -199,6 +216,21 @@
   margin-top:34px;
 }
 .msg:has(.reply) .msg-actions > .abar{
+  background:none;
+  box-shadow:none;
+  width:100%;
+  margin:0;
+  padding:0;
+}
+/* The THREAD wrapper stands its bar down under the same rule — the editor docks at the foot of
+ * the same scrolling column (`.conv > .reply-dock`), so a pinned pill would float over the Send
+ * row there exactly as it would inside `.msg`. Same three declarations, same reason; the
+ * `margin-top` outranks the flex fill's `auto` so the bar returns to the flow above the editor. */
+.conv:has(.reply) .msg-actions{
+  position:static;
+  margin-top:34px;
+}
+.conv:has(.reply) .msg-actions > .abar{
   background:none;
   box-shadow:none;
   width:100%;
