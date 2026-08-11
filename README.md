@@ -447,9 +447,8 @@ holds no credential, because the shell adds the engine's session token on its ow
 side of that pipe.
 
 The one thing the *process* reaches on its own is the update feed, and it does so
-shortly after launch and whenever you ask — one pinned HTTPS address, with every
-payload cryptographically verified before it may install. There is no repeating
-timer: one check per run, plus the ones you ask for.
+only when you ask or on its daily check — one pinned HTTPS address, with every
+payload cryptographically verified before it may install.
 
 ## Desktop or Cloud
 

@@ -245,6 +245,7 @@
     "actionRead": "Gelesen",
     "actionMarkRead": "Als gelesen markieren",
     "actionMarkUnread": "Als ungelesen markieren",
+    "actionTag": "Tag",
     "actionMore": "Mehr",
     "groupDefer": "Nicht jetzt",
     "groupFile": "Einordnen",

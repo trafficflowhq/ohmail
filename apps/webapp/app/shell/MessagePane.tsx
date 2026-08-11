@@ -194,8 +194,8 @@ function ActionBar({
   onScreen: (anchor: HTMLElement | null) => void;
   /**
    * Add a tag, anchored on the control that opened the picker. ABSENT on the stream surfaces
-   * (Reads/Receipts) whose bar carries no tagging; when absent the "+Tag" verb is not in the
-   * menu, rather than a menu row that opens nothing.
+   * (Reads/Receipts) whose bar carries no tagging; when absent the Tag verb is in neither the
+   * row nor the menu, rather than a control that opens nothing.
    */
   onTag?: (anchor: HTMLElement | null) => void;
 }) {
@@ -307,6 +307,40 @@ function ActionBar({
       </button>
     </>
   );
+
+  /**
+   * ── TAG, AS A VERB OF THE BAR ─────────────────────────────────────────────────────────
+   *
+   * Reported twice: *"Tag + is still under the title and not in the Pill shape (I gave this
+   * feedback before). Added Tags should stay where they are, but the + Tag element should go into
+   * the Pill UI."* The entry point used to be a dashed `+ Tag` chip beside the subject; it is this
+   * button now, and the chip is deleted rather than kept alongside — two doors to one picker was
+   * the substance of the note.
+   *
+   * It OPENS the picker the chip opened. `onTag` reaches `AppShell.openTagPicker`, which is the
+   * same seam the `t` key and the selection bar's Tag button call, so nothing here is a second
+   * implementation of tagging. The anchor is the BUTTON, exactly as Screening's is and for the
+   * same reason: in the reader sheet the list row is behind the overlay, so a popover placed from
+   * it would open under the message being read. `.tagp` is `position: fixed` at `--z-pal`, so it
+   * is clipped by nothing on the way out of the pill.
+   *
+   * Its own `.abar-g`, not a member of the filing segment: Screening and Move both answer "where
+   * does this mail live", and a tag is the reader's own mark on mail that lives where it lives.
+   * `.abar-tag` is the density-ladder group — see `action-bar.css` for the tier and for why it
+   * outranks Reply all.
+   */
+  const tag = onTag ? (
+    <div className="abar-g abar-tag">
+      <button
+        type="button"
+        className="abar-b abar-solo"
+        onClick={(e) => onTag((e.currentTarget as HTMLElement | null) ?? null)}
+      >
+        {copy("actionTag", "Tag")}
+        <Key chord="t" />
+      </button>
+    </div>
+  ) : null;
 
   /* "Move" relocates THIS message; screening decides where this SENDER's mail goes,
      which is a different question and had no control anywhere outside the Screener.
@@ -424,23 +458,38 @@ function ActionBar({
     { id: "later", group: "defer", label: copy("actionLater", "Later"), run: () => { closeMenu(); onAction("later"); } },
     { id: "aside", group: "defer", label: t("actionSetAside"), run: () => { closeMenu(); onAction("aside"); } },
     { id: "resurface", group: "defer", label: t("actionResurface"), run: () => { closeMenu(); onPanel("resurface"); } },
-    { id: "screen", group: "file", label: tr("action"), run: () => { setMenuOpen(false); onScreen(moreRef.current); } },
-    { id: "move", group: "file", label: t("actionMove"), run: () => { closeMenu(); onPanel("move"); } },
     /**
-     * ADD A TAG — reachable from the bar as well as from the `+Tag` chip beside the subject, so a
-     * reader working the bar never has to leave it to reach tagging. Anchored on the More button
-     * (`moreRef`), like Screening, so the picker opens where the press was. Only when the surface
-     * can tag (`onTag` present) — the stream bar cannot, so it carries no such row. No group class:
-     * like Draft, it is only ever in the menu.
+     * TAG — THE FOLDED HALF OF THE ROW BUTTON, and it used to be the only half.
+     *
+     * While tagging's always-visible entry point was the `+ Tag` chip under the title, this row
+     * was a convenience with no row position at all: it carried no group class, like Draft reply,
+     * and no query could switch it off. The chip is gone and the verb stands in the bar, so this
+     * is now a LADDER DUPLICATE — `group: "tag"` is what lets the 519px tier hide it exactly where
+     * `.abar-tag` stands, keeping "a verb is in the row or in the menu, never both".
+     *
+     * Placed between the horizons and filing, mirroring the row: a reader who has seen Tag there
+     * on a wide bar looks for it there on a narrow one. Anchored on More (`moreRef`), like
+     * Screening, so the picker opens where the press was rather than under a menu that has closed.
+     * Only where the surface can tag (`onTag` present) — the stream bar cannot.
+     *
+     * **THIS IS NOT A SECOND ENTRY POINT, and that was checked rather than argued.** Rendered in
+     * Chrome with both halves present and the container stepped through every tier, the row and
+     * the menu are exactly complementary — row hidden / menu shown at 242, 350, 455, 456 and 518;
+     * row shown / menu hidden at 519, 572 and 576. Never both, never neither. Deleting this row to
+     * make the move "a move" would instead make tagging UNREACHABLE from an open message in the
+     * split column and on a phone, which are the first five of those widths.
      */
     ...(onTag
       ? [{
           id: "tag",
-          label: copy("actionAddTag", "Add tag"),
+          group: "tag",
+          label: copy("actionTag", "Tag"),
           icon: <Icon name="tag" size={13} />,
           run: () => { closeMenu(); onTag(moreRef.current); },
         } as MoreMenuItem]
       : []),
+    { id: "screen", group: "file", label: tr("action"), run: () => { setMenuOpen(false); onScreen(moreRef.current); } },
+    { id: "move", group: "file", label: t("actionMove"), run: () => { closeMenu(); onPanel("move"); } },
     {
       id: "draft",
       label: t("actionDraftReply"),
@@ -489,6 +538,10 @@ function ActionBar({
         >
           {defer}
         </div>
+
+        {/* Between the horizons and filing — see `tag` above for why it is its own group and
+            not a third segment of "File it". */}
+        {tag}
 
         <div
           className="abar-g abar-seg abar-file"
@@ -655,7 +708,6 @@ export function MessagePane({
   const tc = useTranslations("reply");
   /** Hydration state copy, shared with the Reads/Receipts cards and the Screener preview. */
   const tb = useTranslations("body");
-  const addRef = useRef<HTMLSpanElement>(null);
   /** The conversation stack, so the pane can open at the LATEST message — see below. */
   const convRef = useRef<HTMLDivElement>(null);
   /**
@@ -1128,9 +1180,19 @@ export function MessagePane({
    * left exactly as they were — a tag there is a scanning aid at row scale, not the head of an
    * open letter, so `MessageRow` still renders its chips inline.
    *
-   * The add-tag control stays OUTSIDE the disclosure and always visible: it is a small dashed
-   * affordance rather than a mark competing for attention, and its popover anchors to `addRef`,
-   * which must not be a node the browser has hidden inside a folded `<details>`.
+   * ── AND THE `+ Tag` AFFORDANCE IS NO LONGER ONE OF THEM ───────────────────────────────────
+   *
+   * A dashed `+ Tag` chip used to stand here permanently, outside the fold, with its own `addRef`
+   * anchor and a hand-typed `t` hint. Reported twice — *"Tag + is still under the title and not in
+   * the Pill shape (I gave this feedback before). Added Tags should stay where they are, but the
+   * + Tag element should go into the Pill UI."* — so the ENTRY POINT is a verb of the action bar
+   * now (see `ActionBar`'s `tag`) and the chip is deleted rather than left standing beside it: two
+   * controls opening one picker is what the note is about.
+   *
+   * What is left under the title is only what the note asked to leave alone — the message's own
+   * marks. And with the affordance gone, an untagged message renders no `.tag-chrome` at all: the
+   * row existed to hold a control that is somewhere else, and an empty flex box under every
+   * untagged subject is a gap with nothing in it.
    */
   const titleChrome = (
     <div className="msg-marks">
@@ -1140,8 +1202,8 @@ export function MessagePane({
           {message.trackerNote ? <Chip variant="tracker">{message.trackerNote}</Chip> : null}
         </div>
       ) : null}
-      <div className="tag-chrome">
-        {mine.length > 0 ? (
+      {mine.length > 0 ? (
+        <div className="tag-chrome">
           <InfoNote
             className="tag-note"
             lead={t("tagsLead", { count: mine.length })}
@@ -1155,13 +1217,8 @@ export function MessagePane({
               ))}
             </div>
           </InfoNote>
-        ) : null}
-        <span ref={addRef} style={{ display: "inline-flex" }}>
-          <Chip variant="add" kbdHint="t" onPress={() => onAddTag(message.id, addRef.current)}>
-            {t("tagChip")}
-          </Chip>
-        </span>
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 

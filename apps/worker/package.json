@@ -6,9 +6,11 @@
   "exports": {
     "./sync": "./src/sync.ts",
     "./lease": "./src/lease.ts",
-    "./classifier-fault": "./src/classifier-fault.ts"
+    "./classifier-fault": "./src/classifier-fault.ts",
+    "./bubble-up": "./src/bubble-up-pass.ts"
   },
   "dependencies": {
+    "drizzle-orm": "0.36.4",
     "@trafficflow/core": "*",
     "@trafficflow/db": "*"
   }

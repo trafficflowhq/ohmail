@@ -418,9 +418,53 @@
  * the labels it was measured against.** Re-measure this when a label changes, when the read
  * switch's vocabulary changes, or when a locale other than `en` is added — all three change the
  * intrinsic width and none of them touches this file.
+ *
+ * ── AND TAG JOINED THE ROW, WHICH MOVED ONE TIER ──────────────────────────────────────
+ *
+ * `Tag` with its `t` keycap measures 56.9 by the same method (a `.abar-b.abar-solo` capsule, read
+ * off Chrome at 11.5px/550 — the harness reproduces `Reply all` at 95.69 and `Reply` at 68.16,
+ * which is how it is known to be measuring the same thing this file already measured):
+ *
+ *     base + defer            = 455.2                → defer admits at 456, UNCHANGED
+ *     + Tag                   = 455.2 + 56.9 + 6     = 518.1  → admit at 519
+ *     + Reply all             = 518.1 + 95.7 + 6     = 619.8  → admit at 620, MOVED FROM 557
+ *
+ * **TAG OUTRANKS REPLY ALL, and that is the one judgement in this ladder rather than an
+ * arithmetic consequence.** A message's bar is capped by the mail measure at ≤576px, so exactly
+ * one of the two can stand at the width a reading pane actually has, and something had to give.
+ * Reply all VARIES a verb that is standing two capsules away, keeps `⇧R`, and keeps its row in
+ * More; Tag is the ONLY entry point tagging has, now that the `+ Tag` chip under the title is
+ * gone. A verb with no other door outranks a verb with two — a Tag folded into More at 572px
+ * would put the sole way to tag an open message behind a disclosure at the one width every
+ * desktop reader has.
+ *
+ * `.abar-file` is deliberately NOT re-derived. It is unreachable on a message bar for the same
+ * ≤576px reason (see its own tier below), so the only surface that reaches 601 is the selection
+ * bar — which carries no Reply all and whose Tag button is a plain `.abar-g`, outside this group
+ * entirely. Moving 601 would fold a group that fits, on a bar this slice does not touch.
+ *
+ * ── AND THE LADDER WAS THEN WATCHED, NOT ONLY CALCULATED ──────────────────────────────
+ *
+ * Arithmetic on measured parts is still arithmetic. The rules below were rendered in Chrome
+ * against containers stepped through every tier, reading which groups stood and the row's own
+ * `scrollWidth` — the number that tells you whether the pill has put a control outside the mail:
+ *
+ *     container   groups standing in the row                row width
+ *      242        reply · read+More                          229
+ *      350        reply · read+More                          229
+ *      455        reply · read+More                          229
+ *      456        reply · DEFER · read+More                  455
+ *      518        reply · defer · read+More                  455
+ *      519        reply · defer · TAG · read+More            517
+ *      572        reply · defer · TAG · read+More            517   ← the reading measure
+ *      576        reply · defer · TAG · read+More            517   ← the widest a message bar gets
+ *
+ * No row exceeds its container at any tier a message bar can reach, and Tag is standing at both
+ * of the two widths a message is actually read at. That is the claim this slice is making.
  */
 .abar-defer,
 .abar-file,
+.abar-tag,
 .abar-rall { display: none; }
 
 /* Duplicates, hidden exactly when the group is standing in the row above, so a verb is in the
@@ -447,28 +491,60 @@
   .mmenu .mm-defer { display: none; }
 }
 
-/* ── REPLY ALL'S OWN TIER, ABOVE DEFER AND BELOW NOTHING A MESSAGE BAR CAN REACH ────────
+/* ── TAG'S TIER: THE FIRST GROUP ADMITTED AFTER THE THREE HORIZONS ──────────────────────
+ *
+ *     base + defer + tag = 455.2 + 56.9 + 6 = 518.1  → admit at 519
+ *
+ * 56.9 is a MEASUREMENT: a `.abar-b.abar-solo` capsule labelled "Tag" with its `t` keycap, read
+ * in Chrome at 11.5px/550 against the same stack `.mo-canvas` sets. The same harness returns
+ * 95.69 for "Reply all" and 68.16 for "Reply" — the two figures this file already carries — which
+ * is what makes it a re-measurement of the shipped ladder rather than a fresh guess beside it.
+ *
+ * 519 is the number that matters: it fires at the 572px desktop reading measure and at the 576px
+ * a stream card allows, which are the two widths an open message is read at — so Tag stands in
+ * the bar wherever mail is actually read. Below it — the 242px split column at a 1000px window,
+ * the 350px phone reader — Tag folds into More with defer, which is the ladder doing its job
+ * rather than an exception to it.
+ *
+ * Re-measure it under the same rule as every other tier: a changed label (including a locale
+ * whose word for "Tag" is longer) changes the intrinsic width and nothing here would notice.
+ */
+@container abar (min-width: 519px) {
+  .abar-tag { display: flex; }
+  .mmenu .mm-tag { display: none; }
+}
+
+/* ── REPLY ALL'S OWN TIER, ABOVE TAG AND BELOW NOTHING A MESSAGE BAR CAN REACH ──────────
  *
  * The group exists only on a multi-recipient message (`replyAllRecipients`), so unlike defer
  * and file its width is sometimes simply absent — but the tier must be set for the row that
  * CARRIES it, or the one message that shows it is the one message that overflows. It is
- * admitted only after the full defer row stands (455.2px, the ladder above), plus its own
+ * admitted only after the full defer row AND Tag stand (518.1px, the ladder above), plus its own
  * measured width, plus one 6px gap:
  *
- *     base + defer + reply-all = 455.2 + 95.7 + 6 = 556.9  → admit at 557
+ *     base + defer + tag + reply-all = 518.1 + 95.7 + 6 = 619.8  → admit at 620
  *
  * 95.7 is a MEASUREMENT — a `.abar-b.abar-solo` capsule labelled "Reply all" with its `⇧ r`
  * keycap (27.2px), read off the built page in Chrome at the 572px reading measure (see the
  * header's rule: re-measure when a label or the font stack changes).
  *
- * WHY IT OUTRANKS NOTHING AND NOTHING OUTRANKS IT: a message bar's container is capped by the
- * mail measure at ≤576px (`.msg` 640 − 68 padding; a stream card's `.scast` 620 − 44), so the
- * 601 file tier below never fires where this group can exist — the two can NOT stand together,
- * which is why 601 did not move when this tier landed. The only surface that reaches 601 is
- * the selection bar, and a selection carries no reply verbs at all (`BulkAction`). If the mail
+ * ── IT WAS 557, AND MOVING IT IS THE COST OF THE TAG TIER ─────────────────────────────
+ *
+ * At 557 this group stood at the 572px reading measure. With Tag in the row it cannot: 619.8
+ * against a container of at most 576 is a 47.8px overflow, and the row is `nowrap` by
+ * construction, so it would not wrap — it would put More outside the message, over scrolling
+ * text, which is precisely the defect the 456/601 re-measurement was written to remove. So on a
+ * message bar Reply all now folds into More, where `mm-rall` already carries it. That ordering is
+ * argued in the header: Tag has no other entry point, Reply all has `⇧R` and a menu row.
+ *
+ * WHY NOTHING OUTRANKS IT: a message bar's container is capped by the mail measure at ≤576px
+ * (`.msg` 640 − 68 padding; a stream card's `.scast` 620 − 44), so the 601 file tier below never
+ * fires where this group can exist — the two can NOT stand together, which is why 601 did not
+ * move when this tier landed and did not move again now. The only surface that reaches 601 is the
+ * selection bar, and a selection carries no reply verbs at all (`BulkAction`). If the mail
  * measure ever widens past `601 + 95.7 + 6`, re-derive BOTH numbers.
  */
-@container abar (min-width: 557px) {
+@container abar (min-width: 620px) {
   .abar-rall { display: flex; }
   .mmenu .mm-rall { display: none; }
 }
