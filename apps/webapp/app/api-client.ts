@@ -117,6 +117,7 @@ export interface MailboxDTO {
     disabledReason?: string | null;
     createdAt?: string;
     initialImportCompletedAt?: string | null;
+    messageCount?: number;
 }
 
 export interface SubscriptionStatus {
@@ -264,7 +265,9 @@ export interface UpdateMailboxBody {
 }
 
 export const mailboxes: {
-    list: () => Promise<{
+    list: (opts?: {
+        counts?: boolean;
+    }) => Promise<{
         items: MailboxDTO[];
     }>;
     resync: (id: string) => Promise<{

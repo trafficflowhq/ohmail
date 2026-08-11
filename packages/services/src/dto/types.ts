@@ -451,6 +451,37 @@ export interface MailboxDTO {
    * `apps/webapp/app/shell/mail-state.ts` states the rule it applies.
    */
   pendingMoves: number;
+  /**
+   * HOW MUCH MAIL IS IN THIS MAILBOX — and the only OPT-IN field on this DTO.
+   *
+   * ── WHY IT IS OPTIONAL WHEN EVERY OTHER NUMBER HERE IS NOT ──────────────────────────
+   *
+   * `pendingMoves` one field up is unconditional because it is a filtered aggregate over one
+   * mailbox's outstanding filings — a small, bounded set. This is an aggregate over the
+   * account's ENTIRE `messages` table, and `GET /mailboxes` is a polled route:
+   * `apps/webapp/app/shell/MailStateProvider.tsx` reads it every 30 s in every open tab to
+   * derive the status strip, and the Settings pane reads it every 10 s while it is on screen.
+   * Neither poller wants this number. Shipping it unconditionally would put a full scan of a
+   * mailbox's history behind a heartbeat.
+   *
+   * So the server computes it only for `GET /mailboxes?counts=1`, in ONE statement grouped by
+   * mailbox and scoped to the account in that same statement, and this field is ABSENT
+   * otherwise. `messages_account_mailbox_unread_idx` is `(account_id, mailbox_id, unread)`, so
+   * its leading column serves the scope predicate and the grouping key is the second.
+   *
+   * ── ABSENT AND `0` ARE DIFFERENT ANSWERS, AND A CLIENT MUST NOT CONFLATE THEM ────────
+   *
+   * `0` means the mailbox holds no mail — a real state, and the one a freshly connected
+   * mailbox is in for its whole first import. ABSENT means nobody asked, which is every
+   * response the two pollers above receive and every response from a server older than this
+   * field. A renderer therefore reads it with `typeof === "number"` and shows NOTHING when it
+   * is absent — never "0 messages", which would tell somebody their mail had vanished
+   * because a status poll happened to be the last read to land.
+   *
+   * Whole mail, unread or not: the question is how much is in there. The index's third column
+   * is not filtered on.
+   */
+  messageCount?: number;
   folders?: MailboxFolderSummary[];
   createdAt: ISODateTime;
   // NOTE: intentionally NO credential field — creds are envelope-encrypted at rest

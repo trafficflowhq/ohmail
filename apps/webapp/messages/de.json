@@ -1333,6 +1333,7 @@
     "cancel": "Abbrechen",
     "noFactorTitle": "Kein zweiter Faktor",
     "noFactorBody": "Dieses Konto hat keinen Passkey und keine Authenticator-App, und ein Postfach zu verbinden braucht eines von beidem.",
+    "messageCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
     "syncedAgo": "Synchronisiert {when}",
     "syncRunning": "Wird jetzt synchronisiert",
     "syncFirstPending": "Noch keine Post — hinzugefügt {when}",

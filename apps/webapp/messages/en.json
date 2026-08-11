@@ -1333,6 +1333,7 @@
     "cancel": "Cancel",
     "noFactorTitle": "No second factor",
     "noFactorBody": "This account has no passkey or authenticator app, and connecting a mailbox requires one.",
+    "messageCount": "{count, plural, one {1 message} other {# messages}}",
     "syncedAgo": "Synced {when}",
     "syncRunning": "Syncing now",
     "syncFirstPending": "No mail yet — added {when}",

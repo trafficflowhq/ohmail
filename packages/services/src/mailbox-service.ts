@@ -24,6 +24,17 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
  * and a caller that only knows "it did not work" has to invent one. `already_organizing` is a
  * no-op and not an error — a second click, or a mailbox the worker picked back up in between.
  */
+/**
+ * What {@link MailboxService.list} is being asked for beyond the mailboxes themselves.
+ *
+ * One flag, defaulting to OFF, and the default is the contract: the polled callers of
+ * `GET /mailboxes` pass nothing and must pay nothing. See `MailboxDTO.messageCount`.
+ */
+export interface ListMailboxesOptions {
+  /** Compute {@link MailboxDTO.messageCount} — one grouped aggregate for the whole account. */
+  counts?: boolean;
+}
+
 export type MailboxTakeoverResult =
   /** The stand-down was ended and one takeover is authorized. The worker decides on its next pass. */
   | { outcome: "authorized"; previousReason: string }
@@ -626,12 +637,67 @@ export class MailboxService {
     return this.deps.allowance ?? defaultMailboxAllowance();
   }
 
-  async list(ctx: ServiceContext): Promise<MailboxDTO[]> {
+  /**
+   * List the account's mailboxes.
+   *
+   * ── THE COUNTS VARIANT IS OPT-IN, AND THE DEFAULT PATH RUNS NO AGGREGATE OVER `messages` ──
+   *
+   * This route is POLLED. `MailStateProvider` reads it every 30 s in every open Cloud tab for
+   * the shell's status strip, and Settings → Mailboxes reads it every 10 s while it is open.
+   * `MailboxDTO.messageCount` is an aggregate over the account's whole message history, so it
+   * is computed only when a caller asks for it — `GET /mailboxes?counts=1` — and the field is
+   * absent from every other response rather than being sent as `0`.
+   *
+   * ONE STATEMENT for the whole account, taken BEFORE the per-mailbox loop. Reading the count
+   * inside `toDTO` would be one aggregate per mailbox, which is the shape this method already
+   * pays twice over for folders and pending moves and must not pay a third time over a table
+   * whose size is the product's whole point.
+   */
+  async list(ctx: ServiceContext, opts: ListMailboxesOptions = {}): Promise<MailboxDTO[]> {
     const rows = await ctx.db.select().from(mailboxes)
       .where(eq(mailboxes.accountId, ctx.accountId)).orderBy(asc(mailboxes.id));
+    const counts = opts.counts ? await this.messageCounts(ctx) : null;
     const out: MailboxDTO[] = [];
-    for (const m of rows) out.push(await this.toDTO(ctx, m));
+    for (const m of rows) {
+      /* `?? 0` and not `map.get(id)` bare: a mailbox holding no mail produces NO GROUP ROW, so
+         the map has no entry for it — and forwarding that `undefined` would emit an ABSENT
+         field, which on this wire means "nobody asked" about a mailbox somebody did ask
+         about. An empty mailbox has an answer and it is zero. */
+      out.push(await this.toDTO(ctx, m, counts ? counts.get(m.id) ?? 0 : undefined));
+    }
     return out;
+  }
+
+  /**
+   * How many messages each of this account's mailboxes holds, in one grouped statement.
+   *
+   * ── INVARIANT #9 LIVES IN THE `WHERE`, NOT IN THE CALLER ────────────────────────────────
+   *
+   * `eq(messages.accountId, ctx.accountId)` is in the SAME statement as the `GROUP BY`, and it
+   * is not redundant with `list` looking the result up by the ids it owns. `messages.account_id`
+   * has no foreign key tying it to `mailboxes.account_id` — nothing in the schema makes the two
+   * agree — so a row whose mailbox is ours and whose account is somebody else's is a state the
+   * database permits. A mailbox moved between accounts by the operator dedup resolver leaves
+   * exactly that behind, because it rewrites `mailboxes.account_id` and does not restamp the
+   * mail. Grouping by `mailbox_id` alone would then count another account's messages into this
+   * account's number, and every ordinary row would still be correct, so nothing else would show
+   * it. A real-Postgres test seeds exactly that row and goes red when the predicate is removed.
+   *
+   * It is also what makes the query cheap: `messages_account_mailbox_unread_idx` is
+   * `(account_id, mailbox_id, unread)`, so the scope predicate is served by the index's leading
+   * column and the grouping key is the next one.
+   *
+   * `::int` because `count(*)` is `bigint` and postgres-js hands a bigint back as a STRING. A
+   * DTO field that is `7` on one driver and `"7"` on another is a client bug waiting for a
+   * mailbox big enough to notice.
+   */
+  private async messageCounts(ctx: ServiceContext): Promise<Map<string, number>> {
+    const rows = await ctx.db
+      .select({ mailboxId: messages.mailboxId, n: sql<number>`count(*)::int` })
+      .from(messages)
+      .where(eq(messages.accountId, ctx.accountId))
+      .groupBy(messages.mailboxId);
+    return new Map(rows.map((r) => [r.mailboxId, r.n]));
   }
 
   async get(ctx: ServiceContext, id: string): Promise<MailboxDTO> {
@@ -1567,8 +1633,18 @@ export class MailboxService {
     return m as MailboxRow;
   }
 
-  /** MailboxDTO — identity + lifecycle + a per-folder sync summary. NEVER credentials. */
-  private async toDTO(ctx: ServiceContext, m: MailboxRow): Promise<MailboxDTO> {
+  /**
+   * MailboxDTO — identity + lifecycle + a per-folder sync summary. NEVER credentials.
+   *
+   * `messageCount` is PASSED IN rather than read here, and `undefined` means the caller did not
+   * ask. The aggregate behind it is per-ACCOUNT, so computing it inside this per-mailbox
+   * projection would be one full scan per row; `list` takes it once and hands each row its
+   * share. Every other caller (`get`, `create`, `update`) omits the argument and the field is
+   * absent from their DTOs — a single mailbox read is not a surface that asks "how many".
+   */
+  private async toDTO(
+    ctx: ServiceContext, m: MailboxRow, messageCount?: number,
+  ): Promise<MailboxDTO> {
     const fRows = await ctx.db.select().from(mailboxFolders)
       .where(eq(mailboxFolders.mailboxId, m.id)).orderBy(asc(mailboxFolders.folder));
     const folders: MailboxFolderSummary[] = fRows.map((f) => ({
@@ -1660,6 +1736,13 @@ export class MailboxService {
       // return no row here, but a driver that answered `undefined` must degrade to "nothing
       // outstanding" rather than to `NaN` on somebody's strip.
       pendingMoves: pending?.n ?? 0,
+      /* SPREAD, not `messageCount: messageCount`. The key must be genuinely ABSENT when nobody
+         asked, because absent and `0` are different answers here and a client tells them apart
+         with a `typeof` guard. `JSON.stringify` would drop an explicitly-undefined property on
+         the way out, so the wire would be right either way — but the in-process DTO would carry
+         a key whose presence says the opposite of what it means, and `packages/api` hands these
+         objects to a local host as well as to a serializer. */
+      ...(messageCount === undefined ? {} : { messageCount }),
       folders,
       createdAt: m.createdAt.toISOString(),
     };

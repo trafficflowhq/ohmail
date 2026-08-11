@@ -18,7 +18,26 @@ export const mailboxRoutes: Route[] = [
     pattern: "/mailboxes",
     cost: "read",
     handler: async (req, deps) => {
-      const items = await mailbox(deps).list(serviceContext(deps, req));
+      /**
+       * ── `?counts=1` — THE ONE OPT-IN ON THIS ROUTE, AND WHY IT IS OPT-IN ────────────────
+       *
+       * `MailboxDTO.messageCount` is an aggregate over the account's whole `messages` table.
+       * This route is POLLED: `MailStateProvider` reads it every 30 s in every open Cloud tab
+       * for the shell's status strip, and Settings → Mailboxes reads it every 10 s while it is
+       * open. Neither reads the count. Computing it unconditionally would put a full scan of
+       * somebody's mail history behind a heartbeat, twice a minute, per tab.
+       *
+       * STRICTLY `"1"`, AND ANYTHING ELSE IS THE CHEAP PATH. `params.has("counts")` — or any
+       * truthiness read — turns the aggregate ON for `?counts=0` and `?counts=false`, which are
+       * the two spellings a caller reaches for to turn it OFF. Since an absent field is a
+       * legitimate answer here, an unrecognised value costs a screen its number; the inverse
+       * mistake costs the polled route an aggregate nobody asked for.
+       *
+       * NOT A 400 either. The list is returned either way and this decides one optional field
+       * of it, so a malformed value must not break the pane that renders the rest.
+       */
+      const counts = new URL(req.url).searchParams.get("counts") === "1";
+      const items = await mailbox(deps).list(serviceContext(deps, req), { counts });
       return jsonResponse({ items });
     },
   },
