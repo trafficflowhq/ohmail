@@ -51,19 +51,14 @@ Two options were on the table and both were tried:
 | **`next build` with `output: "export"` on apps/webapp** | **Works** — measured, not guessed: 6 static pages, 1.3 MB of `out/`, every asset local. Rejected anyway, for three reasons. It emits **root-absolute** `/_next/…` URLs, which assume the app is served from an origin root; a desktop bundle should not care where it is mounted. It drags Next, next-intl's server pipeline and a webpack build onto three CI runners for a page that is 100 % client-side. And publishing it to the public mirror would mean publishing `apps/webapp` — the *Cloud* client, with its sign-in screen and its API rewrite topology — into the free tier's repository. |
 | **A Vite bundle over the shared shell** ✅ | `base: "./"` ⇒ every emitted URL is relative, so the bundle is origin-agnostic: `tauri://localhost`, `http://tauri.localhost` and `file://` all work and nothing can escape through an absolute path. It is the pattern `packages/ui/showcase` already uses in this repo. 380 KB total, builds in half a second, and needs exactly six npm packages. |
 
-The Vite config aliases exactly four seams, and nothing else:
+The Vite config aliases exactly three seams, and nothing else:
 
 1. **`next-intl` → `use-intl`.** `next-intl` *is* `use-intl` plus Next server
    plumbing (both 3.26.5 here), and the thirteen shell/view files that import it
    only ever call `useTranslations`. Aliasing the wrapper away keeps ICU plurals
    byte-identical instead of re-implementing them in a shim that would drift.
 2. **`…/adapters/http-adapter.js` → `src/no-http-adapter.ts`.** See below.
-3. **`…/api-client` → `src/no-api-client.ts`**, in both builds. Neither desktop
-   build has a Cloud account or a server to reach — both talk to a local engine
-   over a pipe — and every value the stub exports refuses. The ten shell and view
-   modules that import it ask `apiConfigured()` first, which the stub answers
-   `false`, so nothing calls into a refusal by accident.
-4. **`react` / `react-dom` → this package's copy, by absolute path.** `dedupe`
+3. **`react` / `react-dom` → this package's copy, by absolute path.** `dedupe`
    is not enough: in the published mirror there is no `packages/ui/node_modules`
    for a bare `react` to resolve into. An absolute alias resolves identically in
    the monorepo and in the mirror, and guarantees a single React instance.
@@ -87,12 +82,6 @@ client. In the preview build Vite aliases that module to
 [`src/no-http-adapter.ts`](src/no-http-adapter.ts), whose constructor throws, and
 in that bundle `x-csrf-token`, `idempotency-key`, `X-Sync-Seq` and `/sync?` all
 return **zero** matches.
-
-That count holds because of seam 3 as much as seam 2. The Cloud client is a stub
-whose `apiConfigured()` is `false` at compile time, so every caller's
-`if (!apiConfigured())` guard folds and the request paths behind them — the
-draft-reply POST and its `Idempotency-Key` among them — are removed as dead code
-rather than merely never run.
 
 **In the engine-bearing build the real adapter is there, deliberately**, and it
 is what the window speaks to its own engine over: `src/bridge-fetch.ts` hands it
