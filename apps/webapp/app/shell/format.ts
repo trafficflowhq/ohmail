@@ -496,75 +496,62 @@ export function rowStamp(
     : { time: rel, timeTitle: abs, onToggleTime: onToggle };
 }
 
-/** One recipient, folded: the reader's own address becomes "me", everyone else keeps a name. */
-export type RecipientChip = { me: true } | { name: string };
+/**
+ * One recipient, WRITTEN OUT — a chip under the header (viewer redesign).
+ *
+ * `me` marks the reader's own address so the card can swap the ACCOUNT's identity onto the
+ * face; the flag is computed here, on the STORED form, and the name the account goes by is
+ * deliberately not — that answer belongs to `GET /mailboxes` and reaches the card through the
+ * chrome (`ownNameOf`), not through a pure function every mount shares.
+ *
+ * `address` is the wire form, untouched: every action a chip offers (copy, write, screening)
+ * acts on it, and only the FACE decodes (`displayAddress`, at the render site). Carrying a
+ * pre-decoded string here is exactly the leak `idn.ts`'s header forbids.
+ */
+export interface RecipientRowChip {
+  /** True when this recipient IS the reader — fold on the stored, case-folded address. */
+  me: boolean;
+  /** The display name as the sender wrote it, or null. The card ignores it for `me` chips. */
+  name: string | null;
+  /** The STORED wire address. Never decoded — the face decodes at render, the value does not. */
+  address: string;
+}
 
 /**
- * WHO ELSE THE MESSAGE WENT TO, summarised for a single line under the sender.
+ * WHO THE MESSAGE WENT TO, in full — the summarised single line and its "+N" fold are retired
+ * with the viewer redesign: every To and Cc recipient renders as its own chip, so nothing here
+ * caps, counts or folds. Pure and i18n-free like the summary it replaces: the row labels
+ * ("To", "Cc") are the card's, from `messages/*.json`.
  *
- * Pure and i18n-free on purpose: it returns STRUCTURE, not sentence. The words ("to", "me",
- * "cc", "+N") are the app's, read from `messages/en.json` at the card; folding the reader's own
- * address to a translated "me" here would bake one locale's copy into a function every locale
- * shares. So an own address surfaces as `{ me: true }` and the card swaps in `t("me")`.
- *
- * The rules, in the order they bite:
- *  · **Nothing to say → `empty`.** A message with no To and no Cc renders no recipients line at
- *    all — never a dangling "to" with nothing after it, which is the punctuation-shaped lie
- *    `metaLine` exists to prevent one row up.
- *  · **Own addresses fold to "me", case-folded.** The comparison is `toLowerCase()` on both
- *    sides; `ownAddresses` is whatever `GET /mailboxes` reported (see `AppShell`), and an empty
- *    set means the reader is recognised nowhere — every address renders in full, which is the
- *    honest degradation, not "me" applied to a stranger.
- *  · **At most two To names, then "+N".** `to` holds the first two folded recipients and
- *    `toOverflow` counts the rest, so "to me, Anna Roth +3" is the card's job to assemble.
- *  · **Cc is one name or a count.** A single Cc shows its (possibly folded) name; several show
- *    only how many, because a card is not the place to list eleven addresses — `details` is.
+ * The two rules that survive from the old fold, because they are invariants and not layout:
+ *  · **Nothing to say → `empty`.** No To and no Cc renders no block at all — never a dangling
+ *    label with nothing after it.
+ *  · **The me-fold compares STORED addresses.** `ownAddresses` is what `GET /mailboxes`
+ *    answered — A-labels — so a fold on the decoded string would stop recognising the reader
+ *    on their own internationalized mailbox. An empty set recognises the reader nowhere and
+ *    every address renders in full, which is the honest degradation.
  */
-export interface RecipientSummary {
-  /** The first two To recipients, folded. */
-  to: RecipientChip[];
-  /** How many further To recipients there are past the two in `to`. */
-  toOverflow: number;
-  /** The Cc line: a single folded name, a bare count, or nothing. */
-  cc: { name: RecipientChip } | { count: number } | null;
-  /** True only when there is no To and no Cc — the card renders no recipients line. */
+export interface RecipientRows {
+  to: RecipientRowChip[];
+  cc: RecipientRowChip[];
+  /** True only when there is no To and no Cc — the card renders no block. */
   empty: boolean;
 }
 
-/**
- * The fold compares STORED addresses and returns a DISPLAY name, and the order of those two
- * matters: `ownAddresses` is what `GET /mailboxes` answered, which is A-labels, so a fold done on
- * the decoded string would stop recognising the reader on their own internationalized mailbox and
- * print their address back at them where "me" belongs.
- */
-function foldRecipient(r: EmailAddress, own: ReadonlySet<string>): RecipientChip {
-  if (own.has(r.address.trim().toLowerCase())) return { me: true };
-  return { name: r.name || displayAddress(r.address) };
-}
-
-export function recipientSummary(
+export function recipientRows(
   m: EngineMessage,
   ownAddresses: readonly string[],
-): RecipientSummary {
+): RecipientRows {
   const to = m.to ?? [];
   const cc = m.cc ?? [];
-  if (to.length === 0 && cc.length === 0) {
-    return { to: [], toOverflow: 0, cc: null, empty: true };
-  }
+  if (to.length === 0 && cc.length === 0) return { to: [], cc: [], empty: true };
   const own = new Set(ownAddresses.map((a) => a.trim().toLowerCase()));
-  const foldedTo = to.map((r) => foldRecipient(r, own));
-  const ccSummary: RecipientSummary["cc"] =
-    cc.length === 0
-      ? null
-      : cc.length === 1
-        ? { name: foldRecipient(cc[0]!, own) }
-        : { count: cc.length };
-  return {
-    to: foldedTo.slice(0, 2),
-    toOverflow: Math.max(0, foldedTo.length - 2),
-    cc: ccSummary,
-    empty: false,
-  };
+  const chip = (r: EmailAddress): RecipientRowChip => ({
+    me: own.has(r.address.trim().toLowerCase()),
+    name: r.name || null,
+    address: r.address,
+  });
+  return { to: to.map(chip), cc: cc.map(chip), empty: false };
 }
 
 /** Tag lookup helpers over the mirror's tag entities. */
@@ -581,4 +568,22 @@ export function tagsOfMessage(m: EngineMessage, tags: TagDTO[]): TagDTO[] {
  */
 export function hueOf(tag: TagDTO): TagHueName {
   return TAG_HUES.includes(tag.hue as TagHueName) ? (tag.hue as TagHueName) : "moss";
+}
+
+/**
+ * The waterline's stamp — WHEN the reader last left the stream, as "Mon 18:40" in their
+ * locale. The engine stores the instant (`WaterlineMeta.at`), never display strings, so the
+ * two streams format it here through one function rather than each composing its own. An
+ * unparseable instant yields "" and the caller renders the line with no meta — a line with a
+ * wrong time would be a claim, a line without one is just the line.
+ */
+export function waterlineStamp(atIso: string, locale: string): string {
+  const at = new Date(atIso);
+  if (Number.isNaN(at.getTime())) return "";
+  return new Intl.DateTimeFormat(locale, {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(at);
 }

@@ -19,10 +19,11 @@
  *    bold name with the small address beside it, and a no-name sender prints the bare address
  *    ONCE — `senderName`/`rowAddress`, `format.ts`), the ⋯ actions menu LEFT of the stamp with
  *    the date on the right, the message's own quiet subject line under the sender (SUBJECT-D —
- *    the RAW `m.subject`, reply prefixes included), and a recipients line that a "details"
- *    press expands into the full To/Cc list, the exact date and where the message physically
- *    sits. Worn by the focused message (composed by `MessagePane`) and by a sibling panel
- *    alike, so a message reads the same wherever it is.
+ *    the RAW `m.subject`, reply prefixes included), and the recipients WRITTEN OUT (viewer redesign)
+ *    — To and Cc in full, each recipient a chip that opens {@link ContactPopover}, with a
+ *    "details" press left holding only what the chips do not say: the exact date and where the
+ *    message physically sits. Worn by the focused message (composed by `MessagePane`) and by a
+ *    sibling panel alike, so a message reads the same wherever it is.
  *
  *  · {@link MessageCard} — a conversation SIBLING's panel: the header and the body through the
  *    very same {@link MessageBody} the focused message uses. One `<article class="pm">` per
@@ -31,34 +32,24 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Avatar, Button, Icon } from "@ohmail/ui";
-import { type EmailAddress, type EngineMessage } from "@ohmail/client-engine";
+import { type EngineMessage } from "@ohmail/client-engine";
 import { MessageBody } from "../components/MessageBody";
 import { replyAllRecipients } from "./compose-from";
+import { ContactPopover, type ContactPopoverState } from "./ContactPopover";
 import {
   avatarHue,
   displayTime,
   fullDateTime,
   initialsOf,
-  recipientSummary,
+  recipientRows,
   rowAddress,
   senderName,
-  type RecipientChip,
+  type RecipientRowChip,
 } from "./format";
 import { displayAddress } from "./idn";
 import { useBodyStalled, useMessageChrome } from "./message-chrome";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
-
-/**
- * A recipient shown in full in the details block: "me", or "Name <address>", or the address.
- *
- * The fold to "me" compares the STORED address (`own` is `GET /mailboxes`, i.e. A-labels) and only
- * what is PRINTED is decoded — the same order as `foldRecipient` in `format.ts`.
- */
-function fullRecipient(r: EmailAddress, own: ReadonlySet<string>, me: string): string {
-  if (own.has(r.address.trim().toLowerCase())) return me;
-  const shown = displayAddress(r.address);
-  return r.name ? `${r.name} <${shown}>` : shown;
-}
+import { placePicker } from "./TagPicker";
 
 /**
  * THE HEADER — who it is from, what it is called, when, and who else it went to.
@@ -99,13 +90,25 @@ export function MessageHeader({
   /** The ⋯ disclosure. The trigger owns the keyboard's way back — see `closeMenu`. */
   const [menuOpen, setMenuOpen] = useState(false);
   const moreRef = useRef<HTMLButtonElement>(null);
+  /**
+   * The open contact popover, or null — one per header, because one chip is pressed at a time
+   * and a second press re-points it (the same one-question-at-a-time rule the ⋯ menu keeps).
+   * The pressed chip element is held beside it so Escape can put the keyboard back where the
+   * press came from, and so the screening sheet is anchored on the chip rather than nowhere.
+   */
+  const [contact, setContact] = useState<(ContactPopoverState & { key: string }) | null>(null);
+  const contactAnchor = useRef<HTMLButtonElement | null>(null);
   // A message swap in the same mounted position (the single-message pane re-pointed by
   // selection) must not leave a menu open over a different message's verbs — same rule the
-  // pill applies on `message.id`.
-  useEffect(() => setMenuOpen(false), [message.id]);
+  // pill applies on `message.id`. The contact popover follows it for the same reason.
+  useEffect(() => { setMenuOpen(false); setContact(null); }, [message.id]);
   const closeMenu = (): void => {
     setMenuOpen(false);
     moreRef.current?.focus();
+  };
+  const closeContact = (): void => {
+    setContact(null);
+    contactAnchor.current?.focus();
   };
 
   // `?? []` tolerates a bare test harness that predates the field; the real provider always
@@ -117,23 +120,7 @@ export function MessageHeader({
   const abs = fullDateTime(message);
   /** Show the absolute form when the reader has asked for it AND there is one to show. */
   const showAbs = chrome.absoluteTime && !!abs;
-  const summary = recipientSummary(message, ownAddresses);
-  const meLabel = tm("me");
-  const nameOf = (chip: RecipientChip): string => ("me" in chip ? meLabel : chip.name);
-
-  // "to me, Anna Roth +2 · cc 2" — assembled from the pure summary, separators only between
-  // parts that exist (the `metaLine` rule, kept local because these parts are translated here).
-  const toNames =
-    summary.to.map(nameOf).join(", ") +
-    (summary.toOverflow > 0 ? ` ${tm("plusN", { n: summary.toOverflow })}` : "");
-  const parts: string[] = [];
-  if (summary.to.length > 0) parts.push(tm("to", { names: toNames }));
-  if (summary.cc) {
-    parts.push(tm("cc", { who: "count" in summary.cc ? String(summary.cc.count) : nameOf(summary.cc.name) }));
-  }
-  const recipientLine = parts.join(" · ");
-
-  const own = new Set(ownAddresses.map((a) => a.trim().toLowerCase()));
+  const rows = recipientRows(message, ownAddresses);
 
   /**
    * The menu's items, built from what the chrome actually wires — an unwired verb is an absent
@@ -162,6 +149,62 @@ export function MessageHeader({
       run: () => { closeMenu(); chrome.forward!(message.id); },
     });
   }
+
+  /**
+   * ── THE RECIPIENTS, WRITTEN OUT (viewer redesign) ────────────────────────────────────────────────
+   *
+   * To and Cc in full, one CHIP per person — the folded "to me, Anna Roth +2 · cc 2" line and
+   * the details-press-to-see-everyone are retired: who a message went to is not a secret worth
+   * one more press. (`Bcc` does not render because the wire does not carry it: an incoming
+   * message's blind copies are, by definition, not in its headers, and `EngineMessage` has no
+   * such field — a row for it would be a control over data that cannot exist.)
+   *
+   * The FACE is names-first and decoded (`displayAddress`); the VALUE under every chip is the
+   * stored wire address, which is what the popover's verbs dispatch. A "me" chip wears the
+   * ACCOUNT's identity — `chrome.ownNameOf` (from `GET /mailboxes`' `displayName`), never the
+   * sender's spelling of the reader — and falls back to the bare address when the mailbox
+   * carries no label, because inventing a name is worse than omitting one.
+   */
+  const chipRow = (label: string, group: "to" | "cc", chips: RecipientRowChip[]): ReactNode =>
+    chips.length === 0 ? null : (
+      <div className="rcpt-row">
+        <span className="rcpt-k">{label}</span>
+        {chips.map((r, i) => {
+          const key = `${group}:${i}`;
+          const face = r.me ? (chrome.ownNameOf?.(r.address) ?? null) : r.name;
+          const shown = displayAddress(r.address);
+          return (
+            <button
+              key={key}
+              type="button"
+              className="rcpt-chip"
+              aria-haspopup="menu"
+              aria-expanded={contact?.key === key}
+              onClick={(e) => {
+                contactAnchor.current = e.currentTarget;
+                setContact({
+                  key,
+                  messageId: message.id,
+                  address: r.address,
+                  name: face,
+                  ...placePicker(e.currentTarget),
+                });
+              }}
+            >
+              {face ? (
+                <>
+                  <span className="rcpt-name">{face}</span>
+                  {" – "}
+                  <span className="rcpt-addr">{shown}</span>
+                </>
+              ) : (
+                <span className="rcpt-addr">{shown}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    );
 
   /**
    * SUBJECT-D — the message's own quiet subject line, under the sender, on EVERY panel.
@@ -264,9 +307,12 @@ export function MessageHeader({
         </span>
       </div>
       {subjectLine}
-      {summary.empty ? null : (
-        <div className="msg-rcpt">
-          <span className="msg-rcpt-line">{recipientLine}</span>
+      {rows.empty ? null : (
+        <div className="msg-rcpts">
+          {chipRow(tm("toLabel"), "to", rows.to)}
+          {chipRow(tm("ccLabel"), "cc", rows.cc)}
+          {/* What the chips do not already say: the exact date and where the message
+              physically sits. The full To/Cc list left this disclosure — it is ON screen now. */}
           <button
             type="button"
             className="msg-rcpt-more"
@@ -280,18 +326,6 @@ export function MessageHeader({
       )}
       {details ? (
         <dl className="msg-rcpt-full">
-          {message.to.length > 0 ? (
-            <div>
-              <dt>{tm("to", { names: "" }).trim()}</dt>
-              <dd>{message.to.map((r) => fullRecipient(r, own, meLabel)).join(", ")}</dd>
-            </div>
-          ) : null}
-          {message.cc.length > 0 ? (
-            <div>
-              <dt>{tm("cc", { who: "" }).trim()}</dt>
-              <dd>{message.cc.map((r) => fullRecipient(r, own, meLabel)).join(", ")}</dd>
-            </div>
-          ) : null}
           {abs ? (
             <div>
               <dd>
@@ -305,6 +339,22 @@ export function MessageHeader({
             </div>
           ) : null}
         </dl>
+      ) : null}
+      {contact ? (
+        <ContactPopover
+          state={contact}
+          onWrite={
+            chrome.writeTo
+              ? () => chrome.writeTo!(contact.address, contact.name ?? undefined)
+              : undefined
+          }
+          onScreen={
+            chrome.screenAddress
+              ? () => chrome.screenAddress!(message.id, contact.address, contactAnchor.current)
+              : undefined
+          }
+          onClose={closeContact}
+        />
       ) : null}
     </>
   );

@@ -244,12 +244,30 @@ const byDateDesc = (a: EngineMessage, b: EngineMessage) =>
  * Every list in the product stamps `data-id` with a message id, and the Screener's row id
  * is its representative message id, so one lookup serves the Ohbox, Reads, Receipts, the
  * Screener, Tags and Search without any view having to know what a "sender" entity is.
+ *
+ * ── THE ADDRESS OVERRIDE (the viewer redesign's contact chips) ─────────────────────────────────────
+ *
+ * A recipient chip opens Screener settings for THE CHIP'S address — a To/Cc person, not the
+ * message's sender — and `address` is how that reaches this one lookup without a second one
+ * growing beside it. The seed message still anchors everything (a message moved out from
+ * under the sheet still closes it) and supplies the chip's display name from its own
+ * recipient entries; the SUBJECT of every fact — key, domain, message set, rules — becomes
+ * the override. Absent, byte-for-byte the shipped behaviour: the seed's sender.
+ *
+ * A recipient with no mail in the mirror is a REAL subject, not a failure: the sheet then
+ * shows zero messages and still writes the rule that decides their future mail, which is
+ * exactly what "screen somebody who has not written yet" means.
  */
-export function senderScreening(reader: EntityReader, messageId: string): SenderScreening | null {
+export function senderScreening(
+  reader: EntityReader,
+  messageId: string,
+  address?: string,
+): SenderScreening | null {
   const seed = reader.get<EngineMessage>("message", messageId);
   if (!seed) return null;
-  const key = senderKey(seed.from.address);
-  const domain = domainOf(seed.from.address);
+  const subjectAddress = address ?? seed.from.address;
+  const key = senderKey(subjectAddress);
+  const domain = domainOf(subjectAddress);
 
   // ONE pass over the mirror for both scopes. Two `.filter()` calls would walk every message in
   // the account twice on a click, and the sheet reads this on every render.
@@ -266,11 +284,18 @@ export function senderScreening(reader: EntityReader, messageId: string): Sender
   theirs.sort(byDateDesc);
 
   const sender = subjectOf(mine);
+  // The chip's display name, from the seed message's own entries: the sender's when the
+  // override IS the sender (or there is none), else whatever the To/Cc entry wrote — the same
+  // spelling the chip's face wore. Null for an address the seed does not carry.
+  const name =
+    senderKey(seed.from.address) === key
+      ? seed.from.name
+      : [...seed.to, ...seed.cc].find((r) => senderKey(r.address) === key)?.name ?? null;
   return {
     key,
-    address: seed.from.address,
+    address: subjectAddress,
     domain,
-    name: seed.from.name,
+    name,
     messages: sender.messages,
     current: sender.current,
     waiting: sender.waiting,
@@ -278,7 +303,7 @@ export function senderScreening(reader: EntityReader, messageId: string): Sender
     // With no domain there is nothing to widen to, so the domain subject IS the sender subject
     // and `SenderMenu` refuses to offer the switch. It is never a silently-empty second option.
     scopes: { sender, domain: domain === "" ? sender : subjectOf(theirs) },
-    rules: rulesList(reader).filter((r) => r.enabled && ruleMatchesSender(r, seed.from.address)),
+    rules: rulesList(reader).filter((r) => r.enabled && ruleMatchesSender(r, subjectAddress)),
   };
 }
 

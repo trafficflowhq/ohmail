@@ -27,8 +27,9 @@ import {
   ohboxView,
   physicalFolderOf,
   presentationReader,
-  readsPartition,
+  feedPartition,
   receiptsByDay,
+  waterlineIdOf,
   draftsList,
   rulesList,
   senderKey,
@@ -45,8 +46,10 @@ import {
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
+  type FeedView,
   type Folder,
   type OhmailView,
+  type WaterlineMeta,
   type SearchHit,
   type TagDTO,
   type TriagePileEntry,
@@ -840,6 +843,25 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * so no fixture test could ever have shown this.
    */
   const ownAddresses = useMemo(() => facts?.map((m) => m.address) ?? [], [facts]);
+  /**
+   * THE ACCOUNT'S OWN NAME FOR ONE OF ITS ADDRESSES — what the "me" recipient chip wears
+   * (viewer redesign). `GET /mailboxes` carries `displayName` per mailbox (nullable; OAuth connects
+   * fill it from the provider's id_token, IMAP connects only when the user typed a label), and
+   * that is the ONLY name the shell can honestly claim as the account's: the signup name
+   * (`users.displayName`) never reaches `app/shell/**`, which may not call the API directly.
+   * Null — no label, no facts (the demo, the desktop) — and the chip shows the bare address
+   * rather than an invented name.
+   */
+  const ownNameOf = useCallback(
+    (address: string): string | null => {
+      const key = address.trim().toLowerCase();
+      const label = facts
+        ?.find((m) => m.address.trim().toLowerCase() === key)
+        ?.displayName?.trim();
+      return label ? label : null;
+    },
+    [facts],
+  );
   const consentView: ConsentPartition | null = useMemo(
     // THE DEMO IS NOT PARTITIONED, and this is a fact about the data rather than a shortcut.
     //
@@ -874,13 +896,26 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     //
     // The web path is untouched. A browser tab with no API base never reaches this line:
     // `createEngine` throws `EngineUnarmedError` rather than serve fixtures to a live account.
+    //
+    // ── THE BASELINE RIDES THE SAME ANSWER AS THE WINDOW ─────────────────────────────────
+    //
+    // `consent.screeningBaselineAt` comes from the same `GET /consent` body as
+    // `consent.dormancyDays`, so the two halves of the cutoff — `(baseline ?? now) - days` —
+    // cannot be measured from different fetches. It is null on the desktop and on every account
+    // that has never decided anything, which selects the pre-0056 sliding window rather than a
+    // guess; see `consent-state.ts`.
     () =>
       demo || !(consent.known || consent.standalone)
         ? null
-        : consentPartition(reader, { now, dormancyDays: consent.dormancyDays, ownAddresses }),
+        : consentPartition(reader, {
+            now,
+            dormancyDays: consent.dormancyDays,
+            baselineAt: consent.screeningBaselineAt,
+            ownAddresses,
+          }),
     [
       demo, consent.known, consent.standalone, reader, version, now, consent.dormancyDays,
-      ownAddresses,
+      consent.screeningBaselineAt, ownAddresses,
     ],
   );
   /**
@@ -911,7 +946,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
   const ohbox = useMemo(() => ohboxView(presented), [presented, version]);
-  const partition = useMemo(() => readsPartition(presented), [presented, version]);
+  const partition = useMemo(() => feedPartition(presented, "reads"), [presented, version]);
   /**
    * Receipts is a FLAT list, exactly as Reads is — no day headings.
    *
@@ -923,6 +958,16 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const receipts = useMemo(
     () => receiptsByDay(presented, now).flatMap((g) => g.items),
     [presented, version, now],
+  );
+  /**
+   * Receipts' OWN waterline partition — `view_meta` "receipts_waterline", independent of
+   * Reads' by construction (`waterlineIdOf`). `feedPartition` walks `messagesIn` in the same
+   * date order the day-flatten above preserves, so `fresh.length` is a junction into
+   * `receipts` and not a parallel ordering that could drift.
+   */
+  const receiptsPartition = useMemo(
+    () => feedPartition(presented, "receipts"),
+    [presented, version],
   );
   const piles = useMemo(() => triagePiles(presented), [presented, version]);
   const tagGroups = useMemo(() => tagsCrossView(presented), [presented, version]);
@@ -1561,7 +1606,18 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   // survives a reload, because it is backed by a row.
   const receiptsIsUnread = useCallback((m: EngineMessage) => m.unread, []);
   const receiptsUnread = receipts.filter(receiptsIsUnread).length;
-  const readsUnread = [...partition.fresh, ...partition.seen].filter((m) => m.unread).length;
+  /**
+   * WHAT THE RAIL COUNTS FOR THE STREAMS: "new since last visit" — the fresh side of each
+   * view's line — never an unread count. Reads and Receipts carry no per-row unread status,
+   * so an unread badge there would be a number derived from a signal the piles themselves no
+   * longer show, and it would keep demanding attention for mail that is simply old. The
+   * fresh count is the line's own statement, it goes quiet when a visit ends, and
+   * `rail.readsTitle` ("{count} new") has said exactly this all along. `receiptsUnread`
+   * above survives for Mark-all-read only (Reads computes its own inside the view) — that
+   * control is about `\Seen` on the user's other clients, not about this pile's newness.
+   */
+  const readsNew = partition.fresh.length;
+  const receiptsNew = receiptsPartition.fresh.length;
 
   /* ── route transitions: overlays close, pending screener work lands ── */
   const prevRoute = useRef(route);
@@ -2136,6 +2192,32 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   /**
+   * WRITE TO ONE PERSON — the contact popover's Write verb (viewer redesign).
+   *
+   * A NEW message with the To line prefilled, in the same `Name <address>` shape `openDraft`'s
+   * `line()` writes and `parseRecipients` reads back. The ADDRESS is the stored wire form —
+   * the chip decodes only its face — so what reaches the envelope is what the mirror holds.
+   * The release-first rule is `forwardMessage`'s, for the same reason: without it the compose
+   * would adopt whatever draft row the form last held and send over it.
+   */
+  const writeTo = useCallback(
+    (address: string, name?: string) => {
+      const seeded: ComposeFields = {
+        ...EMPTY_COMPOSE,
+        to: name ? `${name} <${address}>` : address,
+      };
+      autosave.release();
+      setCompose(seeded);
+      writeComposeDraft(seeded);
+      // An open inline reply would otherwise sit under the compose the route change opens —
+      // the same two-editors rule `forwardMessage` states.
+      setReplyTo(null);
+      go("compose");
+    },
+    [autosave, go],
+  );
+
+  /**
    * SCREENING FROM ANYWHERE — one call site for every surface.
    *
    * The plan comes from `sender-screening.ts`, which decides whether the endpoint can be
@@ -2152,9 +2234,18 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * The branch lives beside the sentences in `sender-screening.ts`, never here.
    */
   const changeScreening = useCallback(
-    (messageId: string, dest: ScreeningDest, scope: ScreeningScope = "sender", makeRule = true) => {
+    (
+      messageId: string,
+      dest: ScreeningDest,
+      scope: ScreeningScope = "sender",
+      makeRule = true,
+      // The contact-chip override (viewer redesign): the sheet resolved a To/Cc address, so the
+      // dispatch must resolve the SAME one — a plan computed from the message id alone would
+      // preview one person's mail and move the sender's.
+      address?: string,
+    ) => {
       setSenderMenu(null);
-      const sender = senderScreening(reader, messageId);
+      const sender = senderScreening(reader, messageId, address);
       if (!sender) return;
       const plan = planScreeningChange(sender, dest, scope, makeRule);
       const place = PLACE_LABEL[dest] ?? dest;
@@ -2180,9 +2271,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * sync drain landing mid-read. The sheet closes, because the panel replaces it.
    */
   const openSenderAudit = useCallback(
-    (messageId: string, scope: ScreeningScope) => {
+    (messageId: string, scope: ScreeningScope, address?: string) => {
       setSenderMenu(null);
-      const sender = senderScreening(reader, messageId);
+      const sender = senderScreening(reader, messageId, address);
       if (!sender) return;
       setSenderAudit({
         title: scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address),
@@ -2193,9 +2284,17 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     [reader],
   );
 
-  const openSenderMenu = useCallback((messageId: string, anchor: HTMLElement | null) => {
-    setSenderMenu({ messageId, ...placePicker(anchor) });
-  }, []);
+  /**
+   * `address` is the contact-chip override (viewer redesign): the sheet then resolves that To/Cc
+   * address rather than the message's sender — see `SenderMenuState.address`. Every caller
+   * that predates chips passes two arguments and gets the sender, unchanged.
+   */
+  const openSenderMenu = useCallback(
+    (messageId: string, anchor: HTMLElement | null, address?: string) => {
+      setSenderMenu({ messageId, address, ...placePicker(anchor) });
+    },
+    [],
+  );
 
   /**
    * OPEN THE SUBJECT-RULE SHEET — from a message's title, and from the sender popover's last row.
@@ -2349,6 +2448,21 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       );
     },
     [engine, reader, tags, toast, t],
+  );
+
+  /**
+   * A TAG DROPPED ON THE RAIL — apply, never toggle.
+   *
+   * The rail-drop gesture (`shell/drag-file.ts`, wired in `OhboxView`) names its tag by the
+   * row it landed on, so it needs no picker; what it must NOT have is a second tagging
+   * semantic. This is `bulkToggleTag` in the apply direction and nothing else: the same
+   * per-message `tag_assign`, the same skip of members that already carry it, the same
+   * sentence at the end. A drop can never REMOVE a tag — the drop's meaning is "put it
+   * here", and the picker remains the place where a tag is taken off.
+   */
+  const dropTag = useCallback(
+    (ids: string[], tagId: string) => bulkToggleTag(ids, tagId, true),
+    [bulkToggleTag],
   );
 
   /**
@@ -2756,16 +2870,44 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     [onBulkAction, openBulkTagPicker, planBulkScreening, onBulkScreen],
   );
 
+  /**
+   * The per-card sweep writer for Reads — ids ONLY, never an anchor. The waterline is "new
+   * since last visit": it must hold still for the whole visit and move exactly once, on the
+   * way out ({@link commitFeedSeen}). This used to re-send the current anchor with every
+   * dwell-mark, which meant a first mark on a line-less pile MINTED a line mid-visit and the
+   * partition reshuffled under the reader.
+   */
   const readsMarkSeen = useCallback(
     (id: string) => {
-      void engine.mutate({
-        kind: "feed_mark_seen",
-        messageIds: [id],
-        upToId: partition.waterline?.afterId ?? id,
-      });
+      void engine.mutate({ kind: "feed_mark_seen", view: "reads", messageIds: [id] });
     },
-    [engine, partition.waterline?.afterId],
+    [engine],
   );
+
+  /**
+   * THE LEAVE-COMMIT, both streams — one anchored `feed_mark_seen` per departure, the
+   * reliability floor under the per-card observers. The views hand up the anchor ("the top
+   * of what was on screen") and the unread ids their final screen covered; this reads the
+   * CURRENT meta at invocation time (the view is unmounting; its render-time partition is
+   * already history) and skips entirely when nothing would change — a leave that flips
+   * nothing and moves nothing is not worth a wire round-trip and the drain that follows it.
+   */
+  const commitFeedSeen = useCallback(
+    (view: FeedView) =>
+      (commit: { upToId: string; messageIds: string[] }) => {
+        const held = engine.read().get<WaterlineMeta>("view_meta", waterlineIdOf(view));
+        if (commit.messageIds.length === 0 && held?.newestSeenId === commit.upToId) return;
+        void engine.mutate({
+          kind: "feed_mark_seen",
+          view,
+          upToId: commit.upToId,
+          messageIds: commit.messageIds,
+        });
+      },
+    [engine],
+  );
+  const commitReadsSeen = useMemo(() => commitFeedSeen("reads"), [commitFeedSeen]);
+  const commitReceiptsSeen = useMemo(() => commitFeedSeen("receipts"), [commitFeedSeen]);
 
   /**
    * The Screener row that speaks for `m`, in `segment`.
@@ -3278,17 +3420,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
               total: allOhbox.length,
             }),
           },
+          /* The streams count "new since last visit" — the fresh side of each view's own
+             waterline — never unread. See the `readsNew` derivation for the whole argument. */
           {
             id: "reads",
             label: t("rail.reads"),
-            count: readsUnread,
-            title: t("rail.readsTitle", { count: readsUnread }),
+            count: readsNew,
+            title: t("rail.readsTitle", { count: readsNew }),
           },
           {
             id: "receipts",
             label: t("rail.receipts"),
-            count: receiptsUnread,
-            title: t("rail.readsTitle", { count: receiptsUnread }),
+            count: receiptsNew,
+            title: t("rail.readsTitle", { count: receiptsNew }),
           },
         ],
       },
@@ -3384,7 +3528,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         ],
       },
     ],
-    [t, ohbox.newForYou.length, allOhbox.length, readsUnread, receiptsUnread, screener.waitingCount, piles, tagGroups, tags, createTagAlone],
+    [t, ohbox.newForYou.length, allOhbox.length, readsNew, receiptsNew, screener.waitingCount, piles, tagGroups, tags, createTagAlone],
   );
 
   /**
@@ -3634,6 +3778,13 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       // knew nothing about.
       draftReply: draftReplyChrome,
       openSenderMenu,
+      // The "me" chip's identity and the contact popover's two verbs (viewer redesign). Write seeds
+      // a compose; the Screener entry is the WIDENED openSenderMenu — the chip's address rides
+      // as the override, so the sheet resolves the To/Cc person and not the message's sender.
+      ownNameOf,
+      writeTo,
+      screenAddress: (messageId: string, address: string, anchor: HTMLElement | null) =>
+        openSenderMenu(messageId, anchor, address),
       // The title press. The seam was declared with no implementation, so the viewer rendered the
       // subject as a plain heading; supplying it is what turns the title into the control.
       openSubjectRule: (messageId: string) => openSubjectRule(messageId, null),
@@ -3645,14 +3796,14 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     }),
     [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       replyEnvelope, replyFromId, replyAttachments, replyBook,
-      openSenderMenu, openReply, forwardMessage, openSubjectRule,
+      openSenderMenu, ownNameOf, writeTo, openReply, forwardMessage, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just
   // been moved out from under it closes the popover instead of rendering an empty one.
   const senderMenuFor = useMemo(
-    () => (senderMenu ? senderScreening(reader, senderMenu.messageId) : null),
+    () => (senderMenu ? senderScreening(reader, senderMenu.messageId, senderMenu.address) : null),
     [senderMenu, reader, version],
   );
 
@@ -3921,6 +4072,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 onDoorbell={() => go("screener")}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
+                onDropTag={dropTag}
                 bulk={bulkVerbs}
                 /* Mail from beyond what this device kept — see `shell/older-mail.ts`. Built in
                    the shell because the hook needs the engine, and this view is mounted without
@@ -3944,7 +4096,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 chipState={chipState}
                 onChipState={setChipState}
                 markSeen={readsMarkSeen}
-                isSeen={(m) => !m.unread}
+                onLeaveSeen={commitReadsSeen}
                 bodyOf={bodyOfMessage}
                 hydrateBody={hydrateBody}
                 jumpTo={jump?.view === "reads" ? jump.id : null}
@@ -3960,6 +4112,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 messages={receipts}
+                waterline={receiptsPartition.waterline}
+                freshCount={receiptsNew}
                 tags={tags}
                 now={now}
                 cur={receiptsCur}
@@ -3967,6 +4121,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 unreadCount={receiptsUnread}
                 isUnread={receiptsIsUnread}
                 markSeen={(id) => markSeen([id], false)}
+                onLeaveSeen={commitReceiptsSeen}
                 bodyOf={bodyOfMessage}
                 hydrateBody={hydrateBody}
                 jumpTo={jump?.view === "receipts" ? jump.id : null}
@@ -4536,10 +4691,15 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         <SenderMenu
           state={senderMenu!}
           sender={senderMenuFor}
-          onChoose={(dest, scope, makeRule) => changeScreening(senderMenu!.messageId, dest, scope, makeRule)}
+          // The address override travels on EVERY dispatch off this sheet, or the sheet would
+          // show the chip's person and rule on the message's sender — the cc-chip guard names
+          // this exact seam.
+          onChoose={(dest, scope, makeRule) => changeScreening(senderMenu!.messageId, dest, scope, makeRule, senderMenu!.address)}
           autoUnsubscribe={autoUnsubscribeDiscloses}
-          onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope)}
-          onSubjectRule={() => openSubjectRule(senderMenu!.messageId, null)}
+          onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope, senderMenu!.address)}
+          // The subject sheet resolves the message's SENDER (`subjectRuleContext`), so under an
+          // override the row is withheld rather than offered about somebody the sheet never named.
+          onSubjectRule={senderMenu!.address == null ? () => openSubjectRule(senderMenu!.messageId, null) : undefined}
           onClose={() => setSenderMenu(null)}
         />
       ) : null}

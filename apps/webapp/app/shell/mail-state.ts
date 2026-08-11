@@ -183,6 +183,14 @@ export interface MailboxFacts {
    */
   id: string;
   address: string;
+  /**
+   * The mailbox's user-facing label from `GET /mailboxes` — what the "me" recipient chip wears
+   * as the account's name (viewer redesign). `deriveMailState` must never read it, and does not: a
+   * label says nothing about whether mail is arriving. OPTIONAL and nullable because the wire
+   * is (`MailboxDTO.displayName` — OAuth connects fill it from the provider, IMAP connects only
+   * when the user typed one), and the chip's fallback for both absences is the bare address.
+   */
+  displayName?: string | null;
   /** The 3-member lifecycle union, widened to `string` because the wire is a string. */
   status: string;
   /** Null unless `status === 'error'`. A stable key; the wording lives in `messages/*.json`. */

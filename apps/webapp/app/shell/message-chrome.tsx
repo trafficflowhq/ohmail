@@ -162,6 +162,43 @@ export interface MessageChrome {
   /** Open the screening popover for `messageId`, anchored on `anchor`. */
   openSenderMenu: (messageId: string, anchor: HTMLElement | null) => void;
   /**
+   * THE ACCOUNT'S OWN NAME FOR ONE OF ITS ADDRESSES, or null when it has none — what the "me"
+   * chip in the recipients block wears instead of the sender's spelling of the reader.
+   *
+   * The answer is `GET /mailboxes`' `displayName`, resolved in `AppShell` from the same facts
+   * `ownAddresses` comes from, and it rides the chrome for the same reason they do: the header
+   * is rendered inside both `MessagePane` mounts and holds no mailbox hook of its own. A
+   * FUNCTION of the address rather than one string, because an account can hold several
+   * mailboxes under different labels and the chip folds a SPECIFIC own address.
+   *
+   * OPTIONAL, and null is a real answer either way: a mailbox with no label, the desktop
+   * shell, the demo and every bare harness all have no name to offer, and the chip then shows
+   * the bare address — the honest fallback, never an invented one.
+   */
+  ownNameOf?: (address: string) => string | null;
+  /**
+   * PREFILL A NEW MESSAGE to `address` — the contact popover's Write verb.
+   *
+   * Filled by `AppShell` (compose seeded with the recipient, then the route change), which is
+   * the only place a compose form exists. OPTIONAL, and absence is the INERT-CHROME RULE at
+   * work: a surface with no compose machine behind it (a bare harness, a provider-less mount)
+   * OMITS the Write item rather than rendering a dead one — the same degradation `openReply`
+   * and `forward` already follow one interface entry up.
+   */
+  writeTo?: (address: string, name?: string) => void;
+  /**
+   * OPEN THE SCREENING SHEET FOR `address` — the contact popover's Screener-settings verb, and
+   * the one entry that must NOT collapse to {@link MessageChrome.openSenderMenu} alone: that
+   * call resolves the SENDER of `messageId`, while a chip names a To/Cc person. `AppShell`
+   * fills this with its widened `openSenderMenu(messageId, anchor, address)`, so the sheet
+   * opens on the CHIP's address with the message as its anchor into the mirror.
+   *
+   * OPTIONAL for the same reason `writeTo` is: where no screening machine exists the item is
+   * ABSENT, never dead. (`openSenderMenu` itself stays required-with-a-noop for the sender
+   * line's sake, which is why it cannot serve as this item's presence signal.)
+   */
+  screenAddress?: (messageId: string, address: string, anchor: HTMLElement | null) => void;
+  /**
    * OPEN THE QUICK-LOOK PREVIEW for one attachment on `messageId`. The pane dispatches a tile
    * press here for a type this app can render (image, PDF, text) and to `attachments.open`
    * (download) for everything else.

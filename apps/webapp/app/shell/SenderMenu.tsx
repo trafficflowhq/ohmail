@@ -76,6 +76,14 @@ import {
 export interface SenderMenuState {
   /** Any message from the sender — the mirror resolves the rest. */
   messageId: string;
+  /**
+   * THE SUBJECT, when it is not the message's sender — a contact chip's To/Cc address
+   * (viewer redesign). `senderScreening` resolves every fact from it instead of `from.address`,
+   * and every dispatch off this sheet (`changeScreening`, `openSenderAudit`) must carry it
+   * too, or the sheet would SHOW one person and rule on another. Absent for every opener
+   * that predates chips: the sender resolves, byte for byte as before.
+   */
+  address?: string;
   x: number;
   y: number;
 }
