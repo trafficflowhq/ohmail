@@ -86,20 +86,23 @@ function pileList(dests: DecisionDestination[], t: (k: string, v?: Record<string
 /**
  * THE SIX GROUPS A WAITING QUEUE FALLS INTO — the filter chips, in the order they are offered.
  *
- * Spelled as {@link APPLY_PILE_ORDER} plus the two the bulk apply REFUSES, because that is the
- * whole point of the row. "Apply 12 — Ohbox, Reads & Receipts" over a queue of 47 is a true
+ * Spelled as {@link APPLY_PILE_ORDER} plus the one group the bulk apply REFUSES, because that is
+ * the whole point of the row. "Apply 12 — Ohbox, Reads & Receipts" over a queue of 47 is a true
  * sentence that leaves 35 senders unaccounted for, and a reader has no way to find out where
  * they went: the button names what it will do and says nothing about what it is stepping over.
- * The chips are that remainder, made countable — `spam`, which the bulk will not judge forty at
- * a time, and `none`, which is every sender the model held, could not answer for, or was never
- * asked about.
+ * The chips are that remainder, made countable — `none`, which is every sender the model held,
+ * could not answer for, or was never asked about.
  *
- * Deriving the first four from the shared constant rather than re-listing them is what keeps the
- * chips and the banner describing ONE set: a sixth destination, or a change of order, moves both
- * at once. Two hand-kept lists would drift, and the drift would read as the apply count being
- * wrong.
+ * `spam` USED TO BE LISTED HERE SEPARATELY, and it moved into `APPLY_PILE_ORDER` rather than being
+ * dropped: the apply now files spam like every other verdict, so it is one of the piles the button
+ * names instead of one of the groups it steps over. Its chip is unchanged and sits in the same
+ * place, which is the point of deriving this list rather than hand-keeping it.
+ *
+ * Deriving the piles from the shared constant is what keeps the chips and the banner describing
+ * ONE set: a new destination, or a change of order, moves both at once. Two hand-kept lists would
+ * drift, and the drift would read as the apply count being wrong.
  */
-const FILTER_ORDER = [...APPLY_PILE_ORDER, "spam", "none"] as const;
+const FILTER_ORDER = [...APPLY_PILE_ORDER, "none"] as const;
 type ScreenerFilterId = DecisionDestination | "none";
 
 /** Breathing room above the anchored message, so its own header is not flush with the column edge. */

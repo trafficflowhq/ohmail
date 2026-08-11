@@ -141,8 +141,8 @@ export interface ScreenerState {
    *
    * The apply control's label is built from this and from {@link suggestedCount} together: a
    * button that says only how MANY is a bulk action whose consequence is invisible until it has
-   * happened. Never contains `screener` or `spam` — the two the bulk refuses to act on — because
-   * it is derived from the same rows the count is.
+   * happened. Never contains `screener` — the one answer the bulk refuses to act on — because it
+   * is derived from the same rows the count is.
    */
   suggestedDests: DecisionDestination[];
   /**
@@ -262,16 +262,18 @@ const MARK_SEEN_MAX = 200;
 /**
  * The piles the apply control may name, in the order it names them.
  *
- * The four `applyAll` can actually file into, and no more: `screener` is the model declining to
- * place a sender and `spam` is a judgement the bulk deliberately refuses to make forty at a time
- * (`applyAll`'s predicate states both). A fifth member here would put a pile in the label that
- * the press does not deliver, which is the "Apply all (83)" lie one control over.
+ * The five `applyAll` can actually file into, and no more: `screener` is the model declining to
+ * place a sender, which is the one answer a bulk may not act on (`applyAll`'s predicate states
+ * why). A sixth member here would put a pile in the label that the press does not deliver, which
+ * is the "Apply all (83)" lie one control over — and, symmetrically, a destination the press DOES
+ * deliver but this list omits is the "it stopped at the spam" report this list used to produce.
  *
- * Ohbox first, then the two automated piles, then the demotion — least to most consequential, so
- * a reader scanning "Apply 12 — Ohbox, Reads & Receipts" meets the admission before the filing.
+ * Ohbox first, then the two automated piles, then the demotion, then the judgement — least to
+ * most consequential, so a reader scanning "Apply 12 — Ohbox, Reads, Receipts & Spam" meets the
+ * admissions before the filing and the filing before the verdict.
  */
 export const APPLY_PILE_ORDER: readonly DecisionDestination[] = [
-  "ohbox", "reads", "receipts", "screened",
+  "ohbox", "reads", "receipts", "screened", "spam",
 ];
 
 export function useScreenerState(
@@ -570,11 +572,10 @@ export function useScreenerState(
   // A queue whose every suggestion is a `hold` offers no button at all, which is honest: there
   // is nothing to apply, and a button reading "Apply all (83)" that moved nothing would be the
   // inert-button lie `ScreenerView.tsx` already refuses.
-  // Spam is excluded here for the same reason it is excluded there — see `applyAll`. Counting it
-  // would put a number on the button that the press does not deliver.
-  const suggestedRows = undecided.filter(
-    (x) => x.ai != null && x.ai.dest !== "screener" && x.ai.dest !== "spam",
-  );
+  // Spam IS counted, because the press files it — see `applyAll`. It used to be excluded here to
+  // match an exclusion there, and the two together are what left a queue of spam rows on screen
+  // after a press that claimed to have applied every suggestion.
+  const suggestedRows = undecided.filter((x) => x.ai != null && x.ai.dest !== "screener");
   const suggestedCount = suggestedRows.length;
   /**
    * WHICH PILES the press would file into, deduped, in the surface's own reading order.
@@ -641,10 +642,10 @@ export function useScreenerState(
    * rows into a batch the endpoint can only answer `not_held` for — the exact loop #116 removed
    * from the buy list, re-created on the re-ask path.
    *
-   * `ai != null` and NOT `suggestedRows`' predicate: that set drops `screener` and `spam` because
-   * they are destinations a bulk APPLY refuses to act on. A sender the model declined to place, or
-   * one a run could not answer for, is not un-re-askable — it is the case with the most to gain
-   * from being asked again once their next mail arrives.
+   * `ai != null` and NOT `suggestedRows`' predicate: that set drops `screener`, because it is the
+   * one answer a bulk APPLY refuses to act on. A sender the model declined to place, or one a run
+   * could not answer for, is not un-re-askable — it is the case with the most to gain from being
+   * asked again once their next mail arrives.
    */
   const suggestedSenders = [
     ...new Set(
@@ -748,13 +749,27 @@ export function useScreenerState(
       // very thing removing the fallback was meant to end. Without this the cast above would send
       // the string "screener" to `decide` as a `DecisionDestination`, which is not one of the five.
       //
-      // SPAM IS EXCLUDED FROM THIS CONTROL TOO, and for a different reason than the hold. It is a
-      // real suggestion and the surface shows it; what it is not is a filing to make forty at a
-      // time on a model's word. Every other destination sorts a stranger's mail, and this one
-      // makes a judgement about the stranger. There is already a control for doing it in bulk —
-      // `markAllSpam`, pressed deliberately — so a row suggested as spam keeps its chip, stays in
-      // the queue, and waits for the one press that means it.
-      (x) => x.ai != null && x.ai.dest !== "screener" && x.ai.dest !== "spam",
+      // ── AND IT IS THE ONLY EXCLUSION. SPAM USED TO BE THE SECOND, AND WAS WRONG ────────────
+      //
+      // This predicate carried `&& x.ai.dest !== "spam"` as well, on the argument that spam is a
+      // judgement about a stranger rather than a filing of their mail, and that `markAllSpam`
+      // already exists for anyone who wants to make it forty at a time. Reported from live use:
+      // "when auto-applying the AI suggestions it stops at the spam and shows one only the
+      // remaining spam messages". That is this line, and the report is the right reading of it —
+      // a control labelled "Apply 12" that leaves five rows standing has failed halfway as far as
+      // anyone using it can tell, whatever the reasoning behind the gap.
+      //
+      // The safety argument does not survive contact with what the press actually does. A spam
+      // decision is `{decision:"no", dest:"spam"}` — a MOVE to `ohmail/Quarantine`, plus the same
+      // rule and the same retro pass every other destination writes. Nothing is deleted; the Spam
+      // segment lists the whole pile with "Not spam → Screener" and "Not spam → Ohbox" on every
+      // row, and `undo` covers the window like any other decision. It is exactly as reversible as
+      // the screen-out this control has always performed, and `markAllSpam` — which judges EVERY
+      // waiting sender with no model behind it — is by any measure the blunter of the two.
+      //
+      // `markAllSpam` stays where it is. It answers a different question ("all of this is junk")
+      // and needs no suggestions to do it.
+      (x) => x.ai != null && x.ai.dest !== "screener",
     );
 
   const markAllSpam = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope) =>

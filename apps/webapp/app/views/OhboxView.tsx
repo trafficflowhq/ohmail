@@ -66,12 +66,17 @@ type PickPanel =
 const DWELL_MS = 2000;
 
 /**
- * How long a settled reply's parent slides before it re-files under "Earlier".
+ * How long a row slides before it re-files under "Earlier".
  *
  * Long enough to read as a deliberate move rather than a jump, short enough that the row is gone
  * from "New for you" by the time attention returns to the list. It matches the `.row.settling`
- * transition in `row.css`; a device that prefers reduced motion drops the transition and the row
- * simply moves on the next render.
+ * transition in `row.css`; a device that prefers reduced motion gets no transition at all (the
+ * rule is inside a `prefers-reduced-motion: no-preference` block) and the row simply moves on the
+ * render this timer schedules.
+ *
+ * ONE CONSTANT FOR EVERY DEPARTURE FROM "NEW FOR YOU" — a reply that settled, a message read in
+ * the app, a `\Seen` that arrived from another mail client. They are one gesture with three
+ * causes, so they share one duration and one mechanism (see `slideOut`).
  */
 const SETTLE_MS = 280;
 
@@ -83,9 +88,9 @@ const SETTLE_MS = 280;
  * `at` is when it settled, so a consumer can key an animation and ignore a stale value on a later
  * render. Exported so the shell and the view name the same shape.
  *
- * The view accepts it but does not yet act on it — the animation ships in a following slice. Until
- * then it is a dark prop: passed, typed, and unread, which is exactly what lets the wiring land now
- * and the motion land later without a second change to this signature.
+ * WHAT THE VIEW DOES WITH IT IS NARROW: it marks the answered message read. The slide is not this
+ * prop's — it belongs to `slideOut`, which moves ANY row the selector has re-filed under "Earlier",
+ * whatever read it. Answering a message is one of the things that reads it, not a second gesture.
  */
 export interface OhboxReplyDone {
   /** The answered message — the row that moves to Earlier. */
@@ -122,9 +127,9 @@ export function OhboxView({
   onMarkAllRead,
 }: {
   /**
-   * A reply that just settled, or `null`. Consumed by the animate-to-Earlier gesture in a
-   * following slice; declared here so the shell can wire `onSendSettled` to it now. Optional
-   * so every existing caller and test compiles unchanged.
+   * A reply that just settled, or `null`. The view marks the answered message read; the move to
+   * "Earlier" follows from that, through the same slide every other read takes. Optional so
+   * every existing caller and test compiles unchanged.
    */
   replyDone?: OhboxReplyDone | null;
   /**
@@ -241,34 +246,44 @@ export function OhboxView({
   const t = useTranslations("ohbox");
 
   /**
-   * ═══ SESSION-SCOPED PLACEMENT ════════════════════════════════════════════════════════
-   *
-   * The selector re-partitions the list the instant a message is read — the row leaves "New for
-   * you" and reappears in "Earlier" — which re-sorts the Ohbox under the reader's cursor
-   * mid-session. That is the churn this removes: a message read THIS session keeps its slot in its
-   * upper group (its unread dot clears in place) until a reload, when the selector's truth takes
-   * over. The selector still computes what is TRUE; this holds a session ORDER on top of it.
+   * ═══ SESSION-SCOPED PLACEMENT, AND THE SLIDE THAT ENDS IT ════════════════════════════
    *
    * Two refs, one per pinned upper group — resurfaced and New for you. Each is reconciled at
    * render: it keeps the ids it already held that are still in the Ohbox, then appends any that the
-   * selector has newly placed in that group. It never drops an id just because the selector moved
-   * it to "Earlier" — that move is what the pin exists to defer. Refs, and reconciled in render
-   * rather than an effect, for the reason `allRef` below is: the value has to be right for the
-   * render that reads it, not one render late.
+   * selector has newly placed in that group. Refs, and reconciled in render rather than an effect,
+   * for the reason `allRef` below is: the value has to be right for the render that reads it, not
+   * one render late.
    *
-   * `dismissed` is the ONE exception, and the one deliberate mid-session move: a settled reply (see
-   * the `replyDone` effect) drops its parent from the New order on purpose, so it animates down to
-   * "Earlier". `settling` carries the slide while it does.
+   * What the session order is FOR is the ordering: a row keeps the slot it was given rather than
+   * being re-sorted every time the selector recomputes, and a live arrival lands at the end of it
+   * instead of shuffling everything above it. What it is NOT for is holding a message in "New for
+   * you" after it has been read.
    *
-   * ── AND THE REVERSE MOVE: `promoted` ─────────────────────────────────────────────────
+   * ── A READ MESSAGE LEAVES "NEW FOR YOU" NOW, NOT ON THE NEXT RELOAD ──────────────────
    *
-   * The forward move is DEFERRED (a read row keeps its slot). The reverse move must not be, and
-   * the asymmetry is not an inconsistency — it is the same rule applied in the other direction.
-   * Deferring the forward move exists to stop the list re-sorting under a reader who did not ask
-   * for it; an explicit mark-unread IS the asking, and the section it belongs in is defined by
-   * exactly the state the reader just set — "New for you" means unread-in-Ohbox.
+   * This reverses the earlier ruling, deliberately. That ruling deferred the forward move: a
+   * message read this session kept its slot with its dot cleared, on the argument that "the reader
+   * did not ask for the move". The cost of it is what shipped, and it is worse than the churn it
+   * avoided — a mailbox read in the app looked exactly like a mailbox that had not been read.
+   * "New for you" went on listing mail the reader had finished with, for the whole session, and the
+   * only way to make the list agree with the reading was to reload the page. A section heading that
+   * needs a page refresh to become true is not a stable list; it is a stale one.
    *
-   * So `promoted` holds the ids the reader has explicitly put back to unread this session, and
+   * So: the moment the selector files a row under "Earlier" — because the reader read it here,
+   * because a reply to it settled, or because a `\Seen` for it arrived from another mail client —
+   * the row SLIDES down and re-files. `settling` carries the slide (280 ms, `SETTLE_MS`), and when
+   * it ends `dismissed` drops the id from the session order so the next render draws it under
+   * "Earlier". `slideOut` below owns all of it.
+   *
+   * THE ONE THING THAT DOES NOT MOVE IS THE MESSAGE BEING READ RIGHT NOW, and that is not an
+   * exception bolted on here — it falls out of reading being committed on the way OUT (see
+   * {@link commitPendingRead}). Nothing is written while the message is on screen, so there is
+   * nothing for the selector to re-file and nothing to slide; the row moves when the reader leaves
+   * it, which is the moment their attention is already somewhere else.
+   *
+   * ── THE REVERSE MOVE: `promoted` ─────────────────────────────────────────────────────
+   *
+   * `promoted` holds the ids the reader has explicitly put back to unread this session, and
    * `reconcile` enters each of them at the FRONT of the New order rather than appending. Appending
    * is what shipped, and it is the reported defect: the row a reader has just finished with sits at
    * the TOP of "Earlier", so appending moved it exactly one position — past the "Earlier" label to
@@ -276,21 +291,27 @@ export function OhboxView({
    * next thing the reader intends to do with it is, and on a long list the bottom of New is off
    * screen.
    *
-   * It OVERRIDES `dismissed`, which is why `promote` clears it: a reply settled a message down to
-   * "Earlier" and then the reader said "no, this is unfinished" — the later, explicit act wins.
+   * IT WINS OVER A SLIDE THAT IS ALREADY RUNNING, which is why `promote` cancels the timer, clears
+   * `settling` and clears `dismissed`: a message read a moment ago is on its way down, and the
+   * reader has just said "no, this is unfinished". The later explicit act wins, and it wins
+   * immediately rather than 280 ms later when a timer nobody can see fires.
    */
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
   const [promoted, setPromoted] = useState<Set<string>>(() => new Set());
   const [settling, setSettling] = useState<Set<string>>(() => new Set());
   const resurfacedOrder = useRef<string[]>([]);
   const newOrder = useRef<string[]>([]);
+  /** Slides in flight, id → timer handle. Cancelled by `promote` and by unmount. */
+  const slideTimers = useRef<Map<string, number>>(new Map());
 
   /**
    * Record an explicit "this is unread again" for one or more ids — see `promoted` above.
    *
-   * Both halves are needed and neither is housekeeping: the id joins the promote set so the next
-   * reconcile leads the New order with it, and it leaves `dismissed` so a settle that already
-   * pushed it down cannot keep filtering it out of that order.
+   * Four halves, and none of them is housekeeping. The id joins the promote set so the next
+   * reconcile leads the New order with it; the slide timer is torn up and the `settling` class
+   * comes off, so a row caught mid-descent stops where it is instead of finishing a move the
+   * reader has just contradicted; and it leaves `dismissed` so a slide that already completed
+   * cannot keep filtering it out of the order it is being promoted into.
    *
    * NOT PRUNED when a row leaves the Ohbox. The set is bounded by explicit user acts within one
    * session, and an id it still holds is inert the moment the row is in the New order (reconcile
@@ -298,6 +319,18 @@ export function OhboxView({
    * of the same fact for no behaviour.
    */
   const promote = useCallback((ids: readonly string[]) => {
+    for (const id of ids) {
+      const timer = slideTimers.current.get(id);
+      if (timer === undefined) continue;
+      window.clearTimeout(timer);
+      slideTimers.current.delete(id);
+    }
+    setSettling((prev) => {
+      if (!ids.some((id) => prev.has(id))) return prev;
+      const next = new Set(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
     setPromoted((prev) => {
       const next = new Set(prev);
       for (const id of ids) next.add(id);
@@ -318,23 +351,49 @@ export function OhboxView({
   const byId = useMemo(() => new Map(ohboxAll.map((m) => [m.id, m])), [ohboxAll]);
 
   /**
+   * THE ROWS THE SELECTOR NOW FILES UNDER "EARLIER" — the predicate the whole slide turns on.
+   *
+   * Membership of `previouslySeen`, and not `m.unread === false`, because those two are not the
+   * same question. A RESURFACED row that has been read is read and still belongs at the top of the
+   * list: the worker's pin, not the read state, decides that group, and `ohboxView` keeps it out of
+   * "Earlier" until the pin is cleared. Sliding on the read flag alone would drop such a row out of
+   * its pinned group and into a section that does not contain it — a row that vanishes from the
+   * list entirely until the server catches up.
+   *
+   * So the question asked here is the one the answer depends on: does the selector say this row's
+   * place is now "Earlier"? Every cause is covered by construction — an in-app read, an answered
+   * message, a `\Seen` adopted from another client — because all three reach this view as the same
+   * re-partition.
+   */
+  const earlierIds = useMemo(() => new Set(previouslySeen.map((m) => m.id)), [previouslySeen]);
+
+  /**
    * `lead` is the promote block: ids entering this group for the first time that the reader has
    * explicitly marked unread go to the FRONT, keeping the group's own relative order among
    * themselves (a bulk unread of three keeps their arrival order rather than reversing it), and
    * everything else appends as before. An id already in `prev` is skipped by `have`, so a row the
    * session order is already holding never moves — which is what makes marking a row that is
    * already in New a no-op on placement.
+   *
+   * A DISMISSAL IS SPENT THE MOMENT THE SELECTOR STOPS FILING THE ROW UNDER "EARLIER", which is
+   * what `dropped` says. `dismissed` is a session set that now takes an entry for every message
+   * read in the session, so a permanent one would swallow the row's way back: mail marked unread
+   * from another client arrives as a plain re-partition — no `promote` call, nothing explicit here
+   * — and an unconditional `dismissed.has(id)` would file it under a section it is no longer in and
+   * then refuse to draw it in the section it IS in. Reading the two facts together is what makes
+   * the set self-healing rather than a leak with a UI consequence.
    */
+  const dropped = (id: string): boolean => dismissed.has(id) && earlierIds.has(id);
   const reconcile = (
     prev: string[],
     current: EngineMessage[],
     front?: ReadonlySet<string>,
   ): string[] => {
-    const keep = prev.filter((id) => byId.has(id) && !dismissed.has(id));
+    const keep = prev.filter((id) => byId.has(id) && !dropped(id));
     const have = new Set(keep);
     const lead: string[] = [];
     for (const m of current) {
-      if (dismissed.has(m.id) || have.has(m.id)) continue;
+      if (dropped(m.id) || have.has(m.id)) continue;
       (front?.has(m.id) ? lead : keep).push(m.id);
       have.add(m.id);
     }
@@ -563,6 +622,15 @@ export function OhboxView({
   markSeenRef.current = onMarkSeen;
 
   /**
+   * {@link earlierIds}, READABLE FROM INSIDE THE SLIDE TIMER, and held the same way and for the
+   * same reason as `allRef` above: the slide has to re-judge its own premise at the moment it
+   * completes, against the list as it is THEN, not as it was 280 ms earlier when the row started
+   * moving. Assigned in render so a slide that fires between two renders reads the newer answer.
+   */
+  const earlierRef = useRef(earlierIds);
+  earlierRef.current = earlierIds;
+
+  /**
    * THE MESSAGE `u` JUST PUT BACK TO UNREAD, and why nothing here may undo it.
    *
    * Pressing `u` on the row under the cursor marks it unread — and in the split pane the cursor
@@ -596,6 +664,13 @@ export function OhboxView({
    * So arrival ARMS and departure COMMITS. This ref holds the one message that has been read but
    * not yet left — written by the dwell when its two seconds elapse, and by an explicit open —
    * and it is spent by {@link commitPendingRead} at each of the four ways out.
+   *
+   * IT CARRIES THE WHOLE OF THE STABILITY ARGUMENT NOW. A read used to be doubly deferred: nothing
+   * was written until the reader left, and the row then held its slot anyway until a reload. The
+   * second half is gone — a read row slides to "Earlier" at once (see the session-placement block
+   * above) — so this is the only thing standing between the reader and a list that re-sorts under
+   * their eyes. Which is enough, and is where the protection belonged all along: the list moves at
+   * the moment attention has already left the message, never while it is being looked at.
    *
    * A ref rather than state, for the same two reasons `pinnedUnread` is one: the commit paths run
    * outside React's render (a timer, a document event, an unmount cleanup) and must see the value
@@ -760,6 +835,12 @@ export function OhboxView({
    * the state from being undone, and neither of them puts the row anywhere. `promote` does (see
    * `promoted`), because "New for you" is defined by unread-in-Ohbox and a row this key has just
    * made unread that stayed under "Earlier" is the list contradicting its own section heading.
+   *
+   * `promote` ALSO TEARS UP A SLIDE IN FLIGHT, which is the case this key meets most often now
+   * that reading moves rows: read a message, change your mind within 280 ms, and the row is
+   * mid-descent. The two mechanisms above would leave the read state alone and the timer would
+   * still file the row under "Earlier" a quarter-second later — the reader's last word undone by
+   * a clock they cannot see. See `promote`.
    */
   const markUnread = useCallback((m: EngineMessage) => {
     pinnedUnread.current = m.id;
@@ -902,19 +983,93 @@ export function OhboxView({
   }, [commitPendingRead]);
 
   /**
-   * ═══ THE ONE DELIBERATE MID-SESSION MOVE: A SETTLED REPLY ═════════════════════════════
+   * ═══ THE SLIDE: A ROW LEAVES THE UPPER GROUPS BY MOVING, NOT BY DISAPPEARING ══════════
    *
-   * Every other read this session holds its row in place (session placement above). A reply is the
-   * exception: answering a message is done with it, so its parent slides down to "Earlier" and is
-   * marked read. The shell hands the settled reply down as {@link replyDone}, keyed on the settle
-   * instant so a value already acted on is ignored across later renders.
+   * Start one row's descent to "Earlier". It is the only writer of `settling` and the only writer
+   * of `dismissed`, so there is exactly one answer in this file to "how does a row leave New for
+   * you", however it came to be read.
    *
-   * It moves a row only if that row is CURRENTLY in the New session order — a reply to something
-   * already in "Earlier" has nowhere to move, and a late confirmation for a message the list no
-   * longer shows in New is a no-op. The slide runs first (`settling`); then the row is dropped from
-   * the New order (`dismissed`, the one thing that overrides the pin) and marked read, so the next
-   * render files it under "Earlier". Reading it is what clears any resurfaced pin server-side too
-   * (`MessageService.markSeen`), which is why a reply closes a resurface.
+   * TWO STEPS AND A GAP BETWEEN THEM, and the gap is the point. The class goes on first and the
+   * row keeps its slot for {@link SETTLE_MS}, which is what `row.css` transitions over; only then
+   * is the id dropped from the session order and the row redrawn under "Earlier". Dropping it in
+   * the same tick would be a teleport — the row would vanish from under the cursor and reappear
+   * somewhere below, and everything between the two positions would jump up a row with no motion
+   * to explain it.
+   *
+   * IT RE-JUDGES ITS OWN PREMISE WHEN IT LANDS, the way {@link commitPendingRead} does. 280 ms is
+   * long enough for the answer to change: `u` can put the message back to unread, another client
+   * can, the row can be filed out of the Ohbox altogether. So the completion asks `earlierRef`
+   * again — is "Earlier" still where this belongs? — and abandons the move if it is not, leaving
+   * the row exactly where the reader last saw it. `promote` cancels the timer outright for the
+   * explicit case; this covers the ones nothing in this view initiated.
+   */
+  const slideOut = useCallback((id: string) => {
+    if (slideTimers.current.has(id)) return;
+    setSettling((s) => new Set(s).add(id));
+    const timer = window.setTimeout(() => {
+      slideTimers.current.delete(id);
+      if (earlierRef.current.has(id)) setDismissed((d) => new Set(d).add(id));
+      setSettling((s) => {
+        if (!s.has(id)) return s;
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    }, SETTLE_MS);
+    slideTimers.current.set(id, timer);
+  }, []);
+
+  /**
+   * ═══ WHAT STARTS A SLIDE: THE SELECTOR RE-FILING A ROW THIS VIEW IS STILL HOLDING UP ══
+   *
+   * The whole gesture keys on ONE observation, made against the session orders rather than against
+   * any particular act: an id these orders are holding in an upper group, which `ohboxView` now
+   * files under "Earlier". Reading a message here produces exactly that (the optimistic `mark_seen`
+   * overlay flips the row before any request lands), and so does a reply settling, and so does a
+   * `\Seen` adopted from Exchange, Mail.app or a phone — the worker writes it to the mirror and it
+   * arrives as the same delta. One mechanism, because they are one event with different causes; a
+   * per-cause hook would have been three places to forget the third one, which is precisely how
+   * external reads came to move nothing at all until a reload.
+   *
+   * KEYED ON `earlierIds` AND NOTHING ELSE. It is a memo over `previouslySeen`, so the effect
+   * re-runs on exactly the changes that can add work and never on the ones that cannot — a new
+   * unread arriving, a selection moving, a picked set changing. The session orders are read from
+   * their refs, which render has already reconciled by the time any effect runs.
+   *
+   * `slideOut` is idempotent on an id already in flight, so a re-render mid-slide re-observes the
+   * same row and does nothing to it.
+   */
+  useEffect(() => {
+    for (const id of resurfacedOrder.current) if (earlierIds.has(id)) slideOut(id);
+    for (const id of newOrder.current) if (earlierIds.has(id)) slideOut(id);
+  }, [earlierIds, slideOut]);
+
+  /** Nothing may fire into an unmounted view — the whole map, once, on the way out. */
+  useEffect(() => {
+    const timers = slideTimers.current;
+    return () => {
+      for (const timer of timers.values()) window.clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+
+  /**
+   * ═══ A SETTLED REPLY MARKS THE MESSAGE IT ANSWERED READ ═══════════════════════════════
+   *
+   * Answering a message is being done with it, and the product says so by writing the read state —
+   * which is also what clears any resurfaced pin server-side (`MessageService.markSeen`), so a
+   * reply closes a resurface. The shell hands the settled reply down as {@link replyDone}, keyed on
+   * the settle instant so a value already acted on is ignored across later renders.
+   *
+   * THE MOVE IS NOT WRITTEN HERE ANY MORE. This used to run its own slide-then-dismiss, because it
+   * was the one deliberate mid-session move in a design where reads did not move rows at all. Reads
+   * move rows now, so a second copy of the gesture would be two mechanisms racing over one row —
+   * both setting `settling`, both scheduling a dismissal. The write is the whole of this effect;
+   * the slide follows from it through `slideOut`, exactly as it does for a message read by hand.
+   *
+   * It still acts only on a row CURRENTLY in the New session order: a reply to something already in
+   * "Earlier" is answering mail that has been read, and a late confirmation for a message the list
+   * no longer shows in New is a no-op.
    */
   const replyDoneStamp = useRef<string | null>(null);
   useEffect(() => {
@@ -924,18 +1079,9 @@ export function OhboxView({
     if (replyDoneStamp.current === stamp) return;
     replyDoneStamp.current = stamp;
     if (!newOrder.current.includes(rd.messageId)) return;
-    const id = rd.messageId;
-    setSettling((s) => new Set(s).add(id));
-    const timer = window.setTimeout(() => {
-      setDismissed((d) => new Set(d).add(id));
-      if (allRef.current.find((m) => m.id === id)?.unread) markSeenRef.current([id], false);
-      setSettling((s) => {
-        const next = new Set(s);
-        next.delete(id);
-        return next;
-      });
-    }, SETTLE_MS);
-    return () => window.clearTimeout(timer);
+    if (allRef.current.find((m) => m.id === rd.messageId)?.unread) {
+      markSeenRef.current([rd.messageId], false);
+    }
     // Keyed on `replyDone` alone: the refs and setters it reaches are stable, and re-running on any
     // other change would replay a settle the stamp guard has already spent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1170,7 +1316,8 @@ export function OhboxView({
       unread={m.unread}
       seen={!m.unread}
       selected={selected?.id === m.id}
-      // the settling class rides the parent while it slides to "Earlier" after a reply settles.
+      // the settling class rides the row for the 280 ms it takes to slide down to "Earlier" —
+      // read here, answered, or read on another mail client. See `slideOut`.
       className={settling.has(m.id) ? "settling" : undefined}
       threadCount={m.threadCount}
       participants={participants.length > 0 ? participants : undefined}
@@ -1233,8 +1380,13 @@ export function OhboxView({
    *     thread view, the dwell and the departure commit behave exactly as for a plain row, and
    *     nothing bulk-marks the folded members read;
    *   · `selected` is row MEMBERSHIP, so the highlight survives the lead message changing;
-   *   · no `settling` class: the settle gesture dismisses ONE message, and a conversation row
-   *     with members left has nowhere to slide.
+   *   · `settling` ONLY WHEN EVERY MEMBER IS SLIDING, which is what makes a conversation behave
+   *     the way a reader expects when they work through it. The slide is per MESSAGE: read one
+   *     of five unread replies and that message alone descends, so the row stands still and its
+   *     count goes to four — nothing moves, because the conversation is still waiting. Read the
+   *     last one and every member is in flight at once, so the row itself slides and the whole
+   *     conversation re-files under "Earlier" as one row. A row that animated on each member
+   *     would be five slides for one conversation, four of which end where they started.
    */
   const groupRow = (g: OhboxRowGroup) => {
     if (g.members.length === 1) return row(g.members[0]!);
@@ -1263,6 +1415,8 @@ export function OhboxView({
         {...(sentLeads ? sent.avatar : avatarOf(target))}
         time={displayTime(shown, now)}
         subject={threadSubject?.(g.key) ?? shown.subject}
+        // see the docblock: the conversation slides only when the whole of it is on its way down.
+        className={g.members.every((m) => settling.has(m.id)) ? "settling" : undefined}
         preview={
           shown.protected
             ? t("protectedPreview")
@@ -1411,9 +1565,12 @@ export function OhboxView({
         {/* RESURFACED — pinned at the very top under its own quiet label, whole and outside
             the window (a scheduled set is small). It is a different claim from "New for you": not
             "this arrived" but "you asked to see this again now", so it earns its own heading rather
-            than being folded in. A row read this session holds its place here (session placement)
-            with its dot cleared, until a reload files it under "Earlier". COPY-SHIM: the label is
-            an inline literal pending an `en.json` key. */}
+            than being folded in. Reading one clears the pin server-side (`MessageService.markSeen`),
+            and the row slides down to "Earlier" on the same mechanism a read row in "New for you"
+            does — but only once the selector actually files it there, which is the whole reason the
+            slide keys on section membership rather than on the read flag (see `earlierIds`). Until
+            that answer arrives the row stays pinned, read, exactly where the reader left it.
+            COPY-SHIM: the label is an inline literal pending an `en.json` key. */}
         {displayResurfaced.length > 0 ? (
           <>
             <ListGroupLabel>Resurfaced</ListGroupLabel>

@@ -20,6 +20,12 @@ import type { EngineMessage } from "@ohmail/client-engine";
    are deliberately NOT grouped: a resurfaced row is a per-message "you asked to see this again",
    and the tail is a bounded server page whose membership this client cannot see all of.
 
+   PER-SECTION GROUPING IS ALSO WHAT MAKES READING THROUGH A CONVERSATION BEHAVE. Reading one of
+   five unread replies moves that MESSAGE to "Earlier" — the unit the read state lives on — so the
+   New row is folded from four members instead of five and its count says so, while the Earlier row
+   for the same thread gains the one that was read. The conversation stops being listed as waiting
+   only when its last unread member has gone, which is the sentence "New for you" is making.
+
    ── ORDER: THE FIRST MEMBER KEEPS THE ROW'S PLACE ───────────────────────────────────────────
 
    A group renders at its first member's position in the section's own order, so grouping never
