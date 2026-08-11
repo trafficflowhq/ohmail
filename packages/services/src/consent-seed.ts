@@ -584,6 +584,7 @@ export async function consentSettings(
   screeningResetAt: string | null;
   autoSuggestAt: string | null;
   blockRemoteImagesAt: string | null;
+  blockAutoUnsubscribeAt: string | null;
   locale: string | null;
 }> {
   const [row] = await ctx.db.select().from(accountSettings)
@@ -603,6 +604,14 @@ export async function consentSettings(
     // the difference between "no opt-out" and "no answer" is actually visible.
     blockRemoteImagesAt: row?.blockRemoteImagesAt
       ? row.blockRemoteImagesAt.toISOString()
+      : null,
+    // NULL and an absent row both mean "a screen-out still unsubscribes" — the product default,
+    // and the same direction as `blockRemoteImagesAt` above rather than as the two flags before
+    // it. What the CLIENT does with an unknown differs from that neighbour (see
+    // `consent-state.ts`), but nothing about that reaches here: this is a server that read the
+    // row, so it has no unknown to resolve.
+    blockAutoUnsubscribeAt: row?.blockAutoUnsubscribeAt
+      ? row.blockAutoUnsubscribeAt.toISOString()
       : null,
     // NULL, an absent row and — unlike every other field here — an UNSUPPORTED value all answer
     // null, which the client reads as "this account has no preference, keep the device's language".
@@ -765,6 +774,58 @@ export async function setBlockRemoteImages(
       set: { blockRemoteImagesAt: at, updatedAt: ctx.now() },
     });
   return { blockRemoteImagesAt: at ? at.toISOString() : null };
+}
+
+/**
+ * KEEP AUTO-UNSUBSCRIBE, OR STOP IT — the fifth knob on `account_settings`, and the second one on
+ * the row that stores an OPT-OUT.
+ *
+ * `blocked === true` stamps the instant: this account asked that screening a sender out stop
+ * sending a one-click unsubscribe on their behalf. `false` NULLs the column and returns them to
+ * the product default, which is that it does.
+ *
+ * ── WHY THE OPT-OUT SPELLING IS NOT ARGUABLE HERE ──────────────────────────────────────────
+ *
+ * `setBlockRemoteImages` makes the "a default nobody is on" argument for its own direction. This
+ * column has a stronger version of it: the behaviour is ALREADY RUNNING for every account that
+ * exists, so an opt-in column shipped without a backfill would have switched it off for all of
+ * them silently, and shipped WITH one would have written a preference nobody expressed. See
+ * `0054_auto_unsubscribe_optout.sql`.
+ *
+ * ── WHAT THIS FLAG DOES AND DOES NOT REACH ─────────────────────────────────────────────────
+ *
+ * It gates exactly one seam: {@link UnsubscribeService.onScreenOut}, the automatic entry point the
+ * screen-out calls after its commit — and therefore `sweepScreenedOut` too, which goes through it.
+ * It does NOT gate `UnsubscribeService.unsubscribe`, the per-message button: that is a person
+ * pressing unsubscribe on mail in front of them, and a switch labelled "auto" may not quietly
+ * disable a manual control. It spends nothing and moves no mail; both positions are reversible,
+ * except for requests already sent, which is what makes the switch worth having.
+ *
+ * ── THE UPSERT, COLUMN-SCOPED ──────────────────────────────────────────────────────────────
+ *
+ * Same shape and reason as {@link setAutoSuggest}, {@link setDormancyDays} and
+ * {@link setBlockRemoteImages}: rows are created lazily by whichever feature writes first, so this
+ * races `confirmSeed`, `resetScreeningState` and every other knob on one primary key. Touching
+ * only `block_auto_unsubscribe_at` + `updated_at` means a concurrent seed confirmation keeps its
+ * `seed_confirmed_at`.
+ *
+ * Returns the stored instant so the caller echoes the database rather than the argument — a
+ * refused write must never be drawn as a move, and here the move drawn wrongly would tell somebody
+ * their lists are being left alone while the server goes on leaving them.
+ */
+export async function setBlockAutoUnsubscribe(
+  ctx: ServiceContext, blocked: boolean,
+): Promise<{ blockAutoUnsubscribeAt: string | null }> {
+  // The context clock, not the database's — every other consent timestamp is written this way,
+  // and a settings row whose columns come from two clocks cannot be ordered.
+  const at = blocked ? ctx.now() : null;
+  await ctx.db.insert(accountSettings)
+    .values({ accountId: ctx.accountId, blockAutoUnsubscribeAt: at })
+    .onConflictDoUpdate({
+      target: accountSettings.accountId,
+      set: { blockAutoUnsubscribeAt: at, updatedAt: ctx.now() },
+    });
+  return { blockAutoUnsubscribeAt: at ? at.toISOString() : null };
 }
 
 /**

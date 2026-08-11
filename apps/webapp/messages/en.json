@@ -388,13 +388,13 @@
     "delete": "Delete",
     "today": "today",
     "toastFiled": "{dest} — filed{read, select, true { · marked read} other {}}. Future mail from {target} files there automatically.",
-    "toastScreened": "Screened out — {target}.{read, select, true { Held mail marked read.} other {}}",
-    "toastSpam": "Marked spam — {target}.",
+    "toastScreened": "Screened out — {target}.{read, select, true { Held mail marked read.} other {}}{unsub, select, true { ohmail is also unsubscribing you, where the sender offers one-click.} other {}}",
+    "toastSpam": "Marked spam — {target}.{unsub, select, true { ohmail is also unsubscribing you, where the sender offers one-click.} other {}}",
     "toastUndo": "Undo",
     "toastUndone": "{count, plural, one {Undone — 1 waiting again.} other {Undone — # waiting again.}}",
     "toastUndoExpired": "Too late to undo — that decision has already been sent.",
-    "toastBulkDecided": "{count} decided — {parts}",
-    "toastBulkSpam": "{count} moved to Spam",
+    "toastBulkDecided": "{count} decided — {parts}{unsub, select, true {. ohmail is also unsubscribing you from the ones you screened out, where they offer one-click.} other {}}",
+    "toastBulkSpam": "{count} moved to Spam{unsub, select, true {. ohmail is also unsubscribing you, where they offer one-click.} other {}}",
     "toastAllowed": "Allowed — {count} held + future mail from {sender} go to {dest}.",
     "toastReleased": "{dest} — {count} held from {sender} released. No rule was made, so future mail is unchanged.",
     "toastNotSpamOhbox": "Not spam — filed to Ohbox. {sender} is allowed now.",
@@ -651,6 +651,13 @@
       "on": "Pictures in a message load when you open it, through ohmail's proxy.",
       "off": "Each message asks first. Press Show images to load them.",
       "microcopy": "Either way, images come through our proxy, so a sender never sees your address — and a tracking pixel is never fetched at all.",
+      "failed": "Couldn't save that — try again."
+    },
+    "autoUnsub": {
+      "title": "Unsubscribe when I screen out or mark spam",
+      "on": "Screening a sender out also sends their unsubscribe, where they offer one-click.",
+      "off": "Their mail is filed and nothing is sent.",
+      "microcopy": "One request per list, once, from our servers — so your address and reading times stay out of the sender's log. Senders who offer no one-click link are filed and nothing is sent for them, and a request already sent cannot be taken back.",
       "failed": "Couldn't save that — try again."
     },
     "dormancy": {

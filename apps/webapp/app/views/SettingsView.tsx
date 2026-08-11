@@ -370,6 +370,7 @@ export function SettingsView({
   screeningSection,
   dormancySection,
   remoteImagesSection,
+  autoUnsubscribeSection,
   awaySection,
   desktopSection,
 }: {
@@ -539,6 +540,26 @@ export function SettingsView({
    */
   remoteImagesSection?: ReactNode;
   /**
+   * AUTO-UNSUBSCRIBE ON SCREEN-OUT, injected — the Screener pane's fourth control.
+   *
+   * It belongs to the SCREENER and not to General, unlike {@link remoteImagesSection} directly
+   * above: what it governs is a consequence of a screening decision, so the place somebody looks
+   * for it is the pane where they set what screening does.
+   *
+   * It renders AFTER {@link autoSuggestSection} and BEFORE {@link awaySection}, which is an
+   * escalation and not an accident: the two above it change what the Screener shows and what it
+   * may spend, this one makes a request to a stranger, and the responder below it sends mail. A
+   * control whose consequence leaves the building sits below every control whose does not.
+   *
+   * The same injection seam as {@link autoSuggestSection}: it writes `PATCH /consent/settings`
+   * through `app/api-client` and through the shell's `useConsentState` (so the sender sheet and the
+   * Screener stop disclosing a request that will no longer be made), neither of which this shared,
+   * desktop-mirrored file may name. Absent ⇒ no row, which is the honest state on a standalone
+   * install: its engine wires no unsubscribe service at all, so there is nothing there to switch
+   * off.
+   */
+  autoUnsubscribeSection?: ReactNode;
+  /**
    * THE AWAY RESPONDER, injected — and the only injected node whose feature SENDS MAIL.
    *
    * The same seam as {@link autoSuggestSection}: it reads and writes `GET/PUT /away-responder`
@@ -587,7 +608,8 @@ export function SettingsView({
   // (About). Each group moves from what the app IS to the user, through what it DOES with their
   // mail, to what governs the account, and ends on facts that are not controls at all.
   const screenerPane = Boolean(
-    screeningSection || dormancySection || autoSuggestSection || awaySection || seedSection,
+    screeningSection || dormancySection || autoSuggestSection || autoUnsubscribeSection
+      || awaySection || seedSection,
   );
   const panes: Array<[PaneId, string]> = [
     ["general", t("general")],
@@ -799,9 +821,13 @@ export function SettingsView({
               {screeningSection}
               {dormancySection}
               {autoSuggestSection}
+              {/* Auto-unsubscribe, below the two that change what the Screener shows and the one
+                  that can spend, because this is the first one whose consequence leaves the
+                  building — a request to a stranger, with no undo once it has gone. */}
+              {autoUnsubscribeSection}
               {/* The away responder, after the controls about what the Screener SHOWS and after the
-                  one that can spend, because it is the only one that SENDS. Its own decision is
-                  about the senders the posture above is holding. */}
+                  one that can spend, because it is the only one that SENDS MAIL. Its own decision
+                  is about the senders the posture above is holding. */}
               {awaySection}
               {seedSection ? (
                 <>

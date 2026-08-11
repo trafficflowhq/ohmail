@@ -91,6 +91,7 @@ import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
 import { useComposeAutosave } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
+import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
 import { AwayResponderRow } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
@@ -927,7 +928,28 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * metered auto-suggest batch below, so this also stops the spender from being offered senders
    * the cutline had already ruled out as not-work.
    */
-  const screener = useScreenerState(engine, version, toast, suggestions.suggestions, presented);
+  /**
+   * WILL SCREENING A SENDER OUT ALSO UNSUBSCRIBE FROM THEIR LIST, ON THIS BUILD, FOR THIS ACCOUNT?
+   *
+   * The single answer every disclosure in this shell reads — the sender sheet's pre-click confirm
+   * and the Screener's toasts — so the sentence and the sending can never come apart. Two
+   * conditions, and they are independent facts rather than belt and braces:
+   *
+   *  · `consent.autoUnsubscribe` — the ACCOUNT's switch (mail 0054), which is what the server
+   *    itself reads at the seam. Resting TRUE, so a failed `GET /consent` keeps the disclosure
+   *    exactly as it was before the switch existed rather than silently dropping it.
+   *  · `!consent.standalone` — the BUILD. A standalone install wires no unsubscribe service into
+   *    its screener at all (`apps/sidecar`'s bag has no `unsubscribe` entry), so a decision there
+   *    sends nothing whatever the account row says. Without this clause the desktop would warn
+   *    about a request it structurally cannot make.
+   *
+   * The demo is deliberately NOT excluded: `standalone` is false there, and the demo's job is to
+   * show what the product does.
+   */
+  const autoUnsubscribeDiscloses = consent.autoUnsubscribe && !consent.standalone;
+  const screener = useScreenerState(
+    engine, version, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
+  );
   /**
    * The opt-in's quote, bound to the SAME list the automatic batch will slice.
    *
@@ -4034,6 +4056,25 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                     setBlockRemoteImages={consent.setBlockRemoteImages}
                   />
                 )}
+                /* AUTO-UNSUBSCRIBE ON SCREEN-OUT. Gated on BOTH `consent.known` and
+                   `autoOptIn.supported`, and each gate answers a different question.
+
+                   `known` is the flash argument the two rows above make, pointing the other way:
+                   this switch rests ON, so drawing it before the server has answered would show it
+                   ON to an account that turned it OFF — and somebody who then left it alone would
+                   believe they had chosen the state they were merely shown.
+
+                   `supported` (i.e. `apiConfigured()`) is the structural one, and it is why this is
+                   not simply `known`: a standalone install wires no unsubscribe service into its
+                   screener at all, so nothing there could be switched off. A control drawn on that
+                   build would store nothing and govern nothing. Withheld from the demo like every
+                   other injected pane. */
+                autoUnsubscribeSection={demo || !consent.known || !autoOptIn.supported ? undefined : (
+                  <AutoUnsubscribeRow
+                    on={consent.autoUnsubscribe}
+                    setBlockAutoUnsubscribe={consent.setBlockAutoUnsubscribe}
+                  />
+                )}
                 /* THE AWAY RESPONDER. Gated on "is there a server to ask" and NOT on
                    `consent.known`, unlike the two rows above: it holds no consent state and loads
                    its own row, so it has nothing to flash the wrong way round. But the server gate
@@ -4260,6 +4301,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           state={senderMenu!}
           sender={senderMenuFor}
           onChoose={(dest, scope, makeRule) => changeScreening(senderMenu!.messageId, dest, scope, makeRule)}
+          autoUnsubscribe={autoUnsubscribeDiscloses}
           onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope)}
           onSubjectRule={() => openSubjectRule(senderMenu!.messageId, null)}
           onClose={() => setSenderMenu(null)}
