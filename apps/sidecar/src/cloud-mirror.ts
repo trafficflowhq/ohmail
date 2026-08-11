@@ -1,10 +1,11 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
-import { eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { recordChange } from "@trafficflow/db";
 import {
-  approvals, drafts, folderState, messageBodies, messageStates, messages, messageTags,
+  approvals, drafts, folderState, mailboxes, messageBodies, messageStates, messages, messageTags,
   routingDecisions, rules, tags, threads,
 } from "@trafficflow/db/mail";
+import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
 import type {
   ApprovalDTO, ChangeOp, DraftDTO, EntityType, MessageBodyBatchItem, MessageDTO, MessageStateDTO,
   Page, RoutingDecisionDTO, RuleDTO, SnapshotResponse, SyncChange, SyncResponse, TagDTO, ThreadDTO,
@@ -89,11 +90,67 @@ const APPLY_ORDER: readonly EntityType[] = [
 const DEFAULT_PAGE_LIMIT = 500;
 const DEFAULT_BODIES_LIMIT = 100;
 
+/**
+ * How many body-less messages one pull may repair. Ten `?ids=` requests at the server's cap — enough
+ * to absorb a burst of new mail in a single poll, small enough that a mirror which has been offline
+ * for a week catches up over several polls instead of firing hundreds of requests at once.
+ */
+const BODIES_CATCHUP_MAX = 10 * BODIES_IDS_MAX;
+
+/**
+ * THE ON-DISK MARKER FOR A FINISHED BODY WALK. Written into the cursor file's `bodies` field, where
+ * every other value is a `messages.id` — a UUID — so the two can never be confused, and an old
+ * build reading it would send `after=complete` and get a `400 invalid cursor` rather than silently
+ * mirroring the wrong rows.
+ */
+export const BODIES_WALK_COMPLETE = "complete";
+
+/**
+ * WHERE THE BODY WALK HAS GOT TO — three states, in the one field that used to hold two of them.
+ *
+ * `GET /messages/bodies` keyset-pages the account by `messages.id` and answers `nextCursor: null`
+ * on the LAST page. The cursor stored that answer verbatim, so `null` meant BOTH "the walk finished"
+ * and — because the next pull read it as "no `after=` to send" — "start again from the first
+ * message". A completed walk therefore restarted on every poll, re-fetching and re-upserting every
+ * body in the account for as long as the app was open. Nothing was wrong with the mirror it
+ * produced, which is why it went unnoticed: it converged on identical rows, at the cost of a
+ * permanently busy process and a write-ahead log that never stopped growing.
+ *
+ * Splitting the states is the fix, and the split has to survive cursor files written before it
+ * existed — see {@link resolveBodiesWalk} for how a `null` read off disk is decided.
+ */
+type BodiesWalk =
+  /** An on-disk `null`: complete or never-started, and only the mailbox row can say which. */
+  | { phase: "unresolved" }
+  /** Mid-walk. `after` is the last id a page returned, or null to begin at the first message. */
+  | { phase: "walking"; after: string | null }
+  /** Every message in the account has been offered a body. Later pulls fetch only what is missing. */
+  | { phase: "complete" };
+
+/** The on-disk `bodies` field for a walk state. The inverse of {@link readBodiesWalk}. */
+function writeBodiesWalk(walk: BodiesWalk): string | null {
+  switch (walk.phase) {
+    case "complete":
+      return BODIES_WALK_COMPLETE;
+    case "walking":
+      return walk.after;
+    default:
+      return null;
+  }
+}
+
+/** A cursor file's `bodies` field as a walk state. The inverse of {@link writeBodiesWalk}. */
+function readBodiesWalk(raw: unknown): BodiesWalk {
+  if (raw === BODIES_WALK_COMPLETE) return { phase: "complete" };
+  if (typeof raw === "string" && raw !== "") return { phase: "walking", after: raw };
+  return { phase: "unresolved" };
+}
+
 interface CursorState {
   /** The hosted `/sync` cursor. `"0"` bootstraps a full replay. */
   sync: string;
-  /** The `GET /messages/bodies` keyset cursor (a message id), or null before/at the end. */
-  bodies: string | null;
+  /** How far the body walk has got. See {@link BodiesWalk} for why this is not just an id. */
+  bodies: BodiesWalk;
   /**
    * Set while a `since=0` bootstrap is in flight and its trailing sweep has NOT yet run. It is what
    * makes the mark-and-sweep crash-safe: a bootstrap that commits a page then dies leaves a NON-zero
@@ -130,8 +187,27 @@ export interface CloudMirror {
   pullOnce(): Promise<number>;
   /** Pull now, then poll. */
   start(): Promise<void>;
-  /** Stop polling. */
-  stop(): void;
+  /**
+   * Stop polling, ASK ANY IN-FLIGHT PULL TO LEAVE, and resolve once it has.
+   *
+   * The await is the whole point, and it is why this is not `void`. A pull is a long walk over the
+   * network with a database transaction per page; clearing the poll timer stopped the NEXT one and
+   * did nothing about the one already running, so quitting closed the database underneath a drain
+   * that was still enqueuing work against it. The close waited behind that queue, missed the
+   * shell's grace period and the process was killed — every quit, with a page half-applied.
+   *
+   * The walk checks between pages and between id batches, so what a caller waits for here is one
+   * request and one page apply, not the rest of the mailbox. Nothing is left half-written: the
+   * cursor is only ever advanced after a page commits, so an interrupted walk resumes from the last
+   * page that landed, and a bootstrap interrupted mid-generation stays marked as one so the next
+   * launch restarts it rather than sweeping against a partial mark.
+   */
+  stop(): Promise<void>;
+  /**
+   * Is a pull running right now? Read by the shutdown log so the line can say whether the mirror
+   * was the thing holding the quit up — the stdio host's own in-flight count says nothing about it.
+   */
+  draining(): boolean;
   /**
    * Is the hosted account reachable right now? True optimistically at construction; a pull that
    * fails (bad network, spent token) flips it false, a pull that succeeds flips it back. The
@@ -168,22 +244,36 @@ export const RECONNECT_MAX_MS = 300_000;
 
 const asDate = (iso: string | null | undefined): Date | null => (iso ? new Date(iso) : null);
 
+/** The cursor file's shape. `bodies` is the serialized {@link BodiesWalk}. */
+interface CursorFile {
+  sync?: unknown;
+  bodies?: unknown;
+  bootstrapping?: unknown;
+  tagBackfill?: unknown;
+}
+
 function readCursor(path: string): CursorState {
   try {
-    const j = JSON.parse(readFileSync(path, "utf8")) as Partial<CursorState>;
+    const j = JSON.parse(readFileSync(path, "utf8")) as CursorFile;
     return {
       sync: typeof j.sync === "string" && j.sync !== "" ? j.sync : "0",
-      bodies: typeof j.bodies === "string" ? j.bodies : null,
+      bodies: readBodiesWalk(j.bodies),
       bootstrapping: j.bootstrapping === true,
       tagBackfill: j.tagBackfill === true,
     };
   } catch {
-    return { sync: "0", bodies: null, bootstrapping: false, tagBackfill: false };
+    return { sync: "0", bodies: { phase: "unresolved" }, bootstrapping: false, tagBackfill: false };
   }
 }
 
 function writeCursor(path: string, state: CursorState): void {
-  writeFileSync(path, JSON.stringify(state));
+  const onDisk: CursorFile = {
+    sync: state.sync,
+    bodies: writeBodiesWalk(state.bodies),
+    bootstrapping: state.bootstrapping,
+    tagBackfill: state.tagBackfill,
+  };
+  writeFileSync(path, JSON.stringify(onDisk));
 }
 
 /** Drop the cursor file. The 410 path deletes it before re-bootstrapping from zero. */
@@ -739,6 +829,11 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const pageLimit = cfg.pageLimit ?? DEFAULT_PAGE_LIMIT;
   const cursor = readCursor(cfg.cursorPath);
   let stopped = false;
+  /**
+   * The abort every loop in this file checks. Set by `stop()` and never cleared: a mirror that has
+   * been asked to leave does not come back, it is replaced by the next launch's.
+   */
+  let aborted = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   /** Optimistic: a mirror is assumed reachable until a pull proves otherwise. */
   let reachable = true;
@@ -767,7 +862,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * relaunch after a 410 deleted the cursor mid-drain. A 410 mid-drain resets to zero and restarts
    * the generation. An incremental drain (a real cursor) marks nothing and sweeps nothing.
    */
-  const drainSync = async (): Promise<{ applied: number; sweep: BootstrapGen | null }> => {
+  const drainSync = async (): Promise<{ applied: number; sweep: BootstrapGen | null; cut: boolean }> => {
     let applied = 0;
     // A drain that begins at since=0 — a first launch, or a healed/absent cursor — OR that finds a
     // bootstrap left unfinished by a crash is a BOOTSTRAP. Force since=0 so the generation is rebuilt
@@ -779,6 +874,11 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       sweep = newBootstrapGen();
     }
     for (;;) {
+      // BETWEEN PAGES, so a quit costs at most the page already in flight. `sweep: null` is the
+      // load-bearing half: a bootstrap generation that stopped early has marked only part of the
+      // account, and sweeping against it would delete rows the feed simply had not reached yet.
+      // `cursor.bootstrapping` is left SET, so the next launch restarts the bootstrap in full.
+      if (aborted) return { applied, sweep: null, cut: true };
       const q = new URLSearchParams({
         since: cursor.sync || "0",
         limit: String(pageLimit),
@@ -794,7 +894,15 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         // persisted by the first page commit below, so a crash mid-bootstrap still resumes as one.
         deleteCursor(cfg.cursorPath);
         cursor.sync = "0";
-        cursor.bodies = null;
+        // The body walk restarts with it. Not `unresolved`, which would consult the import stamp
+        // and, on a mirror that had finished, settle on `complete` — leaving the bodies to
+        // {@link fetchMissingBodies}. That would be cheaper and it would also be correct, since
+        // bodies are immutable once ingested and the sweep takes a phantom's body with the
+        // phantom. It is not what this does, because a 410 is the one moment the mirror is told
+        // its own position is untrustworthy, and rebuilding from zero is the answer that does not
+        // depend on the local rows being right. It costs one walk, on a path reached only when a
+        // cursor has fallen below the feed's retention horizon.
+        cursor.bodies = { phase: "walking", after: null };
         cursor.bootstrapping = true;
         sweep = newBootstrapGen();
         applied = 0;
@@ -809,7 +917,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       writeCursor(cfg.cursorPath, cursor);
       if (!body.hasMore) break;
     }
-    return { applied, sweep };
+    return { applied, sweep, cut: false };
   };
 
   /**
@@ -888,6 +996,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       let totalMessages = 0;
       let pageCursor: string | undefined;
       for (;;) {
+        // Asked to leave mid-repair: return WITHOUT marking it considered, so the next launch
+        // starts again from page 1. The apply is idempotent, so the re-run converges.
+        if (aborted) return totalTags;
         const snap = await fetchSnapshotPage(pageCursor);
         if (!snap) return totalTags;   // a page failed → NOT marked done; the next pull retries
         const written = await applyTagBackfill(cfg.db, cfg.world, snap, now());
@@ -916,40 +1027,149 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     }
   };
 
-  /** Backfill message bodies via the batch text-pull endpoint's `GET /messages/bodies`. Not a `/sync` entity, so no change-log row. */
-  const backfillBodies = async (): Promise<number> => {
+  /**
+   * Message ids the hosted account did not answer for. See {@link fetchMissingBodies} — asked at
+   * most once per launch, so a message deleted on Cloud between the drain that mirrored it and the
+   * tombstone that removes it cannot make every later pull re-ask for a body that is not there.
+   */
+  const unanswered = new Set<string>();
+
+  /** Upsert one page of bodies. Not a `/sync` entity, so no change-log row. */
+  const storeBodies = async (items: readonly MessageBodyBatchItem[]): Promise<number> => {
+    let written = 0;
+    await cfg.db.transaction(async (tx) => {
+      for (const item of items) {
+        // The FK requires the message; a body whose message is not yet mirrored is skipped, and
+        // {@link fetchMissingBodies} is what comes back for it once the message lands.
+        if (!(await messagePresent(tx, item.messageId))) continue;
+        const row = {
+          text: item.text ?? "",
+          html: item.html ?? null,
+          loadedRemoteContent: !!item.loadedRemoteContent,
+        };
+        await tx.insert(messageBodies).values({ messageId: item.messageId, ...row })
+          .onConflictDoUpdate({ target: messageBodies.messageId, set: row });
+        written++;
+      }
+    });
+    return written;
+  };
+
+  /**
+   * DECIDE WHAT AN OLD CURSOR'S `bodies: null` MEANT — the migration read, and it is a one-way door.
+   *
+   * Every install running before the walk had a terminal state carries `null` in that field, and the
+   * two populations it stands for are not the same size. A mirror that has been up for more than the
+   * few minutes a first walk takes has FINISHED its walk; only a brand-new install, caught between
+   * its first `/sync` drain and its first body page, has genuinely not started one. So the read has
+   * to distinguish them, and there is already a fact on disk that does: `initial_import_completed_at`
+   * on the mailbox row is stamped by {@link stampSynced} exactly when a pass drains with the body
+   * walk spent, and never unstamped. Stamped ⇒ the walk finished ⇒ complete. Unstamped ⇒ it has not
+   * ⇒ walk from the first message.
+   *
+   * Reading it the other way round is the expensive mistake in both directions: calling a finished
+   * walk unstarted re-fetches the whole account once per launch, and calling an unfinished walk
+   * complete would leave a half-imported mailbox with bodies missing and nothing to fetch them —
+   * which is why the fallback is to walk. A wrong "walk" costs one pass; a wrong "complete" would
+   * cost correctness.
+   */
+  const resolveBodiesWalk = async (): Promise<BodiesWalk> => {
+    const [row] = await cfg.db.select({ importedAt: mailboxes.initialImportCompletedAt })
+      .from(mailboxes).where(eq(mailboxes.id, cfg.world.mailboxId)).limit(1);
+    return row?.importedAt ? { phase: "complete" } : { phase: "walking", after: null };
+  };
+
+  /**
+   * THE FIRST PASS: keyset-walk `GET /messages/bodies` to the end of the account, once.
+   *
+   * It ends by writing `complete`, which is the state that was missing — see {@link BodiesWalk}. The
+   * cursor advances only after a page has been committed, so an interrupted walk (a quit, a dropped
+   * network) resumes from the last page that landed rather than from the beginning.
+   */
+  const walkAllBodies = async (): Promise<number> => {
     let written = 0;
     for (;;) {
+      const walk = cursor.bodies;
+      if (walk.phase !== "walking" || aborted) return written;
       const q = new URLSearchParams({ limit: String(DEFAULT_BODIES_LIMIT) });
-      if (cursor.bodies) q.set("after", cursor.bodies);
+      if (walk.after !== null) q.set("after", walk.after);
       const res = await cfg.auth.authedFetch(`/messages/bodies?${q.toString()}`);
       if (!res.ok) throw new Error(`the hosted /messages/bodies answered HTTP ${res.status}`);
       const page = (await res.json()) as Page<MessageBodyBatchItem>;
-      await cfg.db.transaction(async (tx) => {
-        for (const item of page.items) {
-          // The FK requires the message; a body whose message is not yet mirrored is skipped and
-          // re-offered on a later pass (the bodies cursor only advances past what this page held).
-          if (!(await messagePresent(tx, item.messageId))) continue;
-          const row = {
-            text: item.text ?? "",
-            html: item.html ?? null,
-            loadedRemoteContent: !!item.loadedRemoteContent,
-          };
-          await tx.insert(messageBodies).values({ messageId: item.messageId, ...row })
-            .onConflictDoUpdate({ target: messageBodies.messageId, set: row });
-          written++;
-        }
-      });
-      cursor.bodies = page.nextCursor;
+      written += await storeBodies(page.items);
+      cursor.bodies = page.nextCursor === null
+        ? { phase: "complete" }
+        : { phase: "walking", after: page.nextCursor };
       writeCursor(cfg.cursorPath, cursor);
-      if (!page.nextCursor) break;
+      if (page.nextCursor === null) return written;
+    }
+  };
+
+  /**
+   * THE STEADY STATE: fetch bodies for the messages this mirror holds that have none, and nothing
+   * else. Zero rows ⇒ zero requests, which is what a settled mailbox does on every poll.
+   *
+   * ── WHY THE LOCAL GAP, AND NOT THE CHANGE FEED ────────────────────────────────────────────────
+   *
+   * The obvious incremental source is the drain's own output — the messages it just applied — and it
+   * is the wrong one, for two reasons that only show up at scale. A `since=0` re-bootstrap applies
+   * EVERY message, so driving off the feed would re-request every body in the mailbox even though
+   * the mirror already holds them; and a body skipped because its message had not landed yet (the FK skip in
+   * {@link storeBodies}) is not in any subsequent page of the feed, so nothing would ever come back
+   * for it. Asking the database which messages have no body row answers both cases with one indexed
+   * read, and it cannot drift from the thing it is meant to keep true.
+   *
+   * It is also why the keyset walk's terminal state is safe to trust. `getBodies` LEFT-JOINs the body
+   * row, so a completed walk has written a row — empty if that is what the account holds — for every
+   * message in it. "Missing" therefore means genuinely absent, not merely empty.
+   */
+  const fetchMissingBodies = async (): Promise<number> => {
+    const rows = await cfg.db.select({ id: messages.id })
+      .from(messages)
+      .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+      .where(and(eq(messages.accountId, cfg.world.accountId), isNull(messageBodies.messageId)))
+      .orderBy(asc(messages.id))
+      .limit(BODIES_CATCHUP_MAX);
+    const wanted = rows.map((r) => r.id).filter((id) => !unanswered.has(id));
+    if (wanted.length === 0) return 0;
+
+    let written = 0;
+    for (let i = 0; i < wanted.length; i += BODIES_IDS_MAX) {
+      if (aborted) return written;
+      const batch = wanted.slice(i, i + BODIES_IDS_MAX);
+      const res = await cfg.auth.authedFetch(`/messages/bodies?ids=${batch.join(",")}`);
+      if (!res.ok) throw new Error(`the hosted /messages/bodies answered HTTP ${res.status}`);
+      const page = (await res.json()) as Page<MessageBodyBatchItem>;
+      written += await storeBodies(page.items);
+      // A short answer is the contract, not an error: the ids mode omits a message this account no
+      // longer owns rather than 404ing, so the honest response is to stop asking for it.
+      const answered = new Set(page.items.map((item) => item.messageId));
+      for (const id of batch) if (!answered.has(id)) unanswered.add(id);
     }
     return written;
   };
 
+  /** The body pass: walk the account once, then keep only the newcomers topped up. */
+  const backfillBodies = async (): Promise<number> => {
+    if (cursor.bodies.phase === "unresolved") {
+      cursor.bodies = await resolveBodiesWalk();
+      writeCursor(cfg.cursorPath, cursor);
+    }
+    if (cursor.bodies.phase === "walking") return walkAllBodies();
+    return fetchMissingBodies();
+  };
+
   const runPull = async (): Promise<number> => {
     try {
-      const { applied, sweep } = await drainSync();
+      const { applied, sweep, cut } = await drainSync();
+      if (cut) {
+        cfg.log?.("cloud_pull_stopped", {
+          count: applied,
+          reason: "the mirror was asked to stop mid-drain; the committed cursor holds where it " +
+            "got to and the next launch resumes from it",
+        });
+        return applied;
+      }
       // Sweep BEFORE bodies: a phantom message is gone, so `backfillBodies` never fetches its body.
       if (sweep) {
         const swept = await sweepPhantoms(cfg.db, cfg.world, sweep, now());
@@ -965,13 +1185,22 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // the zero-tags gate rather than by a special case for it.
       await repairStaleTags();
       await backfillBodies();
+      if (aborted) {
+        cfg.log?.("cloud_pull_stopped", {
+          count: applied,
+          reason: "the mirror was asked to stop after the drain; nothing is stamped, because a " +
+            "pass that did not finish is not a pass that finished",
+        });
+        return applied;
+      }
       /* THE TWO STAMPS THE PROGRESS SURFACE READS. See {@link stampSynced} — on a mirrored
          install this process is the only thing that could write them, and without them the
-         window's sync line has no way to tell a first import from a settled mailbox. `bodies`
-         being exhausted is part of "drained": the mail list is complete before its bodies are,
-         and a first import that claims to be finished while messages still open blank has
-         claimed too early. */
-      await stampSynced(cfg.db, cfg.world.mailboxId, now(), cursor.bodies === null);
+         window's sync line has no way to tell a first import from a settled mailbox. The body
+         walk reaching its end is part of "drained": the mail list is complete before its bodies
+         are, and a first import that claims to be finished while messages still open blank has
+         claimed too early. This is also the fact {@link resolveBodiesWalk} reads back on a later
+         launch to tell a finished walk from one that never started. */
+      await stampSynced(cfg.db, cfg.world.mailboxId, now(), cursor.bodies.phase === "complete");
       // A completed pull is the definition of reachable: the local database keeps serving what it
       // holds either way, but the proxy needs to know it can forward a write again.
       reachable = true;
@@ -1001,6 +1230,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     const end = Date.now() + Math.max(0, deadlineMs);
     for (;;) {
       if (cloudSeq() >= target) return true;
+      // A stopped mirror never advances again, so waiting on it is waiting for ever — and this loop
+      // would otherwise keep starting pulls against a database that is being closed.
+      if (aborted) return false;
       try {
         await pullOnce();
       } catch {
@@ -1045,6 +1277,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
 
   return {
     pullOnce,
+    draining: () => inflight !== null,
     online: () => reachable,
     markConnectivity: (v: boolean) => {
       reachable = v;
@@ -1063,9 +1296,16 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         scheduleAfter(true);
       }
     },
-    stop() {
+    async stop() {
       stopped = true;
+      // Set BEFORE the await, or the walk this is waiting on never sees the ask and the wait is
+      // the very hang it exists to prevent.
+      aborted = true;
       if (timer) clearTimeout(timer);
+      timer = null;
+      // A pull that fails on the way out is still a pull that has left, which is all a caller
+      // closing the database needs to know.
+      await inflight?.catch(() => undefined);
     },
   };
 }

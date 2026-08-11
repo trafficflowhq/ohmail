@@ -371,16 +371,8 @@ export interface ScreeningPlan {
   /** Distinct addresses whose mail this touches — the number the domain copy states. */
   senders: number;
   /**
-   * Whether committing this takes the PATH that hands mail to auto-unsubscribe — which the sheet
-   * must say before the click and not after.
-   *
-   * **It is a fact about the code, not about the account.** Since mail 0054 an account can turn
-   * auto-unsubscribe off, and a standalone install never had it; both are the caller's second
-   * condition (`SenderMenu`'s `autoUnsubscribe` prop, `AppShell#autoUnsubscribeDiscloses`) and
-   * neither belongs here. This function is pure over a `SenderScreening` and answers the question
-   * a planner can answer: does THIS plan reach the seam. Threading a settings flag through it
-   * would make every one of its callers pass a value they do not have in order to ask a question
-   * about mutations.
+   * Whether committing this ALSO hands mail to auto-unsubscribe, which the sheet must say
+   * before the click and not after.
    *
    * True exactly when the DECIDE path runs AND the decision is the endpoint's `no` — never for
    * a rule this sheet writes itself, which is the honest negative and not a convenient one:

@@ -368,7 +368,6 @@ export interface ConsentStateWire {
     dormancyDays: number;
     autoSuggestAt?: string | null;
     blockRemoteImagesAt?: string | null;
-    blockAutoUnsubscribeAt?: string | null;
     locale?: string | null;
     counts: {
         decidedSenders: number;
@@ -405,9 +404,6 @@ export const consent: {
     }>;
     setBlockRemoteImages: (blocked: boolean) => Promise<{
         blockRemoteImagesAt: string | null;
-    }>;
-    setBlockAutoUnsubscribe: (blocked: boolean) => Promise<{
-        blockAutoUnsubscribeAt: string | null;
     }>;
     setLocale: (locale: string | null) => Promise<string | null>;
     seedReview: () => Promise<SeedReviewWire>;

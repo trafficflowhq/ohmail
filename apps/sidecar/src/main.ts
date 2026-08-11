@@ -368,7 +368,15 @@ export async function runCloudSidecar(): Promise<void> {
   let shuttingDown: Promise<void> | null = null;
   const shutdown = (reason: string, code: number): Promise<void> => {
     shuttingDown ??= (async () => {
-      log("shutdown", { reason, inFlight: host?.inFlight ?? 0 });
+      // TWO NUMBERS, BECAUSE ONE OF THEM WAS ANSWERING A DIFFERENT QUESTION. `inFlight` counts
+      // stdio requests, and it is zero exactly when the mirror's own pull is what a quit is waiting
+      // for — so a line carrying only that reported an idle process while a drain held the database
+      // open past the grace period. `mirrorDraining` names the state that was actually blocking.
+      log("shutdown", {
+        reason,
+        inFlight: host?.inFlight ?? 0,
+        mirrorDraining: cloud?.mirrorDraining() ?? false,
+      });
       try {
         if (host) {
           host.stop();

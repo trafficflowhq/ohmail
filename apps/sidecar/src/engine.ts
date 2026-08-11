@@ -493,7 +493,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   // whatever the four named phases do not account for is the remainder, and a remainder that
   // dominates is itself the finding.
   const tBoot = Date.now();
-  const opened: OpenLocalDb = await openLocalDb(config.dataDir);
+  const opened: OpenLocalDb = await openLocalDb(config.dataDir, { log });
   try {
     const db = opened.db;
     const tWorld = Date.now();

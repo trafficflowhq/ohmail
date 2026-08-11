@@ -76,8 +76,8 @@ export {
 // Consent: the sent-mail seed, the dormancy cutline, and putting an account back to unscreened.
 export {
   SEED_SCAN_LIMIT, SUPPORTED_LOCALES,
-  buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setBlockAutoUnsubscribe,
-  setBlockRemoteImages, setDormancyDays, setLocale,
+  buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setBlockRemoteImages,
+  setDormancyDays, setLocale,
   isMachineSent, isRobotAddress, parseAddressList,
   type SeedCandidate, type SeedConfirmResult, type SeedExclusionReason, type SeedReview,
 } from "./consent-seed.js";
@@ -128,7 +128,10 @@ export type {
   PushSubscribeBody, PushSubscribeResult, PushIdempotency, PushTransport,
 } from "./push-types.js";
 export {
-  MessageService, messageService, MARK_SEEN_MAX_IDS,
+  // `BODIES_IDS_MAX` is exported because a CALLER has to respect it: the desktop mirror batches its
+  // body requests and the server REFUSES an over-long id list rather than truncating it, so the cap
+  // is shared rather than copied — a change here cannot leave a client asking for one too many.
+  MessageService, messageService, MARK_SEEN_MAX_IDS, BODIES_IDS_MAX,
   type MessageView, type ListMessagesOptions, type MessagePatchBody,
   type MarkSeenBody, type MarkSeenResult,
   type MoveBody, type MoveIdempotency, type MoveResult, type PatchResult,
