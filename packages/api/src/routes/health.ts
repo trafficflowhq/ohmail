@@ -603,6 +603,24 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // rule read the right way round: a timestamp closes no set, but this column DOES close one, and
   // it closes it over free text. See `account_settings_locale_supported` below.
   ["account_settings", "locale"],
+  // mail 0054_auto_unsubscribe_optout — the switch for auto-unsubscribe on screen-out, stored as
+  // the opt-out. The fifth `account_settings` marker, on the whole-row-select argument every one
+  // above it makes: `consentSettings` does `select().from(accountSettings)`, so an API deployed
+  // ahead of the migration answers Postgres 42703 on `GET /consent` AND on `PATCH
+  // /consent/settings` — the entire consent surface, not merely this switch.
+  //
+  // It is sharper than the three timestamps beside it in one respect worth naming, because it is
+  // the reason this marker is not optional: `UnsubscribeService.onScreenOut` reads this column in
+  // the same request that decides whether to send a one-click unsubscribe. A too-early API would
+  // throw 42703 there — inside a path whose whole contract is that it never throws at its caller,
+  // so the screen-out would still commit and the read would be swallowed as a skip. That failure
+  // is silent by construction; the 503 in front of it is what makes it loud.
+  //
+  // No worker half: nothing in the sync worker reads or writes it. Deploy order: migration → API.
+  //
+  // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker — the column is
+  // read off a row fetched by primary key and nothing filters on it.
+  ["account_settings", "block_auto_unsubscribe_at"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -994,9 +1012,20 @@ export const MAIL_EXPECTED_MARKERS =
  * degrades to English on purpose, so a column without its constraint yields an account whose language
  * setting does not work and logs nothing anywhere. No worker half at all — nothing in the sync loop
  * reads it — and no INDEX marker, since the column is read off a row fetched by primary key and is
- * never a predicate. It is the NEWEST entry in the mail journal.
+ * never a predicate.
+ *
+ * `0054_auto_unsubscribe_optout` is probed ONCE, by `account_settings.block_auto_unsubscribe_at` —
+ * the fifth `account_settings` marker, on the same whole-row-select argument as the four before
+ * it, and the one whose too-early failure is the QUIETEST on this list. The column is read by
+ * `UnsubscribeService.onScreenOut`, whose contract is that it never throws at its caller, so a
+ * 42703 there is caught and counted as a skip: the screen-out commits, the unsubscribe silently
+ * stops happening, and nothing anywhere says so. A `503 schema_incomplete` in front of the whole
+ * API is a better outcome than a feature that turns itself off without a log line. No CHECK marker
+ * (a timestamp closes no set), no INDEX marker (read off a row fetched by primary key, never a
+ * predicate) and no worker half — nothing in the sync loop reads it. It is the NEWEST entry in the
+ * mail journal.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0053_account_locale";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0054_auto_unsubscribe_optout";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

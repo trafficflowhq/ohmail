@@ -1,6 +1,6 @@
 import { and, eq, gte, inArray, isNull } from "drizzle-orm";
 import {
-  messages, messageBodies, folderState, unsubscribeRecords, type Tx,
+  accountSettings, messages, messageBodies, folderState, unsubscribeRecords, type Tx,
 } from "@trafficflow/db";
 import {
   authVerdictFromHeaders, oneClickUnsubscribeUri, unsubscribeHeaderState,
@@ -399,6 +399,32 @@ export class UnsubscribeService {
    */
   async onScreenOut(ctx: ServiceContext, messageIds: readonly string[]): Promise<UnsubscribeSweep> {
     const sweep: UnsubscribeSweep = { considered: 0, posted: 0, skipped: 0, failed: 0 };
+
+    // ── THE ACCOUNT SWITCH, READ HERE AND NOWHERE ELSE (mail 0054) ────────────────────────
+    //
+    // `account_settings.block_auto_unsubscribe_at` NOT NULL means this account asked that a
+    // screen-out stop leaving lists on their behalf. The read is at the TOP of the automatic
+    // entry point, before the loop, for three reasons that are each independent:
+    //
+    //  1. **It is the seam, not the surface.** The client is told what will happen by the same
+    //     flag, but a client is a description and this is the decision. A build that never got
+    //     the setting, a stale tab, a script calling the API directly — none of them can make a
+    //     request go out that this row forbids, because the request is made here.
+    //  2. **`unsubscribe()` is deliberately NOT gated.** That is the per-message button: a person
+    //     pressing unsubscribe on mail in front of them. A switch labelled "auto" that also
+    //     disabled a manual control would be a control whose label lies, and the label is the
+    //     whole contract. `sweepScreenedOut` IS gated, because it comes through here.
+    //  3. **Once, not per message.** A screen-out on a domain hands over every held message from
+    //     every sender under it; one row read for the pass is the same answer for all of them and
+    //     cannot go half-applied between two ids.
+    //
+    // The zero sweep is the honest return. `considered` counts what the pass LOOKED at, and it
+    // looked at nothing: reporting `considered: n, skipped: n` would put this account's opt-out
+    // in the same bucket as the healthy majority of screen-outs whose senders publish no
+    // one-click route at all, which is precisely the conflation `UnsubscribeSweep`'s own note
+    // refuses between `skipped` and `failed`.
+    if (await this.blocked(ctx)) return sweep;
+
     for (const id of messageIds) {
       sweep.considered += 1;
       try {
@@ -471,6 +497,44 @@ export class UnsubscribeService {
       .limit(opts.limit);
 
     return this.onScreenOut(ctx, candidates.map((c) => c.id));
+  }
+
+  /**
+   * HAS THIS ACCOUNT TURNED THE AUTOMATIC PASS OFF? (mail 0054)
+   *
+   * One column, one row, primary key. `true` iff `block_auto_unsubscribe_at IS NOT NULL`.
+   *
+   * **An absent row is FALSE — the pass runs — and that is the product default rather than a
+   * lenient fallback.** `account_settings` rows are created lazily by whichever feature writes
+   * first, so most accounts have never had one; reading "no row" as "turned off" would switch a
+   * shipping behaviour off for everybody who has not opened Settings, which is the same mistake
+   * the migration refuses to make by storing the opt-out instead of an opt-in.
+   *
+   * ── A FAILED READ ANSWERS `true`, AND THE TRY/CATCH IS LOAD-BEARING TWICE ─────────────────
+   *
+   * `onScreenOut`'s contract is that it NEVER throws — its one production caller,
+   * `screener-service.ts#decide`, awaits it after the commit with no `try` of its own, so an
+   * escaping error would turn a screen-out that has already durably committed into a 500. This is
+   * the only `await` in `onScreenOut` outside the per-message loop that already catches, so
+   * without this `catch` the guard would have opened exactly that hole while adding a switch.
+   *
+   * It answers `true` — do not send — rather than falling through to the default. The two are not
+   * symmetric: not sending is recoverable (the next message from that list is still a candidate,
+   * because a blocked pass writes no record row), and sending is not. A 42703 from an API deployed
+   * ahead of the migration lands here too, which is the case `/health`'s marker exists to make
+   * loud rather than leave to this branch.
+   */
+  private async blocked(ctx: ServiceContext): Promise<boolean> {
+    try {
+      const [row] = await asTx(ctx).select({ at: accountSettings.blockAutoUnsubscribeAt })
+        .from(accountSettings)
+        .where(eq(accountSettings.accountId, ctx.accountId))
+        .limit(1);
+      return row?.at != null;
+    } catch (err) {
+      console.error("[unsubscribe] could not read the account switch; sending nothing:", err);
+      return true;
+    }
   }
 
   /**
