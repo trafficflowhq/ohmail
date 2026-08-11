@@ -20,7 +20,6 @@ import {
   DEMO_NOW,
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
-  addressBook,
   bodyOf,
   consentPartition,
   forwardSubject,
@@ -91,12 +90,10 @@ import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
 import { useComposeAutosave } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
-import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
-  clearComposeDraft,
   composePlan,
   readComposeDraft,
   writeComposeDraft,
@@ -116,12 +113,9 @@ import {
   optionsFromFacts,
   optionsFromMirror,
   replyAllRecipients,
-  replyEnvelopeOnWire,
-  replyEnvelopePlan,
   replyRecipients,
   resolveComposeFrom,
   resolveReplyFrom,
-  type ReplyEnvelopeEdit,
 } from "./compose-from";
 import { MessageChromeProvider } from "./message-chrome";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
@@ -149,7 +143,7 @@ import { ReadsView, type ReadsChipState } from "../views/ReadsView";
 import { ReceiptsView } from "../views/ReceiptsView";
 import { ScreenerView } from "../views/ScreenerView";
 import { SearchView } from "../views/SearchView";
-import { SettingsView, type MailboxEntity, type NotificationsMeta, type PaneId } from "../views/SettingsView";
+import { SettingsView, type MailboxEntity, type NotificationsMeta } from "../views/SettingsView";
 import { TagView } from "../views/TagView";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
@@ -466,7 +460,6 @@ export function AppShell({
   screeningSection,
   screenerSuggest,
   awayTransport,
-  aiCredits,
   onUnread,
 }: {
   demo: boolean;
@@ -611,23 +604,6 @@ export function AppShell({
    */
   awayTransport?: AwayTransport;
   /**
-   * WHAT THE ACCOUNT'S AI ALLOWANCE IS DOING, said where AI actions are bought.
-   *
-   * The same seam as {@link screenerSuggest} and for the identical reason: the answer comes from
-   * `GET /billing/subscription`, and this shared shell may not call `app/api-client` — it is
-   * published, and the mirror does not contain that module. A standalone install has no account
-   * and no allowance, so it hands in nothing and the line simply does not exist there.
-   *
-   * A FUNCTION rather than a node, because the offer this line makes ("start a plan") is
-   * worthless without somewhere to land, and WHERE it lands is this file's business. `go()` is a
-   * module export the Cloud client could import — the constraint is not reachability, it is that
-   * "Settings, on the Subscription pane" is a two-part act here: a hash change AND a one-shot
-   * pane request the settings view reads at its own mount. A node that only had `go()` would land
-   * people on General; a node given both would be a second copy of the shell's navigation living
-   * outside it. So the shell hands down the finished act and the injected node presses it.
-   */
-  aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
-  /**
    * HOW MANY PIECES OF MAIL ARE WAITING FOR YOU — published, for a surface outside the page.
    *
    * The number the Ohbox's rail row already shows, handed out so a shell that has a dock icon
@@ -659,7 +635,6 @@ export function AppShell({
             screeningSection={screeningSection}
             screenerSuggest={screenerSuggest}
             awayTransport={awayTransport}
-            aiCredits={aiCredits}
             onUnread={onUnread}
           />
         </MailStateHost>
@@ -704,7 +679,7 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, aiCredits, onUnread }: {
+function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, onUnread }: {
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
   billingSection?: ReactNode;
@@ -718,7 +693,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   }) => ReactNode;
   awayTransport?: AwayTransport;
-  aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
   onUnread?: (unread: number) => void;
 }) {
   const demo = useDemoMode();
@@ -991,28 +965,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * metered auto-suggest batch below, so this also stops the spender from being offered senders
    * the cutline had already ruled out as not-work.
    */
-  /**
-   * WILL SCREENING A SENDER OUT ALSO UNSUBSCRIBE FROM THEIR LIST, ON THIS BUILD, FOR THIS ACCOUNT?
-   *
-   * The single answer every disclosure in this shell reads — the sender sheet's pre-click confirm
-   * and the Screener's toasts — so the sentence and the sending can never come apart. Two
-   * conditions, and they are independent facts rather than belt and braces:
-   *
-   *  · `consent.autoUnsubscribe` — the ACCOUNT's switch (mail 0054), which is what the server
-   *    itself reads at the seam. Resting TRUE, so a failed `GET /consent` keeps the disclosure
-   *    exactly as it was before the switch existed rather than silently dropping it.
-   *  · `!consent.standalone` — the BUILD. A standalone install wires no unsubscribe service into
-   *    its screener at all (`apps/sidecar`'s bag has no `unsubscribe` entry), so a decision there
-   *    sends nothing whatever the account row says. Without this clause the desktop would warn
-   *    about a request it structurally cannot make.
-   *
-   * The demo is deliberately NOT excluded: `standalone` is false there, and the demo's job is to
-   * show what the product does.
-   */
-  const autoUnsubscribeDiscloses = consent.autoUnsubscribe && !consent.standalone;
-  const screener = useScreenerState(
-    engine, version, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
-  );
+  const screener = useScreenerState(engine, version, toast, suggestions.suggestions, presented);
   /**
    * The opt-in's quote, bound to the SAME list the automatic batch will slice.
    *
@@ -1059,41 +1012,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     spam: null,
   });
   const [screenerFull, setScreenerFull] = useState(false);
-  /**
-   * A ONE-SHOT REQUEST FOR WHICH SETTINGS PANE TO OPEN ON, set by a link that promises one.
-   *
-   * The Screener's AI-credit line offers "start a plan", and an offer that lands on Settings →
-   * General is an offer that has not been kept. `SettingsView` reads this once, at ITS mount, so
-   * it decides where the person starts and never where they stay.
-   *
-   * It has to be CLEARED, and WHEN is the whole difficulty. The settings view unmounts when the
-   * user navigates away (`effectiveView === "settings" ? … : null`), so a value left set would
-   * re-select Subscription on every later visit to Settings — a link pressed once quietly
-   * becoming a preference.
-   *
-   * **Clearing "whenever the route is not settings" is the version that does not work**, and it
-   * fails in the one direction that matters. `openSettingsPane` sets the request and then calls
-   * `go()`, which writes `location.hash`; the hashchange is asynchronous, so the very next render
-   * still has the OLD route. That effect would fire with `route.view === "screener"`, clear the
-   * request, and the settings view would mount a moment later with nothing to read — the offer
-   * silently landing on General, which is exactly the broken promise it exists to prevent.
-   *
-   * So the clear is on the way OUT, tracked by a ref: arm while the settings view is up, clear on
-   * the first render after it goes. `null` hands the choice back to the deep-link parameter,
-   * which is what every other mount uses.
-   */
-  const [settingsPane, setSettingsPane] = useState<PaneId | null>(null);
-  const settingsWasOpen = useRef(false);
-  const openSettingsPane = useCallback((pane: PaneId): void => {
-    setSettingsPane(pane);
-    go("settings");
-  }, []);
-  useEffect(() => {
-    if (route.view === "settings") { settingsWasOpen.current = true; return; }
-    if (!settingsWasOpen.current) return;
-    settingsWasOpen.current = false;
-    setSettingsPane(null);
-  }, [route.view]);
   /**
    * THE READER IS A MESSAGE NOW, NOT A BOOLEAN.
    *
@@ -1150,19 +1068,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const [replyAll, setReplyAll] = useState(false);
   const [replyBody, setReplyBody] = useState<RichValue>(EMPTY_RICH);
   /**
-   * THE REPLY'S AUDIENCE AS EDITED — `null` while the computed envelope stands, which is
-   * every reply whose head nobody pressed. It lives HERE beside `replyBody` because the pane
-   * is mounted twice, and it RESETS whenever the editor retargets or changes mode: an edit
-   * belongs to the message (and the audience) it was made on, and carrying it to the next
-   * reply would address somebody else's mail with it. The effect covers every path that
-   * moves `replyTo` — open, close, settle, forward, the Reply Run — without each of them
-   * having to remember.
-   */
-  const [replyEnvelope, setReplyEnvelope] = useState<ReplyEnvelopeEdit | null>(null);
-  useEffect(() => {
-    setReplyEnvelope(null);
-  }, [replyTo, replyAll]);
-  /**
    * THE COMPOSE FORM, and why it lives up here rather than in `ComposeView`.
    *
    * The view is mounted only while `#/compose` is the route, so state inside it is erased by
@@ -1199,15 +1104,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   /**
    * ── ABSOLUTE-TIME STAMPS — A MOMENTARY, VIEW-SCOPED FLIP, NOT A SETTING ────────────────────
    *
-   * Clicking any stamp flips every stamp on screen to the exact date and time — in the open
-   * message (see `absoluteTime` on `MessageChrome`, read by `MessageHeader`/`MessageCard`) and,
-   * from the same boolean, on every LIST ROW of the six mail lists (`rowStamp`, threaded to each
-   * view below). One state and not two: a reader who has asked for exact dates has asked the
-   * question of the mail in front of them, and a list whose rows disagreed with the message open
-   * beside them would be answering it twice.
-   *
-   * It is deliberately NOT persisted, and it resets on every view switch: it answers "let me read
-   * the exact dates on THIS", so carrying it to the next pile — or across a reload — would be the
+   * Clicking any stamp in the open message flips every stamp in it to the exact date and time
+   * (see `absoluteTime` on `MessageChrome`, read by `MessageHeader`/`MessageCard`). It is
+   * deliberately NOT persisted, and it resets on every view switch: it answers "let me read the
+   * exact dates on THIS", so carrying it to the next pile — or across a reload — would be the
    * interface remembering a glance nobody asked it to keep. In-memory state covers reload and
    * re-open for free; the effect below covers moving between rail views.
    */
@@ -1215,10 +1115,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   useEffect(() => {
     setAbsoluteTime(false);
   }, [route.view]);
-  /* ONE callback, stable, for both halves — the chrome's `onToggleAbsoluteTime` and every list's
-     `onToggleTime`. Two arrow literals would be two identities, and the row prop is handed to six
-     memoizable views. */
-  const toggleAbsoluteTime = useCallback(() => setAbsoluteTime((v) => !v), []);
   /**
    * THE ROW A SEARCH HIT LANDED ON — so the user can SEE where they were taken.
    *
@@ -1848,20 +1744,24 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       if (messageId !== replyTo) return;
       const parent = reader.get<EngineMessage>("message", messageId) ?? null;
       const from = resolveReplyFrom(fromOptions, parent?.mailboxId ?? null);
-      // WHO IT IS ADDRESSED TO — `replyEnvelopePlan`, ONE derivation for the head, the lock
-      // and this wire. Untouched (`replyEnvelope === null`) it is exactly the old inline
-      // resolution: `replyAllRecipients` for a reply-all (the same call that let the button
-      // render), `replyRecipients` for the self-authored plain case, nothing otherwise so
-      // `Engine.enrich` keeps deriving `[parent.from]` — and never a Bcc, which no reply
-      // derives. EDITED, the user's strings are the envelope: To/Cc/Bcc parsed by the compose
-      // form's own parser, a typo emptying the whole set so `canSend` refuses it (the same
-      // rule `composePlan` enforces, arriving on the same predicate).
-      const plan = replyEnvelopePlan(
-        parent,
-        fromOptions.map((o) => o.address),
-        replyAll,
-        replyEnvelope,
-      );
+      // WHO IT IS ADDRESSED TO. `enrich` defaults to `[parent.from]`, which answers yourself on
+      // a message you sent — a self-authored one shows inline the moment a thread has two turns.
+      // `replyRecipients` returns the correspondents for that case (and `null` otherwise, leaving
+      // the default in place), using the account's own addresses off the same From options.
+      //
+      // A REPLY ALL resolves `replyAllRecipients` instead — the SAME call that let the button
+      // render and that the editor's head named, over the same options, so the audience shown
+      // is the audience sent. `null` (the envelope degenerated — a recipient list that shrank
+      // under the open editor) falls back to the plain-reply path rather than guessing.
+      const all =
+        replyAll && parent
+          ? replyAllRecipients(parent, fromOptions.map((o) => o.address))
+          : null;
+      const to = all
+        ? all.to
+        : parent
+          ? replyRecipients(parent, fromOptions.map((o) => o.address))
+          : null;
       mailSend.send({
         kind: "mail_send",
         inReplyTo: messageId,
@@ -1872,10 +1772,13 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         body: replyBody.text,
         ...(replyBody.html ? { html: replyBody.html } : {}),
         ...(from.substituted && from.mailboxId ? { mailboxId: from.mailboxId } : {}),
-        ...replyEnvelopeOnWire(plan),
+        ...(to ? { to } : {}),
+        // The Cc line rides only on a reply-all that has one — a plain reply's envelope is
+        // unchanged, exactly as it was before reply-all existed.
+        ...(all && all.cc.length > 0 ? { cc: all.cc } : {}),
       });
     },
-    [mailSend, replyTo, replyAll, replyBody, replyEnvelope, reader, version, fromOptions],
+    [mailSend, replyTo, replyAll, replyBody, reader, version, fromOptions],
   );
 
   /**
@@ -2015,27 +1918,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     writeComposeDraft(next);
   }, []);
   const sendCompose = useCallback(() => mailSend.send(plan.mutation), [mailSend, plan]);
-
-  /**
-   * ABANDONING THE COMPOSE — the row, the buffer and the form, in that order.
-   *
-   * `ComposeView` decides whether to ask first (`worthSaving`); this is what happens once the
-   * answer is yes, and it has to be the shell's because the draft id is. All three copies of the
-   * message are named here on purpose — the account row (`autosave.discard`), the `localStorage`
-   * scratch buffer (`clearComposeDraft`) and the in-memory form — because leaving any one of them
-   * is a message the user threw away coming back: the row would sit in Drafts, and the buffer
-   * would refill the form the next time Compose opened.
-   *
-   * `discard` is not awaited. It is fire-and-forget for the same reason `discardDraft` above is:
-   * the delete is queued through the engine, which owns the retry, and holding the view open
-   * until the wire answers would make leaving a message feel like a network operation.
-   */
-  const cancelCompose = useCallback(() => {
-    void autosave.discard();
-    setCompose(EMPTY_COMPOSE);
-    clearComposeDraft();
-    go("ohbox");
-  }, [autosave, go]);
 
   /**
    * FORWARDING A MESSAGE — the compose surface's entry, and the client half of the sensitive gate.
@@ -2465,21 +2347,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           toast(t("ohbox.toastResurface", { when: resurfaceLabel(when) }));
           break;
         }
-        case "resurface_now":
-          /**
-           * "NOW" IS A STATE, NOT A DATE, and that is the only thing separating this arm from
-           * the one above it.
-           *
-           * `bubbled_up` with a past `bubbleUpAt` would pin nothing until a bubble-up pass ran,
-           * and the pass is not a promise this product can make at this latency — it is gated
-           * inside the worker's cycle, and a standalone desktop install runs no worker at all.
-           * So the mutation asks for the state the schedule exists to reach, the server writes
-           * it in one transaction, and `ohboxView.resurfaced` has the row on the next drain.
-           * No `bubbleUpAt`: there is no schedule to spend.
-           */
-          void engine.mutate({ kind: "triage_set", messageId: m.id, state: "resurfaced" });
-          toast(t("ohbox.toastResurfaceNow"));
-          break;
         default: {
           // RESURFACE AT A CHOSEN INSTANT — the bar's popover feeds the day here. The wire has
           // always carried an arbitrary `bubbleUpAt`; this is the caller that fills it with
@@ -3536,31 +3403,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     [engine],
   );
 
-  /**
-   * The address book for the reply's recipient rows — the same ranked selector the compose
-   * To field builds, derived when a reply OPENS rather than per keystroke or per delta: the
-   * set of people this account has corresponded with does not change while somebody types a
-   * name, which is `ComposeView`'s own once-per-mount reasoning keyed to the editor instead
-   * of the route. Own addresses are excluded for the reason compose excludes the sender:
-   * suggesting somebody their own address as a recipient is noise.
-   */
-  const replyBook = useMemo(
-    () => (replyTo !== null ? addressBook(engine.read(), { exclude: ownAddresses }) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [engine, replyTo, ownAddresses],
-  );
-
   const chrome = useMemo(
     () => ({
       ownAddresses,
       absoluteTime,
-      onToggleAbsoluteTime: toggleAbsoluteTime,
+      onToggleAbsoluteTime: () => setAbsoluteTime((v) => !v),
       replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply,
-      // The audience edit and its book — held here for the mounted-twice reason the reply
-      // body is, applied by `InlineReply`, sent by `sendReply` above from the same state.
-      replyEnvelope,
-      onReplyEnvelope: setReplyEnvelope,
-      addressBook: replyBook,
       /**
        * THE SIBLING VERBS, no longer dormant.
        *
@@ -3593,8 +3441,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       bodyOf: bodyOfMessage, hydrateBody, hydrateThread,
       attachments, remoteImages,
     }),
-    [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
-      replyEnvelope, replyBook,
+    [ownAddresses, absoluteTime, replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       openSenderMenu, openReply, forwardMessage, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
   );
@@ -3837,8 +3684,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 newForYou={ohbox.newForYou}
                 previouslySeen={ohbox.previouslySeen}
                 threadParticipants={participantsOf}
-                absoluteTime={absoluteTime}
-                onToggleTime={toggleAbsoluteTime}
                 threadSubject={threadSubjectOf}
                 tags={tags}
                 now={now}
@@ -3883,8 +3728,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "reads" ? (
               <ReadsView
                 threadParticipants={participantsOf}
-                absoluteTime={absoluteTime}
-                onToggleTime={toggleAbsoluteTime}
                 partition={partition}
                 tags={tags}
                 now={now}
@@ -3907,8 +3750,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "receipts" ? (
               <ReceiptsView
                 threadParticipants={participantsOf}
-                absoluteTime={absoluteTime}
-                onToggleTime={toggleAbsoluteTime}
                 messages={receipts}
                 tags={tags}
                 now={now}
@@ -3969,17 +3810,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                         absorb: suggestions.absorb,
                       })
                 }
-                /* WHAT THE ALLOWANCE IS DOING, under the control that spends it. Bound here
-                   rather than inside the view for the reason every injected node is: the answer
-                   comes from the Cloud API, which this shared file may not call. The offer's
-                   destination is bound HERE too — `openSettingsPane("billing")` — so the shell
-                   keeps its routing and the injected node keeps its transport. Withheld on the
-                   demo, which has no account and therefore no allowance to describe. */
-                aiCreditNode={
-                  demo || !aiCredits
-                    ? undefined
-                    : aiCredits({ onStartPlan: () => openSettingsPane("billing") })
-                }
                 segment={route.screenerSegment}
                 selection={scnSel}
                 onSelect={(segment, id) => setScnSel((s) => ({ ...s, [segment]: id }))}
@@ -4001,8 +3831,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "triage" ? (
               <TriageView
                 threadParticipants={participantsOf}
-                absoluteTime={absoluteTime}
-                onToggleTime={toggleAbsoluteTime}
                 piles={piles}
                 pile={route.triagePile}
                 onPile={goTriage}
@@ -4035,8 +3863,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "tag" && tagGroup ? (
               <TagView
                 threadParticipants={participantsOf}
-                absoluteTime={absoluteTime}
-                onToggleTime={toggleAbsoluteTime}
                 tag={tagGroup.tag}
                 messages={tagGroup.messages}
                 tags={tags}
@@ -4061,8 +3887,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "history" ? (
               <HistoryView
                 threadParticipants={participantsOf}
-                absoluteTime={absoluteTime}
-                onToggleTime={toggleAbsoluteTime}
                 messages={history}
                 tags={tags}
                 now={now}
@@ -4124,7 +3948,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 plan={plan}
                 send={mailSend.stateOf(COMPOSE_SEND_KEY)}
                 onSend={sendCompose}
-                onCancel={cancelCompose}
               />
             ) : null}
 
@@ -4238,25 +4061,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                     setBlockRemoteImages={consent.setBlockRemoteImages}
                   />
                 )}
-                /* AUTO-UNSUBSCRIBE ON SCREEN-OUT. Gated on BOTH `consent.known` and
-                   `autoOptIn.supported`, and each gate answers a different question.
-
-                   `known` is the flash argument the two rows above make, pointing the other way:
-                   this switch rests ON, so drawing it before the server has answered would show it
-                   ON to an account that turned it OFF — and somebody who then left it alone would
-                   believe they had chosen the state they were merely shown.
-
-                   `supported` (i.e. `apiConfigured()`) is the structural one, and it is why this is
-                   not simply `known`: a standalone install wires no unsubscribe service into its
-                   screener at all, so nothing there could be switched off. A control drawn on that
-                   build would store nothing and govern nothing. Withheld from the demo like every
-                   other injected pane. */
-                autoUnsubscribeSection={demo || !consent.known || !autoOptIn.supported ? undefined : (
-                  <AutoUnsubscribeRow
-                    on={consent.autoUnsubscribe}
-                    setBlockAutoUnsubscribe={consent.setBlockAutoUnsubscribe}
-                  />
-                )}
                 /* THE AWAY RESPONDER — its OWN Settings section since it became the one control in
                    the product that makes the app send mail unprompted, and a menu is where people
                    look for that. This node IS that pane: absent ⇒ no pane and no nav entry, which
@@ -4295,10 +4099,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                     aboutSection
                   )
                 }
-                /* WHERE THE SCREENER'S OFFER LANDS. Read once at THIS view's mount and cleared
-                   when the view goes away — see `settingsPane` above — so it decides the pane
-                   exactly once and the person is free to click elsewhere afterwards. */
-                initialPane={settingsPane ?? undefined}
               />
             ) : null}
             </ViewBoundary>
@@ -4487,7 +4287,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           state={senderMenu!}
           sender={senderMenuFor}
           onChoose={(dest, scope, makeRule) => changeScreening(senderMenu!.messageId, dest, scope, makeRule)}
-          autoUnsubscribe={autoUnsubscribeDiscloses}
           onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope)}
           onSubjectRule={() => openSubjectRule(senderMenu!.messageId, null)}
           onClose={() => setSenderMenu(null)}
