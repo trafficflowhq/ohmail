@@ -527,6 +527,10 @@ jobs:
               "$FEED_PREFIX"*) : ;;
               "$CLOUD_URL") : ;;
               'https://ohmail.app/mailbox#/settings'*) : ;;
+              # The mailboxes pane hand-off: a hosted install manages mailbox
+              # ceremonies on the web, and the Settings pane opens this address
+              # through the same fixed link table as the entries around it.
+              'https://ohmail.app/mailbox?settings=mailboxes#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
@@ -544,6 +548,17 @@ jobs:
         with:
           name: ohmail-windows-${{ github.run_number }}
           path: build/ohmail-windows-setup.exe
+          if-no-files-found: error
+
+      # The lockfile the runner actually resolved. When a dependency changes,
+      # this artifact is what gets committed back — `cargo build --locked`
+      # from a fresh clone must reproduce the exact build CI made, and a
+      # hand-assembled lockfile would carry unverified checksums.
+      - name: Upload the resolved Cargo.lock
+        uses: actions/upload-artifact@v7
+        with:
+          name: cargo-lock-${{ github.run_number }}
+          path: apps/desktop/src-tauri/Cargo.lock
           if-no-files-found: error
 
       - name: Run summary
@@ -757,6 +772,10 @@ jobs:
               "$FEED_PREFIX"*) : ;;
               "$CLOUD_URL") : ;;
               'https://ohmail.app/mailbox#/settings'*) : ;;
+              # The mailboxes pane hand-off: a hosted install manages mailbox
+              # ceremonies on the web, and the Settings pane opens this address
+              # through the same fixed link table as the entries around it.
+              'https://ohmail.app/mailbox?settings=mailboxes#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
