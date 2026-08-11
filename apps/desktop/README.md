@@ -74,9 +74,11 @@ These four locks are about the **webview** and the installer — the surfaces a
 stranger downloads and runs. The auto-updater is the one deliberate exception,
 and it does not touch any of them: it runs in the Rust process, not the page, so
 `connect-src 'none'` and the sealed `fetch` still hold literally, and the webview
-is granted no updater permission. What changed is that the *process* now makes
-one request, to one pinned endpoint, when the user picks "Check for Updates…".
-That is stated plainly in "The auto-updater" below rather than softened here.
+is granted no updater permission. What changed is that the *process* makes
+requests to one pinned endpoint — one shortly after launch, one whenever the
+update menu item is picked, and one for the signed artifact when there is a newer
+release to fetch. That is stated plainly in "The auto-updater" below rather than
+softened here.
 
 Three of the four are about the running app. The fourth is about the installer,
 because an installer that phones home makes the other three beside the point.
@@ -189,9 +191,11 @@ Rust side there is no `invoke_handler`, no `std::net` and no socket of any kind.
 ```
 
 The second file is the only grant in the tree, and it is not for that window. It
-covers the transient progress window shown **only** while an update is
-downloading (`src/updater-window.ts`, opened and closed by `src/updater.rs`), and
-it carries exactly one permission: it may LISTEN for the local
+covers the transient progress window shown **only** while an update the user
+asked for is downloading (`src/updater-window.ts`, opened and closed by
+`src/updater.rs`; the launch check downloads without opening it, and the window
+is built unfocused so it never takes the keyboard). It carries exactly one
+permission: it may LISTEN for the local
 `updater://progress` event the Rust updater emits, so it can render a byte-count.
 There is no `core:event:allow-emit`, so it cannot make the shell hear anything
 back; no command; no filesystem permission; and it inherits the app-wide
@@ -284,11 +288,18 @@ The app can update itself, and it does it the way an app that fetches and runs
 new code has to: every payload is cryptographically verified before it is allowed
 to install, and the user consents before anything happens.
 
-**Rust-side, triggered from a native menu.** "Check for Updates…" is a native
-menu item, not a button in the web UI — putting it in the page would mean granting
-the webview an updater permission and breaking the locks above. Instead the whole
-updater lives in `src-tauri/src/updater.rs`, and the webview gains nothing. It is
-symmetric with the macOS client, where the same command is a menu item too.
+**Rust-side, and the menu item is the whole interface.** "Check for Updates…" is
+a native menu item, not a button in the web UI — putting it in the page would mean
+granting the webview an updater permission and breaking the locks above. Instead
+the whole updater lives in `src-tauri/src/updater.rs`, and the webview gains
+nothing.
+
+That is also why there is no update banner inside the mail window: a banner needs
+a button, a button needs a command, and a command is the exact permission being
+withheld. So the item carries the state instead of one fixed word. It reads
+"Checking for Updates…" while the feed is being asked, "Downloading ohmail 0.9.2…"
+while a release is being fetched, and "Restart to Install 0.9.2" once a verified
+payload is waiting — which is the only thing in the app that installs anything.
 
 **One pinned HTTPS feed.** `plugins.updater.endpoints` in `tauri.conf.json` is a
 single URL — the project's own GitHub Releases `latest.json`:
@@ -313,11 +324,24 @@ security of an unsigned-installer updater, `src-tauri/build.rs` **fails the buil
 if the pubkey is missing or empty** — you cannot accidentally ship a build that
 would trust an unsigned feed.
 
-**Notify-and-install, never silent, and no downgrades.** On finding a newer
-release the app asks — a native dialog — before it downloads, and asks again
-before the restart that finishes the install. A version that is not strictly
-newer than the installed one (a downgrade, or a reinstall of the same release) is
-refused; the version is bare semver everywhere, so the comparison is plain.
+**One decision, asked once, and nothing installed without it.** The app checks
+the feed shortly after launch and whenever the menu item is picked. A newer signed
+release is fetched in the background — `Update::download` streams it and verifies
+the signature, and that is all it does; nothing on the machine has changed yet.
+When the payload is verified and waiting, one dialog asks whether to restart and
+install it. "Later" is remembered for the rest of the run and is never asked
+again; the menu item stays as the way back to it, and a payload that is never
+consented to is discarded when the app quits.
+
+The restart happens on that press and on nothing else. A check that finds nothing
+says so only when you asked for it; a check that fails says one plain sentence
+with "Try again" beside it, and a check nobody asked for fails silently rather
+than putting an error box over your mail.
+
+**No downgrades.** A version that is not strictly newer than the installed one (a
+downgrade, or a reinstall of the same release) is refused, as is a feed whose
+version does not parse — the gate fails closed. The version is bare semver
+everywhere, so the comparison is plain.
 
 The two failures that matter for an updater — a tampered payload being installed,
 and a downgrade being installed — are proven, not asserted, in

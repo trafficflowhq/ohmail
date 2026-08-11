@@ -16,9 +16,12 @@
 //!
 //! ── WHAT IS IN THE BAR, AND WHY EACH PART IS THERE ─────────────────────────────────────────
 //!
-//!   * **ohmail** — About, Settings (⌘,), "Check for Updates…", the platform's hide items, and
-//!     Quit. This is where a Mac user looks for an application's own commands, and a bar whose
-//!     first menu held two items was the clearest sign this app had no menu worth opening.
+//!   * **ohmail** — About, Settings (⌘,), the update item, the platform's hide items, and Quit.
+//!     This is where a Mac user looks for an application's own commands, and a bar whose first
+//!     menu held two items was the clearest sign this app had no menu worth opening. The update
+//!     item's TEXT belongs to `updater.rs`, which changes it as the flow moves — it is the app's
+//!     only update affordance, because a button in the page would need a permission the webview
+//!     is deliberately not granted.
 //!   * **File** — "New Message" on ⌘N, and Close Window. ⌘N is the shortcut every mail client on
 //!     the platform has; the shared client binds `c` for the same thing, and both now work.
 //!   * **Edit** — the platform's own undo/cut/copy/paste/select-all items. These are not
@@ -174,9 +177,17 @@ pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
 /// WEBVIEW is behind the feature, because only that build's window is granted the permission to
 /// hear an event.
 fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let check_item =
-        MenuItemBuilder::with_id(crate::updater::CHECK_FOR_UPDATES_ID, "Check for Updates…")
-            .build(app)?;
+    /* THE UPDATE ITEM, built here and SPOKEN FOR ELSEWHERE. Its text is not a constant: it is the
+       whole of the app's update interface, so it reports the check, the download and the one press
+       that installs, and `updater.rs` owns every one of those sentences. This file decides only
+       that it sits in the application menu, which is where a Mac user looks for it. The initial
+       text comes from that module too, so the bar and the flow cannot start out disagreeing. */
+    let check_item = MenuItemBuilder::with_id(
+        crate::updater::CHECK_FOR_UPDATES_ID,
+        crate::updater::MENU_LABEL_IDLE,
+    )
+    .build(app)?;
+    crate::updater::adopt_menu_item(app, check_item.clone());
 
     /* THE PLATFORM'S OWN ABOUT PANEL, not a screen of ours. It reads the bundle's name, version
        and copyright, which is exactly the set of facts an About box is for, and it is drawn by

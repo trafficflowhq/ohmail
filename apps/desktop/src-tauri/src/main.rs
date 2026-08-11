@@ -9,13 +9,19 @@
 // ── THE ONE THING THE WEBVIEW STILL CANNOT DO, AND THIS PROCESS NOW CAN ────────
 //
 // The app carries an auto-updater (`updater.rs`), and that is the single place
-// this binary reaches the network: one pinned HTTPS request to its own GitHub
-// Releases feed, made only when the user picks the native "Check for Updates…"
-// menu item, and every payload minisign-verified before it may install. It is
-// Rust-side on purpose — the webview is granted no updater permission, so the
-// four locks that assert "the page reaches nothing" stay literally true while
-// the PROCESS gains exactly one deliberate, consented request. `updater.rs`
-// carries the reasoning; `attach` here is the only place it is hooked up.
+// this binary reaches the network: pinned HTTPS requests to its own GitHub
+// Releases feed and to the signed artifact that feed names, and every payload
+// minisign-verified before it may install. It is Rust-side on purpose — the
+// webview is granted no updater permission, so the four locks that assert "the
+// page reaches nothing" stay literally true while the PROCESS makes the request.
+// `updater.rs` carries the reasoning; `attach` and `on_launch` here are the only
+// places it is hooked up.
+//
+// `on_launch` is the check that happens without being asked, once, shortly after
+// the window opens. It says nothing at all unless it finds a newer release, and
+// it installs nothing on its own: the payload is fetched and verified, and one
+// dialog then asks whether to restart into it. An updater whose only trigger is a
+// menu item is an updater nobody runs.
 //
 // ── THE ONE PIECE OF INTERFACE THIS PROCESS DRAWS ─────────────────────────────
 //
@@ -81,6 +87,9 @@ fn main() {
     let shell = std::sync::Arc::new(engine::Shell::start(&app));
     #[cfg(feature = "local-engine")]
     engine::manage(&app, std::sync::Arc::clone(&shell));
+
+    // The one unrequested request this binary makes. Spawned, so nothing here waits on a feed.
+    updater::on_launch(app.handle());
 
     app.run(move |_app, _event| {
         #[cfg(feature = "local-engine")]

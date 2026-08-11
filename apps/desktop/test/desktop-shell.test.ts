@@ -769,26 +769,103 @@ describe("the auto-updater", () => {
     expect(pubkeyIsValid(absent)).toBe(false);
   });
 
-  it("installs on consent, never silently — notify-and-install", () => {
-    // Consent is asked before a byte installs, and the install is gated behind
-    // that answer; a second prompt gates the restart.
-    expect(updater).toMatch(/\.blocking_show\(\)/);
-    expect(updater).toMatch(/if !consented \{\s*return;/);
-    expect(updater).toMatch(/download_and_install/);
+  /**
+   * INSTALLING IS WHAT CONSENT GATES, AND THE DOWNLOAD IS NOT THE INSTALL.
+   *
+   * The old flow asked twice — once before the download and again before the restart — with a
+   * progress window between them, so one update was three modal interruptions. It now asks ONCE,
+   * at the end, and the split that makes that safe is the one asserted here: `Update::download`
+   * streams the payload and minisign-verifies it (that verification is the plugin's and is
+   * untouched), and `Update::install` is a SEPARATE call that only ever runs from the branch the
+   * user pressed. `download_and_install` — the convenience that fused the two — is gone, and a
+   * regression back to it would put an install behind a fetch again.
+   *
+   * The dialog is non-blocking (`show`, not `blocking_show`): the answer arrives on a callback
+   * instead of a parked thread, so the app stays usable with the question on screen.
+   */
+  it("consent gates the INSTALL, is asked once, and never blocks", () => {
+    // The two calls are separate, and the fused one is not used.
+    expect(updater).toMatch(/\.download\(/);
+    expect(updater).toMatch(/\.install\(&payload\.bytes\)/);
+    expect(updater).not.toMatch(/download_and_install/);
+
+    // Non-blocking, both for the question and for every notice. Matched as a CALL, so the
+    // module's own note about why it does not use the blocking form does not stand in for the
+    // fact — a comment is the claim under test, never evidence for it.
+    expect(updater).not.toMatch(/\.blocking_show\(/);
+    expect(updater).toMatch(/\.show\(move \|now\| \{/);
+
+    /* ASKED ONCE. `prompt_ready` returns early unless the flow still owes the question, and
+       `Flow::should_prompt` is false the moment "Later" is answered. Both halves are named,
+       because either alone can be true while the other is not — a gate nothing calls, or a call
+       with no gate. The boundary table lives in Rust (`updater_tests.rs`), where the transitions
+       are driven and each one has been watched go red under a mutated implementation. */
+    expect(updater).toMatch(/if !lock\(&state\.flow\)\.should_prompt\(\) \{\s*return;/);
+    expect(updater).toMatch(/Signal::Deferred\)? =>? \{?\s*self\.deferred = true;/);
+
+    // And the payload is held in memory, never written down: an update nobody consented to must
+    // leave nothing on the machine when the app quits.
+    expect(updater).toMatch(/bytes: Vec<u8>/);
+    expect(updater).not.toMatch(/write|File::create|tempfile/);
   });
 
-  it("triggers only from the native menu, never the webview", () => {
+  /**
+   * THE MENU ITEM IS THE WHOLE AFFORDANCE, AND ITS TEXT MOVES.
+   *
+   * There is no update banner in the mail window and there cannot be one: a banner needs a button,
+   * a button needs a command, and a command is the exact permission the webview is refused. So the
+   * item reports the flow — "Checking for Updates…", "Downloading ohmail 0.9.2…", "Restart to
+   * Install 0.9.2" — and `updater.rs` owns every one of those sentences while `menu.rs` owns only
+   * where the item sits.
+   */
+  it("triggers from the native menu and the launch check, never the webview", () => {
     expect(updater).toMatch(/CHECK_FOR_UPDATES_ID/);
     expect(updater).toMatch(/on_menu_event/);
-    // The ITEM is built by `menu.rs`, which owns the whole bar; this module owns its id and the
-    // handler. Both halves are asserted, because either one alone can be true while the other is
-    // not — an id nothing builds a menu item for is a command with no trigger at all.
+    // The ITEM is built by `menu.rs`, which owns the whole bar; this module owns its id, its text
+    // and the handler. All three halves are asserted, because any one alone can be true while the
+    // others are not — an id nothing builds a menu item for is a command with no trigger at all.
     const menu = read("src-tauri/src/menu.rs");
     expect(menu).toMatch(/updater::CHECK_FOR_UPDATES_ID/);
-    expect(menu).toMatch(/Check for Updates/);
+    expect(menu).toMatch(/updater::MENU_LABEL_IDLE/);
+    expect(menu).toMatch(/updater::adopt_menu_item\(app, check_item/);
+    expect(updater).toMatch(/MENU_LABEL_IDLE: &str = "Check for Updates…"/);
+    // The item says what is happening rather than one fixed word, which is the only quiet surface
+    // this design leaves for "an update is waiting".
+    expect(updater).toMatch(/"Checking for Updates…"/);
+    expect(updater).toMatch(/format!\("Downloading ohmail \{version\}…"\)/);
+    expect(updater).toMatch(/format!\("Restart to Install \{version\}"\)/);
+
+    /* THE SECOND TRIGGER, and it is not the webview either: one check shortly after launch, from
+       `main.rs`. An updater whose only trigger is a menu item is an updater nobody runs. It is the
+       same code path with `user_initiated = false`, which is the whole of the difference — it
+       opens no window and says nothing unless it finds something. */
+    expect(updater).toMatch(/pub fn on_launch/);
+    expect(updater).toMatch(/check\(app\.clone\(\), false\)/);
+    expect(read("src-tauri/src/main.rs")).toMatch(/updater::on_launch\(app\.handle\(\)\)/);
+
     // The webview gains no updater permission and no way to ask for a check: the runtime
-    // capability lists the six commands and `core:event:allow-listen`, and nothing else.
+    // capability lists the engine's commands and `core:event:allow-listen`, and nothing else.
     expect(read("src-tauri/src/engine.rs")).not.toMatch(/updater/);
+  });
+
+  /**
+   * NO DEAD ENDS, AND NO DEVELOPER SENTENCES IN A USER'S DIALOG.
+   *
+   * Every failure used to be a single-button alert carrying the library's own error text —
+   * "The update check failed: error sending request for url (…)" — which is a string a person can
+   * neither read nor act on, behind a button that does nothing. A failure now says one plain
+   * sentence, offers "Try again", and only appears at all when the user asked for the check.
+   */
+  it("answers a failure with a plain sentence and a retry, not an alert", () => {
+    expect(updater).toMatch(/"Try again"\.into\(\)/);
+    expect(updater).toMatch(/check\(retry, true\)/);
+    // The sentences are the module's own, and no formatted error is interpolated into any of them.
+    expect(updater).toMatch(/ohmail could not fetch the update\./);
+    expect(updater).not.toMatch(/\{e\}/);
+    // A check nobody asked for fails silently — an unrequested error box over somebody's mail is
+    // the interruption this flow exists to remove.
+    expect(updater).toMatch(/fn failed<R: Runtime>\(app: &AppHandle<R>, user_initiated: bool\)/);
+    expect(updater).toMatch(/if user_initiated \{\s*say_it_failed/);
   });
 
   it("reaches the network only through the plugin — no hand-rolled socket", () => {
@@ -799,11 +876,48 @@ describe("the auto-updater", () => {
     expect(updater).not.toMatch(/std::(fs|net|process)/);
   });
 
+  /**
+   * THE FEED CONTRACT IS FROZEN, AND THE UX REWRITE DID NOT TOUCH IT.
+   *
+   * Every already-installed copy of the app parses the same `latest.json` and applies the same
+   * two refusals, so the shape of the feed, the signature check and the downgrade gate are not
+   * this module's to reinterpret — a client in the field cannot be updated out of a mistake made
+   * in any of the three. What changed above is the ORDER and the NUMBER of the things a person is
+   * shown. What is asserted here is that the three load-bearing parts are the same as they were:
+   *
+   *  · one pinned HTTPS endpoint and tauri's own feed schema (asserted at the top of this block);
+   *  · verification, which happens inside `Update::download` and is the plugin's — this module
+   *    never sees an unverified byte, because `download` returns bytes or an error and nothing
+   *    else, and `install` is only ever handed what `download` returned;
+   *  · `should_offer`, byte for byte the strictly-newer comparison it has always been, applied to
+   *    the exact version about to be installed, with an unparseable version on either side failing
+   *    CLOSED rather than falling through.
+   */
   it("refuses a downgrade in the version gate the install path calls", () => {
-    // should_offer is strictly-newer; prompt_and_install returns early when it is
-    // false. The exhaustive boundary table lives in updater_tests.rs (Rust).
+    // should_offer is strictly-newer; the gate returns early when it is false. The exhaustive
+    // boundary table lives in updater_tests.rs (Rust).
     expect(updater).toMatch(/pub fn should_offer\(/);
     expect(updater).toMatch(/candidate > installed/);
+
+    /* FAILS CLOSED. The gate is one `matches!` requiring BOTH versions to parse and `should_offer`
+       to hold; every other shape — an unparseable candidate, an unparseable installed version, a
+       downgrade — falls to the `!offer` return. A refactor that turned this into an `if let` with
+       an `else` that installed would be the whole updater's security gone, so the closed shape is
+       pinned rather than described. */
+    expect(updater).toMatch(/\(Ok\(installed\), Ok\(candidate\)\) if should_offer\(&installed, &candidate\)/);
+    expect(updater).toMatch(/if !offer \{\s*return nothing_to_offer\(&app, user_initiated\);/);
+
+    // Verification is the plugin's and is reached the same way it always was: the ONLY bytes this
+    // module can install are the ones `download` returned.
+    expect(updater).toMatch(/let bytes = match fetched \{/);
+    expect(updater).toMatch(/Some\(payload\) => payload\.update\.install\(&payload\.bytes\)/);
+
+    /* AND A REFUSED VERSION IS NOT AN ERROR REPORT. It used to raise a dialog reading "Ignoring
+       offered version 0.9.0: it is not newer than the installed 0.9.1", which is a sentence about
+       the release pipeline shown to somebody who cannot do anything about it — and which fired on
+       every check for as long as a feed stayed wrong. The refusal itself is unchanged; only who
+       hears about it is. */
+    expect(updater).not.toMatch(/Ignoring offered version/);
   });
 
   /**
@@ -818,6 +932,13 @@ describe("the auto-updater", () => {
    * The event name and the window label are written in two languages (Rust here, the page in
    * `src/updater-window.ts`) because a binary and a static page share no artifact to import one
    * from — the same reason the menu's events are, and held together the same way.
+   *
+   * ── AND IT OPENS ONLY FOR A CHECK SOMEBODY ASKED FOR ────────────────────────────────────────
+   *
+   * A window that appears by itself, centred and focused, over the mail you are reading is the
+   * interruption this flow was rewritten to remove. So the launch check opens nothing at all — its
+   * download is silent and the menu item is the only sign of it — and the window a menu press does
+   * open is built `focused(false)`: it reports, it does not take the keyboard.
    */
   it("renders download progress in a dedicated window, hearing one event and nothing else", () => {
     // The Rust side accumulates and emits — not the discarded callbacks it used to have.
@@ -831,6 +952,11 @@ describe("the auto-updater", () => {
     // is opened anywhere in this module.
     expect(updater).toMatch(/WebviewUrl::App\("updater\.html"\.into\(\)\)/);
     expect(updater.match(/WebviewWindowBuilder::new/g)).toHaveLength(1);
+    // Opened for a user-initiated check and for nothing else, and never with the keyboard.
+    expect(updater).toMatch(
+      /let progress = if user_initiated \{ show_progress_window\(&app\) \} else \{ None \};/,
+    );
+    expect(updater).toMatch(/\.focused\(false\)/);
 
     // The page listens for the SAME event by name, over the runtime's own event plugin, and never
     // emits — the asymmetry the capability grant enforces. (That the page reaches nothing — no
