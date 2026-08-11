@@ -13,7 +13,7 @@ import { DEFAULT_OHBOX_POLICY, resolveOhboxPolicy } from "@trafficflow/core/mail
 // then the private half. `packages/core` → `@trafficflow/db` is a real edge (`pipeline.ts` imports
 // `classifyLedgerSource`, `drizzle-repo.ts` imports the tables), so this file should not be the
 // module that enters that graph.
-import { accountSettings, mailboxCredentials, mailboxes, type MailboxDisabledReason } from "@trafficflow/db";
+import { accountSettings, mailboxCredentials, mailboxes, type MailboxDisabledReason, type Tx } from "@trafficflow/db";
 import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
   kbService, tagsService,
@@ -41,6 +41,13 @@ import { runSyncCycle, type SyncDeps } from "@trafficflow/worker/sync";
 // table is how a LOCAL install and the CLOUD service come to disagree about who organizes a
 // mailbox, and disagreement here IS the dual-organizer bug.
 import { readMailboxLease, LeaseUnavailableError } from "@trafficflow/worker/lease";
+// The SCHEDULED-RESURFACE FLIP, from the same package and for the third instance of the same
+// argument. "Resurfaces Friday at 9" is a dated promise the product makes to the user, and the
+// only thing that can keep it is a pass that notices the date has arrived. On a hosted account
+// the worker's cycle runs it; a standalone install has no worker at all, so this process runs the
+// SAME function against the store that is authoritative here. A local reimplementation would be a
+// second answer to "when is a resurface due", which is the one thing that must not differ.
+import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
 import { createLocalAi, type LocalAi } from "./ai-provider.js";
 import { localAiRoutes } from "./ai-routes.js";
 import { openLocalDb, type LocalDb, type OpenLocalDb } from "./db.js";
@@ -1067,8 +1074,68 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       }
     };
 
+    /**
+     * SCHEDULED RESURFACING — the local half of a feature that was hosted-only by accident.
+     *
+     * A message the user put away until Friday at nine carries `state='bubbled_up'` and a
+     * `bubbleUpAt`, and something has to notice when that moment arrives and flip it to
+     * `resurfaced`. On a Cloud account the hosted worker's cycle does it. A STANDALONE install
+     * has no worker anywhere — that is the whole shape of the free tier — so until this call
+     * existed the row simply sat there, and the shortcut that says "Resurfaces {when}" with a
+     * real date on it was making a promise this door could never keep.
+     *
+     * ── WHICH DOOR RUNS IT, AND WHY THE CLOUD DOOR DOES NOT ────────────────────────────────
+     *
+     * The flip belongs where the AUTHORITATIVE store is, and there is exactly one of those per
+     * install. Here it is this PGlite file. On the Cloud door (`cloud-engine.ts`) it is the
+     * hosted database: the worker flips the row there, `recordChange` puts a `message_state`
+     * update on the feed, and `cloud-mirror.ts`'s intake upserts `state` and `bubbleUpAt`
+     * straight out of the DTO — so that mirror LEARNS the resurface as an ordinary delta. Adding
+     * this call there would make the desktop a second writer to a store it only reads, flipping
+     * a row the next pull would overwrite anyway. So it lives on this side and only this side.
+     *
+     * ── AND IT IS BEHIND THE ORGANIZER GATE, WHICH IS THE SAME SENTENCE ────────────────────
+     *
+     * It is called from inside {@link drain}, so it runs only when this install may organize the
+     * mailbox. That is not incidental placement: a stood-down install's local database is a
+     * frozen mirror of a mailbox somebody else now organizes, and the resurface the user actually
+     * scheduled lives in THAT organizer's store. Flipping rows in the frozen copy would surface
+     * items in a database nothing maintains, and would do it in parallel with the real owner.
+     *
+     * ── COST ───────────────────────────────────────────────────────────────────────────────
+     *
+     * One indexed SELECT (`message_states_account_state_idx`) plus one UPDATE per DUE row, once
+     * per drain — so it rides the existing poll cadence rather than adding a timer, and a mailbox
+     * with nothing scheduled pays one probe that returns no rows. Deliberately NOT inside the
+     * cycle loop: a backlog drain runs up to a hundred cycles, and the answer cannot change
+     * between two of them in any way a user could perceive.
+     *
+     * A failure is CONTAINED. Resurfacing is one feature; the drain below is the mail arriving.
+     * A store error here must not stop the second, so it is logged and the drain continues — the
+     * next poll asks again, and the row stays due until it flips.
+     */
+    const resurfaceDue = async (): Promise<void> => {
+      try {
+        const { flipped } = await bubbleUpPass(
+          db as unknown as Tx, now(), { accountId: world.accountId },
+        );
+        // Only when something moved: a settled mailbox emits this line never, which is the same
+        // rule the drain summary below follows.
+        if (flipped > 0) log("resurface_flipped", { flipped });
+      } catch (err) {
+        log("resurface_pass_failed", {
+          err,
+          reason: "scheduled resurfaces could not be flipped this pass; the rows stay due and " +
+            "the next poll tries again, and mail continues to be filed either way",
+        });
+      }
+    };
+
     /** The drain itself, ALREADY GATED. Never called from outside this closure. */
     const drain = async (maxCycles: number): Promise<number> => {
+      // BEFORE the cycles, not after: a resurface is a local database fact and does not depend on
+      // the mailbox being reachable, so it must survive a cycle that throws on a dead connection.
+      await resurfaceDue();
       let cycles = 0;
       /** Did a cycle report an empty backlog, or did the loop simply run out of cycles? */
       let drained = false;

@@ -76,8 +76,8 @@ export {
 // Consent: the sent-mail seed, the dormancy cutline, and putting an account back to unscreened.
 export {
   SEED_SCAN_LIMIT, SUPPORTED_LOCALES,
-  buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setBlockAutoUnsubscribe,
-  setBlockRemoteImages, setDormancyDays, setLocale,
+  buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setBlockRemoteImages,
+  setDormancyDays, setLocale,
   isMachineSent, isRobotAddress, parseAddressList,
   type SeedCandidate, type SeedConfirmResult, type SeedExclusionReason, type SeedReview,
 } from "./consent-seed.js";

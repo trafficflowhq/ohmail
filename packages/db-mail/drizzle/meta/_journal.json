@@ -379,13 +379,6 @@
       "when": 1788994940527,
       "tag": "0053_account_locale",
       "breakpoints": true
-    },
-    {
-      "idx": 54,
-      "version": "7",
-      "when": 1789081340527,
-      "tag": "0054_auto_unsubscribe_optout",
-      "breakpoints": true
     }
   ]
 }

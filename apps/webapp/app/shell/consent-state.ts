@@ -73,24 +73,6 @@ export interface ConsentState {
   /** When they opted out, for the settings row that says so. Null whenever images load. */
   blockRemoteImagesAt: string | null;
   /**
-   * DOES SCREENING A SENDER OUT ALSO UNSUBSCRIBE FROM THEIR LIST? True = the product default.
-   *
-   * **It starts TRUE, and unlike {@link blockRemoteImages} — the other field whose resting value
-   * is not `false` — the safe direction here is the DEFAULT one.** The reason is what the value is
-   * used for: nothing on the client sends anything. The server reads its own row and sends or does
-   * not; this flag only decides whether the interface SAYS SO before the click and after it. So
-   * "I do not know" resolving to false would silently drop the disclosure of an irreversible
-   * outbound request that is still happening, which is worse than disclosing one that turns out
-   * not to run.
-   *
-   * A failed `GET /consent`, an API too old to carry the field, and a build with no API at all
-   * therefore all leave this true — which is also exactly what the interface did before the switch
-   * existed, so no failure mode of this fetch changes what anybody is told.
-   */
-  autoUnsubscribe: boolean;
-  /** When they turned it off, for the settings row that says so. Null while the pass runs. */
-  blockAutoUnsubscribeAt: string | null;
-  /**
    * THE ACCOUNT'S INTERFACE LANGUAGE, or `null` for "this account has no preference".
    *
    * The one field on this object whose null is a DEFERRAL rather than a switch position, and the
@@ -146,11 +128,6 @@ const RESTING: ConsentState = {
   // sender's content for somebody who asked us not to.
   blockRemoteImages: true,
   blockRemoteImagesAt: null,
-  // ON AT REST, which is the PRODUCT DEFAULT and not the contrarian value the line above is. See
-  // {@link ConsentState.autoUnsubscribe}: this flag decides whether a consequence is stated, never
-  // whether it happens, so the safe resting value is the one that describes what the server does.
-  autoUnsubscribe: true,
-  blockAutoUnsubscribeAt: null,
   // NOTHING FROM AN ACCOUNT. Unlike `blockRemoteImages` above, resting null is not a safe
   // *position* — it is the absence of one, and it leaves the language this device remembered in
   // charge. See {@link ConsentState.locale}.
@@ -194,18 +171,6 @@ export function useConsentState(active: boolean): ConsentState & {
    * tab believing images may load. It rethrows so the caller can say so.
    */
   setBlockRemoteImages: (blocked: boolean) => Promise<boolean>;
-  /**
-   * Stop auto-unsubscribe on screen-out, or let it run, and keep the local answer in step with the
-   * stored one.
-   *
-   * Resolves to `autoUnsubscribe` AS THE DATABASE HOLDS IT — so the argument is the opt-out and
-   * the answer is the feature, inverted exactly once at this seam. Set from the echo rather than
-   * the argument for the reason the three above give, with the sharper half being the write that
-   * FAILED while turning it off: a tab that drew the switch as off would be telling somebody their
-   * lists are safe while every screen-out goes on leaving one. It rethrows so the row can say the
-   * write did not land.
-   */
-  setBlockAutoUnsubscribe: (blocked: boolean) => Promise<boolean>;
 } {
   const [state, setState] = useState<ConsentState>(RESTING);
 
@@ -246,13 +211,6 @@ export function useConsentState(active: boolean): ConsentState & {
             ? true
             : wire.blockRemoteImagesAt !== null,
           blockRemoteImagesAt: wire.blockRemoteImagesAt ?? null,
-          // `== null` — BOTH null and undefined — which is the line four above's shape and NOT the
-          // one directly above it, and the difference is deliberate in both places. For images the
-          // two are different answers because only one of them may load a sender's content. Here
-          // they are the same answer: neither carries a stored opt-out, so in both cases the
-          // server is going to unsubscribe and the interface has to say so.
-          autoUnsubscribe: wire.blockAutoUnsubscribeAt == null,
-          blockAutoUnsubscribeAt: wire.blockAutoUnsubscribeAt ?? null,
           // NORMALISED, not trusted. The column's CHECK and `consentSettings` both close the set,
           // so an unsupported string cannot arrive from a current server — and this is the boot
           // path, where a value that got through would make the client ask for a catalogue that
@@ -297,20 +255,6 @@ export function useConsentState(active: boolean): ConsentState & {
     return on;
   }, []);
 
-  const setBlockAutoUnsubscribe = useCallback(async (blocked: boolean): Promise<boolean> => {
-    const res = await consentApi.setBlockAutoUnsubscribe(blocked);
-    // `== null` ⇒ the pass runs. The same collapse as the read above, for the same reason, and it
-    // has to be spelled the same way in both places or a server that answered with the field
-    // omitted would move the switch one way on load and the other on write.
-    const on = res.blockAutoUnsubscribeAt == null;
-    setState((prev) => ({
-      ...prev,
-      autoUnsubscribe: on,
-      blockAutoUnsubscribeAt: res.blockAutoUnsubscribeAt ?? null,
-    }));
-    return on;
-  }, []);
-
   // Derived rather than stored, so it cannot be left behind by a `setState` that forgot it: it
   // is a fact about the BUILD and the mode, and both are settled before the first render.
   // `active` is `!demo`; see {@link ConsentState.standalone}.
@@ -320,6 +264,5 @@ export function useConsentState(active: boolean): ConsentState & {
     setAutoSuggest,
     setDormancyDays,
     setBlockRemoteImages,
-    setBlockAutoUnsubscribe,
   };
 }
