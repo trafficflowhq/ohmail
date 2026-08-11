@@ -774,12 +774,17 @@ export function useScreenerState(
           n("screened") ? t("bulkScreened", { count: n("screened") }) : null,
           n("spam") ? t("bulkSpam", { count: n("spam") }) : null,
         ].filter(Boolean);
-        // The sentence is owed only if this batch actually DEMOTED somebody. A run of Reads and
-        // Receipts arms nothing, and appending it there would be false — the two mail piles are a
-        // KEEP and were deliberately removed from the unsubscribe service's actionable set. `spam`
-        // cannot appear here at all (the predicate below excludes it), so `screened` is the whole
-        // of the condition.
-        const unsub = autoUnsubscribe && n("screened") > 0 ? "true" : "false";
+        // The sentence is owed only if this batch actually DEMOTED somebody. A run of Ohbox,
+        // Reads and Receipts arms nothing, and appending it there would be false — those three
+        // are a KEEP, and Reads and Receipts were deliberately removed from the unsubscribe
+        // service's actionable set.
+        //
+        // BOTH REJECTS ARE COUNTED, and `spam` is not defensive padding: this control used to
+        // exclude spam from what it applies, and no longer does (see the predicate below). A
+        // condition written on `screened` alone would silently say nothing about a batch of
+        // twelve spam verdicts — the largest single hand-off to the mechanism this surface can
+        // make — which is the disclosure failing precisely where it matters most.
+        const unsub = autoUnsubscribe && n("screened") + n("spam") > 0 ? "true" : "false";
         return t("toastBulkDecided", { count: snaps.length, parts: parts.join(" · "), unsub });
       },
       // `dest !== "screener"` is the second half of the same rule the paragraph above states, and

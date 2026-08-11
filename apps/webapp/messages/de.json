@@ -393,7 +393,7 @@
     "toastUndo": "Rückgängig",
     "toastUndone": "{count, plural, one {Rückgängig — 1 wartet wieder.} other {Rückgängig — # warten wieder.}}",
     "toastUndoExpired": "Zu spät — diese Entscheidung ist schon raus.",
-    "toastBulkDecided": "{count} entschieden — {parts}{unsub, select, true {. ohmail meldet dich bei den Aussortierten auch ab, sofern sie Ein-Klick-Abmeldung anbieten.} other {}}",
+    "toastBulkDecided": "{count} entschieden — {parts}{unsub, select, true {. ohmail meldet dich bei den Abgelehnten auch ab, sofern sie Ein-Klick-Abmeldung anbieten.} other {}}",
     "toastBulkSpam": "{count} nach Spam verschoben{unsub, select, true {. ohmail meldet dich dort auch ab, sofern sie Ein-Klick-Abmeldung anbieten.} other {}}",
     "toastAllowed": "Zugelassen — {count} zurückgehaltene und künftige Post von {sender} gehen nach {dest}.",
     "toastReleased": "{dest} — {count} zurückgehaltene Nachrichten von {sender} freigegeben. Es wurde keine Regel angelegt, künftige Post bleibt also unverändert.",
