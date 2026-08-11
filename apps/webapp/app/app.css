@@ -1559,8 +1559,18 @@ body.reading .shell {
   color: var(--ink3);
 }
 /* Mid-send both header fields are `readOnly`, like the body. Same one-ink-step recession the
-   reply editor uses, so "held" looks the same everywhere it happens. */
-.c-input:read-only {
+   reply editor uses, so "held" looks the same everywhere it happens.
+
+   NAMED BY ELEMENT, and that is the whole of the rule. `:read-only` does not mean "held" — it
+   means "not an editable text control", and by the spec only an editable `<input>`/`<textarea>`
+   ever matches `:read-write`. A `<select>` therefore matches `:read-only` ALWAYS, disabled or
+   not, so a bare `.c-input:read-only` painted the From selector recessed at all times: a live
+   menu wearing the look of a field that is being held, next to a one-mailbox `<output>` sitting
+   at full `--ink`. Only these two elements can be held in the sense this rule is about, so only
+   these two are named. `.reply-editor.is-locked` further down is the same correction from the
+   other side — a `contenteditable` has no `:read-only` to hook at all. */
+input.c-input:read-only,
+textarea.c-input:read-only {
   color: var(--ink2);
 }
 /* FROM. It is one of the header fields, not a banner about them, so it wears the
@@ -1581,8 +1591,14 @@ body.reading .shell {
    background are the "bordered box per field" the note above rejects. `appearance: none`
    removes the caret with it, so the wrapper draws one; without that the row would read as
    static text and the choice would be invisible, which is this gap wearing a new hat. */
+/* THE WRAPPER HUGS THE CONTROL — it does not span the row. `flex: 1` here (and `.c-input`'s own
+   `flex: 1` on the select inside it) stretched both to the row's full width, which put the
+   `::after` caret against the panel's far edge: at the compose panel's own 660px the address
+   ended at x≈212 and the mark that says "this opens" sat at x≈678, 466px away from the value it
+   belongs to. Shrink-wrapped, the caret lands directly after the address, and the hover target
+   is the control rather than the width of the row. */
 .c-select {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   display: flex;
   align-items: baseline;
@@ -1590,6 +1606,11 @@ body.reading .shell {
 }
 .c-select select {
   appearance: none;
+  /* NOT `.c-input`'s `flex: 1`, for the reason above. `auto` widths a select to its WIDEST
+     option, so the caret does not jump when the pick changes; `.c-input`'s `min-width: 0` still
+     applies, so an address too long for the row shrinks and ellipsizes instead of pushing the
+     caret out of it. */
+  flex: 0 1 auto;
   cursor: pointer;
   text-overflow: ellipsis;
 }
@@ -1604,8 +1625,22 @@ body.reading .shell {
   height: 0;
   border-left: 4px solid transparent;
   border-right: 4px solid transparent;
-  border-top: 4px solid var(--ink3);
+  /* `--ink2`, one ink step under the address it follows, not `--ink3`'s two. This is the only
+     control in a header block that is deliberately borderless, so the caret carries the whole of
+     the claim that the line can be opened — and at `--ink3` it was quieter than the label beside
+     it. Hover takes it to `--ink`: the same two-state idiom `.c-ccbcc-toggle` uses one row down,
+     rather than a bordered dropdown, which would be the "box per field" this block rejects. */
+  border-top: 4px solid var(--ink2);
   transform: translateY(-1px);
+  transition: border-top-color 0.15s var(--swift);
+}
+.c-select:hover::after {
+  border-top-color: var(--ink);
+}
+/* Mid-send the select is disabled and its text recedes; the caret recedes with it, or the row
+   goes on advertising a menu that will not open. */
+.c-select:has(select:disabled)::after {
+  border-top-color: var(--ink3);
 }
 /* A REJECTED RECIPIENT, named. Sits directly under the row it belongs to, on the accent's own
    soft surface rather than a red the system does not have; the field's `aria-describedby`
