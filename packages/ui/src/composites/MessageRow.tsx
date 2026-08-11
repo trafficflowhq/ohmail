@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { Avatar } from "../primitives/Avatar.js";
 import { Badge, Chip, type TagHueName } from "../primitives/Chip.js";
 import "./row.css";
@@ -26,6 +26,50 @@ export interface MessageRowProps {
   from: string;
   address?: string;
   time?: string;
+  /**
+   * THE SAME INSTANT SAID THE OTHER WAY — the stamp's hover title.
+   *
+   * A row stamp is relative because that is what a list is scanned by ("Sat", "09:12"), and the
+   * one question it cannot answer is which Saturday. So the caller hands over the other form of
+   * the same instant and it hangs on the stamp: hover a date, read the exact one. When the list
+   * has been flipped to the absolute form ({@link onToggleTime}) this is the relative one, so the
+   * title always names whichever form is NOT on screen.
+   *
+   * DATA, NOT A DEPENDENCY: it is independent of {@link onToggleTime}, so a surface with no flip
+   * behind it still says the exact instant on hover. Absent ⇒ no title, exactly as before.
+   */
+  timeTitle?: string;
+  /**
+   * FLIP EVERY STAMP IN THE LIST between the relative and absolute forms — or ABSENT, where no
+   * surface is holding that preference.
+   *
+   * The gesture is one press on any one date, and what it changes is the whole list at once: a
+   * reader comparing dates wants them all in the same shape, not one hovered at a time. The state
+   * is the app's (`AppShell` owns it, resets it on a view switch and shares it with the open
+   * message), so all this component does is report the press.
+   *
+   * ── WHY THE STAMP IS NOT A CONTROL OF ITS OWN, WHICH IS THE OBVIOUS SHAPE ────────────────────
+   *
+   * The row IS a `<button>` and a button may not contain another one. This is not a validity
+   * quibble: the HTML PARSER closes the row at the inner start tag, so `<button class="row">…
+   * <button class="stamp">` parses to two SIBLING buttons (measured against jsdom's parser) —
+   * the stamp escapes the row it is supposed to sit in, and since this page is server-rendered
+   * that is the tree the browser has built before React hydrates anything. A `tabindex` on the
+   * span is no better: that is interactive content too, and it breaks the "no interactive
+   * descendants" contract `role="option"` rows depend on (see {@link picked}), while adding one
+   * tab stop per row to every list in the product.
+   *
+   * So the press is HIT-TESTED instead — the same answer `AppShell`'s capture-phase handler
+   * already gives for the sender circle and address (`sender-hit.ts`), for the same reason. The
+   * stamp is marked `data-stamp` only when a flip is actually wired, and the row's own press
+   * routes a click that landed on it here. The consequence, stated rather than hidden: on a list
+   * row the flip is a POINTER gesture. The keyboard route to the same preference is the open
+   * message's stamp, which is a real `<button>` because a message header is not one.
+   *
+   * ABSENT ⇒ a plain, inert span: no hit target, no pressable styling, and a press on the date
+   * does what a press on the row has always done. Never a control that answers nothing.
+   */
+  onToggleTime?: () => void;
   subject: string;
   preview?: string;
   /** Receipts: right-aligned amount. */
@@ -138,6 +182,8 @@ export function MessageRow(props: MessageRowProps) {
     from,
     address,
     time,
+    timeTitle,
+    onToggleTime,
     subject,
     preview,
     amount,
@@ -243,7 +289,18 @@ export function MessageRow(props: MessageRowProps) {
         {unread ? <span className="dot-unread" /> : null}
         <span className="who">{from}</span>
         {address ? <span className="addr">{address}</span> : null}
-        {time ? <span className="t num">{time}</span> : null}
+        {/* See `onToggleTime`: `data-stamp` is the hit target the row's own press looks for, and
+            it exists ONLY where a flip is wired — so an unwired stamp can never be routed to a
+            handler that is not there. `tog` is the pressable styling, `title` is independent. */}
+        {time ? (
+          <span
+            className={onToggleTime ? "t num tog" : "t num"}
+            title={timeTitle || undefined}
+            data-stamp={onToggleTime ? "" : undefined}
+          >
+            {time}
+          </span>
+        ) : null}
       </span>
       <span className="row-mid">
         <span className="subj">
@@ -257,6 +314,21 @@ export function MessageRow(props: MessageRowProps) {
     </>
   );
 
+  /**
+   * ONE PRESS HANDLER, TWO MEANINGS — decided by where the press landed.
+   *
+   * See {@link MessageRowProps.onToggleTime} for why the stamp cannot be a control of its own.
+   * The hit test is the marker the stamp above only wears when a flip is wired, so a row with no
+   * flip behind it takes this branch never and behaves exactly as it always has.
+   */
+  const press = (e: MouseEvent<HTMLButtonElement>): void => {
+    if (onToggleTime && (e.target as Element | null)?.closest?.("[data-stamp]")) {
+      onToggleTime();
+      return;
+    }
+    onClick?.();
+  };
+
   const rowButton = (
     <button
       type="button"
@@ -265,7 +337,7 @@ export function MessageRow(props: MessageRowProps) {
       data-unseen={unread ? "1" : undefined}
       aria-label={`${from}: ${subject}`}
       {...selection}
-      onClick={onClick}
+      onClick={press}
     >
       {lead !== null ? (
         <>

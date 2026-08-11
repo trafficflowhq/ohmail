@@ -23,7 +23,7 @@ import {
   Waterline,
 } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
-import { avatarOf, rowAddress, displayTime, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
 import { type MessageAction } from "../shell/MessagePane";
@@ -44,6 +44,8 @@ export function ReadsView({
   partition,
   tags,
   threadParticipants,
+  absoluteTime,
+  onToggleTime,
   now,
   cur,
   onCur,
@@ -68,6 +70,16 @@ export function ReadsView({
    * always did. Optional, so a view mounted without it (the demo, most tests) is unchanged.
    */
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
+  /**
+   * THE DATE STAMPS — which form they are in, and the press that flips them.
+   *
+   * One boolean for every row at once: the shell owns it, resets it on a view switch and shares
+   * it with the open message, so no two dates on screen are ever in different shapes. `rowStamp`
+   * turns the pair into the row's stamp props. Optional, and absent leaves the rows exactly as
+   * they were — relative dates, the exact instant on hover, nothing to press.
+   */
+  absoluteTime?: boolean;
+  onToggleTime?: () => void;
   tags: TagDTO[];
   now: Date;
   cur: string | null;
@@ -282,7 +294,7 @@ export function ReadsView({
       address={rowAddress(m)}
       {...avatarOf(m)}
       participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
-      time={displayTime(m, now)}
+      {...rowStamp(m, now, absoluteTime, onToggleTime)}
       subject={m.subject}
       preview={m.snippet}
       unread={m.unread || justSeen.has(m.id)}

@@ -14,6 +14,12 @@
 .row.seen .who{font-weight:500;color:var(--ink2)}
 .row-top .addr{flex:1 1 auto;min-width:0;font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row-top .t{margin-left:auto;font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums;flex:none}
+/* A STAMP THAT FLIPS THE LIST, and only where one is wired (`MessageRow`'s `onToggleTime`).
+   Quiet at rest — a date is a fact on a row, not a button, and every row having a visible control
+   in its top corner would be louder than the mail. The affordance is the pointer plus the hover
+   ink, which is also when the `title` names the exact instant, so the two arrive together. */
+.row-top .t.tog{cursor:pointer}
+.row-top .t.tog:hover{color:var(--ink);text-decoration:underline dotted;text-underline-offset:2px}
 .dot-unread{width:5px;height:5px;border-radius:50%;background:var(--accent);flex:none;align-self:center;
   transition:opacity .7s var(--swift)}
 .justseen .dot-unread{opacity:0} /* rows AND stream cards */

@@ -52,7 +52,7 @@ import {
   ReadColumn,
   SegmentedControl,
 } from "@ohmail/ui";
-import { avatarOf, displayTime, hueOf, resurfaceLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
+import { avatarOf, rowStamp, hueOf, resurfaceLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useKeyBindings } from "../shell/keymap";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { TRIAGE_PILES, type TriagePileId } from "../shell/routing";
@@ -105,6 +105,8 @@ export function TriageView({
   messageOf,
   tags,
   threadParticipants,
+  absoluteTime,
+  onToggleTime,
   now,
   onOpen,
   hydrateBody,
@@ -135,6 +137,20 @@ export function TriageView({
    * always did. Optional, so a view mounted without it (the demo, most tests) is unchanged.
    */
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
+  /**
+   * THE DATE STAMPS — which form they are in, and the press that flips them.
+   *
+   * One boolean for every row at once: the shell owns it, resets it on a view switch and shares
+   * it with the open message, so no two dates on screen are ever in different shapes. `rowStamp`
+   * turns the pair into the row's stamp props. Optional, and absent leaves the rows exactly as
+   * they were — relative dates, the exact instant on hover, nothing to press.
+   *
+   * THE RESURFACE PILE IS OUT OF ITS REACH, and deliberately: those rows are stamped with when
+   * the message COMES BACK, not when it arrived, so there is no second form of that stamp to flip
+   * to and the message's own date is not what the row is about. See the row below.
+   */
+  absoluteTime?: boolean;
+  onToggleTime?: () => void;
   tags: TagDTO[];
   now: Date;
   /** The reader sheet — the narrow-width tap, where there is no reading column. */
@@ -229,7 +245,12 @@ export function TriageView({
         address={rowAddress(m)}
         {...avatarOf(m)}
         participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
-        time={pile === "resurface" ? when : displayTime(m, now)}
+        /* A resurface row's stamp is the instant it COMES BACK — the pile's whole subject, and a
+           future one. It has no relative/absolute pair to flip between, and flipping it to the
+           message's arrival date would answer a question this pile is not asking, so it stays a
+           plain stamp with nothing to press. Every other pile is stamped with the message's own
+           date and takes the flip. */
+        {...(pile === "resurface" ? { time: when } : rowStamp(m, now, absoluteTime, onToggleTime))}
         subject={m.subject}
         preview={m.protected ? undefined : m.snippet}
         unread={m.unread}

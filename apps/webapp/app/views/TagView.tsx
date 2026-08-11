@@ -31,7 +31,7 @@ import { useTranslations } from "next-intl";
 import { type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { Button, Kbd, ListPane, ListRows, MessageRow, ReadColumn, TagDot } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
-import { avatarOf, displayTime, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
+import { avatarOf, rowStamp, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 
 /** Below this the reading column is `display:none` (app.css), so a tap must open the sheet. */
 function readColumnHidden(): boolean {
@@ -50,6 +50,8 @@ export function TagView({
   messages,
   tags,
   threadParticipants,
+  absoluteTime,
+  onToggleTime,
   now,
   onOpen,
   hydrateBody,
@@ -67,6 +69,16 @@ export function TagView({
    * always did. Optional, so a view mounted without it (the demo, most tests) is unchanged.
    */
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
+  /**
+   * THE DATE STAMPS — which form they are in, and the press that flips them.
+   *
+   * One boolean for every row at once: the shell owns it, resets it on a view switch and shares
+   * it with the open message, so no two dates on screen are ever in different shapes. `rowStamp`
+   * turns the pair into the row's stamp props. Optional, and absent leaves the rows exactly as
+   * they were — relative dates, the exact instant on hover, nothing to press.
+   */
+  absoluteTime?: boolean;
+  onToggleTime?: () => void;
   tags: TagDTO[];
   now: Date;
   /** The reader sheet, in place — the narrow-width tap, where there is no reading column. */
@@ -123,7 +135,7 @@ export function TagView({
                 address={rowAddress(m)}
                 {...avatarOf(m)}
                 participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
-                time={displayTime(m, now)}
+                {...rowStamp(m, now, absoluteTime, onToggleTime)}
                 subject={m.subject}
                 preview={m.snippet}
                 amount={m.amount}

@@ -22,7 +22,7 @@ import {
 } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { groupSection, sendTimeOf, singletonGroup, type OhboxRowGroup } from "./ohbox-groups";
-import { PLACE_LABEL, avatarOf, rowAddress, displayTime, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
+import { PLACE_LABEL, avatarOf, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
 import { useLoadingGrace } from "../shell/loading-grace";
@@ -108,6 +108,8 @@ export function OhboxView({
   previouslySeen,
   threadParticipants,
   threadSubject,
+  absoluteTime,
+  onToggleTime,
   tags,
   now,
   selectedId,
@@ -162,6 +164,17 @@ export function OhboxView({
    * Optional — a view mounted without it leads every row with the one sender's circle.
    */
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
+  /**
+   * THE DATE STAMPS — which form they are in, and the press that flips them.
+   *
+   * One boolean for every row at once: the shell owns it, resets it on a view switch and shares
+   * it with the open message, so no two dates on screen are ever in different shapes. `rowStamp`
+   * turns the pair into the row's stamp props, and a grouped row's stamp follows its newest
+   * member exactly as its relative one does. Optional, and absent leaves the rows exactly as they
+   * were — relative dates, the exact instant on hover, nothing to press.
+   */
+  absoluteTime?: boolean;
+  onToggleTime?: () => void;
   /**
    * THE CONVERSATION'S STORED NAME — the mirror's thread row's subject, bound by the shell the
    * way {@link threadParticipants} is. The server names a thread with the reply/forward
@@ -1322,7 +1335,7 @@ export function OhboxView({
       from={sent ? sent.label : senderName(m)}
       address={sent ? undefined : rowAddress(m)}
       {...(sent ? sent.avatar : avatarOf(m))}
-      time={displayTime(m, now)}
+      {...rowStamp(m, now, absoluteTime, onToggleTime)}
       subject={m.subject}
       preview={m.protected ? t("protectedPreview") : m.snippet}
       unread={m.unread}
@@ -1457,7 +1470,9 @@ export function OhboxView({
         id={target.id}
         from={sentLeads ? sent.label : groupSenders(g)}
         {...(sentLeads ? sent.avatar : avatarOf(target))}
-        time={displayTime(shown, now)}
+        /* The stamp is the newest member's, in whichever form the list is in — the same message
+           the relative stamp has always named, so the exact date on hover is that one's too. */
+        {...rowStamp(shown, now, absoluteTime, onToggleTime)}
         subject={threadSubject?.(g.key) ?? shown.subject}
         // see the docblock: the conversation slides only when the whole of it is on its way down.
         className={g.members.every((m) => settling.has(m.id)) ? "settling" : undefined}

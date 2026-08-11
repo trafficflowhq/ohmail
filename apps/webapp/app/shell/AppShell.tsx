@@ -1122,10 +1122,15 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   /**
    * ── ABSOLUTE-TIME STAMPS — A MOMENTARY, VIEW-SCOPED FLIP, NOT A SETTING ────────────────────
    *
-   * Clicking any stamp in the open message flips every stamp in it to the exact date and time
-   * (see `absoluteTime` on `MessageChrome`, read by `MessageHeader`/`MessageCard`). It is
-   * deliberately NOT persisted, and it resets on every view switch: it answers "let me read the
-   * exact dates on THIS", so carrying it to the next pile — or across a reload — would be the
+   * Clicking any stamp flips every stamp on screen to the exact date and time — in the open
+   * message (see `absoluteTime` on `MessageChrome`, read by `MessageHeader`/`MessageCard`) and,
+   * from the same boolean, on every LIST ROW of the six mail lists (`rowStamp`, threaded to each
+   * view below). One state and not two: a reader who has asked for exact dates has asked the
+   * question of the mail in front of them, and a list whose rows disagreed with the message open
+   * beside them would be answering it twice.
+   *
+   * It is deliberately NOT persisted, and it resets on every view switch: it answers "let me read
+   * the exact dates on THIS", so carrying it to the next pile — or across a reload — would be the
    * interface remembering a glance nobody asked it to keep. In-memory state covers reload and
    * re-open for free; the effect below covers moving between rail views.
    */
@@ -1133,6 +1138,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   useEffect(() => {
     setAbsoluteTime(false);
   }, [route.view]);
+  /* ONE callback, stable, for both halves — the chrome's `onToggleAbsoluteTime` and every list's
+     `onToggleTime`. Two arrow literals would be two identities, and the row prop is handed to six
+     memoizable views. */
+  const toggleAbsoluteTime = useCallback(() => setAbsoluteTime((v) => !v), []);
   /**
    * THE ROW A SEARCH HIT LANDED ON — so the user can SEE where they were taken.
    *
@@ -3453,7 +3462,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     () => ({
       ownAddresses,
       absoluteTime,
-      onToggleAbsoluteTime: () => setAbsoluteTime((v) => !v),
+      onToggleAbsoluteTime: toggleAbsoluteTime,
       replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply,
       // The audience edit and its book — held here for the mounted-twice reason the reply
       // body is, applied by `InlineReply`, sent by `sendReply` above from the same state.
@@ -3492,7 +3501,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       bodyOf: bodyOfMessage, hydrateBody, hydrateThread,
       attachments, remoteImages,
     }),
-    [ownAddresses, absoluteTime, replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
+    [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       replyEnvelope, replyBook,
       openSenderMenu, openReply, forwardMessage, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
@@ -3736,6 +3745,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 newForYou={ohbox.newForYou}
                 previouslySeen={ohbox.previouslySeen}
                 threadParticipants={participantsOf}
+                absoluteTime={absoluteTime}
+                onToggleTime={toggleAbsoluteTime}
                 threadSubject={threadSubjectOf}
                 tags={tags}
                 now={now}
@@ -3780,6 +3791,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "reads" ? (
               <ReadsView
                 threadParticipants={participantsOf}
+                absoluteTime={absoluteTime}
+                onToggleTime={toggleAbsoluteTime}
                 partition={partition}
                 tags={tags}
                 now={now}
@@ -3802,6 +3815,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "receipts" ? (
               <ReceiptsView
                 threadParticipants={participantsOf}
+                absoluteTime={absoluteTime}
+                onToggleTime={toggleAbsoluteTime}
                 messages={receipts}
                 tags={tags}
                 now={now}
@@ -3883,6 +3898,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "triage" ? (
               <TriageView
                 threadParticipants={participantsOf}
+                absoluteTime={absoluteTime}
+                onToggleTime={toggleAbsoluteTime}
                 piles={piles}
                 pile={route.triagePile}
                 onPile={goTriage}
@@ -3915,6 +3932,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "tag" && tagGroup ? (
               <TagView
                 threadParticipants={participantsOf}
+                absoluteTime={absoluteTime}
+                onToggleTime={toggleAbsoluteTime}
                 tag={tagGroup.tag}
                 messages={tagGroup.messages}
                 tags={tags}
@@ -3939,6 +3958,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
             {effectiveView === "history" ? (
               <HistoryView
                 threadParticipants={participantsOf}
+                absoluteTime={absoluteTime}
+                onToggleTime={toggleAbsoluteTime}
                 messages={history}
                 tags={tags}
                 now={now}
