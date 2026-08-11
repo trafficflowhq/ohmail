@@ -17,9 +17,20 @@
  *    newest-message is the roulette this replaces, and "primary mailbox" is not a concept this
  *    product has. What IS remembered is the user's explicit pick, and only for the draft they
  *    picked it on (`ComposeFields.fromMailboxId`).
+ *  · A fresh compose ADDRESSED TO A DOMAIN THE ACCOUNT ITSELF SENDS FROM takes that address
+ *    instead, and says on screen that it did (`domainMatchedFrom`). Still derived, still nothing
+ *    stored, still overridable by the selector beside it — it changes which default applies, not
+ *    what a default is. It declines wherever a second reading exists.
  *  · A reply keeps the mailbox the message arrived in (`Engine.enrich` → `parent.mailboxId`)
  *    and now SAYS so. If that mailbox can no longer send, the default is substituted and the
- *    substitution is stated on screen — never silently, and never by refusing the reply.
+ *    substitution is stated on screen — never silently, and never by refusing the reply. Nothing
+ *    about a reply's recipients moves its sender: that rule is the compose surface's alone.
+ *  · A FORWARD is a compose for this purpose, and the code says so rather than the prose: it
+ *    seeds the ordinary form with `EMPTY_COMPOSE` (`AppShell.forwardMessage`), so it carries no
+ *    pick, no recipients and no inherited mailbox — `forwardOf` rides the send request only. The
+ *    user addresses it themselves, which is exactly the act the rule above reads. A DRAFT reopened
+ *    from the drafts list is the other way round: `openDraft` seeds `fromMailboxId` from the row,
+ *    which is a pick, so nothing is re-derived over it.
  *  · The value is a mailbox **id**, never an address. Aliases are a later slice and the day one
  *    mailbox carries three addresses an address-keyed selector has no answer; an id keeps its
  *    meaning through that change.
@@ -173,6 +184,18 @@ export interface ResolvedFrom {
    * address than the one it is sending from.
    */
   maxMessageBytes: number | null;
+  /**
+   * True when the sender was MOVED OFF the derived default because a recipient stands on this
+   * mailbox's own domain — see {@link domainMatchedFrom}. The surface must say so.
+   *
+   * It is a change that happened while the user was looking at another field, which is the only
+   * reason it needs a line at all: false whenever the resolution is what it would have been
+   * anyway, including when the matched mailbox IS the default. A notice about a switch nobody
+   * made is the same untruth as a switch nobody was told about.
+   *
+   * Always false on a reply — {@link resolveReplyFrom} has no recipients to read.
+   */
+  domainMatched: boolean;
 }
 
 const NOTHING: ResolvedFrom = {
@@ -182,6 +205,7 @@ const NOTHING: ResolvedFrom = {
   substituted: false,
   substitutedFrom: null,
   maxMessageBytes: null,
+  domainMatched: false,
 };
 
 function resting(options: readonly FromOption[], chosen: FromOption | null): ResolvedFrom {
@@ -192,7 +216,83 @@ function resting(options: readonly FromOption[], chosen: FromOption | null): Res
     substituted: false,
     substitutedFrom: null,
     maxMessageBytes: chosen?.maxMessageBytes ?? null,
+    domainMatched: false,
   };
+}
+
+/**
+ * The domain of an address, case-folded — in the WIRE FORM it is stored in, always.
+ *
+ * `lastIndexOf`, not `indexOf`: an address that reached here has already been through
+ * `isEmailAddress`, but a mailbox fact comes from the server and this must not read a local part
+ * as a domain if one ever carries an `@`.
+ */
+function domainOf(address: string): string | null {
+  const at = address.lastIndexOf("@");
+  if (at < 0) return null;
+  const domain = address.slice(at + 1).trim().toLowerCase();
+  return domain.length > 0 ? domain : null;
+}
+
+/**
+ * THE ADDRESS THE RECIPIENT'S DOMAIN NAMES — or `null`, which is most of the time.
+ *
+ * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
+ *
+ * An account holding two businesses' addresses has ONE fresh-compose default (the oldest
+ * connected mailbox, see the header), so every message to a customer of the other business left
+ * from the wrong company until somebody noticed the From line. The recipient is the evidence that
+ * was on screen the whole time: a message to `dana@acme.example` from an account that can send as
+ * `me@acme.example` is almost never meant to leave from the other identity.
+ *
+ * ── ONE ANSWER OR NONE ──────────────────────────────────────────────────────────────────
+ *
+ * The whole recipient set must point at exactly ONE of the account's sendable mailboxes. Two
+ * recipients naming two different own domains is a message that belongs to neither identity more
+ * than the other, and two of the account's own mailboxes on one domain is a question this rule
+ * cannot answer — both leave the default alone. Reading the To line left to right and taking the
+ * first hit would be a coin toss with an explanation attached, which is the defect being fixed
+ * wearing a new hat.
+ *
+ * So "the first recipient wins" is true only in the sense that survives that rule: the earliest
+ * matching recipient's mailbox is the answer, and it is the answer only because no later one
+ * named a different mailbox. Several recipients on the SAME own domain are one answer reached
+ * twice, not a tie.
+ *
+ * ── SENDABLE, AND NOTHING ELSE ──────────────────────────────────────────────────────────
+ *
+ * `sendable` is the same `!== "disabled"` the rest of this module uses, so a mailbox in `error`
+ * can still be matched (an IMAP verdict is not an SMTP one) and a disabled one is never proposed
+ * — the server would refuse it, and a match that has to be undone is worse than none. When the
+ * disabled mailbox was the account's ONLY address on that domain nothing matches at all and the
+ * derived default stands: a domain the account cannot currently send from is not an invitation to
+ * nominate a different identity.
+ *
+ * ── AND IT COMPARES WIRE FORMS ──────────────────────────────────────────────────────────
+ *
+ * Both sides are punycode already: mailbox addresses are stored in their A-label form, and the
+ * compose recipient field is one of the two surfaces `idn.ts` deliberately leaves undecoded
+ * because its content IS the wire value. `displayAddress` is never called here — decoding is
+ * presentation, and its documented fallback (a label that refuses to decode is shown raw) would
+ * make two identical domains stop matching each other.
+ *
+ * @param recipients the addresses typed on the To line, in order, already parsed.
+ */
+export function domainMatchedFrom(
+  options: readonly FromOption[],
+  recipients: readonly string[],
+): FromOption | null {
+  let hit: FromOption | null = null;
+  for (const recipient of recipients) {
+    const domain = domainOf(recipient);
+    if (domain === null) continue;
+    for (const option of options) {
+      if (!option.sendable || domainOf(option.address) !== domain) continue;
+      if (hit !== null && hit.id !== option.id) return null;
+      hit = option;
+    }
+  }
+  return hit;
 }
 
 /**
@@ -204,14 +304,45 @@ function resting(options: readonly FromOption[], chosen: FromOption | null): Res
  * default is silent ON PURPOSE here and not in {@link resolveReplyFrom}: a compose has no
  * mailbox it was supposed to answer from, so there is no promise to break — the From line
  * simply shows what it will send from, which is the whole point of rendering it.
+ *
+ * ── THE RECIPIENT GETS A VOTE, AND ONLY WHILE NOBODY HAS PICKED ─────────────────────────
+ *
+ * `recipientLine` is the To field verbatim. Addressed to a domain the account itself sends from,
+ * the default is replaced by that address and `domainMatched` says so
+ * ({@link domainMatchedFrom} holds the whole rule, including every case where it declines).
+ *
+ * The gate is `picked === null` — the FIELD's state, not whether the id it holds still resolves.
+ * A user who chose an address has already taken the decision this would take for them, and a pick
+ * that has gone stale falls back to the plain derivation exactly as it did before this existed.
+ *
+ * ── IT IS A DERIVED DEFAULT AND NOTHING ELSE ────────────────────────────────────────────
+ *
+ * Nothing here writes `ComposeFields.fromMailboxId`. The match is re-derived on every render from
+ * the recipients on screen, so deleting the recipient un-switches the sender, and the id reaches
+ * the wire down the SAME path the oldest-connected default takes (`AppShell` → `composeMailbox` →
+ * `composePlan`). Storing it would make one derived guess sticky for every later recipient in the
+ * draft, and would be indistinguishable — to this function, on the next render — from a choice the
+ * user made.
+ *
+ * The To line only. A Cc is a copy, and letting a bystander's domain decide which identity is
+ * writing is a switch the user has more reason to be surprised by than helped by.
  */
 export function resolveComposeFrom(
   options: readonly FromOption[],
   picked: string | null,
+  recipientLine = "",
 ): ResolvedFrom {
   if (options.length === 0) return NOTHING;
   const kept = picked === null ? null : options.find((o) => o.id === picked && o.sendable) ?? null;
-  return resting(options, kept ?? defaultFrom(options));
+  if (kept) return resting(options, kept);
+  const derived = defaultFrom(options);
+  if (picked !== null) return resting(options, derived);
+  const matched = domainMatchedFrom(
+    options,
+    parseRecipients(recipientLine).addresses.map((a) => a.address),
+  );
+  if (matched === null || matched.id === derived?.id) return resting(options, matched ?? derived);
+  return { ...resting(options, matched), domainMatched: true };
 }
 
 /**
@@ -273,6 +404,10 @@ export function resolveReplyFrom(
     // The SUBSTITUTE's ceiling, not the inherited mailbox's: this reply leaves from `chosen`, so
     // the number a surface states has to be the one that will actually be enforced.
     maxMessageBytes: chosen?.maxMessageBytes ?? null,
+    // NEVER on a reply. Its sender is the mailbox the message ARRIVED IN — a fact about the
+    // conversation — so who the answer is addressed to has no say in it, and this function is
+    // handed no recipients to change its mind with.
+    domainMatched: false,
   };
 }
 

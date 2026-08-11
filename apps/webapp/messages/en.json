@@ -549,6 +549,7 @@
   "compose": {
     "title": "Compose",
     "from": "From",
+    "fromMatched": "Switched to match the recipient's domain",
     "to": "To",
     "toSuggestions": "Address suggestions",
     "toPlaceholder": "name@example.com, separated by commas",

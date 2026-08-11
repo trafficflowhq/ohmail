@@ -223,6 +223,9 @@ export function InlineReply({
    */
   const facts = useMailboxFacts();
   const options = facts ? optionsFromFacts(facts) : [];
+  // NO RECIPIENTS IN THIS CALL, and that is the rule rather than an omission: a reply answers
+  // from the mailbox the message ARRIVED IN, so who it is addressed to has no say. The compose
+  // surface's domain match (`domainMatchedFrom`) is deliberately not reachable from here.
   const from = resolveReplyFrom(options, message.mailboxId, fromId ?? null);
   // `useId`, not a static id: this editor is mounted twice while the reader is open, and a
   // duplicate `id`/`for` pair would tie the label to whichever select the document walked to first.

@@ -549,6 +549,7 @@
   "compose": {
     "title": "Schreiben",
     "from": "Von",
+    "fromMatched": "Gewechselt, passend zur Domain des Empfängers",
     "to": "An",
     "toSuggestions": "Adressvorschläge",
     "toPlaceholder": "name@beispiel.de, mit Komma getrennt",

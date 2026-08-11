@@ -66,6 +66,13 @@ import type { ComposeFields, ComposePlan } from "../shell/compose";
 import { worthSaving } from "../shell/compose-autosave";
 import type { ResolvedFrom } from "../shell/compose-from";
 
+/**
+ * The id the From control points `aria-describedby` at when the sender was matched to the
+ * recipient's domain. A constant rather than `useId` because it is written in two places and read
+ * in a third, and there is exactly one compose form on screen.
+ */
+const MATCH_HINT_ID = "compose-from-match";
+
 export function ComposeView({
   engine,
   draft,
@@ -350,6 +357,7 @@ export function ComposeView({
                       className="c-input"
                       value={from.mailboxId ?? ""}
                       disabled={inFlight}
+                      aria-describedby={from.domainMatched ? MATCH_HINT_ID : undefined}
                       onChange={(e) => onFields({ ...fields, fromMailboxId: e.target.value })}
                     >
                       {/* The VALUE is the mailbox id and the LABEL is the address a human reads —
@@ -362,8 +370,33 @@ export function ComposeView({
                     </select>
                   </span>
                 ) : (
-                  <output id="compose-from" className="c-static">{displayAddress(from.address)}</output>
+                  <output
+                    id="compose-from"
+                    className="c-static"
+                    aria-describedby={from.domainMatched ? MATCH_HINT_ID : undefined}
+                  >
+                    {displayAddress(from.address)}
+                  </output>
                 )}
+                {/* THE SENDER MOVED WHILE YOU WERE TYPING SOMEWHERE ELSE, so it is said out loud
+                    in the row it happened in. The message is going to a domain this account can
+                    send from, and that address is now the one it leaves from
+                    (`compose-from.ts` → `domainMatchedFrom`).
+
+                    IT IS NOT AN UNDO AND CARRIES NO DISMISS. The selector beside it IS the way
+                    back — picking any address stores a real choice and the line goes with it,
+                    which is one control for one decision instead of a second affordance that
+                    would have to mean something subtly different. Deleting the recipient
+                    un-switches it too, because the whole thing is re-derived rather than stored.
+
+                    `role="status"` because the change is silent otherwise: it happens in a field
+                    the user is not looking at, and a describedby alone would only be heard by
+                    someone who later tabbed back to the control. */}
+                {from.domainMatched ? (
+                  <span id={MATCH_HINT_ID} className="compose-from-hint" role="status">
+                    {t("fromMatched")}
+                  </span>
+                ) : null}
               </div>
             ) : null}
 

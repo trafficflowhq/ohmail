@@ -1667,6 +1667,22 @@ textarea.c-input:read-only {
 .c-select:has(select:disabled)::after {
   border-top-color: var(--ink3);
 }
+/* THE SENDER CHANGED BECAUSE OF WHO THIS IS GOING TO — the same job `.reply-from-sub` does one
+   surface over, and the same reasoning about its weight: it reports a decision the product took
+   while the user was typing in another field, so it carries the accent rather than sitting at
+   `--ink3` like a caption. Smaller than the value it follows, because the address is the fact and
+   this is the note about it.
+
+   `margin-left: auto` pins it to the row's trailing edge, which is the one place in this block
+   that is always free: the shrink-wrapped `.c-select` leaves the rest of the row empty, and the
+   one-mailbox `<output>` takes `flex: 1` and would otherwise push the note out of the panel. */
+.compose-from-hint {
+  flex: none;
+  margin-left: auto;
+  padding-left: 10px;
+  font-size: 11.5px;
+  color: var(--accent);
+}
 /* A REJECTED RECIPIENT, named. Sits directly under the row it belongs to, on the accent's own
    soft surface rather than a red the system does not have; the field's `aria-describedby`
    points at it, so the reason reaches a screen reader with the field and not as a stray line. */

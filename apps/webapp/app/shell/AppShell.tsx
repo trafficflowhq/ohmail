@@ -1929,9 +1929,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * to — no facts and no seeded mirror rows — where it is still better than refusing to send,
    * and where there is no From line on screen for it to contradict.
    */
+  /**
+   * ── AND THE RECIPIENT MOVES IT, WHILE NOBODY HAS PICKED ─────────────────────────────────
+   *
+   * `compose.to` is passed so a message addressed to a domain this account itself sends from
+   * leaves from THAT address (`domainMatchedFrom`) — the two-businesses case, where the oldest
+   * connected mailbox is the wrong company half the time. It is still a derived default: nothing
+   * writes `compose.fromMailboxId`, so it re-derives as the recipients change and the selector
+   * overrides it, and the id reaches the wire through `composeMailbox` below exactly as the
+   * oldest-connected default does. One resolution, one From line, one `mailboxId`.
+   */
   const composeFrom = useMemo(
-    () => resolveComposeFrom(fromOptions, compose.fromMailboxId),
-    [fromOptions, compose.fromMailboxId],
+    () => resolveComposeFrom(fromOptions, compose.fromMailboxId, compose.to),
+    [fromOptions, compose.fromMailboxId, compose.to],
   );
   const composeMailbox = composeFrom.mailboxId ?? sendingMailboxId(reader);
   /**
