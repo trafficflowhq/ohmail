@@ -3044,8 +3044,10 @@ textarea.c-input:read-only {
     margin: 0 auto;
     padding: 14px 20px 8px;
   }
+  /* The same size the list-pane title carries (`packages/ui` `list-pane.css`) — this is the same
+     pile label, drawn by the stream instead of the list, and it must not be a second number. */
   .stream-top h1 {
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 600;
     letter-spacing: -0.025em;
     margin: 0;
@@ -3060,9 +3062,9 @@ textarea.c-input:read-only {
   .view .vhead {
     padding: 14px 20px 10px;
   }
-  .view .vhead h1 {
-    font-size: 22px;
-  }
+  /* No `.view .vhead h1` size here. The title is one size at every width and `list-pane.css`
+     declares it; a per-breakpoint override is what made it two. The padding above still narrows,
+     because the PANE tightens on a phone — the label does not. */
   .view .grouplabel,
   .view .rows {
     padding-left: 8px;

@@ -1103,6 +1103,13 @@ export function ScreenerView({
           subject={newestHeld(w)?.subject ?? ""}
           avatarInitial={w.initial}
           avatarHue={avatarHue(w.from.address)}
+          /* DIMMED, FOR THE SAME REASON THE SPAM ROW BELOW IS. This pile holds senders already
+             screened OUT — decisions taken, kept viewable so they stay reversible. Without `dull`
+             a row gets `MessageRow`'s full-strength default, which in this product is the
+             language for mail nobody has dealt with yet, so the entire pile read as unread and
+             never stopped: nothing about a screened-out row ever changes its weight. The waiting
+             queue above is the one segment that should be loud; these two are answers. */
+          dull
           selected={w.id === activeId}
           heldCount={w.held.length}
           onClick={() => selectRow(w.id)}
