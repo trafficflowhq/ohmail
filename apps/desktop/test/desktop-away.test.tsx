@@ -161,10 +161,10 @@ describe("the away responder on the hosted door", () => {
    * THE ROUTE, AS A LITERAL. Everything below addresses `AWAY_PATH`, which makes every one of those
    * assertions true of whatever string this module happens to hold — a wrong path passes them all.
    * (Checked: renaming it to `/account/away` left all nine green.) It is the hosted API's own
-   * endpoint, and it is load-bearing twice over: the engine's cloud-mode read table
-   * (`apps/sidecar/src/cloud-read.ts`) deliberately does NOT list it, which is the whole reason a
-   * hosted install's request is FORWARDED to the account rather than answered from the local
-   * mirror — and a locally-answered PUT would store an away responder no worker anywhere reads.
+   * endpoint, and it is load-bearing twice over: the engine's cloud-mode read table deliberately
+   * does NOT list it, which is the whole reason a hosted install's request is FORWARDED to the
+   * account rather than answered from the local mirror — and a locally-answered PUT would store
+   * an away responder no worker anywhere reads.
    */
   it("is the hosted API's own endpoint, spelled exactly", () => {
     expect(AWAY_PATH).toBe("/away-responder");
