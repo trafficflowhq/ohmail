@@ -241,7 +241,7 @@ function updaterProgressPage(): Plugin {
  * self-contained folder of files that Tauri embeds. No dev server, no CDN, no
  * remote origin, no Next.js.
  *
- * Three kinds of seam are aliased, and only three — everything else is the shared
+ * Four kinds of seam are aliased, and only four — everything else is the shared
  * source:
  *
  *  1. `next-intl` → `use-intl`. next-intl IS use-intl plus Next server plumbing
@@ -264,7 +264,15 @@ function updaterProgressPage(): Plugin {
  *     the artifact constructs. `scan-artifact.mjs` now asserts which of the two
  *     each bundle contains, in both directions.
  *
- *  3. Every third-party package the SHARED sources import is pinned to THIS
+ *  3. `../api-client` → `src/no-api-client.ts`, IN BOTH ARTIFACTS. Neither has a
+ *     Cloud account or a server; both talk to a local engine over a pipe. This one
+ *     is unconditional because the PUBLISHED tree writes the same stub over
+ *     `apps/webapp/app/api-client.ts`, so every shipped binary is already built
+ *     against it — without the alias, the bundle built here is not the bundle that
+ *     ships, and a module absent from the published tree (`app/session-refresh.ts`)
+ *     put a CSRF-bearing request builder into a preview nobody could install.
+ *
+ *  4. Every third-party package the SHARED sources import is pinned to THIS
  *     package's copy by absolute path — react and react-dom, and the rich text
  *     editor and HTML sanitizer the compose, reply and reading surfaces use.
  *     `dedupe` is not enough, and neither is declaring them in package.json:
@@ -373,6 +381,30 @@ export default defineConfig({
       ...(LOCAL_ENGINE
         ? []
         : [{ find: /^(?:.*\/)?adapters\/http-adapter\.js$/, replacement: r("./src/no-http-adapter.ts") }]),
+
+      /* The Cloud API client, absent — IN BOTH ARTIFACTS, and the lack of a
+         `LOCAL_ENGINE` condition is the whole point rather than an oversight.
+         Neither desktop artifact has a Cloud account or a server to reach: both
+         talk to a local engine over a pipe, and `src/cloud-suggest.ts` imports
+         this module's types only (`import type`), taking its transport through
+         `src/bridge-fetch.ts`. The ten shell and view modules that import it all
+         ask `apiConfigured()` first, and the stub answers `false` exactly where
+         the real client — with no API base compiled in — throws `api_unconfigured`.
+
+         WITHOUT THIS ALIAS THE BUNDLE BUILT HERE IS NOT THE BUNDLE THAT SHIPS.
+         The published tree writes this same stub over `apps/webapp/app/api-client.ts`
+         (`DEST_ALIASES` in `scripts/publish-desktop.mjs`), so every released binary
+         has always been built against it; only the monorepo compiled the real
+         module. That divergence was not theoretical — it put a `POST /auth/refresh`
+         with an `X-CSRF-Token` header into the preview built here, from
+         `app/session-refresh.ts`, a module that does not exist in the published
+         tree at all. `scan-artifact.mjs` read the header correctly and failed, on
+         bytes that ship nowhere. Aliasing here makes the artifact under the guard
+         the artifact under the installer.
+
+         Anchored so `no-api-client` cannot match itself: the optional group must
+         end in `/`, and the character before `api-client` there is `-`. */
+      { find: /^(?:.*\/)?api-client$/, replacement: r("./src/no-api-client.ts") },
 
       { find: "@ohmail/tokens/tokens.css", replacement: r("../../packages/tokens/src/tokens.css") },
       { find: "@ohmail/tokens", replacement: r("../../packages/tokens/src/index.ts") },

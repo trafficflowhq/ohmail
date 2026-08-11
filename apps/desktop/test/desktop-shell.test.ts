@@ -916,6 +916,42 @@ describe("the UI bundle's build config", () => {
   });
 
   /**
+   * THE ALIAS THAT MAKES THIS DIRECTORY BUILD WHAT THE INSTALLER SHIPS.
+   *
+   * The published tree writes `src/no-api-client.ts` over `apps/webapp/app/api-client.ts`
+   * (`DEST_ALIASES` in `scripts/publish-desktop.mjs`), so every released binary has always been
+   * built against the stub. Only the monorepo compiled the real module, and the two stopped
+   * agreeing the moment the real one reached for something the published tree does not contain:
+   * `app/session-refresh.ts`, whose `POST /auth/refresh` put an `X-CSRF-Token` into a preview
+   * that nobody can install. `scan-artifact.mjs` read that header correctly and failed on bytes
+   * that ship nowhere.
+   *
+   * TWO THINGS ARE ASSERTED AND THE SECOND IS THE ONE THAT WILL BE GOT WRONG. The alias has to
+   * exist, and it has to be UNCONDITIONAL — copying the shape of the http-adapter entry directly
+   * above would tuck it inside `LOCAL_ENGINE ? [] : […]`, which re-diverges the engine build in
+   * silence: every positive marker `scan:engine` looks for comes from the http-adapter, so that
+   * guard would stay green through the whole regression. The check is therefore that the alias
+   * appears OUTSIDE the conditional spread, not merely that it appears.
+   */
+  it("aliases the Cloud API client out of BOTH artifacts, unconditionally", () => {
+    const ALIAS = /\{ find: \/\^\(\?:\.\*\\\/\)\?api-client\$\/, replacement: r\("\.\/src\/no-api-client\.ts"\) \}/;
+    expect(vite, "the api-client alias is missing from vite.config.ts").toMatch(ALIAS);
+
+    // Not inside `...(LOCAL_ENGINE ? [] : [ … ])`: the spread's brackets must close before it.
+    const conditional = /\.\.\.\(LOCAL_ENGINE[\s\S]*?\]\),/.exec(vite)?.[0] ?? "";
+    expect(conditional, "the LOCAL_ENGINE spread was not found — this guard is not reading it")
+      .toContain("no-http-adapter.ts");
+    expect(conditional, "the api-client alias is inside the LOCAL_ENGINE conditional — the engine " +
+      "build would compile the real Cloud client, which the published tree does not have")
+      .not.toMatch(/no-api-client/);
+
+    // The stub refuses rather than degrades, and answers the question every caller asks first.
+    const stub = read("src/no-api-client.ts");
+    expect(stub).toMatch(/throw new Error\(UNAVAILABLE\)/);
+    expect(stub).toMatch(/export const apiConfigured/);
+  });
+
+  /**
    * TWO ARTIFACTS FROM ONE DIRECTORY, AND ONE FLAG THAT DECIDES WHICH.
    *
    * The preview is what has shipped: fixtures, no engine, the sync client aliased to a stub. The
