@@ -91,7 +91,7 @@ import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
 import { useComposeAutosave } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
-import { AwayResponderRow } from "./AwayResponderRow";
+import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
@@ -463,6 +463,7 @@ export function AppShell({
   desktopSection,
   screeningSection,
   screenerSuggest,
+  awayTransport,
   onUnread,
 }: {
   demo: boolean;
@@ -568,6 +569,45 @@ export function AppShell({
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   }) => ReactNode;
   /**
+   * THE AWAY RESPONDER'S TWO CALLS, WHEN THE HOST HAS ITS OWN WIRE — the desktop on its HOSTED
+   * door, and nobody else.
+   *
+   * ── WHY A TRANSPORT AND NOT A SECTION, WHICH IS HOW EVERY OTHER DESKTOP SEAM HERE WORKS ─────
+   *
+   * Because the responder must not have two implementations. `screeningSection` and
+   * `screenerSuggest` are handed over as NODES because the desktop's versions of those are genuinely
+   * different controls — a standalone install's model is not a hosted account's allowance, and a
+   * pane about a local engine is not a pane about a subscription. The responder is the same control
+   * over the same hosted row: one `PUT /away-responder`, whose `updatedAt` IS the enablement episode
+   * the worker's at-most-once record is filed under. A second copy of this control would be a second
+   * definition of when an episode begins, and the visible failure — a correspondent answered twice —
+   * would show up in somebody's mailbox rather than in a suite. So only the wire is injected.
+   *
+   * ── WHY THE DESKTOP NEEDS ONE AT ALL ────────────────────────────────────────────────────────
+   *
+   * `apiConfigured()` is FALSE in every desktop build, both doors: `apps/desktop/vite.config.ts`
+   * aliases `app/api-client` to a stub whose value exports refuse, so the gate below withheld this
+   * control from the hosted door as well as the standalone one. That was right for one of them and
+   * wrong for the other. A desktop install on the HOSTED door is mirroring a real account: its
+   * window cannot open a socket (`connect-src 'none'`), but its mail engine holds the account's
+   * session, serves no `/away-responder` locally, and forwards it to Cloud with the bearer. The row
+   * that is written is the hosted account's own, and the hosted worker sends from it — exactly as
+   * for a browser tab.
+   *
+   * ── AND WHY A STANDALONE INSTALL STILL GETS NOTHING ─────────────────────────────────────────
+   *
+   * That is a product boundary rather than a missing transport, and it is structural: the sender is
+   * a pass in the hosted service, whose module map deliberately does not publish it — a rule that
+   * service's own build holds rather than one somebody remembers. An always-on
+   * replier cannot live in an application that only runs while its window is open, and both installs
+   * organize the SAME mailbox under one lease — two responders would keep two separate at-most-once
+   * records and answer the same correspondent twice. So the standalone door wires no transport, this
+   * shell offers no control, and `SettingsView` grows no nav entry.
+   *
+   * Absent ⇒ the hosted client, which is what a browser tab has, gated on `autoOptIn.supported`.
+   */
+  awayTransport?: AwayTransport;
+  /**
    * HOW MANY PIECES OF MAIL ARE WAITING FOR YOU — published, for a surface outside the page.
    *
    * The number the Ohbox's rail row already shows, handed out so a shell that has a dock icon
@@ -598,6 +638,7 @@ export function AppShell({
             desktopSection={desktopSection}
             screeningSection={screeningSection}
             screenerSuggest={screenerSuggest}
+            awayTransport={awayTransport}
             onUnread={onUnread}
           />
         </MailStateHost>
@@ -642,7 +683,7 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, onUnread }: {
+function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, onUnread }: {
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
   billingSection?: ReactNode;
@@ -655,6 +696,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     resuggestable: string[];
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   }) => ReactNode;
+  awayTransport?: AwayTransport;
   onUnread?: (unread: number) => void;
 }) {
   const demo = useDemoMode();
@@ -940,14 +982,29 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    */
   const autoOptIn = suggestions.autoOptIn(screener.unsuggestedSenders);
   /**
+   * IS THERE ANYWHERE FOR THE AWAY RESPONDER TO BE STORED — the one gate the control, its Ohbox
+   * notice and its Settings entry all read, so those three can only agree.
+   *
+   * TWO ways to be true, and they are the two installs that have a hosted account behind them:
+   *
+   *  · `autoOptIn.supported` is `apiConfigured()` — a browser tab talking to the hosted API. Read
+   *    off the opt-in rather than by calling `apiConfigured()` here so there is one answer to that
+   *    question in this file, and because this shared shell does not import the Cloud API client;
+   *  · a host handed in a transport — the desktop on its HOSTED door, whose window cannot open a
+   *    socket but whose engine forwards this endpoint to the account. See {@link awayTransport},
+   *    which also states why the STANDALONE door deliberately reaches neither branch.
+   */
+  const awaySupported = autoOptIn.supported || awayTransport !== undefined;
+  /**
    * THE AWAY RESPONDER'S ONE SHELL FACT — is it on, and for whom. One `GET /away-responder`
    * per tab, held HERE so the Ohbox notice reads shell state on every visit rather than
    * costing a round trip per mount; the settings row's `onChanged` echo (bound below, beside
    * `awaySection`) keeps it current for a same-tab edit. Gated exactly as `awaySection` is:
    * no server, no read, no notice — and see `AwayNotice.tsx` for why a failed read stays
-   * silent rather than guessing.
+   * silent rather than guessing. Down the host's wire where there is one, for the reason
+   * {@link awayTransport} gives.
    */
-  const awayNotice = useAwayNotice(!demo && autoOptIn.supported);
+  const awayNotice = useAwayNotice(!demo && awaySupported, awayTransport);
 
   /* ── view state ── */
   const [ohboxSel, setOhboxSel] = useState<string | null>(null);
@@ -3649,7 +3706,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    `awayNotice.on` resting false means the fail-shape is a missing courtesy
                    line, never a false claim that replies are going out. */
                 noticeSection={
-                  demo || !autoOptIn.supported || !awayNotice.on
+                  demo || !awaySupported || !awayNotice.on
                     ? undefined
                     : <AwayNotice audience={awayNotice.audience} />
                 }
@@ -4034,26 +4091,26 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                     setBlockRemoteImages={consent.setBlockRemoteImages}
                   />
                 )}
-                /* THE AWAY RESPONDER. Gated on "is there a server to ask" and NOT on
-                   `consent.known`, unlike the two rows above: it holds no consent state and loads
-                   its own row, so it has nothing to flash the wrong way round. But the server gate
-                   is required, and for a stronger reason than the auto-suggest row's — the SENDER is
-                   a pass in the hosted worker, so a standalone install drawing this control would
-                   store a configuration that answers nobody, which is the built-and-unreachable
-                   shape this slice exists to remove, reintroduced one layer up.
+                /* THE AWAY RESPONDER — its OWN Settings section since it became the one control in
+                   the product that makes the app send mail unprompted, and a menu is where people
+                   look for that. This node IS that pane: absent ⇒ no pane and no nav entry, which
+                   is the whole of how the Cloud-only rule is expressed on screen.
 
-                   Read off `autoOptIn.supported`, not by calling `apiConfigured()` here, for the
-                   reason the block above gives at length: one answer to that question in this file,
-                   and this shared shell does not import the Cloud API client. The row itself does —
-                   it is a separate module, like `consent-state`, and it is the mirror's api-client
-                   stand-in that makes that safe. Withheld from the demo for the reason every
-                   injected pane is: there is no mailbox to answer mail from.
+                   Gated on `awaySupported` and NOT on `consent.known`, unlike the two rows above:
+                   it holds no consent state and loads its own row, so it has nothing to flash the
+                   wrong way round. But the "is there anywhere to store this" gate is required, and
+                   for a stronger reason than the auto-suggest row's — the SENDER is a pass in the
+                   hosted worker, so a standalone install drawing this control would store a
+                   configuration that answers nobody, which is the built-and-unreachable shape this
+                   whole surface exists to remove, reintroduced one layer up. See `awaySupported`
+                   for the two ways it is true, and {@link awayTransport} for why the desktop's
+                   HOSTED door is one of them and its standalone door is not.
 
                    The `onChanged` echo is how the Ohbox notice above hears a same-tab save
                    without a refetch — the row reports what the SERVER answered, never what a
                    click asked for, into the one `useAwayNotice` state the shell holds. */
-                awaySection={demo || !autoOptIn.supported ? undefined : (
-                  <AwayResponderRow onChanged={awayNotice.update} />
+                awaySection={demo || !awaySupported ? undefined : (
+                  <AwayResponderRow onChanged={awayNotice.update} transport={awayTransport} />
                 )}
                 billingSection={demo ? undefined : billingSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has

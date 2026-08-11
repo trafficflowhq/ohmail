@@ -617,6 +617,7 @@
     "notifications": "Notifications",
     "mailboxes": "Mailboxes",
     "screener": "Screener",
+    "away": "Away responder",
     "tags": "Tags",
     "language": "Language",
     "languageHint": "Applies to this app everywhere you sign in",
@@ -1750,6 +1751,7 @@
     "saved": "Saved.",
     "failed": "That did not save. Nothing changed.",
     "incomplete": "Add a subject and a message before turning this on.",
+    "unreachable": "Your away settings could not be read just now. Nothing here has changed.",
     "noticeScreenedIn": "Away responder is on — people you've let in get your away note.",
     "noticeEveryone": "Away responder is on — everyone who writes gets your away note.",
     "noticeSettings": "Away settings"
