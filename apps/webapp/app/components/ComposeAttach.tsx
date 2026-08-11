@@ -18,6 +18,19 @@
  * send. **The number is a PROP, not a constant** — see {@link composeAttachCap} for what goes into
  * it and why this component no longer knows.
  *
+ * ── PICTURES ARE SHRUNK FIRST, AND THE ORDER IS THE POINT ────────────────────────────────
+ *
+ * Every picked file goes through {@link shrinkImage} BEFORE the cap above is applied to it, and the
+ * cap is then applied to the SHRUNK size. Written the other way round the feature would be nearly
+ * pointless: the common attachment is a phone photo of six megabytes, the cap is three, and a
+ * compressor that only runs on files which already fit never runs on the file that needed it. So
+ * the sequence is decode → re-encode → measure → admit or refuse, and a photo that fits only
+ * because it was shrunk attaches.
+ *
+ * The transform is in `./image-shrink`, which is where the level table, the format rules and the
+ * keep-the-original guard are documented. This file's only job is to run it in the right place and
+ * to say what happened.
+ *
  * ── COPY ─────────────────────────────────────────────────────────────────────────────────
  *
  * The two strings that state the cap are catalog keys (`compose.attach*`) taking the rendered size
@@ -29,6 +42,7 @@ import { useCallback, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import type { ComposeAttachment } from "@ohmail/client-engine";
+import { readImageShrinkLevel, shrinkImage } from "./image-shrink";
 
 /**
  * THE HOSTED SURFACE'S OWN CEILING on total attachment bytes — the mirror of the constant the
@@ -91,8 +105,14 @@ function formatSize(bytes: number): string {
   return `${bytes} B`;
 }
 
-/** Read one File to base64 (no `data:` prefix). Rejects on a read error. */
-function readAsBase64(file: File): Promise<string> {
+/**
+ * Read bytes to base64 (no `data:` prefix). Rejects on a read error.
+ *
+ * Takes a `Blob` rather than a `File` because what gets read is often no longer the picked file —
+ * a shrunk picture is a fresh blob off a canvas, with no name and no `lastModified`. The filename
+ * comes from the original in every case, which is safe precisely because the shrink keeps formats.
+ */
+function readAsBase64(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(reader.error ?? new Error("read failed"));
@@ -128,9 +148,16 @@ export function ComposeAttach({
   const t = useTranslations("compose");
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * WHAT THE SHRINK SAVED on the most recent pick — `null` when nothing was re-encoded, which is
+   * every pick containing no picture and every pick at level None. Held as the two totals rather
+   * than as a rendered sentence so the copy stays in the catalog.
+   */
+  const [shrunk, setShrunk] = useState<{ from: number; to: number } | null>(null);
 
   const pick = useCallback(() => {
     setError(null);
+    setShrunk(null);
     inputRef.current?.click();
   }, []);
 
@@ -138,22 +165,36 @@ export function ComposeAttach({
     async (fileList: FileList | null) => {
       if (!fileList || fileList.length === 0) return;
       setError(null);
+      setShrunk(null);
+      // READ ONCE PER PICK, and inside the handler — never during a render. There is no
+      // `localStorage` on the server; see the note on `readImageShrinkLevel`.
+      const level = readImageShrinkLevel();
       let running = totalBytes(attachments);
       const next = [...attachments];
       let refused = false;
+      let savedFrom = 0;
+      let savedTo = 0;
       for (const file of Array.from(fileList)) {
-        if (running + file.size > maxTotalBytes) {
-          refused = true;
-          continue;
-        }
         try {
-          const contentBase64 = await readAsBase64(file);
+          // BEFORE THE CAP CHECK. The whole value of compressing on the client is that it changes
+          // which files are admissible, and it cannot do that from behind the check that refuses
+          // them. See the header note.
+          const picture = await shrinkImage(file, level);
+          if (running + picture.bytes > maxTotalBytes) {
+            refused = true;
+            continue;
+          }
+          const contentBase64 = await readAsBase64(picture.blob);
           next.push({
             filename: file.name || "attachment",
-            contentType: file.type || "application/octet-stream",
+            contentType: picture.contentType,
             contentBase64,
           });
-          running += file.size;
+          running += picture.bytes;
+          if (picture.shrunk) {
+            savedFrom += picture.originalBytes;
+            savedTo += picture.bytes;
+          }
         } catch {
           refused = true;
         }
@@ -161,6 +202,10 @@ export function ComposeAttach({
       if (refused) {
         setError(t("attachRefused", { size: formatSize(maxTotalBytes) }));
       }
+      // The totals of this pick, not of the list: the sentence explains what just happened to the
+      // files being added, and for the single-picture case — which is nearly all of them — the two
+      // numbers are that picture's own.
+      if (savedFrom > 0) setShrunk({ from: savedFrom, to: savedTo });
       onChange(next);
       // Clear the native input so re-picking the same file fires `change` again.
       if (inputRef.current) inputRef.current.value = "";
@@ -171,6 +216,9 @@ export function ComposeAttach({
   const remove = useCallback(
     (index: number) => {
       setError(null);
+      // The note described a pick that no longer stands once one of its files is gone. Dropping it
+      // is the honest move; recomputing it would mean claiming a saving for bytes still in the list.
+      setShrunk(null);
       onChange(attachments.filter((_, i) => i !== index));
     },
     [attachments, onChange],
@@ -222,6 +270,16 @@ export function ComposeAttach({
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {/* WHAT WAS DONE TO THE FILES, said quietly and only when it happened. Plain muted text and
+          not the refusal's tinted panel: nothing went wrong, and a picture that got smaller is not
+          news the way a file that was turned away is. No `role="alert"` for the same reason — this
+          must not interrupt a screen reader mid-sentence; it is read when the region is reached. */}
+      {shrunk ? (
+        <p className="compose-attach-shrunk">
+          {t("attachShrunk", { from: formatSize(shrunk.from), to: formatSize(shrunk.to) })}
+        </p>
       ) : null}
 
       {error ? <p className="compose-attach-error" role="alert">{error}</p> : null}

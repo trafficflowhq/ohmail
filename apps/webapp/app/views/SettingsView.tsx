@@ -39,6 +39,7 @@ import {
 } from "@ohmail/ui";
 import { hueOf } from "../shell/format";
 import { LanguageRow } from "../shell/LanguageRow";
+import { ImageShrinkRow } from "../shell/ImageShrinkRow";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
 /* Exported so a caller that LINKS to a pane can name one — `AppShell`'s `openSettingsPane`, and
@@ -739,6 +740,11 @@ export function SettingsView({
                   />
                 }
               />
+              {/* WHAT LEAVES THIS BROWSER WHEN A PICTURE IS ATTACHED. Drawn by the shared file
+                  rather than injected, like the language above and unlike everything below: the
+                  level is kept in this browser and no host has to supply anything, so a standalone
+                  install gets the same dial. See `ImageShrinkRow`. */}
+              <ImageShrinkRow />
               {/* HOW AN OPENED MESSAGE IS DRAWN — the same class of question as the theme above
                   it, which is why it is here and not in the Screener pane. Absent on the demo and
                   on a standalone install; see {@link remoteImagesSection}. */}

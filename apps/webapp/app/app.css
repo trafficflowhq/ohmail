@@ -1925,6 +1925,18 @@ textarea.c-input:read-only {
   cursor: default;
   opacity: 0.5;
 }
+/* "4.1 MB → 830 KB" — the note saying a picture was shrunk on the way in. DELIBERATELY NOT the
+   refusal's treatment below: no tinted panel and no border, because nothing went wrong. It is the
+   weight and colour of the cap text it sits under, so the block reads as one quiet caption rather
+   than as two competing messages, and tabular figures keep the two sizes aligned when a second
+   pick changes them. */
+.compose-attach-shrunk {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink2);
+  font-variant-numeric: tabular-nums;
+}
 /* THE SAME IDIOM AS `.c-error`, and for the reason stated there: this palette HAS NO RED, so a
    refusal is carried on the accent's soft surface in ordinary ink rather than in a colour the
    system would have to invent. Kept as its own rule instead of reusing `.c-error` because that

@@ -570,6 +570,7 @@
     "attachUsed": "{used} of {total}",
     "attachRefused": "Some files were not added — the total must stay under {size}.",
     "attachRemove": "Remove {filename}",
+    "attachShrunk": "Pictures shrunk: {from} → {to}",
     "draftNote": "Kept in this browser until you send it",
     "editorAria": "Message body",
     "editorPlaceholder": "Write your message…",
@@ -645,6 +646,15 @@
     "themeSystem": "System",
     "themeDark": "Dark",
     "themeAria": "Theme",
+    "imageShrink": "Shrink pictures",
+    "imageShrinkHint": "JPEG and PNG attachments are resized before they're sent, which drops the camera data in them — including location. A picture that wouldn't get smaller is sent unchanged, and None sends every picture unchanged.",
+    "imageShrinkAria": "Shrink pictures",
+    "imageShrinkLevel": {
+      "none": "None",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High"
+    },
     "screening": {
       "title": "What reaches your Ohbox",
       "postureTitle": "Keep my Ohbox for what's relevant",
