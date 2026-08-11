@@ -3773,6 +3773,20 @@ textarea.c-input:read-only {
 .reply-from-sub {
   color: var(--accent);
 }
+/* THE FROM SELECTOR ON A REPLY — the compose header's borderless `.c-select`, inherited down into
+   the reply's quiet caption line (`.c-input { font: inherit }`, so it sizes to 11.5px rather than
+   towering). It appears only when the account has more than one sendable address; one address, or a
+   surface with no mailbox facts, keeps the plain sentence beside it. The label sits at the caption's
+   `--ink3`; the value carries `.c-input`'s `--ink`, one step up, because it is the control. */
+.reply-from-pick {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.reply-from-label {
+  color: var(--ink3);
+}
 /* THE REPLY EDITOR'S SHELL — same swap as `.compose-editor` above: this styles the `.rte`
    wrapper now, and the ring moved to `:focus-within` because the focusable element is the
    surface inside it. */
@@ -3785,7 +3799,13 @@ textarea.c-input:read-only {
   color: var(--ink);
 }
 .reply-editor .rte-surface {
-  min-height: 128px;
+  /* A REPLY IS THE MESSAGE, so give it room: the floor nearly doubled from 128px so a few
+     sentences no longer sit in a letterbox. It still GROWS with the text up to half the
+     viewport, then scrolls INSIDE itself rather than pushing the Send row off the bottom of a
+     tall reply — the reader column keeps its own scroll for everything above. */
+  min-height: 240px;
+  max-height: 50vh;
+  overflow-y: auto;
 }
 .reply-editor:focus-within {
   outline: none;
@@ -3815,19 +3835,23 @@ textarea.c-input:read-only {
 .rte-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px;
-  padding: 6px 8px 2px;
+  gap: 3px;
+  padding: 8px 8px 3px;
 }
+/* THE FORMATTING HANDS, SCALED UP ONCE FOR ALL THREE SURFACES — compose, the inline reply and the
+   Reply Run share this block because the grammar they offer is one decision (see the header). The
+   26px/12px buttons read as an afterthought under a full-height editor; 34px targets with a 16px
+   glyph are a comfortable hit area and a legible mark without becoming a second toolbar. */
 .rte-b {
-  min-width: 27px;
-  height: 26px;
-  padding: 0 5px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 7px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
   color: var(--ink2);
   font: inherit;
-  font-size: 12px;
+  font-size: 16px;
   line-height: 1;
   cursor: pointer;
   display: inline-flex;

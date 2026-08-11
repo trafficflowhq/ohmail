@@ -1616,6 +1616,7 @@
     "ccLine": "Cc {names}",
     "editRecipients": "Change recipients",
     "from": "From {address}",
+    "fromLabel": "From",
     "fromSubstituted": "{was} is disconnected, so this answers from the address above.",
     "fromSubstitutedUnknown": "The address this arrived at is disconnected, so this answers from the address above.",
     "placeholder": "Write your reply…",

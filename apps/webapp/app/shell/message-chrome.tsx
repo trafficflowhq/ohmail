@@ -17,6 +17,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import {
   BODY_FETCH_TIMEOUT_MS,
   type AddressBookEntry,
+  type ComposeAttachment,
   type EngineMessage,
   type MessageBody,
 } from "@ohmail/client-engine";
@@ -108,6 +109,24 @@ export interface MessageChrome {
    */
   replyEnvelope: ReplyEnvelopeEdit | null;
   onReplyEnvelope?: (next: ReplyEnvelopeEdit) => void;
+  /**
+   * THE REPLY'S SENDER AS PICKED — `null` while the derived one (the mailbox the message arrived
+   * in) stands. It travels with `replyEnvelope` and for the identical reason: the pane is mounted
+   * TWICE while the reader is open, and two copies of which address answers is how the visible
+   * From line and the sent `mailboxId` stop agreeing. `onReplyFrom` is OPTIONAL like `openReply` —
+   * absent on the inert default, and then `InlineReply` renders the From line as a plain statement
+   * rather than a selector nothing is listening to.
+   */
+  replyFromId: string | null;
+  onReplyFrom?: (mailboxId: string) => void;
+  /**
+   * THE FILES THIS REPLY WILL CARRY — held here beside the reply body (mounted-twice again) and
+   * put on the `mail_send` mutation, never in the `localStorage` scratch. A default of `[]` is the
+   * resting state; `onReplyAttachments` is OPTIONAL, and its absence is what makes `InlineReply`
+   * render no attach control at all rather than a dead one.
+   */
+  replyAttachments: readonly ComposeAttachment[];
+  onReplyAttachments?: (next: ComposeAttachment[]) => void;
   /**
    * `addressBook(reader)` for the reply's recipient rows — the same ranked, local-mirror
    * candidates the compose To field offers. Absent ⇒ no suggestions, which is a cold mirror
@@ -265,6 +284,8 @@ const MessageChromeContext = createContext<MessageChrome>({
   replyBody: EMPTY_RICH,
   onReplyBody: noop,
   replyEnvelope: null,
+  replyFromId: null,
+  replyAttachments: [],
   closeReply: noop,
   sendReply: noop,
   replySendState: () => ({ phase: "idle" }),

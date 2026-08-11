@@ -1616,6 +1616,7 @@
     "ccLine": "Kopie an {names}",
     "editRecipients": "Empfänger ändern",
     "from": "Von {address}",
+    "fromLabel": "Von",
     "fromSubstituted": "{was} ist getrennt, daher geht diese Antwort von der Adresse oben raus.",
     "fromSubstitutedUnknown": "Die Adresse, an die das kam, ist getrennt, daher geht diese Antwort von der Adresse oben raus.",
     "placeholder": "Schreib deine Antwort …",

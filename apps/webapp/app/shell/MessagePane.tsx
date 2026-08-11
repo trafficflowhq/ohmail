@@ -1300,6 +1300,16 @@ export function MessagePane({
       envelope={chrome.replyEnvelope}
       onEnvelope={chrome.onReplyEnvelope}
       book={chrome.addressBook}
+      /* WHICH ADDRESS ANSWERS — the pick and its reporter live on the chrome beside the body
+         (mounted-twice), so the From line the reader sees and the `mailboxId` `sendReply`
+         puts on the wire are one resolution. */
+      fromId={chrome.replyFromId}
+      onFrom={chrome.onReplyFrom}
+      /* FILES ON THE REPLY — held on the chrome (mounted-twice again), carried to the send by
+         `sendReply` and stored nowhere. `onAttachments` absent on the inert chrome renders no
+         attach control there. */
+      attachments={chrome.replyAttachments}
+      onAttachments={chrome.onReplyAttachments}
       /* The AI drafter's offer renders inside the editor the draft lands in — see
          `InlineReply`. Absent where there is no drafter: the desktop shell, and any
          harness that mounts a pane without the shell. */

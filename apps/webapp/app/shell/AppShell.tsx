@@ -38,6 +38,7 @@ import {
   threadParticipantsIndex,
   threadSubject,
   triagePiles,
+  type ComposeAttachment,
   type ConsentPartition,
   type EmailAddress,
   type EngineDraft,
@@ -1163,6 +1164,22 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     setReplyEnvelope(null);
   }, [replyTo, replyAll]);
   /**
+   * THE REPLY'S PICKED SENDER and THE FILES IT WILL CARRY — both PER-MESSAGE and both stored
+   * nowhere. The From pick overrides the mailbox the message arrived in (`resolveReplyFrom`); the
+   * attachments ride the `mail_send` mutation and NEVER the `localStorage` reply scratch, which
+   * serialises only the body (`mail-send.ts`). They live HERE beside `replyBody` for the
+   * mounted-twice reason, and they RESET on `replyTo` alone — not on `replyAll` like the envelope:
+   * a From choice and a file belong to the MESSAGE, and toggling reply/reply-all is still the same
+   * message answered from the same address with the same files. Closing the editor and a settled
+   * send both null `replyTo`, so this one effect is also the close and the post-send clear.
+   */
+  const [replyFromId, setReplyFromId] = useState<string | null>(null);
+  const [replyAttachments, setReplyAttachments] = useState<ComposeAttachment[]>([]);
+  useEffect(() => {
+    setReplyFromId(null);
+    setReplyAttachments([]);
+  }, [replyTo]);
+  /**
    * THE COMPOSE FORM, and why it lives up here rather than in `ComposeView`.
    *
    * The view is mounted only while `#/compose` is the route, so state inside it is erased by
@@ -1834,10 +1851,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    *
    * A reply sends from the mailbox the message arrived in, and `Engine.enrich` already derives
    * that from the parent (`engine.ts:671`) — so the ordinary case adds NOTHING here and the
-   * envelope is unchanged. `mailboxId` is attached in exactly one situation: the parent's
-   * mailbox is `disabled` or gone, `resolveReplyFrom` named a substitute, and `InlineReply` is
-   * SAYING SO on screen. The wire and the sentence come from the same call, which is the point
-   * of it being a pure function.
+   * envelope is unchanged. `mailboxId` is attached only when the resolved sender is NOT the
+   * parent's: the parent's mailbox is `disabled` or gone and `resolveReplyFrom` named a substitute
+   * (`InlineReply` SAYING SO on screen), or the reader picked a different address in the From
+   * selector (`replyFromId`). The wire and the sentence come from the same call over the same
+   * override, which is the point of it being a pure function.
    *
    * When nothing can be named the field stays off and `enrich` behaves exactly as before —
    * `sendingMailboxId`'s newest-message guess is a COMPOSE fallback and must never reach a
@@ -1847,7 +1865,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     (messageId: string) => {
       if (messageId !== replyTo) return;
       const parent = reader.get<EngineMessage>("message", messageId) ?? null;
-      const from = resolveReplyFrom(fromOptions, parent?.mailboxId ?? null);
+      const parentMailbox = parent?.mailboxId ?? null;
+      const from = resolveReplyFrom(fromOptions, parentMailbox, replyFromId);
       // WHO IT IS ADDRESSED TO — `replyEnvelopePlan`, ONE derivation for the head, the lock
       // and this wire. Untouched (`replyEnvelope === null`) it is exactly the old inline
       // resolution: `replyAllRecipients` for a reply-all (the same call that let the button
@@ -1871,11 +1890,26 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         // rendering of the same markup rather than this client's second opinion.
         body: replyBody.text,
         ...(replyBody.html ? { html: replyBody.html } : {}),
-        ...(from.substituted && from.mailboxId ? { mailboxId: from.mailboxId } : {}),
+        // OVERRIDE ENRICH ONLY TO CHANGE THE SENDER. `Engine.enrich` derives the parent's mailbox
+        // (`engine.ts:1899`), so the ordinary reply attaches NOTHING and the envelope is unchanged
+        // byte-for-byte. `mailboxId` rides only when the resolved sender is genuinely NOT the
+        // parent's — a substitution (parent gone/disabled) or an explicit pick of a different
+        // address. The last term is what keeps a bare default off the wire: with no facts and no
+        // pick, `resolveReplyFrom` still names a fallback id, and forcing THAT would put a guess on
+        // the wire the old `from.substituted` path left to `enrich` — which is the byte-identity
+        // the untouched-reply guard pins.
+        ...(from.mailboxId !== null &&
+            from.mailboxId !== parentMailbox &&
+            (from.substituted || replyFromId !== null)
+          ? { mailboxId: from.mailboxId }
+          : {}),
+        // FILES, when the user attached any — carried to the send request and stored nowhere
+        // (`ComposeAttachment`). Absent on a plain reply, so the untouched mutation is unchanged.
+        ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
         ...replyEnvelopeOnWire(plan),
       });
     },
-    [mailSend, replyTo, replyAll, replyBody, replyEnvelope, reader, version, fromOptions],
+    [mailSend, replyTo, replyAll, replyBody, replyEnvelope, replyFromId, replyAttachments, reader, version, fromOptions],
   );
 
   /**
@@ -3560,6 +3594,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       // body is, applied by `InlineReply`, sent by `sendReply` above from the same state.
       replyEnvelope,
       onReplyEnvelope: setReplyEnvelope,
+      // The picked sender and the reply's files — held here for the mounted-twice reason the body
+      // is, resolved by `InlineReply` and put on the wire by `sendReply` from the same state.
+      replyFromId,
+      onReplyFrom: setReplyFromId,
+      replyAttachments,
+      onReplyAttachments: setReplyAttachments,
       addressBook: replyBook,
       /**
        * THE SIBLING VERBS, no longer dormant.
@@ -3594,7 +3634,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       attachments, remoteImages,
     }),
     [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
-      replyEnvelope, replyBook,
+      replyEnvelope, replyFromId, replyAttachments, replyBook,
       openSenderMenu, openReply, forwardMessage, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
   );

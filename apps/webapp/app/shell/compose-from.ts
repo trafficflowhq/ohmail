@@ -238,12 +238,27 @@ export function resolveComposeFrom(
  * A mailbox ABSENT from the options counts as substituted too: with the options in hand, an id
  * that is not among them is a mailbox that has been removed from the account, not one we simply
  * have not heard about. The caller must pass `[]` — never a partial list — when it cannot see.
+ *
+ * ── AN EXPLICIT PICK IS A STATEMENT, NOT A SUBSTITUTION ─────────────────────────────────────
+ *
+ * `override` is the sender the user chose ON THIS REPLY, or `null` while none is chosen. When it
+ * names a mailbox that can send it stands as the answer and `substituted` is FALSE: the selector
+ * value IS the From line, so there is nothing to announce — a pick and a substitution are
+ * different acts and only the second, which the user did not make, gets a notice. A pick that no
+ * longer names a sendable option (its address was disabled or removed since) is DROPPED, and the
+ * inherited-mailbox derivation below runs verbatim — which is what re-announces a substitution if
+ * the mailbox the message arrived in is the one that went away.
  */
 export function resolveReplyFrom(
   options: readonly FromOption[],
   inherited: string | null,
+  override: string | null = null,
 ): ResolvedFrom {
   if (options.length === 0) return NOTHING;
+  if (override !== null) {
+    const picked = options.find((o) => o.id === override && o.sendable) ?? null;
+    if (picked) return resting(options, picked);
+  }
   const own = inherited === null ? null : options.find((o) => o.id === inherited) ?? null;
   if (own?.sendable) return resting(options, own);
   const chosen = defaultFrom(options);

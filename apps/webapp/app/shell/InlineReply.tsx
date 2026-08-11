@@ -42,8 +42,14 @@
  */
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import type { AddressBookEntry, EmailAddress, EngineMessage } from "@ohmail/client-engine";
+import type {
+  AddressBookEntry,
+  ComposeAttachment,
+  EmailAddress,
+  EngineMessage,
+} from "@ohmail/client-engine";
 import { Button, Kbd } from "@ohmail/ui";
+import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
 import { rowAddress, senderName } from "./format";
 import { displayAddress } from "./idn";
 import { canSend, type SendState } from "./mail-send";
@@ -110,6 +116,10 @@ export function InlineReply({
   envelope = null,
   onEnvelope,
   book = [],
+  fromId = null,
+  onFrom,
+  attachments = [],
+  onAttachments,
 }: {
   message: EngineMessage;
   /**
@@ -160,6 +170,33 @@ export function InlineReply({
   onEnvelope?: (next: ReplyEnvelopeEdit) => void;
   /** `addressBook(reader)` for the recipient rows' suggestions. Empty where no mirror is. */
   book?: readonly AddressBookEntry[];
+  /**
+   * THE SENDER THE USER PICKED ON THIS REPLY, or `null` while the derived one stands — held by
+   * the SHELL (like `envelope`, and for the identical reason: `MessagePane` is mounted twice while
+   * the reader is open, and two copies of who a reply comes FROM is how the visible From line and
+   * the sent `mailboxId` stop being one object). It feeds `resolveReplyFrom` here so the line and
+   * the wire read one resolution, and it is per-message: the shell drops it when the editor
+   * retargets, so a pick never rides to somebody else's mail.
+   */
+  fromId?: string | null;
+  /**
+   * Report a From pick. ABSENT means this surface cannot hold one — the inert chrome, a bare
+   * harness, the desktop shell — and then the From line stays a plain statement rather than a
+   * selector nothing is listening to, exactly as before this field existed.
+   */
+  onFrom?: (mailboxId: string) => void;
+  /**
+   * FILES TO RIDE THE SEND — held by the SHELL beside the reply body (mounted-twice again) and
+   * carried onto the `mail_send` mutation, never into the `localStorage` reply scratch: the bytes
+   * are zero-at-rest exactly as compose's are (`ComposeAttachment`). Empty on a plain reply.
+   */
+  attachments?: readonly ComposeAttachment[];
+  /**
+   * Report an attachment-list change. ABSENT means this surface has nowhere to keep files — the
+   * inert chrome and every provider-less mount — and then no attach control is rendered at all,
+   * rather than a dead one.
+   */
+  onAttachments?: (next: ComposeAttachment[]) => void;
 }) {
   const t = useTranslations("reply");
   const box = useRef<HTMLDivElement>(null);
@@ -186,7 +223,10 @@ export function InlineReply({
    */
   const facts = useMailboxFacts();
   const options = facts ? optionsFromFacts(facts) : [];
-  const from = resolveReplyFrom(options, message.mailboxId);
+  const from = resolveReplyFrom(options, message.mailboxId, fromId ?? null);
+  // `useId`, not a static id: this editor is mounted twice while the reader is open, and a
+  // duplicate `id`/`for` pair would tie the label to whichever select the document walked to first.
+  const fromSelectId = useId();
 
   /**
    * WHO THIS IS ADDRESSED TO. `enrich` answers `[parent.from]` by default, which is yourself on
@@ -333,12 +373,45 @@ export function InlineReply({
         <div className="reply-head">{headContent}</div>
       )}
 
-      {/* FROM, and the substitution said out loud. Static text, never a control: a
-          reply has a right answer — the address the sender wrote to — and offering to change it
-          here is a different feature from being able to SEE it. */}
+      {/* FROM — a CONTROL when there is a choice, otherwise the sentence. This used to be static
+          text on the premise that a reply's sender is a fact and not a choice; it is now editable
+          when the account genuinely has one.
+          A reply still has a right answer (the address the sender wrote to), so the derived one
+          LEADS: the selector is offered only when the account has more than one sendable address
+          AND the shell can hold a pick (`onFrom`). One address, or a surface that cannot keep an
+          override, renders the plain statement; no facts renders nothing, because a From line is a
+          claim.
+
+          A PICK AND THE SUBSTITUTION NOTICE ARE MUTUALLY EXCLUSIVE BY CONSTRUCTION. An honored
+          pick makes `from.substituted` false (`resolveReplyFrom`), so choosing an address is what
+          silences the "answers from the address above" line — the selector's value becomes the
+          statement the sentence used to make, and re-announcing it as a substitution would be
+          claiming the user was overruled when they were obeyed. */}
       {from.address !== null ? (
         <p className="reply-from">
-          <span>{t("from", { address: displayAddress(from.address) })}</span>
+          {onFrom && from.choices.length > 1 ? (
+            <span className="reply-from-pick">
+              <label htmlFor={fromSelectId} className="reply-from-label">{t("fromLabel")}</label>
+              <span className="c-select">
+                <select
+                  id={fromSelectId}
+                  className="c-input"
+                  value={from.mailboxId ?? ""}
+                  disabled={inFlight}
+                  onChange={(e) => onFrom(e.target.value)}
+                >
+                  {/* Value is the mailbox id, label the address a human reads — the shape
+                      `ComposeView` uses. Sendable choices only, so a disconnected address is never
+                      offered and the wire cannot carry one the server would refuse. */}
+                  {from.choices.map((o) => (
+                    <option key={o.id} value={o.id}>{displayAddress(o.address)}</option>
+                  ))}
+                </select>
+              </span>
+            </span>
+          ) : (
+            <span>{t("from", { address: displayAddress(from.address) })}</span>
+          )}
           {from.substituted ? (
             <span className="reply-from-sub">
               {from.substitutedFrom
@@ -371,6 +444,20 @@ export function InlineReply({
         editable={!inFlight}
         onChange={onChange}
       />
+
+      {/* ATTACHMENTS — files ride the send, never the account and never the scratch buffer
+          (`compose-from`/`mail-send`: the reply buffer serialises only the body). Rendered only
+          where the shell can hold the bytes (`onAttachments`); the cap follows the resolved From,
+          so switching the sender moves the ceiling exactly as it does in compose. Disabled
+          mid-send like every other input. */}
+      {onAttachments ? (
+        <ComposeAttach
+          attachments={[...attachments]}
+          onChange={onAttachments}
+          disabled={inFlight}
+          maxTotalBytes={composeAttachCap(from.maxMessageBytes)}
+        />
+      ) : null}
 
       <div className="reply-actions">
         <Button
