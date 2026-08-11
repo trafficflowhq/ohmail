@@ -1223,36 +1223,20 @@ export function MessagePane({
 
   /**
    * THE FOCUSED MESSAGE'S OWN HEADER — the same {@link MessageHeader} an expanded sibling wears,
-   * so the message you opened and the ones around it read identically: avatar, name, the address
-   * that is still the screening control, the relative stamp with the absolute date on hover, and
-   * the recipients line whose "details" press reveals the full To/Cc, the exact date and where
-   * the message physically sits (`physicalFolder`). `onEnterReader` rides here now — the from-line
-   * it used to hang off is gone from `ReadingPane`.
+   * so the message you opened and the ones around it read identically: avatar, the names-first
+   * sender that is still the screening control, the ⋯ actions menu left of the stamp, the
+   * message's own quiet subject line (SUBJECT-D — the raw `m.subject`, and the subject-rule
+   * entry where the shell offers the sheet), and the recipients line whose "details" press
+   * reveals the full To/Cc, the exact date and where the message physically sits
+   * (`physicalFolder`). `onEnterReader` rides here now — the from-line it used to hang off is
+   * gone from `ReadingPane`.
+   *
+   * NO LARGE `<h2>` AND NO THREAD LEDE ANY MORE: the 24px heading (and the one-time lede the
+   * thread wrapper opened with) is deleted with the viewer redesign — the subject is per
+   * message, in the header, uniformly, on a single message exactly as on every thread panel.
+   * `conversation.test.ts` holds the absence.
    */
   const focusedHeader = <MessageHeader message={message} now={now} onEnterReader={onEnterReader} />;
-
-  /**
-   * THE SUBJECT — and a press opens the subject-rule sheet where the shell offers one.
-   *
-   * `chrome.openSubjectRule` is the seam a later slice fills with the sheet (a rule keyed on this
-   * subject). Until it does, the subject is a plain heading — never a control that opens nothing.
-   * Where present it is a heading-styled button (`.subj-rule`, `reader.css`), so the affordance is
-   * keyboard-reachable and still reads as the title it is. Rendered once and used in both the
-   * threaded and single-message layouts so the two cannot drift.
-   */
-  const subjectTitle = chrome.openSubjectRule ? (
-    <h2>
-      <button
-        type="button"
-        className="subj-rule"
-        onClick={() => chrome.openSubjectRule!(message.id)}
-      >
-        {message.subject}
-      </button>
-    </h2>
-  ) : (
-    <h2>{message.subject}</h2>
-  );
 
   const bodyNoteFailed = body.state === "failed" || stalled;
 
@@ -1336,7 +1320,6 @@ export function MessagePane({
         reply={replyEditor}
       >
         {focusedHeader}
-        {subjectTitle}
         {titleChrome}
         {focusedMessage}
       </ReadingPane>
@@ -1351,12 +1334,13 @@ export function MessagePane({
    * `.read-col` drops its panel skin for this case (`message.css`). No peek rows, no counts,
    * no "show earlier": every panel is the mail itself (`ConversationPanels`).
    *
-   *   · The SUBJECT opens the column once (`.conv-lede`) — panels wear a heading only when
-   *     theirs diverges — and it scrolls away with the thread; the lede is the first element
-   *     on the columns' shared top line.
+   *   · NO LEDE: the column opens on the oldest panel. Every panel prints its OWN subject in
+   *     its header (SUBJECT-D, `MessageHeader`) — the one-time thread heading is deleted, and
+   *     with it the suppression that decided which panels earned a line.
    *   · The FOCUSED panel is composed here (the protected rule decided first, the hydrated
-   *     body, the attachment strip, the body-state line) and slotted into its chronological
-   *     place; `aria-current` marks it, and the focus is never remapped.
+   *     body, the attachment strip, the body-state line — and the signal/tag marks, which are
+   *     facts about THIS message and ride its panel now the lede is gone); `aria-current`
+   *     marks it, and the focus is never remapped.
    *   · The PILL and the reply dock are direct children of the wrapper, AFTER the panels, so
    *     `.msg-actions`' sticky rule pins the one bar at the foot of the scrolling column
    *     exactly as it pins inside `.msg` — and the editor docks under it, one copy, below the
@@ -1367,19 +1351,15 @@ export function MessagePane({
    */
   return (
     <div className="conv" role="group" aria-label={tc("conversationAria")} ref={convRef}>
-      <div className="conv-lede">
-        {subjectTitle}
-        {titleChrome}
-      </div>
       <ConversationPanels
         messages={conversation}
         focusedId={message.id}
-        threadSubject={message.subject}
         now={now}
         focusedPanel={
           <article className="pm conv-focus" data-conv-id={message.id} aria-current="true">
             <div className="pm-in">
               {focusedHeader}
+              {titleChrome}
               {focusedMessage}
               {bodyNote ? (
                 <p className={bodyNoteFailed ? "msg-body-state warn" : "msg-body-state"} role="status">

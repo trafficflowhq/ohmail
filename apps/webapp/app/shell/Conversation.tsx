@@ -45,14 +45,13 @@
  * place that holds the whole thread. This mapper asks for nothing.
  */
 import { Fragment, type ReactNode } from "react";
-import { MessageCard, subjectKey } from "./MessageCard";
+import { MessageCard } from "./MessageCard";
 import type { EngineMessage } from "@ohmail/client-engine";
 
 export function ConversationPanels({
   messages,
   focusedId,
   focusedPanel,
-  threadSubject,
   now,
 }: {
   /** The WHOLE conversation, OLDEST FIRST — the focused message included. */
@@ -64,12 +63,9 @@ export function ConversationPanels({
    * protected rule decided first, the hydrated body and the attachment strip.
    */
   focusedPanel: ReactNode;
-  /** The subject already on screen as the thread's own heading — see `subjectKey`. */
-  threadSubject?: string;
   now: Date;
 }) {
   if (messages.length === 0) return null;
-  const alreadySaid = threadSubject ? subjectKey(threadSubject) : null;
 
   return (
     <>
@@ -79,14 +75,10 @@ export function ConversationPanels({
           // direct-child geometry (`.conv > …`) must see one article per message.
           <Fragment key={m.id}>{focusedPanel}</Fragment>
         ) : (
-          <MessageCard
-            key={m.id}
-            message={m}
-            now={now}
-            // A renamed branch of a thread prints its own heading; a "Re: …" of the same subject
-            // does not repeat under the h2 that already says it.
-            showSubject={alreadySaid !== subjectKey(m.subject)}
-          />
+          // Every panel prints its own true subject in its header (SUBJECT-D, `MessageHeader`);
+          // the normalized-key suppression that once decided which panel earned a heading is
+          // deleted with the thread lede it compared against.
+          <MessageCard key={m.id} message={m} now={now} />
         ),
       )}
     </>

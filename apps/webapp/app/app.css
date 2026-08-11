@@ -3502,24 +3502,6 @@ textarea.c-input:read-only {
 .conv > * {
   flex: none;
 }
-/* The thread's subject (and the focused message's signal/tag marks) open the column once —
-   set like the panel content: same centred measure, no panel of its own, scrolls away. */
-.conv-lede {
-  width: 100%;
-  max-width: 688px;
-  margin: 0 auto 14px;
-  padding: 2px 30px 0;
-}
-.conv-lede h2 {
-  font-size: 24px;
-  font-weight: 600;
-  letter-spacing: -0.025em;
-  line-height: 1.25;
-  margin: 0;
-}
-.conv-lede .msg-marks {
-  margin-top: 8px;
-}
 /* ── A MESSAGE'S PANEL — every message on the thread wears the same one ──────────────────────
    The reading column's own treatment (`--panel`, 20px radius, lift-1), full width of the
    wrapper, content centred on the reading measure inside. The 12px of canvas between panels is
@@ -3538,15 +3520,6 @@ textarea.c-input:read-only {
   max-width: 688px;
   margin: 0 auto;
   padding: 26px 30px 30px;
-}
-/* A panel's diverging subject — only a renamed branch prints one (`Conversation.tsx`). */
-.pm h3 {
-  font-size: 14.5px;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  line-height: 1.3;
-  margin: 12px 0 0;
-  text-wrap: balance;
 }
 /* A sibling panel's mail, at the same scale the focused prose gets — one thread, one type.
    (The focused panel's body keeps `.msg-body`, which `conversation.test.ts` holds to exactly
@@ -3603,9 +3576,65 @@ textarea.c-input:read-only {
   .pm-in {
     padding: 20px 18px 24px;
   }
-  .conv-lede {
-    padding: 2px 18px 0;
-  }
+}
+
+/* ── SUBJECT-D: THE MESSAGE'S OWN SUBJECT LINE, UNDER ITS SENDER, ON EVERY PANEL ─────────────
+   The RAW `m.subject` — "AW:"/"Re:" prefixes included, because the prefix is part of what this
+   message is called. Quiet by design: a title at reading scale, not the 24px surface heading
+   the viewer used to open with (the thread lede and the single-message `h2` are deleted with
+   it). Where the shell offers the subject-rule sheet the line's content is a `.subj-rule`
+   button (packages/ui reader.css), which inherits this type wholesale. */
+.msg-subject {
+  margin: 8px 0 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+/* ── THE PER-MESSAGE ⋯ MENU — the header's actions disclosure, LEFT of the stamp ─────────────
+   The trigger sits in the from-line's `.t` cluster before the date; the menu itself is the
+   pill's own `.mmenu` (action-bar.css) re-anchored to drop DOWN — the header is at the TOP of
+   its panel, so upward would run off the panel edge the way downward would off the pill's. */
+.msg-menu {
+  position: relative;
+  display: inline-flex;
+}
+.msg-more {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 99px;
+  background: none;
+  padding: 0;
+  color: var(--ink2);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.msg-more:hover,
+.msg-more[aria-expanded="true"] {
+  background: var(--tint);
+  color: var(--ink);
+}
+.msg-menu .mmenu {
+  bottom: auto;
+  top: calc(100% + 6px);
+  /* `.mmenu`'s own max-width is `min(240px, 100%)` against the pill; here the anchor is a
+     26px trigger, so 100% would be nonsense — restate the cap alone. */
+  max-width: 240px;
+  animation: msg-menu-drop .16s var(--swift);
+}
+@keyframes msg-menu-drop {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
 }
 
 /* ── THE RECIPIENTS LINE — who else it went to, under the sender ─────────────────────────────

@@ -788,7 +788,11 @@
     "details": "Details",
     "detailsAria": "Alle Empfänger und das vollständige Datum anzeigen",
     "expand": "Nachricht von {sender} lesen",
-    "collapse": "Nachricht von {sender} zuklappen"
+    "collapse": "Nachricht von {sender} zuklappen",
+    "actions": "Aktionen für diese Nachricht",
+    "menuReply": "Antworten",
+    "menuReplyAll": "Allen antworten",
+    "menuForward": "Weiterleiten"
   },
   "nav": {
     "skip": "Zum Inhalt springen",

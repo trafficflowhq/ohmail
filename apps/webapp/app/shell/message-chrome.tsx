@@ -69,22 +69,30 @@ export interface MessageChrome {
    */
   replyAll?: boolean;
   /**
-   * OPEN THE REPLY EDITOR ON A SPECIFIC MESSAGE — the seam a conversation SIBLING answers with.
+   * OPEN THE REPLY EDITOR ON A SPECIFIC MESSAGE — the seam every panel's ⋯ menu answers with.
    *
    * The focused message's own Reply travels the pane's `onAction("reply")` prop, which the shell
-   * resolves against the focused id. A sibling is rendered deep inside `MessagePane` (through
-   * `ConversationEntries`) and holds no such prop, so its two-verb footer retargets the editor by
-   * id through here — the same `openReply(messageId)` the shell already runs for the focused case.
+   * resolves against the focused id. A panel's header menu (`MessageHeader`) retargets the editor
+   * by id through here instead — the same `openReply(messageId)` the shell already runs for the
+   * focused case.
    *
-   * OPTIONAL, so the inert default and every provider-less mount keep compiling; a footer button
-   * is simply inert until the shell wires it, which is the honest degradation for a surface with
-   * no reply machine behind it (the desktop shell, a bare test).
+   * `all` answers EVERYONE on the message — the same flag `AppShell.openReply(id, true)` takes,
+   * so widening this signature is compatible with the shell that already exists. The menu offers
+   * the Reply-all item only where `replyAllRecipients(message, ownAddresses)` returns an
+   * envelope, resolved PER PANEL — the predicate the pill and the send path resolve, so what a
+   * panel offers and what would leave the account are one decision, and a 1:1 message offers no
+   * Reply all anywhere.
+   *
+   * OPTIONAL, so the inert default and every provider-less mount keep compiling; the menu item
+   * is simply ABSENT until the shell wires it — and a chrome with neither this nor `forward`
+   * renders no ⋯ trigger at all, which is the honest degradation for a surface with no reply
+   * machine behind it (the desktop shell, a bare test).
    */
-  openReply?: (messageId: string) => void;
+  openReply?: (messageId: string, all?: boolean) => void;
   /**
-   * FORWARD `messageId` — the entry a sibling's footer and the reader call, filled by the shell's
-   * forward model. OPTIONAL for the same reason `openReply` is: absent where there is no compose
-   * seam, and the caller is written `chrome.forward?.(id)` so it is a no-op rather than a crash.
+   * FORWARD `messageId` — the entry each panel's ⋯ menu calls, filled by the shell's forward
+   * model. OPTIONAL for the same reason `openReply` is: absent where there is no compose seam,
+   * and an absent verb is an absent menu item rather than a dead one.
    */
   forward?: (messageId: string) => void;
   /**

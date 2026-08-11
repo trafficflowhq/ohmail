@@ -15,22 +15,25 @@
  *
  * ── TWO SHARED PIECES ───────────────────────────────────────────────────────────────────────
  *
- *  · {@link MessageHeader} — avatar, sender name, address (which is the SCREENING control, so it
- *    stays a real button), the relative stamp with the absolute date on hover, and a recipients
- *    line that a "details" press expands into the full To/Cc list, the exact date and where the
- *    message physically sits. Worn by the focused message (composed by `MessagePane`) and by a
- *    sibling panel alike, so a message reads the same wherever it is.
+ *  · {@link MessageHeader} — one grammar for every panel: avatar and sender NAMES-FIRST (the
+ *    bold name with the small address beside it, and a no-name sender prints the bare address
+ *    ONCE — `senderName`/`rowAddress`, `format.ts`), the ⋯ actions menu LEFT of the stamp with
+ *    the date on the right, the message's own quiet subject line under the sender (SUBJECT-D —
+ *    the RAW `m.subject`, reply prefixes included), and a recipients line that a "details"
+ *    press expands into the full To/Cc list, the exact date and where the message physically
+ *    sits. Worn by the focused message (composed by `MessagePane`) and by a sibling panel
+ *    alike, so a message reads the same wherever it is.
  *
- *  · {@link MessageCard} — a conversation SIBLING's panel: the header, the subject when it
- *    diverges from the thread's, and the body through the very same {@link MessageBody} the
- *    focused message uses. One `<article class="pm">` per message — the panel treatment every
- *    message on the thread wears, the focused one included.
+ *  · {@link MessageCard} — a conversation SIBLING's panel: the header and the body through the
+ *    very same {@link MessageBody} the focused message uses. One `<article class="pm">` per
+ *    message — the panel treatment every message on the thread wears, the focused one included.
  */
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Avatar, Button, Icon } from "@ohmail/ui";
 import { type EmailAddress, type EngineMessage } from "@ohmail/client-engine";
 import { MessageBody } from "../components/MessageBody";
+import { replyAllRecipients } from "./compose-from";
 import {
   avatarHue,
   displayTime,
@@ -43,12 +46,7 @@ import {
 } from "./format";
 import { displayAddress } from "./idn";
 import { useBodyStalled, useMessageChrome } from "./message-chrome";
-
-/** A subject with its reply prefixes stripped, case-folded — see `Conversation.tsx`. */
-const REPLY_PREFIX = /^\s*(?:(?:re|fwd?|aw|wg|sv|vs|antw)\s*(?:\[\d+\])?\s*:\s*)+/i;
-export function subjectKey(subject: string): string {
-  return subject.replace(REPLY_PREFIX, "").trim().toLowerCase();
-}
+import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 
 /**
  * A recipient shown in full in the details block: "me", or "Name <address>", or the address.
@@ -63,13 +61,26 @@ function fullRecipient(r: EmailAddress, own: ReadonlySet<string>, me: string): s
 }
 
 /**
- * THE HEADER — who it is from, when, and who else it went to.
+ * THE HEADER — who it is from, what it is called, when, and who else it went to.
  *
  * Reads `ownAddresses` and `openSenderMenu` off the chrome rather than as props, for the reason
  * the whole chrome exists: the pane is mounted twice and holds no engine hook, and the header is
  * rendered inside both mounts. `onEnterReader` is the one thing a CALLER varies — the reader
  * affordance on the split-column focused message — so it comes as a prop. (`onCollapse` left
  * with the peek rows: there is no fold to operate any more.)
+ *
+ * ── THE ⋯ MENU — the message's verbs, per panel, LEFT of the stamp ─────────────────────────
+ *
+ * Reply / Reply all / Forward live in a disclosure menu in the header's right cluster, on every
+ * panel — the focused message and its siblings wear the same one, so answering an older message
+ * on the thread never requires first making it the focused one. The `.hm-foot` text-verb footer
+ * this replaces is deleted, not moved. Each item dispatches THIS header's `message.id`; Reply
+ * all is offered only where {@link replyAllRecipients} returns an envelope for THIS message —
+ * the predicate the pill and the send path resolve, so a 1:1 message offers it nowhere. Items
+ * degrade by OMISSION where the chrome is inert (the desktop shell, a bare test): no verbs, no
+ * trigger — never a menu of dead controls. The menu itself is the pill's own {@link MoreMenu} —
+ * same roving focus, same key claims — anchored to drop DOWN from the header (`.msg-menu`,
+ * `app.css`) rather than up from the bar.
  */
 export function MessageHeader({
   message,
@@ -85,6 +96,17 @@ export function MessageHeader({
   const to = useTranslations("ohbox");
   const chrome = useMessageChrome();
   const [details, setDetails] = useState(false);
+  /** The ⋯ disclosure. The trigger owns the keyboard's way back — see `closeMenu`. */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const moreRef = useRef<HTMLButtonElement>(null);
+  // A message swap in the same mounted position (the single-message pane re-pointed by
+  // selection) must not leave a menu open over a different message's verbs — same rule the
+  // pill applies on `message.id`.
+  useEffect(() => setMenuOpen(false), [message.id]);
+  const closeMenu = (): void => {
+    setMenuOpen(false);
+    moreRef.current?.focus();
+  };
 
   // `?? []` tolerates a bare test harness that predates the field; the real provider always
   // supplies it (default `[]`), so on every live path this is exactly `chrome.ownAddresses`.
@@ -113,6 +135,61 @@ export function MessageHeader({
 
   const own = new Set(ownAddresses.map((a) => a.trim().toLowerCase()));
 
+  /**
+   * The menu's items, built from what the chrome actually wires — an unwired verb is an absent
+   * item, and zero items is no trigger at all. Every `run` closes the menu FIRST so the focus
+   * return does not race the editor the dispatch opens.
+   */
+  const menuItems: MoreMenuItem[] = [];
+  if (chrome.openReply) {
+    menuItems.push({
+      id: "reply",
+      label: tm("menuReply"),
+      run: () => { closeMenu(); chrome.openReply!(message.id); },
+    });
+    if (replyAllRecipients(message, ownAddresses) !== null) {
+      menuItems.push({
+        id: "reply_all",
+        label: tm("menuReplyAll"),
+        run: () => { closeMenu(); chrome.openReply!(message.id, true); },
+      });
+    }
+  }
+  if (chrome.forward) {
+    menuItems.push({
+      id: "forward",
+      label: tm("menuForward"),
+      run: () => { closeMenu(); chrome.forward!(message.id); },
+    });
+  }
+
+  /**
+   * SUBJECT-D — the message's own quiet subject line, under the sender, on EVERY panel.
+   *
+   * The RAW `m.subject`, reply prefixes included: "AW: …" is what this message is called, and
+   * printing it is what lets a thread's panels tell each other apart now that the one large
+   * heading is deleted (`MessagePane`'s `<h2>` and the thread lede both — see
+   * `conversation.test.ts`). No normalization, no suppression against a thread heading that no
+   * longer exists. The line is the subject-rule entry where the shell provides the sheet
+   * (`chrome.openSubjectRule`, dispatching THIS message's id) and plain text where it does not
+   * — never a dead control. An empty subject renders no line rather than an empty one.
+   */
+  const subjectLine = message.subject.trim() ? (
+    <p className="msg-subject">
+      {chrome.openSubjectRule ? (
+        <button
+          type="button"
+          className="subj-rule"
+          onClick={() => chrome.openSubjectRule!(message.id)}
+        >
+          {message.subject}
+        </button>
+      ) : (
+        message.subject
+      )}
+    </p>
+  ) : null;
+
   return (
     <>
       <div className="msg-from">
@@ -130,6 +207,29 @@ export function MessageHeader({
           {address ? <small>{address}</small> : null}
         </button>
         <span className="t num">
+          {/* The ⋯ LEFT of the date, date on the right — the menu is an object in the header's
+              quiet cluster, and the stamp keeps the outer edge. A real disclosure: haspopup
+              with a LIVE expanded (the literal-false defect the pill already fixed), and the
+              whole thing absent when there are no items. */}
+          {menuItems.length > 0 ? (
+            <span className="msg-menu">
+              <button
+                ref={moreRef}
+                type="button"
+                className="msg-more"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label={tm("actions")}
+                title={tm("actions")}
+                onClick={() => setMenuOpen((open) => !open)}
+              >
+                <span aria-hidden="true">⋯</span>
+              </button>
+              {menuOpen ? (
+                <MoreMenu items={menuItems} ariaLabel={tm("actions")} onClose={closeMenu} />
+              ) : null}
+            </span>
+          ) : null}
           {/* Relative by default, the exact instant on hover (`title`) — and clicking flips
               EVERY stamp in the open message to the absolute form at once (`onToggleAbsoluteTime`,
               session- and view-scoped; see the chrome). A `<button>` and not a bare `<time>` so
@@ -163,6 +263,7 @@ export function MessageHeader({
           ) : null}
         </span>
       </div>
+      {subjectLine}
       {summary.empty ? null : (
         <div className="msg-rcpt">
           <span className="msg-rcpt-line">{recipientLine}</span>
@@ -219,22 +320,15 @@ export function MessageHeader({
 export function MessageCard({
   message,
   now,
-  showSubject,
 }: {
   message: EngineMessage;
   now: Date;
-  /** Render the subject as an `<h3>` — only when it diverges from the thread's own heading. */
-  showSubject: boolean;
 }) {
   const tb = useTranslations("body");
-  const tm = useTranslations("message");
   const chrome = useMessageChrome();
   const body = chrome.bodyOf(message);
   const waiting = body.state === "loading" || body.state === "snippet";
   const stalled = useBodyStalled(message.id, waiting);
-  // Copy shim — `en.json` wins the moment the key lands; the fallback keeps the verb legible
-  // until it does, without this slice editing the message catalogue. See `ActionBar`'s `copy`.
-  const verb = (key: string, fallback: string): string => (tm.has(key) ? tm(key) : fallback);
 
   const loadingNote: ReactNode = !stalled && waiting ? <p className="hm-state">{tb("loading")}</p> : null;
   const failedNote: ReactNode =
@@ -251,7 +345,6 @@ export function MessageCard({
     <article className="pm" data-conv-id={message.id}>
       <div className="pm-in">
         <MessageHeader message={message} now={now} />
-        {showSubject ? <h3>{message.subject}</h3> : null}
         <div className="pm-body">
           <MessageBody
             messageId={message.id}
@@ -272,27 +365,12 @@ export function MessageCard({
         </div>
         {loadingNote}
         {failedNote}
-        {/* THE SIBLING'S OWN VERBS — Reply and Forward, dispatched through the SAME chrome the
-            focused message's bar uses, so answering (or forwarding) an older message in the thread
-            does not first require making it the focused one. Deliberately NOT a second ActionBar: a
+        {/* NO VERB FOOTER, AND NOT AN OVERSIGHT. Reply / Reply all / Forward live in the
+            header's ⋯ menu now (`MessageHeader`), per panel, through the same chrome the old
+            `.hm-foot` buttons dispatched — `conversation.test.ts` holds the footer's absence
+            and the menu's dispatch-by-panel-id. Still deliberately NOT a second ActionBar: a
             full bar per panel would stack the file / defer / read machinery onto a message the
-            reader is only glancing back at. Reply retargets the editor to THIS id; Forward hands
-            THIS id to the forward model. Each button appears only where the shell has wired its
-            verb — a footer of dead controls is exactly what this file refuses elsewhere. */}
-        {chrome.openReply || chrome.forward ? (
-          <div className="hm-foot">
-            {chrome.openReply ? (
-              <button type="button" className="hm-verb" onClick={() => chrome.openReply!(message.id)}>
-                {verb("siblingReply", "Reply")}
-              </button>
-            ) : null}
-            {chrome.forward ? (
-              <button type="button" className="hm-verb" onClick={() => chrome.forward!(message.id)}>
-                {verb("siblingForward", "Forward")}
-              </button>
-            ) : null}
-          </div>
-        ) : null}
+            reader is only glancing back at. */}
       </div>
     </article>
   );
