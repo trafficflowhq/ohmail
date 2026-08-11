@@ -58,6 +58,16 @@ export interface FromOption {
   sendable: boolean;
   /** Healthy. The fresh-compose default prefers these. */
   connected: boolean;
+  /**
+   * The biggest message THIS mailbox's submission server said it will accept, in bytes, or `null`
+   * when it announced none (and on every surface that cannot read `GET /mailboxes` at all).
+   *
+   * It travels with the From option and not beside it because the ceiling is per-MAILBOX: an
+   * account with two addresses on two providers has two different answers, and the one that
+   * applies is the one the user is sending from. It is NOT the cap on its own — see
+   * `composeAttachCap` in `../components/ComposeAttach`.
+   */
+  maxMessageBytes: number | null;
 }
 
 /** The subset of {@link import("./mail-state").MailboxFacts} this module reads. */
@@ -66,6 +76,7 @@ interface FactsShape {
   address: string;
   status: string;
   createdAt: string;
+  smtpMaxSizeBytes?: number | null;
 }
 
 /**
@@ -85,6 +96,11 @@ export function optionsFromFacts(facts: readonly FactsShape[]): FromOption[] {
       address: m.address,
       sendable: m.status !== "disabled",
       connected: m.status === "connected",
+      // `?? null` collapses "this API predates the column" and "the server announced no ceiling",
+      // and here that is correct rather than the seam mistake `CloudShell` avoids: both mean
+      // exactly "no measured ceiling for this mailbox", and the compose surface resolves them to
+      // the same fallback. There is no third reading for the distinction to serve.
+      maxMessageBytes: m.smtpMaxSizeBytes ?? null,
     }));
 }
 
@@ -114,7 +130,9 @@ interface MirrorShape {
 export function optionsFromMirror(entities: readonly MirrorShape[]): FromOption[] {
   return entities
     .filter((m) => typeof m.id === "string" && m.id.length > 0 && typeof m.address === "string")
-    .map((m) => ({ id: m.id, address: m.address, sendable: true, connected: true }));
+    // `maxMessageBytes: null` — a mirror row carries no server announcement, so the compose
+    // surface states the product constant here, exactly as it did before the field existed.
+    .map((m) => ({ id: m.id, address: m.address, sendable: true, connected: true, maxMessageBytes: null }));
 }
 
 /**
@@ -145,6 +163,16 @@ export interface ResolvedFrom {
   substituted: boolean;
   /** The address that was asked for and refused, when it can be named. Copy uses it. */
   substitutedFrom: string | null;
+  /**
+   * What the CHOSEN mailbox's submission server said it will accept, in bytes, or `null`.
+   *
+   * On this object rather than looked up from `choices` for the reason the whole object exists:
+   * the screen and the wire must agree. The From line, the mutation's `mailboxId` and the
+   * attachment ceiling the form states are three consequences of ONE resolution, and a surface
+   * that re-derived the third from a mailbox id could state a ceiling belonging to a different
+   * address than the one it is sending from.
+   */
+  maxMessageBytes: number | null;
 }
 
 const NOTHING: ResolvedFrom = {
@@ -153,6 +181,7 @@ const NOTHING: ResolvedFrom = {
   choices: [],
   substituted: false,
   substitutedFrom: null,
+  maxMessageBytes: null,
 };
 
 function resting(options: readonly FromOption[], chosen: FromOption | null): ResolvedFrom {
@@ -162,6 +191,7 @@ function resting(options: readonly FromOption[], chosen: FromOption | null): Res
     choices: options.filter((o) => o.sendable),
     substituted: false,
     substitutedFrom: null,
+    maxMessageBytes: chosen?.maxMessageBytes ?? null,
   };
 }
 
@@ -225,6 +255,9 @@ export function resolveReplyFrom(
     // the server says so in words. Claiming one here would name an address we are not using.
     substituted: chosen !== null && inherited !== null,
     substitutedFrom: chosen !== null && inherited !== null ? own?.address ?? null : null,
+    // The SUBSTITUTE's ceiling, not the inherited mailbox's: this reply leaves from `chosen`, so
+    // the number a surface states has to be the one that will actually be enforced.
+    maxMessageBytes: chosen?.maxMessageBytes ?? null,
   };
 }
 

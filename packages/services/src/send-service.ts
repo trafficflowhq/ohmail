@@ -65,6 +65,21 @@ function forwardedQuote(
 export interface SendDeps {
   openSendAdapter: OpenSendAdapter;
   /**
+   * THE PLATFORM CEILING OF THE HOST SERVING THIS SEND, in raw attachment bytes — or `null` for a
+   * host that has none. **Three values, and `undefined` is not a fourth spelling of `null`.**
+   *
+   *  · a NUMBER — this host's request pipeline refuses a body above it, so the send must stay under
+   *    it whatever the mail server would have accepted. The hosted API passes
+   *    {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES}; see that constant for where ~4.5 MB becomes 3 MB.
+   *  · `null` — this host has NO platform ceiling. That is the local engine: it runs this same
+   *    service in its own process and hands the message straight to SMTP, so there is no request
+   *    body anywhere in the path and the only limit that exists is the mail server's own.
+   *  · ABSENT (`undefined`) — nobody said. Resolved to {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES}, the
+   *    STRICTER of the two branches, deliberately: a host that forgets to declare itself must not
+   *    thereby acquire an unbounded one. See {@link effectiveAttachmentCap}.
+   */
+  surfaceMaxTotalBytes?: number | null;
+  /**
    * Opens a per-mailbox handle to STREAM a forwarded message's original attachments from IMAP at
    * send time — the same `AttachmentAdapter` the byte routes use (`makeOpenAdapter`). Optional: a
    * plain send never touches it, and a caller that supplies none simply forwards no original files.
@@ -121,6 +136,49 @@ interface ForwardPart {
  * on. The compose surface states this number rather than discovering it at send time.
  */
 export const SEND_ATTACHMENT_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
+
+/**
+ * THE CAP THAT ACTUALLY APPLIES TO ONE SEND — the smaller of what the HOST can carry and what the
+ * MAIL SERVER said it will accept.
+ *
+ * Two independent ceilings, and neither subsumes the other:
+ *
+ *  · `surfaceMax` is the host's request pipeline. The hosted API is behind a serverless body limit,
+ *    so it declares {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES}. The local engine has no such limit at
+ *    all — it is this same service in the same process as the SMTP dial — so it declares `null`.
+ *  · `mailboxMax` is the submission server's own RFC 1870 `SIZE` announcement, recorded per mailbox
+ *    by the connect-time SMTP probe (mail 0055), or `null` when it announced none.
+ *
+ * ── THE `min` IS THE POINT, NOT THE `null` HANDLING ──────────────────────────────────────────
+ *
+ * The interesting case is not a generous provider on the desktop; it is a STINGY one on the hosted
+ * service. A provider that announces 2 MB binds a hosted compose to 2 MB even though the platform
+ * would have carried 3 — and without the `min` the product would accept the send, spend the user's
+ * wait on it, and let their own server bounce it. That is the acceptance check for this rule.
+ *
+ * ── AN UNKNOWN CEILING IS THE STRICT ONE ─────────────────────────────────────────────────────
+ *
+ * `undefined` for `surfaceMax` means the host did not declare itself, and it resolves to
+ * {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES} rather than to "unbounded" — a caller that forgets must
+ * not acquire a bigger allowance by forgetting. When BOTH are unknown (`null` surface, `null`
+ * mailbox — a local install whose server has never been probed) there is no measured ceiling
+ * anywhere, and the answer is again the product constant, for the reason mail 0055's own header
+ * gives: an unknown limit read as no limit costs the user a message they composed and waited for.
+ *
+ * Non-positive and non-finite values are ignored on both sides. A `0` from either — a server
+ * announcing `SIZE 0`, which RFC 1870 §6 defines as "no fixed maximum", or a host declaring a cap
+ * of nothing — must never become a ceiling no message can clear.
+ */
+export function effectiveAttachmentCap(
+  surfaceMax: number | null | undefined,
+  mailboxMax: number | null | undefined,
+): number {
+  const usable = (n: number | null | undefined): n is number =>
+    typeof n === "number" && Number.isFinite(n) && n > 0;
+  const surface = surfaceMax === undefined ? SEND_ATTACHMENT_MAX_TOTAL_BYTES : surfaceMax;
+  const bounds = [surface, mailboxMax].filter(usable);
+  return bounds.length > 0 ? Math.min(...bounds) : SEND_ATTACHMENT_MAX_TOTAL_BYTES;
+}
 
 /**
  * How old a `pending` reservation must be before it counts as ORPHANED rather than in flight.
@@ -190,7 +248,7 @@ export class SendService {
     input: SendInput = {},
   ): Promise<SendResult> {
     // ── 1. RESERVE (short tx, NO network) ────────────────────────────────────
-    const reservation = await this.reserve(ctx, draftId, idempotencyKey, input);
+    const reservation = await this.reserve(ctx, draftId, idempotencyKey, deps, input);
 
     // A same-key request that hit the UNIQUE reservation: branch on stored status.
     if (reservation.kind === "existing") {
@@ -248,25 +306,41 @@ export class SendService {
    * back, so an invalid draft never leaves an orphan `pending` row.
    */
   private async reserve(
-    ctx: ServiceContext, draftId: string, idempotencyKey: string, input: SendInput,
+    ctx: ServiceContext, draftId: string, idempotencyKey: string, deps: SendDeps, input: SendInput,
   ): Promise<Reservation> {
-    // THE ATTACHMENT CAP, refused BEFORE the reservation commits. Enforced on the decoded bytes
-    // (the route already rejected a body over the platform limit); this is the product rule and the
-    // number the compose surface states. Over it, nothing is reserved and no draft leaves `draft`.
     const attachTotal = (input.attachments ?? []).reduce((n, a) => n + a.content.byteLength, 0);
-    if (attachTotal > SEND_ATTACHMENT_MAX_TOTAL_BYTES) {
-      throw new ServiceError(
-        "payload_too_large", 413,
-        `attachments total ${attachTotal} bytes; the limit is ${SEND_ATTACHMENT_MAX_TOTAL_BYTES}`,
-      );
-    }
     return asTx(ctx).transaction(async (tx): Promise<Reservation> => {
       const [d] = await tx.select().from(drafts)
         .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
       if (!d) throw new ServiceError("not_found", 404, "draft not found");
 
-      const [mb] = await tx.select({ address: mailboxes.address, status: mailboxes.status }).from(mailboxes)
+      const [mb] = await tx.select({
+        address: mailboxes.address, status: mailboxes.status,
+        smtpMaxSizeBytes: mailboxes.smtpMaxSizeBytes,
+      }).from(mailboxes)
         .where(eq(mailboxes.id, d.mailboxId)).limit(1);
+
+      // ── THE ATTACHMENT CAP, refused BEFORE the reservation commits ────────────────────────
+      //
+      // Enforced on the decoded bytes (the route already rejected a body over the platform limit);
+      // this is the product rule and the number the compose surface states. It throws INSIDE the
+      // transaction and therefore rolls it back, so nothing is reserved and no draft leaves
+      // `draft` — the property this check has always had.
+      //
+      // It reads the mailbox row, which is why it is here rather than ahead of the transaction as
+      // it used to be: the ceiling is per-mailbox now ({@link effectiveAttachmentCap}), the
+      // SMALLER of the host's platform limit and what this mailbox's own submission server
+      // announced. The reordering costs one thing worth naming — a send over the cap on a draft
+      // that does not exist now answers 404 rather than 413, because the draft is loaded first.
+      // That is the more truthful of the two answers to a request naming nothing.
+      const cap = effectiveAttachmentCap(deps.surfaceMaxTotalBytes, mb?.smtpMaxSizeBytes ?? null);
+      if (attachTotal > cap) {
+        throw new ServiceError(
+          "payload_too_large", 413,
+          `attachments total ${attachTotal} bytes; the limit is ${cap}`,
+        );
+      }
+
       const mintedMessageId = mintMessageId(domainOf(mb?.address));
 
       const inserted = await tx.insert(outboundSends).values({

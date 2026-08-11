@@ -183,6 +183,31 @@ export const mailboxes = pgTable("mailboxes", {
   // API writes it and only the worker clears it; a deploy in either order is safe, because an
   // unstamped mailbox is exactly today's poll-only behaviour.
   syncRequestedAt: timestamp("sync_requested_at", { withTimezone: true }),
+  // ── Mail 0055 — WHAT THE SENDING SERVER SAID IT WILL ACCEPT (RFC 1870 `SIZE`) ──
+  //
+  // The attachment ceiling used to be one product constant, and it was reasoned from the HOSTED
+  // API's serverless request-body limit — attachment bytes ride the send request as base64, so
+  // 3 MB of raw bytes encodes to about 4 MB and clears a ~4.5 MB body cap. That is a true fact
+  // about one deployment and no fact at all about a LOCAL install, which runs the same
+  // `SendService` in its own process and hands the message straight to SMTP with no request body
+  // anywhere in the path. It was refusing attachments the user's own mail server would have taken.
+  //
+  // This is the number that actually governs: the ceiling the submission server announces in its
+  // EHLO reply. It is written by the connect-time SMTP probe, which already runs a full EHLO
+  // before it stores a credential, and read on the send path and in the mailbox DTO.
+  //
+  // NULL IS "NOT KNOWN", AND IT IS READ AS THE STRICT ANSWER. Three servers write NULL and are
+  // deliberately not told apart — one that never advertised `SIZE`, one that advertised the bare
+  // keyword, and one that advertised `SIZE 0` (RFC 1870 §6: "no fixed maximum"). All three answer
+  // *"is there a ceiling I must stay under?"* with "none that I stated". `SendService` resolves an
+  // unknown ceiling to the product's own 3 MB rather than to "unbounded": an unknown limit read as
+  // no limit is a message the user composes, waits for, and has bounced by their own provider.
+  //
+  // `bigint` and not `integer` because the value is an unbounded decimal in somebody else's reply
+  // and an eccentric announcement above 2^31 must be storable rather than raise 22003 inside the
+  // connect flow's transaction. No CHECK (a size closes no set) and no index — it is read off a row
+  // already fetched by primary key and is never a predicate.
+  smtpMaxSizeBytes: bigint("smtp_max_size_bytes", { mode: "number" }),
   // ── Mail 0030 — the ONE-TIME re-evaluation of mail the sensitivity override already misrouted ──
   //
   // A fix stopped `pipeline.ts:393` letting a sender-chosen subject or body carry a stranger

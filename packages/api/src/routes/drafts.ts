@@ -112,7 +112,16 @@ export const draftsRoutes: Route[] = [
       const openFetchAdapter = makeOpenAdapter(deps);
       const result = await sends(deps).send(
         serviceContext(deps, req), params.id!, key,
-        { openSendAdapter, openFetchAdapter }, { attachments, forwardOf },
+        {
+          openSendAdapter, openFetchAdapter,
+          // WHICH HOST IS CARRYING THESE BYTES. Absent on the hosted API, which resolves to the
+          // serverless body limit; `null` from the local engine, which has no request pipeline
+          // between this handler and SMTP. `SendService` takes the SMALLER of this and the
+          // mailbox's own announced `SIZE`, so neither host can send past what the user's mail
+          // server said it will accept.
+          surfaceMaxTotalBytes: deps.services?.sendSurfaceMaxTotalBytes,
+        },
+        { attachments, forwardOf },
       );
       switch (result.status) {
         case "sent":

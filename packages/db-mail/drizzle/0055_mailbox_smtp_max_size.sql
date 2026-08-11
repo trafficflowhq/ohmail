@@ -1,0 +1,80 @@
+-- WHAT THE SENDING SERVER SAID IT WILL ACCEPT — the SMTP `SIZE` announcement, stored per mailbox.
+--
+-- ══ WHAT THIS FIXES ════════════════════════════════════════════════════════════════════════
+--
+-- The attachment ceiling was one constant for the whole product (3 MB of raw bytes), and it was
+-- derived from the HOSTED API's platform limit: attachment bytes ride the send request as base64,
+-- a serverless request body is capped at roughly 4.5 MB, and 3 MB of raw bytes encodes to about
+-- 4 MB. That reasoning is correct about the hosted service and says nothing at all about anybody
+-- else. A local install runs the same send code in its own process and hands the message straight
+-- to SMTP, with no request body and no platform limit anywhere in the path — so it was refusing
+-- attachments its own mail server would have taken without comment.
+--
+-- The number that actually governs is the one the mail server states. Every SMTP server that
+-- implements RFC 1870 announces it in its EHLO reply (`250-SIZE 35882577`), and the connect-time
+-- SMTP probe already runs a full EHLO before it stores a credential. This column is where that
+-- announcement is kept.
+--
+-- ══ NULL MEANS "NOT KNOWN", AND IT IS READ AS THE STRICT ANSWER ════════════════════════════
+--
+-- Three different servers write NULL here and they are deliberately not told apart: one that never
+-- advertised `SIZE`, one that advertised the bare keyword with no number, and one that advertised
+-- `SIZE 0`, which RFC 1870 §6 defines as "no fixed maximum". All three answer the only question
+-- the sender asks — *"is there a ceiling I must stay under?"* — with "none that I stated", and
+-- collapsing them stops a reader inventing `0` as a ceiling no message can clear.
+--
+-- NULL is also every row that exists on the day this lands, and every row belonging to a mailbox
+-- added before the probe learned to record it. The rule the send path applies to an unknown
+-- ceiling is the STRICT one: it falls back to the product's own 3 MB rather than to "unbounded".
+-- An unknown limit read as no limit is a message the user composes, waits for, and has bounced by
+-- their own provider — which is worse than a cap that is merely conservative.
+--
+-- ══ NO BACKFILL, AND THIS IS THE STATEMENT THAT MUST NEVER JOIN THIS FILE ══════════════════
+--
+-- `UPDATE mailboxes SET smtp_max_size_bytes = 3145728` (or any other number) is the one to refuse.
+-- It looks like a harmless seeding of the value the product already enforces, and it is not: this
+-- column means "the SERVER said so", and writing a number nobody's server said turns a fallback
+-- the send path can recognise as absent into a stored fact it cannot. The moment such a row exists,
+-- a later probe that learns a real 35 MB limit is overwriting what looks like evidence, and a
+-- mailbox on a generous provider is pinned to our own constant with no way to tell that from a
+-- provider that genuinely caps at 3 MB. NULL is the truth about every row here today.
+--
+-- The mirror-image statement is equally refused: seeding a LARGE number (`= 35882577`, Gmail's) to
+-- "unblock" desktop sends would assert a ceiling on behalf of servers that never stated one, and
+-- the failure mode is a bounce rather than a refusal — the direction this column exists to avoid.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO CHECK, NO INDEX ═══════════════════════════════════════════════
+--
+-- `ADD COLUMN IF NOT EXISTS`, nullable, no default: a catalog-only change on a table with one row
+-- per connected mailbox, so a replay is a no-op and a partially-applied window costs nothing (an
+-- unstamped mailbox is exactly today's single-constant behaviour). `bigint` rather than `integer`
+-- because the wire value is an unbounded decimal in the server's own reply and a hostile or merely
+-- eccentric announcement above 2^31 must be storable rather than raise 22003 inside the connect
+-- flow's transaction. No CHECK: a size closes no set, and the one property worth asserting
+-- (`> 0`) is enforced where the value is READ — `verifySmtpLogin` maps anything that is not a
+-- positive finite number to NULL — because that is the same place a future non-probe writer would
+-- have to be corrected anyway. No index: the column is read off a mailbox row already fetched by
+-- primary key, on the send path and in the mailbox DTO, and it is never a predicate.
+--
+-- `ADD COLUMN` inherits the table's grants.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → API. `MailboxService.list` and `SendService.reserve` both select whole `mailboxes`
+-- rows, so an API deployed ahead of this answers Postgres 42703 on the mailbox list AND on every
+-- send reservation — not a panel, the sending. The health marker
+-- `["mailboxes","smtp_max_size_bytes"]` turns that into a `503 schema_incomplete` naming this file.
+--
+-- No worker half: nothing in the sync worker reads or writes it.
+--
+-- A CLIENT older than the API ignores a DTO field it does not know and keeps stating the product
+-- constant, which is the number the server will enforce for it anyway (the effective cap is the
+-- MINIMUM of the two, so an old client's 3 MB can only ever be at or below the truth). A client
+-- NEWER than the API reads `undefined` and falls back to the same constant. Neither needs the
+-- other to ship first.
+--
+-- ROLLBACK is `ALTER TABLE mailboxes DROP COLUMN smtp_max_size_bytes`, and it costs only the
+-- recorded announcements: every send falls back to the 3 MB constant, which is where the product
+-- was before this column. No user data is lost — the column holds a fact the next probe re-learns.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "smtp_max_size_bytes" bigint;

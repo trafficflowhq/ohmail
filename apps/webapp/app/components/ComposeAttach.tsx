@@ -13,24 +13,57 @@
  *
  * ── THE CAP IS A UX PRE-CHECK; THE SERVER IS AUTHORITATIVE ───────────────────────────────
  *
- * Attachment bytes travel base64 on one JSON request, so their total has to clear the hosted API's
- * request-body limit with room for the envelope and the ~1.33× base64 inflation. The server refuses
- * a total over its own ceiling (`SEND_ATTACHMENT_MAX_TOTAL_BYTES`, 3 MB of raw bytes); this states
- * that number up front and refuses to ADD a file that would cross it, so a user learns at pick time
- * instead of at a failed send. The client number is a mirror of the server's, kept here as a
- * constant rather than imported so the webapp pulls in no server module.
+ * The server refuses a total over its own ceiling; this control states that number up front and
+ * refuses to ADD a file that would cross it, so a user learns at pick time instead of at a failed
+ * send. **The number is a PROP, not a constant** — see {@link composeAttachCap} for what goes into
+ * it and why this component no longer knows.
  *
  * ── COPY ─────────────────────────────────────────────────────────────────────────────────
  *
- * Strings are inline (a copy-shim), not `en.json` keys — this slice deliberately makes no message
- * edits. A later pass moves them into the catalog; the wording here is plain and final.
+ * The two strings that state the cap are catalog keys (`compose.attach*`) taking the rendered size
+ * as a parameter, so the sentence on screen and the number the send will enforce come from one
+ * value. They were inline literals holding a hard-coded "3 MB" — which was exactly the drift this
+ * slice removes, in the one place a user reads a promise.
  */
 import { useCallback, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import type { ComposeAttachment } from "@ohmail/client-engine";
 
-/** Raw-byte ceiling for the whole set — the mirror of the server's authoritative cap. */
+/**
+ * THE HOSTED SURFACE'S OWN CEILING on total attachment bytes — the mirror of
+ * `SEND_ATTACHMENT_MAX_TOTAL_BYTES` in `packages/services`, kept as a literal rather than imported
+ * so the webapp pulls in no server module.
+ *
+ * It is a fact about the REQUEST PIPELINE and not about mail: attachment bytes travel base64 on one
+ * JSON request, so their total has to clear the hosted API's serverless body limit (~4.5 MB) with
+ * room for the envelope and the ~1.33× base64 inflation. 3 MB of raw bytes encodes to about 4 MB.
+ */
 export const COMPOSE_ATTACH_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
+
+/**
+ * THE CEILING THIS FORM MAY PROMISE — the smaller of what the request can carry and what the
+ * sending mailbox's own server said it will accept.
+ *
+ * The mirror of `effectiveAttachmentCap` in `packages/services/src/send-service.ts`, and it has to
+ * be: a number stated here that the server would refuse is a claim the product cannot keep, which
+ * is the whole reason the copy renders this value instead of a literal.
+ *
+ * `mailboxMax` is the submission server's own RFC 1870 `SIZE` announcement, forwarded from
+ * `GET /mailboxes` through the resolved From. The interesting case is the STINGY provider, not the
+ * generous one: a server that caps at 2 MB binds this form to 2 MB even though the request pipeline
+ * would have carried 3 — without the `min` the user picks a file, waits for a send, and has it
+ * bounced by their own provider.
+ *
+ * `null`, absent, `0` and anything non-finite all mean "no measured ceiling for this mailbox" and
+ * resolve to the surface constant. A server advertising `SIZE 0` means "no fixed maximum"
+ * (RFC 1870 §6), so reading it as a ceiling of nothing would refuse every file.
+ */
+export function composeAttachCap(mailboxMax: number | null | undefined): number {
+  return typeof mailboxMax === "number" && Number.isFinite(mailboxMax) && mailboxMax > 0
+    ? Math.min(COMPOSE_ATTACH_MAX_TOTAL_BYTES, mailboxMax)
+    : COMPOSE_ATTACH_MAX_TOTAL_BYTES;
+}
 
 /** Decoded byte length of a base64 string, without decoding it. */
 function base64Bytes(b64: string): number {
@@ -76,11 +109,23 @@ export function ComposeAttach({
   attachments,
   onChange,
   disabled,
+  maxTotalBytes = COMPOSE_ATTACH_MAX_TOTAL_BYTES,
 }: {
   attachments: ComposeAttachment[];
   onChange: (next: ComposeAttachment[]) => void;
   disabled?: boolean;
+  /**
+   * The ceiling this form enforces and states, in raw bytes. Callers pass
+   * {@link composeAttachCap} of the sending mailbox's announced `SIZE`.
+   *
+   * DEFAULTED rather than required, and to the STRICT value: a surface that has not been taught to
+   * resolve a mailbox must not thereby acquire a bigger allowance than the hosted request pipeline
+   * can carry. The default is what this component hard-coded before it took a prop, so an
+   * un-updated caller behaves exactly as it did.
+   */
+  maxTotalBytes?: number;
 }) {
+  const t = useTranslations("compose");
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -97,7 +142,7 @@ export function ComposeAttach({
       const next = [...attachments];
       let refused = false;
       for (const file of Array.from(fileList)) {
-        if (running + file.size > COMPOSE_ATTACH_MAX_TOTAL_BYTES) {
+        if (running + file.size > maxTotalBytes) {
           refused = true;
           continue;
         }
@@ -114,13 +159,13 @@ export function ComposeAttach({
         }
       }
       if (refused) {
-        setError(`Some files were not added — the total must stay under ${formatSize(COMPOSE_ATTACH_MAX_TOTAL_BYTES)}.`);
+        setError(t("attachRefused", { size: formatSize(maxTotalBytes) }));
       }
       onChange(next);
       // Clear the native input so re-picking the same file fires `change` again.
       if (inputRef.current) inputRef.current.value = "";
     },
-    [attachments, onChange],
+    [attachments, onChange, maxTotalBytes, t],
   );
 
   const remove = useCallback(
@@ -145,12 +190,16 @@ export function ComposeAttach({
       />
       <div className="compose-attach-row">
         <Button variant="ghost" onClick={pick} disabled={disabled}>
-          <Icon name="clip" size={14} /> Attach files
+          <Icon name="clip" size={14} /> {t("attach")}
         </Button>
+        {/* THE CLAIM, RENDERED FROM THE NUMBER THAT WILL BE ENFORCED. Both branches take
+            `maxTotalBytes` — the same value `onFiles` refuses against — so the sentence and the
+            rule cannot drift. It used to read a hard-coded 3 MB while the server's answer depended
+            on the mailbox. */}
         <span className="compose-attach-cap">
           {attachments.length > 0
-            ? `${formatSize(used)} of ${formatSize(COMPOSE_ATTACH_MAX_TOTAL_BYTES)}`
-            : `Up to ${formatSize(COMPOSE_ATTACH_MAX_TOTAL_BYTES)} total`}
+            ? t("attachUsed", { used: formatSize(used), total: formatSize(maxTotalBytes) })
+            : t("attachCap", { size: formatSize(maxTotalBytes) })}
         </span>
       </div>
 
@@ -164,7 +213,7 @@ export function ComposeAttach({
               <button
                 type="button"
                 className="compose-attach-remove"
-                aria-label={`Remove ${a.filename}`}
+                aria-label={t("attachRemove", { filename: a.filename })}
                 disabled={disabled}
                 onClick={() => remove(i)}
               >

@@ -244,6 +244,21 @@ export interface MailboxFacts {
    * server…` is a sentence about nothing, which is why the arm tests `> 0` as well.
    */
   pendingMoves?: number;
+  /**
+   * THE BIGGEST MESSAGE THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT, in bytes — the
+   * server's own `SIZE` announcement, recorded when the mailbox was connected.
+   *
+   * `deriveMailState` must never read it, and does not: it says nothing about whether mail is
+   * arriving. It is here for the same reason {@link MailboxFacts.id} is — `compose-from.ts` needs
+   * it, and this is the narrowed shape `GET /mailboxes` arrives as.
+   *
+   * OPTIONAL and nullable, and the two mean different things by the rule
+   * {@link MailboxFacts.initialImportCompletedAt} states: absent is an API that predates the
+   * column, `null` is a server that announced no ceiling. Both resolve the same way at the compose
+   * surface — fall back to the product constant — so nothing here has to tell them apart; the
+   * distinction is kept because collapsing it is how the import floor was once broken.
+   */
+  smtpMaxSizeBytes?: number | null;
   /** When this mailbox was connected. The one per-mailbox clock that is not shared. */
   createdAt: string;
 }

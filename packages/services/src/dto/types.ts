@@ -452,6 +452,36 @@ export interface MailboxDTO {
    */
   pendingMoves: number;
   /**
+   * THE BIGGEST MESSAGE THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT, in bytes — the
+   * server's own RFC 1870 `SIZE` announcement, recorded by the connect-time SMTP probe (mail 0055).
+   *
+   * ── WHY A CLIENT IS TOLD THIS AT ALL ─────────────────────────────────────────────────────
+   *
+   * The compose surface states an attachment ceiling before the user picks a file, and until this
+   * field it stated a CONSTANT: 3 MB, mirrored from the server. That number is the hosted API's
+   * serverless request-body limit expressed in raw bytes — a true fact about one deployment and
+   * about nothing else. It is simultaneously too small for a local install (same code, same
+   * process, no request body anywhere in the path) and too LARGE for anyone whose provider caps
+   * submission below it, where the product accepted the send, spent the user's wait on it, and let
+   * their own server bounce it. Both are the same defect: a claim on screen that the code cannot
+   * keep.
+   *
+   * ── `null` MEANS "NOT KNOWN", AND ABSENT MEANS "THIS SERVER CANNOT SAY" ──────────────────
+   *
+   * `null` is a mailbox whose server announced no ceiling — it never advertised `SIZE`, or
+   * advertised the bare keyword, or advertised `SIZE 0`, which RFC 1870 §6 defines as "no fixed
+   * maximum". All three are one answer to the only question the compose surface asks, and the
+   * client resolves it the same way the server does: fall back to the product constant. ABSENT is
+   * an API older than the column.
+   *
+   * **It is not the cap on its own, and a client must not render it as one.** The ceiling that
+   * applies is the SMALLER of this and whatever the host carrying the request can take —
+   * `effectiveAttachmentCap` in `send-service.ts` is the authority and it runs on every send. A
+   * client that showed this number raw would promise 35 MB to somebody whose browser has to push
+   * those bytes through the hosted API's body limit.
+   */
+  smtpMaxSizeBytes?: number | null;
+  /**
    * HOW MUCH MAIL IS IN THIS MAILBOX — and the only OPT-IN field on this DTO.
    *
    * ── WHY IT IS OPTIONAL WHEN EVERY OTHER NUMBER HERE IS NOT ──────────────────────────

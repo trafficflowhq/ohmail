@@ -386,6 +386,13 @@
       "when": 1789081340527,
       "tag": "0054_auto_unsubscribe_optout",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1789340540527,
+      "tag": "0055_mailbox_smtp_max_size",
+      "breakpoints": true
     }
   ]
 }

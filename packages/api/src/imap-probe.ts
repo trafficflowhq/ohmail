@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { resolveCname as dnsResolveCname } from "node:dns/promises";
 import { type MailboxErrorCode } from "@trafficflow/db";
-import { ImapAdapter, buildImapAuth, verifySmtpLogin, type ImapConfig } from "@trafficflow/core/adapters/imap";
+import {
+  ImapAdapter, buildImapAuth, verifySmtpLogin,
+  type ImapConfig, type SmtpLoginProof,
+} from "@trafficflow/core/adapters/imap";
 import {
   ServiceError, type ProbeTlsDetail, type ProbeTlsFailureKind, type ProvenEndpoint,
   type SmtpProbe, type SmtpProbeInput,
@@ -867,8 +870,16 @@ export function smtpProbeAdmissionKey(accountId: string, address: string): strin
 export interface SmtpProbeOptions {
   maxPerAddress?: number;
   deadlineMs?: number;
-  /** The dial, injectable for the ladder tests. Default: {@link verifySmtpLogin} on the floor. */
-  dial?: (smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } }) => Promise<void>;
+  /**
+   * The dial, injectable for the ladder tests. Default: {@link verifySmtpLogin} on the floor.
+   *
+   * It resolves to what the login PROVED — today the server's advertised `SIZE` — and a double
+   * that resolves `undefined` is treated as "nothing was learned", so every pre-SIZE test double
+   * keeps meaning exactly what it meant.
+   */
+  dial?: (
+    smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } },
+  ) => Promise<SmtpLoginProof | void>;
   resolveCname?: (host: string) => Promise<string | null>;
 }
 
@@ -876,10 +887,9 @@ export interface SmtpProbeOptions {
 export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpProbe {
   const max = opts.maxPerAddress ?? MAX_PROBES_PER_ADDRESS;
   const deadlineMs = opts.deadlineMs ?? PROBE_DEADLINE_MS;
-  const dial = opts.dial
+  const dial: NonNullable<SmtpProbeOptions["dial"]> = opts.dial
     ?? deps.services?.smtpVerify
-    ?? ((smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } }): Promise<void> =>
-      verifySmtpLogin(smtp, PROBE_TIMEOUTS));
+    ?? ((smtp): Promise<SmtpLoginProof> => verifySmtpLogin(smtp, PROBE_TIMEOUTS));
   const resolveCname = opts.resolveCname ?? nodeResolveCname;
 
   return async (input: SmtpProbeInput): Promise<ImapProbeVerdict> => {
@@ -900,8 +910,9 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
       for (const attempt of attempts) {
         if (budgetLeft() < 250) { sawTimeout = true; break; }
         let failure: { err: unknown } | null = null;
+        let proof: SmtpLoginProof | void = undefined;
         try {
-          await withDeadline(dial({
+          proof = await withDeadline(dial({
             host: input.smtp.host, port: attempt.port, secure: attempt.secure,
             auth: { user: input.smtp.user, pass: input.smtp.pass },
           }), Math.max(1, budgetLeft()));
@@ -909,7 +920,16 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
           failure = { err };
         }
         if (!failure) {
-          return { verdict: "ok", proven: { host: input.smtp.host, port: attempt.port, secure: attempt.secure } };
+          return {
+            verdict: "ok",
+            proven: {
+              host: input.smtp.host, port: attempt.port, secure: attempt.secure,
+              // `?? null` and never `?? undefined`: a dial that resolved without a number said
+              // "this server announced no ceiling", which is a fact worth storing as such. A test
+              // double resolving `void` lands in the same place, which is what makes it inert.
+              maxMessageBytes: proof?.maxMessageBytes ?? null,
+            },
+          };
         }
         if (failure.err instanceof ProbeDeadlineExceeded) { sawTimeout = true; continue; }
 

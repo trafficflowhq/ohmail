@@ -117,6 +117,7 @@ export interface MailboxDTO {
     disabledReason?: string | null;
     createdAt?: string;
     initialImportCompletedAt?: string | null;
+    smtpMaxSizeBytes?: number | null;
     messageCount?: number;
 }
 

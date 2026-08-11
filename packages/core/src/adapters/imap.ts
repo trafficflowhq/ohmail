@@ -4,6 +4,9 @@ import nodemailer, { type Transporter } from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import type Mail from "nodemailer/lib/mailer/index.js";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
+// The connection class `SMTPTransport.verify()` drives internally. Imported directly for the one
+// thing `verify()` cannot do — see {@link verifySmtpLogin}.
+import SMTPConnection from "nodemailer/lib/smtp-connection/index.js";
 // `../mail.js`, not `../index.js`: the IMAP adapter needs the mail half only, and the default
 // barrel would pull the classifier and drafter prompts into every artifact that opens a mailbox.
 import {
@@ -171,28 +174,93 @@ export function smtpTransportOptions(config: ImapConfig): SMTPTransport.Options 
 }
 
 /**
+ * WHAT A COMPLETED SMTP LOGIN PROVED — beyond the fact that it completed.
+ *
+ * One field today: the server's own `SIZE` announcement from the EHLO it just ran. `null` is
+ * "the server said nothing we can use", and it covers three genuinely different servers —
+ * one that never advertised `SIZE`, one that advertised the bare keyword with no number, and
+ * one that advertised `SIZE 0`, which RFC 1870 §6 defines as "no fixed maximum". All three are
+ * the same answer to the only question a caller asks (*"is there a ceiling I must stay under?"*),
+ * and collapsing them here is what stops a caller inventing `0` as a ceiling nothing can clear.
+ */
+export interface SmtpLoginProof {
+  /** The advertised `SIZE` ceiling in bytes, or `null` when the server declared none. */
+  maxMessageBytes: number | null;
+}
+
+/**
  * Dial an SMTP submission endpoint and AUTHENTICATE, without sending anything — the connect-time
  * proof the SMTP probe needs, kept here because this package owns nodemailer and the TLS floor.
- * `verify()` runs the full sequence (connect, EHLO, mandatory STARTTLS where `secure` is false,
- * AUTH) against the complete option set from {@link smtpTransportOptions}, so what it proves is
+ * It runs the full sequence (connect, EHLO, mandatory STARTTLS where `secure` is false, AUTH)
+ * against the complete option set from {@link smtpTransportOptions}, so what it proves is
  * byte-identical to what a later send will do. Resolves on a completed login; throws nodemailer's
  * error otherwise. The caller classifies; nothing here logs — the config carries a password.
+ *
+ * ── WHY THIS DRIVES `SMTPConnection` RATHER THAN CALLING `transporter.verify()` ────────────
+ *
+ * The sequence below is `SMTPTransport.verify()`'s, arm for arm: connect, then `login` only when
+ * the server advertised AUTH (`allowsAuth`) or the options force it, then QUIT; an `error`
+ * closes and rejects, an `end` before either outcome rejects with nodemailer's own
+ * "Connection closed". It is transcribed rather than delegated for one reason: the EHLO response
+ * carries the server's `SIZE` limit, nodemailer parses it into `_maxAllowedSize` on the
+ * connection — and `verify()` builds that connection in a local, closes it, and resolves `true`.
+ * There is no supported handle on it, so the number is unreachable through that call.
+ *
+ * The option set is still the one `smtpTransportOptions` assembles, unchanged, which is what
+ * keeps the TLS floor on this path: `SMTPTransport` passes its options straight to
+ * `new SMTPConnection(options)`, so `requireTLS`, `opportunisticTLS: false` and the certificate
+ * floor govern this dial exactly as they governed `verify()`'s.
+ *
+ * `_maxAllowedSize` IS PRIVATE, and the read is written to survive its disappearance: anything
+ * that is not a positive number reads as `null` — "no ceiling was learned" — which is the same
+ * answer a server that advertises nothing gives, and is the safe direction for every caller
+ * (`SEND_ATTACHMENT_MAX_TOTAL_BYTES` in `packages/services` treats an unknown ceiling as the
+ * strict one, never as an unbounded one).
  */
 export async function verifySmtpLogin(
   smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } },
   timeouts?: Partial<NetTimeouts>,
-): Promise<void> {
-  const transporter = nodemailer.createTransport(smtpTransportOptions({
+): Promise<SmtpLoginProof> {
+  const options = smtpTransportOptions({
     host: smtp.host, port: smtp.port, secure: smtp.secure,
     auth: { user: smtp.auth.user, pass: smtp.auth.pass },
     smtp,
     ...(timeouts ? { timeouts } : {}),
-  }));
-  try {
-    await transporter.verify();
-  } finally {
-    transporter.close();
-  }
+  });
+  const connection = new SMTPConnection(options as ConstructorParameters<typeof SMTPConnection>[0]);
+  return new Promise<SmtpLoginProof>((resolve, reject) => {
+    let returned = false;
+    const settleErr = (err: Error): void => {
+      if (returned) return;
+      returned = true;
+      connection.close();
+      reject(err);
+    };
+    const settleOk = (): void => {
+      if (returned) return;
+      returned = true;
+      // Read BEFORE `quit()`: the connection is torn down asynchronously and this is the one
+      // instant at which both "the login completed" and "the EHLO is still on the object" hold.
+      const raw = (connection as unknown as { _maxAllowedSize?: unknown })._maxAllowedSize;
+      const maxMessageBytes = typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : null;
+      connection.quit();
+      resolve({ maxMessageBytes });
+    };
+    connection.once("error", settleErr);
+    connection.once("end", () => settleErr(new Error("Connection closed")));
+    connection.connect(() => {
+      if (returned) return;
+      // `allowsAuth` is nodemailer's own "the server advertised AUTH". A server that offers none
+      // is verified by having connected, exactly as `verify()` treats it — logging in anyway
+      // would refuse a submission endpoint that works.
+      const allowsAuth = (connection as unknown as { allowsAuth?: boolean }).allowsAuth !== false;
+      if (!allowsAuth) return settleOk();
+      connection.login({ user: smtp.auth.user, pass: smtp.auth.pass }, (err) => {
+        if (err) return settleErr(err);
+        settleOk();
+      });
+    });
+  });
 }
 
 /**

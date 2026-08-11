@@ -621,6 +621,23 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker — the column is
   // read off a row fetched by primary key and nothing filters on it.
   ["account_settings", "block_auto_unsubscribe_at"],
+  // mail 0055_mailbox_smtp_max_size — what the sending server said it will accept (RFC 1870 `SIZE`),
+  // recorded per mailbox by the connect-time SMTP probe. One additive nullable `bigint` on
+  // `mailboxes`, and it earns a marker on the same whole-row-select rule `sync_requested_at` (0049)
+  // does one column over — but with a second reader that makes it sharper than the mailbox list.
+  //
+  // `MailboxService.list` does `select().from(mailboxes)`, so a too-early API 42703s the mailbox
+  // panel and every read that resolves a mailbox. `SendService.reserve` enumerates the row too, in
+  // the transaction that reserves an idempotent send — so the same missing column takes out SENDING,
+  // and it does so BEFORE the reservation commits, which is the safe half of an unsafe failure: the
+  // user cannot send, and no draft is stranded out of `draft` while they cannot.
+  //
+  // No worker half: nothing in the sync worker reads or writes it. Deploy order: migration → API.
+  //
+  // No CHECK marker (a size closes no set — 0030's rule, and the positivity that matters is applied
+  // where the value is read) and no INDEX marker: the column is read off a row already fetched by
+  // primary key and is never a predicate.
+  ["mailboxes", "smtp_max_size_bytes"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1055,10 +1072,21 @@ export const MAIL_EXPECTED_MARKERS =
  * stops happening, and nothing anywhere says so. A `503 schema_incomplete` in front of the whole
  * API is a better outcome than a feature that turns itself off without a log line. No CHECK marker
  * (a timestamp closes no set), no INDEX marker (read off a row fetched by primary key, never a
- * predicate) and no worker half — nothing in the sync loop reads it. It is the NEWEST entry in the
- * mail journal.
+ * predicate) and no worker half — nothing in the sync loop reads it.
+ *
+ * `0055_mailbox_smtp_max_size` is probed ONCE, by `mailboxes.smtp_max_size_bytes` — the sending
+ * server's own `SIZE` announcement, recorded by the connect-time SMTP probe. Two whole-row readers
+ * rather than one, which is what makes it the sharpest `mailboxes` marker: `MailboxService.list`
+ * enumerates the row (so a too-early API 42703s the mailbox panel and every mailbox resolution) and
+ * `SendService.reserve` enumerates it inside the transaction that reserves a send, so the same
+ * missing column takes out SENDING. That second failure is the safe half of an unsafe one — it
+ * happens before the reservation commits, so nothing is stranded out of `draft` — but it is still a
+ * user who cannot send, which is why the 503 in front of it is worth more than the diagnosis
+ * afterwards. No CHECK marker (a size closes no set) and no INDEX marker (read off a row fetched by
+ * primary key, never a predicate); no worker half — nothing in the sync loop reads it. It is the
+ * NEWEST entry in the mail journal.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0054_auto_unsubscribe_optout";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0055_mailbox_smtp_max_size";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

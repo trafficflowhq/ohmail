@@ -32,8 +32,9 @@ export interface EmailAddress {
  * It rides the `mail_send` mutation and then the send REQUEST (`POST /drafts/:id/send`), base64 so
  * a JSON body can carry it, and it is gone when the send returns: no `attachments` row, no `drafts`
  * column, nowhere. The compose surface reads a picked `File` into `contentBase64` and states the
- * total-size limit (`SEND_ATTACHMENT_MAX_TOTAL_BYTES` on the server) up front. This is the SEND
- * path only — a draft is not given attachment bytes, because nothing on the account stores them.
+ * total-size limit up front — the SMALLER of what the host carrying the request can take and what
+ * the sending mailbox's own submission server announced it will accept. This is the SEND path only
+ * — a draft is not given attachment bytes, because nothing on the account stores them.
  */
 export interface ComposeAttachment {
   filename: string;

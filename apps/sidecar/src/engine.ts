@@ -420,6 +420,19 @@ function localServices(
     // exactly the divergence the one-pipeline rule forbids on the receive side, for the same reason.
     sends: sendService,
     sendAdapter: openSendAdapter,
+    // NO PLATFORM CEILING ON ATTACHMENT BYTES, and that is a fact about this host rather than a
+    // preference. The hosted API runs behind a serverless request-body limit, and the 3 MB
+    // constant in `SendService` is that limit expressed in raw bytes — reasoned entirely from a
+    // deployment this process is not. Here the compose form, this handler and the SMTP dial are
+    // one process: there is no request body anywhere between them, so the only ceiling that
+    // exists is the one the user's own submission server announced
+    // (`mailboxes.smtp_max_size_bytes`, mail 0055), which `SendService` applies.
+    //
+    // `null` is a DECLARATION and not an absence — an install that said nothing would get the
+    // hosted constant, which is the stricter branch and the right default for a host that has
+    // not been read. Until a local install's server has been probed the column is NULL and this
+    // still resolves to 3 MB, so the loose direction is unreachable without a measurement.
+    sendSurfaceMaxTotalBytes: null,
     push: LOCAL_PUSH,
     imapAdmission: LOCAL_IMAP_ADMISSION,
     mailbox: makeMailboxService({ keyProvider, allowance: UNMETERED_MAILBOX_ALLOWANCE }),

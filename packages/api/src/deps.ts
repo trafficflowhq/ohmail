@@ -20,6 +20,9 @@ import type {
 import type {
   DraftPort, OpenSendAdapter, KekEnvIdentity, Logger, OAuthTokenProvider,
 } from "@trafficflow/core/mail";
+/* What a completed SMTP login proved. From the adapter entrypoint rather than the mail barrel
+ * because it belongs to the dial, and `imap-probe.ts` — the only implementor — imports it there. */
+import type { SmtpLoginProof } from "@trafficflow/core/adapters/imap";
 /* The spend gate's PORT, from the root barrel. `@trafficflow/db/cloud` is the half that answers,
  * and a route table must be able to say it may be handed a gate without depending on the ledger. */
 import type { AiCreditGate } from "@trafficflow/db";
@@ -75,7 +78,7 @@ export interface ApiServices {
    */
   smtpVerify?: (
     smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } },
-  ) => Promise<void>;
+  ) => Promise<SmtpLoginProof | void>;
   mailbox: MailboxService;
   rules: RulesService;
   message: MessageService;
@@ -135,6 +138,23 @@ export interface ApiServices {
   // `makeSendAdapter` (decrypt both imap+smtp creds → connected ImapAdapter). Tests
   // inject a fake/GreenMail spy here to count `send` calls + drive `messageInSent`.
   sendAdapter?: OpenSendAdapter;
+  /**
+   * THIS HOST'S PLATFORM CEILING on total attachment bytes in one send — or `null` for a host that
+   * has none, which is the local engine.
+   *
+   * It is deps-level rather than a route constant because `routes/drafts.ts` is the ONE send
+   * handler and both hosts mount it. `apps/api-vercel` declares
+   * `SEND_ATTACHMENT_MAX_TOTAL_BYTES` — its serverless body limit expressed in raw bytes.
+   * `apps/sidecar` declares `null`: it runs `SendService` in the same process as its own SMTP
+   * dial, so nothing between the compose form and the wire imposes a request-body limit and the
+   * only ceiling that exists is the mail server's own (`mailboxes.smtp_max_size_bytes`, mail 0055).
+   *
+   * ABSENT is neither of those — it is a host that has not been read, and
+   * {@link SendDeps.surfaceMaxTotalBytes} resolves it to the same 3 MB constant rather than to
+   * "unbounded". Both live hosts declare themselves, so the absent case is what a NEW host gets
+   * before anybody has thought about it, and it is deliberately the strict branch.
+   */
+  sendSurfaceMaxTotalBytes?: number | null;
 }
 
 /**

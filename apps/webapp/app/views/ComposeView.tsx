@@ -61,7 +61,7 @@ import {
   moveRecipient,
   type RecipientMove,
 } from "../shell/RecipientField";
-import { ComposeAttach } from "../components/ComposeAttach";
+import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
 import { worthSaving } from "../shell/compose-autosave";
 import type { ResolvedFrom } from "../shell/compose-from";
@@ -578,6 +578,12 @@ export function ComposeView({
               attachments={fields.attachments ?? []}
               onChange={(next) => onFields({ ...fields, attachments: next })}
               disabled={inFlight}
+              /* THE CEILING COMES FROM THE MAILBOX THIS WILL SEND FROM. `from` is the same
+                 resolution `plan.mutation.mailboxId` was built from, so switching the From
+                 selector moves the stated cap with it — a provider capping submission below the
+                 request pipeline's own limit binds this form to the smaller number, which is the
+                 case that used to end in a bounce after the user had waited for the send. */
+              maxTotalBytes={composeAttachCap(from.maxMessageBytes)}
             />
             {/* THE QUESTION SITS ABOVE THE ROW IT WAS ASKED FROM, at full panel width — the
                 Drafts list's panel, and deliberately not a modal: Compose was moved OUT of a

@@ -214,7 +214,19 @@ export interface ProbeTlsDetail {
  * plaintext AND the same call re-proved the server offers no TLS (IMAP only); it becomes
  * `meta.insecureConsent` on the credential row.
  */
-export interface ProvenEndpoint { host: string; port: number; secure: boolean; insecure?: true }
+export interface ProvenEndpoint {
+  host: string; port: number; secure: boolean; insecure?: true;
+  /**
+   * SMTP ONLY — the server's advertised `SIZE` ceiling in bytes, from the EHLO of the dial that
+   * proved this endpoint, or `null`/absent when it declared none (see `SmtpLoginProof`).
+   *
+   * It rides on the PROVEN endpoint rather than on the verdict because it is a fact about the
+   * combination that answered — a provider can advertise a different ceiling on submission than
+   * on its legacy port — and because the two travel to the same writer. The IMAP probe never
+   * sets it: there is no such announcement in an IMAP capability list.
+   */
+  maxMessageBytes?: number | null;
+}
 
 /**
  * THE THREE ANSWERS, AND WHY "STORE UNVERIFIED" IS ONE OF THEM.
@@ -866,6 +878,12 @@ export class MailboxService {
         address,
         displayName: body.displayName ?? null,
         authKind,
+        // WHAT THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT (mail 0055) — read out of the
+        // EHLO the probe above already ran, so it costs no extra dial. `?? null` covers both "no
+        // SMTP block was submitted" and "the server announced no ceiling", which are the same
+        // answer to the send path's only question and are both read as "fall back to the strict
+        // constant". Never a number this code chose: the column means the SERVER said so.
+        smtpMaxSizeBytes: provenSmtp?.maxMessageBytes ?? null,
       }).returning();
 
       if (body.imap?.pass) {
@@ -1212,6 +1230,11 @@ export class MailboxService {
         set.syncBlockedReason = null;
         set.syncBlockedSince = null;
       }
+      // WHAT THE RE-PROBED SUBMISSION SERVER SAID IT WILL ACCEPT (mail 0055). Written only when
+      // this PATCH actually dialled SMTP — a patch that touches nothing else leaves the recorded
+      // announcement alone — and written as `null` when the dial learned nothing, so a stale
+      // larger number cannot survive a re-probe that no longer proves it.
+      if (mergedSmtp) set.smtpMaxSizeBytes = mergedSmtp.maxMessageBytes;
 
       // The gate BEFORE the write, and before the count it implies — same order as `create`.
       // The row itself is excluded: it does not yet hold the slot it is asking for.
@@ -1240,7 +1263,7 @@ export class MailboxService {
       // PROBED when the host injects `smtpProbe`, like `create` — the same vanity-CNAME shape
       // reaches this door via the edit form. `mergedSmtp` was dialled before this transaction
       // opened; where no prober is injected it is the plain merge, the pre-probe behaviour.
-      if (patch.smtp?.pass) await this.upsertCredOn(tx, ctx, kp, id, "smtp", patch.smtp.pass, mergedSmtp ?? metaOf(patch.smtp));
+      if (patch.smtp?.pass) await this.upsertCredOn(tx, ctx, kp, id, "smtp", patch.smtp.pass, mergedSmtp?.meta ?? metaOf(patch.smtp));
 
       const [row] = await tx.select().from(mailboxes)
         .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId))).limit(1);
@@ -1531,7 +1554,7 @@ export class MailboxService {
    */
   private async probedSmtpMeta(
     ctx: ServiceContext, id: string, patch: UpdateMailboxBody, smtpProbe: SmtpProbe,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<{ meta: Record<string, unknown>; maxMessageBytes: number | null }> {
     const current = await this.ownedRow(ctx, id); // 404 before anything is dialled
 
     const effectiveStatus = patch.status ?? current.status;
@@ -1565,7 +1588,19 @@ export class MailboxService {
       merged.port = verdict.proven.port;
       merged.secure = verdict.proven.secure;
     }
-    return merged;
+    /**
+     * The `SIZE` announcement rides OUT OF THIS METHOD rather than into `merged`, and the split is
+     * deliberate: `merged` becomes the credential row's `meta`, which is per-TRANSPORT config the
+     * dialler reads back, while this is a fact about the mailbox that the SEND path and the mailbox
+     * DTO read. Putting it in `meta` would hide it behind a credential row the send path does not
+     * open.
+     *
+     * `null` when the re-probe learned nothing, and it OVERWRITES a previously stored number rather
+     * than leaving it — a server that has stopped announcing a ceiling, or that answered on a
+     * different port, has not silently kept yesterday's. Falling back to the strict constant is the
+     * safe direction; keeping a stale larger number is not.
+     */
+    return { meta: merged, maxMessageBytes: verdict.proven?.maxMessageBytes ?? null };
   }
 
   private async upsertCredOn(
@@ -1736,6 +1771,12 @@ export class MailboxService {
       // return no row here, but a driver that answered `undefined` must degrade to "nothing
       // outstanding" rather than to `NaN` on somebody's strip.
       pendingMoves: pending?.n ?? 0,
+      // WHAT THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT (mail 0055). UNCONDITIONAL, for
+      // the reason the two lines above are: it is meaningful in every lifecycle state, and it is
+      // read by the compose surface rather than by any error copy. `null` is "not known" — no
+      // announcement, or never probed — and the client resolves that to the product constant, the
+      // same strict fallback `effectiveAttachmentCap` applies on the send itself.
+      smtpMaxSizeBytes: m.smtpMaxSizeBytes ?? null,
       /* SPREAD, not `messageCount: messageCount`. The key must be genuinely ABSENT when nobody
          asked, because absent and `0` are different answers here and a client tells them apart
          with a `typeof` guard. `JSON.stringify` would drop an explicitly-undefined property on

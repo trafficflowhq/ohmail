@@ -199,7 +199,8 @@ export {
 } from "./drafting-service.js";
 export {
   SendService, sendService, SEND_STALE_AFTER_MS,
-  type SendDeps, type SendResult,
+  SEND_ATTACHMENT_MAX_TOTAL_BYTES, effectiveAttachmentCap,
+  type SendDeps, type SendResult, type SendAttachment,
 } from "./send-service.js";
 export {
   WorkflowsService, workflowsService,
