@@ -531,6 +531,55 @@ describe("the Rust side", () => {
   });
 
   /**
+   * THE TWO HALVES OF THE NAMED-PLACE TABLE SAY THE SAME THING.
+   *
+   * `open_link` is safe because the window names a KEY and the SHELL owns the addresses. That
+   * splits one list across two languages, and the two ways it can drift are both invisible to the
+   * checks that exist:
+   *
+   *  · a key in `WEB_PLACES` with no row in `LINKS` compiles on both sides and is a button that
+   *    does nothing — `open_link` answers "not a place this app opens" and the caller shows its
+   *    fallback sentence about a browser that would not open, which is a wrong explanation;
+   *  · `const LINKS: [(&str, &str); N]` with the wrong N is a Rust compile error, and this repo
+   *    has no Rust toolchain outside CI — so it would be found by a release build rather than by
+   *    the person who added the row.
+   *
+   * `engine_tests.rs` asserts what the table MEANS (ours, TLS, no query it did not choose); this
+   * asserts that the table and the window agree on what is in it. Source-level for the reason the
+   * command census above is: the wiring between two languages has no single place to run.
+   */
+  it("every place the window can name has a row in the shell's link table", () => {
+    const engine = read("src-tauri/src/engine.rs");
+    const native = read("src/native.ts");
+
+    const places = [
+      ...(/export const WEB_PLACES = \[([\s\S]*?)\] as const;/.exec(native)?.[1] ?? "")
+        .matchAll(/"([a-z-]+)"/g),
+    ].map((m) => m[1]!);
+    const table = /const LINKS: \[\(&str, &str\); (\d+)\] = \[([\s\S]*?)\n\];/.exec(engine);
+    expect(table, "the LINKS declaration has stopped matching — this check is looking at nothing")
+      .not.toBeNull();
+    const rows = [...table![2]!.matchAll(/\(\s*"([a-z-]+)",\s*"([^"]+)"\)/g)].map((m) => ({
+      key: m[1]!,
+      url: m[2]!,
+    }));
+
+    // The harness looked at something. Both sides derive from source, and both derivations are
+    // empty-safe — two empty lists agree with each other.
+    expect(places.length).toBeGreaterThan(4);
+    expect(rows.length).toBe(places.length);
+    expect(rows.map((r) => r.key).sort()).toEqual([...places].sort());
+
+    // The declared array length IS the number of rows. Wrong here, and the Rust half does not
+    // compile — which nothing local would tell whoever wrote it.
+    expect(Number(table![1]), "LINKS declares a length its rows do not fill").toBe(rows.length);
+
+    // And the window still names no address itself: that is the claim the artifact scan rests on.
+    expect(native).not.toMatch(/https?:\/\//);
+    for (const r of rows) expect(r.url.startsWith("https://ohmail.app/"), r.key).toBe(true);
+  });
+
+  /**
    * THE KEY AN EARLIER VERSION STORED IS COPIED, NEVER MOVED.
    *
    * A machine that has run the previous macOS client already has this install's key, under that

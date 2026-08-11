@@ -84,6 +84,15 @@ const OPEN_COMMAND = "open_link";
  */
 export const WEB_PLACES = [
   "account", "security", "billing",
+  // `mailboxes` is the hosted door's mailbox administration — connecting one, rotating its
+  // password, disconnecting it. It is here for a reason the shell can state precisely rather
+  // than as a shrug: those three routes on the hosted account are step-up gated (a second factor
+  // asserted within the last few minutes), and a desktop install's session is stamped with one
+  // exactly once, when the code was claimed. Nothing this app can do re-asserts a factor — it
+  // holds no password, no authenticator secret, and a passkey ceremony needs a real browser
+  // origin this window does not have. So the honest surface is a read-only list and a way out to
+  // the browser, and this key is the way out.
+  "mailboxes",
   // `link-desktop` is the odd one and worth naming: every other place here administers an
   // account this app is already serving, and this one is opened BEFORE there is a session — it
   // is the browser half of signing in, where the page mints a one-use code the person retypes

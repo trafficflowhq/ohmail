@@ -1809,11 +1809,25 @@ fn a_local_child_still_inherits_what_the_environment_says() {
 /// unknown key has to be a refusal rather than a fallback.
 #[test]
 fn the_browser_can_only_be_sent_where_this_table_says() {
+    // The queries this table is allowed to carry, written out. It used to be "none at all", which
+    // was the right rule right up until one destination needed to name a Settings pane — and the
+    // property that rule was standing in for is not "no query", it is "no query anything outside
+    // this file could have shaped". So the ban stays, with the admitted values named: a new entry
+    // that invents a query still fails here, and so does an existing one that grows a parameter.
+    const ALLOWED_QUERIES: [&str; 1] = ["settings=mailboxes"];
     for (key, url) in LINKS {
         assert_eq!(link_for(key), Some(url));
-        // Every destination is ours, over TLS, and carries no query a caller could have shaped.
+        // Every destination is ours, over TLS.
         assert!(url.starts_with("https://ohmail.app/"), "{key} points at {url}");
-        assert!(!url.contains('?'), "{key} carries a query string");
+        // The fragment comes off first: `#/settings` is a route, not a parameter, and splitting on
+        // '?' without it would read the fragment as part of the query and never match.
+        let before_hash = url.split_once('#').map_or(url, |(head, _)| head);
+        if let Some((_, query)) = before_hash.split_once('?') {
+            assert!(
+                ALLOWED_QUERIES.contains(&query),
+                "{key} carries the query {query}, which this table does not admit"
+            );
+        }
     }
     assert_eq!(link_for("https://elsewhere.test"), None);
     assert_eq!(link_for(""), None);
