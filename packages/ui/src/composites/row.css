@@ -31,40 +31,31 @@
 .row .prev{font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
 .row .badges{display:inline-flex;gap:6px;margin-left:7px;vertical-align:1px}
 
-/* THREAD LEAD — the conversation's faces where one sender's circle stands.
- *
- * THE SLOT IS EXACTLY ONE AVATAR WIDE, ALWAYS, and that is the whole constraint this block is
- * built around. A thread row and a plain row sit next to each other in the same list, so the
- * lead is what decides where BOTH rows' text begins: a stack that grew with the count would put
- * a conversation's sender line 8–20px right of its neighbours' — visible as a ragged left edge
- * down the list, and worse as rows fold and unfold while mail arrives. So the circles get
- * SMALLER as they get MORE, and the total stays 30px:
- *
- *   two people    22px each, stepping 8px    →  22 + 8      = 30
- *   three people  20px each, stepping 5px    →  20 + 5 + 5  = 30
- *
- * (`:first-child:nth-last-child(n)` is "this element is the first of exactly n"; the `~ .av`
- * companion carries the rule to the rest of the stack. Counting in the selector rather than in
- * a class keeps `MessageRow` from having to name what it just rendered.)
- *
- * Each circle wears a ring in the ROW's colour, not its own, so it reads as lifted clear of the
- * one behind it: `--edge` follows the row through hover and selection, defaulting to the panel.
- * That ring replaces `.av`'s `--lift-0` rather than joining it — one shadow, and at this size a
- * drop shadow under a 5px sliver is mud.
- *
- * No transition: nothing here moves. A face joining a conversation is a re-render of the list,
- * not an animation, so there is nothing for `prefers-reduced-motion` to hold back. */
-.row .av-stack{display:flex;flex:none;align-items:center;width:30px;height:30px;margin-top:1px;
-  --edge:var(--panel)}
-.row .av-stack .av{margin-top:0;font-weight:600;box-shadow:0 0 0 1.5px var(--edge)}
-.row .av-stack .av:first-child:nth-last-child(2),
-.row .av-stack .av:first-child:nth-last-child(2) ~ .av{width:22px;height:22px;font-size:9.5px}
-.row .av-stack .av:first-child:nth-last-child(2) ~ .av{margin-left:-14px}
-.row .av-stack .av:first-child:nth-last-child(3),
-.row .av-stack .av:first-child:nth-last-child(3) ~ .av{width:20px;height:20px;font-size:9px}
-.row .av-stack .av:first-child:nth-last-child(3) ~ .av{margin-left:-15px}
-.row:hover .av-stack{--edge:var(--tint)}
-.row.sel .av-stack{--edge:var(--float)}
+/* THREAD PARTICIPANT CIRCLES — the conversation's faces in the subject line's badge strip,
+   standing immediately after its `⤷ N` count. They are NOT the row's lead: the lead is one
+   sender's full-size circle on every row, because it is what decides where a row's text begins,
+   and a stack that grew with the count would put a conversation's sender line right of its
+   singleton neighbours' — a ragged left edge down the list that moves as rows fold and unfold
+   while mail arrives. Here, a face joining a conversation costs the subject 12px and nothing
+   else shifts.
+
+   ONE SIZE, WHATEVER THE COUNT — 18px, stepping 12px. The stack overlaps by a fixed negative
+   margin, so two or three people cost nearly the width of one-and-a-half rather than growing
+   linearly. Reduced from the 26px `.s` avatar: a mark on a subject line, not a portrait.
+
+   Each circle wears a ring in the ROW's colour, not its own, so it reads as separate from the one
+   behind it — `--edge` follows the row through hover and selection, defaulting to the panel. That
+   ring replaces `.av`'s `--lift-0` rather than joining it: one shadow, and at this size a drop
+   shadow under a 6px sliver is mud.
+
+   No transition: nothing here moves. A face joining a conversation is a re-render of the list,
+   not an animation, so there is nothing for `prefers-reduced-motion` to hold back. */
+.row .thread-circles{display:inline-flex;align-items:center;vertical-align:-4px;--edge:var(--panel)}
+.row .thread-circles .av.s{width:18px;height:18px;font-size:8.5px;font-weight:600;
+  margin-left:-6px;box-shadow:0 0 0 1.5px var(--edge)}
+.row .thread-circles .av.s:first-child{margin-left:0}
+.row:hover .thread-circles{--edge:var(--tint)}
+.row.sel .thread-circles{--edge:var(--float)}
 
 /* screener rows — standard anatomy + initial-avatar + suggestion chips */
 .row.srow{display:flex;gap:11px;align-items:flex-start}
