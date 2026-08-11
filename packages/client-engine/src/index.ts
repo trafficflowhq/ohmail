@@ -67,6 +67,7 @@ export {
   DEFAULT_DORMANCY_DAYS,
   consentIndex,
   consentPartition,
+  cutlineFor,
   decidedDestination,
   domainOfAddress,
   historyView,

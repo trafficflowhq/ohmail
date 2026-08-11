@@ -896,13 +896,26 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     //
     // The web path is untouched. A browser tab with no API base never reaches this line:
     // `createEngine` throws `EngineUnarmedError` rather than serve fixtures to a live account.
+    //
+    // ── THE BASELINE RIDES THE SAME ANSWER AS THE WINDOW ─────────────────────────────────
+    //
+    // `consent.screeningBaselineAt` comes from the same `GET /consent` body as
+    // `consent.dormancyDays`, so the two halves of the cutoff — `(baseline ?? now) - days` —
+    // cannot be measured from different fetches. It is null on the desktop and on every account
+    // that has never decided anything, which selects the pre-0056 sliding window rather than a
+    // guess; see `consent-state.ts`.
     () =>
       demo || !(consent.known || consent.standalone)
         ? null
-        : consentPartition(reader, { now, dormancyDays: consent.dormancyDays, ownAddresses }),
+        : consentPartition(reader, {
+            now,
+            dormancyDays: consent.dormancyDays,
+            baselineAt: consent.screeningBaselineAt,
+            ownAddresses,
+          }),
     [
       demo, consent.known, consent.standalone, reader, version, now, consent.dormancyDays,
-      ownAddresses,
+      consent.screeningBaselineAt, ownAddresses,
     ],
   );
   /**

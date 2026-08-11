@@ -348,7 +348,15 @@ export class MoveVerifyError extends Error {
  */
 export const DEFAULT_FETCH_RAW_MAX_BYTES = 8 * 1024 * 1024;
 
-interface InternalCreate { folder: string; uidValidity: bigint; uid: number; raw: Buffer; seen: boolean; messageId: string | null; }
+/**
+ * `internalDate` is the server's own receive time, carried through to {@link Change.internalDate}
+ * so the pipeline's screening cutoff has a date the SENDER did not choose. Optional because a
+ * server may answer the fetch without one; absent reaches the pipeline as absent and it falls back
+ * to the header date. It is deliberately NOT folded into `arrivalKey`'s ordering value on the way
+ * through — that one takes the EARLIER of the two dates, which is right for sorting and wrong for
+ * deciding whether a message is genuinely old.
+ */
+interface InternalCreate { folder: string; uidValidity: bigint; uid: number; raw: Buffer; seen: boolean; messageId: string | null; internalDate?: Date; }
 interface InternalDelete { folder: string; uidValidity: bigint; uid: number; messageId: string | null; }
 
 /** Pair a vanished message with a re-appeared one sharing the same canonical Message-ID → a single MOVE. */
@@ -970,6 +978,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         raw: (m.source ?? Buffer.alloc(0)) as Buffer,
         seen: m.flags?.has("\\Seen") ?? false,
         messageId: normalizeMessageId(m.envelope?.messageId ?? null),
+        // The fetch already asks for `internalDate` (it is in the field list above, for the
+        // ordering key); this carries it to the pipeline instead of discarding it. Guarded on the
+        // instance and on validity because a server may answer without one, or with garbage — and
+        // an invalid Date reaching the cutoff comparison would answer `false` for every message,
+        // silently switching the backlog rule off for that whole page.
+        ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
+          ? { internalDate: m.internalDate }
+          : {}),
       });
       /**
        * NOT `dates.set(...)` HERE, THOUGH THE BODY FETCH CARRIES BOTH FIELDS.
@@ -1440,6 +1456,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         locator: { folder: c.folder, ref: makeRef(c.uidValidity, c.uid) },
         raw: c.raw,
         seen: c.seen,
+        // The server's receive time, for the pipeline's screening cutoff. Only on pure creates:
+        // a correlated MOVE is the user filing an existing message and never reaches the gate.
+        ...(c.internalDate ? { internalDate: c.internalDate } : {}),
         ...(sentFolder !== null && c.folder === sentFolder ? { ownAuthored: true } : {}),
       })),
       moves: correlated.moves,
@@ -1514,6 +1533,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             locator: { folder, ref: makeRef(curUidValidity, m.uid) },
             raw: (m.source ?? Buffer.alloc(0)) as Buffer,
             seen: m.flags?.has("\\Seen") ?? false,
+            // Same stamp, same guard as `changesSince` — a re-read must reach the gate with the
+            // same age evidence the first read did, or a retry would route differently.
+            ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
+              ? { internalDate: m.internalDate }
+              : {}),
             // The SAME stamp `changesSince` applies, from the same resolution. Omitting it would
             // route a retried Sent message through `new` instead of `own_copy` and file the user's
             // own reply as an inbound message.

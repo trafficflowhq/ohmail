@@ -1701,6 +1701,37 @@ export const accountSettings = pgTable("account_settings", {
    */
   screenerAutoApplyAt: timestamp("screener_auto_apply_at", { withTimezone: true }),
   /**
+   * WHEN THIS ACCOUNT FINISHED SCREENING ITS BACKLOG (mail 0056) — the instant the dormancy
+   * window is measured back from, instead of from `now()`.
+   *
+   * The cutline reads `(screeningBaselineAt ?? now()) - dormancyDays`. With a baseline the cutoff
+   * STOPS SLIDING, which buys two properties the sliding window could not express:
+   *
+   *   · mail older than the cutoff can never make an undecided sender active — **not even
+   *     unread**. That is the churn this column exists for: old unread mail arrives in the mirror
+   *     constantly (a backfill reaching further back, a folder read for the first time, a `\Seen`
+   *     flag adopted late), and under the sliding window every such arrival resurrected a sender
+   *     the account had already worked past, then dropped them again when the read-state synced;
+   *   · a stranger who wrote AFTER the baseline never goes dormant — their mail is newer than the
+   *     cutoff for ever — so they wait until somebody decides instead of ageing quietly out of
+   *     the queue unanswered.
+   *
+   * **NULL is exactly the pre-0056 behaviour at every layer**, and this is the one property to
+   * preserve when editing any reader: cutoff = `now() - dormancyDays`, unread outranks age, and
+   * the router holds any unruled sender's mail at the gate whatever its date. The narrowing is
+   * gated on the baseline being PRESENT, never applied unconditionally through a `?? now()`
+   * default — those are different programs, and the second one empties a live account's Screener
+   * queue on deploy.
+   *
+   * Unlike every other timestamp on this row it is read as an INSTANT and not as `IS NOT NULL`:
+   * the value is what the arithmetic uses. Written once, by the account's first screener decide,
+   * in that decide's own transaction and only while still NULL — so two decides racing produce
+   * one baseline. Never recomputed, and deliberately NOT derived from `min(rules.created_at)`,
+   * because rules are deletable and a baseline that can travel backwards would re-open the queue
+   * every time somebody tidies their rules.
+   */
+  screeningBaselineAt: timestamp("screening_baseline_at", { withTimezone: true }),
+  /**
    * REMOTE IMAGES — the OPT-OUT, and the direction is the whole design (mail 0048).
    *
    * NULL (and no row) = the product default: a message's remote images load automatically,

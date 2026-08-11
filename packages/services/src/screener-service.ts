@@ -1,9 +1,10 @@
-import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import {
   messages,
   folderState,
   flagState,
   contacts,
+  accountSettings,
   rules as rulesTbl,
   routingDecisions,
   claimIdempotencyKey,
@@ -752,6 +753,48 @@ export class ScreenerReadService {
         await tx.insert(contacts).values({ accountId: ctx.accountId, address })
           .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
       }
+
+      /**
+       * ── THE SCREENING BASELINE, STAMPED ON THE FIRST DECIDE AND NEVER AGAIN (mail 0056) ───
+       *
+       * The instant the cutline measures its window back from. Until it exists the window slides
+       * off `now()` and the unread test ignores age entirely, so any old unread mail entering the
+       * mirror — a backfill reaching further back, a folder read for the first time, a `\Seen`
+       * flag adopted late — resurrects a sender the account had already worked past, and the
+       * queue never stays empty. `client-engine/src/consent-cutline.ts` carries the argument.
+       *
+       * WHY HERE. This transaction is the account's decision that a sender is answered for; the
+       * FIRST one is the account saying the queue is a thing it is now working through. Nothing
+       * else in the product is that event: `seed_confirmed_at` is answered before any mail has
+       * been screened, and a login is not a decision.
+       *
+       * WHY `setWhere: isNull(...)` AND NOT AN OVERWRITE. The baseline is established once. A
+       * later decide is the account USING a queue that already has a baseline, and re-stamping
+       * would drag the cutoff forward every time somebody presses a button — which drops every
+       * sender whose newest mail just fell behind the new cutoff out of the queue, silently, as a
+       * side effect of answering an unrelated one.
+       *
+       * AND IT IS WHAT MAKES THE RACE SAFE. Two decides on one account commit concurrently — two
+       * devices, or a client firing a batch. Both reach this upsert, Postgres serialises them on
+       * the primary key, and the loser re-evaluates `screening_baseline_at IS NULL` against the
+       * WINNER's committed row and skips. One baseline, and it is the earlier one. A
+       * read-then-write here would produce two different answers under exactly that interleaving
+       * and PGlite would never show it — `consent-baseline.concurrency.pg.test.ts` runs it on
+       * real Postgres for the reason `consent-auto-suggest.concurrency.pg.test.ts` states.
+       *
+       * Column-scoped, like every other writer on this row: only `screening_baseline_at` and
+       * `updated_at` are touched, so a concurrent `confirmSeed` or `setDormancyDays` is not
+       * clobbered by a stale snapshot.
+       */
+      await tx.insert(accountSettings).values({
+        accountId: ctx.accountId,
+        screeningBaselineAt: ctx.now(),
+        updatedAt: ctx.now(),
+      }).onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { screeningBaselineAt: ctx.now(), updatedAt: ctx.now() },
+        setWhere: isNull(accountSettings.screeningBaselineAt),
+      });
 
       const [rule] = await tx.insert(rulesTbl).values({
         accountId: ctx.accountId,

@@ -288,6 +288,61 @@ export interface PlanDeps {
    * residue; it never itself moves a message. Absent ⇒ omitted from the payload.
    */
   ohboxBar?: string;
+  /**
+   * THE SCREENING CUTOFF — mail that arrived before this instant keeps its arrival folder instead
+   * of being held at the gate. ABSENT ⇒ no cutoff ⇒ byte-identical routing to before mail 0056.
+   *
+   * ── THE DEFECT ────────────────────────────────────────────────────────────────────────────
+   *
+   * The router has no notion of age. `evaluateRules` answers `ohmail/Screener` for ANY sender with
+   * no rule, and this function applies it, so every message from an unruled sender is physically
+   * moved to the Screener folder whatever its date. On a fresh mailbox that is exactly right — it
+   * IS the consent gate. On a backfill it is not: a pass reaching further into the mailbox delivers
+   * years-old mail from senders the reader has long since stopped hearing from, and each one is
+   * moved to the gate and queued for a decision nobody is going to make. On a mailbox with years of
+   * history that is not a trickle: the backfill walks newest-first, so after the first pass
+   * essentially everything it delivers predates the window, and the gate files all of it — one
+   * physical IMAP move per message, into a queue the reader is expected to empty by hand.
+   *
+   * ── WHAT THE CUTOFF DOES, AND THE THREE THINGS IT MUST NOT ────────────────────────────────
+   *
+   * Only `source === "screener"` verdicts are subordinated — the gate's own fall-through for a
+   * sender nobody has ruled on. Specifically NOT:
+   *
+   *  · `source === "rule"`. A rule is the USER's decision and outranks everything here, in both
+   *    directions: an old message from a sender they screened OUT still goes to Screened, and an
+   *    old message from a sender they admitted still goes to the Ohbox. Subordinating a rule
+   *    verdict would let a date decide something a person already decided.
+   *  · the auth-fail demotion, which also produces `source === "screener"` — and this is the one
+   *    place the source test is not sufficient on its own. That branch fires on a message whose
+   *    `Authentication-Results` FAILED, which is a statement about the message and not about the
+   *    sender being unknown, so it is checked separately below and never subordinated.
+   *  · sensitivity and the corroborated-bounce arm, both of which resolve BEFORE this and both of
+   *    which promote INTO the Ohbox. Nothing here re-demotes them.
+   *
+   * The message keeps `change.locator.folder` — where the mail server already had it. Not the
+   * Ohbox, not a heuristic destination: the whole claim is "leave the backlog alone", and picking
+   * a folder for it would be a placement nobody asked for. On the ordinary path that is the INBOX
+   * for INBOX mail and the user's own folder for filed mail.
+   *
+   * ── HOW THE AGE IS MEASURED ───────────────────────────────────────────────────────────────
+   *
+   * `change.internalDate` when the adapter carries it, the parsed `Date:` header otherwise, and
+   * NEITHER present ⇒ NOT old ⇒ the gate's verdict stands. That last case is the one to keep: a
+   * message with no date at all is unknown, not ancient, and the safe answer for an unknown is the
+   * consent gate. See {@link Change.internalDate} for why the header is a fallback rather than an
+   * equal, and why the two are not combined the way `arrivalKey` combines them.
+   *
+   * ── WHY A RESOLVED INSTANT AND NOT `{ baselineAt, dormancyDays }` ─────────────────────────
+   *
+   * The same discipline as `trustedAuthservIds` and `ohboxPolicy` above: the account's settings
+   * are resolved ONCE per cycle by the worker (`index.ts#screeningFor`) and threaded in. Passing
+   * the two components would put the arithmetic — and therefore a second chance to get it wrong —
+   * inside the engine, where it would drift from the cutline's copy. ABSENT is the only state that
+   * means "no cutoff", and it is what a NULL `screening_baseline_at`, a settings read that failed,
+   * and every existing caller and test all produce.
+   */
+  screeningCutoff?: Date;
 }
 
 export interface CommitDeps {
@@ -625,9 +680,41 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     /** A corroborated bounce the account has expressed no opinion about. */
     const admitBounce = ownBounce && decision.matchedRuleId === null
       && (!deniedByConsent || decision.source === "screener");
+
+    /* ── THE GATE DOES NOT REACH BACK PAST THE SCREENING BASELINE ────────────────────────────
+     *
+     * See {@link PlanDeps.screeningCutoff} for the defect and the boundaries. Three conditions,
+     * each of which is a refusal to over-reach, and the third is the one that is easy to get
+     * wrong:
+     *
+     *  1. a cutoff was resolved at all. Absent ⇒ this whole block is inert and routing is
+     *     byte-identical to before mail 0056, which is what every existing caller and test gets;
+     *  2. the verdict is the GATE's own — `source === "screener"`. A `rule` verdict is the user's
+     *     decision and is never subordinated, in either direction;
+     *  3. the message did not FAIL authentication. `evaluateRules` returns the same `screener`
+     *     verdict for two different reasons — "nobody has ruled on this sender" and "this
+     *     message's `Authentication-Results` said fail" — and only the first is a backlog
+     *     question. The second is a statement about THIS message that an old date must not
+     *     excuse; without this term, `Date: 2019` plus a failed DKIM would be a way past the gate.
+     *     Read off `authVerdict`, which is the input that branch is computed from, rather than
+     *     re-derived from the decision — the decision cannot tell the two apart.
+     *
+     * The `\Seen` state is deliberately NOT consulted. Whether the backlog has been read is a fact
+     * about the user's habits, not about whether ohmail should re-file it, and the unread half of
+     * exactly that conflation is the churn the cutline half of this slice removes.
+     */
+    const arrivedAt = change.internalDate ?? normalized.date ?? null;
+    const preBaselineBacklog = deps.screeningCutoff !== undefined
+      && decision.source === "screener"
+      && authVerdict !== "fail"
+      && arrivedAt !== null
+      && arrivedAt.getTime() < deps.screeningCutoff.getTime();
+
     let desired: string = (sensitivity.sensitive && !deniedByConsent) || admitBounce
       ? "INBOX"
-      : decision.destination ?? change.locator.folder;
+      : preBaselineBacklog
+        ? change.locator.folder
+        : decision.destination ?? change.locator.folder;
 
     let ai: AiPlan | undefined;
     // The ledger identity of ONE classification of THIS mail. Computing it writes nothing —

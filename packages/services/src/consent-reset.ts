@@ -142,11 +142,36 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
       .where(and(eq(learningSignals.accountId, ctx.accountId), eq(learningSignals.kind, "screener")))
       .returning({ id: learningSignals.id });
 
+    /**
+     * ── AND THE SCREENING BASELINE GOES BACK TO NULL (mail 0056) ──────────────────────────
+     *
+     * Not housekeeping — without this line the reset is a NO-OP for the cutline, which is most of
+     * what the user asked for.
+     *
+     * The baseline is the instant the dormancy window is measured back from, and once it is set
+     * the cutoff stops sliding: mail older than `baseline - dormancy_days` can no longer make an
+     * undecided sender active, so it presents in History rather than in the queue. Every rule
+     * above has just been deleted, so every sender in the mailbox is undecided again — and with a
+     * baseline still standing from the previous era, all of the mail that predates it would go
+     * straight back to History. The user presses "start over" and the Screener comes back empty.
+     *
+     * NULL is right rather than `ctx.now()` for the same reason the column is not stamped at
+     * signup: a baseline asserts that this account has worked through its backlog, and an account
+     * that just discarded every decision it had made has not. The next decide establishes the new
+     * one, which is exactly the event that established the old one.
+     *
+     * Unlike its neighbours here this field is written by a DIFFERENT writer in normal operation
+     * (`ScreenerService.decide`, guarded on it still being NULL), so the two must not fight: this
+     * runs inside the reset transaction, which has already deleted the rules a concurrent decide
+     * would have been writing beside, and the decide's own guard means the loser of that race
+     * simply does not re-stamp.
+     */
     await tx.insert(accountSettings).values({
       accountId: ctx.accountId,
       seedConfirmedAt: null,
       seedConfirmedCount: 0,
       seedDeclinedCount: 0,
+      screeningBaselineAt: null,
       screeningResetAt: ctx.now(),
     }).onConflictDoUpdate({
       target: accountSettings.accountId,
@@ -154,6 +179,7 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
         seedConfirmedAt: null,
         seedConfirmedCount: 0,
         seedDeclinedCount: 0,
+        screeningBaselineAt: null,
         screeningResetAt: ctx.now(),
         updatedAt: ctx.now(),
       },

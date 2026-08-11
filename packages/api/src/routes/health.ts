@@ -638,6 +638,21 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // where the value is read) and no INDEX marker: the column is read off a row already fetched by
   // primary key and is never a predicate.
   ["mailboxes", "smtp_max_size_bytes"],
+  // mail 0056 — `account_settings.screening_baseline_at`, the instant the dormancy window is
+  // measured back from. It earns a marker on the whole-row-select rule the four flags above it
+  // follow: `consentSettings` does `select().from(account_settings)`, so an API ahead of the
+  // migration answers Postgres 42703 on `GET /consent` — the route the shell fetches at boot to
+  // learn the window it partitions the mirror with. Without a marker that is a client that renders
+  // its Screener over the raw mirror and cannot say why.
+  //
+  // The WORKER reads the same column to resolve the router's cutoff, and a worker ahead of the
+  // migration degrades to "no cutoff" (`screeningFor` catches the read and returns the lenient
+  // value without caching it), which is the pre-0056 routing — the safe direction, and the same
+  // absent-config-selects-safe rule `ohbox_policy` states.
+  //
+  // No CHECK marker: any instant is a legal baseline (0040's rule). No INDEX marker: read off a
+  // row already fetched by primary key, never a predicate.
+  ["account_settings", "screening_baseline_at"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1083,10 +1098,22 @@ export const MAIL_EXPECTED_MARKERS =
  * happens before the reservation commits, so nothing is stranded out of `draft` — but it is still a
  * user who cannot send, which is why the 503 in front of it is worth more than the diagnosis
  * afterwards. No CHECK marker (a size closes no set) and no INDEX marker (read off a row fetched by
- * primary key, never a predicate); no worker half — nothing in the sync loop reads it. It is the
+ * primary key, never a predicate); no worker half — nothing in the sync loop reads it.
+ *
+ * `0056_screening_baseline` is probed ONCE, by `account_settings.screening_baseline_at` — the
+ * sixth `account_settings` marker, on the whole-row-select argument all five before it make
+ * (`consentSettings` does `select().from(account_settings)`). What distinguishes it is that it has
+ * a WORKER half as well as an API one, and the two fail in opposite directions. The API's failure
+ * is loud: `GET /consent` is the boot fetch the shell partitions its mirror from, so a 42703 there
+ * is a client drawing the Screener over the raw mirror. The worker's is silent by construction —
+ * `screeningFor` catches the read, logs, and returns the lenient value WITHOUT caching it, so a
+ * worker ahead of the migration routes exactly as it did before this column existed. That is the
+ * intended degradation and not a reason to skip the marker: the 503 in front of the API is what
+ * makes the window visible instead of merely survivable. No CHECK marker (any instant is a legal
+ * baseline), no INDEX marker (read off a row fetched by primary key, never a predicate). It is the
  * NEWEST entry in the mail journal.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0055_mailbox_smtp_max_size";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0056_screening_baseline";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

@@ -33,13 +33,21 @@ import type { EngineMessage, Folder, RuleDTO } from "./types.js";
    Mail anywhere else — Reads, Receipts, Screened, Quarantine — is already where somebody put
    it. An explicit placement is itself an answer, so it is never second-guessed here.
 
-   ── HISTORY HAS NO BADGE, AND THAT IS A PROPERTY, NOT A STYLE CHOICE ──────────────────────
+   ── HISTORY HAS NO BADGE, AND WITH A BASELINE THAT IS A PRODUCT DECISION ──────────────────
 
-   A sender with ANY unread mail is active, whatever its age. So a message can only reach
-   History if it has been read. History therefore cannot contain anything that wants attention,
-   which is why it carries no count anywhere in the interface. That is a consequence of
-   {@link senderActivity}, not a decision the nav bar is free to revisit — if the definition of
-   "active" ever stops including unread, the badge question reopens with it.
+   Without a baseline, a sender with ANY unread mail is active whatever its age, so a message
+   can only reach History if it has been read — History cannot contain anything that wants
+   attention, and the absence of a count follows from {@link senderActivity} rather than from a
+   choice the nav bar made.
+
+   **Under a baseline that derivation no longer holds, and the conclusion is kept deliberately.**
+   Pre-cutoff mail cannot make a sender active even unread (see {@link ConsentOptions.baselineAt}),
+   so History can hold unread mail: the account's old backlog, from senders nobody ever answered
+   for. Badging it would be a permanent unread count over mail the baseline exists to say is
+   finished — the "1,847 unread" every migrated mailbox arrives with, which is the state this
+   product is against. So History stays uncounted, now because that is what it is FOR rather than
+   because it cannot contain anything. Anything genuinely new is post-baseline, and post-baseline
+   undecided senders never reach History at all — they wait in the Screener until decided.
 
    It is called History rather than Archive for two reasons. "Archive" is a verb in every other
    mail client — an action this mail never received — and plenty of mailboxes have a real
@@ -118,6 +126,50 @@ export interface ConsentOptions {
   now?: Date;
   /** Days. Defaults to {@link DEFAULT_DORMANCY_DAYS}. */
   dormancyDays?: number;
+  /**
+   * WHEN THIS ACCOUNT FINISHED SCREENING ITS BACKLOG (`account_settings.screening_baseline_at`,
+   * mail 0056), or `null`/absent for an account that has never decided anything.
+   *
+   * ── THE DEFECT ────────────────────────────────────────────────────────────────────────────
+   *
+   * Without it the cutoff is `now - dormancyDays`, and BOTH halves of {@link senderActivity} move
+   * without anybody doing anything:
+   *
+   *   · the window slides, so a sender leaves the queue because the clock moved;
+   *   · unread outranks age, so any OLD unread mail entering the mirror makes its sender active
+   *     again. Old mail enters the mirror constantly, and that is a property of how a mailbox is
+   *     read rather than an unusual event: the sync walks a mailbox newest-first, so the older mail
+   *     arrives continuously behind it, one folder and one batch at a time, and a `\Seen` flag can
+   *     be adopted well after the message itself. Each such arrival puts a sender the reader had
+   *     already worked past back into "first-time senders waiting"; the read-state then catches up,
+   *     or the window slides, and they disappear again. On a mailbox with years of history the
+   *     overwhelming majority of what a backfill delivers on any given day is older than the
+   *     window, so this is the normal case for that mailbox and not a corner of it.
+   *
+   * ── WHAT A BASELINE CHANGES ───────────────────────────────────────────────────────────────
+   *
+   * The cutoff becomes `baselineAt - dormancyDays` and STOPS MOVING. Two consequences:
+   *
+   *   · pre-cutoff mail can never resurrect a sender, **not even unread**. That mail is the
+   *     backlog the account already worked through;
+   *   · a stranger who wrote AFTER the baseline is newer than the cutoff for ever, so they never
+   *     go dormant and wait until somebody decides. The sliding window could not express that: a
+   *     stranger who wrote once and went quiet used to age out of the queue unanswered.
+   *
+   * ── ABSENT IS EXACTLY THE PRE-0056 BEHAVIOUR, AND IT IS THE DEFAULT ───────────────────────
+   *
+   * `null`/absent ⇒ cutoff `now - dormancyDays` AND unread outranking age ⇒ byte-identical
+   * partitioning to before this field existed. The narrowing in {@link senderActivity} is gated
+   * on the baseline being PRESENT, and writing it instead as an unconditional
+   * `(baselineAt ?? now) - dormancyDays` is a DIFFERENT PROGRAM: it would also stop unread
+   * pre-cutoff mail from making a sender active on accounts that have never decided anything,
+   * which empties a live account's Screener queue on deploy. The `??` form is right for the
+   * cutoff arithmetic and wrong for the unread test, and that asymmetry is the whole care.
+   *
+   * A desktop build has no server to read the column from and passes nothing, which is the same
+   * safe branch — it keeps today's behaviour rather than guessing a baseline.
+   */
+  baselineAt?: Date | string | null;
   /**
    * The account's OWN mailbox addresses. Mail from these is the user writing, not a
    * correspondent writing, so it is never a candidate for a place and never makes anybody
@@ -228,12 +280,51 @@ export function decidedDestination(index: ConsentIndex, address: string): Folder
 }
 
 /**
- * ACTIVE if the sender has any unread mail, or any mail inside the window. DORMANT otherwise.
+ * The instant a message is inside the window ⇒ `null` when it is not a legal time at all.
  *
- * Unread wins regardless of age, and that ordering is what makes History badge-free: anything
- * unread makes its sender active, so nothing unread can be in History. A sender with mail from
- * four years ago that was never opened is active — it is exactly the case where a decision is
- * overdue, not the case where it can be assumed away.
+ * A message with no `Date:` is `null` here and is never "recent"; it cannot make its sender
+ * active on recency, which is the same answer this function gave before the baseline existed.
+ */
+function messageMs(m: EngineMessage): number | null {
+  if (m.date === null) return null;
+  const t = new Date(m.date).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+/** The cutoff both halves of the cutline measure from. See {@link ConsentOptions.baselineAt}. */
+export function cutlineFor(opts: ConsentOptions): { cutoff: number; baselined: boolean } {
+  const now = opts.now ?? new Date();
+  const days = opts.dormancyDays ?? DEFAULT_DORMANCY_DAYS;
+  const raw = opts.baselineAt == null ? null : new Date(opts.baselineAt).getTime();
+  // An unparseable stored value is treated as ABSENT, not as epoch 0: a baseline of 1970 would
+  // make every message post-cutoff and pin every undecided sender in the queue for ever, which is
+  // the loudest possible failure for a value nobody can see. Absent is today's behaviour.
+  const baseline = raw !== null && Number.isFinite(raw) ? raw : null;
+  const from = baseline ?? now.getTime();
+  return { cutoff: from - days * 24 * 60 * 60 * 1000, baselined: baseline !== null };
+}
+
+/**
+ * ACTIVE if the sender has mail worth a decision today. DORMANT otherwise.
+ *
+ * ── WITHOUT A BASELINE (`baselineAt` absent) ──────────────────────────────────────────────
+ *
+ * Any unread mail, or any mail inside `now - dormancyDays`. Unread wins regardless of age: a
+ * sender with mail from four years ago that was never opened is active, because that is exactly
+ * the case where a decision is overdue rather than one that can be assumed away.
+ *
+ * ── WITH A BASELINE ───────────────────────────────────────────────────────────────────────
+ *
+ * The unread term NARROWS to `m.unread && inside the window`, and the window is now fixed at
+ * `baselineAt - dormancyDays`. Pre-cutoff mail therefore cannot make a sender active by any
+ * route, which is the resurrection this exists to stop — see {@link ConsentOptions.baselineAt}
+ * for the measurement.
+ *
+ * **The narrowed unread term is subsumed by the recency term, and that is not dead code being
+ * left in.** `(unread && within) || within` is `within`; the term is written out because it is
+ * the STATEMENT of the rule at the seam where a future editor will reach for it, and because
+ * changing the shape of either half must keep the other visible. What must never happen is the
+ * simplification going the other way — dropping `&& within` — which restores the resurrection.
  *
  * Only mail the product presents is counted. A message in a Sent folder is the user writing,
  * not the sender writing, and counting it would make every correspondent permanently active.
@@ -243,9 +334,7 @@ export function senderActivity(
   opts: ConsentOptions = {},
   own: ReadonlySet<string> = new Set(),
 ): Map<string, SenderActivity> {
-  const now = opts.now ?? new Date();
-  const days = opts.dormancyDays ?? DEFAULT_DORMANCY_DAYS;
-  const cutoff = now.getTime() - days * 24 * 60 * 60 * 1000;
+  const { cutoff, baselined } = cutlineFor(opts);
 
   const out = new Map<string, SenderActivity>();
   for (const m of messages) {
@@ -253,8 +342,12 @@ export function senderActivity(
     const key = senderKey(m.from.address);
     if (own.has(key)) continue;
     if (out.get(key) === "active") continue;
-    const recent = m.date !== null && new Date(m.date).getTime() >= cutoff;
-    out.set(key, m.unread || recent ? "active" : "dormant");
+    const ms = messageMs(m);
+    const recent = ms !== null && ms >= cutoff;
+    // Baselined ⇒ unread only counts inside the window. Absent ⇒ unread outranks age, exactly as
+    // before mail 0056. The gate is on the BASELINE, never on the cutoff — see `ConsentOptions`.
+    const unreadWins = m.unread && (!baselined || recent);
+    out.set(key, unreadWins || recent ? "active" : "dormant");
   }
   return out;
 }

@@ -582,6 +582,8 @@ export async function consentSettings(
   seedConfirmedAt: string | null;
   dormancyDays: number | null;
   screeningResetAt: string | null;
+  /** mail 0056 — the instant the cutline is measured back from. NULL ⇒ measure from `now`. */
+  screeningBaselineAt: string | null;
   autoSuggestAt: string | null;
   blockRemoteImagesAt: string | null;
   blockAutoUnsubscribeAt: string | null;
@@ -594,6 +596,12 @@ export async function consentSettings(
     seedConfirmedAt: row?.seedConfirmedAt ? row.seedConfirmedAt.toISOString() : null,
     dormancyDays: row?.dormancyDays ?? null,
     screeningResetAt: row?.screeningResetAt ? row.screeningResetAt.toISOString() : null,
+    // NULL and an absent row both mean "this account has never decided anything, so measure the
+    // window from now" — the pre-0056 behaviour at every layer. Unlike its neighbours this field
+    // is not a switch: readers use the VALUE, and the only thing null selects is the old
+    // arithmetic. There is deliberately no fallback that invents one, because a baseline nobody
+    // established would re-partition a live mailbox with no user action behind it.
+    screeningBaselineAt: row?.screeningBaselineAt ? row.screeningBaselineAt.toISOString() : null,
     // NULL is OFF, and so is an absent row. This `?? null` is the whole default: there is no
     // branch anywhere that turns a missing value into ON, because ON authorises spending.
     autoSuggestAt: row?.autoSuggestAt ? row.autoSuggestAt.toISOString() : null,

@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { DEFAULT_DORMANCY_DAYS } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -18,13 +19,26 @@ import type { ServiceContext } from "./context.js";
    itself. A rule pointing AT the Screener says "keep holding this one", which is the absence of
    a decision written down, and reading it as one would exempt that sender from the cutline for
    ever.
+
+   ── AND WHAT THE WINDOW IS MEASURED FROM ─────────────────────────────────────────────────
+
+   `now`, until the account has a `screening_baseline_at` (mail 0056); that instant afterwards.
+   See {@link CutlineOptions.baselineAt}, and the client's `ConsentOptions.baselineAt` for the
+   full argument — the two files implement one rule and the parity test is what keeps them from
+   drifting.
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
  * Days of quiet before a sender stops being asked about. MUST equal the client engine's
  * `DEFAULT_DORMANCY_DAYS`; the parity test pins the two together.
+ *
+ * RE-EXPORTED from core rather than declared here. It used to be a second literal `60`, and the
+ * worker's router cutoff (mail 0056) would have made it a third — in a package that cannot import
+ * this one. Core is the only place all three consumers can reach, so the number lives there and
+ * this name goes on pointing at it; every existing importer is unaffected, and the parity test
+ * still pins the client engine's independent copy against it.
  */
-export const DEFAULT_DORMANCY_DAYS = 60;
+export { DEFAULT_DORMANCY_DAYS };
 
 /** Folders the product presents. A Sent folder, or any of the user's own, is not one of them. */
 const PRESENTED_FOLDERS = [
@@ -78,6 +92,20 @@ export interface CutlineCounts {
 export interface CutlineOptions {
   /** Days. Defaults to {@link DEFAULT_DORMANCY_DAYS}. */
   dormancyDays?: number;
+  /**
+   * WHEN THIS ACCOUNT FINISHED SCREENING ITS BACKLOG (`account_settings.screening_baseline_at`,
+   * mail 0056), or `null`/absent for an account that has never decided anything.
+   *
+   * The client engine's `ConsentOptions.baselineAt` carries the whole argument — the resurrection
+   * it stops, why the narrowing is gated on the baseline being PRESENT rather than folded into a
+   * `?? now()` default, and why that distinction is a live account's Screener queue. **Both files
+   * must implement the same rule and `consent-cutline.pg.test.ts` runs them over the same rows;
+   * this one is the SQL half and nothing about it may be reasoned about separately.**
+   *
+   * `null`/absent ⇒ cutoff `now - dormancyDays` and unread outranking age ⇒ byte-identical counts
+   * to before this field existed.
+   */
+  baselineAt?: Date | null;
 }
 
 /**
@@ -91,9 +119,29 @@ export async function cutlineCounts(
   ctx: ServiceContext, opts: CutlineOptions = {},
 ): Promise<CutlineCounts> {
   const days = opts.dormancyDays ?? DEFAULT_DORMANCY_DAYS;
-  const cutoff = new Date(ctx.now().getTime() - days * 24 * 60 * 60 * 1000);
+  // An unparseable stored baseline is treated as ABSENT rather than as epoch 0 — the client's rule
+  // verbatim (`cutlineFor`), and for its reason: a 1970 baseline puts every message after the
+  // cutoff and pins every undecided sender in the queue for ever.
+  const baselineMs = opts.baselineAt == null ? null : opts.baselineAt.getTime();
+  const baselined = baselineMs !== null && Number.isFinite(baselineMs);
+  const measuredFrom = baselined ? baselineMs! : ctx.now().getTime();
+  const cutoff = new Date(measuredFrom - days * 24 * 60 * 60 * 1000);
   const folders = sql`(${sql.join(PRESENTED_FOLDERS.map((f) => sql`${f}`), sql`, `)})`;
   const undecidedResidences = sql`(${sql.join(UNDECIDED_RESIDENCES.map((f) => sql`${f}`), sql`, `)})`;
+  /**
+   * THE UNREAD TERM, AND IT IS THE ONLY THING THE BASELINE CHANGES HERE.
+   *
+   * Baselined ⇒ unread mail counts only INSIDE the window (`any_unread_in_window`); absent ⇒ any
+   * unread mail at all outranks age (`any_unread`), which is the pre-0056 expression unchanged.
+   * The client's `senderActivity` picks between exactly these two, and the parity test runs both
+   * over one set of rows precisely because two implementations of one rule is two things that can
+   * drift apart silently.
+   *
+   * Chosen in TypeScript rather than as a SQL `CASE`, so the statement Postgres plans contains one
+   * predicate and not a branch over a constant — and so the choice sits next to the comment
+   * explaining it rather than three subqueries down.
+   */
+  const unreadTerm = baselined ? sql`i.any_unread_in_window` : sql`i.any_unread`;
 
   const rows = await ctx.db.execute<{
     decided: string; active_undecided: string; dormant_undecided: string;
@@ -114,6 +162,13 @@ export async function cutlineCounts(
     inbound as (
       select lower(m.from_address) addr,
              bool_or(m.unread) any_unread,
+             -- The BASELINED unread term: unread AND inside the window. The null test is explicit
+             -- because a message with no Date header must not count as recent here, exactly as
+             -- the client's messageMs answers null for one. (NO BACKTICKS anywhere in this
+             -- template literal: one of them ends the tagged template and the file stops
+             -- compiling, with the error pointing at a line some distance away.)
+             bool_or(m.unread and m.date is not null and m.date >= ${cutoff.toISOString()}::timestamptz)
+               as any_unread_in_window,
              max(m.date) newest,
              -- Does this sender have ANY mail still sitting where no decision has been made?
              -- Activity is measured over all six presented folders (above); membership in the
@@ -132,7 +187,7 @@ export async function cutlineCounts(
               or (position('@' in i.addr) > 0
                   and exists (select 1 from decided_domain d
                                where d.m = substring(i.addr from position('@' in i.addr) + 1)))) as decided,
-             (i.any_unread or (i.newest is not null and i.newest >= ${cutoff.toISOString()}::timestamptz)) as active
+             (${unreadTerm} or (i.newest is not null and i.newest >= ${cutoff.toISOString()}::timestamptz)) as active
         from inbound i
     )
     select count(*) filter (where decided)                        as decided,

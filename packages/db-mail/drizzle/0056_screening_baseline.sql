@@ -1,0 +1,111 @@
+-- WHEN THIS ACCOUNT FINISHED SCREENING ITS BACKLOG — the instant the dormancy window is
+-- measured back from, instead of measuring it back from "now".
+--
+-- ══ THE DEFECT THIS COLUMN EXISTS FOR ══════════════════════════════════════════════════════
+--
+-- Whether a sender is still owed a decision is a DERIVATION, not stored state: an undecided
+-- sender is ACTIVE — and therefore waiting in the Screener queue — if they have any unread mail
+-- at all regardless of age, or any mail inside the last N days. Both halves of that test move on
+-- their own, and neither of them is an event the user caused:
+--
+--   · the window SLIDES. `now() - 60 days` passes over a sender's newest message and they leave
+--     the queue; nothing happened, the clock moved;
+--   · unread outranks age, so any old unread mail ENTERING the mirror makes its sender active
+--     again — and old mail enters the mirror constantly. A backfill pass reaching further into
+--     the mailbox, a folder read for the first time, a `\Seen` flag adopted late: all of them
+--     deliver mail whose header date is years old into a partition that reads "unread" as "this
+--     wants a decision today".
+--
+-- The user-visible result is senders from months ago appearing in "first-time senders waiting",
+-- then vanishing when the read-state syncs or the window slides past them. The queue is supposed
+-- to be a finite piece of work that empties and stays empty; instead it re-fills with mail that
+-- was already there when the account was set up.
+--
+-- ══ WHAT THE BASELINE CHANGES ══════════════════════════════════════════════════════════════
+--
+-- The cutoff becomes `(screening_baseline_at ?? now()) - dormancy_days`. Two consequences, and
+-- they are the whole feature:
+--
+--   · mail OLDER than the cutoff can never make a sender active — not even unread. It is the
+--     backlog the account already worked through, and re-asking about it is the churn above;
+--   · mail NEWER than the baseline is a stranger who arrived AFTER the account was set up, and
+--     such a sender never goes dormant. The cutoff stops sliding once the baseline is stamped,
+--     so "post-baseline and undecided" stays true until somebody decides. That is the property
+--     the sliding window could not express: a stranger who wrote once and went quiet used to
+--     fall out of the queue unanswered.
+--
+-- Decided senders are unaffected in every case — a rule outranks the cutline and always has.
+--
+-- ══ NULL IS EXACTLY TODAY'S BEHAVIOUR, AND THAT IS LOAD-BEARING ════════════════════════════
+--
+-- NULL on every row this migration touches, which is all of them, and every reader resolves NULL
+-- to the pre-slice expression: cutoff = `now() - dormancy_days`, unread outranks age, and the
+-- router holds any unruled sender's mail at the gate whatever its date. Not a fallback — the
+-- required day-one behaviour, on the same rule `ohbox_policy` (0042) and `screener_auto_apply_at`
+-- (0046) follow: shipping the column changes nothing about anybody's mail until a decision
+-- stamps it. The existing consent suites pass untouched, and that is the evidence, not a claim.
+--
+-- The narrowing is therefore gated on the baseline being PRESENT rather than applied
+-- unconditionally with a `?? now()` default. Those two are not the same program: `?? now()` would
+-- also stop unread pre-cutoff mail from making a sender active on accounts that have never
+-- decided anything, which is a live account's entire Screener queue disappearing on deploy.
+--
+-- ══ WHY timestamptz AND NOT boolean, AND WHY NOT DERIVED ═══════════════════════════════════
+--
+-- The same argument `seed_confirmed_at` (0035), `auto_suggest_at` (0040) and
+-- `screener_auto_apply_at` (0046) make, with one addition specific to this column: the VALUE is
+-- the thing being used, not merely its presence. Every other timestamp on this table is read as
+-- `IS NOT NULL`; this one is read as an instant and arithmetic is done on it, so a boolean could
+-- not carry it even in principle.
+--
+-- It is NOT derived from `min(rules.created_at) where provenance = 'promoted'`, and that
+-- alternative is worth refusing in writing because it looks cheaper. A promoted rule is written
+-- by the Screener's decide path, but also by the learning path, and `rules` rows are deletable —
+-- so the derivation would move backwards when a user tidies their rules, and every sender whose
+-- mail predates the new value would re-enter the queue. A baseline that can travel is not a
+-- baseline. Stored once, never recomputed.
+--
+-- ══ WHO WRITES IT ═════════════════════════════════════════════════════════════════════════
+--
+-- The account's FIRST screener decide, in the same transaction as the promoted rule, and only
+-- while the column is still NULL (`DO UPDATE … WHERE screening_baseline_at IS NULL`). Two
+-- decides racing on one account therefore produce ONE baseline — the row lock serialises them and
+-- the loser's predicate is false. It is never written again: a later decide is the account using
+-- a queue that already has a baseline, not establishing one.
+--
+-- Accounts that were already screening before this ships get their baseline from a one-off
+-- runner (`scripts/backfill-screening-baseline.mjs`), which stamps `now()` for accounts already
+-- holding `provenance = 'promoted'` rules — the evidence that this account has decided at least
+-- once. It is a separate, explicitly-run script and NOT part of this migration, because the value
+-- it writes is a judgement about the present moment rather than a schema fact, and a migration
+-- that silently re-partitioned every existing account's mailbox on deploy is the opposite of the
+-- NULL-is-today's-behaviour rule above.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO BACKFILL, NO CHECK, NO INDEX ══════════════════════════════════
+--
+-- `ADD COLUMN IF NOT EXISTS`, nullable, no default: a catalog-only change, so a journal replay is
+-- a no-op and a partially-applied window costs nothing. No CHECK — any instant is a legal answer,
+-- on 0040's rule; a baseline in the future merely means nothing is dormant yet, which is a
+-- coherent (if pointless) state and not one worth a constraint that could refuse a legitimate
+-- clock skew. No index: the column is read off a row already fetched by primary key.
+--
+-- `ADD COLUMN` on `account_settings` inherits its grants (0035, tightened), so no privilege
+-- lockdown is owed.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → API and worker. `consentSettings` selects whole `account_settings` rows, so a host
+-- ahead of the migration answers Postgres 42703 on the consent surface; the health marker
+-- `["account_settings","screening_baseline_at"]` turns that into a `503 schema_incomplete`
+-- naming this file.
+--
+-- A CLIENT older than the API ignores a DTO field it does not know and partitions with the
+-- sliding window, which is what it did before — the churn, not a wrong answer about anybody's
+-- consent. A client NEWER than the API reads `undefined`, resolves it to null, and does the same.
+-- Neither needs the other to ship first.
+--
+-- ROLLBACK is `ALTER TABLE account_settings DROP COLUMN screening_baseline_at`. The cost is that
+-- every account returns to the sliding window and the churn comes back. Nothing about the mail
+-- unwinds: this column never moved a message, and the decisions it defers to all live in `rules`.
+
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "screening_baseline_at" timestamp with time zone;

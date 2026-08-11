@@ -205,6 +205,47 @@ export function resolveOhboxPolicy(raw: string | null | undefined): OhboxPolicy 
   return raw === "people_only" || raw === "people_and_replied" ? raw : DEFAULT_OHBOX_POLICY;
 }
 
+/**
+ * HOW RECENTLY A SENDER MUST HAVE WRITTEN to still be worth a decision. Days.
+ *
+ * A default, not a constant — an account may carry its own `account_settings.dormancy_days`, and
+ * every reader takes the window as an argument. It is stated here, in core, because THREE
+ * independent consumers need the same number and two of them cannot import each other: the
+ * cutline (`services/src/consent-cutline.ts`, which re-exports this rather than declaring a second
+ * literal), the client engine's own copy (`client-engine/src/consent-cutline.ts` — a separate
+ * package with no core dependency, pinned equal to this one by `consent-cutline.pg.test.ts`), and
+ * the worker, which resolves the router's cutoff below. A number written out three times is a
+ * number that will eventually be three different numbers.
+ */
+export const DEFAULT_DORMANCY_DAYS = 60;
+
+/**
+ * Resolve a stored `account_settings.screening_baseline_at` + `dormancy_days` into the instant the
+ * router treats as the edge of the backlog, or `undefined` for "no cutoff" (mail 0056).
+ *
+ * `undefined` means the gate behaves exactly as it did before the baseline existed — every unruled
+ * sender's mail is held, whatever its date — and it is what a NULL baseline, an absent settings
+ * row and an unparseable stored value all produce. That last case is deliberate rather than
+ * defensive: a `Date` that is `Invalid` would make every comparison against it false, which is the
+ * same routing as no cutoff but reached silently and by accident; answering `undefined` makes the
+ * two the same thing on purpose.
+ *
+ * In core, next to {@link resolveOhboxPolicy}, for that function's reason: the worker's resolution
+ * and any later reader must not drift apart, and the arithmetic belongs on one side of the seam —
+ * `PlanDeps.screeningCutoff` takes a resolved instant precisely so the engine never repeats it.
+ */
+export function resolveScreeningCutoff(
+  baselineAt: Date | null | undefined, dormancyDays: number | null | undefined,
+): Date | undefined {
+  if (!(baselineAt instanceof Date)) return undefined;
+  const base = baselineAt.getTime();
+  if (!Number.isFinite(base)) return undefined;
+  const days = typeof dormancyDays === "number" && Number.isFinite(dormancyDays) && dormancyDays > 0
+    ? dormancyDays
+    : DEFAULT_DORMANCY_DAYS;
+  return new Date(base - days * 24 * 60 * 60 * 1000);
+}
+
 export interface EvaluateRulesInput {
   msg: NormalizedMessage;
   rules: readonly Rule[];
