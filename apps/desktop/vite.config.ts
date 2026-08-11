@@ -84,6 +84,12 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // The derivation in `test/desktop-messages.test.ts` counts `liveCopy("<ns>", …)` as a read for
   // exactly this reason: it is a read.
   "attachmentPreview", "away", "place",
+  // `bodyText` is the quoted-history fold's copy ("Show history"/"Hide history"), read by
+  // `app/shell/BodyText.tsx` through `liveCopy("bodyText", …)` since the fold landed — the same
+  // non-hook route `attachmentPreview` takes, and counted by the derivation for the same reason:
+  // it is a read. The fold renders on every message whose text carries a quoted tail, which the
+  // desktop preview's fixture thread does, so this one is reachable in the binary today.
+  "bodyText",
   // `draftReply`, `history` and `seed` are the three the shell started reading without this
   // array following, which is precisely the omission `desktop-messages.test.ts` exists to
   // catch — and it was catching it: the guard has been red since those surfaces landed.
