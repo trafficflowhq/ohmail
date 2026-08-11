@@ -33,13 +33,33 @@
   --accent-soft: oklch(0.60 0.13 45 / .09);
   --accent-hair: oklch(0.55 0.13 45 / .38);
   --on-accent:   oklch(0.995 0.004 85);
-  /* tag hues — muted, warm-adjacent, never candy */
+  /* tag hues — muted, warm-adjacent, never candy.
+     The first three are the prototype's, named after the tags it demonstrated
+     (pottery / Buchhaltung / privat) and pinned byte-for-byte by the fidelity
+     test. The seven below are DERIVED from them — same L/C envelope, hue angle
+     the only variable — and are named for the colour, because a family invented
+     here has no demo tag to be named after. See tokens.ts for the derivation and
+     for why the 40–60° accent band is empty. */
   --tg-pottery-ink: oklch(0.43 0.07 150);
   --tg-pottery-bg:  oklch(0.55 0.08 150 / .11);
   --tg-buch-ink:    oklch(0.45 0.09 78);
   --tg-buch-bg:     oklch(0.60 0.10 78 / .14);
   --tg-privat-ink:  oklch(0.45 0.10 25);
   --tg-privat-bg:   oklch(0.55 0.10 25 / .11);
+  --tg-olive-ink:     oklch(0.44 0.075 112);
+  --tg-olive-bg:      oklch(0.57 0.085 112 / .12);
+  --tg-verdigris-ink: oklch(0.44 0.075 182);
+  --tg-verdigris-bg:  oklch(0.57 0.085 182 / .12);
+  --tg-denim-ink:     oklch(0.44 0.075 214);
+  --tg-denim-bg:      oklch(0.57 0.09 214 / .12);
+  --tg-indigo-ink:    oklch(0.44 0.095 250);
+  --tg-indigo-bg:     oklch(0.57 0.10 250 / .12);
+  --tg-iris-ink:      oklch(0.44 0.095 288);
+  --tg-iris-bg:       oklch(0.57 0.10 288 / .12);
+  --tg-mulberry-ink:  oklch(0.44 0.095 320);
+  --tg-mulberry-bg:   oklch(0.57 0.10 320 / .12);
+  --tg-heather-ink:   oklch(0.44 0.09 352);
+  --tg-heather-bg:    oklch(0.57 0.10 352 / .12);
   /* shadow system — tight contact layer + wide warm ambient */
   --lift-0:
     0 0 0 1px oklch(0.40 0.05 55 / .04),
@@ -93,6 +113,20 @@
   --tg-buch-bg:     oklch(0.78 0.10 80 / .15);
   --tg-privat-ink:  oklch(0.80 0.08 25);
   --tg-privat-bg:   oklch(0.72 0.10 25 / .15);
+  --tg-olive-ink:     oklch(0.81 0.075 112);
+  --tg-olive-bg:      oklch(0.75 0.085 112 / .15);
+  --tg-verdigris-ink: oklch(0.81 0.075 182);
+  --tg-verdigris-bg:  oklch(0.75 0.085 182 / .15);
+  --tg-denim-ink:     oklch(0.81 0.08 214);
+  --tg-denim-bg:      oklch(0.75 0.09 214 / .15);
+  --tg-indigo-ink:    oklch(0.81 0.09 250);
+  --tg-indigo-bg:     oklch(0.75 0.10 250 / .15);
+  --tg-iris-ink:      oklch(0.81 0.09 288);
+  --tg-iris-bg:       oklch(0.75 0.10 288 / .15);
+  --tg-mulberry-ink:  oklch(0.81 0.09 320);
+  --tg-mulberry-bg:   oklch(0.75 0.10 320 / .15);
+  --tg-heather-ink:   oklch(0.81 0.085 352);
+  --tg-heather-bg:    oklch(0.75 0.095 352 / .15);
   --lift-0:
     0 0 0 1px oklch(0 0 0 / .22),
     0 1px 2px oklch(0 0 0 / .32),
@@ -139,6 +173,20 @@
     --tg-buch-bg:     oklch(0.78 0.10 80 / .15);
     --tg-privat-ink:  oklch(0.80 0.08 25);
     --tg-privat-bg:   oklch(0.72 0.10 25 / .15);
+    --tg-olive-ink:     oklch(0.81 0.075 112);
+    --tg-olive-bg:      oklch(0.75 0.085 112 / .15);
+    --tg-verdigris-ink: oklch(0.81 0.075 182);
+    --tg-verdigris-bg:  oklch(0.75 0.085 182 / .15);
+    --tg-denim-ink:     oklch(0.81 0.08 214);
+    --tg-denim-bg:      oklch(0.75 0.09 214 / .15);
+    --tg-indigo-ink:    oklch(0.81 0.09 250);
+    --tg-indigo-bg:     oklch(0.75 0.10 250 / .15);
+    --tg-iris-ink:      oklch(0.81 0.09 288);
+    --tg-iris-bg:       oklch(0.75 0.10 288 / .15);
+    --tg-mulberry-ink:  oklch(0.81 0.09 320);
+    --tg-mulberry-bg:   oklch(0.75 0.10 320 / .15);
+    --tg-heather-ink:   oklch(0.81 0.085 352);
+    --tg-heather-bg:    oklch(0.75 0.095 352 / .15);
     --lift-0:
       0 0 0 1px oklch(0 0 0 / .22),
       0 1px 2px oklch(0 0 0 / .32),

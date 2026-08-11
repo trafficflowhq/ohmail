@@ -47,8 +47,7 @@ import { DesktopMailboxes, readMailboxFacts } from "./DesktopMailboxes.js";
 import { DesktopScreening } from "./DesktopScreening.js";
 import { GateNotice } from "./GateNotice.js";
 import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
-import { awayDoorFor, gateFor, mailMount, readShell, suggestDoorFor, type Shell } from "./doors.js";
-import { awayOverBridge } from "./local-away.js";
+import { gateFor, mailMount, readShell, suggestDoorFor, type Shell } from "./doors.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
 import { LocalSuggest } from "./local-suggest.js";
 import { CloudSuggest } from "./CloudSuggest.js";
@@ -287,17 +286,6 @@ export function DesktopGate() {
                 ),
               }
             : {})}
-        /* SETTINGS → AWAY RESPONDER, on the HOSTED door only.
-           The shared shell offers this control when `apiConfigured()` says there is a server — and
-           that is false in EVERY desktop build, both doors, because this bundle aliases the Cloud
-           client to a refusing stub. So the responder was withheld from a hosted install that has a
-           real account behind it, which was wrong, and from a standalone install, which is right and
-           is a product boundary rather than a plumbing gap: nothing on that door SENDS the reply.
-           A TRANSPORT and not a section, unlike the two seams above: this is the same control over
-           the same hosted row, and a second copy of it would be a second definition of when an
-           enablement episode begins — the key the worker files its at-most-once record under.
-           `awayDoorFor` is where the rule lives, as a pure function a test can drive. */
-        {...(awayDoorFor(status) === "cloud" ? { awayTransport: awayOverBridge } : {})}
         onUnread={onUnread}
       />
       {overlay ? (

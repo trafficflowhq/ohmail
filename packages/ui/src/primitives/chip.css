@@ -13,13 +13,27 @@
 /* tag chips — hue names map onto the token tag families */
 .tagchip{font-size:10.5px;font-weight:600;border-radius:99px;padding:1px 8px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .tagchip.big{font-size:11px;padding:4px 11px}
-.tagchip.hue-moss{color:var(--tg-pottery-ink);background:var(--tg-pottery-bg)}
-.tagchip.hue-ochre{color:var(--tg-buch-ink);background:var(--tg-buch-bg)}
 .tagchip.hue-rosewood{color:var(--tg-privat-ink);background:var(--tg-privat-bg)}
+.tagchip.hue-ochre{color:var(--tg-buch-ink);background:var(--tg-buch-bg)}
+.tagchip.hue-olive{color:var(--tg-olive-ink);background:var(--tg-olive-bg)}
+.tagchip.hue-moss{color:var(--tg-pottery-ink);background:var(--tg-pottery-bg)}
+.tagchip.hue-verdigris{color:var(--tg-verdigris-ink);background:var(--tg-verdigris-bg)}
+.tagchip.hue-denim{color:var(--tg-denim-ink);background:var(--tg-denim-bg)}
+.tagchip.hue-indigo{color:var(--tg-indigo-ink);background:var(--tg-indigo-bg)}
+.tagchip.hue-iris{color:var(--tg-iris-ink);background:var(--tg-iris-bg)}
+.tagchip.hue-mulberry{color:var(--tg-mulberry-ink);background:var(--tg-mulberry-bg)}
+.tagchip.hue-heather{color:var(--tg-heather-ink);background:var(--tg-heather-bg)}
 .tdot{width:8px;height:8px;border-radius:3px;flex:none}
-.tdot.hue-moss{background:var(--tg-pottery-ink);opacity:.75}
-.tdot.hue-ochre{background:var(--tg-buch-ink);opacity:.75}
 .tdot.hue-rosewood{background:var(--tg-privat-ink);opacity:.75}
+.tdot.hue-ochre{background:var(--tg-buch-ink);opacity:.75}
+.tdot.hue-olive{background:var(--tg-olive-ink);opacity:.75}
+.tdot.hue-moss{background:var(--tg-pottery-ink);opacity:.75}
+.tdot.hue-verdigris{background:var(--tg-verdigris-ink);opacity:.75}
+.tdot.hue-denim{background:var(--tg-denim-ink);opacity:.75}
+.tdot.hue-indigo{background:var(--tg-indigo-ink);opacity:.75}
+.tdot.hue-iris{background:var(--tg-iris-ink);opacity:.75}
+.tdot.hue-mulberry{background:var(--tg-mulberry-ink);opacity:.75}
+.tdot.hue-heather{background:var(--tg-heather-ink);opacity:.75}
 
 /* badges — the small in-row capsules */
 .badge{font-size:10.5px;color:var(--ink3);background:var(--tint2);border-radius:99px;

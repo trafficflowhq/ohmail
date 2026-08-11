@@ -207,32 +207,6 @@ export function suggestDoorFor(status: EngineStatus | null): SuggestDoor {
   return null;
 }
 
-/**
- * WHETHER THIS INSTALL MAY CONFIGURE AN AWAY RESPONDER — a decision, so it is a function here and
- * not a condition buried in a render, for the reason `gateFor` and `suggestDoorFor` are.
- *
- * It is NOT the same question as `suggestDoorFor`, even though the two agree on every status they
- * have ever been shown. That one is about SPENDING: never offer a purchase control with no ledger
- * behind it. This one is about a SENDER, and the rule is stronger than "the control would refuse".
- *
- *  · STANDALONE. The engine on this machine would answer `GET/PUT /away-responder` perfectly well
- *    out of its own database, and that is exactly why the check has to be here rather than left to
- *    the route. Nothing on this door SENDS the reply: the responder is a scheduled pass in the
- *    hosted service, whose module map publishes four entry points and not that one — a rule its own
- *    build holds rather than one somebody remembers. An always-on replier cannot live in an app
- *    that only runs while its window is open. So the control is absent, and a stored configuration
- *    that answers nobody is impossible rather than merely unlikely.
- *  · HOSTED, SIGNED IN. The account is real, the engine forwards this endpoint to it with the
- *    bearer, and the hosted worker sends from the row that is written. Identical to a browser tab
- *    with one hop more.
- *  · HOSTED, NOT SIGNED IN — or no door yet, or no answer from the shell. `null`, like the suggest
- *    control's: every read would be refused, and a settings pane whose only state is an error about
- *    something it cannot fix from inside itself is worse than no pane.
- */
-export function awayDoorFor(status: EngineStatus | null): "cloud" | null {
-  return status?.mode === "cloud" && status.credentialState === "ready" ? "cloud" : null;
-}
-
 /** What the local door's form collects. Every field is what the user typed, untrimmed. */
 export interface LocalDoorFields {
   /** The preset's id — `providerById` in the shared shell resolves it to hosts and ports. */

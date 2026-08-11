@@ -183,7 +183,7 @@ export {
   type KbEntryBody, type ListKbOptions,
 } from "./kb-service.js";
 export {
-  TagsService, tagsService,
+  TagsService, tagsService, RENDERABLE_HUES,
   type TagBody, type TagHue, type AssignResult,
 } from "./tags-service.js";
 export {

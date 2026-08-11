@@ -10,16 +10,30 @@ import type { TagDTO } from "./dto/types.js";
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
 /**
- * The hues the client can render — `TagHueName` in `packages/ui` (`moss|ochre|rosewood`), the
- * three the Blanc token families (`--tg-pottery|buch|privat`) actually paint. This list MUST
- * equal that one: a hue accepted here but with no rule in `chip.css` is an invisible dot, which
- * is why the tag recolour verb waited on the two sets being reconciled (see `client-engine`'s
- * `tag_recolor`). A closed set validated here rather than at the DB — it is presentation, and a
- * new hue must not need a migration — and a round-trip test pins it so a sixth name cannot creep
- * back in without a matching family being drawn first.
+ * The hues the client can render — `TagHueName` in `packages/ui`, the ten the Blanc token
+ * families actually paint. This list MUST equal that one: a hue accepted here but with no rule
+ * in `chip.css` is an invisible dot, which is why the tag recolour verb waited on the two sets
+ * being reconciled (see `client-engine`'s `tag_recolor`). A closed set validated here rather
+ * than at the DB — it is presentation, and a new hue must not need a migration, which is why
+ * `tags.hue` is a plain `text` column with no CHECK (mail 0031) and this widening ships without
+ * one. The API's tag suite round-trips every member and refuses a non-member, so a name cannot
+ * creep back in without a matching family being drawn first.
+ *
+ * ORDER IS `TAG_HUES`' ORDER (hue wheel), and it carries no data: the column stores the NAME.
+ * `moss|ochre|rosewood` keep their exact spelling so tags written before the palette grew are
+ * unaffected, and the seven new names deliberately avoid `clay|slate|plum|amber|teal` — the set
+ * this service accepted alone before the reconciliation, whose rows are still in the database
+ * and which the client clamps to moss. Re-admitting one would repaint an existing tag.
+ *
+ * Exported so `test/tag-hues.test.ts` and the HTTP round-trip can compare this set to the
+ * client's rather than to a copy of it written down in a test — a copy is what let the two
+ * lists diverge in the first place.
  */
-const HUES = ["moss", "ochre", "rosewood"] as const;
-export type TagHue = (typeof HUES)[number];
+export const RENDERABLE_HUES = [
+  "rosewood", "ochre", "olive", "moss", "verdigris",
+  "denim", "indigo", "iris", "mulberry", "heather",
+] as const;
+export type TagHue = (typeof RENDERABLE_HUES)[number];
 
 /** Longest tag name we store. Tags are labels, not notes — a rail entry that does not fit is
  *  a worse product than a refusal, and an unbounded text column keyed by a user is an easy
@@ -99,8 +113,8 @@ export class TagsService {
 
   private validHue(raw: unknown): TagHue {
     if (raw === undefined || raw === null) return "moss";
-    if (typeof raw !== "string" || !HUES.includes(raw as TagHue)) {
-      throw new ServiceError("validation_failed", 400, `hue must be one of ${HUES.join(", ")}`);
+    if (typeof raw !== "string" || !RENDERABLE_HUES.includes(raw as TagHue)) {
+      throw new ServiceError("validation_failed", 400, `hue must be one of ${RENDERABLE_HUES.join(", ")}`);
     }
     return raw as TagHue;
   }

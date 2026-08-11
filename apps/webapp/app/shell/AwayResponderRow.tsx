@@ -75,33 +75,9 @@ export const AWAY_COPY = {
   saved: "Saved.",
   failed: "That did not save. Nothing changed.",
   incomplete: "Add a subject and a message before turning this on.",
-  unreachable: "Your away settings could not be read just now. Nothing here has changed.",
 } as const;
 
 type Audience = AwayResponderWire["audience"];
-
-/**
- * WHERE THE ROW IS READ AND WRITTEN — the two calls, as a seam, because two installs reach the
- * same account's row down two different wires.
- *
- * A BROWSER TAB opens a socket to the hosted API, which is exactly what `app/api-client`'s `away`
- * is, and that stays the default so no caller in this app has to say so.
- *
- * THE DESKTOP CANNOT. Its content policy forbids the window opening a socket at all, and the Cloud
- * client is not compiled into that build — `apps/desktop/vite.config.ts` aliases this module's
- * `../api-client` to a stub whose every value export refuses. On the HOSTED door that window still
- * has an account behind it: the request goes down the pipe to the mail engine on this machine,
- * which serves no `/away-responder` locally and therefore forwards it to the account with the
- * bearer. Same endpoint, same stored row, same hosted sender — one hop more.
- *
- * So the transport is a parameter and everything else here is shared. A second copy of this control
- * for the desktop would be a second definition of what one enablement episode is, and the episode
- * is the key the worker's at-most-once record is filed under.
- */
-export interface AwayTransport {
-  state: () => Promise<AwayResponderWire>;
-  save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderWire>;
-}
 
 /** The two audiences, in the order the control draws them. Labels are resolved at render. */
 const AUDIENCE_IDS: readonly Audience[] = ["screened_in", "everyone"];
@@ -112,7 +88,7 @@ const RESTING: Draft = {
   enabled: false, subject: null, body: null, startsAt: null, endsAt: null, audience: "screened_in",
 };
 
-export function AwayResponderRow({ onChanged, transport }: {
+export function AwayResponderRow({ onChanged }: {
   /**
    * THE SHELL'S ECHO — how the Ohbox notice (`AwayNotice.tsx`) learns of a same-tab edit
    * without a refetch. Called with what the SERVER answered — the mount load and every save
@@ -120,8 +96,6 @@ export function AwayResponderRow({ onChanged, transport }: {
    * Optional: this row predates the notice, and a mount with nothing to tell stays valid.
    */
   onChanged?: (state: { enabled: boolean; audience: Audience }) => void;
-  /** The two calls, or the hosted client. See {@link AwayTransport}. */
-  transport?: AwayTransport;
 } = {}) {
   const t = useTranslations("away");
   /**
@@ -133,37 +107,10 @@ export function AwayResponderRow({ onChanged, transport }: {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [pending, setPending] = useState(false);
   const [state, setState] = useState<"idle" | "saved" | "failed">("idle");
-  /**
-   * THE READ CAME BACK REFUSED — and this is a state rather than silence BECAUSE THE CONTROL HAS
-   * ITS OWN PANE NOW.
-   *
-   * As the last row of the Screener pane, a failed load could render nothing: the four controls
-   * above it still filled the screen, and an absent row was the honest "no configuration to show".
-   * On its own pane, nothing means a nav entry that opens a blank rectangle — which reads as an
-   * app that lost something. So the pane says which of the two it is. It still never draws the
-   * CONTROLS on a failed read, for the reason the load effect gives: a resting OFF switch shown to
-   * somebody whose responder is ON is a lie about mail going out.
-   */
-  const [unreachable, setUnreachable] = useState(false);
 
   /** The echo through a ref, so the load effect below keeps its once-per-mount `[]` deps. */
   const changed = useRef(onChanged);
   changed.current = onChanged;
-
-  /** The host's transport through a ref, for the reason the echo is: one load, at mount. */
-  const wired = useRef(transport);
-  wired.current = transport;
-
-  /**
-   * A HOST'S WIRE, OR THE HOSTED CLIENT — resolved at the CALL and never at the render.
-   *
-   * `??` would read `awayApi` on every render of a row that has a transport and will never touch
-   * it, and that read is not free: on a standalone install this binding is a stub whose properties
-   * refuse, and a suite that mocks `../api-client` throws on the read itself. Both calls below are
-   * inside a `try`, so resolving here keeps a refusal a state this component can draw rather than a
-   * render that dies.
-   */
-  const wireOf = (): AwayTransport => wired.current ?? awayApi;
 
   /** Unmounted-after-await guard — a nav press swaps this pane out mid-request. */
   const alive = useRef(true);
@@ -175,23 +122,22 @@ export function AwayResponderRow({ onChanged, transport }: {
   useEffect(() => {
     void (async () => {
       try {
-        const loaded = await wireOf().state();
+        const wire = await awayApi.state();
         if (!alive.current) return;
         setDraft({
-          enabled: loaded.enabled, subject: loaded.subject, body: loaded.body,
-          startsAt: loaded.startsAt, endsAt: loaded.endsAt, audience: loaded.audience,
+          enabled: wire.enabled, subject: wire.subject, body: wire.body,
+          startsAt: wire.startsAt, endsAt: wire.endsAt, audience: wire.audience,
         });
-        changed.current?.({ enabled: loaded.enabled, audience: loaded.audience });
+        changed.current?.({ enabled: wire.enabled, audience: wire.audience });
       } catch {
-        // No server, or a refused read. The CONTROLS stay absent rather than offering one whose
-        // Save would fail — a responder somebody believes they configured is worse than none — and
-        // the pane says so instead of drawing nothing. See {@link unreachable}.
-        if (alive.current) { setDraft(null); setUnreachable(true); }
+        // No server, or a refused read. The section stays absent rather than offering a control
+        // whose Save would fail — a responder somebody believes they configured is worse than none.
+        if (alive.current) setDraft(null);
       }
     })();
   }, []);
 
-  if (!draft) return unreachable ? <p className="set-note-inline">{t("unreachable")}</p> : null;
+  if (!draft) return null;
 
   const complete = (draft.subject ?? "").trim().length > 0 && (draft.body ?? "").trim().length > 0;
   const edit = (patch: Partial<Draft>): void => {
@@ -208,14 +154,14 @@ export function AwayResponderRow({ onChanged, transport }: {
     setState("idle");
     void (async () => {
       try {
-        const stored = await wireOf().save(draft);
+        const wire = await awayApi.save(draft);
         if (!alive.current) return;
         // Set from the ECHO, never from what was asked for: the server is what the worker reads.
         setDraft({
-          enabled: stored.enabled, subject: stored.subject, body: stored.body,
-          startsAt: stored.startsAt, endsAt: stored.endsAt, audience: stored.audience,
+          enabled: wire.enabled, subject: wire.subject, body: wire.body,
+          startsAt: wire.startsAt, endsAt: wire.endsAt, audience: wire.audience,
         });
-        changed.current?.({ enabled: stored.enabled, audience: stored.audience });
+        changed.current?.({ enabled: wire.enabled, audience: wire.audience });
         setState("saved");
       } catch {
         if (alive.current) setState("failed");

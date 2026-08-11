@@ -55,14 +55,49 @@ export interface ColorScheme {
   readonly onAccent: string;
   /** Overlay scrim behind palette / focus-reply / drawer. */
   readonly scrim: string;
-  /** Tag hues — muted, warm-adjacent, never candy. */
+  /**
+   * Tag hues — muted, warm-adjacent, never candy.
+   *
+   * ── THE FAMILY IS A HUE WHEEL AT A FIXED L/C ENVELOPE ────────────────────────────────────
+   *
+   * The prototype extracted three (moss/ochre/rosewood) and they are pinned byte-for-byte by
+   * `test/fidelity.test.ts`. The seven that follow are DERIVED from those three rather than
+   * invented: the family holds lightness and chroma inside the envelope the prototype set
+   * (light ink ≈ L .43–.45 / C .07–.10, light bg ≈ L .55–.60 / C .08–.10 at 11–14% alpha; dark
+   * ink ≈ L .80–.82, dark bg ≈ L .72–.78 at 14–15%) and varies ONLY the hue angle. Chroma
+   * tracks the angle by a hair — blues and violets need a little more to read as coloured at
+   * the same lightness, greens a little less — which is the same compensation the three
+   * originals already carry (moss .07, ochre .09, rosewood .10).
+   *
+   * The angles are spaced 27–53° apart around the whole wheel and deliberately AVOID the
+   * 40–60° band, which belongs to `accent` (burnt sienna, 42–45): a tag chip sitting on the
+   * accent's hue reads as a UI state rather than as a label.
+   *
+   * Listed in wheel order, which is the order the picker shows them — ten swatches scan by
+   * hue, not by the order the product happened to grow them. The stored value is the NAME
+   * (`tags.hue text`), never an index, so this order carries no data.
+   */
   readonly tag: {
-    /** moss — "Projekt Pottery" (green, hue 150) */
-    readonly moss: TagHue;
-    /** ochre — "Buchhaltung" (yellow-brown, hue ~78) */
-    readonly ochre: TagHue;
     /** rosewood — "Privat" (muted red, hue 25) */
     readonly rosewood: TagHue;
+    /** ochre — "Buchhaltung" (yellow-brown, hue ~78) */
+    readonly ochre: TagHue;
+    /** olive — hue 112 */
+    readonly olive: TagHue;
+    /** moss — "Projekt Pottery" (green, hue 150) */
+    readonly moss: TagHue;
+    /** verdigris — blue-green, hue 182 */
+    readonly verdigris: TagHue;
+    /** denim — muted blue, hue 214 */
+    readonly denim: TagHue;
+    /** indigo — blue-violet, hue 250 */
+    readonly indigo: TagHue;
+    /** iris — violet, hue 288 */
+    readonly iris: TagHue;
+    /** mulberry — purple-red, hue 320 */
+    readonly mulberry: TagHue;
+    /** heather — dusty pink, hue 352 */
+    readonly heather: TagHue;
   };
 }
 
@@ -85,9 +120,19 @@ export const color: { readonly light: ColorScheme; readonly dark: ColorScheme } 
     onAccent: "oklch(0.995 0.004 85)",
     scrim: "oklch(0.985 0.003 90 / .74)",
     tag: {
-      moss: { ink: "oklch(0.43 0.07 150)", bg: "oklch(0.55 0.08 150 / .11)" },
-      ochre: { ink: "oklch(0.45 0.09 78)", bg: "oklch(0.60 0.10 78 / .14)" },
       rosewood: { ink: "oklch(0.45 0.10 25)", bg: "oklch(0.55 0.10 25 / .11)" },
+      ochre: { ink: "oklch(0.45 0.09 78)", bg: "oklch(0.60 0.10 78 / .14)" },
+      olive: { ink: "oklch(0.44 0.075 112)", bg: "oklch(0.57 0.085 112 / .12)" },
+      moss: { ink: "oklch(0.43 0.07 150)", bg: "oklch(0.55 0.08 150 / .11)" },
+      verdigris: { ink: "oklch(0.44 0.075 182)", bg: "oklch(0.57 0.085 182 / .12)" },
+      // .075 and not .08: sRGB's ceiling at L .44 / H 214 is .0778, and a browser CLIPS past it
+      // rather than refusing — the swatch would render a colour nobody chose. Measured, not
+      // guessed; `test/tag-hues.test.ts` re-measures it.
+      denim: { ink: "oklch(0.44 0.075 214)", bg: "oklch(0.57 0.09 214 / .12)" },
+      indigo: { ink: "oklch(0.44 0.095 250)", bg: "oklch(0.57 0.10 250 / .12)" },
+      iris: { ink: "oklch(0.44 0.095 288)", bg: "oklch(0.57 0.10 288 / .12)" },
+      mulberry: { ink: "oklch(0.44 0.095 320)", bg: "oklch(0.57 0.10 320 / .12)" },
+      heather: { ink: "oklch(0.44 0.09 352)", bg: "oklch(0.57 0.10 352 / .12)" },
     },
   },
   dark: {
@@ -108,9 +153,16 @@ export const color: { readonly light: ColorScheme; readonly dark: ColorScheme } 
     onAccent: "oklch(0.19 0.035 50)",
     scrim: "oklch(0.11 0.008 55 / .76)",
     tag: {
-      moss: { ink: "oklch(0.80 0.07 150)", bg: "oklch(0.75 0.08 150 / .14)" },
-      ochre: { ink: "oklch(0.82 0.09 80)", bg: "oklch(0.78 0.10 80 / .15)" },
       rosewood: { ink: "oklch(0.80 0.08 25)", bg: "oklch(0.72 0.10 25 / .15)" },
+      ochre: { ink: "oklch(0.82 0.09 80)", bg: "oklch(0.78 0.10 80 / .15)" },
+      olive: { ink: "oklch(0.81 0.075 112)", bg: "oklch(0.75 0.085 112 / .15)" },
+      moss: { ink: "oklch(0.80 0.07 150)", bg: "oklch(0.75 0.08 150 / .14)" },
+      verdigris: { ink: "oklch(0.81 0.075 182)", bg: "oklch(0.75 0.085 182 / .15)" },
+      denim: { ink: "oklch(0.81 0.08 214)", bg: "oklch(0.75 0.09 214 / .15)" },
+      indigo: { ink: "oklch(0.81 0.09 250)", bg: "oklch(0.75 0.10 250 / .15)" },
+      iris: { ink: "oklch(0.81 0.09 288)", bg: "oklch(0.75 0.10 288 / .15)" },
+      mulberry: { ink: "oklch(0.81 0.09 320)", bg: "oklch(0.75 0.10 320 / .15)" },
+      heather: { ink: "oklch(0.81 0.085 352)", bg: "oklch(0.75 0.095 352 / .15)" },
     },
   },
 } as const;

@@ -2125,6 +2125,11 @@ body.reading .shell {
 /* Settings → Tags: the rename field and the delete confirmation take the row's place. */
 .set-tag-edit {
   gap: 10px;
+  /* `.set-row` is a nowrap flex row. That was fine while the recolour mode carried three
+     swatches; with ten it is the difference between a palette that reflows under the tag's
+     name on a narrow pane and one that squeezes the swatches until two colours share a
+     pixel. Only this mode can overflow, so the wrap is scoped to it. */
+  flex-wrap: wrap;
 }
 .set-tag-input {
   flex: 1 1 auto;
@@ -2152,13 +2157,17 @@ body.reading .shell {
 .set-tag-dot:hover { background: var(--tint); }
 .set-tag-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* The recolour swatches — one button per renderable hue, the current one ringed. */
+/* The recolour swatches — one button per renderable hue, the current one ringed. Ten of them
+   now, so the group wraps rather than compressing: `flex: 0 1 auto` lets it give back width
+   before the row does, and the wrap keeps every swatch at its full hit area. */
 .set-tag-hues {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 9px;
-  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 1 auto;
 }
 .set-tag-hues .set-hue {
   border: 0;
@@ -2169,6 +2178,7 @@ body.reading .shell {
   display: inline-flex;
   line-height: 0;
   box-shadow: inset 0 0 0 1px transparent;
+  flex: 0 0 auto;
 }
 .set-tag-hues .set-hue:hover { box-shadow: inset 0 0 0 1px var(--hair); }
 .set-tag-hues .set-hue.on { box-shadow: inset 0 0 0 2px var(--accent-hair); }

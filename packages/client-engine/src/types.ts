@@ -925,8 +925,11 @@ export type EngineMutation =
    * server names (`moss|clay|slate|plum|amber|teal`) against three renderable ones
    * (`moss|ochre|rosewood`), overlapping only on `moss` — so any colour a picker could offer was
    * one the other half could not honour: an invisible dot or a 400. They are reconciled to the
-   * three the Blanc system actually paints, so every hue on the wire renders and every hue the
-   * picker shows validates. `PATCH /tags/:id` takes `{ hue }` on its own.
+   * hues the Blanc system actually paints, so every hue on the wire renders and every hue the
+   * picker shows validates. That reconciled set is now TEN rather than three; the widening added
+   * token families and `chip.css` rules on the client in the same change as the server's list,
+   * and needed no migration because `tags.hue` is plain `text` with no CHECK.
+   * `PATCH /tags/:id` takes `{ hue }` on its own.
    */
   | { kind: "tag_recolor"; tagId: string; hue: string }
   /**
