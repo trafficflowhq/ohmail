@@ -81,6 +81,7 @@ export function clientIdempotencyKey(headerValue: string): IdempotencyKey {
  * | `debit_workflow` | `workflow_run:<run_id>:<step_index>` | Mirrors the existing `workflow_dedup_key` crash-resume convention: a re-drained run re-executes steps idempotently, so the charge is per STEP, not per drain. |
  * | `refund` | `refund:<original_source>` | One refund per original charge, structurally — a crashed-and-retried refund path cannot refund twice because its own source collides. A refund-origin trigger additionally requires the original to be a real DEBIT on the same account, so a refund of nothing (and a refund of a refund) is refused by the database. |
  * | `adjustment_credit` / `adjustment_debit` | `admin:<uuid>` | Each staff adjustment is its own event (uuid minted per adjustment, staff user id in `meta`). |
+ * | `trial_grant` | `trial:<account_id>` | The trial bounty is ONE event in an account's whole life, so the ACCOUNT is the identity. See {@link ledgerSources.trialGrant}. |
  *
  * These prefixes are not a convention: the source-reason CHECK constraint pins each `reason`
  * to its namespace, so a debit physically cannot be written under an `invoice:` source and be
@@ -117,6 +118,29 @@ export const ledgerSources = {
   workflowStep: (runId: string, stepIndex: number) => `workflow_run:${runId}:${stepIndex}`,
   refund: (originalSource: string) => `refund:${originalSource}`,
   admin: (adjustmentId: string) => `admin:${adjustmentId}`,
+  /**
+   * THE TRIAL BOUNTY, keyed by the ACCOUNT and by nothing else — idempotent by construction.
+   *
+   * Every other namespace here names the producing system's retry unit: an invoice, a message, a
+   * workflow step. This one names the ACCOUNT, because the economic event is "this account was
+   * given its one trial allowance" and there is exactly one of those per account for as long as
+   * the account exists. `UNIQUE (account_id, source)` then makes a second grant unrepresentable
+   * rather than merely unlikely — which is the property the callers need, since two of them exist
+   * and neither can see the other:
+   *
+   *  · the subscription mirror grants when a trial row first lands, and it runs on EVERY
+   *    subscription event for the account, redelivered and out of order;
+   *  · the one-shot backfill grants to accounts already trialing when the policy changed.
+   *
+   * Run both, twice each, in any order: the second write of the four answers `duplicate` and
+   * moves no money. Keying this by the subscription instead would have made a resubscribe — or a
+   * second trial after a cancel — a second bounty, which is the shape of the giveaway a bounty
+   * must not have.
+   *
+   * The account id is a uuid we minted, so unlike `draft` and `classify` there is nothing
+   * remote-controlled to bound or to hash: the source is 6 + 36 characters, always.
+   */
+  trialGrant: (accountId: string) => `trial:${accountId}`,
 } as const;
 
 /**
