@@ -99,6 +99,16 @@ refused it names the actual reason and, where the certificate is issued for a di
 suggests the address that would work. A server that offers no encryption at all can still be used,
 but only after you have been told and have said yes.
 
+### Updating
+
+**The app now looks for a new release by itself**, shortly after launch and whenever you pick Check
+for Updates. That is a request to the update feed on GitHub and nothing else, and the release it
+fetches is signature-verified before anything is installed, as it always has been.
+
+**One question instead of three dialogs.** A newer release is downloaded in the background, and you
+are asked once, without being blocked: restart now or later. "Later" is not asked again for the rest
+of the run, and the app restarts only when you press the button.
+
 ### Sync and reliability
 
 - A mailbox that has never synced is worked on first, so a newly connected account fills in promptly
@@ -107,6 +117,8 @@ but only after you have been told and have said yes.
   replaying from a stale one.
 - Read and unread marks made in Outlook are adopted rather than overwritten.
 - Long mailbox addresses no longer squash the controls beside them.
+- Filing a batch of mail sends it to your server in groups rather than one message at a time, and one
+  mailbox with a large backlog no longer holds the queue while it drains.
 
 ## [0.8.2] — 2026-08-10
 
