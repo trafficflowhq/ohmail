@@ -1292,6 +1292,13 @@ export function MessagePane({
             onChange={chrome.onReplyBody}
             onClose={chrome.closeReply}
             onSend={() => chrome.sendReply(message.id)}
+            /* The audience, editable: the edit strings and their reporter live on the chrome
+               beside the body (mounted-twice — `message-chrome.tsx`), and the book feeds the
+               rows' suggestions. `onEnvelope` absent on the inert chrome keeps the head a
+               plain statement there. */
+            envelope={chrome.replyEnvelope}
+            onEnvelope={chrome.onReplyEnvelope}
+            book={chrome.addressBook}
             /* The AI drafter's offer renders inside the editor the draft lands in — see
                `InlineReply`. Absent where there is no drafter: the desktop shell, and any
                harness that mounts a pane without the shell. */

@@ -20,6 +20,7 @@ import {
   DEMO_NOW,
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
+  addressBook,
   bodyOf,
   consentPartition,
   forwardSubject,
@@ -113,9 +114,12 @@ import {
   optionsFromFacts,
   optionsFromMirror,
   replyAllRecipients,
+  replyEnvelopeOnWire,
+  replyEnvelopePlan,
   replyRecipients,
   resolveComposeFrom,
   resolveReplyFrom,
+  type ReplyEnvelopeEdit,
 } from "./compose-from";
 import { MessageChromeProvider } from "./message-chrome";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
@@ -1068,6 +1072,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const [replyAll, setReplyAll] = useState(false);
   const [replyBody, setReplyBody] = useState<RichValue>(EMPTY_RICH);
   /**
+   * THE REPLY'S AUDIENCE AS EDITED — `null` while the computed envelope stands, which is
+   * every reply whose head nobody pressed. It lives HERE beside `replyBody` because the pane
+   * is mounted twice, and it RESETS whenever the editor retargets or changes mode: an edit
+   * belongs to the message (and the audience) it was made on, and carrying it to the next
+   * reply would address somebody else's mail with it. The effect covers every path that
+   * moves `replyTo` — open, close, settle, forward, the Reply Run — without each of them
+   * having to remember.
+   */
+  const [replyEnvelope, setReplyEnvelope] = useState<ReplyEnvelopeEdit | null>(null);
+  useEffect(() => {
+    setReplyEnvelope(null);
+  }, [replyTo, replyAll]);
+  /**
    * THE COMPOSE FORM, and why it lives up here rather than in `ComposeView`.
    *
    * The view is mounted only while `#/compose` is the route, so state inside it is erased by
@@ -1744,24 +1761,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       if (messageId !== replyTo) return;
       const parent = reader.get<EngineMessage>("message", messageId) ?? null;
       const from = resolveReplyFrom(fromOptions, parent?.mailboxId ?? null);
-      // WHO IT IS ADDRESSED TO. `enrich` defaults to `[parent.from]`, which answers yourself on
-      // a message you sent — a self-authored one shows inline the moment a thread has two turns.
-      // `replyRecipients` returns the correspondents for that case (and `null` otherwise, leaving
-      // the default in place), using the account's own addresses off the same From options.
-      //
-      // A REPLY ALL resolves `replyAllRecipients` instead — the SAME call that let the button
-      // render and that the editor's head named, over the same options, so the audience shown
-      // is the audience sent. `null` (the envelope degenerated — a recipient list that shrank
-      // under the open editor) falls back to the plain-reply path rather than guessing.
-      const all =
-        replyAll && parent
-          ? replyAllRecipients(parent, fromOptions.map((o) => o.address))
-          : null;
-      const to = all
-        ? all.to
-        : parent
-          ? replyRecipients(parent, fromOptions.map((o) => o.address))
-          : null;
+      // WHO IT IS ADDRESSED TO — `replyEnvelopePlan`, ONE derivation for the head, the lock
+      // and this wire. Untouched (`replyEnvelope === null`) it is exactly the old inline
+      // resolution: `replyAllRecipients` for a reply-all (the same call that let the button
+      // render), `replyRecipients` for the self-authored plain case, nothing otherwise so
+      // `Engine.enrich` keeps deriving `[parent.from]` — and never a Bcc, which no reply
+      // derives. EDITED, the user's strings are the envelope: To/Cc/Bcc parsed by the compose
+      // form's own parser, a typo emptying the whole set so `canSend` refuses it (the same
+      // rule `composePlan` enforces, arriving on the same predicate).
+      const plan = replyEnvelopePlan(
+        parent,
+        fromOptions.map((o) => o.address),
+        replyAll,
+        replyEnvelope,
+      );
       mailSend.send({
         kind: "mail_send",
         inReplyTo: messageId,
@@ -1772,13 +1785,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         body: replyBody.text,
         ...(replyBody.html ? { html: replyBody.html } : {}),
         ...(from.substituted && from.mailboxId ? { mailboxId: from.mailboxId } : {}),
-        ...(to ? { to } : {}),
-        // The Cc line rides only on a reply-all that has one — a plain reply's envelope is
-        // unchanged, exactly as it was before reply-all existed.
-        ...(all && all.cc.length > 0 ? { cc: all.cc } : {}),
+        ...replyEnvelopeOnWire(plan),
       });
     },
-    [mailSend, replyTo, replyAll, replyBody, reader, version, fromOptions],
+    [mailSend, replyTo, replyAll, replyBody, replyEnvelope, reader, version, fromOptions],
   );
 
   /**
@@ -3403,12 +3413,31 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     [engine],
   );
 
+  /**
+   * The address book for the reply's recipient rows — the same ranked selector the compose
+   * To field builds, derived when a reply OPENS rather than per keystroke or per delta: the
+   * set of people this account has corresponded with does not change while somebody types a
+   * name, which is `ComposeView`'s own once-per-mount reasoning keyed to the editor instead
+   * of the route. Own addresses are excluded for the reason compose excludes the sender:
+   * suggesting somebody their own address as a recipient is noise.
+   */
+  const replyBook = useMemo(
+    () => (replyTo !== null ? addressBook(engine.read(), { exclude: ownAddresses }) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [engine, replyTo, ownAddresses],
+  );
+
   const chrome = useMemo(
     () => ({
       ownAddresses,
       absoluteTime,
       onToggleAbsoluteTime: () => setAbsoluteTime((v) => !v),
       replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply,
+      // The audience edit and its book — held here for the mounted-twice reason the reply
+      // body is, applied by `InlineReply`, sent by `sendReply` above from the same state.
+      replyEnvelope,
+      onReplyEnvelope: setReplyEnvelope,
+      addressBook: replyBook,
       /**
        * THE SIBLING VERBS, no longer dormant.
        *
@@ -3442,6 +3471,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       attachments, remoteImages,
     }),
     [ownAddresses, absoluteTime, replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
+      replyEnvelope, replyBook,
       openSenderMenu, openReply, forwardMessage, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
   );

@@ -40,19 +40,37 @@
  * buffer, not an IMAP draft. Server-side drafts are a later phase and belong on the mailbox
  * itself; nothing here claims they already exist.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import type { EngineMessage } from "@ohmail/client-engine";
+import type { AddressBookEntry, EmailAddress, EngineMessage } from "@ohmail/client-engine";
 import { Button, Kbd } from "@ohmail/ui";
 import { rowAddress, senderName } from "./format";
 import { displayAddress } from "./idn";
 import { canSend, type SendState } from "./mail-send";
+import { parseRecipients } from "./compose";
 import { RichEditor } from "./RichEditor";
 import type { RichValue } from "./rich-text";
 import type { DraftReplyControl, DraftedReply } from "./draft-reply";
 import { SendStatus } from "./SendStatus";
 import { useMailboxFacts } from "./MailStateProvider";
-import { optionsFromFacts, replyAllRecipients, replyRecipients, resolveReplyFrom } from "./compose-from";
+import {
+  formatRecipientLine,
+  optionsFromFacts,
+  replyAllRecipients,
+  replyEnvelopeOnWire,
+  replyEnvelopePlan,
+  replyRecipients,
+  resolveReplyFrom,
+  type ReplyEnvelopeEdit,
+} from "./compose-from";
+import {
+  RecipientField,
+  focusMovedChip,
+  gatedInvalid,
+  moveRecipient,
+  type RecipientMove,
+  type RecipientRow,
+} from "./RecipientField";
 
 /*
  * The scratch-buffer helpers and `canSend` used to live here and now live in `mail-send.ts`,
@@ -89,6 +107,9 @@ export function InlineReply({
   onClose,
   onSend,
   draftReply,
+  envelope = null,
+  onEnvelope,
+  book = [],
 }: {
   message: EngineMessage;
   /**
@@ -123,6 +144,22 @@ export function InlineReply({
    * desktop shell, where there is no drafter to offer.
    */
   draftReply?: DraftReplyChrome;
+  /**
+   * THE USER'S EDIT OF THE AUDIENCE, or `null` while the computed one stands — held by the
+   * SHELL (like `replyBody`, and for the identical reason: `MessagePane` is mounted twice
+   * while the reader is open, and two copies of who a reply goes to is how the visible head
+   * and the sent envelope stop being one object). `null` means the head below renders the
+   * computed audience and the wire carries the computed envelope, exactly as before this
+   * field existed.
+   */
+  envelope?: ReplyEnvelopeEdit | null;
+  /**
+   * Report an edit. ABSENT means this surface has nowhere to keep one — the inert chrome, a
+   * bare harness — and then the head stays a plain statement rather than a dead button.
+   */
+  onEnvelope?: (next: ReplyEnvelopeEdit) => void;
+  /** `addressBook(reader)` for the recipient rows' suggestions. Empty where no mirror is. */
+  book?: readonly AddressBookEntry[];
 }) {
   const t = useTranslations("reply");
   const box = useRef<HTMLDivElement>(null);
@@ -180,6 +217,33 @@ export function InlineReply({
     r.name ?? displayAddress(r.address);
 
   /**
+   * THE AUDIENCE IS ALWAYS EDITABLE. The head that names it is a BUTTON, and pressing it
+   * turns the computed audience into three editable recipient rows (To, Cc, Bcc — the same
+   * chip field every compose surface uses), prefilled with EXACTLY what the head claimed:
+   * `formatRecipientLine` over the same `all`/`recipients` the sentences above rendered.
+   * From that press on the user's strings are the envelope (`replyEnvelopePlan`), free-form —
+   * remove the sender, add a Cc, blind-copy somebody; a reply's computed audience is a
+   * default, not a cage.
+   *
+   * Untouched (`envelope === null`), NOTHING changed: the head renders as before and the
+   * wire carries the computed envelope byte-for-byte — `inline-reply.test.ts` pins the
+   * mutation's exact key set for that case.
+   */
+  const expand = onEnvelope === undefined
+    ? undefined
+    : (): void => {
+        const to = all ? all.to : recipients ?? [message.from];
+        // The trailing separator is what makes every prefilled entry a CHIP rather than text
+        // sitting in the input — `splitRecipients` reads the final segment as the tail being
+        // typed, and a prefill is settled, not half-typed.
+        const asChips = (list: readonly EmailAddress[]): string => {
+          const line = formatRecipientLine(list);
+          return line === "" ? "" : `${line}, `;
+        };
+        onEnvelope({ to: asChips(to), cc: asChips(all ? all.cc : []), bcc: "" });
+      };
+
+  /**
    * BRING THE EDITOR TO THE READER.
    *
    * The conversation above is no longer a bounded 190px quote — it is the real thread, as
@@ -215,30 +279,58 @@ export function InlineReply({
 
   const inFlight = send.phase === "sending" || send.phase === "queued";
   // LOCKED, not merely styled: `disabled` is what stops a second key being minted. Shared
-  // with the state machine — see `canSend`. The mutation it judges is the one this editor
-  // would send, so the button and the machine cannot reach different verdicts; a reply needs
-  // no recipient of its own (`enrich` derives it from the parent), which is why `inReplyTo`
-  // and `body` are the whole shape here.
+  // with the state machine — see `canSend`. The mutation it judges carries the SAME envelope
+  // fields `AppShell.sendReply` will put on the wire (`replyEnvelopePlan` over the same
+  // options and the same edit — one derivation, two consumers), so the button and the machine
+  // cannot reach different verdicts; an untouched reply still judges `{inReplyTo, body}` plus
+  // the computed audience, which `canSend`'s reply branch never refuses when non-empty.
   // `body: value.text` and not the markup: `canSend` refuses an empty body, and an empty
   // ProseMirror document is `<p></p>` — four characters that would light Send up on a reply
   // nobody has written. The plain rendering is the only half that answers "is there anything
   // here", which is the same rule `isRichEmpty` states.
-  const locked = !canSend(send, { kind: "mail_send", inReplyTo: message.id, body: value.text });
+  const envPlan = replyEnvelopePlan(message, options.map((o) => o.address), replyAll, envelope);
+  const locked = !canSend(send, {
+    kind: "mail_send",
+    inReplyTo: message.id,
+    body: value.text,
+    ...replyEnvelopeOnWire(envPlan),
+  });
+
+  /** The head's own sentence — shared by the static head and the button that opens the edit. */
+  const headContent = all ? (
+    <>
+      <b>{t("toAll", { names: all.to.map(nameOf).join(", ") })}</b>
+      {/* The Cc line, only when the envelope carries one — an empty "Cc" is a claim. */}
+      {all.cc.length > 0 ? <small>{t("ccLine", { names: all.cc.map(nameOf).join(", ") })}</small> : null}
+    </>
+  ) : (
+    <>
+      <b>{t("to", { name: toName })}</b>
+      {/* Only when it adds something — see `rowAddress`. */}
+      {toAddr ? <small>{toAddr}</small> : null}
+    </>
+  );
 
   return (
     <div className="reply" data-reply-for={message.id} ref={box}>
-      {all ? (
-        <div className="reply-head">
-          <b>{t("toAll", { names: all.to.map(nameOf).join(", ") })}</b>
-          {/* The Cc line, only when the envelope carries one — an empty "Cc" is a claim. */}
-          {all.cc.length > 0 ? <small>{t("ccLine", { names: all.cc.map(nameOf).join(", ") })}</small> : null}
-        </div>
+      {envelope !== null && onEnvelope ? (
+        <ReplyRecipients
+          envelope={envelope}
+          onEnvelope={onEnvelope}
+          book={book}
+          disabled={inFlight}
+        />
+      ) : expand ? (
+        // The head IS the way in: pressing the audience opens it for editing. A button and
+        // not a div-with-onClick, because "recipients always editable" has to be true from
+        // the keyboard too. The hint is part of the accessible name, so a screen reader
+        // hears what pressing does rather than only whom the reply addresses.
+        <button type="button" className="reply-head reply-head-btn" onClick={expand} disabled={inFlight}>
+          {headContent}
+          <span className="reply-head-edit">{t("editRecipients")}</span>
+        </button>
       ) : (
-        <div className="reply-head">
-          <b>{t("to", { name: toName })}</b>
-          {/* Only when it adds something — see `rowAddress`. */}
-          {toAddr ? <small>{toAddr}</small> : null}
-        </div>
+        <div className="reply-head">{headContent}</div>
       )}
 
       {/* FROM, and the substitution said out loud. Static text, never a control: a
@@ -372,6 +464,109 @@ function DraftReplyCard({
           fact and none of them is inferable from a status code. */}
       {control.notice ? (
         <p className="dr-note" role="status">{control.notice}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * THE OPENED AUDIENCE — To, Cc, Bcc as the same chip rows Compose has, over the edit strings
+ * the shell holds.
+ *
+ * The markup deliberately mirrors `ComposeView`'s header rows — `.c-field`, the label gutter,
+ * the `Cc/Bcc` toggle inside the To row, the error line under the row it belongs to, the Bcc
+ * hint — because "wherever this appears" means the SAME field, not a cousin. What differs is
+ * only what must: ids come from `useId` (this editor is mounted twice while the reader is
+ * open, and `compose-to` may exist on another route's DOM at the same time), and the invalid
+ * entries are parsed here from the strings rather than handed down from a plan, gated by the
+ * same still-typing rule (`gatedInvalid`).
+ *
+ * Cross-row moves (drag, Alt+arrows) land in ONE `onEnvelope` via `moveRecipient`, for the
+ * reason `ComposeView.moveChip` states: two onChange calls would each spread a stale copy of
+ * the other row. Starting a drag opens the hidden Cc/Bcc rows so the drop target exists.
+ */
+function ReplyRecipients({
+  envelope,
+  onEnvelope,
+  book,
+  disabled,
+}: {
+  envelope: ReplyEnvelopeEdit;
+  onEnvelope: (next: ReplyEnvelopeEdit) => void;
+  book: readonly AddressBookEntry[];
+  disabled: boolean;
+}) {
+  const t = useTranslations("compose");
+  const base = useId();
+  const [showCcBcc, setShowCcBcc] = useState(false);
+  const [focused, setFocused] = useState<Record<RecipientRow, boolean>>({
+    to: false, cc: false, bcc: false,
+  });
+  // Revealed by the toggle, and revealed AUTOMATICALLY when the row holds text — a prefilled
+  // reply-all Cc must never hide recipients the user cannot see they have. Same derivation
+  // as Compose's `ccBccOpen`.
+  const open = showCcBcc || envelope.cc.trim() !== "" || envelope.bcc.trim() !== "";
+
+  const move = (mv: RecipientMove): void => {
+    const next = moveRecipient(envelope, mv);
+    if (!next) return;
+    onEnvelope(next);
+    focusMovedChip(`${base}-${mv.to}`, mv.entry);
+  };
+  const dragOpen = (active: boolean): void => { if (active) setShowCcBcc(true); };
+
+  const row = (r: RecipientRow, extra?: ReactNode): ReactNode => {
+    const shown = gatedInvalid(envelope[r], focused[r], parseRecipients(envelope[r]).invalid);
+    const errId = `${base}-${r}-error`;
+    return (
+      <>
+        <div className="c-field">
+          <label htmlFor={`${base}-${r}`}>{t(r)}</label>
+          <RecipientField
+            id={`${base}-${r}`}
+            value={envelope[r]}
+            onChange={(next) => onEnvelope({ ...envelope, [r]: next })}
+            book={book}
+            disabled={disabled}
+            invalid={shown.length > 0}
+            describedBy={shown.length > 0 ? errId : undefined}
+            onFocusChange={(f) => setFocused((cur) => ({ ...cur, [r]: f }))}
+            row={r}
+            onMove={move}
+            onDragActive={dragOpen}
+          />
+          {extra}
+        </div>
+        {shown.length > 0 ? (
+          <p className="c-error" id={errId}>{t("toInvalid", { entries: shown.join(", ") })}</p>
+        ) : null}
+      </>
+    );
+  };
+
+  return (
+    <div className="reply-rcpt">
+      {row(
+        "to",
+        !open ? (
+          <button
+            type="button"
+            className="c-ccbcc-toggle"
+            aria-expanded={false}
+            aria-controls={`${base}-cc ${base}-bcc`}
+            onClick={() => setShowCcBcc(true)}
+          >
+            {t("ccBcc")}
+          </button>
+        ) : null,
+      )}
+      {open ? (
+        <>
+          {row("cc")}
+          {row("bcc")}
+          {/* Bcc says out loud what "blind" means — delivered on the envelope, never a header. */}
+          <p className="c-hint">{t("bccHint")}</p>
+        </>
       ) : null}
     </div>
   );
