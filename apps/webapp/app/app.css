@@ -3361,6 +3361,81 @@ textarea.c-input:read-only {
 }
 @keyframes mbx-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .mbx-spin { animation: none; } }
+
+/* ================= the boot silhouette =================
+   The other waiting affordance, filed beside the spinner because they answer the same question
+   at two different lengths and share one reduced-motion rule between them (see `BootSkeleton.tsx`
+   for when either is drawn).
+
+   It is the app's OWN geometry — the deck's 224px rail column, the deck's 16px gutter, `.row`'s
+   12px/14px inset — reproduced in tinted bars, so the window fills in where it is about to fill
+   in rather than settling somewhere else afterwards. The numbers below are the deck's and the
+   row's, restated here rather than shared, because this must not inherit a future change to the
+   real ones: a silhouette that tracks the list would be one more thing to keep in step, and the
+   only property it needs is "close enough that nothing jumps". */
+.boot-sk { display: flex; gap: 16px; width: 100%; min-width: 0; }
+.boot-sk-rail {
+  flex: none;
+  width: 224px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  padding: 22px 12px 18px 16px;
+  border-radius: 20px;
+  background: var(--panel);
+  box-shadow: var(--lift-1);
+}
+.boot-sk-list { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.boot-sk-row { padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; }
+/* `--tint2` and `--tint` are the two quietest fills in the system, and both are alpha over the
+   surface — so this reads correctly in either theme without a second palette, and never as a
+   grey rectangle on a dark canvas. */
+.boot-sk-bar {
+  display: block;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--tint2);
+  animation: boot-sk-breathe 2s var(--swift) infinite;
+}
+.boot-sk-who { height: 10px; }
+.boot-sk-line { height: 8px; background: var(--tint); }
+/* A breath, not a shimmer. A travelling highlight is the convention and it is the wrong one
+   here: it draws the eye to a surface with nothing on it, for a wait that can legitimately run
+   a hundred seconds. Opacity alone, slowly, says "not yet" and then lets go of the attention. */
+@keyframes boot-sk-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+/* The shape survives without the breath — the same answer `.mbx-spin` gives above, and for the
+   same reason: the affordance is the thing, the motion is only how it is drawn. */
+@media (prefers-reduced-motion: reduce) {
+  .boot-sk-bar { animation: none; }
+}
+/* Narrow: the deck is one column and the rail is a drawer, so a rail silhouette beside the list
+   would be describing a layout this width does not have. */
+@media (max-width: 900px) {
+  .boot-sk-rail { display: none; }
+}
+/* IN A LIST'S EMPTY BLOCK (the browser tab's cold mirror). `.empty` is centred, padded for a
+   sentence and — inside `.rows` — already carries the list's own 14px gutter, so the silhouette
+   drops its own horizontal inset and lands its bars exactly on the rows they stand in for. */
+.empty .boot-sk { margin-top: 22px; }
+.empty .boot-sk-row { padding-left: 0; padding-right: 0; }
+
+/* AS THE WINDOW ITSELF (the standalone client, before an engine has served). The sentence stays
+   centred where it has always been and the geometry goes BEHIND it: `.gate` is a centring flex
+   column, so a skeleton in its flow would push the card off-centre and then move it again when
+   the engine came up. Out of flow, the card never moves at all — the window simply gains a
+   backdrop after the grace. Dimmed, because it is scenery for a sentence, not the subject. */
+.gate-boot { position: relative; }
+.gate-boot > .boot-sk {
+  position: absolute;
+  inset: 16px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.gate-boot > .gate-card { position: relative; z-index: 1; }
+
 /* A button label never breaks — "Reconnect Microsoft" on two lines inside its own capsule is
    the cramped wrapping the screenshot showed. The row makes room by wrapping BETWEEN items. */
 .mbx-btn { font-size: 12px; padding: 5px 12px; white-space: nowrap; flex: none; }

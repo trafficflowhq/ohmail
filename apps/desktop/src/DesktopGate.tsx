@@ -40,6 +40,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
+import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go } from "../../webapp/app/shell/routing";
 import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
@@ -198,9 +199,23 @@ export function DesktopGate() {
     /* A door is chosen and no engine has served yet — a first launch migrating a database, or an
        engine on its way back up. One line, and no mail: the two things this window could put on
        screen instead are a guess and the sample mailbox, and the sample mailbox under somebody's
-       own address is the worse of the two. The settling poll above is what ends this state. */
+       own address is the worse of the two. The settling poll above is what ends this state.
+
+       AND, ONCE THE WAIT STOPS BEING AN ORDINARY ONE, THE SHAPE OF THE WINDOW BEHIND IT.
+       `BootSkeleton` is `mailMount`'s answer drawn out, never a second opinion about it: this
+       branch is chosen entirely above, and the silhouette is decoration inside a decision that
+       has already been made. It carries no text and nothing derived from any mailbox, which is
+       what keeps it on the right side of the rule this comment states — a shape is not the sample
+       world, for exactly as long as there is nothing in it.
+
+       It is delayed behind its own grace, so the ordinary launch is the quiet frame it has always
+       been. The wait it exists for is the one-off recovery launch: an install whose previous run
+       left a large write-ahead log replays it inside the engine's database open, near two minutes
+       on a directory of tens of gigabytes (see `SETTLE_MS` in `doors.ts`). The sentence stays,
+       because a shape says something is happening and only words say what. */
     return (
-      <div className="gate">
+      <div className="gate gate-boot">
+        <BootSkeleton active rail />
         <div className="gate-card">
           <span className="wordmark"><b>ohmail</b><em>.</em></span>
           <p>Opening your mailbox…</p>

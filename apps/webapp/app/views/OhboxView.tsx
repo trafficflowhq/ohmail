@@ -25,6 +25,7 @@ import { groupSection, sendTimeOf, singletonGroup, type OhboxRowGroup } from "./
 import { PLACE_LABEL, avatarOf, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
+import { BootSkeleton } from "../shell/BootSkeleton";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useMailState } from "../shell/MailStateProvider";
 import type { OlderMail } from "../shell/older-mail";
@@ -2090,6 +2091,18 @@ function BulkBar({
  * or a skeleton shaped like mail would answer this defect by creating the one this product
  * treats as unforgivable.
  *
+ * ── AND THE LINE THAT RULE ACTUALLY DRAWS ───────────────────────────────────────────────
+ *
+ * It is about CONTENT, not about shape, and the difference is the whole of what may be added
+ * here. A bar as long as a real subject line is a claim about that subject; a row carrying a
+ * name is a claim about a sender; a count invented to fill a slot is the worst of the three. All
+ * three remain forbidden. `BootSkeleton` below is on the other side of that line by
+ * construction: zero text nodes, `aria-hidden`, and a fixed width table that is derived from
+ * nothing — so there is nothing in it that could be mistaken for this mailbox, because there is
+ * nothing in it at all. It draws where the list is about to be, and the sentence above it stays
+ * the only thing on this pane that says anything. `boot-skeleton.test.tsx` holds that boundary
+ * as a structural assertion rather than as this paragraph.
+ *
  * The demo and the Desktop never reach the `screenerCandidate` arms — the derivation returns the
  * resting value for a fixtures engine before it looks at anything else — and `settled` is true
  * for them for the same reason: a fixtures engine is permanently settled.
@@ -2114,6 +2127,12 @@ function SyncState({ waiting, settled }: { waiting: number; settled: boolean }) 
           <span className="mbx-spin" aria-hidden="true" />
           {speak ? <b>{t("loading")}</b> : null}
         </span>
+        {/* The column's own geometry, under the sentence, on its own shorter grace — see the
+            header above for why a contentless silhouette is not the placeholder this pane
+            forbids. `rail` is deliberately off: in a browser tab the rail is real, populated and
+            already on screen a few pixels to the left, and a second fake one beside it would be
+            describing a layout the reader can see is not there. */}
+        <BootSkeleton active={!settled} />
       </div>
     );
   }
