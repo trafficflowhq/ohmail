@@ -113,7 +113,18 @@
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOptionalTheme } from "@ohmail/ui";
-import { BodyText } from "../shell/BodyText";
+import {
+  anchorFor,
+  BodyText,
+  isAttribution,
+  MAX_QUOTE_DEPTH,
+  type BodyNode,
+  type InlineNode,
+  type QuoteNode,
+  type RichParagraphNode,
+  type TableCellNode,
+  type TableRowNode,
+} from "../shell/BodyText";
 import { UI_KEYS, usePersistedIdSet } from "../shell/persisted-ui";
 import "./message-body.css";
 import { liveCopy } from "../shell/locale";
@@ -1034,14 +1045,16 @@ function widthAttrPx(v: string | null): number | null {
  *
  * ── THE ONE THING THIS MUST NEVER BECOME ────────────────────────────────────────────────
  *
- * **The sanitized HTML is never rendered into the app's own DOM, in this class or any other.**
- * The `srcdoc` sandbox — `default-src 'none'`, no scripts, no same-origin — is the XSS boundary
- * this whole file is arranged around, and "the sanitizer said it was fine, so we can inline it"
- * is the sentence that removes it. What this class does is render the message's TEXT part
- * instead, through the same component a message with no html has always used. There is no path
- * from `prose` to markup in the app document, and `message-body-prose.test.ts` holds it there.
- * WIDENING `prose` WIDENS WHAT THAT GUARD COVERS AND NOTHING ELSE: every message that changed
- * class here moved from the frame to `BodyText`, which renders text nodes only.
+ * **No untrusted markup STRING ever reaches a DOM sink — no `dangerouslySetInnerHTML`, no
+ * `innerHTML`, no srcdoc-in-the-app-document.** The `srcdoc` sandbox is where the sanitizer's
+ * OUTPUT STRING renders, and "the sanitizer said it was fine, so we can inline it" is the
+ * sentence that removes that boundary. What the prose class renders natively is not that
+ * string: {@link buildRichNodes} walks the sanitized DOM through a second, narrower allow-list
+ * and emits DATA — text runs, bounded ints, gated hrefs — which `BodyText` turns into elements
+ * it constructs itself. Sender bytes enter the app document only as React text nodes, and
+ * every attribute on the constructed elements is a value this code computed.
+ * `message-body-prose.test.ts` holds both halves: the structure renders, and no sender markup,
+ * class, style, id or handler exists anywhere in the app's tree.
  */
 
 /**
@@ -1059,6 +1072,279 @@ export function isRigidLayout(root: Element, styleText: string): boolean {
     if (style && declaresCanvas(style)) return true;
   }
   return false;
+}
+
+// ── the rich walker: the prose rendering's OWN allow-list ──────────────────────────────
+
+/**
+ * ── A SECOND, NARROWER ALLOW-LIST, AND WHY THE FIRST ONE IS NOT ENOUGH ──────────────────
+ *
+ * The sanitizer's {@link ALLOWED_TAGS} answers "what may a mail document SAY inside the
+ * sandboxed frame" — where a `<style>`, an `<img>`, a `width="600"` are all legitimate,
+ * because the frame contains them. The prose rendering has no frame: its elements live in
+ * the app's own document, so the question changes to "what STRUCTURE does a letter actually
+ * have", and the answer is this walker. It reads the sanitized DOM — the same element
+ * `sanitizeMailHtml` is about to serialize for the frame — and emits `BodyText`'s node
+ * model: paragraphs, headings, lists, tables, quotes, emphasis, gated links.
+ *
+ * The invariant, stated once and arranged for everywhere below: **no sender byte leaves this
+ * walker except as the `text` of a text run, and no sender attribute leaves it at all.** An
+ * `href` is re-derived through {@link anchorFor} (a parsed URL or nothing), a `colspan` is
+ * {@link boundedSpan}'s int, and `style`/`class`/`width`/`id` are simply never read — the
+ * viewer's own type is the point of the prose class. There is no serialized markup anywhere
+ * between the sanitized DOM and React: the builder emits data, `BodyText` builds elements.
+ *
+ * What is ABSENT is absent on purpose:
+ *   `img`     pictures are not in the native rendering; the attachment strip lists them and
+ *             "Show original" brings the sender's layout back. Skipped wholesale.
+ *   `style`   its TEXT is a stylesheet, not prose. The one element whose content must not
+ *             fall through to a text run, so it is the other member of {@link RICH_SKIP}.
+ *   everything else the sanitizer admits (`span`, `font`, `center`, `section`, …) is
+ *             TRANSPARENT: its words flow through, the element itself is never constructed.
+ *
+ * `blockquote` maps to the SAME QuoteNode the plain-text parser builds, clamped by the same
+ * {@link MAX_QUOTE_DEPTH}, which is what makes the trailing-history fold apply to html mail
+ * with no further wiring. And the whole walk runs under {@link MAX_RICH_NODES}: past the cap
+ * the builder answers `null` and the component falls back to the text part — the
+ * MAX_QUOTE_DEPTH precedent, applied to breadth.
+ */
+export const MAX_RICH_NODES = 4096;
+
+/** The ceiling on a parsed `colspan`/`rowspan`. Real mail tables sit far under it. */
+export const MAX_TABLE_SPAN = 20;
+
+/**
+ * The ceiling on DOM NESTING the walk will follow. The node cap bounds breadth; this bounds
+ * the recursion itself, because a 512 KiB html part that is nothing but `<div><div><div>…`
+ * parses to ~10⁵ levels and a recursive walk of it is a stack overflow, not a letter. 256 is
+ * past any real thread (Gmail nests one `blockquote` per hop) and nowhere near the stack.
+ * Exceeding it poisons the budget, so the whole build refuses and the text part renders.
+ */
+const MAX_WALK_DEPTH = 256;
+
+/** Elements whose CONTENT must not reach the prose — see the header above. */
+const RICH_SKIP = new Set(["style", "img"]);
+
+/** The walk's budget. Decremented per EMITTED node; below zero the whole build is refused. */
+interface RichBudget { left: number }
+function spend(b: RichBudget): boolean { return --b.left >= 0; }
+/** Refuse the whole build — see {@link MAX_WALK_DEPTH} and {@link buildRichNodes}. */
+function poison(b: RichBudget): void { b.left = -1; }
+
+/** `colspan="3"` → 3; junk, absence and zero → 1; anything huge → {@link MAX_TABLE_SPAN}. */
+function boundedSpan(v: string | null): number {
+  const n = Number.parseInt(v ?? "", 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(n, MAX_TABLE_SPAN);
+}
+
+/** The sender's words in an inline run — what attribution detection and emptiness read. */
+function textOfInline(nodes: InlineNode[]): string {
+  let s = "";
+  for (const n of nodes) {
+    if (n.kind === "text") s += n.text;
+    else if (n.kind === "break") s += "\n";
+    else s += textOfInline(n.children);
+  }
+  return s;
+}
+
+/**
+ * One node of inline content. Text becomes a text run; `strong`/`b`, `em`/`i`, `u` become
+ * styled runs; `a` passes {@link anchorFor} or dissolves into its own label; EVERYTHING else
+ * is transparent — its children are walked in place, the element is never emitted.
+ */
+function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: number): void {
+  if (b.left < 0) return;
+  if (nest > MAX_WALK_DEPTH) { poison(b); return; }
+  if (node.nodeType === 3 /* TEXT_NODE */) {
+    const text = node.nodeValue ?? "";
+    if (text.length > 0 && spend(b)) out.push({ kind: "text", text });
+    return;
+  }
+  if (node.nodeType !== 1 /* ELEMENT_NODE */) return;
+  const el = node as Element;
+  const tag = el.tagName.toLowerCase();
+  if (RICH_SKIP.has(tag)) return;
+  if (tag === "br") { if (spend(b)) out.push({ kind: "break" }); return; }
+  if (tag === "strong" || tag === "b") {
+    if (spend(b)) out.push({ kind: "strong", children: inlineOf(el, b, nest) });
+    return;
+  }
+  if (tag === "em" || tag === "i") {
+    if (spend(b)) out.push({ kind: "em", children: inlineOf(el, b, nest) });
+    return;
+  }
+  if (tag === "u") {
+    if (spend(b)) out.push({ kind: "underline", children: inlineOf(el, b, nest) });
+    return;
+  }
+  if (tag === "a") {
+    /**
+     * ONE GATE, the same one the plain-text path trusts. `anchorFor` re-parses the href and
+     * answers with a URL it constructed or with `null` — and the `null` branch is the
+     * DEFAULT branch: the label stays in the run as text, exactly as the sender wrote it,
+     * with no anchor around it. That covers `mailto:`/`tel:`/`cid:` (which the sanitizer's
+     * {@link SAFE_HREF} admits for the frame but this rendering does not link), a relative
+     * href, and an href the post-pass already removed.
+     *
+     * The label is the sender's — which is precisely the property the plain path's
+     * label≡href construction never had to defend — so the disagreement check rides along:
+     * a label that names a host other than the destination's gets the destination's host
+     * printed beside it by the renderer.
+     */
+    const gate = anchorFor((el.getAttribute("href") ?? "").trim());
+    const children = inlineOf(el, b, nest);
+    if (gate === null) { out.push(...children); return; }
+    const host = hostOfUrl(gate.href);
+    if (spend(b)) {
+      out.push({
+        kind: "link",
+        href: gate.href,
+        host,
+        elsewhere: textDisagreesWithHref(el.textContent ?? "", host),
+        children,
+      });
+    }
+    return;
+  }
+  // Transparent: `span`, `font`, and any block the sender nested mid-line. Words flow on.
+  for (const child of el.childNodes) appendInline(child, out, b, nest + 1);
+}
+
+function inlineOf(el: Element, b: RichBudget, nest: number): InlineNode[] {
+  const out: InlineNode[] = [];
+  for (const child of el.childNodes) appendInline(child, out, b, nest + 1);
+  return out;
+}
+
+/** The tags the BLOCK walk handles by name. Anything else is a transparent block. */
+const RICH_INLINE = new Set(["br", "strong", "b", "em", "i", "u", "a", "span", "font",
+  "abbr", "acronym", "bdi", "bdo", "big", "cite", "code", "data", "dfn", "del", "ins",
+  "kbd", "label", "mark", "q", "rp", "rt", "ruby", "s", "samp", "small", "strike",
+  "sub", "sup", "time", "tt", "var", "wbr"]);
+
+/**
+ * The block walk: accumulate inline content into a paragraph run, flush it at every block
+ * boundary, and emit the structural kinds by name. A paragraph whose words trim to nothing
+ * is dropped — that is the whitespace between a mail builder's `<div>`s, not content.
+ */
+function blocksOf(container: Element, depth: number, b: RichBudget, nest: number): BodyNode[] {
+  if (nest > MAX_WALK_DEPTH) { poison(b); return []; }
+  const out: BodyNode[] = [];
+  let run: InlineNode[] = [];
+  const flush = (): void => {
+    if (run.length === 0) return;
+    const children = run;
+    run = [];
+    const words = textOfInline(children).trim();
+    if (words.length === 0) return;
+    if (spend(b)) {
+      const para: RichParagraphNode = { kind: "rich", attribution: isAttribution(words), children };
+      out.push(para);
+    }
+  };
+
+  for (const node of container.childNodes) {
+    if (b.left < 0) break;
+    if (node.nodeType !== 1 /* ELEMENT_NODE */) { appendInline(node, run, b, nest + 1); continue; }
+    const el = node as Element;
+    const tag = el.tagName.toLowerCase();
+    if (RICH_SKIP.has(tag)) continue;
+    if (RICH_INLINE.has(tag)) { appendInline(node, run, b, nest + 1); continue; }
+
+    flush();
+    if (tag === "blockquote") {
+      // The clamp is the SAME semantic as the text path's: past MAX_QUOTE_DEPTH the words
+      // survive at the deepest level and only the wrapper count is capped.
+      if (depth >= MAX_QUOTE_DEPTH) { out.push(...blocksOf(el, depth, b, nest + 1)); continue; }
+      const children = blocksOf(el, depth + 1, b, nest + 1);
+      if (children.length > 0 && spend(b)) {
+        const quote: QuoteNode = { kind: "quote", depth: depth + 1, children };
+        out.push(quote);
+      }
+    } else if (tag === "ul" || tag === "ol") {
+      const items: BodyNode[][] = [];
+      for (const child of el.children) {
+        if (b.left < 0) break;
+        if (RICH_SKIP.has(child.tagName.toLowerCase())) continue;
+        const item = blocksOf(child, depth, b, nest + 1);
+        if (item.length > 0) items.push(item);
+      }
+      if (items.length > 0 && spend(b)) out.push({ kind: "list", ordered: tag === "ol", items });
+    } else if (tag === "table") {
+      tableOf(el, depth, b, out, nest + 1);
+    } else if (tag === "hr") {
+      if (spend(b)) out.push({ kind: "rule" });
+    } else if (/^h[1-6]$/.test(tag)) {
+      const children = inlineOf(el, b, nest);
+      if (textOfInline(children).trim().length > 0 && spend(b)) {
+        out.push({
+          kind: "heading",
+          level: Number(tag[1]) as 1 | 2 | 3 | 4 | 5 | 6,
+          children,
+        });
+      }
+    } else {
+      // `p`, `div`, and every unhandled block container (`center`, `section`, `pre`, an
+      // orphaned `td`): a block boundary whose content is walked in place.
+      out.push(...blocksOf(el, depth, b, nest + 1));
+    }
+  }
+  flush();
+  return out;
+}
+
+/**
+ * Rows from wherever the parser put them — direct `tr` children and the ones inside
+ * `thead`/`tbody`/`tfoot` — in document order. A `caption`'s words land as a paragraph
+ * above the table rather than being dropped. Cells carry {@link boundedSpan} ints and their
+ * own block children, so a nested table nests instead of flattening into its parent.
+ */
+function tableOf(el: Element, depth: number, b: RichBudget, out: BodyNode[], nest: number): void {
+  const rows: TableRowNode[] = [];
+  const addRow = (tr: Element): void => {
+    const cells: TableCellNode[] = [];
+    for (const c of tr.children) {
+      if (b.left < 0) break;
+      const tag = c.tagName.toLowerCase();
+      if (tag !== "td" && tag !== "th") continue;
+      if (!spend(b)) break;
+      cells.push({
+        header: tag === "th",
+        colSpan: boundedSpan(c.getAttribute("colspan")),
+        rowSpan: boundedSpan(c.getAttribute("rowspan")),
+        children: blocksOf(c, depth, b, nest + 1),
+      });
+    }
+    if (cells.length > 0 && spend(b)) rows.push({ cells });
+  };
+  for (const child of el.children) {
+    if (b.left < 0) break;
+    const tag = child.tagName.toLowerCase();
+    if (tag === "tr") addRow(child);
+    else if (tag === "thead" || tag === "tbody" || tag === "tfoot") {
+      for (const tr of child.children) {
+        if (tr.tagName.toLowerCase() === "tr") addRow(tr);
+      }
+    } else if (tag === "caption") {
+      out.push(...blocksOf(child, depth, b, nest + 1));
+    }
+  }
+  if (rows.length > 0 && spend(b)) out.push({ kind: "table", rows });
+}
+
+/**
+ * The walker's whole answer for one sanitized document: the node tree, or `null` when the
+ * mail holds no usable structure or wants more than {@link MAX_RICH_NODES} of it. `null`
+ * means "render the text part", which is the rendering every prose message had before this
+ * walker existed — the fallback is the previous behaviour, not a degraded one.
+ */
+export function buildRichNodes(root: Element): BodyNode[] | null {
+  const b: RichBudget = { left: MAX_RICH_NODES };
+  const nodes = blocksOf(root, 0, b, 0);
+  if (b.left < 0) return null;
+  return nodes.length > 0 ? nodes : null;
 }
 
 export interface SanitizeOptions {
@@ -1111,10 +1397,10 @@ export interface SanitizedMail {
    * IS THIS A LETTER RATHER THAN A LAYOUT? The one input to the frameless path — see the note
    * above {@link isRigidLayout}, which is the whole test.
    *
-   * `true` means the component may render the message's TEXT part in the app's own type and skip
-   * the iframe entirely. It NEVER means the sanitized html may be inlined: the srcdoc sandbox is
-   * the XSS boundary, and this flag decides which of two SAFE renderings is used, not whether the
-   * boundary applies.
+   * `true` means the component may skip the iframe and render the message in the app's own type
+   * — {@link rich} when the walker produced it, the TEXT part otherwise. It NEVER means the
+   * sanitized html STRING may be inlined: the srcdoc sandbox is where that string renders, and
+   * this flag decides which of two SAFE renderings is used, not whether the boundary applies.
    *
    * EQUAL TO {@link reflow} TODAY, and that is a statement about the current rule rather than a
    * duplicated field: both mean "this document declares no canvas". They are separate because
@@ -1123,6 +1409,15 @@ export interface SanitizedMail {
    * second read of the same document.
    */
   prose: boolean;
+  /**
+   * THE NATIVE RICH RENDERING of a prose mail — {@link buildRichNodes}' walk of the sanitized
+   * document, or `null`. `null` on a rigid mail (the frame renders it), on a walk past
+   * {@link MAX_RICH_NODES}, and on a document with no usable structure; in every `null` case
+   * the prose path renders the TEXT PART, which is what it always rendered. It is DATA, not
+   * markup: text runs and constructed attributes, rendered by `BodyText` element by element —
+   * the serialized {@link html} string never reaches the app document on any path.
+   */
+  rich: BodyNode[] | null;
   /**
    * The paper {@link light} was decided from, or `null` when the mail declared none. Carried
    * for the tests and for anyone debugging a message that inverted when it should not have;
@@ -1208,10 +1503,10 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // conservative side: these branches produce no document to have read, and a `true` here would
   // send an unparseable message down the frameless path on the strength of nothing.
   if (!sanitizerAvailable()) {
-    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, background: null };
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null };
   }
   if (html.length > MAX_HTML_CHARS) {
-    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, background: null, oversize: true };
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, oversize: true };
   }
 
   const seen = new Set<string>();
@@ -1465,7 +1760,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     }) as unknown as HTMLElement | null;
 
   // `IS_EMPTY_INPUT` returns null under `RETURN_DOM`, which is a message with no html left.
-  if (!sanitized) return { html: "", blocked, sheets, light: true, reflow: false, prose: false, background: null };
+  if (!sanitized) return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null };
 
   // ── THE POST-PASS. Over the document the frame will have, not the one we handed over. ──
   for (const node of sanitized.querySelectorAll("*")) onAttributes(node);
@@ -1488,6 +1783,10 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     light: mailIsLight(background),
     reflow: !rigid,
     prose: !rigid,
+    // THE WALK RUNS ON THE SAME ELEMENT the line above is about to serialize — the sanitized,
+    // post-passed document — and only for a mail the frame will not render. What it emits is
+    // data (text runs, bounded ints, gated hrefs); the serialized string stays the frame's.
+    rich: rigid ? null : buildRichNodes(sanitized),
     background,
   };
 }
@@ -1886,8 +2185,9 @@ export interface MessageBodyProps {
   /**
    * HOW THIS MESSAGE IS ACTUALLY BEING DRAWN, reported to whoever mounted the component.
    *
-   * `"prose"` is the frameless path — {@link BodyText} over the text part, in the app's own type,
-   * which draws **no images at all**. `"framed"` is the sandboxed `srcdoc`, where the sender's
+   * `"prose"` is the frameless path — {@link BodyText} in the app's own type, over the walker's
+   * rich nodes or the text part, and it draws **no images at all** either way (`img` is absent
+   * from the walker's allow-list). `"framed"` is the sandboxed `srcdoc`, where the sender's
    * html paints its own pictures.
    *
    * A CALLBACK AND NOT A PROP THE CALLER COMPUTES, because the caller cannot compute it. The
@@ -1995,7 +2295,7 @@ export function MessageBody({
   const mail = useMemo(() => {
     if (!html) return null;
     if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const };
-    const { html: clean, blocked, sheets, oversize, light, reflow, prose, background } =
+    const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background } =
       sanitizeMailHtml(html, { imageProxy: proxy });
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
     // frame, and never by taking however long the neutralising would have taken.
@@ -2017,6 +2317,12 @@ export function MessageBody({
        * no remote picture the reader has already consented to. Both are stated there.
        */
       prose,
+      /**
+       * THE LETTER'S OWN STRUCTURE, walked out of the sanitized document — see
+       * {@link SanitizedMail.rich}. Handed to `BodyText` on the prose path; `null` falls back
+       * to the text part there, which was the whole of the prose rendering before the walker.
+       */
+      rich,
       // `darkWanted && light` is baked in for the FIRST paint (no flash), then never rebuilt:
       // every later flip goes through the toggleAttribute effect below. It is deliberately NOT
       // a dep — rebuilding the srcdoc on a theme change would re-parse and re-measure the whole
@@ -2295,11 +2601,15 @@ export function MessageBody({
    *
    * ── WHAT IS RENDERED, AND THE LINE THAT MUST NOT MOVE ──────────────────────────────────
    *
-   * The TEXT PART, through the same {@link BodyText} a message with no html has always used.
-   * **The sanitized html is never put into the app's document, here or anywhere.** The srcdoc
-   * sandbox is the XSS boundary; this flag chooses between two safe renderings and has no power
-   * to relax it. `message-body-prose.test.ts` plants markup in a prose-classified message and
-   * asserts that not one element of it reaches the app's DOM.
+   * The walker's node tree when there is one, the TEXT PART when there is not — both through
+   * the same {@link BodyText} a message with no html has always used. **No markup string is
+   * ever put into the app's document, here or anywhere**: the native rendering is built
+   * element by element from data the walker emitted, so sender bytes exist in the app's tree
+   * only as text nodes and every attribute is one this code constructed. The srcdoc sandbox is
+   * where the sanitized STRING renders; this flag chooses between two safe renderings and has
+   * no power to relax that. `message-body-prose.test.ts` plants hostile markup in a
+   * prose-classified message and asserts none of it — no element it named, no class, no
+   * handler, no unvetted href — reaches the app's DOM.
    *
    * ── THE BAR STAYS WHEN IT HAS SOMETHING TO SAY ─────────────────────────────────────────
    *
@@ -2414,9 +2724,12 @@ export function MessageBody({
       ) : null}
 
       {proseView ? (
-        /* A LETTER. The message's text part, in the app's own type — no frame, no sheet, no
-           measurement pass, and NEVER the sanitized html. See `proseView` above. */
-        <BodyText text={text} />
+        /* A LETTER, in the app's own type — no frame, no sheet, no measurement pass, and NEVER
+           a markup string. `rich` is the walker's node tree (tables, lists, real anchors),
+           rendered by `BodyText` element by element; when it is null — the walk refused, or the
+           mail had no structure worth keeping — the text part renders exactly as it always has.
+           See `proseView` above. */
+        <BodyText text={text} rich={mail.rich} />
       ) : (
         /* `data-dark` themes the sheet the frame sits on — the chrome this file owns — to match
            the transform inside the frame, so a short mail's surround does not read as a light

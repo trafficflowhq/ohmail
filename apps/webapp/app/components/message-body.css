@@ -136,6 +136,45 @@
 }
 .mb-sheet[data-dark] .mb-frame { background: #1b1b1b; color-scheme: dark; }
 
+/* ── the letter's own structure, in the app's type ─────────────────────────────────────
+   The native rich rendering (`BodyText`'s rich nodes, walked out of the sanitized document
+   by `MessageBody`) reuses `.msg-p`/`.msg-quote`/`.msg-link` from the ui package; the kinds
+   that exist only on this path are styled here, beside the component that emits them. None
+   of these values comes from the sender — no sender style survives the walker — so this
+   sheet IS the typography of a native table, list or heading, everywhere one renders. */
+
+/* A genuinely wide table scrolls INSIDE the letter; the pane never grows a horizontal bar. */
+.msg-table-wrap { overflow-x: auto; max-width: 100%; margin: 0 0 10px; }
+.msg-table-wrap:last-child { margin-bottom: 0; }
+.msg-table { border-collapse: collapse; font-size: 0.95em; line-height: 1.45; }
+.msg-table th,
+.msg-table td {
+  border: 1px solid var(--hair);
+  padding: 5px 10px;
+  text-align: start;
+  vertical-align: top;
+}
+.msg-table th { background: var(--tint); font-weight: 600; color: var(--ink); }
+
+/* Headings at the APP's scale, whatever level the sender reached for: a mail heading is a
+   letter's heading, not a page's. Level order survives, loudness does not. */
+.msg-h { margin: 0 0 10px; line-height: 1.35; font-weight: 650; color: var(--ink); }
+h1.msg-h, h2.msg-h { font-size: 1.2em; }
+h3.msg-h { font-size: 1.08em; }
+h4.msg-h, h5.msg-h, h6.msg-h { font-size: 1em; }
+
+.msg-list { margin: 0 0 10px; padding-inline-start: 24px; }
+.msg-list:last-child { margin-bottom: 0; }
+.msg-list .msg-p { margin-bottom: 2px; }
+.msg-list .msg-list { margin-bottom: 0; }
+
+.msg-hr { border: 0; border-top: 1px solid var(--hair); margin: 14px 0; }
+
+/* The real destination, said beside a link whose visible label names a different host — the
+   framed path's anti-phishing marker, natively. Quiet, and part of the link so it travels
+   with it. */
+.msg-link-host { color: var(--ink3); font-size: 0.88em; }
+
 /* ── the states this surface owns ─────────────────────────────────────────────────────── */
 
 /* Said when the sanitizer is not available (no DOM — a server render that reached here) and

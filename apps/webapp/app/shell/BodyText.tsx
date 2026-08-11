@@ -50,11 +50,25 @@
  * ── REACT ELEMENTS ONLY ───────────────────────────────────────────────────────────────────
  *
  * No `dangerouslySetInnerHTML`, no HTML string anywhere in this file — not as an intermediate
- * value, not "just for the links". `security-headers.ts` states that the app "renders no
- * untrusted HTML anywhere" and the CSP rationale is written on top of that sentence; claims are
- * contracts here, so the sentence constrains this file rather than the other way round. The
- * sender's bytes only ever reach the DOM as text nodes and as an `href` this file constructed
- * from a parsed `URL`.
+ * value, not "just for the links". `security-headers.ts` states the invariant this file is half
+ * of: no untrusted markup STRING reaches a DOM sink; sender bytes enter the app document only
+ * as React text nodes and as attributes this code constructed. The CSP rationale is written on
+ * top of that sentence; claims are contracts here, so the sentence constrains this file rather
+ * than the other way round. On the plain-text path the constructed attribute is an `href` built
+ * from a parsed `URL`; on the rich path (below) it is that plus the handful of numbers and
+ * class names the renderer stamps on elements IT created.
+ *
+ * ── AND THE RICH PATH, WHICH RENDERS STRUCTURE WITHOUT EVER RENDERING MARKUP ──────────────
+ *
+ * A prose-classified html mail (see `MessageBody`'s `isRigidLayout`) no longer flattens to its
+ * `text/plain` part. `MessageBody`'s walker re-reads the SANITIZED document through a second,
+ * narrower allow-list and emits the {@link BodyNode} superset below — paragraphs, headings,
+ * lists, tables, inline emphasis, gated links, and `blockquote` as the same {@link QuoteNode}
+ * the plain-text path builds, so the trailing-history fold applies to both. This file renders
+ * those nodes the only way it renders anything: `createElement`, text nodes, constructed
+ * attributes. There is no serialized form anywhere between the sanitized DOM and the screen,
+ * which is what keeps the sink invariant true while tables and lists render natively. No
+ * sender `style`, `class`, `width` or `id` survives — the viewer's own type is the point.
  *
  * Deliberately a plain `<a>` and never `next/link`: `next/link` prefetches, and a message body
  * that fetches anything on render is the tracker-pixel behaviour the product exists to stop.
@@ -108,7 +122,7 @@ const ATTRIBUTION: RegExp[] = [
   /^(von|from|gesendet|sent|an|to|betreff|subject|datum|date|cc|bcc|reply-to|antwort an|de|para|asunto|enviado|répondre à)\s*:\s?\S/i,
 ];
 
-function isAttribution(content: string): boolean {
+export function isAttribution(content: string): boolean {
   const s = content.trim();
   if (s.length === 0 || s.length > 400) return false;
   return ATTRIBUTION.some((re) => re.test(s));
@@ -173,13 +187,67 @@ function toBlocks(lines: ClassifiedLine[]): Block[] {
  * wrote and load-bearing on `">".repeat(50000)`, which would otherwise become fifty thousand
  * nested elements built synchronously on the thread that paints the app.
  */
-const MAX_QUOTE_DEPTH = 6;
+export const MAX_QUOTE_DEPTH = 6;
 
 /** One paragraph (or attribution line) of the rendered body. */
-interface ParagraphNode { kind: "para"; block: Block }
+export interface ParagraphNode { kind: "para"; block: Block }
 /** One quote container: everything quoted at `depth` within one contiguous quoted run. */
-interface QuoteNode { kind: "quote"; depth: number; children: BodyNode[] }
-type BodyNode = ParagraphNode | QuoteNode;
+export interface QuoteNode { kind: "quote"; depth: number; children: BodyNode[] }
+
+/**
+ * ── THE RICH NODES — what `MessageBody`'s walker emits for a prose-classified html part ────
+ *
+ * Every kind below is a STRUCTURE, never a string of markup: the walker reads the sanitized
+ * document and this file constructs each element itself, so a sender's byte can only ever be
+ * the `text` of a {@link TextRun} — a React text node — and every attribute on the rendered
+ * elements ({@link LinkRun.href}, the bounded spans on {@link TableCellNode}) is a value this
+ * code computed, not one it copied. That property is the whole reason the model exists; a
+ * field that carried sender markup or a sender attribute would dissolve it.
+ */
+export interface TextRun { kind: "text"; text: string }
+export interface LineBreak { kind: "break" }
+/** Inline emphasis — `strong`/`b`, `em`/`i`, `u`, folded to one kind per meaning. */
+export interface StyledRun { kind: "strong" | "em" | "underline"; children: InlineNode[] }
+/**
+ * A link that passed {@link anchorFor} — the same single gate the plain-text path uses; a
+ * rejected href never becomes a node at all, its label stays in the surrounding run as text.
+ * An html anchor breaks the plain path's label≡href property (the sender writes the label),
+ * so the anti-phishing disclosure travels with the node: `elsewhere` is
+ * `textDisagreesWithHref`'s answer, and the renderer prints `host` beside the label when it
+ * is true — the framed path's marker, natively.
+ */
+export interface LinkRun {
+  kind: "link";
+  /** Constructed from a parsed `URL` by {@link anchorFor} — never the sender's raw bytes. */
+  href: string;
+  /** The real destination's host, for the title and the disagreement disclosure. */
+  host: string;
+  /** The visible label names a DIFFERENT host — say the real one out loud. */
+  elsewhere: boolean;
+  children: InlineNode[];
+}
+export type InlineNode = TextRun | LineBreak | StyledRun | LinkRun;
+
+/** A paragraph of rich inline content. `attribution` re-uses the plain path's role and style. */
+export interface RichParagraphNode { kind: "rich"; attribution: boolean; children: InlineNode[] }
+/** `h1`–`h6`, rendered at the app's own scale — a mail heading is not a page heading. */
+export interface HeadingNode { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; children: InlineNode[] }
+export interface RuleNode { kind: "rule" }
+/** `ul`/`ol`; each item is its own block list, so nested lists nest. */
+export interface ListNode { kind: "list"; ordered: boolean; items: BodyNode[][] }
+/** Spans are PARSED, BOUNDED INTS — see `MessageBody`'s `boundedSpan` — never sender strings. */
+export interface TableCellNode { header: boolean; colSpan: number; rowSpan: number; children: BodyNode[] }
+export interface TableRowNode { cells: TableCellNode[] }
+export interface TableNode { kind: "table"; rows: TableRowNode[] }
+
+export type BodyNode =
+  | ParagraphNode
+  | QuoteNode
+  | RichParagraphNode
+  | HeadingNode
+  | RuleNode
+  | ListNode
+  | TableNode;
 /**
  * Fold the flat block list into the tree the reader actually means.
  *
@@ -233,6 +301,25 @@ export const COPY: typeof EN = liveCopy("bodyText", EN);
  * the last node, so it never reaches the fold. That is the inline-reply case, and it stays on
  * screen with the words that answer it.
  */
+/** Is this node an attribution line, in either of the two paragraph spellings? */
+function isAttributionNode(n: BodyNode): boolean {
+  return (n.kind === "para" && n.block.attribution) || (n.kind === "rich" && n.attribution);
+}
+
+/**
+ * Does this node hold fresh words — content the fold must leave on screen? Quotes are what the
+ * fold hides, attributions introduce them, and a bare rule holds no words; everything else —
+ * a paragraph of either spelling, a heading, a list, a table — is the letter.
+ */
+function carriesProse(n: BodyNode): boolean {
+  switch (n.kind) {
+    case "para": return !n.block.attribution;
+    case "rich": return !n.attribution;
+    case "heading": case "list": case "table": return true;
+    case "quote": case "rule": return false;
+  }
+}
+
 function splitTrailingHistory(
   nodes: BodyNode[],
 ): { lead: BodyNode[]; history: BodyNode[] } | null {
@@ -241,12 +328,11 @@ function splitTrailingHistory(
   let start = nodes.length - 1;
   while (start > 0) {
     const prev = nodes[start - 1]!;
-    if (prev.kind === "para" && prev.block.attribution) start -= 1;
+    if (isAttributionNode(prev)) start -= 1;
     else break;
   }
   const lead = nodes.slice(0, start);
-  const hasProse = lead.some((n) => n.kind === "para" && !n.block.attribution);
-  if (!hasProse) return null;
+  if (!lead.some(carriesProse)) return null;
   return { lead, history: nodes.slice(start) };
 }
 
@@ -304,7 +390,7 @@ function labelOf(url: URL): string {
  * `https:`/`http:` returns `null`, including the parse failure. A `catch` that renders the
  * substring as a link anyway is the untested branch that ships `javascript:`.
  */
-function anchorFor(candidate: string): { href: string; label: string } | null {
+export function anchorFor(candidate: string): { href: string; label: string } | null {
   let url: URL;
   try {
     url = new URL(candidate);
@@ -362,43 +448,139 @@ function linkify(block: string, keyBase: string): ReactNode[] {
  * its class (`.msg-body`, `.hm-body`), which are what the existing pane and screener
  * assertions select on, and what carries the surface's own type scale.
  */
-function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
+/**
+ * Rich inline content, as React elements. A `text` run renders as a bare string — a React
+ * TEXT NODE, which is the sink invariant made concrete — and every element here is one this
+ * function created with attributes it computed. The anchor mirrors the plain path's
+ * (`target`/`rel`/class) with one addition: when the sender's label names a different host
+ * than the destination ({@link LinkRun.elsewhere}), the real host is printed beside it — the
+ * framed path's anti-phishing marker, carried natively.
+ */
+function renderInline(nodes: InlineNode[], keyBase: string): ReactNode[] {
   return nodes.map((node, i) => {
-    const key = `${keyPrefix}${i}`;
-    if (node.kind === "quote") {
-      // One container per quoted run per level, so the left rule runs unbroken down the whole
-      // quoted message instead of restarting at every paragraph. `data-quote-depth` still
-      // carries the level for styling hooks and tests; the recursion is bounded by
-      // MAX_QUOTE_DEPTH, enforced where the tree is built.
-      return (
-        <div className="msg-quote" data-quote-depth={node.depth} key={key}>
-          {renderNodes(node.children, `${key}-`)}
-        </div>
-      );
+    const key = `${keyBase}i${i}`;
+    switch (node.kind) {
+      case "text": return node.text;
+      case "break": return <br key={key} />;
+      case "strong": return <strong key={key}>{renderInline(node.children, key)}</strong>;
+      case "em": return <em key={key}>{renderInline(node.children, key)}</em>;
+      case "underline": return <u key={key}>{renderInline(node.children, key)}</u>;
+      case "link":
+        return (
+          <a
+            key={key}
+            className="msg-link"
+            href={node.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Goes to ${node.host}`}
+          >
+            {renderInline(node.children, key)}
+            {node.elsewhere ? <span className="msg-link-host"> ({node.host})</span> : null}
+          </a>
+        );
     }
-    const cls = node.block.attribution ? "msg-attribution" : "msg-p";
-    return (
-      <p className={cls} key={key}>
-        {linkify(node.block.text, key)}
-      </p>
-    );
   });
 }
 
-export function BodyText({ text }: { text: string }) {
+function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
+  return nodes.map((node, i) => {
+    const key = `${keyPrefix}${i}`;
+    switch (node.kind) {
+      case "quote":
+        // One container per quoted run per level, so the left rule runs unbroken down the whole
+        // quoted message instead of restarting at every paragraph. `data-quote-depth` still
+        // carries the level for styling hooks and tests; the recursion is bounded by
+        // MAX_QUOTE_DEPTH, enforced where the tree is built.
+        return (
+          <div className="msg-quote" data-quote-depth={node.depth} key={key}>
+            {renderNodes(node.children, `${key}-`)}
+          </div>
+        );
+      case "para":
+        return (
+          <p className={node.block.attribution ? "msg-attribution" : "msg-p"} key={key}>
+            {linkify(node.block.text, key)}
+          </p>
+        );
+      case "rich":
+        return (
+          <p className={node.attribution ? "msg-attribution" : "msg-p"} key={key}>
+            {renderInline(node.children, key)}
+          </p>
+        );
+      case "heading": {
+        // The app's scale, not the sender's: `.msg-h` caps the size (message-body.css), so a
+        // newsletter-sized h1 reads as a letter's heading rather than a shout.
+        const H = `h${node.level}` as "h1";
+        return <H className="msg-h" key={key}>{renderInline(node.children, key)}</H>;
+      }
+      case "rule":
+        return <hr className="msg-hr" key={key} />;
+      case "list": {
+        const items = node.items.map((item, j) => (
+          <li key={`${key}-${j}`}>{renderNodes(item, `${key}-${j}-`)}</li>
+        ));
+        return node.ordered
+          ? <ol className="msg-list" key={key}>{items}</ol>
+          : <ul className="msg-list" key={key}>{items}</ul>;
+      }
+      case "table":
+        // The wrap scrolls a genuinely wide table INSIDE the letter instead of letting it push
+        // the pane — the same rule the frame's column obeys. Spans are the bounded ints the
+        // walker parsed; a span of 1 is simply omitted.
+        return (
+          <div className="msg-table-wrap" key={key}>
+            <table className="msg-table">
+              <tbody>
+                {node.rows.map((row, r) => (
+                  <tr key={`${key}-${r}`}>
+                    {row.cells.map((cell, c) => {
+                      const Cell = cell.header ? "th" : "td";
+                      return (
+                        <Cell
+                          key={`${key}-${r}-${c}`}
+                          colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
+                          rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
+                        >
+                          {renderNodes(cell.children, `${key}-${r}-${c}-`)}
+                        </Cell>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+    }
+  });
+}
+
+/**
+ * `rich` is the walker's output for a prose-classified html part — `MessageBody` is the only
+ * caller that passes it. Present and non-empty, it replaces the text-parsing entirely (the
+ * message renders with its own structure — lists, tables, real anchors); absent, `null` (the
+ * walker hit its node cap, or the mail had no usable structure) or empty, the text part
+ * renders exactly as it always has. The fold below applies identically to both, because the
+ * walker emits the same {@link QuoteNode} the text parser builds.
+ */
+export function BodyText({ text, rich }: { text: string; rich?: BodyNode[] | null }) {
   /**
    * The fold's state keys on the MESSAGE TEXT, not on the component instance: `open` is only
    * true while the text it was opened for is the text on screen. The pane reuses one mounted
    * `BodyText` as the reader moves between messages, and a plain `useState(false)` would carry
    * one mail's expansion onto the next — history the reader never asked for, on a message they
    * have not read. Comparing against the same string the mirror handed down is an identity
-   * check in practice and correct even when it is not.
+   * check in practice and correct even when it is not. The rich path keys on the same string:
+   * `text` is the same message's text part, handed down beside the nodes.
    */
   const [openedFor, setOpenedFor] = useState<string | null>(null);
   // CRLF is what an IMAP body actually carries; normalise before splitting on lines, or a
   // blank line is `\r\n\r\n` and every paragraph boundary is missed.
-  const lines = (text ?? "").replace(/\r\n?/g, "\n").split("\n").map(classifyLine);
-  const nodes = toTree(toBlocks(lines));
+  const nodes = rich && rich.length > 0
+    ? rich
+    : toTree(toBlocks((text ?? "").replace(/\r\n?/g, "\n").split("\n").map(classifyLine)));
   const split = splitTrailingHistory(nodes);
   if (split === null) return <>{renderNodes(nodes, "b")}</>;
   const open = openedFor === text;
