@@ -1722,7 +1722,11 @@ export interface OutboundScreen {
 export interface ModelSafeText {
   subject: string;
   snippet: string;
-  /** True ⇒ the screen fired and both fields were run through {@link redactSensitiveText}. */
+  /**
+   * True ⇒ the screen fired and both fields were rewritten: {@link redactSensitiveText} for
+   * plain values, {@link redactUrlTails} for URL tails, and {@link redactEncodedRuns} for
+   * base64 / quoted-printable runs the embedded decoder would have read.
+   */
   redacted: boolean;
 }
 
@@ -1767,7 +1771,13 @@ export interface ModelSafeText {
  */
 export function redactForModel(subject: string, snippet: string): ModelSafeText {
   if (screenOutboundText(subject, snippet).safe) return { subject, snippet, redacted: false };
-  const clean = (t: string): string => redactUrlTails(redactSensitiveText(t));
+  // Order: QP soft breaks are unfolded first, so a value wrapped across lines is contiguous when
+  // {@link CODE} reads it; then the plain-text passes blank values and URL tails; then
+  // {@link redactEncodedRuns} blanks every run the embedded decoder could have read — the pass
+  // that keeps a base64/QP-encoded credential from leaving in its encoded form. Encoded-last is
+  // load-bearing too: whatever the earlier passes leave of a machine run, this one removes.
+  const clean = (t: string): string =>
+    redactEncodedRuns(redactUrlTails(redactSensitiveText(t.replace(QP_SOFT_BREAK, ""))));
   return { subject: clean(subject), snippet: clean(snippet), redacted: true };
 }
 
@@ -1807,6 +1817,46 @@ const URL_RUN = /https?:\/\/[^\s<>"')\]]+/gi;
 /** Everything after the authority: the first `/`, `?` or `#` and onward. */
 const URL_TAIL = /^(https?:\/\/[^/?#\s]*)([\s\S]*)$/i;
 const TAIL_SEGMENT = /[A-Za-z0-9_\-.~+%=]{16,}/g;
+
+/**
+ * ── THE ENCODED FORM IS REDACTED LIKE THE PLAIN ONE ──────────────────────────────────────────
+ *
+ * {@link screenOutboundText} DECODES embedded base64 and quoted-printable before judging — that
+ * is how a credential inside a forwarded raw part flags the payload at all. The redaction
+ * passes above do not decode anything: they rewrite the ORIGINAL bytes, and {@link CODE}'s `\b`
+ * never fires inside a contiguous mixed-case base64 run. Before this pass existed, a payload
+ * could therefore be flagged BECAUSE of its encoded credential and still leave with that
+ * credential intact — `redacted: true` describing a transform that had removed nothing, one
+ * trivial decode away from the plaintext this gate exists to withhold.
+ *
+ * So, on a payload the screen has already flagged — the only payloads any redaction runs on —
+ * every run the embedded decoder would have read is blanked in the outbound copy:
+ *
+ *  · every {@link B64_RUN}, the exact pattern {@link decodeEmbedded} decodes, so the redaction's
+ *    reach is the detection's reach rather than a second guess at it;
+ *  · every run of quoted-printable hex escapes ({@link QP_HEX_RUN}) — the variant where the
+ *    digits themselves are QP-encoded and no digit ever appears in the raw bytes;
+ *  · and QP soft line breaks are unfolded FIRST, in {@link redactForModel}'s pipeline, so a
+ *    value wrapped across lines is one contiguous run again when {@link CODE} reads it, instead
+ *    of two fragments each too short for any pattern.
+ *
+ * The cost is the one the model path already prices: a ≥16-character unbroken alphanumeric
+ * stretch in a credential-bearing mail is blanked even when it happens to be words. Stretches
+ * that long are almost always machine text, the mail is already flagged, and it is the same
+ * trade {@link redactUrlTails} makes for URL tails. Hosts survive — `.` is not in the base64
+ * alphabet, so a hostname's labels break the run.
+ *
+ * Bounded honestly: a base64 fragment SHORTER than {@link B64_RUN}'s floor is not blanked here —
+ * but it is below {@link decodeEmbedded}'s floor too, so it is equally invisible to the
+ * detection this product has; nothing the screen can see is left unredacted.
+ */
+const QP_HEX_RUN = /(?:=[0-9A-Fa-f]{2})+/g;
+/** A quoted-printable soft line break: `=` at end of line — "the value continues on the next". */
+const QP_SOFT_BREAK = /=\r?\n/g;
+
+function redactEncodedRuns(text: string): string {
+  return text.replace(QP_HEX_RUN, "[REDACTED]").replace(B64_RUN, "[REDACTED]");
+}
 
 function redactUrlTails(text: string): string {
   URL_RUN.lastIndex = 0;
