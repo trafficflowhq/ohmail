@@ -1156,7 +1156,10 @@ export class HttpAdapter implements EngineAdapter {
           };
         }
         const res = await this.request("PUT", `/drafts/${encodeURIComponent(m.draftId)}`, {
-          body: fields,
+          // `mailboxId` rides the update too: the sending identity follows the From pick for
+          // as long as the row is a draft (the server refuses the move past `draft`), so a
+          // draft closed here and reopened on another device carries the pick with it.
+          body: { ...fields, ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}) },
           idempotencyKey: opts.idempotencyKey,
         });
         if (!res.ok) throw await this.rejectionOf(res);
@@ -1280,7 +1283,7 @@ export class HttpAdapter implements EngineAdapter {
     if (draftId && !this.draftForKey.has(idempotencyKey)) {
       this.draftForKey.set(idempotencyKey, draftId);
       const wantsBcc = (m.bcc?.length ?? 0) > 0;
-      let echoed: { bcc?: unknown } | null = null;
+      let echoed: { bcc?: unknown; mailboxId?: unknown } | null = null;
       try {
         const put = await this.request("PUT", `/drafts/${encodeURIComponent(draftId)}`, {
           body: {
@@ -1289,9 +1292,15 @@ export class HttpAdapter implements EngineAdapter {
             to: m.to ?? [],
             cc: m.cc ?? [],
             bcc: m.bcc ?? [],
+            // THE SENDING IDENTITY, AT PRESS TIME. The row was born at the FIRST autosave,
+            // under whatever the From picker held then; `m.mailboxId` is what the From line
+            // resolved when Send was pressed. Carrying it re-homes the row while it is still
+            // `draft`, so the send that follows dials the identity on screen rather than the
+            // frozen one — the wrong-From incident this line exists to close.
+            ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
           },
         });
-        if (put.ok) echoed = (await put.json()) as { bcc?: unknown };
+        if (put.ok) echoed = (await put.json()) as { bcc?: unknown; mailboxId?: unknown };
       } catch { /* see above — the row stands, and the send is what matters */ }
 
       // ── THE VERSION-SKEW GUARD, ON THIS PATH TOO ────────────────────────────────────────
@@ -1308,6 +1317,24 @@ export class HttpAdapter implements EngineAdapter {
         throw new MutationRejectedError(
           "This message was not sent: the server did not confirm the Bcc recipients. Reload to update, then try again.",
           { code: "bcc_unsupported", retryable: false },
+        );
+      }
+
+      // ── AND THE SAME GUARD FOR THE SENDING IDENTITY ─────────────────────────────────────
+      //
+      // The send that follows dials the ROW's mailbox, so the PUT above is what makes the
+      // picked From real — and a server that predates the movable column reads named fields
+      // and ignores the rest: the PUT "succeeds" and the echo carries the row's OLD mailbox.
+      // Going on to `/send` would deliver under an identity the sender explicitly moved off,
+      // which is a wrong-From delivery the recipient sees and the sender cannot. So the echo
+      // must name the picked mailbox, and anything else — the old id, or no echo because the
+      // PUT blipped — refuses the send. Text tolerates a blipped PUT because a stale row is
+      // at most one debounce old; the row's IDENTITY may be days old, so it does not.
+      if (m.mailboxId && echoed?.mailboxId !== m.mailboxId) {
+        this.draftForKey.delete(idempotencyKey);
+        throw new MutationRejectedError(
+          "This message was not sent: the server did not confirm the sending address. Try again, or reload to update.",
+          { code: "from_mailbox_unconfirmed", retryable: false },
         );
       }
     }

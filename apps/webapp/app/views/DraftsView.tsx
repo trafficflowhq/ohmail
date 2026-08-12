@@ -35,6 +35,16 @@
  * everything else — a compose, or a reply whose parent this device has not synced — opens in
  * Compose. The decision is the shell's because only the shell can look in the mirror; this view
  * reports the press and says which kind of thing each row is.
+ *
+ * ── A SEND THAT DID NOT CONFIRM IS A ROW HERE, AND IT SAYS SO ───────────────────────────
+ *
+ * `draftsList` also surfaces `unverified` rows (SMTP threw and the Sent probe found nothing)
+ * and `sending` rows old enough that no send can still be running. Both hold the only copy of
+ * a message that may never have been delivered, and both used to be invisible on every surface
+ * — the compose sheet's warning was the last anyone heard of them. The row states what is and
+ * is not known, in the row, before any press; opening one recovers the text into a fresh
+ * message (the shell's rule — the stranded row itself is never blindly re-sent), and Discard
+ * works as on any draft.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -123,7 +133,7 @@ export function DraftsView({
                       type="button"
                       className="draft-open"
                       onClick={() => onOpen(d)}
-                      title={t("openTitle")}
+                      title={d.status === "draft" ? t("openTitle") : t("openRecoverTitle")}
                     >
                       <span className="draft-line">
                         <b className="draft-subject">{d.subject.trim() || t("noSubject")}</b>
@@ -137,6 +147,16 @@ export function DraftsView({
                         {repliesHere(d) ? <span className="draft-badge">{t("isReply")}</span> : null}
                       </span>
                       <span className="draft-preview">{preview(d.body)}</span>
+                      {/* WHAT IS AND IS NOT KNOWN, in the row — before any press. `role="status"`
+                          for the same reason `SendStatus` carries it: the condition arrived out
+                          of band, possibly days ago, and this line is the first anyone hears of
+                          it. The wording never claims the mail failed: `unverified` means
+                          exactly "we could not tell", and a claim either way would be a guess. */}
+                      {d.status !== "draft" ? (
+                        <span className="draft-state" role="status">
+                          {d.status === "unverified" ? t("unverifiedNote") : t("interruptedNote")}
+                        </span>
+                      ) : null}
                     </button>
                     {/* THE TRIGGER STAYS ON SCREEN WHILE THE QUESTION IS OPEN — `RulesView`'s
                         idiom, and the reason is the same: it was SWAPPED for the confirm, so

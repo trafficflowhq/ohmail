@@ -4806,6 +4806,21 @@ textarea.c-input:read-only {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A send that did not confirm, said in the row (DraftsView). The same treatment as
+   `.send-status.warn` — accent-soft ground, hairline edge — because it is the same standing
+   condition on a second surface, and two dialects for one state is how a reader learns to
+   ignore both. Wraps rather than ellipsizes: this sentence is the row's reason to exist. */
+.draft-state {
+  align-self: flex-start;
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-hair);
+  border-radius: 9px;
+  padding: 4px 9px;
+}
 .draft-discard {
   flex: none;
   align-self: center;

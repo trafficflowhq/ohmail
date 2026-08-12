@@ -1231,7 +1231,12 @@ export type EngineMutation =
       kind: "draft_save";
       /** `null` ⇒ create. A server id ⇒ update THAT row. Never a client-minted id. */
       draftId: string | null;
-      /** Required on create (the account's own address); ignored by an update. */
+      /**
+       * The SENDING mailbox. Required on create; on an update it RE-TARGETS the row — the From
+       * pick has to reach the account, or a draft reopened on another device sends from the
+       * identity the row froze at its first autosave. The server refuses the move on any row
+       * past `draft` (409), so a send in flight keeps the identity it was reserved under.
+       */
       mailboxId?: string;
       threadId?: string | null;
       inReplyToMessageId?: string | null;

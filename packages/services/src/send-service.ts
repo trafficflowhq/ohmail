@@ -310,8 +310,22 @@ export class SendService {
   ): Promise<Reservation> {
     const attachTotal = (input.attachments ?? []).reduce((n, a) => n + a.content.byteLength, 0);
     return asTx(ctx).transaction(async (tx): Promise<Reservation> => {
+      // `FOR UPDATE`, because this read decides the SENDING IDENTITY. The draft's `mailboxId`
+      // is PATCHable while the row is a draft (`DraftsService.update`), and a plain read-
+      // committed SELECT does not wait for a concurrent move's row lock — it reads the
+      // pre-move snapshot, so the envelope, the minted Message-ID and the SMTP dial would all
+      // be the OLD identity's while the row (and every screen) commits the new one. Locking
+      // the row serializes the two writers: reserve either waits and reads what the move
+      // committed, or wins and flips the row to `sending`, at which point the move's own
+      // status predicate refuses it. Measured, not reasoned — `draft-move-race.pg.test.ts`
+      // watched the plain SELECT dial the pre-move mailbox across two real connections.
+      // The lock is safe to WAIT on here (unlike the finalize's mailbox doorbell, which must
+      // `SKIP LOCKED`): nothing has been sent yet, every other holder of a drafts row lock is
+      // a short CRUD transaction, and a reserve that waits a few milliseconds is a reserve
+      // that tells the truth.
       const [d] = await tx.select().from(drafts)
-        .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
+        .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)))
+        .for("update").limit(1);
       if (!d) throw new ServiceError("not_found", 404, "draft not found");
 
       const [mb] = await tx.select({

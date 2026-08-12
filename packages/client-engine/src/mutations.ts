@@ -702,15 +702,18 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         id: existing.id,
         entity: {
           ...existing,
-          // The FIELDS the form owns, and nothing else. `status`, `mailboxId`, `threadId` and
-          // `inReplyToMessageId` are settled at create and are not the form's to move: changing
-          // the mailbox of a draft mid-write would change which address it goes out from without
-          // saying so, and the server refuses it anyway (the column is immutable after create).
+          // The FIELDS the form owns. `status`, `threadId` and `inReplyToMessageId` are settled
+          // at create and are not the form's to move. `mailboxId` IS the form's now — the From
+          // pick re-targets the sending identity for as long as the row is a draft, the wire
+          // carries it on the PUT, and an overlay that pinned the old one would show a From
+          // line the send is not going to use. The server still refuses the move on any row
+          // past `draft`, and that refusal rolls this overlay back like any other rejection.
           subject: m.subject,
           body: m.body,
           to: m.to,
           cc: m.cc,
           bcc: m.bcc,
+          ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
           updatedAt: iso,
         } satisfies EngineDraft,
       }];

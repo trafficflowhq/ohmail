@@ -118,6 +118,7 @@ export {
   readsPartition,
   receiptsByDay,
   draftsList,
+  SENDING_STALE_AFTER_MS,
   rulesList,
   screenerSegments,
   senderKey,

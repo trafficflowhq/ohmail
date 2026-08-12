@@ -236,6 +236,73 @@ export function bodyOf(
 // ── Conversations ──────────────────────────────────────────────────────────
 
 /**
+ * ONE SPELLING FOR A MESSAGE-ID — strip one pair of RFC 5322 angle brackets, trim, KEEP the case.
+ *
+ * The two sides of the optimistic-sent reconcile spell the same id differently: the send
+ * confirmation's `providerMessageId` is the minted header, `<id@domain>`, while the ingested
+ * row's `messageIdHeader` comes back bracket-stripped (server ingest normalises it exactly this
+ * way). Comparing the raw strings therefore NEVER matched, and the optimistic copy was only ever
+ * retired by its ten-minute TTL — the just-sent message stood twice in its conversation and in
+ * Earlier until then. Both sides go through this before any comparison.
+ *
+ * Case is preserved for the same reason ingest preserves it: `id-left` is a case-sensitive atom,
+ * and folding it would equate ids a sender chose to distinguish.
+ *
+ * DEFINED HERE (it lived in `mutations.ts`, which re-exports it) because {@link threadOf}'s twin
+ * collapse is a consumer and `mutations.ts` imports from this file — the one direction the
+ * dependency may point.
+ */
+export function messageIdKey(raw: string): string {
+  const m = raw.match(/<([^>]+)>/);
+  return (m ? m[1]! : raw).trim();
+}
+
+/**
+ * WHICH OF TWO TWINS STANDS — one panel per logical message, and this is the whole ranking.
+ *
+ * `openId` first: the message the reader actually opened may never be collapsed out of its own
+ * pane, whatever else is known about it. Then a REAL row beats a `local: true` one — the
+ * optimistic Sent copy is provisional by definition, and it is the twin that renders without an
+ * attachment tile (its client-minted id can serve no attachment fetch). Between two real rows
+ * the FIRST in reading order stands ({@link byDateAsc}, id tie-break), which is deterministic
+ * across renders and devices.
+ */
+function preferTwin(a: EngineMessage, b: EngineMessage, openId: string): EngineMessage {
+  if (a.id === openId) return a;
+  if (b.id === openId) return b;
+  const aLocal = a.local === true;
+  if (aLocal !== (b.local === true)) return aLocal ? b : a;
+  return a;
+}
+
+/**
+ * COLLAPSE THE SELF-SEND TWINS — members sharing a `messageIdKey` are ONE message, one panel.
+ *
+ * A self-send legitimately puts one logical message in the mirror twice: the optimistic Sent
+ * copy stands beside the ingested row until the reconcile retires it (and for up to a drain
+ * after the row lands), and a provider that re-renders its Sent filing (Exchange files its own
+ * copy of every SMTP submission) can defeat the server-side collapse outright — two REAL rows,
+ * one Message-ID, one thread. Rendered plainly, that is twin identical panels in the reading
+ * pane. The Message-ID is the one identity both copies carry, so it is the collapse key; a row
+ * with NO header never collapses, because absence is not an identity two strangers can share.
+ *
+ * `members` arrives in reading order and leaves in reading order — the survivor keeps its
+ * place; nothing is re-sorted.
+ */
+function collapseTwins(members: EngineMessage[], openId: string): EngineMessage[] {
+  const keeper = new Map<string, EngineMessage>();
+  for (const m of members) {
+    if (!m.messageIdHeader) continue;
+    const key = messageIdKey(m.messageIdHeader);
+    const held = keeper.get(key);
+    keeper.set(key, held ? preferTwin(held, m, openId) : m);
+  }
+  return members.filter(
+    (m) => !m.messageIdHeader || keeper.get(messageIdKey(m.messageIdHeader)) === m,
+  );
+}
+
+/**
  * THE CONVERSATION a message belongs to, oldest first.
  *
  * `threadId` is populated at ingest, and until this selector existed nothing rendered it.
@@ -263,10 +330,15 @@ export function bodyOf(
 export function threadOf(reader: EntityReader, messageId: string): EngineMessage[] {
   const self = reader.get<EngineMessage>("message", messageId);
   if (!self?.threadId) return [];
-  const members = reader
-    .list<EngineMessage>("message")
-    .filter((m) => m.threadId === self.threadId)
-    .sort(byDateAsc);
+  const members = collapseTwins(
+    reader
+      .list<EngineMessage>("message")
+      .filter((m) => m.threadId === self.threadId)
+      .sort(byDateAsc),
+    messageId,
+  );
+  // The >1 contract is judged AFTER the collapse: a thread reduced to one logical message has
+  // no conversation, so the pane renders the single open message — one panel, never a twin.
   return members.length > 1 ? members : [];
 }
 
@@ -901,6 +973,20 @@ export interface TriagePiles {
 /**
  * The bottom piles: `message_state` entities joined to their messages, merged
  * with fixture-only `triage_item` entries (demo entries with no backing message).
+ *
+ * ── ONE MESSAGE, ONE CLAIM — the records are deduped by MESSAGE id first ──────────────────
+ *
+ * The mirror can briefly hold TWO `message_state` records for one message under different
+ * record ids: the live server keys the entity by the `message_states` ROW's uuid
+ * (`TriageService.setState` emits `entityId: row.id`), while an optimistic effect that found
+ * no settled record yet keys by the only id it has — the message's. A poll drain landing the
+ * settled row while that overlay still stands is therefore two records saying "this message
+ * is parked", and a pile that renders records verbatim counts the message twice — the rail
+ * badge inflating past the pile it renders beside (a drag-park was measured at 6-vs-1 on a
+ * live account, corrected only by reload). The message is the unit a pile is ABOUT, so the
+ * message is the dedup key; when two records disagree, the NEWEST `updatedAt` is the latest
+ * claim and ties keep the later-listed record (the overlay reads after the store, so the
+ * user's own in-flight intent wins a tie — user-always-wins).
  */
 export function triagePiles(reader: EntityReader): TriagePiles {
   const piles: TriagePiles = { replyLater: [], setAside: [], resurface: [] };
@@ -910,7 +996,13 @@ export function triagePiles(reader: EntityReader): TriagePiles {
       : state === "bubbled_up" ? piles.resurface
       : null;
 
+  const claimOf = new Map<string, MessageStateDTO>();
   for (const st of reader.list<MessageStateDTO>("message_state")) {
+    const held = claimOf.get(st.messageId);
+    if (held && Date.parse(held.updatedAt) > Date.parse(st.updatedAt)) continue;
+    claimOf.set(st.messageId, st);
+  }
+  for (const st of claimOf.values()) {
     const pile = pileOf(st.state);
     if (!pile) continue;
     const msg = reader.get<EngineMessage>("message", st.messageId);
@@ -1010,15 +1102,41 @@ export function rulesList(reader: EntityReader): RuleDTO[] {
 }
 
 /**
- * EVERY UNSENT DRAFT ON THE ACCOUNT, newest first — the Drafts list.
+ * How old a `sending` row must be before this list treats it as STRANDED rather than in flight.
  *
- * ── `status === "draft"` IS THE WHOLE FILTER, AND IT IS NOT A CONVENIENCE ────────────────
+ * The server's send path has the same ten-minute constant (`SEND_STALE_AFTER_MS`) for treating a
+ * `pending` reservation as orphaned, and this value matches it on purpose: past this age no
+ * invocation can still be alive, so a row still
+ * `sending` is the wreckage of a send that died mid-flight — the same silent loss as `unverified`,
+ * reached without the server ever getting to say so. Younger `sending` rows stay OFF the list:
+ * they are the two seconds of an ordinary delivery, and a Drafts list that flashed every send
+ * through itself would be noise wearing a warning's clothes.
+ */
+export const SENDING_STALE_AFTER_MS = 10 * 60 * 1000;
+
+/**
+ * EVERY DRAFT THE USER CAN STILL ACT ON, newest first — the Drafts list.
+ *
+ * ── WHICH STATUSES, AND WHY EACH ─────────────────────────────────────────────────────────
  *
  * `drafts` rows do not disappear when they are sent: `SendService` moves the row to `sent`, and
  * `sending` / `unverified` are the two states in between. All four are the same entity in the
- * mirror. Listing anything but `draft` would put a message that has already left the account in a
- * list whose every row invites you to keep writing it — and, on `unverified`, would invite a
- * second delivery of a mail that may well have gone.
+ * mirror.
+ *
+ *  · `draft` — the ordinary case: a message being written.
+ *  · `unverified` — SMTP threw AND the Sent probe found nothing: the mail may never have been
+ *    delivered, and the row holds THE ONLY COPY of its text. This used to be filtered out, on
+ *    the reasoning that listing it invites a second delivery of a mail that may have gone —
+ *    which is right about a plain re-send and wrong about the listing: hiding the row made an
+ *    undelivered message invisible on every surface, and the user, told to "check your Sent
+ *    folder", found nothing anywhere and concluded the mail was lost (it was — measured on a
+ *    real account). The row is listed; what the surface OFFERS on it is the surface's rule
+ *    (recover into a fresh compose, or discard — never a blind re-send of the same row).
+ *  · `sending`, once STALE — see {@link SENDING_STALE_AFTER_MS}: past every possible invocation
+ *    lifetime this is a send that died without a verdict, stranded exactly like `unverified`
+ *    except the server never got to write the word. Fresh `sending` rows are not listed.
+ *  · `sent` — never listed: that message left, and a list whose rows invite editing must not
+ *    hold it.
  *
  * `accepted` is not filtered on. It is a client-local flag meaning "the user took an AI draft
  * into the editor", and a draft somebody has started editing is exactly a draft.
@@ -1026,10 +1144,18 @@ export function rulesList(reader: EntityReader): RuleDTO[] {
  * Sorted by `updatedAt` and not `createdAt`, because the question a Drafts list answers is "what
  * was I last writing" — a reply started a week ago and touched this morning belongs at the top.
  * The id breaks ties so the order is stable across renders rather than dependent on insertion.
+ *
+ * @param now injected for the staleness cut, defaulting to the wall clock. A memoized caller
+ * re-evaluates on its ordinary version bumps, so a row crossing the ten-minute line surfaces on
+ * the next drain rather than the very second — a deliberate trade, not a defect.
  */
-export function draftsList(reader: EntityReader): EngineDraft[] {
+export function draftsList(reader: EntityReader, now: Date = new Date()): EngineDraft[] {
+  const staleBefore = now.getTime() - SENDING_STALE_AFTER_MS;
   return reader.list<EngineDraft>("draft")
-    .filter((d) => d.status === "draft")
+    .filter((d) =>
+      d.status === "draft" ||
+      d.status === "unverified" ||
+      (d.status === "sending" && (d.updatedAt ? Date.parse(d.updatedAt) : 0) < staleBefore))
     .sort((a, b) => {
       const ta = a.updatedAt ? Date.parse(a.updatedAt) : 0;
       const tb = b.updatedAt ? Date.parse(b.updatedAt) : 0;

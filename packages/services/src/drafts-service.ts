@@ -54,8 +54,19 @@ export interface CreateDraftBody {
   rationale?: string | null;
 }
 
-/** PUT/PATCH — any subset of the composable fields (mailboxId is fixed after create). */
-export type PatchDraftBody = Partial<Omit<CreateDraftBody, "mailboxId">>;
+/**
+ * PUT/PATCH — any subset of the composable fields, `mailboxId` included.
+ *
+ * `mailboxId` was fixed after create, and that froze the sending IDENTITY at the first
+ * autosave: the row is born at the first keystroke, so a From picked afterwards — the
+ * explicit selector, or the domain-match switch that fires only once recipients exist —
+ * changed the screen and nothing else, and the mail left under whatever the picker held
+ * when typing began. The pick has to reach the row, so the patch may move it: validated
+ * exactly like create (owned, not disabled), and refused with a 409 the moment the row
+ * has left `draft` — a send in flight, or already out, keeps the identity it was
+ * reserved under (see {@link DraftsService.update}).
+ */
+export type PatchDraftBody = Partial<CreateDraftBody>;
 
 /** A mutation's result: the DTO plus the change_log seq to echo as `X-Sync-Seq`. */
 export interface DraftMutation {
@@ -134,6 +145,12 @@ export class DraftsService {
   /** PUT/PATCH /drafts/:id — full/partial edit of the composable fields. */
   async update(ctx: ServiceContext, id: string, patch: PatchDraftBody): Promise<DraftMutation> {
     const set: Record<string, unknown> = { updatedAt: ctx.now() };
+    // THE SENDING MAILBOX MOVES WITH THE PICK — validated exactly as create validates it
+    // (owned, not disabled), and only while the row is still a draft: the status predicate
+    // is on the UPDATE itself (below), so a row that a concurrent send has already flipped
+    // to `sending` cannot have its identity rewritten between a read and a write here.
+    const movesMailbox = patch.mailboxId !== undefined;
+    if (movesMailbox) set.mailboxId = await this.validMailbox(ctx, patch.mailboxId);
     if (patch.subject !== undefined) set.subject = this.validString(patch.subject, "subject");
     const rich = this.richBody(patch.html, patch.body);
     if (rich) {
@@ -159,11 +176,34 @@ export class DraftsService {
     if (patch.inReplyToMessageId !== undefined) set.inReplyToMessageId = patch.inReplyToMessageId ?? null;
 
     const seq = await asTx(ctx).transaction(async (tx) => {
-      // Scope the UPDATE to the account: a cross-account id matches 0 rows.
+      // Scope the UPDATE to the account: a cross-account id matches 0 rows. A mailbox move
+      // additionally requires `status = 'draft'` IN THE PREDICATE — not in a prior read —
+      // because the send path flips the row to `sending` in its own transaction, and a check
+      // that ran before this UPDATE took the row lock would let the move land on a row whose
+      // send is already reserved under the old identity.
       const updated = await tx.update(drafts).set(set)
-        .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
+        .where(and(
+          eq(drafts.id, id), eq(drafts.accountId, ctx.accountId),
+          ...(movesMailbox ? [eq(drafts.status, "draft")] : []),
+        ))
         .returning({ id: drafts.id });
-      if (updated.length === 0) throw new ServiceError("not_found", 404, "draft not found");
+      if (updated.length === 0) {
+        if (movesMailbox) {
+          // Zero rows is two different refusals, and they need different answers: a row that
+          // does not exist (or is another account's) is the standing 404; a row past `draft`
+          // exists and is refused the MOVE — 409, so the caller learns the identity is fixed
+          // rather than that the draft vanished.
+          const [row] = await tx.select({ status: drafts.status }).from(drafts)
+            .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId))).limit(1);
+          if (row) {
+            throw new ServiceError(
+              "conflict", 409,
+              `the sending mailbox cannot change once a draft is '${row.status}'`,
+            );
+          }
+        }
+        throw new ServiceError("not_found", 404, "draft not found");
+      }
       return recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: id, op: "update", meta: null,
       });

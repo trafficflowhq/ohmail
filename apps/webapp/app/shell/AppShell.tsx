@@ -1880,6 +1880,18 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * below) or when the row is discarded from the Drafts list (`discardDraft`).
    */
   const replySeedDrafts = useRef(new Map<string, string>());
+  /**
+   * THE STRANDED ROW A COMPOSE IS RECOVERING — an `unverified` (or stale-`sending`) draft whose
+   * text was seeded into Compose, or the row a send just left in `unverified`. The compose does
+   * NOT adopt it: adopting would point autosave and Send at a row the server refuses to send
+   * again (`SendService` takes only `status='draft'`), so the recovery writes a FRESH row and
+   * this ref remembers the stranded one. Discharged when the fresh send CONFIRMS — the moment
+   * the message is known delivered, the stranded copy of it is a phantom and is discarded, the
+   * `replySeedDrafts` rule one surface over. Cleared without discarding when the user abandons
+   * the recovery (cancel, a different draft, a forward): nothing got delivered, so the record
+   * of the unconfirmed send stays in Drafts.
+   */
+  const recoverySeed = useRef<string | null>(null);
 
   /**
    * The reply that most recently settled, handed to `OhboxView` for the animate-to-Earlier gesture
@@ -1892,6 +1904,14 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   const onSendSettled = useCallback((key: string, m: MailSendMutation) => {
     if (key === COMPOSE_SEND_KEY) {
       setCompose(EMPTY_COMPOSE);
+      /* THE RECOVERED MESSAGE IS DELIVERED, so the stranded row it was recovered from is a
+         phantom copy of a sent mail and goes — see `recoverySeed`. Only on a CONFIRMED send:
+         this callback fires on nothing else. */
+      const seeded = recoverySeed.current;
+      if (seeded && seeded !== m.draftId) {
+        recoverySeed.current = null;
+        void engine.mutate({ kind: "draft_discard", draftId: seeded });
+      }
       /* RELEASED WHEN THE SEND USED THE ROW, DISCARDED WHEN IT DID NOT — `autosave.settled`
          judges by the settled mutation's own `draftId`. A send that carried the row turned it
          into a sent message (`SendService` moved it to `sent`), and deleting that would destroy
@@ -2089,8 +2109,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   /**
    * THE DRAFTS LIST, and the two things a row can do.
    *
-   * `draftsList` filters to `status: "draft"` — a row that has been sent is the same entity in a
-   * later state, and listing one would invite somebody to keep writing a message that has gone.
+   * `draftsList` lists what the user can still act on: `draft` rows, plus `unverified` and
+   * stranded-`sending` ones — a send that did not confirm holds the only copy of its text, and
+   * a list that hid it made an undelivered message invisible on every surface. `sent` rows and
+   * live sends stay out (see the selector's own header).
    *
    * ── OPENING ONE ────────────────────────────────────────────────────────────────────────
    *
@@ -2100,7 +2122,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * row is labelled from, so the badge and the destination cannot disagree.
    *
    * Opening a compose draft ADOPTS its id, so the very next autosave PATCHes the row that was
-   * opened rather than creating a second one beside it.
+   * opened rather than creating a second one beside it. Opening an UNCONFIRMED send does NOT
+   * adopt — see `recoverySeed`: the server refuses to send a row past `draft` again, so the
+   * text is recovered into a fresh row and the stranded one is discarded only once the fresh
+   * send confirms.
    *
    * ── AND OPENING A REPLY DOES NOT ADOPT ─────────────────────────────────────────────────
    *
@@ -2165,7 +2190,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       };
       setCompose(seeded);
       writeComposeDraft(seeded);
-      autosave.adopt(d.id, seeded);
+      if (d.status === "draft") {
+        recoverySeed.current = null;
+        autosave.adopt(d.id, seeded);
+      } else {
+        /* AN UNCONFIRMED SEND, RECOVERED — NOT ADOPTED. The row is `unverified` or a stranded
+           `sending`: the server refuses to send it again under any key (`SendService` reserves
+           only from `status='draft'`), and adopting it would point every autosave PUT and the
+           Send press at that refusal. So the TEXT is seeded, the first pause writes a fresh
+           row, and the send delivers that one — the deliberate fresh send the unverified copy
+           has always promised. The stranded row stays in Drafts as the record of what is not
+           known until the fresh send CONFIRMS, at which point `onSendSettled` discards it. */
+        recoverySeed.current = d.id;
+        autosave.release();
+      }
       go("compose");
     },
     [draftRepliesHere, autosave, go, reader, version],
@@ -2181,6 +2219,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       for (const [msgId, dId] of replySeedDrafts.current) {
         if (dId === draftId) replySeedDrafts.current.delete(msgId);
       }
+      // And so may a compose recovery — same rule, same reason.
+      if (recoverySeed.current === draftId) recoverySeed.current = null;
     },
     [engine, autosave],
   );
@@ -2194,7 +2234,28 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     setCompose(next);
     writeComposeDraft(next);
   }, []);
-  const sendCompose = useCallback(() => mailSend.send(plan.mutation), [mailSend, plan]);
+  /**
+   * A SECOND PRESS AFTER `unverified` IS A FRESH SEND, AND IT HAS TO BUILD A FRESH ROW.
+   *
+   * The warning's contract ("check your Sent folder before retrying"; the next press is a
+   * deliberate fresh send) predates autosave, and autosave silently broke it for Compose: the
+   * plan still carried the row's id, the row is `unverified`, and `SendService` refuses any
+   * key on a row past `draft` — so the deliberate retry answered 409 "cannot be sent from
+   * status 'unverified'" forever. The press now releases the stranded row (kept, as the record
+   * of the unconfirmed first attempt — it is in Drafts saying so) and sends WITHOUT a row id,
+   * so the adapter writes a fresh draft and a fresh reservation: exactly what the inline reply
+   * has always done. When this send confirms, `onSendSettled` discards the stranded copy.
+   */
+  const sendCompose = useCallback(() => {
+    if (mailSend.stateOf(COMPOSE_SEND_KEY).phase === "unverified" && autosave.draftId) {
+      recoverySeed.current = autosave.draftId;
+      autosave.release();
+      const { draftId: _stranded, ...fresh } = plan.mutation;
+      mailSend.send(fresh);
+      return;
+    }
+    mailSend.send(plan.mutation);
+  }, [mailSend, plan, autosave]);
 
   /**
    * ABANDONING THE COMPOSE — the row, the buffer and the form, in that order.
@@ -2212,6 +2273,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    */
   const cancelCompose = useCallback(() => {
     void autosave.discard();
+    // An abandoned RECOVERY is only abandoned: the fresh copy this compose made goes (above),
+    // but the stranded row it was recovering stays in Drafts — nothing got delivered, so the
+    // record of the unconfirmed send is still the truth.
+    recoverySeed.current = null;
     setCompose(EMPTY_COMPOSE);
     clearComposeDraft();
     go("ohbox");
@@ -2260,6 +2325,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         forwardOf: messageId,
       };
       autosave.release();
+      recoverySeed.current = null; // a forward replaces whatever the form held, a recovery included
       setCompose(seeded);
       writeComposeDraft(seeded);
       // The inline editor may be open on the message being forwarded; leaving it open would put a
@@ -2289,6 +2355,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         to: formatRecipientChips([{ name: name ?? null, address }]),
       };
       autosave.release();
+      recoverySeed.current = null; // same as `forwardMessage`: the form's contents are replaced
       setCompose(seeded);
       writeComposeDraft(seeded);
       // An open inline reply would otherwise sit under the compose the route change opens —

@@ -64,9 +64,11 @@ export function worthSaving(f: ComposeFields): boolean {
 
 /**
  * The saved shape, as one string, so "has anything changed" is one comparison rather than five
- * that can be forgotten one at a time. It covers exactly the fields the mutation carries — a
- * change to `fromMailboxId` alone is not a change to the DRAFT, because the mailbox is settled at
- * create and immutable afterwards.
+ * that can be forgotten one at a time. It covers the TEXT the mutation carries; the sending
+ * mailbox is tracked beside it (`savedMailbox` in the hook) rather than in here, because the
+ * two have different sources — the text is the form's, the mailbox is the RESOLUTION's
+ * (`resolveComposeFrom`), and folding the resolution into a signature of the form would make
+ * "has the form changed" depend on an argument the form does not hold.
  */
 function signatureOf(f: ComposeFields): string {
   return JSON.stringify([f.to, f.cc ?? "", f.bcc ?? "", f.subject, f.body, f.html ?? ""]);
@@ -133,6 +135,17 @@ export function useComposeAutosave(opts: {
   const [draftId, setDraftId] = useState<string | null>(null);
   /** The signature of what the account holds. `null` = nothing has been written for this form. */
   const saved = useRef<string | null>(null);
+  /**
+   * THE MAILBOX THE ACCOUNT'S ROW HOLDS, as far as this tab knows — the identity half of
+   * `saved`. Set by a successful save (the mailbox that rode it) and by `adopt` (the reopened
+   * row's own, which `openDraft` seeds into `fromMailboxId`). A RESOLVED mailbox that has moved
+   * off it is a change worth a write on its own: the pick otherwise lives only in this tab, the
+   * row keeps the old identity, and that identity is what another device shows and what the
+   * send dials if this tab never presses Send itself. `null` = unknown, and unknown deliberately
+   * does not trigger — there is nothing to compare against, and the send-time PUT (which always
+   * carries the current resolution) is the backstop.
+   */
+  const savedMailbox = useRef<string | null>(null);
   /** One save at a time: a second create while the first is in flight is a second row. */
   const inFlight = useRef(false);
   /**
@@ -153,12 +166,14 @@ export function useComposeAutosave(opts: {
     epoch.current += 1;
     setDraftId(id);
     saved.current = signatureOf(f);
+    savedMailbox.current = f.fromMailboxId;
   }, []);
 
   const release = useCallback(() => {
     epoch.current += 1;
     setDraftId(null);
     saved.current = null;
+    savedMailbox.current = null;
   }, []);
 
   const discard = useCallback(async () => {
@@ -182,7 +197,12 @@ export function useComposeAutosave(opts: {
     if (!active) return;
     if (!worthSaving(fields)) return;
     const signature = signatureOf(fields);
-    if (signature === saved.current) return;
+    // A moved sending mailbox is a change on its own — see `savedMailbox`. Only for a row that
+    // exists (a create carries the mailbox anyway) and only against a KNOWN base.
+    const mailboxMoved =
+      draftId !== null && mailboxId !== null &&
+      savedMailbox.current !== null && mailboxId !== savedMailbox.current;
+    if (signature === saved.current && !mailboxMoved) return;
     // A create with no mailbox would be a 400 the user cannot act on, and the From line is
     // already saying there is nowhere to send from. Nothing is written until there is.
     if (draftId === null && !mailboxId) return;
@@ -204,7 +224,10 @@ export function useComposeAutosave(opts: {
           const result = await engine.mutate({
             kind: "draft_save",
             draftId,
-            ...(draftId === null && mailboxId ? { mailboxId } : {}),
+            // The mailbox rides CREATE and UPDATE alike: on an update it re-homes the row to
+            // the current From resolution, which is what makes a pick taken after the first
+            // keystroke real on the account rather than cosmetic in this tab.
+            ...(mailboxId ? { mailboxId } : {}),
             subject: fields.subject,
             body: fields.body,
             ...(fields.html ? { html: fields.html } : {}),
@@ -227,6 +250,7 @@ export function useComposeAutosave(opts: {
           // whole failure this hook exists to avoid.
           if (draftId === null && result.entityId) setDraftId(result.entityId);
           saved.current = signature;
+          if (mailboxId) savedMailbox.current = mailboxId;
         } catch {
           /* Left unsaved on purpose: `saved` is not advanced, so the next change tries again.
              A draft that could not be written is not worth a sentence on screen — the text is
