@@ -3693,14 +3693,20 @@ textarea.c-input:read-only {
 }
 /* ── A MESSAGE'S PANEL — every message on the thread wears the same one ──────────────────────
    The reading column's own treatment (`--panel`, 20px radius, lift-1), full width of the
-   wrapper, content centred on the reading measure inside. The 12px of canvas between panels is
-   the thread's rhythm; the LAST panel drops it so the column can rest flush on the bottom
-   line (the pill's flow box follows it — see `.msg-actions` in packages/ui message.css). */
+   wrapper, content centred on the reading measure inside. 20px of canvas between panels is
+   the thread's rhythm, and the number is the SHADOW'S, not taste: at 12px the upper panel's
+   long `--lift-1` throws (light: `0 14px 32px -10px` peaks 14px below the edge — inside the
+   gap) pooled with the lower panel's hairline ring into a near-uniform dark band that read as
+   a border between the panels. 20px is the reading stream's stacked-card gap (`.scast`,
+   stream.css) — the one stacked-lift-1 rhythm already shipped — and on the built page the
+   junction reads as canvas with depth in both themes. The LAST panel drops the margin so the
+   column can rest flush on the bottom line (the pill's flow box follows it — see
+   `.msg-actions` in packages/ui message.css). Guarded by thread-column-shadow.test.ts. */
 .pm {
   background: var(--panel);
   border-radius: 20px;
   box-shadow: var(--lift-1);
-  margin: 0 0 12px;
+  margin: 0 0 20px;
 }
 .conv > article.pm:last-of-type {
   margin-bottom: 0;
@@ -3727,7 +3733,7 @@ textarea.c-input:read-only {
    its position in the column for people; it carries no side rule, no border and no
    colour-only cue (guarded by `conversation.test.ts`). */
 .conv > .conv-focus {
-  margin: 0 0 12px;
+  margin: 0 0 20px;
 }
 /* THE ONE PILL, AT THE FOOT OF THE COLUMN. A direct child of the wrapper, after the panels, so
    the sticky rule in packages/ui message.css pins it to the scrollport bottom exactly as it
