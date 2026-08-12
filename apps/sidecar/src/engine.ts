@@ -1129,12 +1129,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      */
     const resurfaceDue = async (): Promise<void> => {
       try {
-        const { flipped } = await bubbleUpPass(
+        const { flipped, rescued } = await bubbleUpPass(
           db as unknown as Tx, now(), { accountId: world.accountId },
         );
         // Only when something moved: a settled mailbox emits this line never, which is the same
         // rule the drain summary below follows.
-        if (flipped > 0) log("resurface_flipped", { flipped });
+        if (flipped > 0 || rescued > 0) log("resurface_flipped", { flipped, rescued });
       } catch (err) {
         log("resurface_pass_failed", {
           err,

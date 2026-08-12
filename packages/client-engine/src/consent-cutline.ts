@@ -1,5 +1,5 @@
 import type { EntityReader } from "./store.js";
-import { rulesList, senderKey } from "./selectors.js";
+import { isResurfaced, rulesList, senderKey } from "./selectors.js";
 import type { EngineMessage, Folder, RuleDTO } from "./types.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -378,6 +378,26 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     if (own.has(key)) { placeOf.set(m.id, m.folder); continue; }
     const decided = decidedDestination(index, m.from.address);
     if (decided !== null && CONSENTING_DESTINATIONS.has(decided)) consentedSenders.add(key);
+
+    /* ── A RESURFACED ROW IS THE USER'S OWN ACT, AND THE CUTLINE KEEPS ITS HANDS OFF ──────
+     *
+     * Rule 1 above says consent comes from the user's own actions — and snoozing a message and
+     * scheduling THIS moment for its return is nothing else. Yet this partition used to weigh
+     * the row by its SENDER like any other undecided-residence mail: an active undecided sender's
+     * resurfaced row presented in the Screener (a queue of sender rows, where no pin exists),
+     * and a dormant one's was deleted from the projected list entirely (History). Either way the
+     * Ohbox's pinned group — the state's only home, `ohboxView.resurfaced` — never saw it, so a
+     * message the user explicitly asked to see again was, at the very moment they asked to see
+     * it, in NO list at all. Reachable by search, filed nowhere: measured on a live mailbox.
+     *
+     * So a resurfaced row keeps its physical place. `ohboxView` pins it from any folder; what
+     * this exemption owes it is to stay OUT of the Screener grouping and OUT of History's
+     * deletion. The sender's own standing is untouched — their other mail still queues or
+     * rests exactly as before, and reading the pinned row (which clears the state to `none`)
+     * hands this one back to the ordinary rules below. Only `resurfaced`: the bottom piles are
+     * each a visible home of their own, so their rows are never orphaned by this loop.
+     */
+    if (isResurfaced(m)) { placeOf.set(m.id, m.folder); continue; }
 
     // An explicit placement is already an answer. Never second-guessed.
     if (!UNDECIDED_RESIDENCES.has(m.folder)) { placeOf.set(m.id, m.folder); continue; }

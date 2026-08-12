@@ -2,6 +2,7 @@ import { and, asc, eq, gt } from "drizzle-orm";
 import { messages, messageStates, folderState, claimIdempotencyKey, recordChange, type Tx } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
+import { upsertDesiredSeen } from "./flag-intent.js";
 import { materializeMessage, materializeMessageState } from "./dto/materialize.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { MessageDTO, MessageStateDTO, Page, TriageState } from "./dto/types.js";
@@ -88,6 +89,30 @@ export class TriageService {
         target: messageStates.messageId,
         set: { state: b.state, bubbleUpAt, updatedAt: now },
       }).returning({ id: messageStates.id });
+
+      /**
+       * ── RESURFACING RE-UNREADS, WHATEVER STARTED IT ─────────────────────────────────────
+       *
+       * "Resurface this now" and the worker's due flip are the same event at two triggers, so
+       * they carry the same consequence: the row comes back UNREAD, because unread is the one
+       * honest way this product draws an eye to a row, and most resurfaced mail was read before
+       * it was put away. The mark is tied to the EVENT — never to import, never re-applied on a
+       * sync — which is what lets it coexist with `\Seen` adoption: the `flag_state` intent
+       * written here (`desired_seen = false`, ours, pending) makes the worker REMOVE `\Seen` on
+       * the real server, and until it does, `applyExternalFlag`'s our-write-pending guard keeps
+       * the server's stale flag from re-reading the row. `bubbleUpPass` writes the identical
+       * trio for the scheduled trigger; `lastReadAt` is cleared because the reading it recorded
+       * has been deliberately disowned — the row must sort as new attention, not as recently
+       * finished with.
+       */
+      if (b.state === "resurfaced") {
+        const [msgRow] = await tx.select({ unread: messages.unread }).from(messages)
+          .where(eq(messages.id, messageId)).limit(1);
+        await tx.update(messages)
+          .set({ unread: true, lastReadAt: null, updatedAt: now })
+          .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)));
+        await upsertDesiredSeen(tx, messageId, !(msgRow?.unread ?? true), false, now);
+      }
 
       await recordChange(tx, {
         accountId: ctx.accountId, entityType: "message_state", entityId: row!.id, op: "update", meta: null,

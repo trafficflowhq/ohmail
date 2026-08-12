@@ -211,6 +211,34 @@ function destFolderOf(m: Extract<EngineMutation, { kind: "screener_decide" }>, s
   return SEG_FOLDER[dest] ?? FOLDER_OF_VIEW[dest as keyof typeof FOLDER_OF_VIEW] ?? "INBOX";
 }
 
+/**
+ * THE OVERLAY'S HALF OF "READING OR RE-FILING SPENDS THE RESURFACE".
+ *
+ * `MessageService.spendResurface` clears a `resurfaced` state back to `none` inside every
+ * transaction that marks the row read or files it — `markSeen`, the single-message PATCH both
+ * `feed_mark_seen` and the reply flow ride, and `move`. Wire parity (the rule stated on
+ * `mark_seen` below) therefore REQUIRES the overlay to do the same: an overlay that flipped
+ * `unread` and left the pin standing would hold a "Resurfaced" row at the top of the Ohbox for
+ * exactly as long as the drain takes, then drop it — a row that jumps groups when the server
+ * answers, which is the divergence the parity rule exists to forbid.
+ *
+ * Returns the `none` state row the server's UPDATE produces — state and `bubbleUpAt` cleared,
+ * `setAt` preserved, `updatedAt` bumped — or `null` for a row that is not pinned. The CALLER
+ * folds it into its own `message` entity (one effect per (type,id): a second message entity
+ * here would silently overwrite the caller's `unread`/`folder` half) and pushes the
+ * `message_state` effect beside it.
+ */
+function spentResurface(msg: EngineMessage, iso: string): MessageStateDTO | null {
+  if ((msg.triage?.state as string | undefined) !== "resurfaced") return null;
+  return {
+    messageId: msg.id,
+    state: "none",
+    bubbleUpAt: null,
+    setAt: msg.triage?.setAt ?? iso,
+    updatedAt: iso,
+  };
+}
+
 function promotedRule(
   from: EmailAddress,
   scope: "sender" | "domain",
@@ -288,12 +316,19 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     case "move": {
       const msg = reader.get<EngineMessage>("message", m.messageId);
       if (!msg || msg.folder === m.folder) return [];
-      return [{
+      // Re-filing spends the resurface — the server's `move` clears the pin in the same
+      // transaction, so the overlay unpins with the same gesture (see `spentResurface`).
+      const spent = spentResurface(msg, iso);
+      const effects: MutationEffect[] = [{
         type: "message",
         id: msg.id,
-        entity: { ...msg, folder: m.folder, updatedAt: iso } satisfies EngineMessage,
+        entity: {
+          ...msg, folder: m.folder, ...(spent ? { triage: spent } : {}), updatedAt: iso,
+        } satisfies EngineMessage,
         move: { from: msg.folder, to: m.folder },
       }];
+      if (spent) effects.push({ type: "message_state", id: msg.id, entity: spent });
+      return effects;
     }
 
     case "triage_set": {
@@ -315,9 +350,13 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         setAt: iso,
         updatedAt: iso,
       };
+      // Resurfacing RE-UNREADS — the server's `resurfaced` arm forces `unread` and disowns the
+      // reading order in the same transaction (`TriageService.setState`), so the pin the overlay
+      // paints is bold from its first frame rather than turning bold when the drain lands.
+      const reUnread = m.state === "resurfaced" ? { unread: true, lastReadAt: null } : {};
       return [
         { type: "message_state", id: m.messageId, entity: state },
-        { type: "message", id: msg.id, entity: { ...msg, triage: state, updatedAt: iso } },
+        { type: "message", id: msg.id, entity: { ...msg, triage: state, ...reUnread, updatedAt: iso } },
       ];
     }
 
@@ -480,11 +519,21 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       // left it alone would move the row into "Earlier" at the BOTTOM of the list and then jump it
       // to the top when the server's answer landed. One visible reorder per read, from the client
       // and the server disagreeing about a field only one of them was writing.
-      const effects: MutationEffect[] = targets.map((msg) => ({
-        type: "message",
-        id: msg.id,
-        entity: { ...msg, unread: false, lastReadAt: iso, updatedAt: iso },
-      }));
+      const effects: MutationEffect[] = targets.flatMap((msg): MutationEffect[] => {
+        // The wire below is `PATCH /messages/:id { unread: false }` per id, and that route
+        // spends the resurface in its transaction — so this overlay does too (`spentResurface`).
+        const spent = spentResurface(msg, iso);
+        const out: MutationEffect[] = [{
+          type: "message",
+          id: msg.id,
+          entity: {
+            ...msg, unread: false, lastReadAt: iso,
+            ...(spent ? { triage: spent } : {}), updatedAt: iso,
+          },
+        }];
+        if (spent) out.push({ type: "message_state", id: msg.id, entity: spent });
+        return out;
+      });
       // THE LINE MOVES ONLY ON AN EXPLICIT ANCHOR. `upToId` is the leave commit — the newest
       // message that was on screen, above which the line renders (`WaterlineMeta`). A sweep
       // that passes ids alone leaves the line where the last visit put it: "new since last
@@ -521,11 +570,18 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       for (const id of m.messageIds) {
         const msg = reader.get<EngineMessage>("message", id);
         if (!msg) continue;
+        // Marking READ spends the resurface, exactly as the batch route does in the same
+        // transaction (`spendResurface`); marking unread must not touch triage — also the wire.
+        const spent = m.unread ? null : spentResurface(msg, iso);
         effects.push({
           type: "message",
           id,
-          entity: { ...msg, unread: m.unread, lastReadAt: m.unread ? null : iso, updatedAt: iso },
+          entity: {
+            ...msg, unread: m.unread, lastReadAt: m.unread ? null : iso,
+            ...(spent ? { triage: spent } : {}), updatedAt: iso,
+          },
         });
+        if (spent) effects.push({ type: "message_state", id, entity: spent });
       }
       return effects;
     }

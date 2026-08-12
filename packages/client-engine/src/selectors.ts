@@ -430,13 +430,25 @@ function byLastReadDesc(a: EngineMessage, b: EngineMessage): number {
 }
 
 export function ohboxView(reader: EntityReader): OhboxView {
+  const all = reader.list<EngineMessage>("message");
   const inbox = messagesIn(reader, FOLDER_OF_VIEW.ohbox);
   // the account's own sent mail, folder-agnostic (see `isOwnSent`), newest first.
-  const sent = reader.list<EngineMessage>("message").filter(isOwnSent).sort(byDateDesc);
+  const sent = all.filter(isOwnSent).sort(byDateDesc);
 
-  // resurfaced rows are pulled OUT of the ordinary split and pinned above it. Newest bubble
-  // first — the order the two groups below use for anything that has no reading time to sort by.
-  const resurfaced = inbox.filter(isResurfaced).sort(byDateDesc);
+  /**
+   * THE PIN IS STATE-DRIVEN AND FOLDER-AGNOSTIC, and the whole mirror is scanned for it —
+   * not just the INBOX slice above. `resurfaced` is a claim the USER made about a message
+   * ("show me this again now"), and its ONLY home in the product is this group: the state
+   * belongs to no bottom pile by construction (`triagePiles` ignores it), so a resurfaced row
+   * this group declines is a row NO view files. That was a real orphan, measured on a live
+   * mailbox: a message snoozed for yesterday came due, left the Resurface pile with the flip,
+   * and its folder-filtered pin never picked it up — reachable by search and by nothing else.
+   * Filtering `inbox` here would keep exactly that bug for every row whose folder — physical
+   * or presented (the consent cutline re-homes undecided senders' mail) — is not the Ohbox's.
+   * Newest bubble first — the order the two groups below use for anything that has no reading
+   * time to sort by.
+   */
+  const resurfaced = all.filter(isResurfaced).sort(byDateDesc);
   const pinned = new Set(resurfaced.map((m) => m.id));
 
   return {
@@ -448,9 +460,10 @@ export function ohboxView(reader: EntityReader): OhboxView {
     // "Earlier" is read INBOX mail joined by the account's own sent mail. Sent rows carry no
     // `lastReadAt`, so `byLastReadDesc` files them into its by-date tail — "sorted by date in the
     // read block" — below mail with a real reading time, which is the honest place for them.
+    // Pinned ids are held out of BOTH inputs, so a resurfaced row is never doubled below its pin.
     previouslySeen: [
       ...inbox.filter((m) => !m.unread && !pinned.has(m.id)),
-      ...sent,
+      ...sent.filter((m) => !pinned.has(m.id)),
     ].sort(byLastReadDesc),
   };
 }

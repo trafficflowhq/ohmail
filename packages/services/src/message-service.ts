@@ -1,11 +1,13 @@
 import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import {
-  messages, folderState, flagState, messageBodies, messageStates, claimIdempotencyKey, recordChange, type Tx,
+  messages, folderState, messageBodies, messageStates, claimIdempotencyKey, recordChange,
+  type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
 import { httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
+import { upsertDesiredSeen } from "./flag-intent.js";
 import { materializeMessage } from "./dto/materialize.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page } from "./dto/types.js";
@@ -429,7 +431,7 @@ export class MessageService {
         }).where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
         // The read model AND the intent, in the same transaction. Writing only `messages.unread`
         // was the original bug: the flag never reached the mailbox, so it survived nothing.
-        await this.upsertDesiredSeen(tx, id, !msg.unread, !body.unread, ctx.now());
+        await upsertDesiredSeen(tx, id, !msg.unread, !body.unread, ctx.now());
         last = await recordChange(tx, {
           accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
         });
@@ -442,6 +444,15 @@ export class MessageService {
           accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
           meta: { from: observed, to: folder },
         });
+      }
+
+      // Reading — or re-filing — spends the resurface. The batch route (`markSeen`) has always
+      // cleared it; this route marking the same message read through a different verb must not
+      // leave the pin standing, or which client a user reads in decides whether their Ohbox
+      // stays pinned. See `spendResurface`.
+      if (body.unread === false || folder !== undefined) {
+        const spent = await this.spendResurface(tx, ctx, [id]);
+        if (spent !== null) last = spent;
       }
 
       return last;
@@ -522,36 +533,17 @@ export class MessageService {
       for (const id of ids) {
         await tx.update(messages).set({ unread, lastReadAt: readAt, updatedAt: ctx.now() })
           .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
-        await this.upsertDesiredSeen(tx, id, observedById.get(id) ?? false, !unread, ctx.now());
+        await upsertDesiredSeen(tx, id, observedById.get(id) ?? false, !unread, ctx.now());
         last = await recordChange(tx, {
           accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
         });
       }
 
-      // ── READING A RESURFACED ROW SPENDS THE RESURFACE ────────────────────────────────────
-      //
-      // The worker flips a due `bubbled_up` state to `resurfaced` (see `bubbleUpPass`), which pins
-      // the row at the top of the Ohbox. That pin is answered by READING, not by opening: the
-      // moment a resurfaced message is marked read it clears back to `none`, in THIS transaction,
-      // so "Resurfaced" never outlives the read that dealt with it. A settled reply marks the
-      // parent read through this same route, so it clears a resurface too — one rule, both cases.
-      // Only when marking read (`unread === false`); marking unread must not touch triage. Emitted
-      // as `message_state` updates so every client drops the pin on the next `/sync`.
+      // Reading spends the resurface — see `spendResurface`. Only when marking read
+      // (`unread === false`); marking unread must not touch triage.
       if (!unread) {
-        const cleared = await tx
-          .update(messageStates)
-          .set({ state: "none", bubbleUpAt: null, updatedAt: ctx.now() })
-          .where(and(
-            inArray(messageStates.messageId, ids),
-            eq(messageStates.accountId, ctx.accountId),
-            eq(messageStates.state, "resurfaced"),
-          ))
-          .returning({ id: messageStates.id });
-        for (const r of cleared) {
-          last = await recordChange(tx, {
-            accountId: ctx.accountId, entityType: "message_state", entityId: r.id, op: "update", meta: null,
-          });
-        }
+        const spent = await this.spendResurface(tx, ctx, ids);
+        if (spent !== null) last = spent;
       }
       return last;
     });
@@ -580,10 +572,14 @@ export class MessageService {
       // physical IMAP move lands. NO adapter, NO IMAP here.
       const observed = await this.observedFolder(tx, id, msg.nativeLocator);
       await this.upsertDesired(tx, id, observed, folder, ctx.now());
-      const seqBig = await recordChange(tx, {
+      let seqBig = await recordChange(tx, {
         accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
         meta: { from: observed, to: folder },
       });
+      // Re-filing spends the resurface (see `spendResurface`) — BEFORE the materialize below,
+      // so the DTO this route answers (and stores for idempotent replay) already says `none`.
+      const spent = await this.spendResurface(tx, ctx, [id]);
+      if (spent !== null) seqBig = spent;
       const seq = Number(seqBig);
 
       const dto = await materializeMessage(asDb(tx), ctx.accountId, id);
@@ -613,6 +609,48 @@ export class MessageService {
 
   // ── helpers ──
 
+  /**
+   * READING — OR RE-FILING — A RESURFACED ROW SPENDS THE RESURFACE.
+   *
+   * The worker flips a due `bubbled_up` state to `resurfaced` (see `bubbleUpPass`), which pins
+   * the row at the top of the Ohbox. The pin is answered by the user DEALING with the row, and
+   * exactly two verbs are dealing with it: marking it read (a settled reply marks the parent
+   * read through the same route, so it counts too) and filing it somewhere. Both clear the state
+   * back to `none` IN THE CALLER'S TRANSACTION, so "Resurfaced" never outlives the act that
+   * answered it — and never survives into the materialized DTO the same transaction returns.
+   * Merely OPENING the row is deliberately neither: a glance does not spend the resurface.
+   *
+   * One implementation for every route that can perform those verbs — the batch `markSeen`, the
+   * single-message `patch` (both arms) and `move` — because the first defect here was exactly a
+   * route gap: only the batch route cleared, so which client a user read in decided whether
+   * their pin came down.
+   *
+   * Scoped to `state = 'resurfaced'` alone: a `bubbled_up` row keeps its schedule (filing a
+   * snoozed message elsewhere does not cancel the return the user asked for), and the bottom
+   * piles are cleared by their own explicit transitions. Emitted as `message_state` updates so
+   * every client drops the pin on the next `/sync`; the caller has already emitted the paired
+   * `message` change its DTO projection rides on.
+   */
+  // `LedgerTx`, not `Tx`: this writes the change log, and only a real transaction may.
+  private async spendResurface(tx: LedgerTx, ctx: ServiceContext, ids: string[]): Promise<bigint | null> {
+    const cleared = await tx
+      .update(messageStates)
+      .set({ state: "none", bubbleUpAt: null, updatedAt: ctx.now() })
+      .where(and(
+        inArray(messageStates.messageId, ids),
+        eq(messageStates.accountId, ctx.accountId),
+        eq(messageStates.state, "resurfaced"),
+      ))
+      .returning({ id: messageStates.id });
+    let last: bigint | null = null;
+    for (const r of cleared) {
+      last = await recordChange(tx, {
+        accountId: ctx.accountId, entityType: "message_state", entityId: r.id, op: "update", meta: null,
+      });
+    }
+    return last;
+  }
+
   /** The observed folder: the folder_state truth, else the message's native locator, else INBOX. */
   private async observedFolder(tx: Tx, id: string, nativeLocator: unknown): Promise<string> {
     const [fs] = await tx.select({ observedFolder: folderState.observedFolder }).from(folderState)
@@ -622,36 +660,9 @@ export class MessageService {
     return loc?.folder ?? "INBOX";
   }
 
-  /**
-   * Upsert `flag_state` desired=<seen>, us — preserving `observed_seen` on conflict.
-   *
-   * `observedSeen` is only ever supplied for the INSERT, and the fallback is the message's
-   * current `messages.unread`: before anyone has expressed an intent, the read model IS what the
-   * server last told us. On conflict the column is deliberately omitted from the `set`, exactly
-   * as `upsertDesired` omits `observedFolder` — the worker owns it, and an API request that
-   * overwrote it would erase the record of what IMAP actually says and make the reconciler
-   * believe it had already converged.
-   *
-   * `reconcileStatus` is therefore recomputed IN SQL against the STORED `observed_seen`, not
-   * against the value guessed at call time: on the update path the caller's guess is stale by
-   * definition. Both writers use the same rule — `pending` only when desired ≠ observed — so a
-   * no-op click never queues an IMAP round trip.
-   */
-  private async upsertDesiredSeen(
-    tx: Tx, id: string, observedSeen: boolean, desiredSeen: boolean, now: Date,
-  ): Promise<void> {
-    await tx.insert(flagState).values({
-      messageId: id, desiredSeen, observedSeen,
-      lastSetBy: "us", reconcileStatus: desiredSeen === observedSeen ? "reconciled" : "pending",
-      conflict: false,
-    }).onConflictDoUpdate({
-      target: flagState.messageId,
-      set: {
-        desiredSeen, lastSetBy: "us", conflict: false, updatedAt: now,
-        reconcileStatus: sql`case when ${flagState.observedSeen} = ${desiredSeen} then 'reconciled' else 'pending' end`,
-      },
-    });
-  }
+  // The `flag_state` intent writer lives in `flag-intent.ts` now — `TriageService`'s resurface
+  // re-unread writes the same intent, and two copies would be two answers to when a `\Seen`
+  // round trip is owed.
 
   /** Upsert folder_state desired=<folder>, pending, us — preserving observedFolder on conflict. */
   private async upsertDesired(tx: Tx, id: string, observed: string, folder: string, now: Date): Promise<void> {

@@ -197,6 +197,12 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // validated grammar with no allowlist behind it, so it costs nothing — while every entry added
   // here is another chance to repeat the attach-phase mistake four lines up.
   "generated", "flipped", "drained",
+  // `rescued` rides the same bubble-up log line as `flipped` and is the same kind of quantity —
+  // the reconciliation's own counter (resurfaced rows whose due event never re-unread them,
+  // healed), an integer accumulated by `++` and assigned by nothing else. Added WITH its call
+  // sites (`bubbleUpPass` → worker cycle + sidecar drain), per the paragraph above: the first
+  // live line must not read `droppedFields=["rescued"]` on the event that exists to report it.
+  "rescued",
   // ── The sensitivity-false-positive repair's counts, added AFTER the first live run refused them ──
   //
   // The attach-phase paragraph four entries up, reproduced exactly, by somebody who had read it. The
