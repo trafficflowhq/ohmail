@@ -513,14 +513,30 @@ body.reading .shell {
    cannot hold a centred row and an address on the same line without ellipsising away the part
    that moves. Flat fills, no backdrop-filter, no decorative gradient; the tones are the strip's
    own, unchanged, so the two shapes cannot disagree about how loud a state is. */
+/* ONE BREAKPOINT, NOT TWO NUMBERS THAT HAPPEN TO LINE UP.
+
+   "Exactly one of the two shapes is ever on screen" is the claim above, and it used to be
+   spelled as a pair of independent queries: `min-width: 901px` hid the strip, `max-width: 900px`
+   hid the rail slot. Between them they leave a gap. A viewport of 900.5px matches NEITHER — and
+   fractional widths are ordinary, not exotic: browser zoom, a device pixel ratio that does not
+   divide evenly, a window dragged to an odd size on a scaled display all produce them. At any
+   width in that gap BOTH copies were displayed, so the same sentence stood on screen twice and
+   two `role="status"` regions announced it to a screen reader in turn — the precise failure the
+   `display:none` approach was chosen to prevent.
+
+   Stated as one query it cannot happen: the narrow arrangement is the base case, and the single
+   `min-width` swaps both halves together. Whatever a browser decides that query means at a
+   fractional width, it means the same thing for both declarations, so the two can no longer
+   disagree about which of them is the visible copy. */
+.rail-sync-slot {
+  display: none;
+}
 @media (min-width: 901px) {
   .sync-bar {
     display: none;
   }
-}
-@media (max-width: 900px) {
   .rail-sync-slot {
-    display: none;
+    display: block;
   }
 }
 .rail-sync {

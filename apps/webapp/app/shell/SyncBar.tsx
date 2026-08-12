@@ -104,6 +104,20 @@ import { stripSpeaks, type MailState } from "./mail-state";
  * tree with it, so two `role="status"` regions never announce the same sentence twice, and there
  * is no render that disagrees with the media query it is trying to predict.
  *
+ * THAT GUARANTEE IS THE STYLESHEET'S AND IT HAS TO BE WRITTEN AS ONE RULE. It was two — one query
+ * hiding the strip above the breakpoint, another hiding the rail slot below it — and a pair of
+ * queries that look complementary is not the same thing as a rule that is. The two numbers left a
+ * gap: at a fractional width between them neither query matched, both copies were painted, and
+ * the sentence stood on screen twice with two live regions announcing it. It is one `min-width`
+ * now, swapping both halves together, so "exactly one is on screen" holds at every width by
+ * construction rather than by arithmetic. `sync-notice-one-copy.test.ts` sweeps it.
+ *
+ * The other half of the same lesson, and the reason this note is here rather than only in
+ * `app.css`: because the shell renders the strip BEFORE the deck, the hidden copy is the FIRST
+ * match in document order for any search by text. Anything that reads the DOM rather than the
+ * accessibility tree — a diagnostic, a script, an automated walk — and takes the first hit gets
+ * the invisible one and concludes the product said nothing. It said it in the rail.
+ *
  * ── ONE DESCRIPTION, TWO RENDERERS ──────────────────────────────────────────────────────
  *
  * `speech()` below is the switch this file used to BE. Both shapes read it, so the sentence, the
