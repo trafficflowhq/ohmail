@@ -824,13 +824,14 @@ async function fileChunk(deps: SyncDeps, chunk: PendingFolderState[]): Promise<b
   for (const p of chunk) {
     const ref = p.nativeLocator!.ref;
     const newLoc = result.moved.get(ref);
-    // NOT NAMED IN `moved` ⇒ LEAVE THE ROW PENDING, and `moved` is the only thing worth asking.
-    // A member is unnamed for exactly one reason that matters — it was gone from the source, the
-    // batch's form of `MessageGoneError` — and the response to that is the same skip the
-    // per-message path performs: write nothing, and let `changesSince` adopt whatever really
-    // happened to it. Cross-checking `result.gone` as well would be a second reading of one fact,
-    // with a branch no test can redden.
-    if (!newLoc) continue;
+    // NOT NAMED IN `moved` ⇒ the member was gone from the source, the batch's form of
+    // `MessageGoneError` — and the response is the per-message path's, exactly: leave the row
+    // pending for `changesSince` to adopt, unless the disappearance is already on durable
+    // record, in which case there is nothing left to adopt and the filing is voided. See
+    // {@link voidGoneFiling} for why those are the only two readings. Cross-checking
+    // `result.gone` as well would be a second reading of one fact, with a branch no test can
+    // redden.
+    if (!newLoc) { await voidGoneFiling(deps, p); continue; }
     await repo.updateLocator(p.messageId, newLoc);
     await repo.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
     // The audit rows are written together, AFTER the state they describe. One INSERT instead of
@@ -858,6 +859,50 @@ async function recordAudits(
   for (const r of rows) await repo.recordAudit(accountId, r.action, r.payload, r.inverse);
 }
 
+/**
+ * The terminal check for a GONE member: void the filing if the message no longer exists
+ * anywhere this mailbox's record knows of.
+ *
+ * "Gone from the source" has two readings, and they need opposite treatment. A message MID-MOVE
+ * — a prior run's IMAP move that crashed before the DB write, or an external move whose create
+ * is a batch behind its delete — must stay pending: `changesSince` adopts the completed move,
+ * and writing anything here would race it. A message EXPUNGED OUTRIGHT has no adoption event
+ * coming, ever. Before this branch existed such a row stayed `pending` for good — filed, then
+ * deleted from the server before the move could apply, it held `MailboxDTO.pendingMoves` (the
+ * "Filing N messages on your mail server…" count) up indefinitely, survived sign-out and a full
+ * client-mirror wipe because the state is server-side, and left no `reconcile.move.failed` row
+ * anywhere, because this skip writes nothing at all. The retry also cost one IMAP round trip
+ * per cycle, for ever.
+ *
+ * `primaryInstanceVanished` is what tells the readings apart, and it is the SAME predicate
+ * ingest treats as adoption evidence (`pipeline.ts`): true only once the server's DELETE has
+ * been durably observed under a matching epoch (`forgetInstanceAt`) and no re-appearance has
+ * been adopted since. Mid-move it is false — the stale primary instance still exists until the
+ * source delete is enumerated — so the ordinary crash-convergence path is untouched. The one
+ * window where it is true for a message that is NOT expunged is a move whose delete and create
+ * land in different batches; voiding inside that window still converges, because adoption keys
+ * on the message's dedup identity and rewrites `folder_state` itself — it does not read the row
+ * this writes.
+ *
+ * The write is the COMPLETION write (`observed := desired`) rather than a new status member,
+ * because `reconcile_status` is derived from the pair and a row must never claim a convergence
+ * shape its columns do not show; what actually happened is in the audit row. `native_locator`
+ * is left alone deliberately: clearing it would flip `primaryInstanceVanished` to false and
+ * erase the adoption evidence for a copy that does surface later.
+ */
+async function voidGoneFiling(deps: SyncDeps, p: PendingFolderState): Promise<void> {
+  const { repo, accountId } = deps;
+  if (!(await repo.primaryInstanceVanished(p.messageId))) return;
+  await repo.upsertFolderState(p.messageId, {
+    desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us",
+  });
+  await repo.recordAudit(
+    accountId, "reconcile.move.voided",
+    { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder },
+    null,
+  );
+}
+
 /** The per-message path, unchanged: one move, its own verdict, its own audit row. */
 async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
   const { repo, adapter, accountId } = deps;
@@ -872,7 +917,10 @@ async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
     );
   } catch (err) {
     if (err instanceof MessageGoneError) {
-      // Already moved (crash between IMAP move and DB update). Leave pending; next changesSince adopts it.
+      // Already moved (crash between IMAP move and DB update) → leave pending; the next
+      // changesSince adopts it. Expunged outright → nothing will ever adopt it; see
+      // voidGoneFiling for how the two are told apart.
+      await voidGoneFiling(deps, p);
       return;
     }
     // ── ONE MESSAGE'S FAILURE MUST NOT ABANDON THE PASS ──────────────────────────────────
@@ -940,8 +988,18 @@ async function reconcileFlags(deps: SyncDeps): Promise<void> {
       );
     } catch (err) {
       if (err instanceof MessageGoneError) {
-        // The message left this locator between the DB read and the STORE. Leave the row
-        // pending — the next changesSince refreshes the locator and this retries.
+        // The message left this locator between the DB read and the STORE. Mid-move, the next
+        // changesSince refreshes the locator and this retries. Expunged outright, no refresh is
+        // ever coming — voidGoneFiling's argument, one flag over — so the intent is voided the
+        // same way rather than re-STOREd (one IMAP round trip per cycle) for ever.
+        if (await repo.primaryInstanceVanished(p.messageId)) {
+          await repo.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
+          await repo.recordAudit(
+            accountId, "reconcile.flags.voided",
+            { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
+            null,
+          );
+        }
         continue;
       }
       throw err;
