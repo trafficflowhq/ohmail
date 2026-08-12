@@ -703,6 +703,7 @@
       }
     },
     "notificationPrivacy": "Notifications carry no mail content — your device fetches privately.",
+    "notificationsUnavailable": "ohmail doesn't send notifications yet — nothing is delivered to this browser or any device. When delivery ships, what to be notified about is decided here.",
     "vipTitle": "VIP — always notifies",
     "learnedYes": "Yes",
     "learnedNo": "No",
@@ -1298,6 +1299,7 @@
     "oauthContinue": "Connect with Microsoft",
     "microsoftOauthNote": "Sign in with Microsoft to connect this mailbox — there is no app password to create, and ohmail never sees or stores your Microsoft password.",
     "microsoftUseAppPassword": "Use an app password instead",
+    "oauthOfferWhich": "You'll continue to microsoft.com to sign in. Most Outlook and Microsoft 365 mailboxes connect this way; if your organization blocks the sign-in, use Connect a mailbox with an app password instead.",
     "oauthReconnect": "Reconnect Microsoft",
     "oauthFinishing": "Finishing the Microsoft connection…",
     "oauthConnected": "{address} is connected. The first sync starts on the next pass.",
@@ -1325,6 +1327,7 @@
     "editIntro": "Re-enter the app password to store new credentials. Leave the server fields blank to keep the ones already saved.",
     "imapPortLabel": "IMAP port",
     "imapUserLabel": "IMAP username",
+    "smtpPortLabel": "SMTP port",
     "keepCurrent": "Leave blank to keep current",
     "portInvalid": "Enter a port between 1 and 65535.",
     "confirmTitle": "Confirm it is you",

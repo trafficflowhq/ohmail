@@ -61,7 +61,7 @@
  * settings screen, and it means domain rules over all mail — past and future, as the default
  * — can promote it to a route by adding one branch, with no code moving.
  */
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon, SettingsNote, SettingsSection, useToast } from "@ohmail/ui";
 import type { Folder, MutationStatus, RuleDTO } from "@ohmail/client-engine";
@@ -259,6 +259,16 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
   const [query, setQuery] = useState("");
   const [facet, setFacet] = useState<Folder | "all">("all");
   const scrollerRef = useRef<HTMLDivElement>(null);
+  /**
+   * The open single-rule confirm's element, brought on-screen when it opens. `block: "nearest"`
+   * so a confirm that is already visible moves NOTHING — only one that opened below the fold of
+   * the bounded `.rules-scroll` (or of the page) slides in, by the minimum. Optional-called
+   * because jsdom mounts this component without implementing scrollIntoView.
+   */
+  const confirmRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (open && open.mode !== "bulk") confirmRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [open]);
 
   const groups = useMemo(() => groupByDestination(rules), [rules]);
   /**
@@ -320,7 +330,6 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
     );
   }
 
-  const target = open && "ruleId" in open ? rules.find((r) => r.id === open.ruleId) ?? null : null;
   const showSearch = rules.length >= 2;
   const showFacets = groups.length >= 2;
   const showBulk = filtered.length >= 2;
@@ -389,11 +398,12 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
         </div>
       ) : null}
 
-      {/* THE ACTION REGION. Every confirm — single revoke, single retarget, bulk revoke — renders
-          here, above the list and never scrolled away, so the windowed list below stays a stream
-          of fixed-height rows the spacer arithmetic can trust. It is not an "are you sure?": it
-          is the one moment at which "your mail does not move" can be read BEFORE it is true.
-          Removing it would make the sentence something the product says AFTER the act. */}
+      {/* THE BULK ACTION REGION. Only the bulk confirm renders up here: it is about the whole
+          filtered set, so the head of that set is where its disclosure belongs. A SINGLE
+          revoke/retarget confirm renders inside the list, at the row it targets — see the
+          window's map below. Either way it is not an "are you sure?": it is the one
+          moment at which "your mail does not move" can be read BEFORE it is true. Removing it
+          would make the sentence something the product says AFTER the act. */}
       {open?.mode === "bulk" ? (
         <div className="rules-confirm">
           <span>{t("bulkRevokeExplain", { count: filtered.length })}</span>
@@ -406,59 +416,6 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
         </div>
       ) : null}
 
-      {open?.mode === "revoke" && target ? (
-        <div className="rules-confirm">
-          <b className="what">{whatOf(target)}</b>
-          <span>{t("revokeExplain")}</span>
-          <span className="acts">
-            <Button
-              variant="primary"
-              onClick={() => {
-                setOpen(null);
-                void onRevoke(target.id).then((r) =>
-                  report(r.status, t("toastRevoked"), t("toastRevokeQueued"), t("toastRevokeFailed")),
-                );
-              }}
-            >
-              {t("revokeConfirm")}
-            </Button>
-            <Button onClick={() => setOpen(null)}>{t("cancel")}</Button>
-          </span>
-        </div>
-      ) : null}
-
-      {open?.mode === "retarget" && target ? (
-        <div className="rules-confirm">
-          <b className="what">{whatOf(target)}</b>
-          <span>{t("retargetExplain")}</span>
-          <span className="acts">
-            {/* The CURRENT destination is not offered — re-filing mail where it already goes is a
-                no-op the user would have to reason about, and the row states where that is. */}
-            {RULE_DESTINATIONS.filter((f) => f !== target.destination).map((folder) => (
-              <Button
-                key={folder}
-                onClick={() => {
-                  setOpen(null);
-                  void onRetarget(target.id, folder).then((r) =>
-                    report(
-                      r.status,
-                      t("toastRetargeted", { place: placeLabel(folder) }),
-                      t("toastRetargetQueued"),
-                      t("toastRetargetFailed"),
-                    ),
-                  );
-                }}
-              >
-                {placeLabel(folder)}
-              </Button>
-            ))}
-            <Button variant="ghost" onClick={() => setOpen(null)}>
-              {t("cancel")}
-            </Button>
-          </span>
-        </div>
-      ) : null}
-
       <div className="rules-scroll" ref={scrollerRef}>
         {filtered.length === 0 ? (
           <p className="rules-empty">{t("noMatch")}</p>
@@ -466,7 +423,18 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
           <div className="rules-list">
             {/* The rows above and below the window, as reserved height — empty elements rather
                 than a margin, so the scroller's scroll height and scrollbar are what they would
-                be with every row mounted. `aria-hidden` because this is geometry. */}
+                be with every row mounted. `aria-hidden` because this is geometry.
+
+                THE OPEN CONFIRM IS THE ONE NON-ROW CHILD (SET-M4). It renders directly under
+                its target row, so the disclosure is read AT the rule it is about instead of at
+                the top of a list the reader then scrolls away from — and Cancel leaves them
+                exactly where they were. The spacers do not account for its height, on purpose:
+                a per-row bookkeeping scheme would re-couple the window to variable heights,
+                which is the oscillation `useListWindow` exists to avoid. The error this
+                tolerates is bounded by ONE confirm's height (~2 rows) regardless of list
+                length, and the 8-row overscan covers it; when the row scrolls out of the
+                window the confirm unmounts with it and returns when it does — the `open` state
+                is unaffected. */}
             {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
             {filtered.slice(win.start, win.end).map((rule) => {
               const what = whatOf(rule);
@@ -474,41 +442,103 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
               const meta = rule.enabled
                 ? t("meta", { origin, date: ruleDate(rule.createdAt) })
                 : t("metaPaused", { origin, date: ruleDate(rule.createdAt) });
+              const openHere = open !== null && "ruleId" in open && open.ruleId === rule.id;
               return (
-                <div key={rule.id} className="rules-item" data-rule-id={rule.id}>
-                  <span className="body">
-                    <b className="what">{what}</b>
-                    <span className="meta">
-                      {meta} · {t("filesInto", { place: placeLabel(rule.destination) })}
+                <Fragment key={rule.id}>
+                  <div
+                    className={openHere ? "rules-item editing" : "rules-item"}
+                    data-rule-id={rule.id}
+                  >
+                    <span className="body">
+                      <b className="what">{what}</b>
+                      <span className="meta">
+                        {meta} · {t("filesInto", { place: placeLabel(rule.destination) })}
+                      </span>
                     </span>
-                  </span>
-                  <span className="acts">
-                    <Button
-                      variant="ghost"
-                      onClick={() =>
-                        setOpen(
-                          open?.mode === "retarget" && open.ruleId === rule.id
-                            ? null
-                            : { mode: "retarget", ruleId: rule.id },
-                        )
-                      }
-                    >
-                      {t("change")}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      onClick={() =>
-                        setOpen(
-                          open?.mode === "revoke" && open.ruleId === rule.id
-                            ? null
-                            : { mode: "revoke", ruleId: rule.id },
-                        )
-                      }
-                    >
-                      {t("revoke")}
-                    </Button>
-                  </span>
-                </div>
+                    <span className="acts">
+                      <Button
+                        variant="ghost"
+                        aria-expanded={openHere && open.mode === "retarget"}
+                        onClick={() =>
+                          setOpen(
+                            open?.mode === "retarget" && open.ruleId === rule.id
+                              ? null
+                              : { mode: "retarget", ruleId: rule.id },
+                          )
+                        }
+                      >
+                        {t("change")}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        aria-expanded={openHere && open.mode === "revoke"}
+                        onClick={() =>
+                          setOpen(
+                            open?.mode === "revoke" && open.ruleId === rule.id
+                              ? null
+                              : { mode: "revoke", ruleId: rule.id },
+                          )
+                        }
+                      >
+                        {t("revoke")}
+                      </Button>
+                    </span>
+                  </div>
+
+                  {openHere && open.mode === "revoke" ? (
+                    <div className="rules-confirm" ref={confirmRef}>
+                      <b className="what">{what}</b>
+                      <span>{t("revokeExplain")}</span>
+                      <span className="acts">
+                        <Button
+                          variant="primary"
+                          onClick={() => {
+                            setOpen(null);
+                            void onRevoke(rule.id).then((r) =>
+                              report(r.status, t("toastRevoked"), t("toastRevokeQueued"), t("toastRevokeFailed")),
+                            );
+                          }}
+                        >
+                          {t("revokeConfirm")}
+                        </Button>
+                        <Button onClick={() => setOpen(null)}>{t("cancel")}</Button>
+                      </span>
+                    </div>
+                  ) : null}
+
+                  {openHere && open.mode === "retarget" ? (
+                    <div className="rules-confirm" ref={confirmRef}>
+                      <b className="what">{what}</b>
+                      <span>{t("retargetExplain")}</span>
+                      <span className="acts">
+                        {/* The CURRENT destination is not offered — re-filing mail where it
+                            already goes is a no-op the user would have to reason about, and
+                            the row states where that is. */}
+                        {RULE_DESTINATIONS.filter((f) => f !== rule.destination).map((folder) => (
+                          <Button
+                            key={folder}
+                            onClick={() => {
+                              setOpen(null);
+                              void onRetarget(rule.id, folder).then((r) =>
+                                report(
+                                  r.status,
+                                  t("toastRetargeted", { place: placeLabel(folder) }),
+                                  t("toastRetargetQueued"),
+                                  t("toastRetargetFailed"),
+                                ),
+                              );
+                            }}
+                          >
+                            {placeLabel(folder)}
+                          </Button>
+                        ))}
+                        <Button variant="ghost" onClick={() => setOpen(null)}>
+                          {t("cancel")}
+                        </Button>
+                      </span>
+                    </div>
+                  ) : null}
+                </Fragment>
               );
             })}
             {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}

@@ -703,6 +703,7 @@
       }
     },
     "notificationPrivacy": "Benachrichtigungen enthalten keine Inhalte — dein Gerät holt sie privat.",
+    "notificationsUnavailable": "ohmail verschickt noch keine Benachrichtigungen — weder an diesen Browser noch an ein anderes Gerät. Sobald es Zustellung gibt, legst du hier fest, worüber du benachrichtigt wirst.",
     "vipTitle": "VIP — benachrichtigt immer",
     "learnedYes": "Ja",
     "learnedNo": "Nein",
@@ -1298,6 +1299,7 @@
     "oauthContinue": "Mit Microsoft verbinden",
     "microsoftOauthNote": "Melde dich bei Microsoft an, um dieses Postfach zu verbinden — du musst kein App-Passwort anlegen, und ohmail sieht oder speichert dein Microsoft-Passwort nie.",
     "microsoftUseAppPassword": "Stattdessen ein App-Passwort verwenden",
+    "oauthOfferWhich": "Du wirst zu microsoft.com weitergeleitet, um dich anzumelden. Die meisten Outlook- und Microsoft-365-Postfächer verbinden sich so; blockiert deine Organisation die Anmeldung, nimm Postfach verbinden mit einem App-Passwort.",
     "oauthReconnect": "Microsoft neu verbinden",
     "oauthFinishing": "Die Microsoft-Verbindung wird abgeschlossen …",
     "oauthConnected": "{address} ist verbunden. Die erste Synchronisierung beginnt beim nächsten Durchgang.",
@@ -1325,6 +1327,7 @@
     "editIntro": "Gib das App-Passwort neu ein, um neue Zugangsdaten zu speichern. Lass die Serverfelder leer, um die gespeicherten zu behalten.",
     "imapPortLabel": "IMAP-Port",
     "imapUserLabel": "IMAP-Benutzername",
+    "smtpPortLabel": "SMTP-Port",
     "keepCurrent": "Leer lassen, um es so zu behalten",
     "portInvalid": "Gib einen Port zwischen 1 und 65535 ein.",
     "confirmTitle": "Bestätige, dass du es bist",

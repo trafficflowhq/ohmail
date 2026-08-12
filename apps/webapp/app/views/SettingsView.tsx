@@ -59,6 +59,12 @@ export type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "a
  * real defect: those are Mila's people, invented for the demo world, and a paying customer was
  * reading a learned pattern about someone who does not exist. They reach this view through the
  * MIRROR now ({@link NotificationsMeta}) rather than through an import.
+ *
+ * SINCE SET-M1 the channel switches render ONLY where that same meta row exists — the demo.
+ * On a live account they were five controls whose every position meant nothing: no permission
+ * request, no service worker, no subscription, no sender behind `POST /push/subscriptions`.
+ * The pane says so instead. This list therefore now describes the PROTOTYPE's channels, and
+ * whichever slice ships real delivery inherits it as the starting vocabulary.
  */
 const NOTIFICATION_CHANNELS: Array<{ id: string; enabled: boolean }> = [
   { id: "people", enabled: true },
@@ -754,28 +760,44 @@ export function SettingsView({
 
           {pane === "notifications" ? (
             <SettingsSection>
-              {channels.map((c, i) => (
-                <SettingsRow
-                  key={c.id}
-                  label={t(`channel.${c.id}.label`)}
-                  description={t(`channel.${c.id}.description`)}
-                  control={
-                    <Switch
-                      checked={c.enabled}
-                      ariaLabel={t(`channel.${c.id}.label`)}
-                      onChange={(v) =>
-                        setChannels((cur) =>
-                          cur.map((x, xi) => (xi === i ? { ...x, enabled: v } : x)),
-                        )
-                      }
-                    />
-                  }
-                />
-              ))}
-              {/* THE DEMO'S VIP BLOCK. Present only where the mirror carries the row,
-                  which `/sync` can never do — see `NotificationsMeta`. */}
+              {/* THE HONEST STATE FOR EVERY REAL ACCOUNT (SET-M1). Nothing in the product
+                  delivers a notification: the client never asks the browser for permission,
+                  registers no service worker and creates no push subscription, and the one
+                  server piece that exists (`POST /push/subscriptions`) stores registrations
+                  no sender ever reads. The switches that used to render here — two of them
+                  ON — were controls whose every position meant nothing, which is the
+                  built-and-dead shape this file's other panes are structured to avoid
+                  (see {@link mailboxSection}: absent ⇒ withheld, never offered dead). So a
+                  live account gets one factual sentence and no switch. `notifications` (the
+                  mirror's `view_meta` row) exists only in the fixture world — `/sync` has no
+                  such entity — so gating the prototype screen on it keeps the DEMO's
+                  Notifications pane exactly as designed, framed by the demo ribbon.
+                  Guarded by notifications-honest-state.test.tsx; the consumer that replaces
+                  this sentence is the slice that ships real permission + subscription +
+                  delivery. */}
+              {!notifications ? (
+                <p className="set-note-inline">{t("notificationsUnavailable")}</p>
+              ) : null}
               {notifications ? (
                 <>
+                  {channels.map((c, i) => (
+                    <SettingsRow
+                      key={c.id}
+                      label={t(`channel.${c.id}.label`)}
+                      description={t(`channel.${c.id}.description`)}
+                      control={
+                        <Switch
+                          checked={c.enabled}
+                          ariaLabel={t(`channel.${c.id}.label`)}
+                          onChange={(v) =>
+                            setChannels((cur) =>
+                              cur.map((x, xi) => (xi === i ? { ...x, enabled: v } : x)),
+                            )
+                          }
+                        />
+                      }
+                    />
+                  ))}
                   <SettingsSubhead>{notifications.vipLabel}</SettingsSubhead>
                   <div className="viplist">
                     {vipList.map((v) => (
@@ -813,9 +835,12 @@ export function SettingsView({
                       </div>
                     </div>
                   ) : null}
+                  {/* The content-free-payload sentence describes how a DELIVERED notification
+                      behaves, so it renders only with the prototype's switches — on a live
+                      account it would be a promise about a feature that does not exist. */}
+                  <SettingsNote>{t("notificationPrivacy")}</SettingsNote>
                 </>
               ) : null}
-              <SettingsNote>{t("notificationPrivacy")}</SettingsNote>
             </SettingsSection>
           ) : null}
 

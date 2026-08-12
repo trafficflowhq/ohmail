@@ -2049,6 +2049,17 @@ textarea.c-input:read-only {
 .set-layout > .set-pane {
   grid-column: 2;
 }
+/* THE PANES MAY NOT SET THE SHEET'S WIDTH. A `1fr` track is `minmax(auto, 1fr)`, and the
+   `auto` minimum of a grid item is its MIN-CONTENT size — so one nowrap line anywhere inside
+   a pane (a rule row's address, a meta line) widened the content track past the viewport,
+   stretched the nav sitting in the other track's row, and panned the whole settings sheet
+   sideways at 390 (SET-H1; measured at 604px against a three-rule account). `min-width: 0`
+   INSIDE the pane cannot fix this — the minimum being honoured is the grid item's own — so it
+   is released here, on the items, at every width. The panes' innards already ellipsize and
+   wrap once the track stops obeying them. Pinned by settings-390-reflow.test.ts. */
+.set-layout > * {
+  min-width: 0;
+}
 .set-nav {
   display: flex;
   flex-direction: column;
