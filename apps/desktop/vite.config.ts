@@ -90,6 +90,12 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // it is a read. The fold renders on every message whose text carries a quoted tail, which the
   // desktop preview's fixture thread does, so this one is reachable in the binary today.
   "bodyText",
+  // `relativeTime` is the young arm of the shared relative-time stamp ("just now"), read by
+  // `app/shell/format.ts` through `liveCopy("relativeTime", …)` — the same non-hook route
+  // `bodyText` takes, counted by the derivation for the same reason. The stamp renders wherever
+  // a sync age does, so omitting it ships a binary whose German reader gets the English
+  // fallback on every "Synced … ago" line.
+  "relativeTime",
   // `draftReply`, `history` and `seed` are the three the shell started reading without this
   // array following, which is precisely the omission `desktop-messages.test.ts` exists to
   // catch — and it was catching it: the guard has been red since those surfaces landed.
