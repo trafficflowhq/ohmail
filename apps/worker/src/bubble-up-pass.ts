@@ -254,7 +254,7 @@ async function forceUnread(tx: Tx, messageId: string, wasUnread: boolean, now: D
  * `flag_state` desired `\Seen = false`, by us — `MessageService.upsertDesiredSeen` with the
  * desired side pinned to unseen. Inlined rather than imported because this module's import graph
  * is the desktop bundle's boundary (see the header): drizzle plus the mail tables, never
- * `@trafficflow/services`. `observed_seen` is written only on INSERT (the worker owns it after
+ * the services package (kept out of this module's import graph on purpose). `observed_seen` is written only on INSERT (the worker owns it after
  * that), and `reconcile_status` is recomputed against the STORED observation on conflict, so a
  * row the server already reports unseen never queues an IMAP round trip.
  */
