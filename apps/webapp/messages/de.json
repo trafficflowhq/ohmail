@@ -773,7 +773,8 @@
     "build": "{version} · Build {build}."
   },
   "reader": {
-    "hint": "zum Zurückgehen"
+    "hint": "zum Zurückgehen",
+    "back": "Zurück"
   },
   "body": {
     "loading": "Vollständige Nachricht wird geladen …",
@@ -1808,5 +1809,10 @@
     "noticeScreenedIn": "Die Abwesenheitsantwort ist an — Leute, die du reingelassen hast, bekommen deine Notiz.",
     "noticeEveryone": "Die Abwesenheitsantwort ist an — alle, die schreiben, bekommen deine Notiz.",
     "noticeSettings": "Abwesenheit einstellen"
+  },
+  "notFound": {
+    "title": "Diese Seite gibt es nicht.",
+    "note": "Die Adresse ist vielleicht falsch geschrieben, oder die Seite ist umgezogen.",
+    "home": "Zurück zu ohmail."
   }
 }

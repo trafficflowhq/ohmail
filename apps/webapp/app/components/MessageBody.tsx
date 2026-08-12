@@ -1806,6 +1806,63 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   };
 
   /**
+   * ── DATA TABLE OR LAYOUT TABLE — DECIDED HERE, BECAUSE CSS INSIDE THE FRAME CANNOT ──────
+   *
+   * The reflow sheet needs two opposite wrapping rules for one element. A LAYOUT cell — the
+   * grid a table-based letter is built from — needs `overflow-wrap:anywhere`, or one long
+   * tracked link's min-content forces the whole letter into a sideways scroll (the defect
+   * the reflow class was built to end). A DATA cell — an invoice line — needs the opposite:
+   * `anywhere` lets auto table layout crush the table to any width and then split the
+   * values themselves ("3,528.00" rendered as "3,528." over "00" on a 390px walk).
+   * No selector can tell those apart, so the document has to say which is which, and this
+   * post-pass is the one place allowed to say it: an ATTRIBUTE, `data-ohmail-datatable`,
+   * the only kind of write the post-pass may perform (see this function's header). A
+   * sender's own copy of the stamp dies at `ALLOW_DATA_ATTR: false` with every other
+   * `data-ohmail-*` marker, and this classifier then re-decides from shape alone.
+   *
+   * WHAT COUNTS AS DATA, and each clause is a real mail shape:
+   *   · it nests no table — nesting is how layout grids are BUILT, and a wrapper is a
+   *     wrapper whatever its own cells look like (its nested grid is classified on its own);
+   *   · two-plus rows and two-plus columns — a single row or column has no alignment to
+   *     protect, and the single-column wrapper is the most common table in mail;
+   *   · then any of: a header row (`th` is a sender saying "these are fields"), a declared
+   *     border grid (`border="1"` is how bulk invoices draw one), or every cell being short
+   *     text without block children — a grid of values, however unadorned.
+   * The costs are asymmetric by design. Data-read-as-layout keeps today's behaviour (a
+   * value may split); layout-read-as-data costs a sideways scroll on that one letter — so
+   * the block-content and length checks below are what hold the second, worse error down:
+   * a cell holding a `div`, `p` or picture is composing a page, not stating a value, and a
+   * cell past 120 characters is a sentence whatever it is wearing.
+   * `message-body-tables.test.ts` holds all of it, forged stamps included.
+   */
+  const DATA_CELL_MAX_CHARS = 120;
+  const markDataTables = (root: Element): void => {
+    for (const table of root.querySelectorAll("table")) {
+      if (table.querySelector("table")) continue;
+      const rows = table.querySelectorAll("tr");
+      if (rows.length < 2) continue;
+      let cols = 0;
+      for (const row of rows) cols = Math.max(cols, row.children.length);
+      if (cols < 2) continue;
+      const border = Number.parseInt(table.getAttribute("border") ?? "0", 10);
+      let data = table.querySelector("th") !== null || (Number.isFinite(border) && border > 0);
+      if (!data) {
+        data = true;
+        for (const cell of table.querySelectorAll("td")) {
+          if (
+            cell.querySelector("div,p,img,ul,ol,h1,h2,h3,h4,h5,h6,blockquote,pre,hr") ||
+            (cell.textContent ?? "").trim().length > DATA_CELL_MAX_CHARS
+          ) {
+            data = false;
+            break;
+          }
+        }
+      }
+      if (data) table.setAttribute("data-ohmail-datatable", "1");
+    }
+  };
+
+  /**
    * ── THE PRE-PASS. THE ONLY TEXT REWRITE IN THIS FILE, AND IT IS UPSTREAM OF EVERYTHING ──
    *
    * Every `<style>` in the document, not just the ones in `<body>`: the hoist above moved the
@@ -1884,6 +1941,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
 
   // ── THE POST-PASS. Over the document the frame will have, not the one we handed over. ──
   for (const node of sanitized.querySelectorAll("*")) onAttributes(node);
+  markDataTables(sanitized);
 
   // Read AFTER the post-pass, from the final document, for the same reason the post-pass runs
   // there: what the reader is shown is what this must be an answer about. Both are READS — the
@@ -2118,14 +2176,35 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
    overflow-wrap:anywhere and not break-word, and this is the half that fixes the mail nobody
    would call wide: anywhere is the value that also reduces an element's MIN-CONTENT size, so
    one long tracked link inside an ordinary letter stops forcing the whole document wide. That
-   single link is what used to make a plain message measure 900px and render at 0.6. */
+   single link is what used to make a plain message measure 900px and render at 0.6.
+
+   TWO EXEMPTIONS FROM anywhere, both because SOME content's min-content IS the content
+   (no backticks in this comment — it lives inside a template literal):
+
+   · A DATA TABLE'S CELLS. anywhere let a four-column invoice lay out at a 290px column
+     and split its own values — "3,528.00" over two lines is a different amount. Stamped
+     cells (see markDataTables — the sanitizer's post-pass decides, because no selector can
+     tell an invoice from the grid a letter is built of) get break-word: the same wrapping
+     between words, but the longest token keeps its min-content, so a column can never get
+     narrower than its widest value and a number never splits. A table that is then wider
+     than the column overflows the frame's viewport, which scrolls — inside the sheet, never
+     the pane (.mb's containment is about the PANE; the frame is its own document).
+
+   · PREFORMATTED BLOCKS. pre-wrap re-flowed a stack trace's four-thousand-character
+     lines and — with anywhere inherited — broke them mid-identifier, which is a different
+     document exactly the way a re-flowed header dump is. The block keeps its literal
+     whitespace and becomes its OWN scroll container instead, the same construction the
+     native path's .msg-pre-wrap uses and for the same reason: the element allowed to be
+     wide must sit inside the element that scrolls — here they are the same element, capped
+     at the column by the * rule above. */
 :root[data-ohmail-reflow] body{font-size:${NATIVE_FONT_SIZE};line-height:${NATIVE_LINE_HEIGHT};
   overflow-wrap:anywhere}
 :root[data-ohmail-reflow] *{max-width:100% !important}
 :root[data-ohmail-reflow] td,:root[data-ohmail-reflow] th{min-width:0 !important}
 :root[data-ohmail-reflow] table{table-layout:auto !important}
 :root[data-ohmail-reflow] img{height:auto !important}
-:root[data-ohmail-reflow] pre{white-space:pre-wrap !important}
+:root[data-ohmail-reflow] table[data-ohmail-datatable] td,:root[data-ohmail-reflow] table[data-ohmail-datatable] th{overflow-wrap:break-word !important}
+:root[data-ohmail-reflow] pre{white-space:pre !important;overflow-x:auto !important;overflow-wrap:normal !important}
 `;
 
 /**

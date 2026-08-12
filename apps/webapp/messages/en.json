@@ -773,7 +773,8 @@
     "build": "{version} · build {build}."
   },
   "reader": {
-    "hint": "to return"
+    "hint": "to return",
+    "back": "Back"
   },
   "body": {
     "loading": "Loading the full message…",
@@ -1808,5 +1809,10 @@
     "noticeScreenedIn": "Away responder is on — people you've let in get your away note.",
     "noticeEveryone": "Away responder is on — everyone who writes gets your away note.",
     "noticeSettings": "Away settings"
+  },
+  "notFound": {
+    "title": "This page doesn't exist.",
+    "note": "The address may be mistyped, or the page has moved.",
+    "home": "Back to ohmail."
   }
 }

@@ -17,6 +17,14 @@ export interface ReaderProps {
    */
   closeOnEscape?: boolean;
   ariaLabel?: string;
+  /**
+   * The accessible name of the on-screen back control — a translated string, because the
+   * default below is English and this package has no catalogue. The control itself is
+   * unconditional in the DOM and gated to overlay widths by the stylesheet: at phone width
+   * the esc hint is (rightly) suppressed for coarse pointers by the app, which left the
+   * overlay with no visible exit at all — backdrop tap worked, and nothing said so.
+   */
+  closeLabel?: string;
 }
 
 /**
@@ -31,6 +39,7 @@ export function Reader({
   hint,
   closeOnEscape = true,
   ariaLabel = "Reading",
+  closeLabel = "Back",
 }: ReaderProps) {
   useEffect(() => {
     if (!open) return;
@@ -66,6 +75,18 @@ export function Reader({
           if (e.target === e.currentTarget) onClose();
         }}
       >
+        {/* The on-screen way back. Always in the DOM (a keyboard user may want a visible,
+            focusable exit too); reader.css displays it only at overlay widths, where the
+            backdrop is not visible enough to read as tappable and the esc hint is suppressed
+            for coarse pointers. A child of the dialog, so its click is its OWN handler —
+            never the backdrop's target check. */}
+        <button type="button" className="reader-close" aria-label={closeLabel} onClick={onClose}>
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5" />
+            <path d="M12 19l-7-7 7-7" />
+          </svg>
+        </button>
         {children}
       </div>
     </>

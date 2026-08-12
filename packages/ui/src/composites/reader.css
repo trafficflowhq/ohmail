@@ -44,10 +44,33 @@
   animation:hint 3.6s var(--swift) .2s both}
 @keyframes hint{0%{opacity:0}10%{opacity:1}82%{opacity:1}100%{opacity:0}}
 body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
+/* THE ON-SCREEN WAY BACK — hidden at rest, real below 900px. On the desktop overlay the
+   exhale keeps its chrome-free surface: esc and the visible dimmed backdrop both say the way
+   out. At phone width neither does — the overlay covers everything, the esc hint is (rightly)
+   suppressed for coarse pointers — so a walked 390 review found an overlay whose only labelled
+   exit was a keycap on a fading toast. This is the exit that stays. */
+.reader-close{display:none}
 @media (max-width: 900px){
-  .reader{padding:4vh 12px 10vh}
+  /* AN OPAQUE GROUND, AND ONLY HERE. The overlay paints nothing above 900px — the receded
+     shell at 5% IS the desktop design. Below it the overlay is the whole viewport, and the 5%
+     residue ghosted through the seams between message panels as stray dimmed words — a walked
+     defect, both themes. `--canvas` because a full-screen reading surface is a PAGE of the
+     app, on the app's own ground, themed with it. */
+  .reader{padding:4vh 12px 10vh;background:var(--canvas)}
   .reader .msg{padding:30px 22px 26px}
   .reader .msg h2{font-size:24px}
+  /* Fixed, so the exit is on screen at every scroll offset of a long thread; safe-area
+     insets so it clears a notch. The float ground and lift keep it legible over whatever
+     panel edge it crosses. z-index 2 inside the overlay's own stacking context: the panels
+     and the action pill are unpositioned or z:1. */
+  .reader-close{
+    display:inline-flex;align-items:center;justify-content:center;
+    position:fixed;top:calc(10px + env(safe-area-inset-top,0px));
+    left:calc(12px + env(safe-area-inset-left,0px));z-index:2;
+    width:38px;height:38px;border-radius:50%;border:0;padding:0;cursor:pointer;
+    color:var(--ink);background:var(--float);box-shadow:var(--lift-2);
+  }
+  .reader-close:active{transform:scale(.94)}
 }
 
 /* ── THE REPLY DOCK STAYS ON SCREEN IN THE SPLIT READING COLUMN ────────────────────────────

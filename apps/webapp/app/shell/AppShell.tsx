@@ -4547,6 +4547,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         open={readerMessage != null}
         closeOnEscape={false}
         onClose={() => setReaderFor(null)}
+        /* The on-screen back control's accessible name — the stylesheet shows the control at
+           phone width, where the esc hint is suppressed for coarse pointers and the backdrop
+           does not read as tappable. The component's own default is English. */
+        closeLabel={t("reader.back")}
       >
         {readerMessage ? (
           <MessagePane

@@ -189,6 +189,43 @@ function toBlocks(lines: ClassifiedLine[]): Block[] {
  */
 export const MAX_QUOTE_DEPTH = 6;
 
+/**
+ * ── A BLOCK WHOSE LINES ARE COLUMNS IS PREFORMATTED, NOT PROSE ──────────────────────────
+ *
+ * Plain-text receipts and notices line their values up with runs of spaces, and the
+ * alignment IS the content — "Pro plan      15.00" and "Pro plan 15.00" are different
+ * documents. The paragraph path renders under `white-space: pre-line`, which collapses
+ * intra-line runs by definition, so a column-shaped block must leave that path entirely.
+ * It becomes the same {@link PreNode} a code block arrives as: monospace so the columns
+ * actually meet, literal whitespace so the runs survive, and `.msg-pre-wrap`'s own scroll
+ * container so a wide receipt scrolls inside the letter (`message-body-code.test.ts` holds
+ * that construction; `body-text-columns.test.ts` holds this classification).
+ *
+ * A COLUMN GAP IS THREE-PLUS SPACES OR A TAB, INTERIOR. Three and not two, deliberately:
+ * two spaces after a period is a typing habit older than email, and reading it as a column
+ * would re-render half of ordinary correspondence in monospace. Interior (`\S` on both
+ * sides) so trailing whitespace — which pre-line hides and senders cannot see — never votes.
+ *
+ * AND THE BLOCK DECIDES, NOT THE LINE. At least two gap-carrying lines, and at least half
+ * of the block: one stray run inside a paragraph is an accident of typing, and the cost of
+ * a false positive is somebody's words set in a code block's type. The cost of a false
+ * negative is the status quo this exists to fix — collapsed columns — so the thresholds
+ * lean conservative. What is deliberately NOT here is any attempt to detect alignment
+ * ACROSS lines (equal offsets, shared boundaries): senders pad by eye, proportional
+ * previews lie to them, and a cross-line rule would reject exactly the hand-padded receipts
+ * this is for.
+ */
+const COLUMN_GAP = /\S(?: {3,}|\t)(?=\S)/;
+
+function isColumnar(block: Block): boolean {
+  if (block.attribution) return false;
+  const lines = block.text.split("\n");
+  if (lines.length < 2) return false;
+  let gaps = 0;
+  for (const line of lines) if (COLUMN_GAP.test(line)) gaps += 1;
+  return gaps >= 2 && gaps * 2 >= lines.length;
+}
+
 /** One paragraph (or attribution line) of the rendered body. */
 export interface ParagraphNode { kind: "para"; block: Block }
 /** One quote container: everything quoted at `depth` within one contiguous quoted run. */
@@ -289,7 +326,11 @@ function toTree(blocks: Block[]): BodyNode[] {
       (stack.length === 0 ? top : stack[stack.length - 1]!.children).push(quote);
       stack.push(quote);
     }
-    (depth === 0 ? top : stack[stack.length - 1]!.children).push({ kind: "para", block });
+    // Column-shaped blocks take the preformatted kind at ANY depth — a quoted receipt has
+    // the same alignment to lose as an unquoted one. See {@link isColumnar}.
+    (depth === 0 ? top : stack[stack.length - 1]!.children).push(
+      isColumnar(block) ? { kind: "pre", text: block.text } : { kind: "para", block },
+    );
   }
   return top;
 }

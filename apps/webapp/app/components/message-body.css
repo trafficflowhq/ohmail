@@ -208,6 +208,16 @@
   padding: 5px 10px;
   text-align: start;
   vertical-align: top;
+  /* NOT `anywhere`, which is what the cells INHERIT (`.msg-body`/`.pm-body` declare it for
+     running text, where it is right). `anywhere` reduces min-content to almost nothing, so a
+     narrow column lays this table out at any width and pays by splitting the values
+     themselves — a 290px invoice rendered "3,528.00" as "3,528." over "00", which is a
+     different amount to anyone skimming. `break-word` wraps between words identically but
+     keeps the longest token's min-content, so a column can never get narrower than its
+     widest value and a number therefore never splits. The width that buys is absorbed by
+     the wrapper above — the scrollbar it was built for finally has a job.
+     Guarded by message-body-tables.test.ts. */
+  overflow-wrap: break-word;
 }
 .msg-table th { background: var(--tint); font-weight: 600; color: var(--ink); }
 

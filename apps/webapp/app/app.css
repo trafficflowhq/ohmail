@@ -550,33 +550,43 @@ body.reading .shell {
   color: var(--accent-ink);
   background: var(--accent-soft);
 }
+/* ── BOTH HALVES OF THE SENTENCE WRAP. NEITHER IS EVER ELLIPSIZED. ──────────────────────
+   This is the ONLY copy of the sync sentence at desktop width (sync-notice-one-copy.test.ts
+   pins that), and it used to clip: "Filing 1 message on your m…" with no title attribute and
+   no expansion anywhere — a status whose words cannot be read only says "something", which
+   trains a reader to ignore the one that matters. The stack's own header already argued that
+   ellipsising hides "the one part of the sentence that MOVES"; the declarations now agree
+   with it. A wrapped line costs vertical space in a column that has it; a clipped one costs
+   the sentence. `overflow-wrap: anywhere` because an address is one unbreakable token and
+   must break rather than widen the rail. Guarded by rail-sync-readable.test.ts. */
 .rail-sync .rs-line {
   display: flex;
-  align-items: center;
+  /* Top-aligned, not centred: the title may wrap to two lines now, and the mark belongs
+     beside the FIRST of them. The 1px nudge is optical — an 11–12px mark against a 15px
+     first line box. */
+  align-items: flex-start;
   gap: 7px;
   min-width: 0;
 }
 .rail-sync .rs-line b {
   font-weight: 600;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .rail-sync .glyph {
   font-size: 12px;
   line-height: 1;
   flex: none;
+  margin-top: 1px;
 }
 .rail-sync .mbx-spin {
   flex: none;
+  margin-top: 2px;
 }
 .rail-sync .rs-num {
   font-size: 10.5px;
   opacity: 0.8;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-feature-settings: "tnum";
   font-variant-numeric: tabular-nums;
 }
