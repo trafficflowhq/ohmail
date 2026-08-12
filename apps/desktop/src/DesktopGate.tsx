@@ -252,7 +252,12 @@ export function DesktopGate() {
            of the database on this machine, so the answer costs one call down the pipe. Withheld
            while there is no engine: the invented mailbox is nobody's account and has nothing to
            report. See `DesktopMailboxes.tsx` for why the probe must reject rather than answer
-           with an empty list. */
+           with an empty list.
+
+           These are the ACCOUNT's own mailboxes on the hosted door — mirrored under the account's
+           own ids by the engine's pull, not the single placeholder row it used to answer with. The
+           same facts feed the From selector, which is why the addresses on offer here are the
+           addresses a send can actually leave from. */
         {...(engine ? { mailboxFacts: readMailboxFacts } : {})}
         /* WHAT A SEND FROM THIS WINDOW RIDES. On the STANDALONE door the compose form, the
            send handler and the SMTP dial are one process — the mail engine's own service bag

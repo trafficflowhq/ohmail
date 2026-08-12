@@ -1,14 +1,16 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, ne, notInArray } from "drizzle-orm";
 import { recordChange } from "@trafficflow/db";
 import {
-  approvals, drafts, folderState, mailboxes, messageBodies, messageStates, messages, messageTags,
-  routingDecisions, rules, tags, threads,
+  approvals, drafts, folderState, mailboxCredentials, mailboxFolders, mailboxes, messageBodies,
+  messageFailures, messageInstances, messageStates, messages, messageTags, routingDecisions, rules,
+  tags, threads, unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
 import type {
-  ApprovalDTO, ChangeOp, DraftDTO, EntityType, MessageBodyBatchItem, MessageDTO, MessageStateDTO,
-  Page, RoutingDecisionDTO, RuleDTO, SnapshotResponse, SyncChange, SyncResponse, TagDTO, ThreadDTO,
+  ApprovalDTO, ChangeOp, DraftDTO, EntityType, MailboxDTO, MessageBodyBatchItem, MessageDTO,
+  MessageStateDTO, Page, RoutingDecisionDTO, RuleDTO, SnapshotResponse, SyncChange, SyncResponse,
+  TagDTO, ThreadDTO,
 } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";
@@ -42,14 +44,39 @@ import type { Diagnostic } from "./log.js";
  * Applying the same page twice — the crash-recovery case, since the cursor is written AFTER the
  * commit — converges, because every write is an upsert and every delete is unconditional.
  *
- * ── THE REMAP IS LOAD-BEARING ─────────────────────────────────────────────────────────────────
+ * ── THE ACCOUNT IS REMAPPED. THE MAILBOX IS NOT — AND THAT ASYMMETRY IS THE POINT ─────────────
  *
- * Every DTO carries the HOSTED account's `accountId`/`mailboxId`. The local database is scoped by
- * the single synthetic local identity (`identity.ts`), so every row is written under
- * `world.accountId`/`world.mailboxId`. Skipping this yields a full mirror keyed to an account the
- * local reader has never heard of — it renders EMPTY, because `materializeMessages` filters on the
- * local account. Entity IDs (message id, thread id, …) are the `/sync` feed's own keys and are
- * preserved unchanged.
+ * Every DTO carries the HOSTED account's `accountId` and `mailboxId`, and the two are treated
+ * completely differently.
+ *
+ * `accountId` IS REMAPPED to `world.accountId`. The local database is scoped by the single
+ * synthetic local identity (`identity.ts`) and every read service filters on the caller's own
+ * account, so a mirror keyed to the hosted account renders EMPTY — `materializeMessages` would
+ * find nothing.
+ *
+ * `mailboxId` IS COPIED VERBATIM, and it used to be remapped the same way. That was the defect.
+ * `identity.ts` mints ONE synthetic mailbox row — a random uuid, addressed with the ACCOUNT LOGIN
+ * address — and every mirrored message and draft was attributed to it. Three consequences, all of
+ * them visible to the user:
+ *
+ *  · a hosted `POST`/`PUT /drafts` carrying that id is refused `400 mailboxId does not belong to
+ *    this account` (`drafts-service.ts`, `validMailbox`), so EVERY send from the Cloud door failed;
+ *  · the From selector reads `GET /mailboxes` (`compose-from.ts`), which was answered from the
+ *    synthetic row, so it rendered one static option whose address was the login rather than the
+ *    account's actual sending addresses — and an account with two mailboxes could not pick;
+ *  · a reply inherits `parent.mailboxId` (`Engine.enrich`), which named a mailbox no option list
+ *    contained, so `resolveReplyFrom` announced a SUBSTITUTION on every reply.
+ *
+ * So the mailbox rows are mirrored too — {@link makeMailboxRefresh} pulls hosted `GET /mailboxes`
+ * at the START of every pull, keyed on the HOSTED id, before a single change is drained. That
+ * ordering is mandatory rather than tidy: a message can only be attributed to a mailbox row that
+ * already exists (`messages.mailbox_id` has a foreign key), so the refresh has to precede the
+ * drain. Entity IDs (message id, thread id, …) are the `/sync` feed's own keys and are preserved
+ * unchanged, and mailbox ids now join them.
+ *
+ * The synthetic row is retired in the same transaction the hosted rows land in. It is never left
+ * beside them: two active rows for one address violate `mailboxes_active_address_uq`, and a
+ * lingering login-address row would render in Settings as a mailbox nobody has.
  *
  * ── AND ONE LOCAL `recordChange` PER APPLIED ENTITY ───────────────────────────────────────────
  *
@@ -146,7 +173,33 @@ function readBodiesWalk(raw: unknown): BodiesWalk {
   return { phase: "unresolved" };
 }
 
+/**
+ * THE CURSOR FILE'S FORMAT VERSION — **and an ABSENT version means 0, which means RE-KEY.**
+ *
+ * The mirror's rows changed meaning when mailbox attribution stopped being the synthetic local id
+ * (see this file's header). Every mirror written before that carries messages and drafts pointing
+ * at a mailbox row the hosted account has never heard of, and no delta can repair them: a message
+ * that has not changed on Cloud emits no change, so an incremental drain would leave the whole
+ * back catalogue mis-attributed for ever while fresh installs came up correct.
+ *
+ * So the version is the migration, and the DEFAULT IS THE DANGEROUS DIRECTION ON PURPOSE. A cursor
+ * file with no `version` field — which is every file any earlier build wrote — reads as 0 and
+ * forces a `since=0` re-bootstrap, which re-applies every entity through the corrected upsert. The
+ * inverse default (absent ⇒ current) is the one failure that would be invisible in testing: fresh
+ * installs would be green and every UPGRADED install would silently keep the defect.
+ *
+ * The re-pull is the ordinary bootstrap machinery — 500-row pages, one transaction and one cursor
+ * write per page, resumable after a crash — not a discard: `message_bodies` is keyed on
+ * `message_id` alone and entity ids are preserved, so the body store is untouched by it.
+ */
+export const CURSOR_VERSION = 1;
+
 interface CursorState {
+  /**
+   * The format this cursor file was written by. See {@link CURSOR_VERSION}: below it, the next
+   * drain is forced to `since=0` so every row is re-applied with the attribution it should have.
+   */
+  version: number;
   /** The hosted `/sync` cursor. `"0"` bootstraps a full replay. */
   sync: string;
   /** How far the body walk has got. See {@link BodiesWalk} for why this is not just an id. */
@@ -246,6 +299,7 @@ const asDate = (iso: string | null | undefined): Date | null => (iso ? new Date(
 
 /** The cursor file's shape. `bodies` is the serialized {@link BodiesWalk}. */
 interface CursorFile {
+  version?: unknown;
   sync?: unknown;
   bodies?: unknown;
   bootstrapping?: unknown;
@@ -256,18 +310,29 @@ function readCursor(path: string): CursorState {
   try {
     const j = JSON.parse(readFileSync(path, "utf8")) as CursorFile;
     return {
+      // ABSENT ⇒ 0 ⇒ re-key. Read {@link CURSOR_VERSION} before changing this expression: the
+      // whole migration hangs off an unrecognised value defaulting to the OLD format, and a
+      // `?? CURSOR_VERSION` here would silently exempt every install that has the defect.
+      version: typeof j.version === "number" && Number.isFinite(j.version) ? j.version : 0,
       sync: typeof j.sync === "string" && j.sync !== "" ? j.sync : "0",
       bodies: readBodiesWalk(j.bodies),
       bootstrapping: j.bootstrapping === true,
       tagBackfill: j.tagBackfill === true,
     };
   } catch {
-    return { sync: "0", bodies: { phase: "unresolved" }, bootstrapping: false, tagBackfill: false };
+    // No file at all is a FRESH install, not an upgraded one: there are no rows to re-key, and the
+    // `sync: "0"` below already bootstraps. Stamping the current version keeps the re-key a
+    // statement about mirrors that exist.
+    return {
+      version: CURSOR_VERSION, sync: "0", bodies: { phase: "unresolved" },
+      bootstrapping: false, tagBackfill: false,
+    };
   }
 }
 
 function writeCursor(path: string, state: CursorState): void {
   const onDisk: CursorFile = {
+    version: state.version,
     sync: state.sync,
     bodies: writeBodiesWalk(state.bodies),
     bootstrapping: state.bootstrapping,
@@ -315,6 +380,9 @@ function newBootstrapGen(): BootstrapGen {
 /** The tx handle `db.transaction` hands its callback. */
 type Tx = Parameters<Parameters<LocalDb["transaction"]>[0]>[0];
 
+/** For the one apply path that carries no mailbox-bearing entity — see `applyTagBackfill`. */
+const EMPTY_MAILBOXES: ReadonlySet<string> = new Set<string>();
+
 async function messagePresent(tx: Tx, id: string): Promise<boolean> {
   const rows = await tx.select({ id: messages.id }).from(messages).where(eq(messages.id, id)).limit(1);
   return rows.length > 0;
@@ -323,6 +391,173 @@ async function messagePresent(tx: Tx, id: string): Promise<boolean> {
 async function threadPresent(tx: Tx, id: string): Promise<boolean> {
   const rows = await tx.select({ id: threads.id }).from(threads).where(eq(threads.id, id)).limit(1);
   return rows.length > 0;
+}
+
+/**
+ * A hosted `MailboxDTO` as the local row that mirrors it — **minus the two progress stamps.**
+ *
+ * `lastSyncAt` and `initialImportCompletedAt` are DELIBERATELY ABSENT and copying them would break
+ * the body walk in a way that shows as blank mail. `initial_import_completed_at` is what
+ * `resolveBodiesWalk` reads back to tell a finished body walk from one that never started; a
+ * hosted account has finished ITS import long ago, so copying the stamp onto a mirror that has
+ * fetched no body yet resolves the walk as `complete` and hands the account to
+ * `fetchMissingBodies` — which asks only about messages this mirror already holds. On a first pull
+ * that is none of them, so every message would open blank for ever.
+ *
+ * They are stamps about THIS mirror's own progress, written by `stampSynced` when a pull of THIS
+ * process drains with the walk spent, and the hosted account's answer to the same question is a
+ * different fact with the same name.
+ */
+function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
+  return {
+    // THE ACCOUNT IS REMAPPED, THE ID IS NOT — the asymmetry this file's header is about. The row
+    // keeps the HOSTED id, because that id is what every mirrored message names and what a send
+    // has to carry back to Cloud.
+    accountId: world.accountId,
+    provider: m.provider,
+    address: m.address,
+    displayName: m.displayName ?? null,
+    status: m.status,
+    authKind: m.authKind,
+    // `?? null` on every one of these rather than omission, for the reason the rule upsert states:
+    // this object IS the `onConflictDoUpdate` set, so a key left out would make a value that was
+    // CLEARED on Cloud persist locally — a mailbox that recovered would keep rendering its old
+    // failure.
+    errorCode: m.errorCode ?? null,
+    errorDetail: m.errorDetail ?? null,
+    failedAt: asDate(m.failedAt),
+    retryCount: m.retryCount ?? 0,
+    syncBlockedReason: m.syncBlockedReason ?? null,
+    syncBlockedSince: asDate(m.syncBlockedSince),
+    disabledReason: m.disabledReason ?? null,
+    smtpMaxSizeBytes: m.smtpMaxSizeBytes ?? null,
+    // NOT decoration: `compose-from.ts` orders the From options by `createdAt` ascending and calls
+    // the first sendable one the default sender. A mirror that stamped its own clock here would
+    // pick a different default from the browser tab looking at the same account.
+    createdAt: asDate(m.createdAt) ?? now,
+  };
+}
+
+/**
+ * Does anything still point at this mailbox row? The guard on deleting a retired one.
+ *
+ * Seven tables carry `mailbox_id` foreign keys (`schema-mail.ts`). Only two of them can hold rows
+ * on the Cloud door — `messages` and `drafts`, both written by this file — but the other five are
+ * checked anyway: this runs on a database that may have been a STANDALONE install before the door
+ * was switched, and a delete that trips a foreign key aborts the whole refresh transaction.
+ */
+async function mailboxReferenced(tx: Tx, id: string): Promise<boolean> {
+  const hit = async (rows: Promise<readonly unknown[]>): Promise<boolean> => (await rows).length > 0;
+  if (await hit(tx.select({ x: messages.id }).from(messages).where(eq(messages.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: drafts.id }).from(drafts).where(eq(drafts.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: messageInstances.id }).from(messageInstances).where(eq(messageInstances.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: messageFailures.id }).from(messageFailures).where(eq(messageFailures.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: unsubscribeRecords.id }).from(unsubscribeRecords).where(eq(unsubscribeRecords.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: mailboxFolders.id }).from(mailboxFolders).where(eq(mailboxFolders.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: mailboxCredentials.mailboxId }).from(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, id)).limit(1))) return true;
+  return false;
+}
+
+/**
+ * Remove retired mailbox rows nothing references any more — the second half of the synthetic row's
+ * retirement, and the reason it is a two-step.
+ *
+ * A FRESH install reaches this inside the refresh transaction with the synthetic row holding zero
+ * references (the refresh precedes the first drain), so it goes immediately. An UPGRADED install
+ * reaches it with every mirrored message still pointing at that row, so it survives as a tombstone
+ * until the re-key has moved them, and this runs again once the drain has finished.
+ *
+ * The zero-reference guard is what makes the two cases one rule instead of a special case for
+ * each — and it is also the honest answer for a mailbox REMOVED on Cloud: its mail is still here,
+ * so its row stays, exactly as `mailboxes_active_address_uq`'s partial index expects a tombstone to.
+ */
+async function dropRetiredMailboxes(tx: Tx, world: LocalWorld, hostedIds: readonly string[]): Promise<string[]> {
+  const rows = await tx.select({ id: mailboxes.id }).from(mailboxes).where(
+    and(
+      eq(mailboxes.accountId, world.accountId),
+      eq(mailboxes.status, "disabled"),
+      ...(hostedIds.length > 0 ? [notInArray(mailboxes.id, [...hostedIds])] : []),
+    ),
+  );
+  const dropped: string[] = [];
+  for (const row of rows) {
+    if (await mailboxReferenced(tx, row.id)) continue;
+    await tx.delete(mailboxes).where(eq(mailboxes.id, row.id));
+    dropped.push(row.id);
+  }
+  return dropped;
+}
+
+/** What one mailbox refresh did, for the log line and for the tests that watch the ordering. */
+export interface MailboxRefreshOutcome {
+  /** Every local mailbox id after the refresh — what an incoming DTO's `mailboxId` is checked against. */
+  known: Set<string>;
+  /** Rows that were active and are not in the hosted answer: the synthetic row, or a removed mailbox. */
+  retired: string[];
+  /** Retired rows nothing referenced, so they are gone rather than tombstoned. */
+  dropped: string[];
+}
+
+/**
+ * APPLY ONE HOSTED MAILBOX LIST INTO THE LOCAL TABLE — retire, upsert and prune, IN ONE
+ * TRANSACTION, in that order.
+ *
+ * ── THE ORDER IS A UNIQUE-CONSTRAINT DODGE ────────────────────────────────────────────────────
+ *
+ * `mailboxes_active_address_uq` is `(account_id, lower(address)) where status <> 'disabled'`. On
+ * the common install the synthetic row's address IS the hosted mailbox's address — the account
+ * login and the mailbox are the same string — so inserting the hosted row while the synthetic one
+ * is still `connected` violates it. Retiring first frees the index; the upsert then lands.
+ *
+ * ── AND THE TRANSACTION IS WHY `GET /mailboxes` NEVER ANSWERS `[]` ────────────────────────────
+ *
+ * `DesktopMailboxes.tsx` states the rule from the other side: the mailbox probe must REJECT rather
+ * than return an empty list, because "we could not ask" and "there are none" render differently —
+ * the second puts "No mailbox connected, so nothing can arrive" in front of somebody whose mailbox
+ * is working. This read is served locally and cannot fail that way, so the empty window has to be
+ * closed here instead: split into two transactions, a reader between them sees a table holding
+ * only tombstones and gets exactly that sentence.
+ *
+ * ── A RETIREMENT IS AN ORDINARY TOMBSTONE, WITH `disabled_reason` NULL ────────────────────────
+ *
+ * Deliberately not one of the `organized_elsewhere:*` members: `identity.ts`'s lookup returns a
+ * disabled row only when it carries a reason (a lease stand-down is the SAME mailbox, paused), so
+ * a NULL reason is what stops a later launch resurrecting the synthetic row it just retired.
+ */
+export async function applyMailboxRefresh(
+  db: LocalDb,
+  world: LocalWorld,
+  hosted: readonly MailboxDTO[],
+  now: Date,
+): Promise<MailboxRefreshOutcome> {
+  const hostedIds = hosted.map((m) => m.id);
+  return db.transaction(async (tx) => {
+    // (i) RETIRE what the hosted account does not name — the synthetic row on a first refresh, a
+    //     mailbox somebody removed in the browser on any later one.
+    const retired = await tx.update(mailboxes)
+      .set({ status: "disabled", disabledReason: null })
+      .where(and(
+        eq(mailboxes.accountId, world.accountId),
+        ne(mailboxes.status, "disabled"),
+        ...(hostedIds.length > 0 ? [notInArray(mailboxes.id, hostedIds)] : []),
+      ))
+      .returning({ id: mailboxes.id });
+
+    // (ii) UPSERT the hosted rows, keyed on the HOSTED id.
+    for (const m of hosted) {
+      const row = mailboxRow(world, m, now);
+      await tx.insert(mailboxes).values({ id: m.id, ...row } as typeof mailboxes.$inferInsert)
+        .onConflictDoUpdate({ target: mailboxes.id, set: row });
+    }
+
+    // (iii) PRUNE. A tombstone nothing references is not a mailbox, it is a phantom disconnection
+    //       in somebody's Settings pane.
+    const dropped = await dropRetiredMailboxes(tx, world, hostedIds);
+
+    const all = await tx.select({ id: mailboxes.id }).from(mailboxes)
+      .where(eq(mailboxes.accountId, world.accountId));
+    return { known: new Set(all.map((r) => r.id)), retired: retired.map((r) => r.id), dropped };
+  });
 }
 
 /**
@@ -362,8 +597,29 @@ async function applyLabels(tx: Tx, world: LocalWorld, messageId: string, labels:
  * Apply one non-delete change. Returns false when a foreign-key referent is missing and the row
  * is skipped — the cursor still advances (a later update to the same entity re-emits it), which is
  * the forward-compatible posture `apply.ts` takes toward an unknown type.
+ *
+ * ── "A LATER UPDATE RE-EMITS IT" IS TRUE OF THE FK SKIPS AND FALSE OF THE MAILBOX ONE ─────────
+ *
+ * A message whose thread has not arrived is skipped and will come back, because something about
+ * that message will change again. A message naming a MAILBOX this database does not hold will not:
+ * mailboxes change far less often than mail, and a message already at rest emits nothing. That is
+ * why the refresh runs BEFORE the drain and why {@link CloudMirrorConfig} makes it a hard failure
+ * when it cannot — the skip below is the last resort, not the mechanism.
+ *
+ * `known` is every local mailbox id, whatever its status: a tombstoned row still satisfies the
+ * foreign key, so mail belonging to a mailbox removed on Cloud keeps landing where it belongs
+ * rather than being attributed to a different address. **Attributing to a different mailbox is the
+ * one thing this may never do** — that is the wrong-sender class of defect the From selector's own
+ * rules exist to prevent, and a message the mirror cannot place honestly is better absent.
  */
-async function applyUpsert(tx: Tx, world: LocalWorld, ch: SyncChange, now: Date, gen: BootstrapGen | null): Promise<boolean> {
+async function applyUpsert(
+  tx: Tx,
+  world: LocalWorld,
+  ch: SyncChange,
+  now: Date,
+  gen: BootstrapGen | null,
+  known: ReadonlySet<string>,
+): Promise<boolean> {
   switch (ch.type) {
     case "thread": {
       const t = ch.entity as ThreadDTO | undefined;
@@ -392,6 +648,9 @@ async function applyUpsert(tx: Tx, world: LocalWorld, ch: SyncChange, now: Date,
     case "message": {
       const m = ch.entity as MessageDTO | undefined;
       if (!m) return false;
+      // The mailbox this message belongs to has to be mirrored before the message can be. See the
+      // header: never re-attributed, never invented.
+      if (!known.has(m.mailboxId)) return false;
       // A thread STUB before the message, so the FK holds even when the thread's own change has
       // not arrived. A later `thread` change overwrites the stub with the real row.
       if (m.threadId) {
@@ -400,6 +659,12 @@ async function applyUpsert(tx: Tx, world: LocalWorld, ch: SyncChange, now: Date,
           .onConflictDoNothing({ target: threads.id });
       }
       const display = {
+        /* THE ATTRIBUTION, AND IT IS IN THE CONFLICT SET FOR A REASON. This object is both the
+           insert's display half and the `onConflictDoUpdate` set; `mailbox_id` used to be in
+           neither, written once from the synthetic local id at insert time. Leaving it out of the
+           set here would make the re-key a no-op — every already-mirrored message would keep the
+           id it was first written with, which is precisely the row this slice exists to correct. */
+        mailboxId: m.mailboxId,
         messageIdHeader: m.messageIdHeader ?? null,
         subject: m.subject ?? "",
         fromAddress: m.from?.address ?? "",
@@ -423,7 +688,6 @@ async function applyUpsert(tx: Tx, world: LocalWorld, ch: SyncChange, now: Date,
       await tx.insert(messages).values({
         id: m.id,
         accountId: world.accountId,
-        mailboxId: world.mailboxId,
         // A mirror carries no raw body, so it derives no dedup/body hash. `dedup_key` is unique per
         // mailbox; keying it to the message id keeps the constraint honest without a body to hash.
         bodyHash: "",
@@ -524,6 +788,9 @@ async function applyUpsert(tx: Tx, world: LocalWorld, ch: SyncChange, now: Date,
     case "draft": {
       const d = ch.entity as DraftDTO | undefined;
       if (!d) return false;
+      // The mailbox a draft SENDS FROM, same rule as a message's. A draft whose sender this mirror
+      // cannot name is one the hosted API would refuse on send anyway.
+      if (!known.has(d.mailboxId)) return false;
       if (d.threadId) {
         await tx.insert(threads)
           .values({ id: d.threadId, accountId: world.accountId, updatedAt: now })
@@ -535,7 +802,10 @@ async function applyUpsert(tx: Tx, world: LocalWorld, ch: SyncChange, now: Date,
         : null;
       const body = {
         accountId: world.accountId,
-        mailboxId: world.mailboxId,
+        // The draft's OWN sending mailbox — see the message branch. A draft written against the
+        // synthetic id could never be sent: the hosted `PUT /drafts` refuses a mailbox that does
+        // not belong to the account, which is the 400 every Cloud-door send used to collect.
+        mailboxId: d.mailboxId,
         threadId: d.threadId ?? null,
         inReplyToMessageId: inReplyTo,
         subject: d.subject ?? "",
@@ -653,7 +923,14 @@ async function applyDelete(tx: Tx, ch: SyncChange): Promise<boolean> {
  * `gen`, when present, is the bootstrap generation this page belongs to: every upsert marks the row
  * it touched so the trailing sweep can tell survivors from phantoms.
  */
-async function applyPage(db: LocalDb, world: LocalWorld, resp: SyncResponse, now: Date, gen: BootstrapGen | null): Promise<number> {
+async function applyPage(
+  db: LocalDb,
+  world: LocalWorld,
+  resp: SyncResponse,
+  now: Date,
+  gen: BootstrapGen | null,
+  known: ReadonlySet<string>,
+): Promise<number> {
   const changes: SyncChange[] = [
     ...resp.changes.creates, ...resp.changes.updates, ...resp.changes.moves, ...resp.changes.deletes,
   ];
@@ -677,7 +954,7 @@ async function applyPage(db: LocalDb, world: LocalWorld, resp: SyncResponse, now
     for (const type of APPLY_ORDER) {
       for (const ch of nonDeletes) {
         if (ch.type !== type) continue;
-        if (await applyUpsert(tx, world, ch, now, gen)) {
+        if (await applyUpsert(tx, world, ch, now, gen, known)) {
           await record(type, ch.id, ch.op, ch.move);
           applied++;
         }
@@ -798,7 +1075,9 @@ async function applyTagBackfill(
     let tagCount = 0;
     for (const ch of snap.changes) {
       if (ch.type !== "tag" || ch.op === "delete") continue;
-      if (await applyUpsert(tx, world, ch, now, null)) {
+      // A tag names no mailbox, so the empty set below is not a shortcut — it is the honest
+      // statement that this repair touches nothing a mailbox id could gate.
+      if (await applyUpsert(tx, world, ch, now, null, EMPTY_MAILBOXES)) {
         await recordChange(tx, { accountId: world.accountId, entityType: "tag", entityId: ch.id, op: "create", meta: null });
         tagCount++;
       }
@@ -842,6 +1121,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   let inflight: Promise<number> | null = null;
   /** Current reconnect delay; grows on failure, resets on success. See {@link scheduleAfter}. */
   let backoffMs = RECONNECT_BASE_MS;
+  /**
+   * Every mailbox id this database holds, as of the last refresh — what an incoming `mailboxId` is
+   * checked against before a message or draft may be written under it. Empty until the first
+   * refresh, which is why nothing drains before one has run.
+   */
+  let knownMailboxes: ReadonlySet<string> = EMPTY_MAILBOXES;
+  /** The ids the hosted account named last, for the post-drain prune. */
+  let hostedMailboxIds: string[] = [];
 
   /** The cloud seq the cursor encodes — the inverse of `SyncService.encodeCursor`. */
   const cloudSeq = (): bigint => {
@@ -853,6 +1140,66 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     } catch {
       return 0n;
     }
+  };
+
+  /**
+   * PULL THE ACCOUNT'S MAILBOXES AND APPLY THEM. Runs at the start of every pull, before the drain.
+   *
+   * ── A FAILURE HERE FAILS THE WHOLE PULL, AND THAT IS THE SAFE DIRECTION ───────────────────────
+   *
+   * Throwing looks harsh for a list of two rows, and continuing is the dangerous option. A drain
+   * that proceeds without a mailbox set skips every message it cannot attribute — and on a
+   * `since=0` bootstrap a skipped message is one the generation never marked, so the trailing
+   * mark-and-sweep would delete it. A transient 500 on this route would empty somebody's mirror.
+   *
+   * The cost of throwing is bounded and visible: `runPull` flips `reachable` false, the local read
+   * surface keeps serving every row it already holds, the write-through proxy answers
+   * `503 offline_read_only` rather than forwarding into a void, and the poll retries on the same
+   * backoff a failed `/sync` uses.
+   */
+  const refreshMailboxes = async (): Promise<MailboxRefreshOutcome> => {
+    const res = await cfg.auth.authedFetch("/mailboxes");
+    if (!res.ok) throw new Error(`the hosted /mailboxes answered HTTP ${res.status}`);
+    const body = (await res.json()) as { items?: unknown };
+    // A wire boundary, so the shape is checked rather than assumed — an answer that is not a list
+    // would otherwise retire every local mailbox and take the mirror with it.
+    if (!Array.isArray(body.items)) {
+      throw new Error("the hosted /mailboxes answered something that is not a mailbox list");
+    }
+    const hosted = body.items as MailboxDTO[];
+    const out = await applyMailboxRefresh(cfg.db, cfg.world, hosted, now());
+    knownMailboxes = out.known;
+    hostedMailboxIds = hosted.map((m) => m.id);
+    if (out.retired.length > 0 || out.dropped.length > 0) {
+      /* THREE COUNTS AND NO ADDRESS. `count` is how many mailboxes the account has, `pruned` how
+         many local rows it no longer names (retired to tombstones, because mail still points at
+         them) and `dropped` how many of those were then removed outright. The names are the ones
+         `ALLOWED_FIELDS` already carries — a mailbox address on this line would be exactly the
+         identifying signal that census exists to keep off it. */
+      cfg.log?.("cloud_mailboxes_refreshed", {
+        count: hosted.length,
+        pruned: out.retired.length,
+        dropped: out.dropped.length,
+        reason: "a local mailbox row the hosted account does not name was retired; mail that still " +
+          "points at it keeps it as a tombstone, and a row nothing references is removed",
+      });
+    }
+    return out;
+  };
+
+  /** The mailbox ids a page's messages and drafts name — the pre-scan the refetch decision reads. */
+  const mailboxIdsNamedBy = (resp: SyncResponse): Set<string> => {
+    const out = new Set<string>();
+    for (const ch of [...resp.changes.creates, ...resp.changes.updates, ...resp.changes.moves]) {
+      if (ch.type === "message") {
+        const m = ch.entity as MessageDTO | undefined;
+        if (m?.mailboxId) out.add(m.mailboxId);
+      } else if (ch.type === "draft") {
+        const d = ch.entity as DraftDTO | undefined;
+        if (d?.mailboxId) out.add(d.mailboxId);
+      }
+    }
+    return out;
   };
 
   /**
@@ -868,12 +1215,28 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     // A drain that begins at since=0 — a first launch, or a healed/absent cursor — OR that finds a
     // bootstrap left unfinished by a crash is a BOOTSTRAP. Force since=0 so the generation is rebuilt
     // in FULL (a partial resume would sweep real rows), and tag what it touches.
+    //
+    // A cursor written by an older format is the FOURTH way in, and the one this slice added: its
+    // rows carry the wrong mailbox attribution and no delta can correct them, so the whole feed is
+    // replayed through the corrected upsert. See {@link CURSOR_VERSION}.
     let sweep: BootstrapGen | null = null;
-    if (isBootstrapCursor(cursor.sync) || cursor.bootstrapping) {
+    const reKeying = cursor.version < CURSOR_VERSION;
+    if (isBootstrapCursor(cursor.sync) || cursor.bootstrapping || reKeying) {
+      if (reKeying && !isBootstrapCursor(cursor.sync)) {
+        // The event name IS the fact, so the line carries only the reason — the same discipline
+        // `packages/core/src/log.ts` prescribes for the cron passes: a version number would be a
+        // new allowlist entry to say what the event already says.
+        cfg.log?.("cloud_mirror_rekey", {
+          reason: "this mirror's mail was filed under a local placeholder mailbox rather than the " +
+            "account's own; the feed is replayed from the start so every row is re-attributed",
+        });
+      }
       cursor.sync = "0";
       cursor.bootstrapping = true;
       sweep = newBootstrapGen();
     }
+    /** One refetch per drain — see the pre-scan below. */
+    let refetched = false;
     for (;;) {
       // BETWEEN PAGES, so a quit costs at most the page already in flight. `sweep: null` is the
       // load-bearing half: a bootstrap generation that stopped early has marked only part of the
@@ -912,7 +1275,26 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       }
       if (!res.ok) throw new Error(`the hosted /sync answered HTTP ${res.status}`);
       const body = (await res.json()) as SyncResponse;
-      applied += await applyPage(cfg.db, cfg.world, body, now(), sweep);
+      /* A MAILBOX ADDED SINCE THE REFRESH AT THE TOP OF THIS PULL. The page is scanned BEFORE it is
+         applied, so the extra request happens outside the page transaction rather than inside one —
+         a network call under an open transaction is how a slow hop becomes a held lock. Once per
+         drain: a page that still names an unknown mailbox after a fresh list is naming one the
+         account does not have, and asking again per page would turn that into a request storm. */
+      const named = mailboxIdsNamedBy(body);
+      const unknown = [...named].filter((id) => !knownMailboxes.has(id));
+      if (unknown.length > 0 && !refetched) {
+        refetched = true;
+        await refreshMailboxes();
+      }
+      const stillUnknown = [...named].filter((id) => !knownMailboxes.has(id));
+      if (stillUnknown.length > 0) {
+        cfg.log?.("cloud_mirror_unattributable", {
+          count: stillUnknown.length,
+          reason: "the feed carried mail for a mailbox the account did not list, so it is skipped " +
+            "rather than filed under a different address; a later refresh picks it up",
+        });
+      }
+      applied += await applyPage(cfg.db, cfg.world, body, now(), sweep, knownMailboxes);
       // AFTER the commit: a crash before this line re-applies the page next launch, which converges.
       cursor.sync = body.cursor;
       writeCursor(cfg.cursorPath, cursor);
@@ -1073,11 +1455,29 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * complete would leave a half-imported mailbox with bodies missing and nothing to fetch them —
    * which is why the fallback is to walk. A wrong "walk" costs one pass; a wrong "complete" would
    * cost correctness.
+   *
+   * ── IT READS THE MIRRORED ROWS, AND ONLY THIS PROCESS EVER STAMPS THEM ────────────────────────
+   *
+   * The row it used to read was the synthetic one, which no longer exists once the refresh has
+   * retired it. It now reads every ACTIVE mirrored mailbox — and the stamp on those rows is still a
+   * fact about THIS mirror, because {@link mailboxRow} deliberately does not copy the hosted
+   * account's own `initial_import_completed_at`. If it did, a brand-new mirror would inherit the
+   * hosted account's finished import, resolve `complete` before fetching a single body, and leave
+   * every message opening blank.
+   *
+   * EVERY active row must be stamped, and no rows at all is `walking`. The walk is account-wide, so
+   * a partially-stamped account is one whose walk has not finished — and the fallback stays the
+   * cheap direction rather than the wrong one.
    */
+  const activeMirroredMailboxes = async (): Promise<Array<{ id: string; importedAt: Date | null }>> =>
+    cfg.db.select({ id: mailboxes.id, importedAt: mailboxes.initialImportCompletedAt })
+      .from(mailboxes)
+      .where(and(eq(mailboxes.accountId, cfg.world.accountId), ne(mailboxes.status, "disabled")));
+
   const resolveBodiesWalk = async (): Promise<BodiesWalk> => {
-    const [row] = await cfg.db.select({ importedAt: mailboxes.initialImportCompletedAt })
-      .from(mailboxes).where(eq(mailboxes.id, cfg.world.mailboxId)).limit(1);
-    return row?.importedAt ? { phase: "complete" } : { phase: "walking", after: null };
+    const rows = await activeMirroredMailboxes();
+    const finished = rows.length > 0 && rows.every((r) => r.importedAt !== null);
+    return finished ? { phase: "complete" } : { phase: "walking", after: null };
   };
 
   /**
@@ -1162,6 +1562,12 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
 
   const runPull = async (): Promise<number> => {
     try {
+      /* THE MAILBOXES FIRST, ALWAYS. A message's `mailbox_id` is a foreign key and the drain writes
+         it verbatim from the feed, so the rows it points at have to exist before the first page is
+         applied. This ordering is the whole reason the mirror can attribute mail honestly, and a
+         version of it that ran AFTER the drain would skip every message of a mailbox added since
+         the last pull — a first pull on a fresh install would land nothing at all. */
+      await refreshMailboxes();
       const { applied, sweep, cut } = await drainSync();
       if (cut) {
         cfg.log?.("cloud_pull_stopped", {
@@ -1178,9 +1584,26 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           cfg.log?.("cloud_mirror_swept", { count: swept, reason: "bootstrap phantoms removed after a since=0 re-pull" });
         }
         // The bootstrap AND its sweep have completed: clear the flag so the next drain resumes
-        // incrementally instead of re-bootstrapping.
+        // incrementally instead of re-bootstrapping. The format version rides the same write —
+        // this is the point where a re-key has finished, and until it lands the next launch
+        // correctly starts over.
         cursor.bootstrapping = false;
+        cursor.version = CURSOR_VERSION;
         writeCursor(cfg.cursorPath, cursor);
+        /* AND NOW THE RETIRED ROWS CAN GO. On an upgraded install the placeholder mailbox was
+           still holding every mirrored message when the refresh retired it, so it survived as a
+           tombstone; the re-pull above has just moved them onto the account's own mailboxes, and a
+           tombstone nobody references would otherwise render in Settings as a mailbox that has
+           disconnected itself. */
+        const dropped = await cfg.db.transaction((tx) => dropRetiredMailboxes(tx, cfg.world, hostedMailboxIds));
+        if (dropped.length > 0) {
+          cfg.log?.("cloud_mailboxes_refreshed", {
+            dropped: dropped.length,
+            reason: "the placeholder mailbox this mirror used to file mail under holds none of it " +
+              "any more and has been removed",
+          });
+        }
+
       }
       // AFTER the drain, so a bootstrap has already delivered the tags natively and is skipped by
       // the zero-tags gate rather than by a special case for it.
@@ -1200,8 +1623,16 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
          walk reaching its end is part of "drained": the mail list is complete before its bodies
          are, and a first import that claims to be finished while messages still open blank has
          claimed too early. This is also the fact {@link resolveBodiesWalk} reads back on a later
-         launch to tell a finished walk from one that never started. */
-      await stampSynced(cfg.db, cfg.world.mailboxId, now(), cursor.bodies.phase === "complete");
+         launch to tell a finished walk from one that never started.
+
+         ON EVERY ACTIVE MIRRORED ROW, AND NEVER ON A TOMBSTONE. It used to be the single synthetic
+         mailbox, which no longer exists once the refresh has retired it — stamping that id would
+         update no row at all and the sync line would say "Syncing your mail" for the life of the
+         install. A retired row is excluded for the inverse reason: a mailbox that is gone has no
+         import to report finishing. */
+      for (const row of await activeMirroredMailboxes()) {
+        await stampSynced(cfg.db, row.id, now(), cursor.bodies.phase === "complete");
+      }
       // A completed pull is the definition of reachable: the local database keeps serving what it
       // holds either way, but the proxy needs to know it can forward a write again.
       reachable = true;

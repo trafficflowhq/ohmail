@@ -19,6 +19,18 @@
  * — the standalone engine from its own row, the hosted one from the mirror — so this file needs no
  * knowledge of which door it is behind.
  *
+ * ── WHAT THE HOSTED DOOR ACTUALLY ANSWERS WITH, WHICH IS NEWER THAN THIS PANE ───────────────
+ *
+ * "From the mirror" was, for a while, an overstatement worth correcting rather than deleting. The
+ * hosted engine held ONE mailbox row — a placeholder its local schema needs, addressed with the
+ * account LOGIN — and answered this route from it. So the pane and the From selector showed a
+ * single mailbox that was not one of the account's, an account with two addresses could not be
+ * told apart here, and a send carrying that row's id was refused by the account outright.
+ *
+ * The engine now mirrors the account's mailbox rows themselves, under the account's own ids, at
+ * the start of every pull. This pane reads what it always read; what changed is that the rows
+ * underneath it are the ones a browser tab would show.
+ *
  * ── THE PROBE MUST REJECT, NOT RETURN AN EMPTY LIST ─────────────────────────────────────────
  *
  * "We could not ask" and "there are none" are different facts and the ladder acts on them
