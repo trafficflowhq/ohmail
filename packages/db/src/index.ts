@@ -111,3 +111,19 @@ export {
 export {
   MAILBOX_SYNC_BLOCK_REASONS, isMailboxSyncBlockReason, type MailboxSyncBlockReason,
 } from "./mailbox-errors.js";
+
+/**
+ * ONE definition of the row a bought Screener suggestion is stored as — the provenance that marks
+ * it, the status that keeps it inert, and the per-message transaction that writes it.
+ *
+ * On the ROOT barrel, and it belongs there for the reason the ledger-source vocabulary does: its
+ * callers straddle the deployment. The user-pressed purchase lives in `@trafficflow/services`;
+ * the always-on pass that buys for incoming held senders lives in the worker, which may import
+ * core and db and nothing else from the workspace. It reaches `schema-mail.js` alone, so it is
+ * inside this barrel's closure rule.
+ */
+export {
+  storeScreenerSuggestion,
+  SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
+  type ScreenerSuggestionRow,
+} from "./screener-suggestion.js";

@@ -1,6 +1,6 @@
 import type { Destination } from "./types.js";
-import type { ClassifierInput, ClassifierResult } from "./classifier-port.js";
-import { screenOutboundText, type OutboundScreen } from "./sensitive.js";
+import type { ClassifierInput, ClassifierPort, ClassifierResult } from "./classifier-port.js";
+import { redactForModel, screenOutboundText, type OutboundScreen } from "./sensitive.js";
 
 /**
  * THE ROUTING QUESTION — what is asked, what is refused, and how an answer is made safe.
@@ -429,6 +429,67 @@ export interface ClassifyUserPayload {
  * upstream routing decisions, and a sink that threw on every non-Latin payload would break the
  * Screener for non-Latin senders while protecting nothing.
  */
+/** One held first-contact sender, as much of them as the screening question reads. */
+export interface ScreeningAsk {
+  /** The sender's address, already lower-cased by the caller's queue. */
+  fromAddress: string;
+  /** RAW, as stored. Redacted here — see {@link askScreeningQuestion}. */
+  subject: string;
+  /** The stored preview. Redacted here for the same reason. */
+  snippet: string;
+  /** The account's own "who belongs in my Ohbox" words. Absent ⇒ omitted from the request. */
+  ohboxBar?: string;
+}
+
+/**
+ * ── ASK A MODEL ABOUT ONE HELD STRANGER — THE WHOLE REQUEST, IN ONE PLACE ────────────────────
+ *
+ * Four decisions travel together here, and every one of them is load-bearing. They were written
+ * out at the Screener's purchase call site while that was the only caller; there is now a second
+ * (the worker's always-on pass for opted-in accounts), and a second COPY of these four lines
+ * would be four independent ways to get a money-and-privacy path subtly wrong:
+ *
+ *  1. **The credential is removed HERE, at the caller, not one layer down.** `ClassifierPort` is
+ *     an interface — the bundled client is one implementation, a local Ollama and a
+ *     bring-your-own-key provider are others, and they receive this object DIRECTLY. A redaction
+ *     applied inside one builder protects exactly that one and leaves a local model reading the
+ *     raw code. {@link redactForModel} is conditional (see its docblock): it fires only where the
+ *     outbound screen says there is credential material, so ordinary mail is sent verbatim and
+ *     not blanked by a detector that matches `NEWSLETTER`.
+ *  2. **`outbound: "prescreened"` goes with the redaction and only with it.** It is what stops
+ *     {@link classifyUserPayload}'s sink refusing a payload that has already been made safe.
+ *     Absent everywhere else, which is what keeps the AUTOMATIC routing path failing closed.
+ *  3. **The SCREENING question, not the routing one.** Routing asks "which folder does this
+ *     belong in", and `ohmail/Screener` is that taxonomy's own definition of a first-contact
+ *     sender — which is every row a caller of this function can have. Asking it there is a
+ *     question with its answer built in. The fallback to `classify` exists because a port is
+ *     implemented outside this repository too; it degrades the ADVICE and cannot degrade the
+ *     safety, since routing's answer for a stranger coerces to a hold, never to an admission.
+ *  4. **The bar reaches the model's USER turn, and a blank one is omitted**, so an account that
+ *     set none produces a byte-identical request to the pre-bar one.
+ *
+ * It is not gated on `messages.no_ai`. That column is known-wrong for historical rows, and
+ * `subject` is stored RAW even where the body was stored redacted — which is the field a one-time
+ * code is usually in. The bytes are always current; the flag is a claim about them.
+ *
+ * @param classifier the port. The caller decides whether it may spend BEFORE calling this.
+ */
+export async function askScreeningQuestion(
+  classifier: ClassifierPort, ask: ScreeningAsk,
+): Promise<ClassifierResult> {
+  const safe = redactForModel(ask.subject, ask.snippet);
+  const put = classifier.screen?.bind(classifier) ?? classifier.classify.bind(classifier);
+  return put({
+    from: { name: null, address: ask.fromAddress },
+    subject: safe.subject,
+    snippet: safe.snippet,
+    headersDigest: "",
+    fewShot: [],
+    outbound: "prescreened" as const,
+    ...(ask.ohboxBar ? { ohboxBar: ask.ohboxBar } : {}),
+  });
+}
+
 export function classifyUserPayload(input: ClassifierInput): ClassifyUserPayload {
   const screen = screenOutboundText(input.subject, input.snippet);
   // `!== "prescreened"`, never `=== "refuse"` — see `ClassifierInput.outbound` for why the

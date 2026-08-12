@@ -19,10 +19,22 @@
  * ── WHAT IT DOES NOT DO, WHICH IS THE POINT ─────────────────────────────────────────────
  *
  * It automates the WORK, never the DECISION. No rule is written, no contact stored, no folder
- * changed, nothing moved or routed — the automatic path reaches `POST /screener/suggest` and
- * nothing else. So there is nothing to undo, and the only thing spent is credits, which is
- * exactly why it is worth asking about. `suggest.autoDecides` says so on the confirm, next to
- * the price, because that is where somebody is deciding.
+ * changed, nothing moved or routed — both automatic paths only ever leave an advisory row. So
+ * there is nothing to undo, and the only thing spent is credits, which is exactly why it is worth
+ * asking about. `suggest.autoDecides` says so on the confirm, next to the price, because that is
+ * where somebody is deciding.
+ *
+ * ── THE SWITCH AUTHORISES TWO PATHS, AND THE COPY HAS TO NAME BOTH ──────────────────────
+ *
+ * This component's sentences used to describe one: "when you open the Screener, ohmail gets a
+ * suggestion for the first ten waiting". That is still what happens to the BACKLOG — the batch
+ * this file's `control` prices and buys — but the flag now also authorises the server to suggest
+ * for senders as their mail ARRIVES, whether or not anybody opens anything. A consent sentence
+ * that describes half of what a switch does is the kind of claim this product treats as a
+ * contract, so `suggest.autoWhat`, `suggest.autoCost` and `suggest.autoOn` say both halves, in
+ * that order: what happens to new mail, what happens to the queue already waiting, and what it
+ * costs. The `since` timestamp is the boundary between them — the server suggests automatically
+ * for mail that arrived after it, and never reaches back past it.
  *
  * ── THE SWITCH SHOWS THE STORED VALUE, NEVER THE HOPED-FOR ONE ──────────────────────────
  *
@@ -46,7 +58,14 @@ export function AutoSuggestRow({
 }: {
   /** As the SERVER answered it. The only field that says whether credits are committed. */
   on: boolean;
-  /** When it was turned on, or null. Display only — nothing branches on it. */
+  /**
+   * When it was turned on, or null.
+   *
+   * Display only IN THIS COMPONENT, which is not the same as inert: on the server the same
+   * timestamp is the WATERMARK, and the automatic path suggests only for senders whose held mail
+   * arrived after it. That is why the column is a timestamp rather than a boolean, and why
+   * turning the switch on does not spend against a backlog that predates the press.
+   */
   since: string | null;
   /** The dry-run quote for the next batch — see {@link AutoOptInControl}. */
   control: AutoOptInControl;

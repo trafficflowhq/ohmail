@@ -10,6 +10,8 @@ import {
   claimIdempotencyKey,
   recordChange,
   screenerLedgerSource,
+  storeScreenerSuggestion,
+  SCREENER_SUGGESTION_PROVENANCE,
   AI_ACTION_COST,
   type Tx,
 } from "@trafficflow/db";
@@ -20,8 +22,8 @@ import {
 import type { AiCreditGate } from "@trafficflow/db";
 import type { AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy } from "@trafficflow/core/mail";
 import {
-  applyReconcileAction, CLASSIFY_DESTINATIONS, effectForDestination, rationaleHoldsAtGate,
-  redactForModel, resolveOhboxPolicy,
+  applyReconcileAction, askScreeningQuestion, CLASSIFY_DESTINATIONS, effectForDestination,
+  rationaleHoldsAtGate, resolveOhboxPolicy,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
@@ -214,22 +216,22 @@ export interface ScreenDecisionResult {
  * vocabulary belongs to the code that computes it.
  *
  * This is the one part of this feature that would rather have been a migration: there is no
- * `UNIQUE (account_id, message_id)` here, so {@link ScreenerService.suggest} deletes-then-inserts
- * inside its transaction and two concurrent suggests for one message can leave two rows. They
+ * `UNIQUE (account_id, message_id)` here, so the write deletes-then-inserts inside its
+ * transaction and two concurrent suggests for one message can leave two rows. They
  * carry the same verdict (the model was asked once — the second spend is a `duplicate`), and
  * the read takes the newest, so the surface is unaffected; it is untidiness, not ambiguity.
- */
-const SUGGESTION_PROVENANCE = "screener_suggestion";
-/**
- * Not `auto_applied` and not `pending_approval`: nothing was applied and nothing is queued.
  *
- * Paired with the rule that makes these rows genuinely inert — **a suggestion emits no
- * `recordChange`**. It is not a change to the user's mail, nothing in `/sync` refers to it, and
- * `ApprovalService` reaches a routing decision only through `approvals.routing_decision_id`,
- * which no row here ever has. So the only reader of a suggestion is
- * {@link ScreenerReadService.storedSuggestions}, by provenance, in this file.
+ * **THE VALUE AND THE WRITE BOTH MOVED TO `@trafficflow/db`, and the alias below is the read
+ * path's half of it.** There are now two writers — this service's user-pressed purchase and the
+ * worker's always-on pass for opted-in accounts — and the worker may import core and db and
+ * nothing else from the workspace, so `storeScreenerSuggestion` is the one place the row shape
+ * lives. Everything the paragraphs above argue is unchanged; it is argued in
+ * `packages/db/src/screener-suggestion.ts` now, next to the INSERT it constrains. This file keeps
+ * the name because the WHERE clause below is what makes a suggestion readable at all: a writer
+ * and a reader that disagreed about this string would produce rows that are bought, charged and
+ * invisible.
  */
-const SUGGESTION_STATUS = "suggestion";
+const SUGGESTION_PROVENANCE = SCREENER_SUGGESTION_PROVENANCE;
 
 /**
  * The most senders ONE `POST /screener/suggest` request may cover — the PER-REQUEST cap.
@@ -1425,52 +1427,19 @@ export class ScreenerService extends ScreenerReadService {
 
       let result;
       try {
-        // ── THE CREDENTIAL IS REMOVED HERE, AT THE CALLER, AND NOT ONE LAYER DOWN ────────────
+        // ── THE REQUEST — `askScreeningQuestion`, ONE definition, in `@trafficflow/core/mail` ──
         //
-        // `redactForModel` runs the outbound screen over these exact bytes and, only where it
-        // fires, replaces code-shaped and token-shaped runs with `[REDACTED]` — the same
-        // transform `classifySensitivity` used to produce the stored body and the stored
-        // snippet. So there is ONE redacted representation of this message: the one on disk, the
-        // one on the user's screen, and the one on the wire.
-        //
-        // **Why here and not in the classifier's parameter builder**, which is where it is
-        // tempting to put it: `classifier` is a PORT. `makeHaikuClassifier` is one implementation
-        // of it; the sidecar's local Ollama and Anthropic providers are two more, and they
-        // receive this object directly. A redaction applied inside the bundled builder would
-        // protect exactly one of the three and leave a local model reading the raw code.
-        //
-        // It is not gated on `messages.no_ai`. That column is known-wrong for historical rows
-        // (`sensitive-backfill.ts` exists for it and repaired 2,111 in August) and `r.subject` is
-        // stored RAW even where the body was stored redacted — which is the field an OTP is
-        // usually in. The bytes are always current; the flag is a claim about them.
-        const safe = redactForModel(r.subject, r.snippet);
-
-        // THE SCREENING QUESTION, not the routing one — see `classify-prompt.ts`. Routing asks
-        // "which folder does this belong in", and `ohmail/Screener` is that taxonomy's own
-        // definition of a first-contact sender, which is every row this loop can reach. Asking it
-        // here was a question with its answer built in, and the model gave that answer 89% of the
-        // time on an account with no stated bar.
-        //
-        // The fallback is `classify` because a `ClassifierPort` is implemented outside this repo's
-        // core too. It degrades the advice and cannot degrade the safety: routing's answer for a
-        // stranger coerces to `hold`, never to an admission.
-        const ask = classifier.screen?.bind(classifier) ?? classifier.classify.bind(classifier);
-        result = await ask({
-          from: { name: null, address: r.fromAddress },
-          subject: safe.subject,
-          snippet: safe.snippet,
-          headersDigest: "",
-          fewShot: [],
-          // The declaration that goes WITH the redaction above, and the only thing that stops the
-          // outbound sink refusing a payload this method has already made safe. Absent everywhere
-          // else, which is what keeps the automatic routing path refusing — see
-          // `ClassifierInput.outbound`.
-          outbound: "prescreened" as const,
-          // The account's own "who belongs in my Ohbox" words, into the model's USER turn only —
-          // the same field `planChange` threads on the routing path. Absent ⇒ omitted (never the
-          // placeholder), and `classifyUserPayload` drops a blank, so a NULL bar is byte-identical
-          // to the pre-bar request. It sharpens what the model proposes; it never itself files mail.
-          ohboxBar,
+        // The redaction (at the CALLER, because a port has implementations outside this repo),
+        // the `outbound: "prescreened"` declaration that goes with it, the screening question
+        // rather than the routing one, and the account's own Ohbox bar into the model's user turn.
+        // All four were written out here while this was the only caller; the worker's always-on
+        // pass is the second, and four lines a second caller has to get independently right is
+        // four ways to send a credential or ask the wrong question. See that function.
+        result = await askScreeningQuestion(classifier, {
+          fromAddress: r.fromAddress,
+          subject: r.subject,
+          snippet: r.snippet,
+          ...(ohboxBar ? { ohboxBar } : {}),
         });
       } catch (err) {
         console.error(`[screener] AI suggestion failed for message ${r.messageId}:`, err);
@@ -1573,31 +1542,21 @@ export class ScreenerService extends ScreenerReadService {
   }
 
   /**
-   * ONE suggestion, in its own transaction. Delete-then-insert rather than an upsert: there is
-   * no unique key to conflict on (see {@link SUGGESTION_PROVENANCE}), and the delete is scoped
-   * to this provenance so a pipeline routing decision for the same message is never touched.
+   * ONE suggestion, in its own transaction — `storeScreenerSuggestion`, unchanged in behaviour.
    *
-   * **No `recordChange`.** A suggestion is advice about mail, not a change to it; emitting a
-   * `change_log` row would put it in `/sync` and make every client's delta stream carry model
-   * output nobody asked for.
+   * The body of this method moved to `@trafficflow/db` when the worker's always-on pass became a
+   * second writer of these rows: the delete-then-insert, the provenance it is scoped to and the
+   * per-message transaction are the row's definition, and the worker cannot reach this class. See
+   * that module for the argument; this stays a method so the call sites above read the same.
    */
   private async store(ctx: ServiceContext, messageId: string, result: ClassifierResultLike): Promise<void> {
-    await asTx(ctx).transaction(async (tx) => {
-      await tx.delete(routingDecisions).where(and(
-        eq(routingDecisions.accountId, ctx.accountId),
-        eq(routingDecisions.messageId, messageId),
-        eq(routingDecisions.inputProvenance, SUGGESTION_PROVENANCE),
-      ));
-      await tx.insert(routingDecisions).values({
-        accountId: ctx.accountId,
-        messageId,
-        inputProvenance: SUGGESTION_PROVENANCE,
-        destination: result.destination,
-        confidence: result.confidence,
-        rationale: result.rationale,
-        spam: result.spam,
-        status: SUGGESTION_STATUS,
-      });
+    await storeScreenerSuggestion(asTx(ctx), {
+      accountId: ctx.accountId,
+      messageId,
+      destination: result.destination,
+      confidence: result.confidence,
+      rationale: result.rationale,
+      spam: result.spam,
     });
   }
 }
