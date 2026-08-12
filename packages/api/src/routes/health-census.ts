@@ -36,6 +36,13 @@ export interface SchemaCensus {
    * takes, which every name-keyed catalog is blind to. Cloud `0011` is why this field exists.
    */
   checkDefinitions: ReadonlyArray<CheckDefinitionMarker>;
+  /**
+   * Cloud INDEX names probed through `pg_indexes`, beyond the shared `SCHEMA_INDEX_MARKERS`
+   * list — which cannot hold them, because it lives in `health.ts` and ships in the desktop
+   * engine while these entries name Cloud tables. Cloud `0013` (the trial-once partial unique
+   * index) is why this field exists.
+   */
+  indexMarkers: ReadonlyArray<string>;
   expected: number;
   through: string;
 }

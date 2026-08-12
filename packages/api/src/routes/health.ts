@@ -1180,10 +1180,19 @@ export async function probeDatabase(
    * because every entry so far names a Cloud table and this module ships in the desktop engine.
    */
   checkDefinitionMarkers: ReadonlyArray<CheckDefinitionMarker> = [],
+  /**
+   * INDEX markers beyond {@link SCHEMA_INDEX_MARKERS} — the same `pg_indexes` probe, extended
+   * the way `checkDefinitionMarkers` extends the constraint probes and for the same reason:
+   * every entry so far names a Cloud table (`CLOUD_INDEX_MARKERS` in `health-cloud.ts`), and
+   * this module ships in the desktop engine, so the names must arrive as a parameter rather
+   * than live here. Defaults to none — a mail-tier database is complete without them.
+   */
+  extraIndexMarkers: ReadonlyArray<string> = [],
 ): Promise<HealthProbe> {
   const started = Date.now();
+  const indexMarkers = [...SCHEMA_INDEX_MARKERS, ...extraIndexMarkers];
   const expected =
-    columnMarkers.length + SCHEMA_INDEX_MARKERS.length + SCHEMA_CHECK_MARKERS.length +
+    columnMarkers.length + indexMarkers.length + SCHEMA_CHECK_MARKERS.length +
     checkDefinitionMarkers.length;
   try {
     const result = await db.execute(
@@ -1196,11 +1205,13 @@ export async function probeDatabase(
                        sql`, `,
                      )})) as schema_markers,
                  -- The index half: pg_indexes, because information_schema has no view of
-                 -- indexes at all. Scoped to public, like the column probe above.
+                 -- indexes at all. Scoped to public, like the column probe above. The list is
+                 -- the shared mail markers plus whatever the host registered (see the
+                 -- extraIndexMarkers parameter).
                  (select count(*) from pg_indexes
                    where schemaname = 'public'
                      and indexname in (${sql.join(
-                       SCHEMA_INDEX_MARKERS.map((n) => sql`${n}`),
+                       indexMarkers.map((n) => sql`${n}`),
                        sql`, `,
                      )})) as index_markers,
                  -- The CHECK half: a third catalog again, because neither view above can see a
@@ -1373,9 +1384,10 @@ export const healthRoutes: Route[] = [
       const probe = await probeDatabase(
         deps.db,
         fullCensus ? fullCensus.markers : MAIL_SCHEMA_MARKERS,
-        // A mail-tier host passes none: every entry so far names a Cloud table, and a local
-        // engine's database is complete without them.
+        // A mail-tier host passes none of either: every entry so far names a Cloud table, and
+        // a local engine's database is complete without them.
         fullCensus ? fullCensus.checkDefinitions : [],
+        fullCensus ? fullCensus.indexMarkers : [],
       );
       if (probe.kind === "unreachable") {
         return healthResponse(503, {
