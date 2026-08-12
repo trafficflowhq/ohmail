@@ -181,6 +181,16 @@
 .abar-b:disabled:hover { background: none; }
 .abar-b:disabled:active { transform: none; }
 
+/* PRESSED IS THE MESSAGE'S STATE, not the last click — the horizon that holds the message
+   reads as held down (TRI-F12), the same `[aria-pressed]` convention the editor's toolbar
+   uses (`.rte-b`). `--tint2` rather than the accent: a state report, quieter than a hover
+   is loud, and it must survive next to the row's own hover without becoming two accents. */
+.abar-b[aria-pressed="true"] {
+  background: var(--tint2);
+  color: var(--ink);
+}
+.abar-b[aria-pressed="true"] kbd { color: var(--ink2); }
+
 /* A button standing on its own gets the Blanc capsule; one inside a segment does not,
    because the segment carries the capsule for the whole group. */
 .abar-solo {

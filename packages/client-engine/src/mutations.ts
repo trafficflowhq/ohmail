@@ -50,21 +50,33 @@ export function forwardSubject(originalSubject: string): string {
 }
 
 /**
- * ONE SPELLING FOR A MESSAGE-ID — strip one pair of RFC 5322 angle brackets, trim, KEEP the case.
- *
- * The two sides of the optimistic-sent reconcile spell the same id differently: the send
- * confirmation's `providerMessageId` is the minted header, `<id@domain>`, while the ingested
- * row's `messageIdHeader` comes back bracket-stripped (server ingest normalises it exactly this
- * way). Comparing the raw strings therefore NEVER matched, and the optimistic copy was only ever
- * retired by its ten-minute TTL — the just-sent message stood twice in its conversation and in
- * Earlier until then. Both sides go through this before any comparison.
- *
- * Case is preserved for the same reason ingest preserves it: `id-left` is a case-sensitive atom,
- * and folding it would equate ids a sender chose to distinguish.
+ * ONE SPELLING FOR A MESSAGE-ID. Defined in `selectors.ts` now — `threadOf`'s twin collapse
+ * consumes it and this file imports from that one, so the definition moved to the end the
+ * dependency arrow already pointed at. Re-exported here because the engine and the tests have
+ * always imported it from this module.
  */
-export function messageIdKey(raw: string): string {
-  const m = raw.match(/<([^>]+)>/);
-  return (m ? m[1]! : raw).trim();
+export { messageIdKey } from "./selectors.js";
+
+/**
+ * THE MIRROR'S OWN RECORD ID for a message's triage state — the id every `message_state`
+ * effect must land on.
+ *
+ * The live server keys this entity by the `message_states` ROW's uuid (`TriageService.setState`
+ * emits `entityId: row.id`), so a mirror that has drained even once holds the settled record
+ * under an id no mutation knows a priori. An effect written at the MESSAGE id then stands
+ * BESIDE the settled record instead of replacing it: a parked message counted in two piles at
+ * once, and a `state:"none"` tombstone that deletes nothing — the un-park invisible until the
+ * drain, and the rail badge inflated against the pile it renders beside (TRI-F5, measured
+ * 6-vs-1 on a live account). Resolving to the record the mirror actually holds makes the
+ * optimistic delta retire the settled state through the transition. When no record exists yet,
+ * the message id is the honest fallback — and exactly the key the demo's fixtures use, so the
+ * FixturesAdapter's authoritative replay is unchanged.
+ */
+function stateRecordIdOf(reader: EntityReader, messageId: string): string {
+  for (const { id, entity } of reader.entries<MessageStateDTO>("message_state")) {
+    if ((entity?.messageId ?? id) === messageId) return id;
+  }
+  return messageId;
 }
 
 /**
@@ -345,16 +357,22 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         } satisfies EngineMessage,
         move: { from: msg.folder, to: m.folder },
       }];
-      if (spent) effects.push({ type: "message_state", id: msg.id, entity: spent });
+      // At the settled record's id (`stateRecordIdOf`) — a pin the mirror holds under the
+      // server's row uuid would otherwise stand unspent beside this `none` for the round trip.
+      if (spent) effects.push({ type: "message_state", id: stateRecordIdOf(reader, msg.id), entity: spent });
       return effects;
     }
 
     case "triage_set": {
       const msg = reader.get<EngineMessage>("message", m.messageId);
       if (!msg) return [];
+      // The SETTLED record's id when the mirror holds one (the server's row uuid), the message
+      // id when it does not — see `stateRecordIdOf`. Writing at the message id while a settled
+      // record stands would put the message in two piles at once for the whole round trip.
+      const recordId = stateRecordIdOf(reader, m.messageId);
       if (m.state === "none") {
         return [
-          { type: "message_state", id: m.messageId, entity: null },
+          { type: "message_state", id: recordId, entity: null },
           { type: "message", id: msg.id, entity: { ...msg, triage: null, updatedAt: iso } },
         ];
       }
@@ -373,7 +391,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       // paints is bold from its first frame rather than turning bold when the drain lands.
       const reUnread = m.state === "resurfaced" ? { unread: true, lastReadAt: null } : {};
       return [
-        { type: "message_state", id: m.messageId, entity: state },
+        { type: "message_state", id: recordId, entity: state },
         { type: "message", id: msg.id, entity: { ...msg, triage: state, ...reUnread, updatedAt: iso } },
       ];
     }
@@ -549,7 +567,8 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
             ...(spent ? { triage: spent } : {}), updatedAt: iso,
           },
         }];
-        if (spent) out.push({ type: "message_state", id: msg.id, entity: spent });
+        // The settled record's id, as everywhere a resurface is spent — see `stateRecordIdOf`.
+        if (spent) out.push({ type: "message_state", id: stateRecordIdOf(reader, msg.id), entity: spent });
         return out;
       });
       // THE LINE MOVES ONLY ON AN EXPLICIT ANCHOR. `upToId` is the leave commit — the newest
@@ -599,7 +618,8 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
             ...(spent ? { triage: spent } : {}), updatedAt: iso,
           },
         });
-        if (spent) effects.push({ type: "message_state", id, entity: spent });
+        // The settled record's id, as everywhere a resurface is spent — see `stateRecordIdOf`.
+        if (spent) effects.push({ type: "message_state", id: stateRecordIdOf(reader, id), entity: spent });
       }
       return effects;
     }

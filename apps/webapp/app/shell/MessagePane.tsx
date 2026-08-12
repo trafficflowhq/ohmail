@@ -296,17 +296,42 @@ function ActionBar({
     if (!press("shift+i")) onAction("unread");
   };
 
+  /**
+   * THE MESSAGE'S CURRENT PILE, REPORTED BY THE BUTTON THAT PUT IT THERE (TRI-F12).
+   *
+   * The list rows carry a state badge (`OhboxView.stateNoteOf`) and this bar did not: all
+   * three horizons rendered identically whatever the message's state, so `a` on something
+   * already queued was pressed in good faith, and the button that would UN-park a message
+   * looked exactly like the one that parks it — on a control that is a TOGGLE (the verb that
+   * filed a message takes it out again; see `AppShell`'s later/aside arms). `aria-pressed`
+   * is the toggle's own vocabulary, present in BOTH states so the role never changes with
+   * the message, and `action-bar.css` styles the pressed face from the same attribute — one
+   * source for the screen reader and the eye. `resurfaced` presses nothing: the pin is not
+   * a bottom pile (`triagePiles` ignores it by construction), and Resurface's own press
+   * opens the chooser rather than clearing the pin.
+   */
+  const pile = message.triage?.state;
   const defer = (
     <>
       {/* "Later", not "Answer Later". Inside a control whose own name is "Not now", each
           segment need only carry its HORIZON — the shared idea is said once, by the group,
           instead of three times by its members. It is also the 45px that decides whether
           filing fits on the row at the 569px the reading measure allows. */}
-      <button type="button" className="abar-b" onClick={() => onAction("later")}>
+      <button
+        type="button"
+        className="abar-b"
+        aria-pressed={pile === "reply_later"}
+        onClick={() => onAction("later")}
+      >
         {copy("actionLater", "Later")}
         <Key chord="a" />
       </button>
-      <button type="button" className="abar-b" onClick={() => onAction("aside")}>
+      <button
+        type="button"
+        className="abar-b"
+        aria-pressed={pile === "set_aside"}
+        onClick={() => onAction("aside")}
+      >
         {t("actionSetAside")}
         <Key chord="e" />
       </button>
@@ -314,7 +339,12 @@ function ActionBar({
           long?", so a single click cannot mean it. `b` still stands for it: the key is the
           keyboard's quick default (the shell resolves plain `resurface` to next Friday), and
           the panel is where a specific when is chosen. */}
-      <button type="button" className="abar-b" onClick={() => onPanel("resurface")}>
+      <button
+        type="button"
+        className="abar-b"
+        aria-pressed={pile === "bubbled_up"}
+        onClick={() => onPanel("resurface")}
+      >
         {t("actionResurface")}
         <Key chord="b" />
       </button>
