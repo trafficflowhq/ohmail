@@ -408,6 +408,10 @@ function TagsGroup({
           <button
             key={t.id}
             type="button"
+            // The same presentation-free hook every nav row above carries as `data-rail-id`:
+            // it lets a host surface (the shell's drag-to-file) name the tag a gesture landed
+            // on without depending on label text. Nothing in this package reads it.
+            data-rail-tag-id={t.id}
             className={t.id === activeTagId ? "ritem on" : "ritem"}
             onClick={() => onNavigateTag?.(t.id)}
           >

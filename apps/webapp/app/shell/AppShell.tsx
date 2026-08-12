@@ -2451,6 +2451,21 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
 
   /**
+   * A TAG DROPPED ON THE RAIL — apply, never toggle.
+   *
+   * The rail-drop gesture (`shell/drag-file.ts`, wired in `OhboxView`) names its tag by the
+   * row it landed on, so it needs no picker; what it must NOT have is a second tagging
+   * semantic. This is `bulkToggleTag` in the apply direction and nothing else: the same
+   * per-message `tag_assign`, the same skip of members that already carry it, the same
+   * sentence at the end. A drop can never REMOVE a tag — the drop's meaning is "put it
+   * here", and the picker remains the place where a tag is taken off.
+   */
+  const dropTag = useCallback(
+    (ids: string[], tagId: string) => bulkToggleTag(ids, tagId, true),
+    [bulkToggleTag],
+  );
+
+  /**
    * Mint a tag and put it on this message.
    *
    * ONE mutation, not two. The shell cannot call the API directly — `scripts/publish-desktop.mjs`
@@ -4057,6 +4072,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 onDoorbell={() => go("screener")}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
+                onDropTag={dropTag}
                 bulk={bulkVerbs}
                 /* Mail from beyond what this device kept — see `shell/older-mail.ts`. Built in
                    the shell because the hook needs the engine, and this view is mounted without

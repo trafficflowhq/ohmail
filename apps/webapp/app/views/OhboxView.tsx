@@ -30,6 +30,7 @@ import { useLoadingGrace } from "../shell/loading-grace";
 import { useMailState } from "../shell/MailStateProvider";
 import type { OlderMail } from "../shell/older-mail";
 import { MessagePane, MOVE_TARGETS, type BulkAction, type MessageAction, type MoveTarget } from "../shell/MessagePane";
+import { useDragToFile, type DragSource, type RailDropTarget } from "../shell/drag-file";
 import type { ScreeningDest } from "../shell/sender-screening";
 import "../shell/action-bar.css";
 
@@ -125,6 +126,7 @@ export function OhboxView({
   onDoorbell,
   onAction,
   onAddTag,
+  onDropTag,
   bulk,
   older,
   onMarkAllRead,
@@ -238,6 +240,15 @@ export function OhboxView({
   onDoorbell: () => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
+  /**
+   * APPLY a tag to a set — the rail-drop's dispatch, and only that. The picker path stays
+   * `onAddTag` (it anchors a popover); a drop has already named its tag, so it goes straight
+   * to the same `tag_assign` fan-out the picker's apply runs (`AppShell.bulkToggleTag`,
+   * apply-direction only — a drop must never TOGGLE a tag off). Optional: a harness that
+   * mounts this view without it simply has no tag drops, and the shipped shell always
+   * passes it.
+   */
+  onDropTag?: (ids: string[], tagId: string) => void;
   /** The verbs a multi-selection offers. */
   bulk: BulkVerbs;
   /**
@@ -1537,8 +1548,68 @@ export function OhboxView({
     );
   };
 
+  /**
+   * ═══ DRAG-TO-FILE — what a row's drag STANDS FOR, and what a drop DISPATCHES ═══════════
+   *
+   * The gesture lives in `shell/drag-file.ts`; these two closures are the semantics, and
+   * they are deliberately thin because every arm is an EXISTING verb:
+   *
+   *   · a picked row drags the whole selection and a drop is `runBulk` — the bulk bar's own
+   *     commit, selection-clear included;
+   *   · a lone row is the pill's `onAction`, verbatim;
+   *   · a folded conversation outside the selection is the bulk fan-out over its members —
+   *     the row says "⤷ 5", so the drop acts on five, exactly as a pick of that row would;
+   *   · a tag drop is the picker's apply (`onDropTag` → `bulkToggleTag`, apply-direction).
+   *
+   * Fresh closures each render, read through the hook's ref at use time — nothing here can
+   * run stale, and nothing is memoised for a gesture that happens at hand speed.
+   */
+  const dragSourceFor = (rowId: string): DragSource | null => {
+    const idx = rowIndexOf(rowId);
+    if (idx < 0) return null;
+    const g = navRows[idx]!;
+    const members = g.members;
+    const selection = picked.size > 0 && members.every((m) => picked.has(m.id));
+    const ids = selection ? pickedIds : members.map((m) => m.id);
+    const messages = ids
+      .map((id) => byId.get(id))
+      .filter((m): m is EngineMessage => m != null);
+    if (messages.length === 0) return null;
+    // The ghost wears what the ROW shows — same sender line, same subject — so what is in
+    // hand is recognisably the thing that was picked up.
+    const shown = members.length > 1 ? g.latest : members[0]!;
+    const sent = sentLabelOf(shown);
+    const from = members.length > 1 ? groupSenders(g) : sent ? sent.label : senderName(shown);
+    const subject = members.length > 1 ? (threadSubject?.(g.key) ?? shown.subject) : shown.subject;
+    return { ids: messages.map((m) => m.id), messages, label: { from, subject }, selection };
+  };
+
+  const onRailDrop = (target: RailDropTarget, source: DragSource): void => {
+    if (target.kind === "tag") {
+      onDropTag?.(source.ids, target.tagId);
+      if (source.selection) clearPicked();
+      return;
+    }
+    if (source.selection) {
+      runBulk(target.action);
+      return;
+    }
+    if (source.ids.length === 1) {
+      const m = byId.get(source.ids[0]!);
+      if (m) onAction(target.action, m);
+      return;
+    }
+    bulk.run(target.action, source.ids);
+  };
+
+  const drag = useDragToFile({ sourceFor: dragSourceFor, onDrop: onRailDrop });
+
   return (
-    <section className="view split view-ohbox" onClickCapture={onRangeClickCapture}>
+    <section
+      className="view split view-ohbox"
+      onClickCapture={onRangeClickCapture}
+      onPointerDownCapture={drag.onPointerDown}
+    >
       <ListPane
         title={t("title")}
         scrollerRef={listScrollerRef}

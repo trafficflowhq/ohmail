@@ -4591,3 +4591,79 @@ textarea.c-input:read-only {
    the panel's own `gate-actions` spacing here. */
 .draft-confirm .set-note-inline,
 .compose-confirm .set-note-inline { padding: 0 0 9px; margin: 0; }
+
+/* ================= drag-to-file (a list row, dragged onto the rail) =================
+   The gesture's chrome only — the semantics are the existing verbs (`shell/drag-file.ts`).
+   The ghost is the row in hand: sender, subject, and a count when several travel. Quiet by
+   register: no rotation, no oversize shadow — a floating-layer card at 95% opacity beside
+   the pointer. A rail row lights ONLY over a legal drop, with the app's own "armed"
+   treatment (tint + inset accent hairline, the `.compose-cta.on` grammar); an illegal one
+   stays exactly as it is — the gesture is an offer, not a scold. The landed target holds
+   the accent wash for 360ms (`drop-hit`) and the rail's own .15s transition releases it.
+   Motion: the highlight is a color/background change riding `.ritem`'s existing transition;
+   the ghost's spring-back and settle transitions are set inline by drag-file.ts and only
+   when the device does not prefer reduced motion — with it, every exit is instant. */
+body.dnd-active {
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
+}
+body.dnd-active * { cursor: grabbing !important; }
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 320px;
+  padding: 6px 11px;
+  background: var(--float);
+  border-radius: 9px;
+  box-shadow: var(--lift-3);
+  opacity: 0.95;
+  pointer-events: none;
+  font-size: 12.5px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.drag-ghost .dg-count {
+  flex: 0 0 auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+.drag-ghost .dg-from {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+.drag-ghost .dg-subj {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--ink3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ritem.drop-ok {
+  color: var(--ink);
+  background: var(--tint2);
+  box-shadow: inset 0 0 0 1.5px var(--accent-hair);
+}
+.ritem.drop-hit {
+  color: var(--ink);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent-hair);
+}
