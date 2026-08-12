@@ -1124,15 +1124,44 @@ export function OhboxView({
       chord: "j",
       group: "navigate",
       label: t("keyNext"),
+      // `at < 0` — no cursor, or a cursor on something these rows do not contain — is ENTRY,
+      // and this expression already treats it as one: `-1 >= order.length - 1` is false for any
+      // non-empty list, so `j` steps in at the top. See `k` below for the other half.
       disabled: at >= order.length - 1,
       run: () => at < order.length - 1 && selectByUser(order[at + 1]!),
     },
     {
+      /**
+       * THE EXACT INVERSE OF `j`, AND THAT HAS TO INCLUDE THE WAY IN.
+       *
+       * The Ohbox rests with NO cursor. That is deliberate — the reading column stays at rest
+       * until somebody chooses a message, rather than opening the newest unread on nobody's
+       * behalf — and it means the keys are how a reader enters the list, not merely how they
+       * move around inside it.
+       *
+       * `j` has always had an entry move: with nothing selected it lands on the first row. `k`
+       * had none. It was declared inert whenever the cursor was not already on a row, so on a
+       * freshly opened Ohbox `j` walked the list and `k` did nothing at all, with nothing on
+       * screen to explain the difference. Two keys presented as a pair, one of them dead.
+       *
+       * The pair is one gesture in two directions, so it enters from the two ends: `j` comes in
+       * at the top going down, `k` comes in at the bottom going up. Inside the list they are
+       * strict inverses over the same row order — `j` then `k` returns to the row you left,
+       * whatever the grouping and whatever order this session placed the rows in, because both
+       * read the one `order` array built above.
+       *
+       * `at < 0` covers both readings of "not on a row": nothing selected, and a selection
+       * standing on something outside the three grouped sections. Neither is a state either key
+       * may quietly ignore.
+       */
       chord: "k",
       group: "navigate",
       label: t("keyPrev"),
-      disabled: at <= 0,
-      run: () => at > 0 && selectByUser(order[at - 1]!),
+      disabled: order.length === 0 || at === 0,
+      run: () => {
+        if (at < 0) selectByUser(order[order.length - 1]!);
+        else if (at > 0) selectByUser(order[at - 1]!);
+      },
     },
     {
       chord: "Enter",
