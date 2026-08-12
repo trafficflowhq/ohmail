@@ -653,6 +653,23 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // No CHECK marker: any instant is a legal baseline (0040's rule). No INDEX marker: read off a
   // row already fetched by primary key, never a predicate.
   ["account_settings", "screening_baseline_at"],
+  // mail 0057_message_from_name — the From header's display name, the sender's half of the
+  // recipients repair (`to_addresses`/`cc_addresses` carry theirs inside the jsonb pairs). One
+  // additive nullable text column on `messages`, and it earns a marker on the whole-row-select
+  // rule at its widest reach: `materializeMessages` and the single message read select whole
+  // `messages` rows, so an API deployed ahead of the migration answers Postgres 42703 on the
+  // message list, the single read, the delta feed AND the bootstrap snapshot — the entire mail
+  // surface, not one panel.
+  //
+  // The WORKER half is not the safe kind, deliberately: `insertMessage` names the column
+  // unconditionally, so a worker ahead of the migration fails ingest with the same 42703 into
+  // the cycle's ordinary quarantine — loud — rather than silently dropping the name, which is
+  // the defect the column exists to end. Deploy order: migration → API → worker.
+  //
+  // No CHECK marker (a sender-chosen display name closes no set) and no INDEX marker: the column
+  // is projected off rows already fetched by primary key or by the existing `from_address`
+  // indexes, and it is never a predicate.
+  ["messages", "from_name"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1110,10 +1127,20 @@ export const MAIL_EXPECTED_MARKERS =
  * worker ahead of the migration routes exactly as it did before this column existed. That is the
  * intended degradation and not a reason to skip the marker: the 503 in front of the API is what
  * makes the window visible instead of merely survivable. No CHECK marker (any instant is a legal
- * baseline), no INDEX marker (read off a row fetched by primary key, never a predicate). It is the
- * NEWEST entry in the mail journal.
+ * baseline), no INDEX marker (read off a row fetched by primary key, never a predicate).
+ *
+ * `0057_message_from_name` is probed ONCE, by `messages.from_name` — the From header's display
+ * name, the sender's half of the recipients repair. The whole-row-select argument at its widest:
+ * `materializeMessages` and the single message read select whole `messages` rows, so an API ahead
+ * of the migration 42703s the message list, the single read, the delta feed and the bootstrap
+ * snapshot — the entire mail surface. The WORKER half fails loud, not silent: `insertMessage`
+ * names the column unconditionally, so a worker ahead of the migration fails ingest with the same
+ * 42703 into the cycle's ordinary quarantine rather than dropping names on the floor, which is
+ * the defect this column ends. Deploy order: migration → API → worker. No CHECK marker (a
+ * sender-chosen display name closes no set), no INDEX marker (projected off rows already fetched;
+ * never a predicate). It is the NEWEST entry in the mail journal.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0056_screening_baseline";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0057_message_from_name";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

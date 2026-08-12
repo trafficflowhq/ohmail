@@ -1,0 +1,55 @@
+-- WHO A MESSAGE IS FROM, AS THE SENDER WROTE IT — the display name half of the From header.
+--
+-- ══ THE DEFECT THIS COLUMN EXISTS FOR ══════════════════════════════════════════════════════
+--
+-- The parser has produced `from: { name, address }` for its whole life (`mime.ts#parseMessage`),
+-- and every read surface types the sender as that same `EmailAddress` pair — but `messages` had
+-- only `from_address`, so ingest persisted the address and dropped the name on the floor
+-- (`pipeline.ts#commitChange` had nothing to write it into), and the DTO projection hardcoded
+-- the other half: `from: { name: null, address: m.fromAddress }`. Every message therefore
+-- reached the reader as a bare address — "hello@papierwerk.example" where the header said
+-- "Papierwerk Studio" — and nothing failed, because a name the sender never set and a name the
+-- ingest dropped are the same `null` on the wire. The recipients pair (`to_addresses` /
+-- `cc_addresses`, jsonb `EmailAddress[]`) went through exactly this a slice earlier; this column
+-- is the sender's half of the same repair.
+--
+-- ══ SHAPE ══════════════════════════════════════════════════════════════════════════════════
+--
+-- `text`, nullable, no default. NULL is "the header carried no display name" AND "ingested
+-- before this column existed" — the two are deliberately not distinguishable, because the reader
+-- treats them identically (it falls back to the address), and a sentinel separating them would
+-- be a value the projection has to special-case for ever. A row whose name is genuinely absent
+-- and a row nobody has re-parsed both render the way they always have.
+--
+-- Not folded into a jsonb `from` pair, though the recipients are jsonb pairs: `from_address` is
+-- indexed three ways (lexical tsvector, `lower(from_address)`, domain substring) and read by the
+-- router, the retro passes and search — repointing all of that at a jsonb key for symmetry would
+-- be churn with no reader asking for it. The DTO reassembles the pair at the boundary.
+--
+-- No CHECK (free text closes no set — display names are sender-chosen), no INDEX (projected off
+-- rows already fetched by primary key or by existing indexes; never a predicate).
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → API → worker. `materializeMessages` and the single read select whole `messages`
+-- rows, so an API deployed ahead of this answers Postgres 42703 on the message list, the single
+-- read, the delta feed and the bootstrap snapshot — the whole mail surface. The health marker
+-- `["messages","from_name"]` turns that into a `503 schema_incomplete` naming this file. The
+-- worker WRITES the column on every ingest (`insertMessage` names it unconditionally), so a
+-- worker ahead of the migration fails ingest loudly rather than dropping names silently — the
+-- same 42703, caught by the cycle's ordinary quarantine.
+--
+-- A CLIENT older than the API ignores the populated `from.name` it already types as nullable; a
+-- client newer than the API reads `null` and falls back to the address, which is what it renders
+-- today. Neither needs the other to ship first.
+--
+-- Existing rows stay NULL. The backfill — re-parsing the stored `message_bodies.headers` of
+-- historical rows for From/To/Cc — is a separate, deliberate pass, not this migration: a DDL
+-- file must not rewrite millions of rows on deploy, and the backfill has its own delta-contract
+-- obligations (each touched row owes a `change_log` update or no mirror ever re-reads it).
+--
+-- ROLLBACK is `ALTER TABLE messages DROP COLUMN from_name`. The cost is display names captured
+-- since deploy; addresses, recipients and routing are untouched — nothing reads the column to
+-- make a decision.
+
+ALTER TABLE "messages" ADD COLUMN IF NOT EXISTS "from_name" text;

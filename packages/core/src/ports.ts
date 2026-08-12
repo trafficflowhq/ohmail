@@ -188,6 +188,16 @@ export interface InsertMessageInput {
   canonical: NormalizedMessage["canonical"];
   dedupKey: string; subject: string; fromAddress: string; date: Date | null;
   /**
+   * The From header's display name — `messages.from_name` (mail 0057).
+   *
+   * OPTIONAL, defaulting to NULL, which is the column's own default — the same compatibility
+   * shape as `to`/`cc` below, so every fake repo and every earlier caller keeps its behaviour.
+   * The parser has carried this on `NormalizedMessage.from.name` for its whole life; ingest
+   * persisted only `.address`, the projection hardcoded `name: null`, and every message reached
+   * the reader as a bare address. This field is what carries the name the last step.
+   */
+  fromName?: string | null;
+  /**
    * `To:` and `Cc:`, parsed — `messages.to_addresses` / `cc_addresses`.
    *
    * OPTIONAL, defaulting to `[]`, which is EXACTLY the two columns' own `'[]'::jsonb` default —

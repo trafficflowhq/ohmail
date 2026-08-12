@@ -996,6 +996,15 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       dedupKey: p.dedupKey,
       subject: p.normalized.subject,
       fromAddress: p.normalized.from.address,
+      // ── THE SENDER'S DISPLAY NAME, WHICH THIS LINE IS THE FIRST TO PERSIST ───────────────
+      //
+      // The same repair as the recipients below, one header up: `parseMessage` has produced
+      // `from: { name, address }` since the parser was written, this function persisted only
+      // `.address`, and `materialize.ts` hardcoded the other half (`from: { name: null, … }`) —
+      // so every ingested message reached the reader as a bare address, and nothing failed,
+      // because a name the sender never set and a name ingest dropped are the same `null` on
+      // the wire. Same parse, not a second reading, on the recipients' argument verbatim.
+      fromName: p.normalized.from.name,
       // ── THE RECIPIENTS, WHICH THIS LINE IS THE FIRST TO PERSIST ──────────────────────────
       //
       // `messages.to_addresses` / `cc_addresses` have existed since the mail schema landed and

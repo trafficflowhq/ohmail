@@ -339,6 +339,15 @@ export const messages = pgTable("messages", {
   dedupKey: text("dedup_key").notNull(),
   subject: text("subject").notNull().default(""),
   fromAddress: text("from_address").notNull().default(""),
+  /**
+   * The From header's DISPLAY NAME, as the sender wrote it (mail 0057). NULL is both "the header
+   * carried no name" and "ingested before the column existed" — deliberately indistinct, because
+   * the reader falls back to the address either way. The recipients' names live inside the
+   * `to_addresses`/`cc_addresses` jsonb pairs; this is the sender's half, kept as its own column
+   * because `from_address` is indexed three ways and the pair is reassembled at the DTO boundary
+   * (`materialize.ts`), not stored.
+   */
+  fromName: text("from_name"),
   date: timestamp("date", { withTimezone: true }),
   nativeLocator: jsonb("native_locator"),     // { folder, ref }
   noAi: boolean("no_ai").notNull().default(false),

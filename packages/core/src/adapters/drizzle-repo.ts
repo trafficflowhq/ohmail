@@ -309,6 +309,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       bodyHash: input.canonical.bodyHash,
       dedupKey: input.dedupKey,
       subject: input.subject, fromAddress: input.fromAddress, date: input.date,
+      // `?? null` reproduces the column's own default (nullable, no default expression) — the
+      // recipients' rule one line down, applied to the sender's display name (mail 0057).
+      fromName: input.fromName ?? null,
       // `?? []` reproduces the two columns' own `'[]'::jsonb` default, on the same argument as
       // `unread ?? true` below: this is the ONE place the ingest mapping for recipients is
       // visible, and a caller with nothing to report writes what the database would have written.

@@ -179,7 +179,11 @@ export function messageRowToDTO(
     threadId: m.threadId ?? null,
     messageIdHeader: m.messageIdHeader ?? null,
     subject: m.subject,
-    from: { name: null, address: m.fromAddress },
+    // `?? null` — a row written before mail 0057 has no name on record, and the reader falls
+    // back to the address, exactly as it rendered before the column existed. This literal was
+    // `name: null` for every message for its whole life; the name was parsed at ingest and
+    // dropped for want of a column.
+    from: { name: m.fromName ?? null, address: m.fromAddress },
     to: (m.toAddresses as EmailAddress[]) ?? [],
     cc: (m.ccAddresses as EmailAddress[]) ?? [],
     date: iso(m.date),
