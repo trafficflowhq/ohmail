@@ -7,7 +7,7 @@ import {
   type ImapCursor, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
-import type { WorkerRepo, PendingFolderState } from "@trafficflow/core/adapters/drizzle-repo";
+import type { WorkerRepo, DrizzleRepo, PendingFolderState } from "@trafficflow/core/adapters/drizzle-repo";
 import { ClassifierFaultError } from "./classifier-fault.js";
 import {
   DeadLetterLedger, classifyIngestFault, nextAttemptAfter,
@@ -18,6 +18,73 @@ import {
 // `@trafficflow/worker/sync`. Naming config here would put the classifier and the drafter into the
 // shipped desktop engine's import closure from three modules away.
 import { buildVersionOf } from "./build-version.js";
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE LEADER FENCE OVER MAIL-BEARING WRITES
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * One process at a time organizes a mailbox, and the hosted worker holds that role per shard
+ * under an advisory-lock lease. A lease can end mid-cycle — the lock's session drops, a standby
+ * takes the shard over — and the loser does not learn about it synchronously. Until this seam
+ * existed only the mailbox LIFECYCLE columns were fenced against that: a worker that had already
+ * lost its shard kept committing messages, advancing folder cursors, appending `change_log` rows
+ * and issuing IMAP moves for the rest of its cycle, beside a new leader doing the same work. Two
+ * organizers writing one mailbox is exactly what every lease in this product exists to prevent —
+ * and the existence of a fence for the lifecycle writes made it easy to believe these were
+ * covered. They were not.
+ *
+ * `SyncDeps.fence` is the seam. ABSENT ⇒ unfenced, byte-identically the behaviour before the
+ * seam existed: the standalone desktop engine imports this loop and its single process has no
+ * shard to lose (its organizer boundary is the mailbox-side lease), and the reconcile cron runs
+ * only while no worker leads. The hosted worker passes a fence built over its durable
+ * leadership record — the same one its mailbox lifecycle writes are already fenced on.
+ *
+ * Three rules, each load-bearing:
+ *
+ *  · EVERY database write in this module rides `fencedWrite`/`fencedIngest`, which refuse —
+ *    writing NOTHING — once the heartbeat row stops naming this instance as the leader. The
+ *    refusal must be answered from a FRESH snapshot even when the write had to wait on a row
+ *    lock (under READ COMMITTED, a statement that blocks is otherwise answered with the
+ *    leadership it began with — the fence would fail open in exactly the handover it exists
+ *    for). The fence implementation owns that: it claims the mailbox row first, absorbing the
+ *    wait, and only then verifies leadership. That is why the fence is transaction-shaped
+ *    rather than a boolean checked before the write.
+ *  · EVERY IMAP mutation is preceded by `fenceImapMutation`. An IMAP command cannot ride a
+ *    database transaction, so this is a fresh check rather than a guarantee — a mutation the
+ *    check admits can still land after a takeover that commits in the same instant. That
+ *    residual CONVERGES: a move that landed on the server whose database write was then fenced
+ *    out is byte-identical to a crash between the move and the write, which `changesSince`
+ *    already adopts on the next leader's cycle.
+ *  · `lost()` is the SYNCHRONOUS tripwire. The worker flips it the moment it observes losing
+ *    the lock, so an in-flight cycle stops at its next write site instead of running out its
+ *    batch — without it, the teardown queued behind this cycle would wait on work the process
+ *    has no authority to finish.
+ *
+ * A refused write surfaces as {@link LeaderFencedError} and deliberately aborts the WHOLE
+ * cycle: the fence keys on the shard, not the mailbox, so one refusal means every later write
+ * would be refused too — and the caller treats it as what it is, proof of lost leadership,
+ * never as evidence against the mailbox or the message.
+ */
+export class LeaderFencedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LeaderFencedError";
+  }
+}
+
+/** See the block above. Implemented by the hosted worker; absent everywhere else. */
+export interface SyncWriteFence {
+  /** TRUE once this process has observed losing its lease — synchronous, checked before work. */
+  lost(): boolean;
+  /** A fresh read of the leadership record, for mutations that cannot ride a transaction (IMAP). */
+  stillLeader(): Promise<boolean>;
+  /**
+   * Run one write group inside a transaction that has verified — AFTER absorbing any lock
+   * wait — that this process still leads its shard. `fenced` ⇒ nothing was written.
+   */
+  transaction<T>(fn: (repo: DrizzleRepo) => Promise<T>): Promise<{ fenced: true } | { fenced: false; result: T }>;
+}
 
 export interface SyncDeps {
   repo: WorkerRepo;
@@ -93,6 +160,14 @@ export interface SyncDeps {
    * Present only as a test seam, so a suite can simulate a deploy without touching `process.env`.
    */
   buildVersion?: string;
+  /**
+   * The leader fence over this mailbox's mail-bearing writes — see {@link SyncWriteFence}.
+   *
+   * ABSENT ⇒ unfenced, deliberately: the standalone desktop engine and the reconcile cron have
+   * no shard leadership to lose, and every unfenced write runs byte-identically to before this
+   * seam existed. The hosted worker is the one caller that passes it.
+   */
+  fence?: SyncWriteFence;
   /** Structured log sink. Absent ⇒ a skip is still recorded in `audit_log`, just not logged. */
   log?: Logger;
 }
@@ -202,6 +277,57 @@ function siteOf(ch: Change): { folder: string; uidValidity: string; uid: number 
   return { folder: ch.locator.folder, uidValidity, uid };
 }
 
+type FenceScope = Pick<SyncDeps, "repo" | "fence">;
+
+/**
+ * Route one bare write through the fence when there is one; unfenced callers run it directly on
+ * the repo — no transaction wrapper, so their statement shape is exactly what it always was.
+ */
+async function fencedWrite<T>(deps: FenceScope, fn: (repo: WorkerRepo) => Promise<T>): Promise<T> {
+  if (!deps.fence) return fn(deps.repo);
+  return underFence(deps.fence, fn);
+}
+
+/**
+ * `repo.transaction`, fenced: the ingest and flag transactions run INSIDE the fence's own
+ * transaction, so the leadership verdict and the writes it authorizes commit or vanish together.
+ */
+async function fencedIngest<T>(deps: FenceScope, fn: (repo: DrizzleRepo) => Promise<T>): Promise<T> {
+  if (!deps.fence) return deps.repo.transaction(fn);
+  return underFence(deps.fence, fn);
+}
+
+async function underFence<T>(fence: SyncWriteFence, fn: (repo: DrizzleRepo) => Promise<T>): Promise<T> {
+  if (fence.lost()) {
+    throw new LeaderFencedError("the leader lease is gone — this write is refused before it is attempted");
+  }
+  const out = await fence.transaction(fn);
+  if (out.fenced) {
+    throw new LeaderFencedError("the heartbeat no longer names this instance as the shard leader — the write was refused");
+  }
+  return out.result;
+}
+
+/**
+ * The check before every IMAP mutation — see the fence block at the top of this file for what
+ * its admission can and cannot promise, and why the residual it cannot close converges.
+ */
+async function fenceImapMutation(deps: Pick<SyncDeps, "fence">): Promise<void> {
+  const { fence } = deps;
+  if (!fence) return;
+  if (fence.lost() || !(await fence.stillLeader())) {
+    throw new LeaderFencedError("this instance no longer leads its shard — the IMAP mutation is not issued");
+  }
+}
+
+/**
+ * Rethrow a fence refusal out of a catch arm that would otherwise swallow it or read it as a
+ * message fault. A refusal is proof of lost leadership and must reach the caller unreclassified.
+ */
+function rethrowFenced(err: unknown): void {
+  if (err instanceof LeaderFencedError) throw err;
+}
+
 /**
  * One sync pass. Returns whether the adapter still owes a backlog: a first sync of a real
  * mailbox is now drained in bounded batches (see `DEFAULT_SYNC_BATCH_MAX_MESSAGES`), and the
@@ -263,10 +389,21 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
   async function attempt(ch: Change, run: () => Promise<void>): Promise<void> {
     const site = siteOf(ch);
     if (deadLetters.has(site.folder, site.uidValidity, site.uid)) return;
+    // The fence's synchronous tripwire, BEFORE the work: `planChange` may spend a classifier
+    // call on this message, and a process that has already observed losing its lease must not
+    // spend anything on mail it no longer organizes. The commit below would be refused anyway;
+    // this line is what makes the refusal cost nothing.
+    if (deps.fence?.lost()) {
+      throw new LeaderFencedError("the leader lease is gone — this cycle stops before the next message");
+    }
     try {
       await run();
     } catch (err) {
       if (err instanceof ClassifierFaultError || err instanceof LeaseUnavailableError) throw err;
+      // A fence refusal is proof of lost leadership, never evidence about the message: counting
+      // an attempt against it — let alone writing it off — would spend a customer's mail on our
+      // own handover.
+      rethrowFenced(err);
       const fault = classifyIngestFault(err);
       if (fault.domain === "infrastructure") {
         // Ours, not the message's. Fail the cycle the way a bare throw did before this boundary
@@ -305,13 +442,16 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
       // epoch, UID, closed-set code, and nothing a sender chose.
       let attempts: number;
       try {
-        attempts = await repo.recordMessageFailure(mailboxId, {
+        attempts = await fencedWrite(deps, (r) => r.recordMessageFailure(mailboxId, {
           accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
           code: fault.code, version,
           nextAttemptAt: nextAttemptAfter(fault.code, 1, new Date()),
-        });
+        }));
       } catch (writeErr) {
         deadLetters.revoke(ch.locator);
+        // Revoked FIRST, then the fence refusal propagates: the in-memory terminal decision must
+        // not outlive a durable record that was refused, whoever refused it.
+        rethrowFenced(writeErr);
         deferred.add(site.folder);
         if (firstDeferredError === null) firstDeferredError = writeErr;
         log?.error("sync_message_skip_unrecordable", {
@@ -334,15 +474,16 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
       // and unlike the row above this one carries no recovery, so a bookkeeping failure here must not
       // resurrect the wedge the skip decision exists to end.
       try {
-        await repo.recordAudit(
+        await fencedWrite(deps, (r) => r.recordAudit(
           accountId, "sync.message_skipped",
           {
             mailboxId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
             code: fault.code,
           },
           null,
-        );
+        ));
       } catch (auditErr) {
+        rethrowFenced(auditErr);
         log?.warn("sync_message_skip_audit_failed", {
           mailboxId, accountId, folder: site.folder, uid: site.uid, err: auditErr,
         });
@@ -381,7 +522,7 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
     const site = siteOf(ch);
     const live = observedEpochs.get(site.folder) ?? batch.newCursor.folders[site.folder]?.uidValidity;
     if (live === undefined || live === "0" || live !== site.uidValidity) continue;
-    await repo.forgetInstanceAt(mailboxId, ch.locator);
+    await fencedWrite(deps, (r) => r.forgetInstanceAt(mailboxId, ch.locator));
   }
 
   // Two-phase, transaction-safe ingest. PLAN performs the reads +
@@ -393,7 +534,7 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
   for (const ch of [...batch.creates, ...batch.moves]) {
     await attempt(ch, async () => {
       const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff });
-      await repo.transaction((txRepo) =>
+      await fencedIngest(deps, (txRepo) =>
         commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId }),
       );
     });
@@ -414,7 +555,7 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
   // retried the same one for ever.
   for (const ch of batch.flagChanges) {
     await attempt(ch, async () => {
-      await repo.transaction(async (txRepo) => {
+      await fencedIngest(deps, async (txRepo) => {
         const outcome = await txRepo.applyExternalFlag(mailboxId, ch.locator, ch.seen ?? false);
         if (!outcome?.changed) return;
         await txRepo.recordChange({
@@ -435,7 +576,7 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
   // declared consumed, and a cursor written across that is an acknowledgement of work still owed.
   for (const [folder, fc] of Object.entries(batch.newCursor.folders)) {
     if (deferred.has(folder)) continue;
-    await repo.upsertMailboxFolder(mailboxId, folder, epochAware(fc, observedEpochs.get(folder)));
+    await fencedWrite(deps, (r) => r.upsertMailboxFolder(mailboxId, folder, epochAware(fc, observedEpochs.get(folder))));
   }
 
   // AFTER the cursor writes, and skipped entirely when anything is deferred — see
@@ -492,14 +633,15 @@ async function retryFailedMessages(
   const now = new Date();
   let claimed: Awaited<ReturnType<WorkerRepo["claimMessageFailures"]>>;
   try {
-    claimed = await repo.claimMessageFailures(mailboxId, {
+    claimed = await fencedWrite(deps, (r) => r.claimMessageFailures(mailboxId, {
       version, now, limit: MAX_MESSAGE_RETRIES_PER_CYCLE,
       // The NEXT clock instant is written by the claim, so a process that dies mid-fetch does not
       // leave the row due on every subsequent cycle. `null` for the deterministic codes: their next
       // look is a new build, not a later hour.
       nextAttemptAt: nextAttemptAfter("unclassified", 1, now),
-    });
+    }));
   } catch (err) {
+    rethrowFenced(err);
     log?.warn("message_retry_claim_failed", { mailboxId, accountId, err });
     return;
   }
@@ -530,7 +672,7 @@ async function retryFailedMessages(
     }
 
     const close = async (row: { uidValidity: string; uid: number }, why: string): Promise<void> => {
-      await repo.resolveMessageFailure(mailboxId, { folder, uidValidity: row.uidValidity, uid: row.uid });
+      await fencedWrite(deps, (r) => r.resolveMessageFailure(mailboxId, { folder, uidValidity: row.uidValidity, uid: row.uid }));
       deadLetters.forget(folder, row.uidValidity, row.uid);
       log?.info("message_retry_closed", {
         mailboxId, accountId, folder, uidValidity: row.uidValidity, uid: row.uid, reason: why,
@@ -548,7 +690,7 @@ async function retryFailedMessages(
       // is offered again as an ordinary unknown UID.
       if (found.uidValidity !== "0" && found.uidValidity !== row.uidValidity) {
         try { await close(row, "uidvalidity_changed"); }
-        catch (err) { log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err }); }
+        catch (err) { rethrowFenced(err); log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err }); }
         continue;
       }
 
@@ -556,7 +698,7 @@ async function retryFailedMessages(
         // Expunged, or moved by the user out of this folder. There is no message here to lose, and
         // a move surfaces through the ordinary enumeration of wherever it went.
         try { await close(row, "gone_from_server"); }
-        catch (err) { log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err }); }
+        catch (err) { rethrowFenced(err); log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err }); }
         continue;
       }
 
@@ -583,10 +725,13 @@ async function retryFailedMessages(
       // `own_copy` for a Sent twin of mail we hold.
       try {
         const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff });
-        await repo.transaction((txRepo) =>
+        await fencedIngest(deps, (txRepo) =>
           commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId }),
         );
       } catch (err) {
+        // Lost leadership is not evidence about the message and not an outage to wait out —
+        // the whole cycle must stop, so this one arm rethrows where the two below return.
+        rethrowFenced(err);
         if (err instanceof ClassifierFaultError || err instanceof LeaseUnavailableError) {
           // Not evidence about the message. Leave the row exactly as the claim left it and stop —
           // continuing would spend the rest of this cycle's retries against the same outage.
@@ -602,12 +747,13 @@ async function retryFailedMessages(
         // into `mime_unparseable`), so the code is re-recorded. `recordMessageFailure` does not
         // touch `attempts` — the claim already counted this one.
         try {
-          await repo.recordMessageFailure(mailboxId, {
+          await fencedWrite(deps, (r) => r.recordMessageFailure(mailboxId, {
             accountId, folder, uidValidity: row.uidValidity, uid: row.uid,
             code: fault.code, version,
             nextAttemptAt: nextAttemptAfter(fault.code, row.attempts, new Date()),
-          });
+          }));
         } catch (writeErr) {
+          rethrowFenced(writeErr);
           log?.warn("message_retry_rerecord_failed", { mailboxId, folder, uid: row.uid, err: writeErr });
         }
         log?.error("message_retry_failed", {
@@ -623,6 +769,7 @@ async function retryFailedMessages(
 
       try { await close(row, "ingested"); }
       catch (err) {
+        rethrowFenced(err);
         // The message IS committed. A failed resolve leaves the row owed, the next cycle re-reads
         // the same UID, and `planChange` answers `duplicate` — so the replay converges rather than
         // writing a second message.
@@ -763,7 +910,7 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
   for (const p of work) {
     if (p.lastSetBy !== "us") continue;                       // user-wins: never revert an external move
     if (p.desiredFolder === p.observedFolder) {
-      await repo.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
+      await fencedWrite(deps, (r) => r.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" }));
       continue;
     }
     if (!p.nativeLocator) continue;
@@ -798,7 +945,7 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
  * per-message path has always relied on for a crash between the IMAP move and the DB write.
  */
 async function fileChunk(deps: SyncDeps, chunk: PendingFolderState[]): Promise<boolean> {
-  const { repo, adapter, accountId } = deps;
+  const { adapter, accountId } = deps;
   if (typeof adapter.moveMany !== "function") return false;
   const first = chunk[0]!;
   const srcFolder = first.nativeLocator!.folder;
@@ -812,6 +959,9 @@ async function fileChunk(deps: SyncDeps, chunk: PendingFolderState[]): Promise<b
   const refs = new Set(chunk.map((p) => p.nativeLocator!.ref));
   if (refs.size !== chunk.length) return false;
 
+  // The fence, BEFORE the IMAP command — the whole batch is one mutation. Outside the `try`
+  // below deliberately: its refusal must abort the cycle, never degrade to the per-message path.
+  await fenceImapMutation(deps);
   let result;
   try {
     result = await adapter.moveMany(chunk.map((p) => p.nativeLocator!), toFolder);
@@ -820,30 +970,34 @@ async function fileChunk(deps: SyncDeps, chunk: PendingFolderState[]): Promise<b
   }
   if (!result.batched) return false;
 
-  const audits: Array<{ action: string; payload: unknown; inverse: unknown }> = [];
-  for (const p of chunk) {
-    const ref = p.nativeLocator!.ref;
-    const newLoc = result.moved.get(ref);
-    // NOT NAMED IN `moved` ⇒ the member was gone from the source, the batch's form of
-    // `MessageGoneError` — and the response is the per-message path's, exactly: leave the row
-    // pending for `changesSince` to adopt, unless the disappearance is already on durable
-    // record, in which case there is nothing left to adopt and the filing is voided. See
-    // {@link voidGoneFiling} for why those are the only two readings. Cross-checking
-    // `result.gone` as well would be a second reading of one fact, with a branch no test can
-    // redden.
-    if (!newLoc) { await voidGoneFiling(deps, p); continue; }
-    await repo.updateLocator(p.messageId, newLoc);
-    await repo.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
-    // The audit rows are written together, AFTER the state they describe. One INSERT instead of
-    // fifty, and the same rows a per-message pass would have written — the admin surface and the
-    // inverse both read this table and neither can tell which path filed the mail.
-    audits.push({
-      action: "reconcile.move",
-      payload: { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
-      inverse: { action: "move", locator: newLoc, toFolder: p.nativeLocator!.folder },
-    });
-  }
-  if (audits.length > 0) await recordAudits(repo, accountId, audits);
+  // One fenced write group for the whole chunk's bookkeeping. Unfenced callers run the same
+  // statements in the same order on the bare repo, exactly as before the fence existed.
+  await fencedWrite(deps, async (r) => {
+    const audits: Array<{ action: string; payload: unknown; inverse: unknown }> = [];
+    for (const p of chunk) {
+      const ref = p.nativeLocator!.ref;
+      const newLoc = result.moved.get(ref);
+      // NOT NAMED IN `moved` ⇒ the member was gone from the source, the batch's form of
+      // `MessageGoneError` — and the response is the per-message path's, exactly: leave the row
+      // pending for `changesSince` to adopt, unless the disappearance is already on durable
+      // record, in which case there is nothing left to adopt and the filing is voided. See
+      // {@link voidGoneFiling} for why those are the only two readings. Cross-checking
+      // `result.gone` as well would be a second reading of one fact, with a branch no test can
+      // redden.
+      if (!newLoc) { await voidGoneFiling(r, accountId, p); continue; }
+      await r.updateLocator(p.messageId, newLoc);
+      await r.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
+      // The audit rows are written together, AFTER the state they describe. One INSERT instead of
+      // fifty, and the same rows a per-message pass would have written — the admin surface and the
+      // inverse both read this table and neither can tell which path filed the mail.
+      audits.push({
+        action: "reconcile.move",
+        payload: { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
+        inverse: { action: "move", locator: newLoc, toFolder: p.nativeLocator!.folder },
+      });
+    }
+    if (audits.length > 0) await recordAudits(r, accountId, audits);
+  });
   return true;
 }
 
@@ -889,9 +1043,12 @@ async function recordAudits(
  * shape its columns do not show; what actually happened is in the audit row. `native_locator`
  * is left alone deliberately: clearing it would flip `primaryInstanceVanished` to false and
  * erase the adoption evidence for a copy that does surface later.
+ *
+ * Takes the repo it must write through rather than `deps`, because one caller (`fileChunk`) is
+ * already inside a fenced write group and a second fence opened within the first would wait on
+ * the mailbox row its own transaction holds. The other caller wraps this in its own group.
  */
-async function voidGoneFiling(deps: SyncDeps, p: PendingFolderState): Promise<void> {
-  const { repo, accountId } = deps;
+async function voidGoneFiling(repo: WorkerRepo, accountId: string, p: PendingFolderState): Promise<void> {
   if (!(await repo.primaryInstanceVanished(p.messageId))) return;
   await repo.upsertFolderState(p.messageId, {
     desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us",
@@ -905,22 +1062,27 @@ async function voidGoneFiling(deps: SyncDeps, p: PendingFolderState): Promise<vo
 
 /** The per-message path, unchanged: one move, its own verdict, its own audit row. */
 async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
-  const { repo, adapter, accountId } = deps;
+  const { adapter, accountId } = deps;
   try {
+    await fenceImapMutation(deps);
     const newLoc = await adapter.move(p.nativeLocator!, p.desiredFolder);
-    await repo.updateLocator(p.messageId, newLoc);
-    await repo.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
-    await repo.recordAudit(
-      accountId, "reconcile.move",
-      { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
-      { action: "move", locator: newLoc, toFolder: p.nativeLocator!.folder },
-    );
+    await fencedWrite(deps, async (r) => {
+      await r.updateLocator(p.messageId, newLoc);
+      await r.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
+      await r.recordAudit(
+        accountId, "reconcile.move",
+        { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
+        { action: "move", locator: newLoc, toFolder: p.nativeLocator!.folder },
+      );
+    });
   } catch (err) {
+    // A fence refusal must not be recorded as this message's failure — it is the process's.
+    rethrowFenced(err);
     if (err instanceof MessageGoneError) {
       // Already moved (crash between IMAP move and DB update) → leave pending; the next
       // changesSince adopts it. Expunged outright → nothing will ever adopt it; see
       // voidGoneFiling for how the two are told apart.
-      await voidGoneFiling(deps, p);
+      await fencedWrite(deps, (r) => voidGoneFiling(r, accountId, p));
       return;
     }
     // ── ONE MESSAGE'S FAILURE MUST NOT ABANDON THE PASS ──────────────────────────────────
@@ -941,7 +1103,7 @@ async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
     // behind. It is unbounded in TIME, though, which is why the failure is recorded rather than
     // swallowed — an audit row per cycle is what makes a permanently stuck message visible
     // instead of silent.
-    await repo.recordAudit(
+    await fencedWrite(deps, (r) => r.recordAudit(
       accountId,
       "reconcile.move.failed",
       {
@@ -951,7 +1113,7 @@ async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
         error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
       },
       null,
-    );
+    ));
   }
 }
 
@@ -974,34 +1136,39 @@ async function reconcileFlags(deps: SyncDeps): Promise<void> {
   for (const p of pending) {
     if (p.lastSetBy !== "us") continue;                       // user-wins: never revert an external \Seen
     if (p.desiredSeen === p.observedSeen) {
-      await repo.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
+      await fencedWrite(deps, (r) => r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" }));
       continue;
     }
     if (!p.nativeLocator) continue;
     try {
+      await fenceImapMutation(deps);
       await adapter.setFlags(p.nativeLocator, { seen: p.desiredSeen });
-      await repo.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
-      await repo.recordAudit(
-        accountId, "reconcile.flags",
-        { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
-        { action: "setFlags", locator: p.nativeLocator, seen: !p.desiredSeen },
-      );
+      await fencedWrite(deps, async (r) => {
+        await r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
+        await r.recordAudit(
+          accountId, "reconcile.flags",
+          { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
+          { action: "setFlags", locator: p.nativeLocator, seen: !p.desiredSeen },
+        );
+      });
     } catch (err) {
       if (err instanceof MessageGoneError) {
         // The message left this locator between the DB read and the STORE. Mid-move, the next
         // changesSince refreshes the locator and this retries. Expunged outright, no refresh is
         // ever coming — voidGoneFiling's argument, one flag over — so the intent is voided the
         // same way rather than re-STOREd (one IMAP round trip per cycle) for ever.
-        if (await repo.primaryInstanceVanished(p.messageId)) {
-          await repo.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
-          await repo.recordAudit(
+        await fencedWrite(deps, async (r) => {
+          if (!(await r.primaryInstanceVanished(p.messageId))) return;
+          await r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
+          await r.recordAudit(
             accountId, "reconcile.flags.voided",
             { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
             null,
           );
-        }
+        });
         continue;
       }
+      // Includes a fence refusal from either write above — proof of lost leadership, rethrown.
       throw err;
     }
   }
