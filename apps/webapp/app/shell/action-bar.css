@@ -438,10 +438,10 @@
  * would put the sole way to tag an open message behind a disclosure at the one width every
  * desktop reader has.
  *
- * `.abar-file` is deliberately NOT re-derived. It is unreachable on a message bar for the same
- * ≤576px reason (see its own tier below), so the only surface that reaches 601 is the selection
- * bar — which carries no Reply all and whose Tag button is a plain `.abar-g`, outside this group
- * entirely. Moving 601 would fold a group that fits, on a bar this slice does not touch.
+ * `.abar-file` was "deliberately NOT re-derived" here, on the claim that no message bar reaches
+ * 601 — and the conversation surface made that claim false and the ladder overflow real. Its
+ * tier is now split by surface: 601 for the selection bar (whose chain it was measured against),
+ * the cumulative 766 for a message row. The full account is at the file tier below.
  *
  * ── AND THE LADDER WAS THEN WATCHED, NOT ONLY CALCULATED ──────────────────────────────
  *
@@ -537,20 +537,51 @@
  * message bar Reply all now folds into More, where `mm-rall` already carries it. That ordering is
  * argued in the header: Tag has no other entry point, Reply all has `⇧R` and a menu row.
  *
- * WHY NOTHING OUTRANKS IT: a message bar's container is capped by the mail measure at ≤576px
- * (`.msg` 640 − 68 padding; a stream card's `.scast` 620 − 44), so the 601 file tier below never
- * fires where this group can exist — the two can NOT stand together, which is why 601 did not
- * move when this tier landed and did not move again now. The only surface that reaches 601 is the
- * selection bar, and a selection carries no reply verbs at all (`BulkAction`). If the mail
- * measure ever widens past `601 + 95.7 + 6`, re-derive BOTH numbers.
+ * WHY NOTHING OUTRANKS IT: on a SINGLE message the container is capped by the mail measure at
+ * ≤576px (`.msg` 640 − 68 padding; a stream card's `.scast` 620 − 44), and the one surface wider
+ * than that — the conversation's 628 (below) — admits this group with 8.2px to spare. The file
+ * group stands only above both, at its own cumulative tier.
  */
 @container abar (min-width: 620px) {
   .abar-rall { display: flex; }
   .mmenu .mm-rall { display: none; }
 }
 
+/* ── THE FILE TIER IS SPLIT BY SURFACE, because its one number was true of one surface ────────
+ *
+ * 601 was derived for the chain base+defer+file (455.2 + 139.5 + 6 = 601.7) and guarded by the
+ * claim "no message bar reaches 601". THE CONVERSATION SURFACE ENDED THAT CLAIM: `.conv >
+ * .msg-actions` (app.css) hands the container 688 − 2·30 = 628px, so on a thread the 456, 519,
+ * 601 and 620 tiers all fired at once — two chains that were derived as mutually exclusive,
+ * standing together. The row they admit is
+ *
+ *     base + defer + tag + reply-all + file = 619.8 + 139.5 + 6 = 765.3
+ *
+ * in a pill capped at 628. The row is `nowrap` by construction, so it did not wrap — it put
+ * "Mark unread" and the More disclosure OUTSIDE the pill, on the canvas, on exactly the
+ * messages whose action set was widest (a multi-recipient message that can be tagged). Reported
+ * from real use, varying by message, which is that admission arithmetic read back verbatim.
+ *
+ * So the tier is two rules now, each true of the surface it names:
+ *
+ *   · THE SELECTION BAR keeps 601. Its chain is the one 601 was measured against — a selection
+ *     carries no reply verbs (`BulkAction`), and its Tag button is a plain `.abar-g` outside
+ *     this ladder. Its More ROW (`.abar-panel .abar-p-file`) switches in the same block.
+ *   · A MESSAGE ROW admits file at the CUMULATIVE figure, the same arithmetic every tier above
+ *     follows: 619.8 + 139.5 + one 6px gap = 765.3 → admit at 766. No message container reaches
+ *     it today (the conversation's 628 is the widest), so on a message the group stays behind
+ *     More — which is the ladder doing its job, not a group lost: `.mmenu .mm-file` switches in
+ *     the same block, so the verb is in the row or behind More, never both, PER SURFACE.
+ *
+ * The cumulative arithmetic — every tier against its own standing row, and the standing row at
+ * 628 against the conversation's pill — is asserted by `action-bar.test.ts`, from these same
+ * measured widths. Re-measure the widths when a label changes; the tiers must then follow. */
 @container abar (min-width: 601px) {
-  .abar-file { display: flex; }
+  .pick-bar .abar-file { display: flex; }
   .abar-panel .abar-p-file { display: none; }
+}
+
+@container abar (min-width: 766px) {
+  .msg-actions .abar-file { display: flex; }
   .mmenu .mm-file { display: none; }
 }
