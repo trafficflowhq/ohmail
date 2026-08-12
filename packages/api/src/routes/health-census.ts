@@ -1,4 +1,4 @@
-import type { SchemaMarker, CheckDefinitionMarker } from "./health.js";
+import type { SchemaMarker, CheckDefinitionMarker, FunctionDefinitionMarker } from "./health.js";
 
 /**
  * WHERE THE BOTH-HALVES SCHEMA CENSUS IS REGISTERED, and why it is registered rather than
@@ -43,6 +43,12 @@ export interface SchemaCensus {
    * index) is why this field exists.
    */
   indexMarkers: ReadonlyArray<string>;
+  /**
+   * Trigger FUNCTIONS probed by BODY — the shape a migration takes when `CREATE OR REPLACE
+   * FUNCTION` is its ENTIRE content, which every name-keyed catalog and the constraint-definition
+   * probe are both blind to. Cloud `0014` is why this field exists; cloud `0013` named the gap.
+   */
+  functionDefinitions: ReadonlyArray<FunctionDefinitionMarker>;
   expected: number;
   through: string;
 }

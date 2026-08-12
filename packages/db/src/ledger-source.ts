@@ -139,6 +139,12 @@ export const ledgerSources = {
    *
    * The account id is a uuid we minted, so unlike `draft` and `classify` there is nothing
    * remote-controlled to bound or to hash: the source is 6 + 36 characters, always.
+   *
+   * THIS SHAPE IS ALSO THE DATABASE'S, and that is newer than the paragraph above. A BEFORE
+   * INSERT trigger refuses a `trial_grant` row whose source is not `'trial:' || account_id`, so
+   * "the account is the identity" stopped being a convention this registry keeps and became a
+   * predicate the table enforces. The `trial:%` namespace CHECK is still there and is now the
+   * weaker of the two: it admits any suffix, with no relation to the row's own account.
    */
   trialGrant: (accountId: string) => `trial:${accountId}`,
 } as const;

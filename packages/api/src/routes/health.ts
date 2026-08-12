@@ -851,6 +851,40 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
  */
 export type CheckDefinitionMarker = readonly [conname: string, definitionSubstring: string];
 
+/**
+ * A FUNCTION marker probed by its BODY — the fifth marker class, and the last catalog the other
+ * four cannot reach.
+ *
+ * `[proname, bodySubstring]` — a `public` function of that name must exist AND its `pg_proc.prosrc`
+ * must contain the substring, case-sensitively.
+ *
+ * ── THE SHAPE THIS EXISTS FOR ───────────────────────────────────────────────────────────────
+ *
+ * {@link CheckDefinitionMarker} closed the constraint-REPLACEMENT blind spot. A trigger FUNCTION
+ * replacement is the same defect one catalog over, and strictly worse: `CREATE OR REPLACE
+ * FUNCTION` changes no name anywhere, creates no column and no index, and lives in `pg_proc` —
+ * which `information_schema.columns`, `pg_indexes` and `pg_constraint` all cannot see. Cloud
+ * `0013_ledger_integrity` named this gap in its own header and worked around it by riding the
+ * index it happened to create beside the two replaced functions. Cloud `0014_ledger_trial_source`
+ * has NOTHING beside it — a replaced function body is its entire content — so the workaround runs
+ * out and the class has to exist.
+ *
+ * What a missing entry costs is the usual one, in the usual silent direction: deployed against a
+ * database on the older function body, every layer reports healthy and the invariant the newer
+ * body enforces is simply not enforced. Nothing 500s, no query is wrong, and the first evidence is
+ * a row that should have been impossible.
+ *
+ * ── WHY `prosrc` AND NOT `pg_get_functiondef` ───────────────────────────────────────────────
+ *
+ * `pg_get_functiondef` re-renders the whole `CREATE FUNCTION` statement, so its preamble is a
+ * PostgreSQL version's business — the same objection {@link CheckDefinitionMarker} answers by
+ * taking a substring. `prosrc` is the body EXACTLY as it was written, stored verbatim for a
+ * `plpgsql` function, so a substring of the migration's own text is a stable needle. Pick the
+ * predicate the migration ADDED, for the same reason the constraint markers pick added
+ * vocabulary: it must be unsatisfiable by the body it replaced.
+ */
+export type FunctionDefinitionMarker = readonly [proname: string, bodySubstring: string];
+
 /* `EXPECTED_MARKERS` — the BOTH-HALVES count — moved to `./health-cloud.js` with the list it
  * derives from. {@link MAIL_EXPECTED_MARKERS} below is what this module can compute on its own. */
 
@@ -1188,12 +1222,19 @@ export async function probeDatabase(
    * than live here. Defaults to none — a mail-tier database is complete without them.
    */
   extraIndexMarkers: ReadonlyArray<string> = [],
+  /**
+   * Trigger/helper FUNCTIONS whose BODY is probed — see {@link FunctionDefinitionMarker}.
+   * Defaults to none, on the same rule as the two parameters above: every entry so far names a
+   * Cloud function (`CLOUD_FUNCTION_MARKERS` in `health-cloud.ts`) and this module ships in the
+   * desktop engine, so the names arrive as a parameter rather than living here.
+   */
+  functionDefinitionMarkers: ReadonlyArray<FunctionDefinitionMarker> = [],
 ): Promise<HealthProbe> {
   const started = Date.now();
   const indexMarkers = [...SCHEMA_INDEX_MARKERS, ...extraIndexMarkers];
   const expected =
     columnMarkers.length + indexMarkers.length + SCHEMA_CHECK_MARKERS.length +
-    checkDefinitionMarkers.length;
+    checkDefinitionMarkers.length + functionDefinitionMarkers.length;
   try {
     const result = await db.execute(
       sql`select 1 as one,
@@ -1243,18 +1284,36 @@ export async function probeDatabase(
                          sql` or `,
                        )
                        : sql`false`
-                     })) as check_def_markers`,
+                     })) as check_def_markers,
+                 -- The FUNCTION-BODY half: a FIFTH catalog, because a migration whose entire
+                 -- content is a CREATE OR REPLACE FUNCTION changes nothing the four probes
+                 -- above can see — not a column, not an index, not a constraint name, and not
+                 -- a constraint DEFINITION (a function is pg_proc). prosrc is the body as
+                 -- written. Scoped to public like the rest; a literal FALSE when the list is
+                 -- empty keeps the subselect valid at 0 for a host that passes none.
+                 (select count(*) from pg_proc p
+                    join pg_namespace n on n.oid = p.pronamespace
+                   where n.nspname = 'public'
+                     and (${functionDefinitionMarkers.length > 0
+                       ? sql.join(
+                         functionDefinitionMarkers.map(([name, needle]) =>
+                           sql`(p.proname = ${name} and position(${needle} in p.prosrc) > 0)`),
+                         sql` or `,
+                       )
+                       : sql`false`
+                     })) as function_def_markers`,
     );
     const dbLatencyMs = Date.now() - started;
     const row = rowsOf<{
       one: number; pg_trgm: boolean; schema_markers: number | string; index_markers: number | string;
       check_markers: number | string; check_def_markers: number | string;
+      function_def_markers: number | string;
     }>(result)[0];
     if (!row || Number(row.one) !== 1) return { kind: "empty", dbLatencyMs };
-    // One total across all four probes — see `SCHEMA_INDEX_MARKERS` for why they are not four.
+    // One total across all five probes — see `SCHEMA_INDEX_MARKERS` for why they are not five.
     const markersFound =
       Number(row.schema_markers) + Number(row.index_markers) + Number(row.check_markers) +
-      Number(row.check_def_markers);
+      Number(row.check_def_markers) + Number(row.function_def_markers);
     return {
       kind: "probed",
       dbLatencyMs,
@@ -1384,10 +1443,11 @@ export const healthRoutes: Route[] = [
       const probe = await probeDatabase(
         deps.db,
         fullCensus ? fullCensus.markers : MAIL_SCHEMA_MARKERS,
-        // A mail-tier host passes none of either: every entry so far names a Cloud table, and
-        // a local engine's database is complete without them.
+        // A mail-tier host passes none of any of them: every entry so far names a Cloud table or
+        // a Cloud function, and a local engine's database is complete without them.
         fullCensus ? fullCensus.checkDefinitions : [],
         fullCensus ? fullCensus.indexMarkers : [],
+        fullCensus ? fullCensus.functionDefinitions : [],
       );
       if (probe.kind === "unreachable") {
         return healthResponse(503, {
