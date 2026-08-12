@@ -16,6 +16,166 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.9.3] — 2026-08-12
+
+Mostly about mail rendering as what it is, and about the app staying truthful while work
+settles. Pictures a sender embeds now show in the letter instead of arriving as a blanked
+box plus a download; filing verbs can be taken back with the same key that filed; pile
+counts hold steady while a filing is still in flight; and a message scheduled to resurface
+can no longer vanish into no list at all. The desktop launch also says what it is doing
+instead of holding one sentence over an empty window.
+
+### Reading
+
+**Embedded images render in the message, and attachments mean files.** An image a sender
+embeds by reference — a signature logo, a pasted screenshot, a newsletter's artwork — used
+to render as a blanked box while being listed as a downloadable attachment. Now the message
+shows it where the sender put it, and the attachment strip, the Files library and the
+paperclip all mean the same thing: a file you could download. Nothing is ever fetched from
+a URL the sender wrote — only the message's own parts are read, with strict budgets on how
+many and how large.
+
+**Sender names arrive with the mail.** Messages used to reach the reader as bare addresses;
+the name the sender writes on their own From line is now captured and shown.
+
+**Mail stays legible at narrow widths.** Tables in mail no longer split numbers in half —
+data cells keep each value whole, and a table wider than the column scrolls inside the
+message. Wide code blocks keep their whitespace and scroll instead of wrapping
+mid-identifier. Plain-text receipts that align columns with spaces render aligned. The
+phone reading overlay paints an opaque ground and gains a visible back button, and an
+unknown address lands on a real not-found page with a way back.
+
+**The thread column's rendering is finished.** A conversation's message panels keep their
+shadows intact, a partially scrolled panel runs to the window's edge before it is cut, the
+column casts no shadow of its own, and the stray vertical line at the list/viewer boundary
+is gone.
+
+**Smaller reading corrections.** The quoted-history control is the compact pill it was
+designed as; "Show original" recedes to a quiet footnote; and the widest message action row
+no longer overflows its pill.
+
+### Reading state
+
+**Mail you had already read no longer shows as new.** On a mailbox with existing history,
+the Reads and Receipts piles treated the absence of a "seen up to here" line as "everything
+is new". They now fall back to the mailbox's own read state, so mail read before this app
+ever ran — or read in another client — presents as read.
+
+**"Mark all read" clears everything the view shows** — flipping unread messages on your own
+mail server too, so other clients agree — and answers with an undo that replays exactly the
+messages the press flipped.
+
+### Keys and filing
+
+**Keys work where the interface says they do.** The message verbs act inside the Triage
+view, reply's `r` and `shift-R` work wherever a message is read, Escape closes what is open
+everywhere — including the search box and the narrow-width drawer — and opening a search
+hit lands on the message that was clicked, not the one nearest the end.
+
+**Filing is reversible.** The three "not now" verbs — Later, Park, Resurface — are toggles:
+the verb that filed a message takes it back out, from the key, the button and the palette
+alike. Rows carry a quiet badge naming the state, and the buttons show their pressed state.
+
+**Pile counts hold steady while filing settles.** A message moved between piles was
+briefly counted in both; the count on the rail and the pile it names are now the same
+number through the whole round trip.
+
+**One "? shortcuts" button replaces the pane-foot key legends** — it opens the complete,
+always-current shortcut sheet instead of a hand-written excerpt that clipped mid-word.
+
+### Ohbox and resurfacing
+
+**A due resurface lands pinned and unread in the Ohbox — never in no list.** A message
+whose resurface time came could vanish from every view while remaining findable only by
+search. It now pins at the top of the Ohbox, arrives bold, and the pin is spent by reading
+or re-filing it, whichever route does it.
+
+**A resurfaced row is one row** while the pin is still settling, and a conversation keeps
+its faces when your own reply is its newest message.
+
+**A self-send is one panel.** A message sent to your own address could render as identical
+twins; the conversation now collapses the copies and the real row outranks the provisional
+one.
+
+### Writing
+
+**The docked reply is a floating card whose controls stay visible.** The recipients, the
+toolbar, the attachment strip and Send/Cancel no longer scroll away — only the message text
+scrolls. A grip sets the panel's height, and Reply is a toggle: pressing `r` again closes
+the editor it opened, keeping the draft.
+
+**A link popover replaces the browser prompt.** The field prefills with the link under the
+caret, Remove appears when the caret stands in one, and destinations a mail client cannot
+open are refused with a visible message.
+
+**The picture-shrink dial sits in the attach row**, names its direction — Most, More, Some,
+Off (original) — and remembers the choice per signed-in account.
+
+**A sent message can no longer linger in Drafts.** Pressing Send during the autosave race
+could leave the delivered message sitting in Drafts, reopenable with Send live. The send
+now reports which row it used and the compose cleans up the other. Pasting a picture or
+dropping a file attaches it through the same pipeline as the picker.
+
+**The message leaves from the address on the From line when Send is pressed** — choosing a
+different From after the first pause in typing used to change the screen and nothing else.
+And a send that could not be confirmed now surfaces in Drafts with a line stating what is
+and is not known, instead of vanishing from every surface.
+
+**One sent row per send on Exchange.** Microsoft 365 saves its own re-rendered copy of
+every submission beside the copy this client appends; the two are now recognised as one
+message, and the provisional copy the interface shows stands down the moment the real one
+arrives.
+
+**The attachment cap is your mail server's own announced limit on the standalone desktop.**
+The fixed "Up to 3 MB total" is the hosted API's ceiling and still applies wherever a send
+rides that request; a standalone install now states and enforces the limit its own
+submission server announces.
+
+### Screening and privacy
+
+**A forged From cannot inherit a contact's consent.** The authentication-results reader is
+now actually wired per provider, so a message claiming a known contact's address is checked
+against the mailbox provider's own verdict before it inherits that contact's standing — and
+a backdated Date: header can no longer dodge the screening cutoff, because age is measured
+by the server's own receive time only.
+
+**A code hidden inside encoded mail is stripped before any AI request.** One-time codes and
+sign-in links were already removed from text sent to the model; that now covers codes
+arriving base64- or quoted-printable-encoded, on messages the credential screen has flagged.
+
+**A reload paints the current piles.** Each reload briefly resurrected already-decided
+Screener rows until the server's consent answer arrived; the answer is now remembered per
+device — nothing that authorises rides the cache — so the piles open partitioned.
+
+**A filing whose message was deleted from the server stops retrying.** The status bar
+counted it under "Filing N messages…" indefinitely; a server-observed delete now settles it.
+
+### Sessions and the app
+
+**A session that ends mid-use says so.** Every surface used to report its own symptom as a
+content failure. A confirmed session end now renders one sign-in prompt over a dimmed
+shell, failure notes distinguish "your session ended" from "this could not be loaded", and
+failures recorded while the session was bad are re-asked once it heals.
+
+**The launch says what it is doing.** The desktop engine narrates its boot — setting up the
+store, replaying recent changes, bringing the schema up to date — in the corner where the
+app reports sync work. And the slow launch this narrates gets rarer: the write-ahead log is
+checkpointed after every sync drain that wrote, so recovery replays at most one drain's
+churn.
+
+**German sessions read German throughout.** Relative-time stamps ("Synced 2 minutes ago")
+and the generic provider label follow the app language, and the desktop binary now bundles
+the strings both need.
+
+**Anchored popovers clamp to the window** instead of opening half off-screen from an anchor
+low in the window, with the lowest options unreachable.
+
+**Settings tell the truth.** The Rules pane reflows at phone width instead of forcing a
+sideways pan, a rule's confirmation opens at its row rather than off-screen at the top, and
+the Notifications pane states what exists instead of rendering five switches nothing reads.
+Sign-in copy promises "a passkey or a one-time code" rather than a passkey for everyone,
+and a card-less trial says "Trial ends", not "Renews".
+
 ## [0.9.2] — 2026-08-12
 
 Mostly about reading. A conversation is no longer one message with the others summarised
@@ -1222,7 +1382,9 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.3
+[0.9.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.2
 [0.9.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.1
 [0.9.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.0
 [0.8.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.8.2
