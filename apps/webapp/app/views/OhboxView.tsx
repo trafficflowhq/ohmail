@@ -428,8 +428,35 @@ export function OhboxView({
   };
   // Resurfaced takes no promote set: that group is the worker's pin, not a reading order, and a
   // `u` on a resurfaced row leaves it exactly where the pin put it.
-  resurfacedOrder.current = reconcile(resurfacedOrder.current, resurfaced);
-  newOrder.current = reconcile(newOrder.current, newForYou, promoted);
+  /**
+   * THE PIN CLAIMS A ROW OUT OF THE SESSION ORDERS — the display half of the selector's dedup.
+   *
+   * `ohboxView` already files a resurfaced row in the pinned group and holds it out of the other
+   * two, so the props this view receives never show one message twice. The session orders can:
+   * `reconcile`'s keep clause holds an id as long as `byId` — built over ALL THREE groups — still
+   * knows it, and `dropped` releases only the read-into-"Earlier" slide. So a "Resurface now" on a
+   * row sitting in New put its id into `resurfacedOrder` while `newOrder` went on holding it, and
+   * the message rendered TWICE — pinned at the top and again in its old slot — until a reload
+   * emptied the session orders. The settled state was always right; the optimistic window lied.
+   *
+   * The rule that ends it: each upper order is pruned to agree with the SELECTOR about which
+   * section owns the id. `newOrder` never holds a pinned id — the pin is instant, in both
+   * directions of the optimistic window. `resurfacedOrder` holds an id the pin claims OR one the
+   * selector has re-filed under "Earlier": that second clause is not a leak, it is the slide's
+   * lease — reading a pinned row clears the pin and files it below in one gesture, and the slide
+   * effect (keyed on `earlierIds`, right below) needs the order to keep the row's slot for
+   * `SETTLE_MS` before `dismissed` releases it, exactly as it does for a read row leaving New.
+   * An id in neither set — a pin rolled back on an unread row — is released to New immediately,
+   * where `reconcile` re-admits it, so a rollback re-files the row instead of leaving it pinned
+   * to nothing or drawn twice. Pruning the ORDERS rather than filtering the display lists keeps
+   * `upper` (which holds rows out of "Earlier") honest for the same reason. What is lost is only
+   * the row's old position in New across an unpin, which no reload preserves either.
+   */
+  const pinnedIds = new Set(resurfaced.map((m) => m.id));
+  resurfacedOrder.current = reconcile(resurfacedOrder.current, resurfaced)
+    .filter((id) => pinnedIds.has(id) || earlierIds.has(id));
+  newOrder.current = reconcile(newOrder.current, newForYou, promoted)
+    .filter((id) => !pinnedIds.has(id));
 
   // The three groups as DISPLAYED: session order for the two upper ones, and "Earlier" with the
   // pinned upper ids removed so a row read this session is never shown twice.
