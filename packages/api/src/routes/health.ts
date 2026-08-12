@@ -1328,9 +1328,26 @@ export const healthRoutes: Route[] = [
       // about hosts whose real problem was the second. Also 200: an observability fault must
       // never darken the product — see `HealthConfig.alertsError`.
       const alertsError = injected?.alertsError ?? null;
+      // B1B-P2b — RUN THE CONTENT-BLIND ATTESTATION, non-fatally. `adminFault` names the static
+      // console refusals; this names the one they cannot see — a plausible over-privileged
+      // `DATABASE_URL_ADMIN` — which otherwise surfaced only as a per-request 503. Awaited (the
+      // memoised factory pays the round trips once per cold instance), never allowed to throw:
+      // a dark console must not take the product host out of rotation. Absent on hosts with no
+      // blind connection, so this is a no-op for desktop and unarmed deployments.
+      let staffDbFault: string | null = null;
+      if (injected?.staffDbAttestation) {
+        try {
+          staffDbFault = await injected.staffDbAttestation();
+        } catch {
+          // The capability itself is contracted not to throw; this is belt-and-braces so a
+          // future edit to it can never darken `/health`.
+          staffDbFault = null;
+        }
+      }
       const staffFaults = {
         ...(adminError ? { adminFault: adminError } : {}),
         ...(alertsError ? { alertsFault: alertsError } : {}),
+        ...(staffDbFault ? { staffDbFault } : {}),
       };
       // Not a fault, and never 503: it is the tripwire for the NEXT provider migration.
       // `unrecognized` here means the connection guards have gone silent again. Emitted beside
