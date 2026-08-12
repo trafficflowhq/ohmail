@@ -162,9 +162,20 @@ export class StaticKeyProvider implements KeyProvider {
 //   • The HIGHEST version present is ACTIVE: `StaticKeyProvider` encrypts new secrets
 //     under it (`currentKeyVersion()`), while every older version stays loaded so
 //     rows carrying `key_version < active` still decrypt. Every table that stores an
-//     envelope-encrypted secret persists `key_version`, so no data migration is needed —
-//     ROTATION IS: add `TF_KEK_V{n+1}` to BOTH hosts, redeploy. Re-encryption of old
-//     rows is lazy (on next write) and never required for correctness.
+//     envelope-encrypted secret persists `key_version`, so ADDING a version needs no
+//     data migration: add `TF_KEK_V{n+1}` to BOTH hosts and redeploy, and re-encryption
+//     of old rows is lazy (on next write) and never required for CORRECTNESS.
+//   • **Correctness is not revocation, and the difference is the whole of what the step
+//     above does not do.** Adding a version protects new writes only. Every row nobody
+//     has touched keeps its old envelope, the old key still opens it, and so a key that
+//     has leaked keeps opening every one of those rows — and every retained backup of
+//     them — for as long as they go unwritten. Add-and-redeploy is therefore the right
+//     move for a scheduled rotation and a no-op for the case that matters, which is
+//     rotating BECAUSE a key leaked.
+//     Retiring a version is a second, deliberate operation: re-wrap the stored envelopes
+//     onto the active version, confirm nothing references the old one any more, and only
+//     then remove it. Re-wrapping means decrypt-then-encrypt under keys that live in this
+//     process, so it is a pass over the rows and not something a schema migration can do.
 //   • Removing an old version is the one destructive step: do it only once no row
 //     references it. A provider that lacks the version a row was written under fails
 //     that row's decrypt with `no KEK for version N`.
