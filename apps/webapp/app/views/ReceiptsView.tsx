@@ -10,12 +10,12 @@
  * Order still comes from the shell's `receiptsByDay` flatten — newest day first, newest within
  * a day — so nothing about the sequence changed, only what is drawn between the rows.
  *
- * Like Reads, the pile carries NO per-row unread status: rows and cards are dotless, and
- * newness is position relative to this view's OWN waterline ("new since last visit" —
- * `view_meta` "receipts_waterline", independent of Reads'). Scroll-past still feeds
- * per-message `\Seen` through `mark_seen` (the eventual sweep; the `justSeen` set below is
- * dedup, not state), and LEAVING the view commits the waterline in one anchored
- * `feed_mark_seen` via `onLeaveSeen`.
+ * Like Reads, the rows keep two facts apart: NEWNESS is position relative to this view's
+ * OWN waterline ("new since last visit" — `view_meta` "receipts_waterline", independent of
+ * Reads'; no dots), and READNESS is the mailbox's `\Seen`, rendered as the quiet ink on
+ * read rows. Scroll-past still feeds per-message `\Seen` through `mark_seen` (the eventual
+ * sweep; the `justSeen` set below is dedup, not state), and LEAVING the view commits the
+ * waterline in one anchored `feed_mark_seen` via `onLeaveSeen`.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
@@ -144,6 +144,18 @@ export function ReceiptsView({
   }, []);
   /** Where the line sits in the flat list; everything is fresh until the shell says otherwise. */
   const fresh = Math.min(freshCount ?? all.length, all.length);
+  /**
+   * The mark-all press clears both of this view's statements — the unread ids through the
+   * shell's chunked `mark_seen`, the "N new" count through one line-commit to the top via
+   * the same writer the leave-commit uses. See the Reads handler for the live measurement
+   * that made the pairing mandatory.
+   */
+  const markAllRead = () => {
+    const ids = all.filter(isUnread).map((m) => m.id);
+    if (ids.length > 0) onMarkAllRead?.(ids);
+    const top = all[0];
+    if (top) onLeaveSeen?.({ upToId: top.id, messageIds: [] });
+  };
   const wlStamp = waterline?.at ? waterlineStamp(waterline.at, locale) : "";
   const wlMeta = waterline?.meta ?? (wlStamp ? tr("waterlineMeta", { stamp: wlStamp }) : undefined);
   /**
@@ -301,9 +313,12 @@ export function ReceiptsView({
       subject={m.subject}
       preview={m.snippet}
       amount={m.amount}
-      /* `data-unseen` for the sweep; NO dot, no seen/justseen weights — newness is position
-         relative to the line, exactly as in Reads. */
+      /* `data-unseen` for the sweep; NO dot — newness is position relative to the line,
+         exactly as in Reads. Read state renders truthfully beside it: a `\Seen` receipt
+         takes the quiet ink, an unread one keeps full weight (see the Reads row for the
+         live measurement behind this). */
       unread={isUnread(m)}
+      seen={!isUnread(m)}
       dotless
       selected={current === m.id}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
@@ -321,7 +336,8 @@ export function ReceiptsView({
           onMarkAllRead ? (
             <MarkAllRead
               unreadCount={unreadCount}
-              onMarkAllRead={() => onMarkAllRead(all.filter(isUnread).map((m) => m.id))}
+              freshCount={fresh}
+              onMarkAllRead={markAllRead}
             />
           ) : null
         }

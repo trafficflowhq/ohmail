@@ -571,15 +571,26 @@ export interface FeedPartition {
  *
  * The cut is EXCLUSIVE: `newestSeenId` was on screen at the end of the last visit, so it
  * belongs BELOW the line — a leave at the top of the pile yields `fresh: []`, the line above
- * everything, which is the honest "nothing new since you were here". An anchor the pile no
- * longer holds (moved, deleted) degrades to everything-fresh: presenting seen mail as new is
- * recoverable, presenting unseen mail as old loses it.
+ * everything, which is the honest "nothing new since you were here".
+ *
+ * WITHOUT A USABLE ANCHOR, `\Seen` FROM THE MAILBOX IS THE LINE. A live mirror holds no
+ * waterline row until the first leave-commit writes one (`/sync` has no `view_meta` entity
+ * type), and the committed anchor can vanish — it is usually a READ message, and deleting
+ * read mail is ordinary. Both absences used to degrade to everything-fresh, which over a
+ * mirror built from an EXISTING mailbox presented years of already-read mail as "new since
+ * last visit". The IMAP mailbox is the master: the fallback junction is the newest
+ * already-read message — the R10-5 anchor semantic ("the newest message that was on screen
+ * when the reader last left") extended to the visit that happened in the user's previous
+ * client. A pile with no read mail in it stays everything-fresh, which is now a statement
+ * about the mail rather than about a row that was never written. Either way the cut is
+ * positional, so `[...fresh, ...seen]` is always the pile's display order — the receipts
+ * junction arithmetic counts on that.
  */
 export function feedPartition(reader: EntityReader, view: FeedView): FeedPartition {
   const all = messagesIn(reader, FOLDER_OF_VIEW[view]);
   const waterline = reader.get<WaterlineMeta>("view_meta", waterlineIdOf(view)) ?? null;
-  if (!waterline) return { waterline: null, fresh: all, seen: [] };
-  const idx = all.findIndex((m) => m.id === waterline.newestSeenId);
+  const anchor = waterline ? all.findIndex((m) => m.id === waterline.newestSeenId) : -1;
+  const idx = anchor >= 0 ? anchor : all.findIndex((m) => !m.unread);
   if (idx < 0) return { waterline, fresh: all, seen: [] };
   return { waterline, fresh: all.slice(0, idx), seen: all.slice(idx) };
 }

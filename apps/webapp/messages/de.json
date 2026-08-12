@@ -6,7 +6,8 @@
   },
   "markAll": {
     "label": "Alles als gelesen markieren",
-    "aria": "Alle {count} ungelesenen Nachrichten als gelesen markieren"
+    "aria": "Alle {count} ungelesenen Nachrichten als gelesen markieren",
+    "ariaFresh": "Alle {count} neuen Nachrichten als gelesen markieren"
   },
   "ribbon": {
     "label": "<b>Demo.</b> Erfundene Post. Nichts verlässt diesen Tab.",

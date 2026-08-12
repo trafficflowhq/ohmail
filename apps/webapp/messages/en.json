@@ -6,7 +6,8 @@
   },
   "markAll": {
     "label": "Mark all read",
-    "aria": "Mark all {count} unread messages read"
+    "aria": "Mark all {count} unread messages read",
+    "ariaFresh": "Mark all {count} new messages read"
   },
   "ribbon": {
     "label": "<b>Demo.</b> Invented mail. Nothing leaves this tab.",

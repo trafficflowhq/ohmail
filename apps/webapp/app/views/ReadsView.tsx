@@ -1,12 +1,13 @@
 "use client";
 
 /**
- * Reads — list left, skim stream right. The pile carries NO per-row unread status: rows and
- * cards are dotless, and newness is position relative to the waterline ("new since last
- * visit"). Scroll-past and dwell still feed per-message `\Seen` through the engine (the
- * eventual sweep), the LEAVE of the view commits the waterline in one anchored
- * `feed_mark_seen` (`onLeaveSeen` — the reliability floor), the scroll-spy keeps list and
- * stream in step, and the pending-AI chip carries the classification approval flow.
+ * Reads — list left, skim stream right. Two per-row facts, kept apart: NEWNESS is position
+ * relative to the waterline ("new since last visit" — no dots), and READNESS is the
+ * mailbox's own `\Seen`, rendered as the quiet ink on read rows. Scroll-past and dwell
+ * feed per-message `\Seen` through the engine (the eventual sweep), the LEAVE of the view
+ * commits the waterline in one anchored `feed_mark_seen` (`onLeaveSeen` — the reliability
+ * floor), the scroll-spy keeps list and stream in step, and the pending-AI chip carries
+ * the classification approval flow.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
@@ -213,10 +214,25 @@ export function ReadsView({
   const unreadCount = all.filter((m) => m.unread).length;
   /**
    * WHAT THE PANE COUNTS: "new since last visit" — the fresh side of the line — never an
-   * unread count. The rows are dotless here; per-row read state is not this pile's language,
-   * so a number derived from it would be a signal the view itself no longer shows.
+   * unread count. Per-row read state renders too (the quiet ink on `\Seen` rows), but the
+   * headline number is the line's statement, and the two must not be conflated.
    */
   const newCount = freshCount;
+  /**
+   * THE MARK-ALL PRESS CLEARS BOTH STATEMENTS THE VIEW MAKES, because a press that clears
+   * only one was measured lying: the button (keyed on unread) vanished while the count and
+   * the rows stood. The unread ids ride the shell's chunked `mark_seen` (real `\Seen`, to
+   * the user's own IMAP via the worker); the line commits to the TOP through the SAME
+   * writer the leave-commit uses (`onLeaveSeen` → `commitFeedSeen`, which skips a commit
+   * that would change nothing). Afterwards: rows quiet, "0 new", and the button's absence
+   * is a statement about the mail.
+   */
+  const markAllRead = () => {
+    const ids = all.filter((m) => m.unread).map((m) => m.id);
+    if (ids.length > 0) onMarkAllRead?.(ids);
+    const top = all[0];
+    if (top) onLeaveSeen?.({ upToId: top.id, messageIds: [] });
+  };
   /** The line's stamp: fixture-authored on the demo, formatted from the commit instant live. */
   const wlStamp = partition.waterline?.at ? waterlineStamp(partition.waterline.at, locale) : "";
   const wlMeta =
@@ -346,9 +362,14 @@ export function ReadsView({
       {...rowStamp(m, now, absoluteTime, onToggleTime)}
       subject={m.subject}
       preview={m.snippet}
-      /* `data-unseen` for the sweep; NO dot, no seen/justseen weights — the pile is the
-         reading pile, and a row's newness is its position relative to the line. */
+      /* `data-unseen` for the sweep; NO dot — NEWNESS is the row's position relative to the
+         line. READNESS is the mailbox's own statement and renders truthfully: a `\Seen`
+         message (including one read before this client ever ran, or in another client)
+         takes the quiet ink, an unread one keeps full weight. Measured live without this:
+         a warm import rendered every row at unread weight, and "Mark all read" changed
+         nothing visible. */
       unread={m.unread}
+      seen={!m.unread}
       dotless
       selected={current === m.id}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
@@ -429,7 +450,8 @@ export function ReadsView({
           onMarkAllRead ? (
             <MarkAllRead
               unreadCount={unreadCount}
-              onMarkAllRead={() => onMarkAllRead(all.filter((m) => m.unread).map((m) => m.id))}
+              freshCount={freshCount}
+              onMarkAllRead={markAllRead}
             />
           ) : null
         }

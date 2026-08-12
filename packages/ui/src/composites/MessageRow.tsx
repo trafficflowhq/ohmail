@@ -76,15 +76,19 @@ export interface MessageRowProps {
   amount?: string;
   unread?: boolean;
   /**
-   * DROP THE ROW'S OWN NEWNESS SIGNAL — for lists whose newness lives on a waterline.
+   * DROP THE ROW'S DOT — for lists whose NEWNESS lives on a waterline.
    *
-   * Reads and Receipts carry no per-row unread status: the pile IS the reading pile, and
-   * "new" means "above the line", not "this row is bold". A dotless row still stamps
-   * `data-unseen` from `unread`, because the seen-on-scroll observer is the eventual
-   * `\Seen` sweep and it selects on that attribute — the STATE keeps flowing to the
-   * user's own IMAP server; only the per-row rendering of it is dropped. `seen` and
-   * `justSeen` are ignored under this flag for the same reason: a quieter-ink read row
-   * is per-row read status by other means.
+   * Reads and Receipts say "new" with the line, not with a dot: "new" means "above the
+   * line". A dotless row still stamps `data-unseen` from `unread`, because the
+   * seen-on-scroll observer is the eventual `\Seen` sweep and it selects on that
+   * attribute — the STATE keeps flowing to the user's own IMAP server.
+   *
+   * WHAT THIS FLAG DOES NOT DROP: `seen`'s quiet ink. This paragraph used to say the
+   * opposite — that a quieter read row is "per-row read status by other means" and is
+   * suppressed too — and a live warm account showed where that ends: every row of an
+   * imported, largely-read mailbox rendered at full unread weight, and "Mark all read"
+   * changed nothing a reader could see. Newness is the line's statement; READNESS is the
+   * mailbox's (`\Seen`), and a row may not render a claim the IMAP master contradicts.
    *
    * Absent ⇒ the row is exactly what it always was, dot and all — the Ohbox's contract.
    */
@@ -287,8 +291,8 @@ export function MessageRow(props: MessageRowProps) {
   const cls = [
     "row",
     lead !== null ? "srow" : null,
-    !dotless && seen ? "seen" : null,
-    !dotless && justSeen ? "justseen" : null,
+    seen ? "seen" : null,
+    justSeen ? "justseen" : null,
     selected ? "sel" : null,
     picked ? "picked" : null,
     dull ? "dull" : null,
