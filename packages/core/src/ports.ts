@@ -36,21 +36,20 @@ export interface Change {
    * is why the field exists at all: the screening cutoff (`PlanDeps.screeningCutoff`) decides
    * whether a message is old enough to keep its arrival folder instead of being held at the gate,
    * and a stranger who could pick that date could put `Date: 2019` on a fresh delivery and reach
-   * the Ohbox. Reading INTERNALDATE first removes the choice.
+   * the Ohbox. INTERNALDATE is the only value the cutoff reads, which removes the choice.
    *
-   * ABSENT ⇒ the pipeline falls back to the header date, and the residual above is live for that
-   * adapter. It is stated rather than designed away because the fallback's alternative — refusing
-   * to apply the cutoff at all without INTERNALDATE — would make the whole feature depend on a
-   * field the IMAP adapter happens to fetch, and the fallback's blast radius is bounded: the
-   * message reaches the folder it ARRIVED in, which is where the mail server already put it, and
-   * no rule, contact or consent record is written. It is not a promotion out of a decision the
-   * user made — {@link Change} never reaches `evaluateRules`' rule branch this way, and the
-   * subordination refuses to touch `source === "rule"` verdicts.
+   * ABSENT ⇒ the cutoff does not apply and the message takes the gate like fresh mail. The
+   * header-date FALLBACK that used to stand here was a security-review finding: on a
+   * server that omits or mangles INTERNALDATE it handed the gate's clock back to the sender,
+   * which is exactly the forgery this field exists to refuse — so the fallback is gone rather
+   * than bounded. The cost is stated instead: an adapter that never carries INTERNALDATE never
+   * engages the backlog suppression, and a fresh account's backfill there is screened like new
+   * mail. Fail-closed — mail is HELD at the consent gate, never admitted — and accepted.
    *
    * Deliberately NOT combined with the header date the way `adapters/imap.ts#arrivalKey` combines
    * them for ORDERING. That function takes the EARLIER of the two, which is the honest answer for
    * "when did this really happen" and the wrong one here: a forged early header would win the
-   * minimum and make a new message look old. First INTERNALDATE, then the header, never a mix.
+   * minimum and make a new message look old. INTERNALDATE alone, never a mix.
    */
   internalDate?: Date;
 }

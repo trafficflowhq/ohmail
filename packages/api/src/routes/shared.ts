@@ -99,10 +99,11 @@ export function privacy(deps: ApiDeps): PrivacyService {
  * The UnsubscribeService — **503, not 500, when the deployment has none.**
  *
  * Same posture as {@link billing} and {@link waitlistSvc}, and for a sharper reason than either:
- * this service needs a decision nobody can default for a host — which authserv-ids the account's
- * own provider signs `Authentication-Results` with (`UnsubscribeDeps.trustedAuthservIds`). A host
- * that has not made that decision is not broken, it is a host that does not offer unsubscribe,
- * and saying so is better than acting on an unauthenticated sender's URL.
+ * this service needs a trust decision — which authserv-ids each mailbox's own provider signs
+ * `Authentication-Results` with (`UnsubscribeDeps.trustedAuthservIdsFor`, resolved per mailbox
+ * from its credential row's IMAP host). A host that has not wired that resolver is
+ * not broken, it is a host that does not offer unsubscribe, and saying so is better than acting
+ * on an unauthenticated sender's URL.
  */
 export function unsubscribes(deps: ApiDeps): UnsubscribeService {
   const svc = deps.services?.unsubscribe;

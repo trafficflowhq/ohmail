@@ -8,7 +8,7 @@ import { ImapAdapter, buildImapAuth, type ImapConfig, type MailboxAdapter, type 
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 // The engine's OWN resolution of the Ohbox posture, never a second reading of it. `rules.ts` owns
 // what an absent or unrecognised value means, and both hosts ask it the same question.
-import { DEFAULT_OHBOX_POLICY, resolveOhboxPolicy } from "@trafficflow/core/mail";
+import { DEFAULT_OHBOX_POLICY, providerAuthservIds, resolveOhboxPolicy } from "@trafficflow/core/mail";
 // After the `@trafficflow/core` block, matching every other file in this package: core first,
 // then the private half. `packages/core` → `@trafficflow/db` is a real edge (`pipeline.ts` imports
 // `classifyLedgerSource`, `drizzle-repo.ts` imports the tables), so this file should not be the
@@ -867,7 +867,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      */
     const imapConfig: ImapConfig = { ...config.imap, auth: { user: config.imap.auth.user, pass: login.pass ?? "" } };
     const adapter = config.adapterFactory ? config.adapterFactory(imapConfig) : new ImapAdapter(imapConfig);
-    const syncDeps = { repo, adapter, accountId: world.accountId, mailboxId: world.mailboxId };
+    const syncDeps = {
+      repo, adapter, accountId: world.accountId, mailboxId: world.mailboxId,
+      // The same consent rule as the hosted worker: whose `Authentication-Results` this
+      // mailbox may believe is a fact about the host THIS config dials — Gmail/Microsoft
+      // resolve to their signing authserv-id, everything else to the empty set (demote nothing).
+      trustedAuthservIds: providerAuthservIds(config.imap.host),
+    };
 
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;

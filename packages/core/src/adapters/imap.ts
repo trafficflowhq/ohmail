@@ -980,9 +980,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         messageId: normalizeMessageId(m.envelope?.messageId ?? null),
         // The fetch already asks for `internalDate` (it is in the field list above, for the
         // ordering key); this carries it to the pipeline instead of discarding it. Guarded on the
-        // instance and on validity because a server may answer without one, or with garbage — and
-        // an invalid Date reaching the cutoff comparison would answer `false` for every message,
-        // silently switching the backlog rule off for that whole page.
+        // instance and on validity because a server may answer without one, or with garbage. An
+        // omitted or invalid value means the backlog cutoff does not engage for that message and
+        // it is HELD at the consent gate like fresh mail — the pipeline no longer falls back to
+        // the sender-written `Date:` header (a security review showed a backdated header kept a
+        // stranger's mail in-folder), so a server that cannot vouch for a receive time screens
+        // more, never admits more.
         ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
           ? { internalDate: m.internalDate }
           : {}),

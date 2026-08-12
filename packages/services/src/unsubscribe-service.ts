@@ -96,17 +96,24 @@ export interface UnsubscribeDeps {
    */
   resolver: HostResolver;
   /**
-   * The authserv-ids the ACCOUNT'S OWN provider signs `Authentication-Results` with, lowercased.
+   * The authserv-ids a MAILBOX's own provider signs `Authentication-Results` with, resolved PER
+   * MESSAGE from the mailbox that holds it.
    *
-   * **Required, and EMPTY is the correct value for a deployment that has not named its
-   * provider.** Empty means every message resolves to `"unavailable"`, which is permissive, so
-   * turning this service on changes no routing and blocks no unsubscribe until somebody makes an
-   * explicit decision about whose report to believe. See `rules.ts#authVerdictFromHeaders`.
+   * This replaced `trustedAuthservIds: ReadonlySet<string>` — one set for the whole deployment —
+   * because the trusted position is a fact about the provider serving EACH mailbox, and one
+   * service instance serves mailboxes at different providers. The deployment-wide set had
+   * exactly one production value, the empty set, which made `authVerdictFromHeaders` answer
+   * `"unavailable"` for every message and left the `author_failed_authentication` refusal
+   * unreachable: a forged `From` could choose whose list the button leaves.
    *
-   * It is injected rather than read from `mailboxes` because there is no column for it: adding
-   * one is a hand-written migration, and this slice was not permitted to write one.
+   * **Still required, and still never defaulted** — the absent-config default is the dangerous
+   * branch. Production wires `adapters/drizzle-repo.ts#mailboxProviderAuthservIds`, which reads
+   * the IMAP host off the mailbox's own credential row (one indexed PK read per unsubscribe) and
+   * maps it through the provider table; a caller that has decided to trust nothing types
+   * `async () => NO_TRUSTED_AUTHSERV_IDS`. See `rules.ts#authVerdictFromHeaders` for what the
+   * set means.
    */
-  trustedAuthservIds: ReadonlySet<string>;
+  trustedAuthservIdsFor: (db: Tx, mailboxId: string) => Promise<ReadonlySet<string>>;
 }
 
 /** Why an unsubscribe was refused. `null` on the {@link UnsubscribeResult} of a success. */
@@ -283,7 +290,10 @@ export class UnsubscribeService {
     const row = await this.load(ctx, messageId);
 
     const authVerdict = authVerdictFromHeaders(
-      row.headers, row.fromAddress, this.deps.trustedAuthservIds,
+      row.headers, row.fromAddress,
+      // Per-mailbox trust, resolved for the mailbox that HOLDS this message — see
+      // {@link UnsubscribeDeps.trustedAuthservIdsFor}.
+      await this.deps.trustedAuthservIdsFor(asTx(ctx), row.mailboxId),
     );
     await asTx(ctx).update(messages)
       .set({ authVerdict, updatedAt: ctx.now() })

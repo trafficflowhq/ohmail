@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
-import { messages, messageInstances, messageFailures, folderState, flagState, mailboxes, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
+import { messages, messageInstances, messageFailures, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   Rule, NativeLocator, EmailAddress,
@@ -10,6 +10,7 @@ import type {
   // classifier and the drafter into the import graph of every artifact that stores a message.
 } from "../mail.js";
 import { effectForDestination } from "../rules.js";
+import { providerAuthservIds } from "../authserv-ids.js";
 
 export interface PersistedFolderCursor { uidValidity: string; uidNext: number; highestModseq: string; }
 /**
@@ -1391,4 +1392,35 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
 export function makeDrizzleRepo(db: Db): DrizzleRepo {
   return new DrizzleRepo(db);
+}
+
+/**
+ * The authserv-ids a MAILBOX's own provider signs `Authentication-Results` with, resolved from
+ * the IMAP host on that mailbox's own credential row.
+ *
+ * This is the ONE sanctioned bridge from a mailbox id to `authserv-ids.ts#providerAuthservIds`
+ * for every consumer that holds a database handle but not the live connection config — the
+ * unsubscribe service and the three re-derivation passes (`rule-retro`, `ohbox-tidy`,
+ * `sensitive-rescreen`). The seams that DO hold the config (the worker's attach, the sidecar,
+ * the reconcile cron) call `providerAuthservIds(host)` directly on the same host string they
+ * dial, so the two paths cannot disagree about which server serves the mailbox.
+ *
+ * `meta` is the credential row's NON-SECRET half (host/port/user/secure — see
+ * `schema-mail.ts#mailboxCredentials`); `secret_enc` is not selected and never leaves the
+ * database here. A mailbox with no `imap` credential row yet (awaiting credentials) or a meta
+ * with no host resolves to the empty set: verdicts stay `"unavailable"` and nothing is demoted,
+ * the same fail-open-for-demote-only answer an unknown provider gets.
+ */
+export async function mailboxProviderAuthservIds(
+  db: Db, mailboxId: string,
+): Promise<ReadonlySet<string>> {
+  const [row] = await db.select({ meta: mailboxCredentials.meta })
+    .from(mailboxCredentials)
+    .where(and(
+      eq(mailboxCredentials.mailboxId, mailboxId),
+      eq(mailboxCredentials.transport, "imap"),
+    ))
+    .limit(1);
+  const meta = row?.meta as { host?: unknown } | null | undefined;
+  return providerAuthservIds(typeof meta?.host === "string" ? meta.host : null);
 }

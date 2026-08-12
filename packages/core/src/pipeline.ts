@@ -261,11 +261,21 @@ export interface PlanDeps {
    * So there is no migration 0032 and no `/health` marker move: this is injected, exactly like
    * the classifier, the credit gate and the routing port beside it.
    *
-   * ── ABSENT IS A FIRST-CLASS STATE, AND IT IS THE DEFAULT ────────────────────────────────
+   * ── HOW PRODUCTION POPULATES IT ─────────────────────────────────────────────────────────
+   *
+   * `authserv-ids.ts#providerAuthservIds(<the IMAP host the connection dials>)` — the static
+   * provider table (Gmail, Microsoft), resolved where the adapter is built and threaded here.
+   * Every seam that builds sync deps REQUIRES the field (`SyncDeps.trustedAuthservIds`), because
+   * for this input the absent default is the dangerous branch: this field sat optional-and-empty
+   * at all five production sites, and the demote-only branch below protected nothing.
+   *
+   * ── ABSENT IS STILL A FIRST-CLASS STATE HERE ────────────────────────────────────────────
    *
    * Absent ⇒ {@link NO_TRUSTED_AUTHSERV_IDS} ⇒ `"unavailable"` for every message ⇒ byte-identical
-   * routing to the `auth: "unauthenticated"` literal this replaced. That is not a fallback, it
-   * is the required day-one behaviour: see {@link AuthVerdict} on the large backlog.
+   * routing to the `auth: "unauthenticated"` literal this replaced — which is also what an
+   * unknown provider's mailbox resolves to. It stays optional HERE (and required one level up)
+   * because a plan with no trust decision must route like the day-one engine: see
+   * {@link AuthVerdict} on the large backlog.
    */
   trustedAuthservIds?: ReadonlySet<string>;
   /**
@@ -327,11 +337,13 @@ export interface PlanDeps {
    *
    * ── HOW THE AGE IS MEASURED ───────────────────────────────────────────────────────────────
    *
-   * `change.internalDate` when the adapter carries it, the parsed `Date:` header otherwise, and
-   * NEITHER present ⇒ NOT old ⇒ the gate's verdict stands. That last case is the one to keep: a
-   * message with no date at all is unknown, not ancient, and the safe answer for an unknown is the
-   * consent gate. See {@link Change.internalDate} for why the header is a fallback rather than an
-   * equal, and why the two are not combined the way `arrivalKey` combines them.
+   * `change.internalDate` — the server's own receive clock — and NOTHING else. ABSENT ⇒ NOT old
+   * ⇒ the gate's verdict stands: a message whose receive time the server did not vouch for is
+   * unknown, not ancient, and the safe answer for an unknown is the consent gate. The parsed
+   * `Date:` header used to be the fallback, and a security review flagged it — the header
+   * is written by the SENDER, so on an INTERNALDATE-less server it let a backdated `Date:` keep
+   * a stranger's fresh delivery in the INBOX. The header still orders and displays
+   * (`messages.date`); it has no say here. See {@link Change.internalDate}.
    *
    * ── WHY A RESOLVED INSTANT AND NOT `{ baselineAt, dormancyDays }` ─────────────────────────
    *
@@ -702,8 +714,17 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
      * The `\Seen` state is deliberately NOT consulted. Whether the backlog has been read is a fact
      * about the user's habits, not about whether ohmail should re-file it, and the unread half of
      * exactly that conflation is the churn the cutline half of this slice removes.
+     *
+     * THE SERVER CLOCK ONLY — `?? normalized.date` stood here, and a security review flagged
+     * it. The header `Date:` is written by the SENDER, so with the fallback in place any
+     * server that omits or mangles INTERNALDATE handed the gate's clock to the sender: a
+     * freshly-delivered `Date: 2019` kept a stranger's mail in the INBOX with no rule, no
+     * contact and no user action. The header still orders and displays (`messages.date`); it
+     * never again says "backlog". No INTERNALDATE ⇒ `null` ⇒ NOT old ⇒ the gate — so on a
+     * server that never supplies INTERNALDATE the backlog suppression simply never engages and
+     * a backfill screens like fresh mail. That is fail-closed, and it is the accepted cost.
      */
-    const arrivedAt = change.internalDate ?? normalized.date ?? null;
+    const arrivedAt = change.internalDate ?? null;
     const preBaselineBacklog = deps.screeningCutoff !== undefined
       && decision.source === "screener"
       && authVerdict !== "fail"

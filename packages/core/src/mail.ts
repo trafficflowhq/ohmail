@@ -31,6 +31,7 @@ export * from "./mime.js";
 export * from "./html-storage.js";
 export * from "./sensitive.js";
 export * from "./rules.js";
+export * from "./authserv-ids.js";
 export * from "./ports.js";
 export * from "./dedup.js";
 export * from "./reconciler.js";

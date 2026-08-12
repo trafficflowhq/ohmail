@@ -35,6 +35,21 @@ export interface SyncDeps {
    */
   credits?: CreditGate;
   /**
+   * The authserv-ids this MAILBOX's own provider signs `Authentication-Results` with —
+   * `providerAuthservIds(<the IMAP host this connection dials>)`, resolved where the adapter is
+   * built and threaded into `planChange`.
+   *
+   * REQUIRED, deliberately, unlike every optional field around it — because for this one the
+   * absent-config default IS the dangerous branch. An empty set makes `authVerdictFromHeaders`
+   * answer `"unavailable"` for every message, the demote-only branch never fires, and a forged
+   * known-contact `From` inherits that contact's Ohbox admission. Optional-with-a-default is how
+   * all five production sites shipped inert; a required field makes the composition root that
+   * forgets it a compile error instead. A caller that has genuinely decided to trust nothing
+   * (a test, an unknown provider) types `NO_TRUSTED_AUTHSERV_IDS` — the same "somebody has to
+   * type the empty set" rule `UnsubscribeDeps` established.
+   */
+  trustedAuthservIds: ReadonlySet<string>;
+  /**
    * The account's Ohbox posture, resolved from `account_settings.ohbox_policy` and threaded into
    * `planChange`. ABSENT ⇒ `planChange` resolves it to the lenient `DEFAULT_OHBOX_POLICY`, so a
    * caller that does not set it (a reconcile/restart pass, a test) routes byte-identically to before
@@ -209,7 +224,7 @@ function siteOf(ch: Change): { folder: string; uidValidity: string; uid: number 
  * would read as permanently partial for a reason that has nothing to do with importing.
  */
 export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
-  const { repo, adapter, accountId, mailboxId, classifier, credits, ohboxPolicy, ohboxBar, screeningCutoff, log } = deps;
+  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, log } = deps;
   const deadLetters = deps.deadLetters ?? new DeadLetterLedger();
   const version = deps.buildVersion ?? buildVersionOf(process.env);
   deadLetters.beginCycle();
@@ -377,7 +392,7 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
   // ingested; a FLAG is a cursor-only signal, and a DELETE is the move evidence recorded above.
   for (const ch of [...batch.creates, ...batch.moves]) {
     await attempt(ch, async () => {
-      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, ohboxPolicy, ohboxBar, screeningCutoff });
+      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff });
       await repo.transaction((txRepo) =>
         commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId }),
       );
@@ -469,7 +484,7 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
 async function retryFailedMessages(
   deps: SyncDeps, deadLetters: DeadLetterLedger, version: string,
 ): Promise<void> {
-  const { repo, adapter, accountId, mailboxId, classifier, credits, ohboxPolicy, ohboxBar, screeningCutoff, log } = deps;
+  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, log } = deps;
   // A backend that cannot re-read one message degrades to the pre-0041 behaviour rather than
   // erroring: the rows stay owed and a later deploy (or a real adapter) picks them up.
   if (!adapter.fetchByUid) return;
@@ -567,7 +582,7 @@ async function retryFailedMessages(
       // dual-key lookup answers `duplicate` for a message a previous attempt already committed, and
       // `own_copy` for a Sent twin of mail we hold.
       try {
-        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, ohboxPolicy, ohboxBar, screeningCutoff });
+        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff });
         await repo.transaction((txRepo) =>
           commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId }),
         );
