@@ -16,7 +16,7 @@ import {
   type UnsubscribeRefusal,
   type UnsubscribeResult,
 } from "../types.js";
-import type { ListOlderWire, ServerSearchWire } from "../engine.js";
+import type { ListOlderWire, ServerSearchOpts, ServerSearchWire } from "../engine.js";
 import type { AttachmentWire, EngineAdapter, MutationOutcome, SyncParams } from "./adapter.js";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -587,9 +587,17 @@ export class HttpAdapter implements EngineAdapter {
    * carrying the server's own sentence about spent credits, and rendering "nothing matched"
    * over a refusal would be a lie the user cannot see through.
    */
-  async searchServer(query: string, opts: { limit?: number } = {}): Promise<ServerSearchWire> {
+  async searchServer(query: string, opts: ServerSearchOpts = {}): Promise<ServerSearchWire> {
     const q = new URLSearchParams({ q: query });
     if (opts.limit !== undefined) q.set("limit", String(opts.limit));
+    /**
+     * `relevance` IS NOT SENT. It is the server's default and the endpoint's whole prior
+     * behaviour, so leaving the parameter off means this build asks an older deploy exactly the
+     * question it asked before — no 400 from a server that predates `?sort=`, and no flag day
+     * between the client and the API. Every other value is explicit, and an unknown one is
+     * refused by the route rather than coerced, which is what makes that silence safe.
+     */
+    if (opts.sort !== undefined && opts.sort !== "relevance") q.set("sort", opts.sort);
     const res = await this.request("GET", `/search?${q.toString()}`);
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as { items?: EngineMessage[]; total?: number };

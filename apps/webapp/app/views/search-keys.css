@@ -34,3 +34,45 @@
    button is transparent at rest, and only `:hover` paints it), and at `0,2,0` the rule beat
    `.hit:hover` at `0,1,0`. It would have deleted the hover state of every search result to
    solve a problem that did not exist. */
+
+/* ═══ THE RESULT-ORDER CONTROL ═════════════════════════════════════════════════════════
+ *
+ * The markup carries `.vhead-action` (the header row's right-aligned slot) and `.c-select`
+ * (the borderless select-with-a-caret treatment), both already in `app.css`. Everything
+ * below is the small amount those two do not cover: the label beside the control, and the
+ * fact that `.vhead` aligns on the BASELINE while `.vhead-action` centres itself.
+ *
+ * Nothing here restates a colour, a radius or a caret. If this block grows into a second
+ * description of what a select looks like, the rule belongs in `app.css` beside the first.
+ */
+.search-sort {
+  font-size: 12px;
+  color: var(--ink3);
+}
+
+/* The `for`/`id` pair is real — this is a clickable label, not a caption — so it takes the
+   pointer the control does rather than the text cursor a bare label would show. */
+.search-sort label {
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* `.c-select select` inherits the compose panel's field sizing, which is a row of a form.
+   In a view header it sits beside a 20px title, so it takes the label's size and the ink
+   one step up from it — the value is the answer, the label is the question. */
+.search-sort select {
+  font-size: 12px;
+  color: var(--ink2);
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+/* At the narrow width the header already wraps (`.vhead` is `flex-wrap`), and
+   `margin-left: auto` on `.vhead-action` would otherwise push the control onto its own line
+   hard against the right edge, away from the title it belongs to. */
+@media (max-width: 640px) {
+  .search-sort {
+    margin-left: 0;
+  }
+}

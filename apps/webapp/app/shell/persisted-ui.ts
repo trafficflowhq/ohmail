@@ -120,6 +120,64 @@ export function usePersistedIdSet(
 }
 
 /**
+ * ONE VALUE OUT OF A CLOSED SET — the store behind Search's result ordering.
+ *
+ * ── WHY A THIRD HOOK RATHER THAN `usePersistedFlag` WITH MORE STATES ────────────────────────
+ *
+ * The two above answer yes/no questions, and the shape of THIS one is the part that matters:
+ * `allowed` is passed in and a stored value outside it is discarded, not repaired. A preference
+ * naming a sort order is about to be sent to a server that REFUSES an unknown value with a 400
+ * rather than quietly substituting a default, so a stale key written by a build that offered an
+ * option this one no longer does must read as "no preference" — otherwise every search a
+ * returning user runs fails until they clear their site data, and nothing on screen says why.
+ *
+ * ── SAME TWO HAZARDS AS ITS SIBLINGS, HANDLED THE SAME WAY ─────────────────────────────────
+ *
+ * The read is a POST-MOUNT effect (the server has no `localStorage`, and a read during the
+ * hydration render is discarded as a mismatch — which would silently keep the server's default
+ * and make the preference look like it never saved), and every access is wrapped, because
+ * Safari private mode throws on write and a site-data-blocked browser throws on read. A refused
+ * store means the choice holds for this session and no longer, which is the right failure for a
+ * preference and the wrong one for anything that authorises.
+ */
+export function usePersistedChoice<T extends string>(
+  key: string,
+  allowed: readonly T[],
+  fallback: T,
+): [T, (next: T) => void] {
+  const [value, setValue] = useState<T>(fallback);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(key);
+      // The membership test IS the validator — see the note above on why a stale value is
+      // dropped rather than repaired.
+      if (raw !== null && (allowed as readonly string[]).includes(raw)) setValue(raw as T);
+    } catch {
+      /* storage blocked or unavailable — the fallback stands */
+    }
+    // `allowed` is a module-level constant at every call site; listing it would re-run this
+    // effect on every render for a caller that built the array inline, and re-reading storage
+    // would stamp over a choice the user has since made in this session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  const set = useCallback(
+    (next: T) => {
+      setValue(next);
+      try {
+        window.localStorage.setItem(key, next);
+      } catch {
+        /* private mode refuses writes; the choice still holds for this session */
+      }
+    },
+    [key],
+  );
+
+  return [value, set];
+}
+
+/**
  * Namespaced so a future preference cannot collide with an unrelated one, and so everything
  * this app stores is greppable from a single prefix.
  */
@@ -128,3 +186,19 @@ export const UI_KEYS = {
   /** Ids the reader chose to view in their ORIGINAL (light) rendering, despite a dark theme. */
   mailOriginal: "ohmail.ui.mail.original",
 } as const;
+
+/**
+ * The Search result order, PER ACCOUNT and per device.
+ *
+ * Per account because two people sharing a browser must not inherit each other's preferences —
+ * the same rule `boot-cache.ts` keys on, and for a weaker reason here (an order reveals nothing)
+ * but the same habit. Per device because it is chrome: this is not a fact about the mailbox, and
+ * a laptop and a phone are allowed to disagree about it.
+ *
+ * `owner` is `readOwner()`, which is `null` on the standalone desktop and before sign-in. That
+ * case gets its own stable key rather than a blank suffix — a device with no account is a real
+ * situation, not a missing value.
+ */
+export function searchSortKey(owner: string | null): string {
+  return `ohmail.ui.search.sort.${owner ?? "local"}`;
+}

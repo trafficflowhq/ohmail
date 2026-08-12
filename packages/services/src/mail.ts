@@ -141,8 +141,8 @@ export {
   type ThreadPatchBody, type ThreadRenameBody, type ThreadMergeBody,
 } from "./thread-service.js";
 export {
-  SearchService, searchService,
-  type SearchOptions, type SearchFilters, type SearchResult, type Facets,
+  SearchService, searchService, SEARCH_SORTS, isSearchSort,
+  type SearchOptions, type SearchFilters, type SearchResult, type Facets, type SearchSort,
 } from "./search-service.js";
 export {
   PrivacyService, makePrivacyService, nodeRemoteFetch, makeNodeRemoteFetch,

@@ -34,16 +34,20 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   folderLeaf,
+  SERVER_SEARCH_SORTS,
   VIEW_OF_FOLDER,
   type EngineMessage,
   type LocalSearchResult,
   type OhmailEngine,
   type SearchHit as EngineSearchHit,
+  type ServerSearchSort,
 } from "@ohmail/client-engine";
 import { Facets, SearchBox, SearchHit, type FacetGroup } from "@ohmail/ui";
 import { displayTime, metaLine, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
 import { displayAddress } from "../shell/idn";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { readOwner } from "../shell/owner-cookie";
+import { searchSortKey, usePersistedChoice } from "../shell/persisted-ui";
 import "./search-keys.css";
 
 interface Filter {
@@ -85,6 +89,76 @@ const ARCHIVE_DEBOUNCE_MS = 250;
 
 /** Rows rendered. Unchanged; it is now STATED when there are more (see `resultsShown`). */
 const SHOWN = 12;
+
+/**
+ * ═══ ORDERING THE MERGED LIST ═══════════════════════════════════════════════════════════════
+ *
+ * The sort control is not merely a parameter forwarded to the archive. This view shows TWO
+ * arms — the device's own index first, the archive's extras appended — so passing `sort` to the
+ * server and leaving the merge alone would put twelve relevance-ranked local hits above the
+ * date-ordered ones. The reader picks "Newest first" and the top of the list does not move.
+ * That is worse than not offering the control.
+ *
+ * So the server orders its half (which decides WHICH rows come back — the thing only it can do,
+ * because it holds the whole corpus) and this comparator orders what ends up on screen.
+ *
+ * ── `mailbox` IS THE ONE THIS CLIENT CANNOT COMPUTE ─────────────────────────────────────────
+ *
+ * A message carries `mailboxId`, never the address. `"mailbox"` is not a `/sync` entity type
+ * (`selectors.ts`), so a Cloud mirror holds no mailbox rows at all and there is nothing on this
+ * device to resolve the id against — the address exists only on the server. The comparator
+ * therefore orders by the position each mailbox first takes in the ARCHIVE's answer, which is
+ * address order because the server sorted it that way. A local hit from a mailbox the archive
+ * did not mention sorts after the ones it did, newest-first among themselves: honest, and the
+ * only alternative is ordering by raw uuid, which looks sorted and is not.
+ */
+type SortRank = ReadonlyMap<string, number>;
+
+/** Millis for ordering; a message with no `Date:` header sorts last in both directions. */
+function stampOf(m: EngineMessage): number | null {
+  if (!m.date) return null;
+  const t = Date.parse(m.date);
+  return Number.isFinite(t) ? t : null;
+}
+
+/** `a` before `b` by date, `dir` 1 for ascending. Undated always last, never first. */
+function byDate(a: EngineMessage, b: EngineMessage, dir: 1 | -1): number {
+  const ta = stampOf(a);
+  const tb = stampOf(b);
+  if (ta === null && tb === null) return 0;
+  if (ta === null) return 1;
+  if (tb === null) return -1;
+  return (ta - tb) * dir;
+}
+
+/**
+ * The displayed order for one sort. `relevance` returns the merged list UNTOUCHED — the local
+ * arm's own ranking followed by the archive's, exactly as before this control existed.
+ */
+function orderMerged(items: MergedHit[], sort: ServerSearchSort, mailboxRank: SortRank): MergedHit[] {
+  if (sort === "relevance") return items;
+  // `toSorted` is not available on every target this bundle supports; copy first so the memo
+  // input is never mutated in place (React would not see the change, and the next render would
+  // sort an already-sorted array — stable, but only by luck).
+  const out = [...items];
+  out.sort((x, y) => {
+    const a = x.hit.message;
+    const b = y.hit.message;
+    if (sort === "date_desc") return byDate(a, b, -1) || a.id.localeCompare(b.id);
+    if (sort === "date_asc") return byDate(a, b, 1) || a.id.localeCompare(b.id);
+    if (sort === "sender") {
+      const cmp = a.from.address.toLowerCase().localeCompare(b.from.address.toLowerCase());
+      // Newest-first WITHIN a sender: address-major with arbitrary dates inside a block is not
+      // a list anybody reads. Matches the server arm's own tiebreak.
+      return cmp || byDate(a, b, -1) || a.id.localeCompare(b.id);
+    }
+    // mailbox — see the note above on why this is a rank and not a comparison of addresses.
+    const ra = mailboxRank.get(a.mailboxId) ?? Number.MAX_SAFE_INTEGER;
+    const rb = mailboxRank.get(b.mailboxId) ?? Number.MAX_SAFE_INTEGER;
+    return ra - rb || byDate(a, b, -1) || a.id.localeCompare(b.id);
+  });
+  return out;
+}
 
 export function SearchView({
   engine,
@@ -141,6 +215,24 @@ export function SearchView({
   const t = useTranslations("search");
   const [filter, setFilter] = useState<Filter | null>(null);
 
+  /**
+   * THE ORDER, remembered per account and per device.
+   *
+   * `readOwner()` in a `useMemo` with no deps rather than at module scope: it reads a cookie, so
+   * it must not run while this module is being evaluated on the server, and the account cannot
+   * change without a remount. A signed-out or standalone client gets the `local` key — see
+   * `searchSortKey`.
+   *
+   * Deliberately NOT a server setting. This is chrome, it is legitimately per-machine, and the
+   * alternative costs a column, a migration and a request on every change of a dropdown.
+   */
+  const sortStorageKey = useMemo(() => searchSortKey(readOwner()), []);
+  const [sort, setSort] = usePersistedChoice<ServerSearchSort>(
+    sortStorageKey,
+    SERVER_SEARCH_SORTS,
+    "relevance",
+  );
+
   const trimmed = query.trim();
   const { result, tookMs } = useMemo(() => {
     if (!trimmed) return { result: null as LocalSearchResult | null, tookMs: 0 };
@@ -176,7 +268,7 @@ export function SearchView({
     const timer = setTimeout(() => {
       // `searchServer` never rejects — the outcome is a value the UI renders, so there is no
       // unhandled promise here and no error boundary over somebody's mailbox.
-      void engine.searchServer(trimmed).then((outcome: ServerOutcome) => {
+      void engine.searchServer(trimmed, { sort }).then((outcome: ServerOutcome) => {
         if (!live) return;
         setArchive({
           q: trimmed,
@@ -193,13 +285,34 @@ export function SearchView({
       live = false;
       clearTimeout(timer);
     };
-  }, [engine, trimmed, available, retryTick]);
+    // `sort` is a dependency: changing the order is a NEW QUESTION for the archive, not a
+    // re-presentation of the old answer. The server holds the whole corpus and decides which
+    // rows come back for a given order — re-sorting the previous page would keep showing the
+    // most RELEVANT fifty in date order, which is the same defect the service arm exists to
+    // avoid, moved to the client.
+  }, [engine, trimmed, available, retryTick, sort]);
 
   /** The archive's answer, but only while it still belongs to what is in the box. */
   const current: Archive | null = archive && archive.q === trimmed ? archive.outcome : null;
 
+  /**
+   * WHICH MAILBOX CAME FIRST IN THE ARCHIVE'S ANSWER — the only address order this device has.
+   *
+   * Built from the server's item order, which under `sort=mailbox` is address-ascending. Empty
+   * whenever the archive has not answered (or cannot), and the comparator degrades to date
+   * order rather than to a uuid comparison that would look sorted without being.
+   */
+  const mailboxRank: SortRank = useMemo(() => {
+    const rank = new Map<string, number>();
+    if (current?.state !== "ready") return rank;
+    for (const item of current.items) {
+      if (!rank.has(item.mailboxId)) rank.set(item.mailboxId, rank.size);
+    }
+    return rank;
+  }, [current]);
+
   // ── merge: local first, archive-only appended ─────────────────────────────
-  const merged: MergedHit[] = useMemo(() => {
+  const mergedRaw: MergedHit[] = useMemo(() => {
     // Relevance floor over the engine's recall: a hit must carry at least
     // one exact/prefix match, or a fuzzy match against a term long enough
     // to mean something ("invoce" → "invoice" stays; "in" noise goes).
@@ -228,6 +341,16 @@ export function SearchView({
     }
     return out;
   }, [result, current, engine]);
+
+  /**
+   * The list as it is READ — merged, then put in the chosen order. `relevance` passes the merged
+   * array through untouched, so the pre-existing behaviour is the identity case rather than a
+   * re-derivation of it.
+   */
+  const merged: MergedHit[] = useMemo(
+    () => orderMerged(mergedRaw, sort, mailboxRank),
+    [mergedRaw, sort, mailboxRank],
+  );
 
   const items = useMemo(() => {
     if (!filter) return merged;
@@ -341,7 +464,10 @@ export function SearchView({
    */
   const shown = items.slice(0, SHOWN);
   const [at, setAt] = useState(0);
-  useEffect(() => setAt(0), [trimmed]);
+  // Reset on the ORDER too, not only on the query. The cursor is an index into the rendered
+  // rows; reordering them under a held index leaves it pointing at a different message than the
+  // one that was highlighted, which is the same reason it resets when the question changes.
+  useEffect(() => setAt(0), [trimmed, sort]);
   const cursor = shown.length === 0 ? -1 : Math.min(at, shown.length - 1);
 
   /**
@@ -485,6 +611,35 @@ export function SearchView({
     <section className="view col view-search">
       <div className="vhead">
         <h1>{t("title")}</h1>
+        {/*
+          THE ORDER CONTROL. `.vhead-action` is the header row's existing right-aligned slot and
+          `.c-select` its existing borderless-with-a-caret select treatment (`app.css`) — reused
+          rather than invented, because a second visual language for a dropdown in a header is
+          how a design system stops being one.
+
+          A native `<select>` and not a `SegmentedControl`: five options do not fit a segmented
+          row at the widths this view is used at, and the native control brings its own keyboard
+          handling, its own mobile presentation and its own label association for free.
+
+          Hidden while the box is empty — there is no order to choose for no results, and the
+          control would be the only thing on an otherwise empty screen.
+        */}
+        {trimmed === "" ? null : (
+          <div className="vhead-action c-select search-sort">
+            <label htmlFor="search-sort">{t("sortLabel")}</label>
+            <select
+              id="search-sort"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as ServerSearchSort)}
+            >
+              {SERVER_SEARCH_SORTS.map((s) => (
+                <option key={s} value={s}>
+                  {t(`sort_${s}`)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
       <div className="scroller">
         <div className="search-wrap">

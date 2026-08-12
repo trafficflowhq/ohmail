@@ -1,4 +1,4 @@
-import type { ServerSearchWire } from "../engine.js";
+import type { ServerSearchOpts, ServerSearchWire } from "../engine.js";
 import type {
   EngineMutation, MessageBodyBatchWire, MessageBodyWire, SyncChange, SyncResponse, UnsubscribeResult,
 } from "../types.js";
@@ -149,7 +149,7 @@ export interface EngineAdapter {
    * resolving `{items: []}` means the archive answered and matched nothing, and the two must
    * never be conflated — one is a missing capability, the other is a real result.
    */
-  searchServer?(query: string, opts: { limit?: number }): Promise<ServerSearchWire | null>;
+  searchServer?(query: string, opts: ServerSearchOpts): Promise<ServerSearchWire | null>;
 
   /**
    * `POST /messages/:id/unsubscribe` — RFC 8058 one-click, performed SERVER-SIDE (the reader's

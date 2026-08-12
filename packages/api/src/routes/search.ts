@@ -1,6 +1,6 @@
-import type { SearchFilters } from "@trafficflow/services/mail";
+import { SEARCH_SORTS, isSearchSort, type SearchFilters, type SearchOptions } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { errorResponse, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { search } from "./shared.js";
 
@@ -11,6 +11,19 @@ import { search } from "./shared.js";
  *   folder, sender, unread, hasAttachments, dateFrom, dateTo.
  * An empty/absent `q` yields an empty result (no error). Session-protected (the
  * default pipeline populates `deps.session`; no `public` flag).
+ *
+ * ── `sort` IS VALIDATED, NOT COERCED ──────────────────────────────────────────────────────
+ *
+ * `?sort=` takes one of {@link SEARCH_SORTS} and an unknown value is a `400`, while an ABSENT
+ * one means `relevance` and is the endpoint's whole prior behaviour. The two are deliberately
+ * different: falling back to relevance on a typo'd or stale value would hand back a
+ * confidently-ordered list that is not in the order the caller asked for, with nothing on the
+ * wire to say so. A client that sends `sort=newest` should learn that today, from a status
+ * code — not later, from a user who trusted the list.
+ *
+ * Every other param on this route is still lenient (`boolParam` drops what it cannot read) and
+ * that stays: those NARROW a result set, so a dropped one returns a superset the caller can see
+ * for itself. An order cannot be checked by looking at it.
  */
 
 /** "true"/"1" → true, "false"/"0" → false, else undefined (filter omitted). */
@@ -32,6 +45,16 @@ export const searchRoutes: Route[] = [
       const limitRaw = url.searchParams.get("limit");
       const limit = limitRaw != null ? Number(limitRaw) : undefined;
 
+      // Before any work: an order we cannot honour is refused, never quietly re-read as
+      // relevance. `null` (absent) falls through to the service's own default.
+      const sortRaw = url.searchParams.get("sort");
+      if (sortRaw !== null && !isSearchSort(sortRaw)) {
+        return errorResponse(
+          "validation_failed", 400,
+          `sort must be one of ${SEARCH_SORTS.join(", ")}`,
+        );
+      }
+
       const filters: SearchFilters = {};
       const folder = url.searchParams.get("folder");
       const sender = url.searchParams.get("sender");
@@ -46,7 +69,11 @@ export const searchRoutes: Route[] = [
       if (unread !== undefined) filters.unread = unread;
       if (hasAttachments !== undefined) filters.hasAttachments = hasAttachments;
 
-      const result = await search(deps).search(serviceContext(deps, req), { q, filters, limit });
+      // Spread rather than `sort: sortRaw ?? undefined`: the service's default lives in the
+      // service, and an omitted property is the only way to say "I did not ask" under
+      // `exactOptionalPropertyTypes`.
+      const opts: SearchOptions = { q, filters, limit, ...(sortRaw !== null ? { sort: sortRaw } : {}) };
+      const result = await search(deps).search(serviceContext(deps, req), opts);
       return jsonResponse(result);
     },
   },

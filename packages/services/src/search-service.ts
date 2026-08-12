@@ -44,10 +44,29 @@ export interface SearchFilters {
   dateTo?: string;            // ISO — inclusive upper bound on date
 }
 
+/**
+ * THE ORDERS A CALLER MAY ASK FOR — a CLOSED set, and unknown values are refused at the route
+ * rather than coerced to the default. Answering a different question than the one asked is how
+ * a sorted list stops being trustworthy without anybody being able to see that it has.
+ *
+ * `relevance` is the default and IS the fused RRF ranking below, untouched. The other four are
+ * a different query SHAPE, not a different `order by` on the same one — see {@link
+ * SearchService.orderedArm} for why that distinction is the whole of this feature.
+ */
+export const SEARCH_SORTS = ["relevance", "date_desc", "date_asc", "mailbox", "sender"] as const;
+export type SearchSort = (typeof SEARCH_SORTS)[number];
+
+/** Narrow an untrusted string to a {@link SearchSort}. Every route that accepts one uses this. */
+export function isSearchSort(v: unknown): v is SearchSort {
+  return typeof v === "string" && (SEARCH_SORTS as readonly string[]).includes(v);
+}
+
 export interface SearchOptions {
   q: string;
   filters?: SearchFilters;
   limit?: number;
+  /** Absent means `relevance` — the fused ranking, byte-identical to passing it explicitly. */
+  sort?: SearchSort;
 }
 
 export interface Facets {
@@ -118,6 +137,9 @@ export class SearchService {
     const q = (opts.q ?? "").trim();
     if (!q) return emptyResult();
     const limit = clampLimit(opts.limit);
+    // The DEFAULT BRANCH, stated once. An absent `sort` is `relevance` and takes the fused
+    // query below with nothing changed — see the `hitQuery` ternary.
+    const sort: SearchSort = opts.sort ?? "relevance";
 
     // ── shared predicates ──────────────────────────────────────────────────
     const where = this.whereSql(ctx.accountId, opts.filters ?? {});
@@ -169,7 +191,24 @@ export class SearchService {
       order by f.score desc, m.date desc nulls last
       limit ${limit}`;
 
-    const hitRows = rowsOf<{ id: string }>(await ctx.db.execute(fusion));
+    /**
+     * ── THE ONE THING THIS FEATURE MUST NOT DO ────────────────────────────────────────────
+     *
+     * A user-chosen order is a DIFFERENT QUERY, never an `order by` bolted onto the fused one.
+     * The fused query is a RANKED SELECTION: each arm keeps its top {@link ARM_LIMIT}
+     * candidates and the final select keeps `limit` of the fusion. Sorting THAT by date answers
+     * "of the most relevant few, which is newest" — which is not the question, and the row it
+     * silently drops is exactly the one the reader asked for: the newest match sitting outside
+     * the relevance window. On a corpus larger than the window it is invisibly wrong, which is
+     * the worst kind.
+     *
+     * So a non-relevance sort runs its own arm over the SAME predicates (`where` + `matchPred`,
+     * the identical match set facets and total are counted over) with no candidate window at
+     * all — the sort key decides which `limit` rows come back. `search-sort.r12.test.ts` plants
+     * a low-relevance newest match and watches this exact difference.
+     */
+    const hitQuery = sort === "relevance" ? fusion : this.orderedArm(where, matchPred, sort, limit);
+    const hitRows = rowsOf<{ id: string }>(await ctx.db.execute(hitQuery));
 
     /**
      * Re-materialize the hits into canonical MessageDTOs (folder + sensitivity), preserving
@@ -199,6 +238,57 @@ export class SearchService {
     const facets = await this.facets(ctx, where, matchPred);
     const total = await this.total(ctx, where, matchPred);
     return { items, facets, total };
+  }
+
+  // ── the user-chosen orders ────────────────────────────────────────────────
+
+  /**
+   * ONE ARM, over the whole match set, ordered by the key the caller asked for.
+   *
+   * NO MIGRATION AND NO NEW INDEX: every key is a column that already exists. The `tsv` GIN
+   * indexes still carry the MATCH — this is `where ${where} and ${matchPred}`, the same
+   * predicates {@link SearchService.total} and {@link SearchService.facets} run over — and the
+   * sort happens across the rows that match, which is the definition of the feature.
+   *
+   * ── THE JOIN IS `left`, DELIBERATELY ────────────────────────────────────────────────────
+   *
+   * `messages.mailbox_id` is NOT NULL with a foreign key, so an inner join would be equivalent
+   * today. It is a `left join` anyway because the invariant worth protecting is that **a sort
+   * never changes WHICH rows match, only the order they come back in.** An inner join makes the
+   * ordering clause capable of dropping a hit, and a search that returns fewer results when you
+   * reorder it is the same class of quiet wrongness as sorting the fused window. `nulls last`
+   * on the address is the other half of that.
+   *
+   * Every order ends in `m.id`, so two rows that tie on the key (same instant, same sender)
+   * still come back in a fixed order. Without it a tie is free to flip between calls, which
+   * reads as a list that reshuffles itself while you look at it.
+   */
+  private orderedArm(
+    where: SQL, matchPred: SQL, sort: Exclude<SearchSort, "relevance">, limit: number,
+  ): SQL {
+    // Only the mailbox key needs a row this query does not already have.
+    const from = sort === "mailbox"
+      ? sql`${this.from} left join mailboxes mbx on mbx.id = m.mailbox_id`
+      : this.from;
+
+    // `nulls last` on both date directions: a message with no `Date:` header has no place on a
+    // timeline, and Postgres would otherwise sort it FIRST on `asc`. Unknown belongs at the end
+    // in both readings of "by date".
+    const order =
+      sort === "date_desc" ? sql`m.date desc nulls last, m.id desc`
+      : sort === "date_asc" ? sql`m.date asc nulls last, m.id asc`
+      // Mail is grouped BY MAILBOX and then newest-first inside each one — a flat address-major
+      // ordering with arbitrary dates inside a group is not a list anybody reads.
+      : sort === "mailbox" ? sql`lower(mbx.address) asc nulls last, m.date desc nulls last, m.id desc`
+      // `lower()` so "Anna@" and "anna@" are one sender, matching `whereSql`'s sender filter.
+      : sql`lower(m.from_address) asc, m.date desc nulls last, m.id desc`;
+
+    return sql`
+      select m.id
+      ${from}
+      where ${where} and ${matchPred}
+      order by ${order}
+      limit ${limit}`;
   }
 
   // ── facets & total over the SAME candidate set (filters + text match) ──────

@@ -1,6 +1,7 @@
 import {
   messageService, threadService, searchService, mailboxService, tagsService, rulesService,
-  syncService, type SearchFilters, type ServiceContext,
+  syncService, SEARCH_SORTS, isSearchSort,
+  type SearchFilters, type SearchOptions, type ServiceContext,
 } from "@trafficflow/services/mail";
 
 /**
@@ -147,6 +148,23 @@ export const READ_ROUTES: ReadRoute[] = [
       const q = url.searchParams.get("q") ?? "";
       const limit = num(url.searchParams.get("limit"));
 
+      /**
+       * The SAME refusal `packages/api/src/routes/search.ts` makes, and it has to be repeated
+       * here for the reason this whole file exists: a Cloud-mode install may not import that
+       * route table (it drags the IMAP admission port into the engine's graph and the census
+       * goes red), so the two doors are held together by shape rather than by shared code.
+       * `cloud-search-sort.test.ts` drives both and asserts they answer alike — an order this
+       * door accepted and ignored would make the desktop quietly disagree with the web client
+       * about what the same query means.
+       */
+      const sortRaw = url.searchParams.get("sort");
+      if (sortRaw !== null && !isSearchSort(sortRaw)) {
+        return json(
+          { error: { code: "validation_failed", message: `sort must be one of ${SEARCH_SORTS.join(", ")}` } },
+          400,
+        );
+      }
+
       const filters: SearchFilters = {};
       const folder = url.searchParams.get("folder");
       const sender = url.searchParams.get("sender");
@@ -161,11 +179,13 @@ export const READ_ROUTES: ReadRoute[] = [
       if (unread !== undefined) filters.unread = unread;
       if (hasAttachments !== undefined) filters.hasAttachments = hasAttachments;
 
-      const result = await searchService.search(ctx, {
+      const opts: SearchOptions = {
         q,
         filters,
         ...(limit !== undefined ? { limit } : {}),
-      });
+        ...(sortRaw !== null ? { sort: sortRaw } : {}),
+      };
+      const result = await searchService.search(ctx, opts);
       return json(result);
     },
   },

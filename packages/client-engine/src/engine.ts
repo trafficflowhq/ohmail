@@ -75,12 +75,35 @@ export interface ServerSearchWire {
 }
 
 /**
+ * THE ORDER THE ARCHIVE IS ASKED FOR — the same closed vocabulary the search service declares
+ * on the server, spelled out again here for the reason
+ * `owner-cookie.ts` repeats a cookie name: this package is the STANDALONE desktop payload and
+ * cannot import the hosted service, so the list is written out twice and held together by a
+ * test on the server's side that reads both declarations and fails if they drift. Adding an
+ * order HERE that the server does not accept is the dangerous direction — the route refuses
+ * what it does not recognise, so every search a user ran with it would fail.
+ *
+ * `relevance` is the default at every layer, and an absent value means it: the parameter is
+ * left OFF the wire rather than sent explicitly, so a client on this build asks an older server
+ * exactly the question it asked before.
+ */
+export const SERVER_SEARCH_SORTS = ["relevance", "date_desc", "date_asc", "mailbox", "sender"] as const;
+export type ServerSearchSort = (typeof SERVER_SEARCH_SORTS)[number];
+
+/** What a caller may ask of one archive pass. */
+export interface ServerSearchOpts {
+  limit?: number;
+  /** Absent ⇒ `relevance`, and nothing is put on the wire. */
+  sort?: ServerSearchSort;
+}
+
+/**
  * The transport `searchServer` runs on. Optional everywhere: the demo has no server, the
  * desktop tier has no Cloud, and neither may be given one.
  */
 export type ServerSearchFn = (
   query: string,
-  opts: { limit?: number },
+  opts: ServerSearchOpts,
 ) => Promise<ServerSearchWire | null>;
 
 /**
@@ -2330,13 +2353,21 @@ export class OhmailEngine {
    * fired from a debounce and never per keystroke, for the same reason `hydrateBody` fires on
    * explicit intent only: a paid request needs somebody behind it.
    */
-  async searchServer(query: string, opts: { limit?: number } = {}): Promise<ServerSearchOutcome> {
+  async searchServer(query: string, opts: ServerSearchOpts = {}): Promise<ServerSearchOutcome> {
     const fn = this.serverSearchFn;
     if (fn === null) return { state: "unavailable" };
     const q = query.trim();
     if (q === "") return { state: "ready", items: [], total: 0 };
 
-    const key = `${opts.limit ?? ""}\u0000${q}`;
+    /**
+     * THE SORT IS PART OF THE KEY, and omitting it would be a defect rather than a missed
+     * optimisation. Single-flight joins concurrent callers onto ONE request, so a `date_desc`
+     * pass issued while a `relevance` pass for the same query is still open would be handed the
+     * relevance answer and render it under the newly-chosen control. Changing the order would
+     * appear to do nothing — but only inside the debounce window, which is the shape that gets
+     * filed as flakiness and never reproduced.
+     */
+    const key = `${opts.limit ?? ""}\u0000${opts.sort ?? ""}\u0000${q}`;
     const inFlight = this.serverSearches.get(key);
     if (inFlight) return inFlight;
 
