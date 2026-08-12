@@ -18,17 +18,23 @@
  * silently thrown away. The read is therefore an effect, which is one frame of the default followed
  * by the truth. This is the same shape, for the same reason, as `usePersistedFlag`.
  *
- * ── ONE VALUE, TWO SURFACES ───────────────────────────────────────────────────────────────────
+ * ── ONE VALUE PER ACCOUNT, TWO SURFACES ───────────────────────────────────────────────────────
  *
  * The compose attach row surfaces this same dial (`ComposeAttach`), reading and writing the same
  * stored value through the same two functions — so "this one needs to go at full size" is served
- * where the file is being picked, without walking here. What remains deliberately absent is a
- * PER-MESSAGE override: a level that applied to one compose and not the next would turn the
- * stored setting into a default with invisible exceptions. Both controls move the one dial, and
- * a move made in either place is what every later pick obeys.
+ * where the file is being picked, without walking here, and the choice made there is remembered
+ * exactly as a choice made here is. The value is keyed by the signed-in account
+ * (`owner-cookie.ts` → `readOwner`, the same id the mail mirror is named for), because a browser
+ * is not a person: on a shared machine one account's full-size preference must not become
+ * another's default. A surface with no account — the standalone desktop, the demo — uses the
+ * account-less key, which is also where every pre-scoping choice lives, so nothing resets.
+ * What remains deliberately absent is a PER-MESSAGE override: a level that applied to one
+ * compose and not the next would turn the stored setting into a default with invisible
+ * exceptions. Both controls move the one dial, and a move made in either place is what every
+ * later pick obeys.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SegmentedControl, SettingsRow } from "@ohmail/ui";
 import {
@@ -38,14 +44,19 @@ import {
   readImageShrinkLevel,
   writeImageShrinkLevel,
 } from "../components/image-shrink";
+import { readOwner } from "./owner-cookie";
 
 export function ImageShrinkRow() {
   const t = useTranslations("settings");
   const [level, setLevel] = useState<ImageShrinkLevel>(DEFAULT_IMAGE_SHRINK_LEVEL);
+  /** The account whose preference this row edits — read post-mount like the value itself. */
+  const owner = useRef<string | null>(null);
 
-  // Post-mount, never during render — see the hydration note above.
+  // Post-mount, never during render — see the hydration note above. The account cookie is read
+  // in the same effect for the same reason: there is no document on the server.
   useEffect(() => {
-    setLevel(readImageShrinkLevel());
+    owner.current = readOwner();
+    setLevel(readImageShrinkLevel(owner.current));
   }, []);
 
   return (
@@ -61,7 +72,7 @@ export function ImageShrinkRow() {
             // Storage first, then the control. There is nothing asynchronous to fail here — a
             // blocked storage is swallowed inside `writeImageShrinkLevel` — so the two cannot end
             // up disagreeing, and the next pick reads back exactly what the segment shows.
-            writeImageShrinkLevel(next);
+            writeImageShrinkLevel(next, owner.current);
             setLevel(next);
           }}
           className="shrink-seg"

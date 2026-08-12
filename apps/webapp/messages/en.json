@@ -645,13 +645,13 @@
     "themeDark": "Dark",
     "themeAria": "Theme",
     "imageShrink": "Shrink pictures",
-    "imageShrinkHint": "JPEG and PNG attachments are resized before they're sent, which drops the camera data in them — including location. A picture that wouldn't get smaller is sent unchanged, and Original sends every picture unchanged.",
+    "imageShrinkHint": "JPEG and PNG attachments are resized before they're sent, which drops the camera data in them — including location. A picture that wouldn't get smaller is sent unchanged, and Off (original) sends every picture unchanged.",
     "imageShrinkAria": "Shrink pictures",
     "imageShrinkLevel": {
-      "none": "Original",
-      "low": "Low",
-      "medium": "Medium",
-      "high": "High"
+      "none": "Off (original)",
+      "low": "Some",
+      "medium": "More",
+      "high": "Most"
     },
     "screening": {
       "title": "What reaches your Ohbox",

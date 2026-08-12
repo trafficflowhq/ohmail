@@ -31,23 +31,24 @@
  * keep-the-original guard are documented. This file's only job is to run it in the right place and
  * to say what happened.
  *
- * ── THE DIAL, IN THE ROW IT ACTS ON — AND SCOPED TO IT ───────────────────────────────────
+ * ── THE DIAL, IN THE ROW IT ACTS ON — ONE VALUE PER ACCOUNT ──────────────────────────────
  *
  * The shrink level is offered beside the attach button because the moment the level matters is
  * the pick: a person about to send a photo at full size should not have to know that a dial
  * lives two views away.
  *
- * IT IS THIS COMPOSE'S DIAL, NOT THE ACCOUNT-WIDE DEFAULT'S EDITOR. It opens at the stored
- * Settings preference (`readImageShrinkLevel`) and moving it changes what the NEXT pick on this
- * surface does — nothing else. It used to write the stored value back
- * (`writeImageShrinkLevel`), which meant a control that looks compose-local silently rewrote
- * the Settings → General preference for every later compose; a one-off "send this one at full
- * size" quietly became the machine's new default. The Settings row remains the one editor of
- * the stored default; this dial reads it as the starting point and diverges for this surface
- * only.
+ * IT EDITS THE ACCOUNT'S OWN PREFERENCE, DELIBERATELY AND SCOPED. Moving it here is remembered
+ * — the next compose on this account opens at the level chosen — and it is the SAME value the
+ * Settings → General row edits, through the same two functions, so the two surfaces cannot
+ * disagree. What changed from the first shipping of this dial is the KEY: the value is stored
+ * per account (`imageShrinkKeyFor`; the id is `readOwner`'s, the one the mail mirror is named
+ * for), because the old account-less key meant a control that looks personal silently rewrote
+ * the preference for EVERYONE who signs in on the machine. A surface with no account — the
+ * standalone desktop, the demo — uses the account-less key, where every pre-scoping choice
+ * already lives.
  *
- * AND WHAT IT DOES NOT DO IS SAID ON SCREEN: files already in the list keep the bytes they were
- * admitted with — re-encoding them here would silently replace what the user was shown and
+ * AND WHAT A MOVE DOES NOT DO IS SAID ON SCREEN: files already in the list keep the bytes they
+ * were admitted with — re-encoding them here would silently replace what the user was shown and
  * approved, and the originals are gone by design (only the admitted bytes are held). Moving the
  * dial while files are attached therefore states the scope in a visible note instead of leaving
  * the user to discover that the change did nothing to the rows above it.
@@ -85,7 +86,9 @@ import {
   isImageShrinkLevel,
   readImageShrinkLevel,
   shrinkImage,
+  writeImageShrinkLevel,
 } from "./image-shrink";
+import { readOwner } from "../shell/owner-cookie";
 
 /**
  * The dial's own order: strongest first, Original last. Derived from the one table rather than
@@ -211,17 +214,19 @@ export function ComposeAttach({
   const levelId = useId();
   const [error, setError] = useState<string | null>(null);
   /**
-   * THIS SURFACE'S LEVEL — the dial's value, and what the next pick applies. Seeded with the
-   * default and corrected to the STORED Settings preference post-mount, never read during the
-   * first render: there is no `localStorage` on the server, and a mismatch would make React
-   * keep the server's value. Moving the dial changes THIS state and nothing stored — see the
-   * header. The ref is the same value readable from inside async handlers without re-binding
-   * them per change.
+   * THE ACCOUNT'S LEVEL — the dial's value, and what the next pick applies. Seeded with the
+   * default and corrected to the STORED per-account preference post-mount, never read during
+   * the first render: there is no `localStorage` on the server (and no cookie to read the
+   * account from), and a mismatch would make React keep the server's value. The ref is the
+   * same value readable from inside async handlers without re-binding them per change.
    */
   const [level, setLevel] = useState<ImageShrinkLevel>(DEFAULT_IMAGE_SHRINK_LEVEL);
   const levelRef = useRef<ImageShrinkLevel>(DEFAULT_IMAGE_SHRINK_LEVEL);
+  /** Whose preference the dial edits — `readOwner`'s account id, `null` where there is none. */
+  const owner = useRef<string | null>(null);
   useEffect(() => {
-    const stored = readImageShrinkLevel();
+    owner.current = readOwner();
+    const stored = readImageShrinkLevel(owner.current);
     setLevel(stored);
     levelRef.current = stored;
   }, []);
@@ -385,10 +390,11 @@ export function ComposeAttach({
             ? t("attachUsed", { used: formatSize(used), total: formatSize(maxTotalBytes) })
             : t("attachCap", { size: formatSize(maxTotalBytes) })}
         </span>
-        {/* THE DIAL — this compose's, seeded from the Settings default and writing NOTHING back
-            to it (see the header: it used to rewrite the stored preference, silently). Applies
-            to the NEXT pick: files already in the list keep the bytes they were admitted with,
-            and moving the dial while any are attached says so in the note below. */}
+        {/* THE DIAL — the account's, remembered: a move here is what the next compose on this
+            account opens at, and it is the same per-account value the Settings row edits (see
+            the header). It applies to the NEXT pick: files already in the list keep the bytes
+            they were admitted with, and moving the dial while any are attached says so in the
+            note below. */}
         <label className="compose-attach-level" htmlFor={levelId}>
           {t("attachLevelLabel")}
           <select
@@ -398,6 +404,9 @@ export function ComposeAttach({
             onChange={(e) => {
               const next = e.target.value;
               if (!isImageShrinkLevel(next) || next === level) return;
+              // Storage first, then the control — the Settings row's own pairing, so the next
+              // pick (which reads the ref) and the next mount (which reads the store) agree.
+              writeImageShrinkLevel(next, owner.current);
               levelRef.current = next;
               setLevel(next);
               if (attachments.length > 0) setScopeNote(true);

@@ -101,12 +101,16 @@ export const IMAGE_SHRINK_RULES: Readonly<Record<ImageShrinkLevel, ImageShrinkRu
 };
 
 /**
- * WHERE THE LEVEL LIVES — this browser, not the account.
+ * WHERE THE LEVEL LIVES — this browser, PER ACCOUNT.
  *
- * It is the same class of preference as the theme: per-machine, about how this install behaves
- * rather than about anybody's mail, and worth neither a column nor a request on every change. It
- * also has a per-machine reading that a synced value would get wrong — the laptop on a hotel
- * connection and the desktop on fibre want different answers.
+ * It is stored in `localStorage` like the theme — per-machine, about how this install behaves,
+ * worth neither a column nor a request on every change — and it is KEYED BY ACCOUNT, because a
+ * browser is not a person: on a shared machine, one account's "send my photos at full size" must
+ * not become another account's default. The account id is the same one the mail mirror is named
+ * for (`shell/owner-cookie.ts` → `readOwner`); a surface with no account — the standalone
+ * desktop, the demo — passes `null` and gets the account-less key, which is also every value
+ * stored before the preference was scoped, so an earlier choice is honored as the fallback
+ * rather than silently reset.
  *
  * Namespaced under `ohmail.ui.` like everything else this app stores (`shell/persisted-ui.ts`), and
  * kept HERE rather than in that file's `UI_KEYS` so the level's table, storage and transform are one
@@ -114,37 +118,52 @@ export const IMAGE_SHRINK_RULES: Readonly<Record<ImageShrinkLevel, ImageShrinkRu
  */
 export const IMAGE_SHRINK_STORAGE_KEY = "ohmail.ui.compose.imageShrink";
 
+/** The storage key for one account's level — the bare key for a surface with no account. */
+export function imageShrinkKeyFor(accountId: string | null): string {
+  return accountId ? `${IMAGE_SHRINK_STORAGE_KEY}:${accountId}` : IMAGE_SHRINK_STORAGE_KEY;
+}
+
 export function isImageShrinkLevel(value: unknown): value is ImageShrinkLevel {
   return typeof value === "string" && (IMAGE_SHRINK_LEVELS as readonly string[]).includes(value);
 }
 
 /**
- * The stored level, or the default.
+ * The stored level for this account, or the default.
+ *
+ * The account-scoped key wins; the account-less key is read as the FALLBACK — it is the
+ * desktop's store and the legacy location every pre-scoping choice was written to, so scoping
+ * the preference does not reset anybody's dial.
  *
  * NEVER CALL THIS DURING A RENDER. There is no `localStorage` on the server, so a component that
  * read it while rendering would draw the default on the server, the stored value on the client, and
  * React would resolve the mismatch by keeping the SERVER's — silently discarding the setting. The
- * settings row reads it in an effect; the attach control reads it inside the click, which is after
- * mount by construction.
+ * settings row reads it in an effect; the attach control reads it in an effect and inside the
+ * pick, both after mount by construction.
  *
  * A blocked or throwing storage (Safari private mode, site data blocked) resolves to the default
  * rather than propagating: a preference is never worth breaking an attach over.
  */
-export function readImageShrinkLevel(): ImageShrinkLevel {
+export function readImageShrinkLevel(accountId: string | null = null): ImageShrinkLevel {
   try {
-    const raw = (globalThis as { localStorage?: Storage }).localStorage?.getItem(
-      IMAGE_SHRINK_STORAGE_KEY,
-    );
+    const ls = (globalThis as { localStorage?: Storage }).localStorage;
+    if (accountId) {
+      const scoped = ls?.getItem(imageShrinkKeyFor(accountId));
+      if (isImageShrinkLevel(scoped)) return scoped;
+    }
+    const raw = ls?.getItem(IMAGE_SHRINK_STORAGE_KEY);
     return isImageShrinkLevel(raw) ? raw : DEFAULT_IMAGE_SHRINK_LEVEL;
   } catch {
     return DEFAULT_IMAGE_SHRINK_LEVEL;
   }
 }
 
-export function writeImageShrinkLevel(level: ImageShrinkLevel): void {
+export function writeImageShrinkLevel(
+  level: ImageShrinkLevel,
+  accountId: string | null = null,
+): void {
   try {
     (globalThis as { localStorage?: Storage }).localStorage?.setItem(
-      IMAGE_SHRINK_STORAGE_KEY,
+      imageShrinkKeyFor(accountId),
       level,
     );
   } catch {

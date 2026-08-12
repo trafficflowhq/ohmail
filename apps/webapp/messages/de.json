@@ -645,10 +645,10 @@
     "themeDark": "Dunkel",
     "themeAria": "Erscheinungsbild",
     "imageShrink": "Bilder verkleinern",
-    "imageShrinkHint": "JPEG- und PNG-Anhänge werden vor dem Senden verkleinert; dabei entfallen die Kameradaten samt Standort. Ein Bild, das dadurch nicht kleiner würde, wird unverändert gesendet, und bei „Original“ wird jedes Bild unverändert gesendet.",
+    "imageShrinkHint": "JPEG- und PNG-Anhänge werden vor dem Senden verkleinert; dabei entfallen die Kameradaten samt Standort. Ein Bild, das dadurch nicht kleiner würde, wird unverändert gesendet, und bei „Aus (Original)“ wird jedes Bild unverändert gesendet.",
     "imageShrinkAria": "Bilder verkleinern",
     "imageShrinkLevel": {
-      "none": "Original",
+      "none": "Aus (Original)",
       "low": "Wenig",
       "medium": "Mittel",
       "high": "Stark"
