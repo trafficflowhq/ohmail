@@ -16,6 +16,116 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.9.2] — 2026-08-12
+
+Mostly about reading. A conversation is no longer one message with the others summarised
+around it — every message on the thread is a panel you can read in place, and the mail
+inside those panels renders as what it is: tables as tables, code as code, quoted history
+folded away until you want it. The other half is the app remembering where you had got to,
+so the piles you have already been through stop presenting themselves as new.
+
+### Reading a conversation
+
+**Every message on a thread is its own panel.** Opening a conversation used to show one
+message in full and the rest as rows you clicked through one at a time. Now the thread is a
+single scrolling column of full messages, in order, so reading a conversation is reading
+rather than a sequence of decisions about what to open next.
+
+**Each message carries its own header** — the subject, the people, and its own actions menu,
+with names first. On a long thread the header travels with the message it belongs to, so it
+is always clear which message an action is about.
+
+**Recipients are written out, and each person is a popover.** To and Cc list the people
+rather than a count, and pressing a name shows that person's address and the actions for
+them without leaving the message.
+
+**Plain HTML mail renders its own structure.** Tables arrive as tables, lists as lists, and
+links are real links. Mail that was written with structure keeps it instead of being
+flattened into a paragraph.
+
+**Code in a message reads as code**, in a monospaced block that stays inside the letter
+rather than pushing the layout sideways. Long lines scroll within the block.
+
+**The trailing quoted history folds behind a toggle.** The part of a reply that repeats the
+message before it is collapsed by default, with a control to show it. A long back-and-forth
+opens at the new writing rather than at the bottom of a pile of quotes.
+
+### Where you had got to
+
+**Reads and Receipts remember your last visit.** Each of those views now draws a line at the
+point you had reached, with everything that arrived since it above. Leaving the view commits
+the line — so the next visit is measured from when you actually left, not from whichever
+message happened to be on screen.
+
+**The sidebar counts those two piles by what is new since your last visit**, not by what is
+unread. For a pile you read through in passing, "unread" was never the number you wanted.
+
+**Rows in those two views no longer carry their own unread dot.** The line is the answer to
+"what is new here", and a per-row marker beside it was a second, quieter answer that
+disagreed with it often enough to be worth removing.
+
+### Screening
+
+**People you dealt with months ago stop coming back to the queue.** A sender you had already
+decided about could reappear in the Screener as a first-time sender waiting on you, because
+the app had no record of where your screening history began. It does now, and mail from
+before that point files itself the way your existing decisions say it should.
+
+**Senders you screened out read as decided.** Their rows are dimmed rather than presented at
+full weight, so a list you have already worked through looks worked through.
+
+**The AI allowance line survives an empty queue** and refreshes after a purchase, instead of
+disappearing when there was nothing waiting and going stale once you had topped it up.
+
+### Lists
+
+**Drag a message row onto the sidebar to file it.** The rail's targets accept a dragged row
+and apply the same verbs the row's own controls do — the gesture is an alternative to the
+menu, not a different set of rules.
+
+**A conversation's faces sit beside its subject, and one sender leads the row again.** The
+people in a thread are shown next to what the thread is about, rather than the row being led
+by whoever happened to write last.
+
+**Pile titles are one size.** Different lists were rendering their headings at different
+sizes depending on how they were reached.
+
+**`k` is the inverse of `j`, including the way into a list.** Moving up from the top of a
+list and moving down from outside it now mirror each other, so the two keys undo one another
+everywhere rather than nearly everywhere.
+
+**A long wait draws the shape of the screen.** The two waits that are genuinely long — first
+boot and a large view opening — show the layout they are about to fill instead of an empty
+frame. It appears only after a short delay, so a fast load does not flash a skeleton.
+
+**A failing sync says so exactly once.** At some window widths the notice appeared twice.
+
+### Writing
+
+**Attach files to an inline reply, in a roomier editor, and choose which address answers.**
+Replying without opening a separate window now offers the same attachment and From controls
+as a full compose.
+
+**Pictures are shrunk before they are attached**, on your machine, so a photo straight from a
+camera does not become a message your recipient's server refuses.
+
+**The attachment limit comes from your mail server.** The cap shown while composing is the
+size your provider actually accepts, read from the server, rather than a fixed number that
+was wrong in both directions depending on who you use.
+
+**The message box takes a click anywhere in it**, and applying Code across several lines
+produces one block rather than one block per line.
+
+**A new message to a domain you send from leaves from that address.** Writing to a domain you
+hold an address on picks that address as the sender instead of defaulting to your primary
+one.
+
+### Signing in
+
+**Session lifetimes roll per surface** — 90 days on the web, 400 days on an installed app.
+An installed app is a device you have already unlocked, and it is treated that way rather
+than being signed out on the browser's schedule.
+
 ## [0.9.1] — 2026-08-11
 
 Mostly about the app getting out of your way: it stops doing work it had already
