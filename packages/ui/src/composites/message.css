@@ -61,13 +61,31 @@
  * `--lift-1` from the column box, and that painted a PHANTOM PANEL: an outer shadow draws the
  * silhouette of an opaque surface around a box that paints none. That ruling stands.
  *
+ * THE LEFT STRIP IS FADED, NOT CUT — the reclaim alone was not enough on that side. The
+ * panels' `--lift-1` needs more sideways room than the 16px gap holds (the light ambient is
+ * `0 40px 96px -28px`, the dark one `0 24px 56px -20px` — both tails outreach 16px), so the
+ * clip at the gap's far edge amputates the falloff while it still has strength: measured on
+ * the built page, the strip next to the clip sat ~4% under canvas in light, and the cut
+ * printed a straight line down the list/viewer boundary — plainly on the open canvas above
+ * and below the list panel, and as a harder-than-native stop against the panel's edge. A
+ * scroller's clip cannot be feathered, but its PAINT can: the mask ramps the reclaimed strip
+ * from nothing at the clip edge to full at the panels' own edge, so the falloff completes to
+ * ZERO exactly on the boundary line — the gap reads as the same lit canvas every other
+ * inter-column gap is, and the columns share one surface. Only the left strip: the right
+ * reclaim dies on the viewport edge, where there is nothing to print a line on, and top and
+ * bottom must stay full-strength or a mid-scroll panel would dissolve before the viewport
+ * cuts it. The prefixed twin is for WKWebView (the desktop shell); the ramp is horizontal
+ * only, so a mask that an engine scrolls with the content renders identically.
+ *
  * `border-radius:0`, deliberately: the 20px arc used to round the cut of a panel scrolled past
  * the edge, back when the panels sat 2px from the clip. With the clip box extended into the
  * gaps the arc cannot reach a panel any more — all it clipped was the corner of the shadow
  * strip, where a curved fragment reads as debris floating over the gap mid-scroll. A scrolled
  * panel is cut on one straight line, the reading the stream's card scroll already ships.
  * Guarded structurally by thread-column-shadow.test.ts in the webapp suite. */
-.read-col:has(> .conv){background:none;border-radius:0;box-shadow:none;margin:-16px;padding:16px}
+.read-col:has(> .conv){background:none;border-radius:0;box-shadow:none;margin:-16px;padding:16px;
+  -webkit-mask-image:linear-gradient(to right,transparent,#000 16px);
+  mask-image:linear-gradient(to right,transparent,#000 16px)}
 /* THE MESSAGE FILLS THE COLUMN EVEN WHEN THE MAIL DOES NOT.
  *
  * A two-line message is a two-line box, so a bar parked at the end of it sits wherever the text
