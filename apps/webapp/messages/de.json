@@ -791,7 +791,9 @@
     "manyMailboxes": "{address} und {others} weitere — {synced}.",
     "syncedAt": "zuletzt synchronisiert {when}",
     "neverSynced": "noch nicht synchronisiert",
-    "build": "{version} · Build {build}."
+    "build": "{version} · Build {build}.",
+    "publishedBy": "Herausgeber",
+    "yourMail": "Was mit deiner Post passiert"
   },
   "reader": {
     "hint": "zum Zurückgehen",
@@ -1311,6 +1313,7 @@
   },
   "providerPicker": {
     "label": "Anbieter",
+    "otherLabel": "Jedes andere IMAP-Postfach",
     "otherSub": "deine eigene Domain oder dein eigener Server"
   },
   "mailboxes": {
@@ -1814,6 +1817,9 @@
     "screener": "Screener",
     "screened": "Aussortiert",
     "spam": "Spam"
+  },
+  "relativeTime": {
+    "justNow": "gerade eben"
   },
   "away": {
     "title": "Abwesenheitsantwort",

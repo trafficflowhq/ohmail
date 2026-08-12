@@ -45,7 +45,11 @@
 export interface ProviderPreset {
   /** Stable id — also the mailbox's stored `provider`, which adapter selection reads. */
   id: string;
-  /** The label, matching the landing's `providers.*` string. */
+  /**
+   * The label, matching the landing's `providers.*` string. For every named provider this is a
+   * BRAND NAME and renders verbatim in every language; the generic entry's label is the one piece
+   * of prose here, and render sites take it from the catalogue instead — see {@link providerLabel}.
+   */
   label: string;
   imap: { host: string; port: number; secure: boolean };
   smtp: { host: string; port: number; secure: boolean };
@@ -154,6 +158,21 @@ export const PROVIDERS: ProviderPreset[] = [
 
 export const providerById = (id: string): ProviderPreset =>
   PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[PROVIDERS.length - 1]!;
+
+/**
+ * THE LABEL A RENDER SITE PUTS ON SCREEN — which is not always {@link ProviderPreset.label}.
+ *
+ * Seven of the eight labels are brand names and are the same string in every language. The
+ * generic entry's is a SENTENCE ("Any other IMAP mailbox"), and it stayed English in a German
+ * session because both render sites read it straight off this table. They now go through here
+ * with the `providerPicker` translator, so the picker tile and the connected-mailbox row take
+ * the translated label from one place — the constant above remains the identity the parity
+ * check judges and the fallback nothing renders.
+ */
+export const providerLabel = (
+  p: ProviderPreset,
+  t: (key: "otherLabel") => string,
+): string => (p.manual ? t("otherLabel") : p.label);
 
 /**
  * `secure` is IMPLICIT TLS (port 993 / 465), not "is this connection encrypted".

@@ -587,3 +587,44 @@ export function waterlineStamp(atIso: string, locale: string): string {
     hour12: false,
   }).format(at);
 }
+
+/**
+ * The one sentence fragment `Intl.RelativeTimeFormat` cannot produce: an age too young for a
+ * unit. `liveCopy` rather than a hook because {@link agoStamp} is called from a component's
+ * helper functions that take no translator — the same argument `PLACE_LABEL` states above.
+ * The English string is the fallback and the parity oracle; the catalogue's `relativeTime`
+ * namespace is the live copy, and `test/locale-shim-parity.test.ts` holds the two together.
+ */
+const AGO_EN = { justNow: "just now" };
+export const AGO_COPY: typeof AGO_EN = liveCopy("relativeTime", AGO_EN);
+
+/**
+ * HOW LONG AGO an instant was, in the reader's language — plus the absolute stamp for the
+ * tooltip, because "2 minutes ago" answers "is it fresh" and the title answers "when exactly".
+ *
+ * This sat in `MailboxSection` formatting through `Intl.RelativeTimeFormat(undefined, …)`,
+ * which reads the BROWSER's locale rather than the app's — so a German session showed
+ * "Synchronisiert 1 minute ago", half a sentence in each language — and its under-45-seconds
+ * arm was the hardcoded English "just now". `activeFormatLocale()` is the app's own choice
+ * (the same seam every other stamp in this file reads), and the young arm goes through the
+ * catalogue like any other copy.
+ *
+ * An unparseable instant echoes back rather than rendering "Invalid Date": the callers put
+ * `rel` in a sentence and `abs` in a `title`, and a verbatim token is at least debuggable.
+ */
+export function agoStamp(iso: string, now: number): { rel: string; abs: string } {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return { rel: iso, abs: iso };
+  const locale = activeFormatLocale();
+  const abs = new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: activeFormatZone(),
+  }).format(d);
+  const secs = Math.max(0, Math.round((now - d.getTime()) / 1000));
+  if (secs < 45) return { rel: AGO_COPY.justNow, abs };
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  if (secs < 3600) return { rel: rtf.format(-Math.round(secs / 60), "minute"), abs };
+  if (secs < 86400) return { rel: rtf.format(-Math.round(secs / 3600), "hour"), abs };
+  return { rel: rtf.format(-Math.round(secs / 86400), "day"), abs };
+}

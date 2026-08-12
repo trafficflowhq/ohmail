@@ -38,7 +38,7 @@
 import { useId, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { Icon } from "@ohmail/ui";
-import { PROVIDERS, providerById, type ProviderPreset } from "./providers";
+import { PROVIDERS, providerById, providerLabel, type ProviderPreset } from "./providers";
 
 const NAMED: ProviderPreset[] = PROVIDERS.filter((p) => !p.manual);
 const MANUAL: ProviderPreset = PROVIDERS.find((p) => p.manual)!;
@@ -118,7 +118,7 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
         className={p.manual ? "pvp-tile pvp-other" : "pvp-tile"}
         onClick={() => onChange(p.id)}
       >
-        <span className="pvp-name">{p.label}</span>
+        <span className="pvp-name">{providerLabel(p, t)}</span>
         <span className="pvp-host">{p.manual ? t("otherSub") : p.imap.host}</span>
         {on ? <Icon name="check" className="pvp-check" size={12} /> : null}
       </button>
