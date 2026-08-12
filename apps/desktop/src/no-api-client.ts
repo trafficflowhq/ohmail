@@ -145,6 +145,7 @@ export interface SubscriptionStatus {
         monthlyCredits: number;
     }>;
     trialCredits?: number;
+    invoiceGranted?: boolean;
 }
 
 export const auth: {
