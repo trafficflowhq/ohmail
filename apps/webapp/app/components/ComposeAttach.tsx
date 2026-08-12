@@ -108,12 +108,15 @@ const LEVEL_CHOICES: readonly ImageShrinkLevel[] = [...IMAGE_SHRINK_LEVELS].reve
 export const COMPOSE_ATTACH_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
 
 /**
- * THE CEILING THIS FORM MAY PROMISE — the smaller of what the request can carry and what the
- * sending mailbox's own server said it will accept.
+ * THE CEILING THIS FORM MAY PROMISE — the smaller of what the sending surface can carry and what
+ * the sending mailbox's own server said it will accept.
  *
- * It is a MIRROR of the rule the send itself applies, and it has to be: a number stated here that
- * the send would refuse is a claim the product cannot keep, which is the whole reason the copy
- * renders this value instead of a literal.
+ * It is a MIRROR of the rule the send itself applies — `effectiveAttachmentCap` in the services
+ * package's send-service — and it has to be: a number stated here that the send
+ * would refuse is a claim the product cannot keep, and a refusal below the promise wastes a
+ * message somebody composed. A mirror rather than an import because this bundle may pull in no
+ * server module (the same rule the constant above states); the two implementations are pinned to
+ * each other VALUE FOR VALUE by the repository's parity suite (`compose-attach-cap-parity`).
  *
  * `mailboxMax` is the submission server's own RFC 1870 `SIZE` announcement, forwarded from
  * `GET /mailboxes` through the resolved From. The interesting case is the STINGY provider, not the
@@ -121,14 +124,35 @@ export const COMPOSE_ATTACH_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
  * would have carried 3 — without the `min` the user picks a file, waits for a send, and has it
  * bounced by their own provider.
  *
- * `null`, absent, `0` and anything non-finite all mean "no measured ceiling for this mailbox" and
- * resolve to the surface constant. A server advertising `SIZE 0` means "no fixed maximum"
- * (RFC 1870 §6), so reading it as a ceiling of nothing would refuse every file.
+ * `surfaceMax` is the HOST's declaration about the pipeline a send from this window rides — the
+ * form-side twin of the `sendSurfaceMaxTotalBytes` the send handler's service bag declares, with
+ * the same three states:
+ *
+ *  · ABSENT (`undefined` — every one-argument call): the surface has not declared itself, and it
+ *    resolves to the strict constant rather than to "unbounded". A caller that has not been
+ *    taught the surface dimension must not acquire a bigger allowance by not passing it.
+ *  · `null`: EXPLICITLY UNCAPPED — the desktop's standalone door, where this form, the send
+ *    handler and the SMTP dial are one process and no request body exists between them (the
+ *    mail engine's service bag makes the same declaration to `SendService`). The mailbox's
+ *    own announcement then governs; while none has been measured the answer is again the
+ *    constant, because an unknown limit read as no limit costs the user a composed message.
+ *  · a number: that surface's own ceiling, bounded exactly as the constant is.
+ *
+ * The parameter order is the reverse of `effectiveAttachmentCap`'s, deliberately: every caller
+ * here has a mailbox in hand, and only a HOST declares a surface, so the surface rides the
+ * optional seat. `0` and anything non-finite never become a ceiling on either side — a server
+ * advertising `SIZE 0` means "no fixed maximum" (RFC 1870 §6), so reading it as a ceiling of
+ * nothing would refuse every file.
  */
-export function composeAttachCap(mailboxMax: number | null | undefined): number {
-  return typeof mailboxMax === "number" && Number.isFinite(mailboxMax) && mailboxMax > 0
-    ? Math.min(COMPOSE_ATTACH_MAX_TOTAL_BYTES, mailboxMax)
-    : COMPOSE_ATTACH_MAX_TOTAL_BYTES;
+export function composeAttachCap(
+  mailboxMax: number | null | undefined,
+  surfaceMax?: number | null,
+): number {
+  const usable = (n: number | null | undefined): n is number =>
+    typeof n === "number" && Number.isFinite(n) && n > 0;
+  const surface = surfaceMax === undefined ? COMPOSE_ATTACH_MAX_TOTAL_BYTES : surfaceMax;
+  const bounds = [surface, mailboxMax].filter(usable);
+  return bounds.length > 0 ? Math.min(...bounds) : COMPOSE_ATTACH_MAX_TOTAL_BYTES;
 }
 
 /** Decoded byte length of a base64 string, without decoding it. */

@@ -79,6 +79,7 @@ export function ComposeView({
   fields,
   onFields,
   from,
+  sendSurfaceMaxTotalBytes,
   plan,
   send,
   onSend,
@@ -97,6 +98,14 @@ export function ComposeView({
    * and reports a new one, which is the same division of labour as the send state machine.
    */
   from: ResolvedFrom;
+  /**
+   * THE HOST'S OWN CEILING on what a send from this window can carry —
+   * `AppShell.sendSurfaceMaxTotalBytes`, handed with the resolved From's `SIZE` announcement
+   * to `composeAttachCap`, which holds the whole rule. ABSENT (every browser tab) resolves to
+   * the strict constant exactly as before this prop existed; `null` is the desktop's
+   * standalone door, where the sending mailbox's own announcement governs.
+   */
+  sendSurfaceMaxTotalBytes?: number | null;
   /** The same object `canSend` judges and `onSend` dispatches. */
   plan: ComposePlan;
   send: SendState;
@@ -641,8 +650,11 @@ export function ComposeView({
                  resolution `plan.mutation.mailboxId` was built from, so switching the From
                  selector moves the stated cap with it — a provider capping submission below the
                  request pipeline's own limit binds this form to the smaller number, which is the
-                 case that used to end in a bounce after the user had waited for the send. */
-              maxTotalBytes={composeAttachCap(from.maxMessageBytes)}
+                 case that used to end in a bounce after the user had waited for the send. The
+                 host's surface declaration is the other half of the same rule: on the desktop's
+                 standalone door there is no request pipeline at all, and the mailbox's own
+                 announcement is the number this form states. */
+              maxTotalBytes={composeAttachCap(from.maxMessageBytes, sendSurfaceMaxTotalBytes)}
             />
             {/* THE QUESTION SITS ABOVE THE ROW IT WAS ASKED FROM, at full panel width — the
                 Drafts list's panel, and deliberately not a modal: Compose was moved OUT of a

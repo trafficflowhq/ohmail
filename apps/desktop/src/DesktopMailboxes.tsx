@@ -82,6 +82,7 @@ interface MailboxWire {
   syncBlockedSince?: string | null;
   lastSyncAt: string | null;
   initialImportCompletedAt?: string | null;
+  smtpMaxSizeBytes?: number | null;
   createdAt?: string;
 }
 
@@ -113,6 +114,14 @@ export async function readMailboxFacts(): Promise<MailboxFacts[]> {
     ...("initialImportCompletedAt" in m
       ? { initialImportCompletedAt: m.initialImportCompletedAt }
       : {}),
+    // WHAT THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT (the connect-time probe's
+    // RFC 1870 `SIZE`). Forwarded untouched, same rule as the line above: `null` is a server
+    // that announced no ceiling, an ABSENT field is an engine that predates the column, and
+    // the compose surface resolves both to the strict constant — but collapsing them here
+    // would erase a distinction this shape documents. This field is the whole reason the
+    // standalone door's attach cap can follow the user's own server instead of the hosted
+    // constant; the engine has served it all along, and this narrowing used to drop it.
+    ...("smtpMaxSizeBytes" in m ? { smtpMaxSizeBytes: m.smtpMaxSizeBytes } : {}),
     createdAt: m.createdAt ?? new Date().toISOString(),
   }));
 }

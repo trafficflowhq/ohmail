@@ -254,6 +254,17 @@ export function DesktopGate() {
            report. See `DesktopMailboxes.tsx` for why the probe must reject rather than answer
            with an empty list. */
         {...(engine ? { mailboxFacts: readMailboxFacts } : {})}
+        /* WHAT A SEND FROM THIS WINDOW RIDES. On the STANDALONE door the compose form, the
+           send handler and the SMTP dial are one process — the mail engine's own service bag
+           makes the same declaration, `sendSurfaceMaxTotalBytes: null` — so the attach
+           ceiling the form may promise is the sending mailbox's own announced limit, not the
+           hosted constant. The CLOUD door stays SILENT on purpose: its writes,
+           `POST /drafts/:id/send` included, are forwarded verbatim to the hosted API
+           (`cloud-proxy.ts`), whose serverless body limit is exactly what the shared
+           constant expresses — an uncapped declaration there would promise attachments the
+           forwarded send must refuse. Both halves are guarded from source by
+           `apps/desktop/test/desktop-attach-cap.test.ts`. */
+        {...(engine && status?.mode === "local" ? { sendSurfaceMaxTotalBytes: null } : {})}
         /* SETTINGS → MAILBOXES. The shared pane's own list used to be drawn from the mirror's
            `mailbox` entities, which only the invented world has — so on a real install it was an
            empty pane; that fallback is deleted now. This one reads the same facts the sync line

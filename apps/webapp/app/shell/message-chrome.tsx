@@ -136,6 +136,18 @@ export interface MessageChrome {
   replyAttachments: readonly ComposeAttachment[];
   onReplyAttachments?: (next: ComposeAttachment[]) => void;
   /**
+   * THE HOST'S OWN CEILING ON WHAT A SEND FROM THIS WINDOW CAN CARRY — `AppShell`'s
+   * `sendSurfaceMaxTotalBytes` prop, forwarded so the reply editor's attach control states and
+   * refuses against the same `min(surface, SIZE)` the send will enforce (`composeAttachCap`).
+   * It rides the chrome for the reason the files above do: the pane is mounted TWICE while the
+   * reader is open, and two readings of one ceiling is how the two editors' sentences drift.
+   * OPTIONAL, and absent — the inert default, every browser tab, every bare harness — means
+   * "not declared", which `composeAttachCap` resolves to the strict constant; `null` is the
+   * desktop's standalone door declaring there is no request body between the form and the
+   * SMTP dial.
+   */
+  sendSurfaceMaxTotalBytes?: number | null;
+  /**
    * `addressBook(reader)` for the reply's recipient rows — the same ranked, local-mirror
    * candidates the compose To field offers. Absent ⇒ no suggestions, which is a cold mirror
    * and every engine-less mount, and the rows still take typed addresses.

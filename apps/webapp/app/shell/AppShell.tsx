@@ -473,6 +473,7 @@ export function AppShell({
   engine,
   resolveOwner,
   mailboxFacts,
+  sendSurfaceMaxTotalBytes,
   accountSection,
   mailboxSection,
   billingSection,
@@ -507,6 +508,25 @@ export function AppShell({
    * because an empty array is a claim about the account.
    */
   mailboxFacts?: MailboxProbe;
+  /**
+   * THE HOST'S OWN CEILING ON ATTACHMENT BYTES IN ONE SEND — what the pipeline a send from this
+   * window rides can carry, declared by the host because only the host knows its transport.
+   *
+   * The form-side twin of the `sendSurfaceMaxTotalBytes` every send handler's service bag
+   * declares, with the same three states (`composeAttachCap` holds the rule): ABSENT is a host
+   * that has not declared itself — every browser tab, whose sends ride the hosted API's
+   * serverless request body — and resolves to the strict constant; `null` is the desktop's
+   * STANDALONE door, where the compose form, the send handler and the SMTP dial are one process
+   * and the only real ceiling is the sending mailbox's own `SIZE` announcement; a number is a
+   * host naming its own transport's limit.
+   *
+   * NOT passed on the desktop's CLOUD door, deliberately: that door forwards
+   * `POST /drafts/:id/send` verbatim to the hosted API, so its sends stand under exactly the
+   * body limit the constant expresses, and an uncapped declaration there would promise
+   * attachments the forwarded send must refuse. See `DesktopGate` for the declaration and
+   * `apps/desktop/test/desktop-attach-cap.test.ts` for the guard on both halves.
+   */
+  sendSurfaceMaxTotalBytes?: number | null;
   /**
    * The Cloud client's Settings → Account pane, injected rather than imported — the same
    * seam as `resolveOwner`, and see `views/SettingsView.tsx` for why it has to be one.
@@ -666,6 +686,7 @@ export function AppShell({
       <KeymapProvider>
         <MailStateHost probe={mailboxFacts}>
           <ShellInner
+            sendSurfaceMaxTotalBytes={sendSurfaceMaxTotalBytes}
             accountSection={accountSection}
             mailboxSection={mailboxSection}
             billingSection={billingSection}
@@ -720,7 +741,9 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, aiCredits, onUnread }: {
+function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, aiCredits, onUnread }: {
+  /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
+  sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
   billingSection?: ReactNode;
@@ -4002,6 +4025,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       onReplyFrom: setReplyFromId,
       replyAttachments,
       onReplyAttachments: setReplyAttachments,
+      // The host's surface declaration rides beside the reply's files because it is the other
+      // half of the same ceiling: `InlineReply` states and refuses against
+      // `composeAttachCap(from.maxMessageBytes, THIS)`, the exact pair the send will enforce.
+      sendSurfaceMaxTotalBytes,
       addressBook: replyBook,
       /**
        * THE SIBLING VERBS, no longer dormant.
@@ -4043,7 +4070,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       attachments, remoteImages,
     }),
     [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
-      replyEnvelope, replyFromId, replyAttachments, replyBook,
+      replyEnvelope, replyFromId, replyAttachments, sendSurfaceMaxTotalBytes, replyBook,
       openSenderMenu, ownNameOf, writeTo, openReply, forwardMessage, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
   );
@@ -4584,6 +4611,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                 fields={compose}
                 onFields={onComposeFields}
                 from={composeFrom}
+                sendSurfaceMaxTotalBytes={sendSurfaceMaxTotalBytes}
                 plan={plan}
                 send={mailSend.stateOf(COMPOSE_SEND_KEY)}
                 onSend={sendCompose}

@@ -1375,6 +1375,10 @@ export function MessagePane({
          attach control there. */
       attachments={chrome.replyAttachments}
       onAttachments={chrome.onReplyAttachments}
+      /* The host's ceiling on what a send can carry — the other half of the attach cap the
+         editor states beside those files (`composeAttachCap(SIZE, THIS)`). Absent on the inert
+         chrome and on every browser tab; `null` on the desktop's standalone door. */
+      sendSurfaceMaxTotalBytes={chrome.sendSurfaceMaxTotalBytes}
       /* The AI drafter's offer renders inside the editor the draft lands in — see
          `InlineReply`. Absent where there is no drafter: the desktop shell, and any
          harness that mounts a pane without the shell. */

@@ -166,6 +166,7 @@ export function InlineReply({
   onFrom,
   attachments = [],
   onAttachments,
+  sendSurfaceMaxTotalBytes,
 }: {
   message: EngineMessage;
   /**
@@ -243,6 +244,15 @@ export function InlineReply({
    * rather than a dead one.
    */
   onAttachments?: (next: ComposeAttachment[]) => void;
+  /**
+   * THE HOST'S OWN CEILING on what a send from this window can carry — threaded from
+   * `AppShell.sendSurfaceMaxTotalBytes` through the chrome, and handed with the resolved
+   * From's `SIZE` announcement to {@link composeAttachCap}, which holds the whole rule. ABSENT
+   * (every browser tab, every bare harness) resolves to the strict constant exactly as before
+   * this prop existed; `null` is the desktop's standalone door, where the sending mailbox's
+   * own announcement governs.
+   */
+  sendSurfaceMaxTotalBytes?: number | null;
 }) {
   const t = useTranslations("reply");
   const box = useRef<HTMLDivElement>(null);
@@ -635,7 +645,7 @@ export function InlineReply({
           attachments={[...attachments]}
           onChange={onAttachments}
           disabled={inFlight}
-          maxTotalBytes={composeAttachCap(from.maxMessageBytes)}
+          maxTotalBytes={composeAttachCap(from.maxMessageBytes, sendSurfaceMaxTotalBytes)}
           /* The reply panel takes pastes and drops exactly as compose does — a pasted picture
              is an attachment, not a silent nothing (`ComposeAttach.dropZone`). */
           dropZone={box}
