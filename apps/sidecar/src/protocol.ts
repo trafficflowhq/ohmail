@@ -131,7 +131,22 @@ export interface ReadyHeader extends ReadyInfo, Record<string, unknown> {
   t: "ready";
 }
 
-export type AnyHeader = RequestHeader | ResponseHeader | ErrorHeader | ReadyHeader;
+/**
+ * What the engine is doing while it is still starting — sent BEFORE `ready`, zero or more times.
+ *
+ * The one unsolicited frame besides `ready`, and strictly earlier than it: once the engine is
+ * serving there is nothing left for this to say, and the app's own sync surface narrates from
+ * there. `phase` is a closed identifier the window maps to a sentence; a shell built before this
+ * frame existed skips it unread (an unknown `t` has always been "skip the body and carry on"),
+ * which is what lets an engine say more without a lockstep upgrade.
+ */
+export interface PhaseHeader extends Record<string, unknown> {
+  v: number;
+  t: "phase";
+  phase: string;
+}
+
+export type AnyHeader = RequestHeader | ResponseHeader | ErrorHeader | ReadyHeader | PhaseHeader;
 
 const EMPTY = new Uint8Array(0);
 

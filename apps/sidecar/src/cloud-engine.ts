@@ -5,7 +5,7 @@ import {
   resolveSession, syncService, ServiceError,
   type EntityType, type ServiceContext,
 } from "@trafficflow/services/mail";
-import { openLocalDb, type LocalDb, type OpenLocalDb } from "./db.js";
+import { openLocalDb, type LocalDb, type LocalDbOpenPhase, type OpenLocalDb } from "./db.js";
 import { ensureLocalWorld, mintLaunchSession, type LocalWorld } from "./identity.js";
 import {
   createCloudAuth, loadSealedTokens, sealTokens, type CloudAuth, type CloudTokens,
@@ -130,7 +130,15 @@ export interface CloudSidecarConfig {
   fetchImpl?: typeof fetch;
   pageLimit?: number;
   pollIntervalMs?: number;
+  /**
+   * Told what the boot is about to spend its time on — the same narration, and the same consumer
+   * (`main.ts` turning it into `phase` frames), as the local engine's. See `SidecarConfig.onPhase`.
+   */
+  onPhase?: (phase: CloudBootPhase) => void;
 }
+
+/** The cloud door's boot phases. Identical to the local door's: the two share `openLocalDb`. */
+export type CloudBootPhase = LocalDbOpenPhase | "preparing";
 
 export interface CloudSidecar {
   readonly db: LocalDb;
@@ -229,7 +237,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
   // changed. Must run before the database is opened — see {@link enforceMirrorOwner}.
   enforceMirrorOwner(config.dataDir, config.address, log);
 
-  const opened: OpenLocalDb = await openLocalDb(config.dataDir, { ...(log ? { log } : {}) });
+  const opened: OpenLocalDb = await openLocalDb(config.dataDir, {
+    ...(log ? { log } : {}),
+    ...(config.onPhase ? { onPhase: config.onPhase } : {}),
+  });
+  config.onPhase?.("preparing");
   try {
     const db = opened.db;
     const tWorld = Date.now();

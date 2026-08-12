@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
@@ -109,11 +109,44 @@ export interface OpenLocalDb {
   close(): Promise<void>;
 }
 
+/**
+ * WHAT THE OPEN IS ABOUT TO SPEND ITS TIME ON, named before the work starts.
+ *
+ * `boot_phases` (the timings above) answers "where did the seconds GO" after the fact, for a log.
+ * This answers "what is happening NOW", for a person watching the window — the two consumers want
+ * the same facts at opposite ends of the wait, which is why both exist.
+ *
+ *  · `creating_store`  — no database yet. A first launch: initdb, then the full schema.
+ *  · `replaying_wal`   — there is a database and a write-ahead log big enough that Postgres'
+ *    recovery replay is the wait (a previous run ended without a checkpoint — a crash, a kill,
+ *    a power loss). Bounded by the log's size, not the mailbox's.
+ *  · `opening_store`   — the ordinary launch: an established database, nothing notable to replay.
+ *  · `migrating`       — the schema ledger is being brought up to date. Sub-second except on the
+ *    first launch after an upgrade that ships new migrations.
+ */
+export type LocalDbOpenPhase = "creating_store" | "replaying_wal" | "opening_store" | "migrating";
+
+/**
+ * A write-ahead log at least this large announces itself as `replaying_wal` rather than
+ * `opening_store`.
+ *
+ * Recovery replay measured at roughly 200–300 MB/s on an ordinary disk, so this is about a second
+ * of extra wait — below it the distinction is not worth a different sentence, above it the honest
+ * word for what the launch is doing is "replaying". Well above the resting pool a healthy close
+ * leaves behind (~64 MB), so an ordinary launch can never trip it.
+ */
+export const REPLAY_PHASE_BYTES = 256 * 1024 * 1024;
+
 /** Everything optional about opening the local database. */
 export interface OpenLocalDbOptions {
   log?: Diagnostic;
   /** How often to checkpoint while open. Production takes {@link CHECKPOINT_INTERVAL_MS}. */
   checkpointIntervalMs?: number;
+  /**
+   * Told which {@link LocalDbOpenPhase} the open is entering, just before it does. Best-effort
+   * narration for a window that is waiting; never awaited and never load-bearing.
+   */
+  onPhase?: (phase: LocalDbOpenPhase) => void;
 }
 
 /**
@@ -155,6 +188,32 @@ function walSegments(pgDataDir: string): number {
   } catch {
     return 0;
   }
+}
+
+/** The write-ahead log's size in bytes — the bound on what a recovery replay costs. */
+function walBytes(pgDataDir: string): number {
+  try {
+    const dir = join(pgDataDir, "pg_wal");
+    let total = 0;
+    for (const f of readdirSync(dir)) {
+      if (/^[0-9A-F]{24}$/.test(f)) total += statSync(join(dir, f)).size;
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Which {@link LocalDbOpenPhase} the coming open is, read from the directory before PGlite touches
+ * it. A pure look at the filesystem: it starts nothing and holds nothing, so a caller that only
+ * wants the answer (a test, a diagnostic) can ask without paying for an open.
+ */
+export function openPhaseFor(dataDir: string): Exclude<LocalDbOpenPhase, "migrating"> {
+  const pgDataDir = join(dataDir, PGDATA_SUBDIR);
+  if (!existsSync(join(pgDataDir, "PG_VERSION"))) return "creating_store";
+  if (walBytes(pgDataDir) >= REPLAY_PHASE_BYTES) return "replaying_wal";
+  return "opening_store";
 }
 
 /**
@@ -287,6 +346,9 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
   const pgDataDir = join(dataDir, PGDATA_SUBDIR);
   let client: PGlite;
   try {
+    // BEFORE `new PGlite`, because the whole point is to name the wait while it is happening —
+    // and read from the directory rather than from PGlite, which says nothing until it is done.
+    opts.onPhase?.(openPhaseFor(dataDir));
     const tOpen = Date.now();
     client = new PGlite(pgDataDir);
     // AWAITED HERE ON PURPOSE, AND IT CHANGES NOTHING EXCEPT WHERE THE COST IS ATTRIBUTED.
@@ -307,6 +369,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     const tAdopt = Date.now();
     await adoptBaseline(db, MAIL_JOURNAL);
     const adoptBaselineMs = Date.now() - tAdopt;
+    opts.onPhase?.("migrating");
     const tMigrate = Date.now();
     await migrate(db, {
       migrationsFolder: MAIL_JOURNAL.dir,

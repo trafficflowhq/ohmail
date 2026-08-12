@@ -73,7 +73,17 @@ const ready = () => frame({
 
 if (mode === "die") { process.exit(1); }
 
-ready();
+// A boot that narrates itself, the way the real engine does while it opens its store: `phase`
+// frames strictly before `ready`. One malformed on purpose — the shell's reader must refuse it —
+// then a real one, then a beat before `ready` so a test can read the status of an engine that is
+// still starting.
+if (mode === "phased") {
+  frame({ v: 1, t: "phase", phase: "NOT_A_PHASE!" });
+  frame({ v: 1, t: "phase", phase: "replaying_wal" });
+  setTimeout(ready, 150);
+} else {
+  ready();
+}
 
 // The real engine leaves when its stdin ends; `serve-deaf` is the one that does not.
 if (mode !== "serve-deaf") {
@@ -1109,6 +1119,36 @@ fn the_status_the_window_can_read_carries_no_token() {
     assert!(printed.contains("\"credentialState\":\"ready\""), "{printed}");
     assert!(!printed.contains("tok_"), "the session token reached the window: {printed}");
     assert!(!printed.to_lowercase().contains("sessiontoken"), "{printed}");
+
+    engine.stop();
+}
+
+#[test]
+fn a_starting_engine_names_its_phase_and_a_serving_one_carries_none() {
+    // The boot narration: the engine writes `phase` frames while it is still starting — "opening
+    // the store", "replaying the log" — and the window reads the latest off `engine_status` to put
+    // words on a wait that is otherwise one sentence for everything. Three claims, one run:
+    //
+    //  · the phase reaches the status WHILE the state is `starting`, which is the only time it
+    //    means anything;
+    //  · a frame whose phase is not a short lowercase identifier is refused at the reader — it
+    //    ends up in a status object the webview renders from, so the grammar is the gate;
+    //  · `ready` clears it. A phase outliving the boot would caption a wait that is over.
+    let f = Fixture::new("phased");
+    let engine = Engine::spawn_with(f.launch("phased"), quick());
+
+    wait_for(
+        || status_json(&engine).to_string().contains("\"bootPhase\":\"replaying_wal\""),
+        Duration::from_secs(10),
+        "the boot phase to reach the status of a starting engine",
+    );
+    let printed = status_json(&engine).to_string();
+    assert!(printed.contains("\"state\":\"starting\""), "{printed}");
+    assert!(!printed.contains("NOT_A_PHASE"), "a malformed phase crossed the reader: {printed}");
+
+    serving(&engine);
+    let after = status_json(&engine).to_string();
+    assert!(!after.contains("bootPhase"), "the narration outlived the boot: {after}");
 
     engine.stop();
 }

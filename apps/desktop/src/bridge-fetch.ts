@@ -287,6 +287,13 @@ export interface EngineStatus {
    * shell.
    */
   credentialState?: "ready" | "absent" | "unreadable" | "unknown";
+  /**
+   * What a still-starting engine last said it was doing — `starting`/`restarting` only, and only
+   * once the engine has said anything. An identifier the boot surface maps to a sentence
+   * (`BootStatus.tsx`), never prose to render as-is; absent on engines built before it existed,
+   * which is why every consumer needs a wording for "no phase yet".
+   */
+  bootPhase?: string;
   reason?: string;
   missing?: string[];
   lookedFor?: string;

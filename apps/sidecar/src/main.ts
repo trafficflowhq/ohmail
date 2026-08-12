@@ -3,8 +3,10 @@ import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createSidecar, type Sidecar, type SidecarConfig } from "./engine.js";
 import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
+import { encodeFrame, PROTOCOL_VERSION } from "./frame.js";
 import { serveOverStdio, type StdioHost } from "./host.js";
 import { createSidecarLog } from "./log.js";
+import type { PhaseHeader } from "./protocol.js";
 
 /**
  * THE RUNNABLE SIDECAR — the process the desktop shell spawns.
@@ -77,6 +79,36 @@ export function claimStdout(): Writable {
   real.write = toStderr;
 
   return sink;
+}
+
+/**
+ * NARRATE THE BOOT DOWN THE WIRE — `phase` frames, so the window can say what the wait is.
+ *
+ * The engine's constructor runs BEFORE `serveOverStdio` exists, and that is exactly the stretch
+ * these frames describe: "opening the store", "replaying the log", the phases a launch can spend
+ * a minute in. So they are written straight to the claimed stdout rather than through the host's
+ * writer — and that is safe for one reason worth stating as the invariant it is:
+ *
+ * **A phase frame may be written only while this process is single-voiced** — after `claimStdout`
+ * and before `serveOverStdio` attaches. `encodeFrame` produces the whole frame as one buffer and
+ * a phase frame carries no body, so each write is a single atomic `write()` on the stream; once
+ * the host's own `FrameWriter` starts interleaving multi-write response frames, a second writer
+ * would corrupt the stream with no resync point. The emitter is handed only to the constructors,
+ * which return before the host is built, so the window is closed by construction.
+ *
+ * Best-effort in both directions: a write failure here means the parent is gone, which the
+ * transport discovers on its own terms, and a shell built before this frame existed skips it
+ * unread (an unknown `t` has always been "skip and carry on").
+ */
+export function bootPhaseEmitter(stdout: Writable): (phase: string) => void {
+  return (phase: string): void => {
+    const header: PhaseHeader = { v: PROTOCOL_VERSION, t: "phase", phase };
+    try {
+      stdout.write(encodeFrame(header));
+    } catch {
+      /* the pipe is gone; the transport reports that, not the narration */
+    }
+  };
 }
 
 function required(name: string): string {
@@ -285,7 +317,9 @@ export async function runSidecar(): Promise<void> {
   };
 
   try {
-    sidecar = await createSidecar({ ...configFromEnv(), log });
+    // The narration is only valid while nothing else writes frames — see `bootPhaseEmitter`.
+    // The constructor returns before `serveOverStdio` below is built, which is that window.
+    sidecar = await createSidecar({ ...configFromEnv(), log, onPhase: bootPhaseEmitter(stdout) });
   } catch (err) {
     log("start_failed", { err });
     process.exit(1);
@@ -393,7 +427,8 @@ export async function runCloudSidecar(): Promise<void> {
   };
 
   try {
-    cloud = await createCloudSidecar({ ...cloudConfigFromEnv(), log });
+    // Same single-voiced window as the local door's — see `bootPhaseEmitter`.
+    cloud = await createCloudSidecar({ ...cloudConfigFromEnv(), log, onPhase: bootPhaseEmitter(stdout) });
   } catch (err) {
     // A refused IMAP setting, a missing URL or address, or a locked data directory — all report the
     // same way the local engine's start failure does: a structured line and a non-zero exit, so the

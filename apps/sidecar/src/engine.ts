@@ -50,7 +50,7 @@ import { readMailboxLease, LeaseUnavailableError } from "@trafficflow/worker/lea
 import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
 import { createLocalAi, type LocalAi } from "./ai-provider.js";
 import { localAiRoutes } from "./ai-routes.js";
-import { openLocalDb, type LocalDb, type OpenLocalDb } from "./db.js";
+import { openLocalDb, type LocalDb, type LocalDbOpenPhase, type OpenLocalDb } from "./db.js";
 import { ensureLocalWorld, mintLaunchSession, type LocalWorld } from "./identity.js";
 import { stampSynced } from "./sync-stamp.js";
 import type { Diagnostic } from "./log.js";
@@ -156,7 +156,25 @@ export interface SidecarConfig {
    * Production takes the engine's ten minutes.
    */
   leaseStaleAfterMs?: number;
+  /**
+   * Told what the boot is about to spend its time on, phase by phase, as it happens.
+   *
+   * `boot_phases` (the log line at the bottom of this constructor) is the same story told
+   * afterwards, with numbers; this is the live narration `main.ts` turns into `phase` frames so
+   * the window can say "Replaying recent changes…" instead of one sentence for every wait.
+   * Best-effort and never awaited: a boot must not be able to fail, or slow, because somebody is
+   * watching it.
+   */
+  onPhase?: (phase: BootPhase) => void;
 }
+
+/**
+ * The boot, as the moments a person watching the window can be told about. The database phases
+ * are {@link LocalDbOpenPhase}; `preparing` is everything after the store is open — identity,
+ * key ring, the AI assembly, the route table — which is fast and is named so the narration never
+ * just stops at the last database phase on a launch where the remainder is what is left.
+ */
+export type BootPhase = LocalDbOpenPhase | "preparing";
 
 /** Why this install is not organizing its mailbox, when it is not. */
 export interface OrganizerState {
@@ -506,7 +524,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   // whatever the four named phases do not account for is the remainder, and a remainder that
   // dominates is itself the finding.
   const tBoot = Date.now();
-  const opened: OpenLocalDb = await openLocalDb(config.dataDir, { log });
+  const opened: OpenLocalDb = await openLocalDb(config.dataDir, {
+    log,
+    ...(config.onPhase ? { onPhase: config.onPhase } : {}),
+  });
+  // Everything after the store: identity, the key ring, the AI assembly, the route table. Named
+  // so the narration a window renders never just stops at the last database phase.
+  config.onPhase?.("preparing");
   try {
     const db = opened.db;
     const tWorld = Date.now();
@@ -1210,6 +1234,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          had would tell somebody their mailbox was complete with half of it still on its way. See
          `sync-stamp.ts`. */
       if (cycles > 0) await stampSynced(db, world.mailboxId, now(), drained);
+      /* ── CHECKPOINT BEHIND EVERY DRAIN THAT WROTE, so the log never holds more than one drain. ──
+
+         The periodic checkpointer (`db.ts`) bounds the write-ahead log to five MINUTES of churn,
+         and five minutes of a first import is gigabytes — a drain is up to a hundred cycles of up
+         to 32 MB each. The exposure is the quit that lands in that window: the shell kills an
+         engine that has not left within its grace period, a kill skips the shutdown checkpoint,
+         and the NEXT launch replays everything since the last one — measured at ~160 MB/s, so a
+         couple of gigabytes is ten-plus seconds of "Opening your mailbox" that this line makes
+         a checkpoint instead, at ~80 ms per hundred megabytes, off any request's path.
+
+         AWAITED, deliberately: the next drain cannot start until this one's log is folded in, and
+         `checkpoint()` never throws (see `checkpointWal`). A drain of zero cycles wrote nothing
+         and skips it, so a settled mailbox costs nothing every poll. */
+      if (cycles > 0) await opened.checkpoint();
       return cycles;
     };
 

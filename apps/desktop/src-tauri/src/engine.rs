@@ -686,6 +686,13 @@ struct Shared {
     /// rather than trust that this file reaped it.
     pid: Option<u32>,
     ready: Option<Ready>,
+    /// What a still-starting engine last said it was doing — its `phase` frame, verbatim.
+    ///
+    /// Meaningful only before `ready`: set by the frame reader, cleared when `ready` arrives and
+    /// when a new run starts, and surfaced by [`status_json`] on the `starting`/`restarting`
+    /// states so the window can name the wait ("replaying the log") instead of guessing at it.
+    /// An identifier the UI maps to a sentence, never prose rendered as-is.
+    boot_phase: Option<String>,
     /// How the last run ended, as the operating system reported it. An exit status exists only
     /// for a process that has terminated and been reaped, which makes this the one piece of
     /// evidence about a dead engine that does not come from this file's own bookkeeping.
@@ -726,6 +733,7 @@ fn new_shared(state: EngineState, finished: bool) -> Shared {
         stdin: None,
         pid: None,
         ready: None,
+        boot_phase: None,
         last_exit: None,
         fault: None,
         stop: false,
@@ -1292,6 +1300,7 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             s.stdin = Some(to_engine);
             s.pid = Some(child.id());
             s.ready = None;
+            s.boot_phase = None;
             s.fault = None;
             // THE DEADLINE BELONGS TO ONE RUN, AND CARRYING IT INTO THE NEXT KILLS THE NEXT.
             //
@@ -1622,6 +1631,29 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
         });
     }
 
+    // ── The boot's narration: what a still-starting engine says it is doing ─────────────────
+    //
+    // Zero or more `phase` frames arrive before `ready`, each naming the phase the engine is
+    // entering — opening the store, replaying the write-ahead log — so the window can put words on
+    // a wait that is otherwise one sentence for everything. Recorded, never acted on: the state
+    // machine still moves only on `ready` and on the process itself.
+    //
+    // The value is held to an identifier's grammar before it is stored. It came off a pipe this
+    // shell spawned, but it ends up in a status object the webview reads, and "a short lowercase
+    // token the UI maps to a sentence" is the whole contract — anything else is a frame from an
+    // engine this shell does not know, kept out rather than passed along.
+    if kind == Some("phase") {
+        if let Some(phase) = parsed.get("phase").and_then(serde_json::Value::as_str) {
+            if !phase.is_empty()
+                && phase.len() <= 64
+                && phase.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+            {
+                inner.shared.lock().expect("engine state").boot_phase = Some(phase.to_string());
+            }
+        }
+        return Ok(Answer::None);
+    }
+
     if kind != Some("ready") {
         return Ok(Answer::None);
     }
@@ -1653,6 +1685,9 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
             return Err("the engine announced itself twice; a launch serves once".to_string());
         }
         s.ready = Some(ready);
+        // The boot is over, so its narration is too — a stale phase surviving into a later
+        // `restarting` would name a wait that is not the one happening.
+        s.boot_phase = None;
     }
     // The mailbox id, and nothing else. Not the token, and not the data directory: a directory
     // under the user's home carries their account name, and the shell that set it already knows.
@@ -2622,9 +2657,9 @@ fn install_key(app_data: Option<&Path>) -> Result<String, String> {
 /// states and matching on prose is how a translated string becomes load-bearing.
 #[cfg(feature = "local-engine")]
 fn status_json(engine: &Engine) -> serde_json::Value {
-    let (state, ready) = {
+    let (state, ready, boot_phase) = {
         let s = engine.inner.shared.lock().expect("engine state");
-        (s.state.clone(), s.ready.clone())
+        (s.state.clone(), s.ready.clone(), s.boot_phase.clone())
     };
     let mut out = match &state {
         EngineState::Absent { looked_for } => {
@@ -2646,6 +2681,14 @@ fn status_json(engine: &Engine) -> serde_json::Value {
         EngineState::Stopped => serde_json::json!({ "state": "stopped" }),
         EngineState::Failed { reason, .. } => serde_json::json!({ "state": "failed", "reason": reason }),
     };
+    // Only on the two states that ARE a wait. A phase belongs to the boot that produced it, and
+    // `Shared.boot_phase` is cleared on `ready` and on every new run — this guard is the same rule
+    // said at the reader, so a state this shell decided on its own can never carry stale narration.
+    if matches!(state, EngineState::Starting { .. } | EngineState::Restarting { .. }) {
+        if let (Some(phase), Some(object)) = (boot_phase, out.as_object_mut()) {
+            object.insert("bootPhase".into(), phase.into());
+        }
+    }
     if let (Some(ready), Some(object)) = (ready, out.as_object_mut()) {
         object.insert("accountId".into(), ready.account_id.clone().into());
         object.insert("userId".into(), ready.user_id.clone().into());

@@ -42,6 +42,7 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 import { AppShell } from "../../webapp/app/shell/AppShell";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go } from "../../webapp/app/shell/routing";
+import { BootStatus } from "./BootStatus.js";
 import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
 import { DesktopMailboxes, readMailboxFacts } from "./DesktopMailboxes.js";
@@ -56,8 +57,15 @@ import { CloudSuggest } from "./CloudSuggest.js";
 import { notify, onMenuCommand, onMenuNavigate, setBadge, type MenuCommand } from "./native.js";
 import { createLocalEngine, type EngineStatus } from "./bridge-fetch.js";
 
-/** How often the window re-asks while the engine is on its way up. */
-const SETTLING_POLL_MS = 1000;
+/**
+ * How often the window re-asks while the engine is on its way up.
+ *
+ * Every millisecond between the engine serving and the next poll is a millisecond of skeleton
+ * over a mailbox that is ready — at the old 1000 this was most of a healthy launch, whose
+ * engine-side cost is a few hundred milliseconds. 250 matches the settle loop in `doors.ts`,
+ * and the poll exists only while the engine is starting, so the steady state still costs zero.
+ */
+const SETTLING_POLL_MS = 250;
 
 export function DesktopGate() {
   const [shell, setShell] = useState<Shell | null>(null);
@@ -73,9 +81,10 @@ export function DesktopGate() {
     void refresh();
   }, [refresh]);
 
-  /* Re-ask while the engine is coming up, and not otherwise. A permanent poll would be one
-     inter-process call a second for the life of the app to learn nothing; a poll that never
-     runs would leave "Starting…" on screen after the engine had started. */
+  /* Re-ask while the engine is coming up, and not otherwise. A permanent poll would be four
+     inter-process calls a second for the life of the app to learn nothing; a poll that never
+     runs would leave "Starting…" on screen after the engine had started. While it runs it is
+     also what carries the engine's boot narration (`status.bootPhase`) onto the screen. */
   const settling =
     shell?.kind === "status" && (shell.status.state === "starting" || shell.status.state === "restarting");
   useEffect(() => {
@@ -165,14 +174,15 @@ export function DesktopGate() {
   }
 
   if (shell === null) {
-    /* Nothing has been asked yet. One quiet line and no sample world: a window that guesses at
-       this moment is a window that guesses wrong on a slow first launch. */
+    /* Nothing has been asked yet, and no sample world: a window that guesses at this moment is a
+       window that guesses wrong on a slow first launch. The same surface the opening state below
+       draws — the skeleton behind its grace, the boot line at the rail's foot — with no phase,
+       because no phase has been read. In the packaged app this frame lasts one status call; on a
+       dev server it is replaced by the preview before either grace elapses. */
     return (
-      <div className="gate">
-        <div className="gate-card">
-          <span className="wordmark"><b>ohmail</b><em>.</em></span>
-          <p>Opening…</p>
-        </div>
+      <div className="gate gate-boot">
+        <BootSkeleton active rail />
+        <BootStatus sentence="Opening…" />
       </div>
     );
   }
@@ -197,9 +207,9 @@ export function DesktopGate() {
 
   if (mount.kind !== "sample" && engine === null) {
     /* A door is chosen and no engine has served yet — a first launch migrating a database, or an
-       engine on its way back up. One line, and no mail: the two things this window could put on
-       screen instead are a guess and the sample mailbox, and the sample mailbox under somebody's
-       own address is the worse of the two. The settling poll above is what ends this state.
+       engine on its way back up. No mail: the two things this window could put on screen instead
+       are a guess and the sample mailbox, and the sample mailbox under somebody's own address is
+       the worse of the two. The settling poll above is what ends this state.
 
        AND, ONCE THE WAIT STOPS BEING AN ORDINARY ONE, THE SHAPE OF THE WINDOW BEHIND IT.
        `BootSkeleton` is `mailMount`'s answer drawn out, never a second opinion about it: this
@@ -210,16 +220,19 @@ export function DesktopGate() {
 
        It is delayed behind its own grace, so the ordinary launch is the quiet frame it has always
        been. The wait it exists for is the one-off recovery launch: an install whose previous run
-       left a large write-ahead log replays it inside the engine's database open, near two minutes
-       on a directory of tens of gigabytes (see `SETTLE_MS` in `doors.ts`). The sentence stays,
-       because a shape says something is happening and only words say what. */
+       left a large write-ahead log replays it inside the engine's database open (see `SETTLE_MS`
+       in `doors.ts`).
+
+       THE WORDS SIT WHERE THE APP'S OWN SYNC LINE WILL SIT — the foot of the rail — not on a
+       centred card over the canvas. `BootStatus` is the sync line's shape with the boot's
+       sentence in it, and the sentence is the engine's own account of the wait: each `phase`
+       frame the engine writes while starting reaches this window as `status.bootPhase`, so a
+       recovery launch says "Replaying recent changes…" instead of one sentence for every wait.
+       The settling poll above is also what refreshes the phase. */
     return (
       <div className="gate gate-boot">
         <BootSkeleton active rail />
-        <div className="gate-card">
-          <span className="wordmark"><b>ohmail</b><em>.</em></span>
-          <p>Opening your mailbox…</p>
-        </div>
+        <BootStatus phase={status?.bootPhase} />
       </div>
     );
   }
