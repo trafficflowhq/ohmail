@@ -70,7 +70,10 @@ body.reading .shell {
    holds the first card exactly where it sits today — the stream's own 2px plus the deck's 16px —
    and `padding-bottom` stays whatever `stream.css` reserves for the last card's shadow falloff
    (48px, since the floating capsule that used to need 132px moved into the rail). The ≤900px
-   block (further down) and `.read-col` are untouched. */
+   block (further down) is untouched, and the single-message `.read-col` keeps its frame — it is
+   one lifted panel, not a scroll of cards. The THREAD column does the same reclaim as this rule,
+   on all four sides (`.read-col:has(> .conv)`, packages/ui message.css): a thread is a scroll of
+   panels on the canvas, and its panels run to the same edges these cards do. */
 @media (min-width: 901px) {
   .view-reads .stream,
   .view-receipts .stream {
@@ -3677,9 +3680,12 @@ textarea.c-input:read-only {
    repeat the message that is already on screen — and the editor scrolls itself
    into view on open instead — see `InlineReply`. So the rule has no exceptions left.
 
-   FLUSH AT BOTH ENDS. The wrapper carries no vertical padding, so the lede rests its top edge
-   on the columns' shared top line and — scrolled to the end — the column bottoms out on the
-   same baseline the neighbouring panels end on. The sub-pixel remainder engines would leave at
+   FLUSH AT BOTH ENDS, EDGE-TO-EDGE IN BETWEEN. The wrapper carries no vertical padding of its
+   own — the scroller's scroll-internal 16px (`.read-col:has(> .conv)`, packages/ui message.css)
+   is the whole vertical spacing — so at rest the lede tops out on the columns' shared top line
+   and, scrolled to the end, the column bottoms out on the same baseline the neighbouring panels
+   end on; mid-scroll the panels run past those lines to the viewport's own edges, the way the
+   reading stream's cards do. The sub-pixel remainder engines would leave at
    the maximum scroll offset is absorbed as ≤1px of padding inside the LAST panel, by the same
    anchor effect that opens the thread at its newest message (`MessagePane`). Flush, sticky and
    scroll-to-latest are LIVE-ONLY facts — jsdom applies no layout, so the live pass is the

@@ -30,22 +30,32 @@
  * the full height of both panel sides, which read as a 2–3px border drawn on the panel edges.
  *
  * So the clip is moved to where cutting is invisible, in two equal-and-opposite halves:
- *   · `margin:0 -16px` widens the scroller by exactly the inter-column gap, putting the clip
+ *   · `margin:-16px` widens the scroller by exactly the inter-column gap, putting the clip
  *     edge ON the list panel's opaque edge one side and the viewport edge the other — the only
  *     shadow it removes is tail that would have died on those surfaces anyway;
- *   · `padding:0 16px` gives the borrowed room back, so the panels stand exactly where the
+ *   · `padding:16px` gives the borrowed room back, so the panels stand exactly where the
  *     single-message panel stands (same width, same edges) and their side falloff renders
  *     COMPLETE on visible canvas — the falloff the single column shows, panel for panel.
  * Padding without the margin insets the panels 16px from every column edge; margin without
  * the padding rides the panels over the gaps and clips their light at full strength. Both
  * halves or neither.
  *
- * No vertical values on either: the thread stays FLUSH at both ends of the scroll — the lede's
- * top edge rests on the columns' shared top line, and the column's CONTENT bottoms out on the
- * same baseline the rail and list panels end on (the sub-pixel remainder is absorbed inside
- * the last panel — see the anchor effect in `MessagePane`). The last panel's downward falloff
- * needs no padding either: the action pill is the wrapper's last flow child (`MessagePane`),
- * and its ~40px flow box on the baseline is the room that falloff renders into.
+ * THE SAME TWO HALVES RUN VERTICALLY, and there the problem is the SCROLL rather than the
+ * shadows. The deck frames every view in 16px of canvas (`.deck` padding, the webapp's
+ * app.css), and while the scroller ended at that frame a mid-scroll panel was CUT on the frame
+ * line — a hard edge 16px short of the viewport, top and bottom — while the reading stream
+ * scrolls clean to both edges (the `.view-reads .stream` reclaim in app.css: the same
+ * construction, negative margins over the deck frame with the spacing given back inside the
+ * scroller). The four-side margin lands the clip edge on the deck's own edges — the viewport's
+ * top and bottom at every width this column exists — and the four-side padding makes the
+ * spacing SCROLL-INTERNAL: at rest nothing moves — the lede's top edge rests on the columns'
+ * shared top line, and the column's CONTENT bottoms out on the same baseline the rail and list
+ * panels end on (the sub-pixel remainder is absorbed inside the last panel — see the anchor
+ * effect in `MessagePane`) — and mid-scroll a panel runs to the viewport edge before it is
+ * cut. The last panel's downward falloff still needs no extra room at rest: the action pill is
+ * the wrapper's last flow child (`MessagePane`), and its ~40px flow box on the baseline is the
+ * room that falloff renders into. The sticky pill and the reply dock pin against the scrollport
+ * as before — the scrollport's bottom is simply the viewport's now.
  *
  * NO SHADOW ON THE WRAPPER — the panels' own light is the only light. This rule once cast
  * `--lift-1` from the column box, and that painted a PHANTOM PANEL: an outer shadow draws the
@@ -57,7 +67,7 @@
  * strip, where a curved fragment reads as debris floating over the gap mid-scroll. A scrolled
  * panel is cut on one straight line, the reading the stream's card scroll already ships.
  * Guarded structurally by thread-column-shadow.test.ts in the webapp suite. */
-.read-col:has(> .conv){background:none;border-radius:0;box-shadow:none;margin:0 -16px;padding:0 16px}
+.read-col:has(> .conv){background:none;border-radius:0;box-shadow:none;margin:-16px;padding:16px}
 /* THE MESSAGE FILLS THE COLUMN EVEN WHEN THE MAIL DOES NOT.
  *
  * A two-line message is a two-line box, so a bar parked at the end of it sits wherever the text
