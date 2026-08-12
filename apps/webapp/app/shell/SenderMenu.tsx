@@ -62,6 +62,7 @@ import { DECISION_DONE_LABEL } from "@ohmail/ui";
 import { Avatar, InfoNote } from "@ohmail/ui";
 import { avatarHue, initialsOf } from "./format";
 import { displayAddress, displayAddressee, displayDomain } from "./idn";
+import { useOverlayClamp } from "./overlay-clamp";
 import "./sender-sheet.css";
 import {
   DECISION_OF_DEST,
@@ -86,6 +87,9 @@ export interface SenderMenuState {
   address?: string;
   x: number;
   y: number;
+  /** The anchor's edges, for the viewport clamp — see `overlay-clamp.ts`. */
+  anchorTop?: number;
+  anchorBottom?: number;
 }
 
 export function SenderMenu({
@@ -180,13 +184,22 @@ export function SenderMenu({
     onChoose(dest, scope, makeRule);
   };
 
+  /**
+   * THE VIEWPORT CLAMP. This sheet is ~580px tall and `placePicker`'s flip guessed 190,
+   * so anchored to the LAST message of a thread — the default reading position — everything
+   * below "Reads" rendered off-screen with no way to reach it. The hook re-places the box
+   * against its measured height: below the anchor, flipped above it, or capped with an inner
+   * scroll, but never past the viewport's edges. See `overlay-clamp.ts` for the geometry.
+   */
+  const style = useOverlayClamp(rootRef, state);
+
   return (
     <div
       ref={rootRef}
       className="senderm"
       role="dialog"
       aria-label={t("aria", { sender: who })}
-      style={{ left: state.x, top: state.y }}
+      style={style}
     >
       <div className="sm-head">
         <Avatar initials={initialsOf(label)} hue={avatarHue(sender.address)} size="s" />
@@ -307,14 +320,23 @@ export function SenderMenu({
           </span>
         </div>
       ) : (
-        <ul role="listbox">
+        <ul role="listbox" aria-label={t("aria", { sender: who })}>
           {SCREENING_DESTS.map((dest) => (
             <li
               key={dest}
               role="option"
               aria-selected={subject.current === dest}
               className={subject.current === dest ? "sel" : undefined}
+              // Focusable and key-operable: the sheet opens from the `s` key, and an option a
+              // keyboard cannot reach is the same defect as one rendered off-screen.
+              tabIndex={0}
               onClick={() => commit(dest)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  commit(dest);
+                }
+              }}
             >
               {DECISION_DONE_LABEL[dest]}
               {/* The two destinations that can send mail on your behalf are marked before you

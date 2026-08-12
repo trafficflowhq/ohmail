@@ -30,9 +30,11 @@
  * `mousedown` dismiss, and every claimed key is stopped before the shell's registry sees it.
  * The CALLER returns focus to the chip — it owns the button.
  */
+import { useRef } from "react";
 import { useTranslations } from "next-intl";
 import { displayAddress, displayAddressee } from "./idn";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
+import { useOverlayClamp } from "./overlay-clamp";
 
 export interface ContactPopoverState {
   /** The message the chip sits on — the screening sheet's anchor into the mirror. */
@@ -43,6 +45,9 @@ export interface ContactPopoverState {
   name: string | null;
   x: number;
   y: number;
+  /** The anchor's edges, for the viewport clamp — see `overlay-clamp.ts`. */
+  anchorTop?: number;
+  anchorBottom?: number;
 }
 
 export function ContactPopover({
@@ -59,6 +64,13 @@ export function ContactPopover({
   onClose: () => void;
 }) {
   const t = useTranslations("message");
+  const rootRef = useRef<HTMLDivElement>(null);
+  /**
+   * THE VIEWPORT CLAMP. A chip on the LAST message of a thread — the default reading
+   * position — anchors this popover near the fold, where the fixed downward placement clipped
+   * it. Same rule as the sender sheet: flip, cap, scroll — never clip. See `overlay-clamp.ts`.
+   */
+  const style = useOverlayClamp(rootRef, state);
   const label = displayAddressee(state.name, state.address);
   const who = displayAddress(state.address);
 
@@ -84,10 +96,11 @@ export function ContactPopover({
 
   return (
     <div
+      ref={rootRef}
       className="cpop"
       role="dialog"
       aria-label={t("contactAria", { who })}
-      style={{ left: state.x, top: state.y }}
+      style={style}
     >
       <div className="cpop-head">
         <b>{label}</b>

@@ -33,16 +33,22 @@
   text-align: left;
   background: var(--tint);
 }
-.sm-scope button b,
-.sm-scope button small {
+.sm-scope button b {
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The COUNT WRAPS, never ellipsizes. It is the consent — "everyone at gmail.com" is chosen
+   with its size visible — and half a tile's width used to print it as "1 s…", which is a
+   count nobody can read. The label above it keeps its one line; the meta takes two. */
 .sm-scope button small {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
   font-size: 10px;
+  line-height: 1.35;
   color: var(--ink3);
   font-feature-settings: "tnum";
   font-variant-numeric: tabular-nums;
@@ -90,6 +96,15 @@
    styling from `.sm-confirm p` and states its own line-height. */
 .sm-confirm .sm-confirm-fine {
   margin-top: 7px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--ink2);
+}
+/* The SHEET-LEVEL explainer — the subject sheet's "no repeating tag" note sits OUTSIDE
+   `.sm-confirm`, so the rule above never reached it and it printed wall-to-wall, crowding
+   its own (i). Same inset as `.sm-now`, whose sentence it follows. */
+.senderm > .sm-confirm-fine {
+  margin: 0 15px 9px;
   font-size: 10.5px;
   line-height: 1.5;
   color: var(--ink2);

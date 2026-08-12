@@ -15,9 +15,23 @@ export interface TagPickerState {
   forId: string;
   x: number;
   y: number;
+  /** The anchor's edges, for `useOverlayClamp` — see `overlay-clamp.ts`. */
+  anchorTop?: number;
+  anchorBottom?: number;
 }
 
-export function placePicker(anchor: HTMLElement | null): { x: number; y: number } {
+/**
+ * Where an anchored popover opens. The `x`/`y` here are an ESTIMATE — the flip guesses 190px of
+ * height, which is roughly this picker and half a sender sheet — so the anchor's own edges ride
+ * along for `useOverlayClamp` (`overlay-clamp.ts`) to re-place the box against its MEASURED
+ * height after render. Callers spread the whole return into their overlay state.
+ */
+export function placePicker(anchor: HTMLElement | null): {
+  x: number;
+  y: number;
+  anchorTop: number;
+  anchorBottom: number;
+} {
   const r = anchor?.getBoundingClientRect() ?? {
     left: window.innerWidth / 2 - 120,
     bottom: window.innerHeight / 3,
@@ -29,7 +43,7 @@ export function placePicker(anchor: HTMLElement | null): { x: number; y: number 
   const x = Math.min(Math.max(r.left, pad), window.innerWidth - w - pad);
   let y = r.bottom + 8;
   if (y + h > window.innerHeight - pad) y = Math.max(pad, r.top - h - 8);
-  return { x, y };
+  return { x, y, anchorTop: r.top, anchorBottom: r.bottom };
 }
 
 export function TagPicker({

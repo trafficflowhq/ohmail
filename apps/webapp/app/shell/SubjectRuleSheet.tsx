@@ -48,6 +48,7 @@ import { useTranslations } from "next-intl";
 import { Avatar, DECISION_DONE_LABEL, InfoNote } from "@ohmail/ui";
 import { avatarHue, initialsOf } from "./format";
 import { displayAddress, displayAddressee, displayRuleMatch } from "./idn";
+import { useOverlayClamp } from "./overlay-clamp";
 import "./sender-sheet.css";
 import { RETRO_DEFAULT_ON, type ScreeningDest } from "./sender-screening";
 import {
@@ -64,6 +65,9 @@ export interface SubjectRuleState {
   messageId: string;
   x: number;
   y: number;
+  /** The anchor's edges, for the viewport clamp — see `overlay-clamp.ts`. */
+  anchorTop?: number;
+  anchorBottom?: number;
 }
 
 /**
@@ -130,6 +134,13 @@ export function SubjectRuleSheet({
   const wholeCount = subjectMatchCount(ctx.messages, ctx.subject);
   const contentCount = ctx.bodyToken ? bodyMatchCount(ctx.messages, ctx.bodyToken) : 0;
 
+  /**
+   * THE VIEWPORT CLAMP — the sender sheet's sibling geometry. At ~600px this sheet
+   * clipped its bottom 339px off a 1440×900 viewport when opened low, which put its lower
+   * destinations out of reach entirely. Same hook, same rule: flip, cap, scroll — never clip.
+   */
+  const style = useOverlayClamp(rootRef, state);
+
   return (
     <div
       ref={rootRef}
@@ -139,7 +150,7 @@ export function SubjectRuleSheet({
         "subjectAria",
         `Make a rule for mail from ${who} with this in the subject`,
       )}
-      style={{ left: state.x, top: state.y }}
+      style={style}
     >
       <div className="sm-head">
         <Avatar initials={initialsOf(label)} hue={avatarHue(ctx.address)} size="s" />
@@ -297,14 +308,29 @@ export function SubjectRuleSheet({
           </span>
         </div>
       ) : (
-        <ul role="listbox">
+        <ul
+          role="listbox"
+          aria-label={copy(
+            "subjectAria",
+            `Make a rule for mail from ${who} with this in the subject`,
+          )}
+        >
           {SUBJECT_RULE_DESTS.map((dest) => (
             <li
               key={dest}
               role="option"
               aria-selected={ctx.current === dest}
               className={ctx.current === dest ? "sel" : undefined}
+              // Focusable and key-operable, matching `SenderMenu`'s destinations: an option a
+              // keyboard cannot reach is the same defect as one rendered off-screen.
+              tabIndex={0}
               onClick={() => setPending(dest)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setPending(dest);
+                }
+              }}
             >
               {DECISION_DONE_LABEL[dest]}
               {ctx.current === dest ? <span className="ck">✓</span> : null}
