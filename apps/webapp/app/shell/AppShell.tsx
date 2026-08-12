@@ -86,6 +86,8 @@ import { dispatchMarkAll, dispatchMarkAllRead } from "./read-all";
 import { useMessageAttachments } from "./attachments";
 import { useRemoteImages } from "./remote-images";
 import { useConsentState } from "./consent-state";
+import { readBootCache, writeBootCache } from "./boot-cache";
+import { readOwner } from "./owner-cookie";
 import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
 import { useScreenerSuggestions, type SenderSuggestion } from "./screener-suggest";
@@ -208,6 +210,15 @@ const RAIL_OF_TRIAGE_PILE: Record<TriagePileId, string> = {
  * cannot put `3` on the wrong row, only include or exclude a row from being numbered.
  */
 const PILE_IDS: string[] = ["ohbox", "reads", "receipts", "screener", ...Object.keys(TRIAGE_PILE_OF_RAIL)];
+
+/** The `boot-cache.ts` scope for the account's own addresses. See `ownAddresses` below. */
+const OWN_ADDRESSES_BOOT_SCOPE = "own-addresses";
+
+/** A cached address list an older build wrote degrades to "no cache", never to mixed types. */
+function acceptAddressList(parsed: unknown): string[] | null {
+  if (!Array.isArray(parsed)) return null;
+  return parsed.every((x): x is string => typeof x === "string") ? parsed : null;
+}
 
 /**
  * How long the located row stays marked, and how long we look for it.
@@ -843,7 +854,32 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * whether they would like to hear from themselves. The demo's mirror DOES hold mailbox rows,
    * so no fixture test could ever have shown this.
    */
-  const ownAddresses = useMemo(() => facts?.map((m) => m.address) ?? [], [facts]);
+  /**
+   * …AND THE BOOT USES THE DEVICE'S COPY OF THAT ANSWER. `facts` is a round trip away on every
+   * load, and a partition computed with an empty own-set for that interval would present the
+   * user's own recent self-mail in their own Screener — the same boot-window defect the consent
+   * cache below closes, on this input. So the addresses ride the same per-account boot cache:
+   * written whenever `GET /mailboxes` has answered, read while `facts` is still null, keyed by
+   * the remembered account id, and never applied over a live answer (`facts` wins the `??`).
+   * An address list neither authorises nor loads anything — it only stops the account being
+   * treated as a stranger to itself for the first round trip.
+   */
+  const [rememberedOwn, setRememberedOwn] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (demo) return;
+    const owner = readOwner();
+    if (owner === null) return;
+    if (facts) {
+      writeBootCache(OWN_ADDRESSES_BOOT_SCOPE, owner, facts.map((m) => m.address));
+      return;
+    }
+    const cached = readBootCache(OWN_ADDRESSES_BOOT_SCOPE, owner, acceptAddressList);
+    if (cached !== null) setRememberedOwn(cached);
+  }, [demo, facts]);
+  const ownAddresses = useMemo(
+    () => facts?.map((m) => m.address) ?? rememberedOwn ?? [],
+    [facts, rememberedOwn],
+  );
   /**
    * THE ACCOUNT'S OWN NAME FOR ONE OF ITS ADDRESSES — what the "me" recipient chip wears
    * (viewer redesign). `GET /mailboxes` carries `displayName` per mailbox (nullable; OAuth connects
@@ -874,13 +910,19 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     // record of decisions this model can read, and pretending otherwise is what would be
     // dishonest here.
     //
-    // AND NOTHING IS PARTITIONED BEFORE THE SERVER HAS ANSWERED. `consent.known` is false
-    // until `GET /consent` lands, and false for ever if it never does. That is the safe
-    // direction and the only one: partitioning on a guessed window would move mail out of the
-    // piles and into History on the strength of a default the account may not be using, and a
-    // request that simply failed would silently hide somebody's mail. Unpartitioned is what
-    // the product did before consent existed — every message in the pile its folder names —
-    // so a tab that cannot reach the endpoint degrades to showing MORE, never less.
+    // AND NOTHING IS PARTITIONED BEFORE THE ACCOUNT'S WINDOW IS KNOWN. `consent.known` is
+    // false until `GET /consent` lands — or, on a device that has held this account before,
+    // until the boot applies the account's CACHED last answer (`consent-state.ts`,
+    // `boot-cache.ts`), which is what stops every reload presenting the raw piles for the
+    // whole consent round trip: measured live, the Screener resurrected the same set of
+    // already-decided senders on every boot and held them until the answer arrived, however
+    // many /sync drains completed first. A tab with NO cache and no answer still partitions
+    // nothing, for ever if the endpoint never answers. That refusal is about GUESSED windows:
+    // partitioning on a default the account may not be using would move mail out of the piles
+    // and into History, and a request that simply failed would silently hide somebody's mail.
+    // The cache is not a guess — it is the account's own stored window, one session old at
+    // most — while unpartitioned remains what the product did before consent existed, so a tab
+    // that cannot know degrades to showing MORE, never less.
     //
     // ── UNLESS THERE IS NO SERVER TO ANSWER, WHICH IS THE DESKTOP ────────────────────────
     //

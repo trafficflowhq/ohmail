@@ -18,17 +18,32 @@
  * senders are ASKED about, not what is stored or searchable, so the worst case is a Screener
  * queue that is briefly the wrong length in one tab.
  *
+ * ── THE BOOT READS THE DEVICE'S COPY OF THE LAST ANSWER FIRST ────────────────────────────
+ *
+ * The warm open paints the mirror in the first frame, and a partition that waits for this
+ * fetch presents the RAW piles for the whole round trip — measured live: every reload
+ * resurrected the same set of already-decided Screener senders (their mail physically at the
+ * gate, presented elsewhere by their rules) and held them until `GET /consent` answered, however
+ * many `/sync` drains completed in between. So the effect below first applies this account's
+ * CACHED last answer (`boot-cache.ts` — the three partition inputs and nothing that authorises
+ * anything), then lets the live answer overwrite it and the cache both. The staleness this can
+ * show is exactly the second-tab cost the paragraph above already accepts.
+ *
  * ── AND WHY A FAILURE IS SILENT ──────────────────────────────────────────────────────────
  *
  * The default is the product default, which is what the client engine uses anyway. A tab that
  * could not reach this endpoint partitions exactly as it would have before the endpoint
- * existed, so a network blip must not produce an error anybody has to read.
+ * existed — or, when this device holds the account's cached answer, with that answer, which is
+ * strictly closer to the account's truth than the default. Either way a network blip must not
+ * produce an error anybody has to read.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_DORMANCY_DAYS } from "@ohmail/client-engine";
 import { apiConfigured, consent as consentApi, type ConsentStateWire } from "../api-client";
+import { readBootCache, writeBootCache } from "./boot-cache";
 import { normalizeLocale, type AppLocale } from "./locale";
+import { readOwner } from "./owner-cookie";
 
 export interface ConsentState {
   /** Null until the seed review has been confirmed. Drives which onboarding step is shown. */
@@ -180,6 +195,50 @@ const RESTING: ConsentState = {
   standalone: false,
 };
 
+/** The `boot-cache.ts` scope this hook owns. Exported for the sign-out test and nothing else. */
+export const CONSENT_BOOT_SCOPE = "consent";
+
+/**
+ * WHAT MAY BE CACHED FOR THE NEXT BOOT, and the boundary that decides it.
+ *
+ * The three fields the boot render cannot be honest without: the two halves of the cutline
+ * arithmetic (`dormancyDays`, `screeningBaselineAt` — without them `AppShell` presents the raw
+ * piles and every reload resurrects the already-decided Screener senders), and
+ * `seedConfirmedAt`, because `known: true` with a null seed would flash the seed review at an
+ * account that confirmed it long ago.
+ *
+ * DELIBERATELY NOT HERE, whatever convenience says: `autoSuggest` (a cached true could spend
+ * credits the account revoked in another session) and `blockRemoteImages` (a cached "images
+ * load" could fetch a sender's content for somebody who opted out elsewhere). Both keep their
+ * safe resting values until the live answer — the same values a tab with no cache has always
+ * shown for the same interval. `consent-boot-cache.test.tsx` watches this boundary.
+ */
+interface ConsentBootCache {
+  v: 1;
+  seedConfirmedAt: string | null;
+  dormancyDays: number;
+  screeningBaselineAt: string | null;
+}
+
+/**
+ * A cache row an older or foreign build wrote must degrade to "no cache", never to a value of
+ * the wrong type: `dormancyDays` reaches date arithmetic and the other two reach `Date.parse`.
+ */
+function acceptConsentCache(parsed: unknown): ConsentBootCache | null {
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const p = parsed as Record<string, unknown>;
+  if (p.v !== 1) return null;
+  if (typeof p.dormancyDays !== "number" || !Number.isFinite(p.dormancyDays)) return null;
+  if (p.seedConfirmedAt !== null && typeof p.seedConfirmedAt !== "string") return null;
+  if (p.screeningBaselineAt !== null && typeof p.screeningBaselineAt !== "string") return null;
+  return {
+    v: 1,
+    seedConfirmedAt: p.seedConfirmedAt,
+    dormancyDays: p.dormancyDays,
+    screeningBaselineAt: p.screeningBaselineAt,
+  };
+}
+
 /**
  * @param active `false` on the demo and the desktop, which have no server. Both keep
  * {@link RESTING}, which is the same window the engine would have used unasked.
@@ -233,6 +292,36 @@ export function useConsentState(active: boolean): ConsentState & {
   useEffect(() => {
     if (!active || !apiConfigured()) return;
     let live = true;
+    /**
+     * THE DEVICE'S LAST ANSWER, FIRST — synchronously, before the fetch below is even issued,
+     * so the live answer can only ever land on top of the cache and never under it.
+     *
+     * Keyed by the remembered account id (`owner-cookie.ts`) — the same id that names the
+     * mirror the warm open paints from, so the cached window and the cached mail can only ever
+     * describe the same account. No cookie (a first visit, the desktop) ⇒ no cache, and the
+     * boot waits for the server exactly as it did before the cache existed.
+     *
+     * The `prev.known` guard makes "the fetch already answered" unconditionally win; with the
+     * synchronous read above it is unreachable, and it is kept because the reachability is an
+     * ordering fact of this effect's body, not a property of the state machine.
+     */
+    const owner = readOwner();
+    if (owner !== null) {
+      const cached = readBootCache(CONSENT_BOOT_SCOPE, owner, acceptConsentCache);
+      if (cached !== null) {
+        setState((prev) =>
+          prev.known
+            ? prev
+            : {
+                ...prev,
+                seedConfirmedAt: cached.seedConfirmedAt,
+                dormancyDays: cached.dormancyDays,
+                screeningBaselineAt: cached.screeningBaselineAt,
+                known: true,
+              },
+        );
+      }
+    }
     void (async () => {
       try {
         const wire: ConsentStateWire = await consentApi.state();
@@ -289,6 +378,19 @@ export function useConsentState(active: boolean): ConsentState & {
           known: true,
           standalone: false,
         });
+        // The next boot paints from THIS answer. Written after the state (never instead of
+        // it), from the same normalised values, under the same account id the read used —
+        // and only the three fields `ConsentBootCache` names, which is the authorisation
+        // boundary, not an economy.
+        if (owner !== null) {
+          const next: ConsentBootCache = {
+            v: 1,
+            seedConfirmedAt: wire.seedConfirmedAt ?? null,
+            dormancyDays: wire.dormancyDays,
+            screeningBaselineAt: wire.screeningBaselineAt ?? null,
+          };
+          writeBootCache(CONSENT_BOOT_SCOPE, owner, next);
+        }
       } catch {
         // Deliberately silent — see the header.
       }
