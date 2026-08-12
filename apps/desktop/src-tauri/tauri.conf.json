@@ -15,6 +15,7 @@
         "height": 900,
         "minWidth": 390,
         "minHeight": 600,
+        "dragDropEnabled": false,
         "center": true,
         "resizable": true,
         "decorations": true,

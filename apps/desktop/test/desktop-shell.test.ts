@@ -41,7 +41,7 @@ describe("tauri.conf.json", () => {
     build: { frontendDist: string };
     app: {
       withGlobalTauri: boolean;
-      windows: { label: string; minWidth: number }[];
+      windows: { label: string; minWidth: number; dragDropEnabled?: boolean }[];
       security: {
         csp: string;
         freezePrototype: boolean;
@@ -214,6 +214,36 @@ describe("tauri.conf.json", () => {
     expect(conf.app.windows).toHaveLength(1);
     expect(conf.app.windows[0]!.label).toBe("main");
     expect(conf.app.windows[0]!.minWidth).toBe(390);
+  });
+
+  it("hands drag-and-drop to the web page, not to Tauri's native handler", () => {
+    // ABSENT KEY ⇒ DANGEROUS DEFAULT. `dragDropEnabled` defaults to TRUE
+    // (tauri-utils config.rs: `#[serde(default = "default_true")] pub
+    // drag_drop_enabled`), and true is the setting that BREAKS the app. With it
+    // on, Tauri installs a native drag handler whose callback returns `true`
+    // unconditionally (tauri-runtime-wry lib.rs, in `with_drag_drop_handler`),
+    // and that return value is "I consumed this drag":
+    //
+    //   · macOS/WKWebView — wry's `draggingEntered:`/`performDragOperation:`
+    //     overrides only fall through to `super` when the callback returns
+    //     false. Returning true means the OS default never runs, so the page
+    //     never receives `dragenter`/`dragover`/`drop`.
+    //   · Windows/WebView2 — wry installs an IDropTarget and calls
+    //     `SetAllowExternalDrop(false)`, which blocks HTML5 file drops outright.
+    //     Tauri's own doc comment on the field says as much: "Disabling it is
+    //     required to use HTML5 drag and drop on the frontend on Windows."
+    //
+    // Two shipping gestures are plain HTML5 drag-and-drop and die with it:
+    // dropping a file from the desktop onto an open compose, and dragging a
+    // recipient chip between the To/Cc/Bcc rows. (Dragging a list row onto the
+    // rail survives either way — it is built on pointer events for exactly this
+    // reason.) Nothing in this app listens for Tauri's drag events, so there is
+    // no second consumer to lose by turning the native handler off.
+    //
+    // The key is therefore asserted PRESENT and false. Deleting the line is not
+    // a no-op that a diff makes obvious; it is a silent return to the broken
+    // default, which is why absence fails here rather than being tolerated.
+    expect(conf.app.windows[0]!.dragDropEnabled).toBe(false);
   });
 
   it("builds Windows installers that never download the WebView2 runtime", () => {
