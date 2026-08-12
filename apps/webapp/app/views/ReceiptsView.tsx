@@ -20,8 +20,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { EngineMessage, MessageBody, TagDTO, WaterlineMeta } from "@ohmail/client-engine";
-import { Kbd, ListPane, ListRows, MessageRow, Waterline } from "@ohmail/ui";
+import { ListPane, ListRows, MessageRow, Waterline } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
+import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, waterlineStamp } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
@@ -346,17 +347,8 @@ export function ReceiptsView({
         /* Re-scan the seen-on-scroll observer as the window slides, so a row that mounts on
            scroll is still marked read when the reader scrolls past it. */
         rescanKey={`${win.start}:${win.end}`}
-        hints={
-          <>
-            <span>
-              <Kbd>j</Kbd> <Kbd>k</Kbd> {tr("hintMove")}
-            </span>
-            <span>
-              <Kbd>↵</Kbd> {tr("hintExpand")}
-            </span>
-            <span>{tr("hintRowJump")}</span>
-          </>
-        }
+        /* One affordance, not a legend — see `ShortcutHint` and the same note in ReadsView. */
+        hints={<ShortcutHint />}
       >
         {/* Rows above and below the window as reserved height — the scrollbar and scroll
             position stay what they would be with every row mounted (`useListWindow`). The
@@ -388,13 +380,7 @@ export function ReceiptsView({
           <span className="meta num">{t("meta", { count: fresh })}</span>
         </div>
         <div className="stream-hints">
-          <span>
-            <Kbd>j</Kbd> <Kbd>k</Kbd> {tr("hintNextPrev")}
-          </span>
-          <span>
-            <Kbd>↵</Kbd> {tr("hintExpand")}
-          </span>
-          <span>{tr("hintSeen")}</span>
+          <ShortcutHint />
         </div>
         {all.slice(0, Math.min(stream.count, fresh)).map(card)}
         {/* The line marks the fresh/seen junction in the stream, so it renders once the run

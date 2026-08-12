@@ -304,10 +304,10 @@ export function TriageView({
             </div>
           </>
         }
-        /* NO `hints` STRIP. The Ohbox's lists it because the Ohbox binds j, k, ↵, t, x and u;
-           this view binds one chord, `f`, and it is already printed on the Reply Run button by
-           `kbdHint`. A hints row here would have to invent rows for keys that are not bound —
-           a legend for a keyboard that does not exist. */
+        /* NO `hints` STRIP. The panes that keep one keep only the `? shortcuts` affordance
+           (`ShortcutHint`) — the legends are gone everywhere. This view binds one chord, `f`,
+           already printed on the Reply Run button by `kbdHint`, and `?` works here without
+           being advertised at every pane foot in the app. */
       >
         <ListRows>
           {entries.length ? (

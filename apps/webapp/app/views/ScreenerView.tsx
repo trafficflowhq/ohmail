@@ -38,6 +38,7 @@ import { avatarHue } from "../shell/format";
 import { displayAddress, displayAddressee, displayAddressUnder, displayDomainLabel } from "../shell/idn";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { ShortcutHint } from "../shell/ShortcutHint";
 /* The reader surfaces' own bound on "still coming" — one mechanism, not a second one shaped like
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
    picked, and `HeldMail` below for why this pile needs it too. */
@@ -1243,42 +1244,15 @@ export function ScreenerView({
             ) : null}
           </div>
         }
-        hints={
-          segment === "waiting" ? (
-            <>
-              <span>
-                <Kbd>j</Kbd> <Kbd>k</Kbd> {t("hintMove")}
-              </span>
-              {/* TWO FALSEHOODS IN ONE HINT, both fixed here. It read
-                  `y accept suggestion` unconditionally. `y` is bound NOWHERE in the webapp
-                  — `DecisionBar` owns that chord behind its `keyboard` prop and this view
-                  deliberately stopped passing it (see the keymap note above), so the only
-                  bound accept is Enter. And "accept suggestion" was offered on accounts
-                  that have none. Now: the real key, shown only when there is something to
-                  accept. */}
-              {state.suggestedCount > 0 ? (
-                <span>
-                  <Kbd>↵</Kbd> {t("hintAccept")}
-                </span>
-              ) : null}
-              {/* THE FILING LEGEND IS GONE, NOT MOVED. It read
-                  `o r c n x file` and `⇧+key marks read` — five keycaps in the bottom
-                  corner of the LIST, naming five destinations that live in the bar at the
-                  top of the other pane, with nothing on screen to attach them to. Each key
-                  is now on the capsule it fires, which is the message action bar's rule; a
-                  legend as well as the caps would be the second list the keyboard registry
-                  deleted from the (i) panel. `j`/`k` and `↵` stay: they act on the LIST,
-                  which is the pane this strip belongs to. */}
-            </>
-          ) : (
-            <>
-              <span>
-                <Kbd>j</Kbd> <Kbd>k</Kbd> {t("hintMove")}
-              </span>
-              <span>{t("hintPreview")}</span>
-            </>
-          )
-        }
+        /* THE LEGEND IS GONE ENTIRELY NOW. Its previous trim (recorded in
+           `screener-cloud.test.ts`) had already deleted the filing keys — `o r c n x file`
+           named capsules in the other pane, and `y accept suggestion` named a key bound
+           nowhere — on the rule that a key is documented on the verb it fires. The j/k/↵
+           remainder fell to the same rule's last step: clamped to one line, it clipped
+           mid-word in the split layout, and it was still a hand-typed copy of bindings the
+           `?` sheet derives from the registry. One affordance remains — the key that opens
+           that sheet. The bindings themselves are unchanged (`keys` above). */
+        hints={<ShortcutHint />}
       >
         <ListRows>
           {items.length ? items.map(row) : <Empty segment={segment} settled={settled} />}

@@ -1,0 +1,13 @@
+/* The pane-foot `? shortcuts` affordance (`ShortcutHint.tsx`). Quiet by the strips' own
+   register — the 11px `--ink3` the hint rows already speak — and tokens only, so both themes
+   resolve it without a rule of their own. `white-space:nowrap` restates the strips' one-line
+   guarantee on the item itself: this button is the only thing a hint strip holds, and it must
+   never be the thing that starts a second line. The color transition is a shade, not motion,
+   so there is nothing here for `prefers-reduced-motion` to switch off. */
+.key-hint{
+  display:inline-flex;align-items:center;gap:6px;
+  background:none;border:0;padding:0;cursor:pointer;
+  font:inherit;color:var(--ink3);white-space:nowrap;
+  transition:color .15s;
+}
+.key-hint:hover,.key-hint:focus-visible{color:var(--ink2)}

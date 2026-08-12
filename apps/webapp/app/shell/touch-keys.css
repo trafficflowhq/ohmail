@@ -86,4 +86,16 @@
   .rail-dock .ritem kbd {
     display: none;
   }
+
+  /* THE PANE-FOOT `? shortcuts` AFFORDANCE (`ShortcutHint`, the one thing a hint strip holds
+     now). The ⌘K pill's case, exactly: a tappable control whose label is a keycap and whose
+     product — the `?` sheet — is a list of keys this device does not have. `app.css` already
+     hides the strips under 900px; this is the wide coarse-pointer surface, the tablet, where
+     they would otherwise show. Same deliberate trade as the pill for the Magic-Keyboard iPad,
+     and the same specificity rule: the declarations to beat are `.list-hints` /
+     `.stream-hints` (0,1,0) in `packages/ui`, so these are (0,2,0). */
+  .view .list-hints,
+  .view .stream-hints {
+    display: none;
+  }
 }

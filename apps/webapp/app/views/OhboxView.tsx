@@ -21,6 +21,7 @@ import {
   ReadColumn,
 } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
+import { ShortcutHint } from "../shell/ShortcutHint";
 import { groupSection, sendTimeOf, singletonGroup, type OhboxRowGroup } from "./ohbox-groups";
 import { PLACE_LABEL, avatarOf, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
@@ -1692,28 +1693,11 @@ export function OhboxView({
             ) : null}
           </>
         }
-        hints={
-          <>
-            <span>
-              <Kbd>j</Kbd> <Kbd>k</Kbd> {t("hintMove")}
-            </span>
-            <span>
-              <Kbd>↵</Kbd> {t("hintRead")}
-            </span>
-            <span>
-              <Kbd>t</Kbd> {t("hintTag")}
-            </span>
-            <span>
-              <Kbd>x</Kbd> {t("hintPick")}
-            </span>
-            <span>
-              <Kbd>u</Kbd> {t("hintUnread")}
-            </span>
-            <span>
-              <Kbd>?</Kbd> {t("hintAllKeys")}
-            </span>
-          </>
-        }
+        /* The strip used to spell the whole keymap out ("j k move · ↵ read · t tag …") and,
+           being clamped to one line, CLIPPED mid-word whenever this pane shared the window
+           with the reading column. One affordance now — the key that opens the generated
+           sheet. The bindings themselves are unchanged, declared in `keys` above. */
+        hints={<ShortcutHint />}
       >
         {/* TWO listboxes, not one: "New" and "Earlier" are separated by a group label, and
             an option's listbox has to be its actual container. Each is labelled, because an
@@ -1897,9 +1881,9 @@ export function OhboxView({
            *   · NO UNREAD COUNT. The list header beside it already states one, and a number
            *     restated two panels apart is a number that will eventually disagree with
            *     itself.
-           *   · NO SECOND KEY LEGEND. `ListPane`'s hints row lists j/k, ↵, t, x, u and `?`
-           *     under the list. One `<kbd>j</kbd>` in the sentence is a pointer INTO that
-           *     legend, not a copy of it.
+           *   · NO SECOND KEY LEGEND. The `?` sheet is the one list of the bindings, and the
+           *     pane foot already carries the affordance that opens it (`ShortcutHint`). One
+           *     `<kbd>j</kbd>` in the sentence is a pointer at a key, not a copy of the map.
            *   · NO `role="status"`. This is not an announcement of something that changed; it
            *     is what the region contains at rest. It becomes a live region the moment a
            *     screen reader is told it changed, and every `j` would then read out a panel the

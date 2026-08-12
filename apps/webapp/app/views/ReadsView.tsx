@@ -19,13 +19,13 @@ import type {
 } from "@ohmail/client-engine";
 import {
   Chip,
-  Kbd,
   ListPane,
   ListRows,
   MessageRow,
   Waterline,
 } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
+import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
@@ -460,17 +460,10 @@ export function ReadsView({
         /* Re-scan the seen-on-scroll observer as the window slides — a row that mounts on scroll
            must still mark itself read when the reader scrolls past it. */
         rescanKey={`${win.start}:${win.end}`}
-        hints={
-          <>
-            <span>
-              <Kbd>j</Kbd> <Kbd>k</Kbd> {t("hintMove")}
-            </span>
-            <span>
-              <Kbd>↵</Kbd> {t("hintExpand")}
-            </span>
-            <span>{t("hintRowJump")}</span>
-          </>
-        }
+        /* One affordance, not a legend — see `ShortcutHint`. The strip clipped in the split
+           layout, and the row-jump sentence taught a click by writing it down; the click
+           teaches itself. */
+        hints={<ShortcutHint />}
       >
         {/* ONE windowed sequence over `[fresh, seen]`: reserved height above, the fresh slice
             (with the AI chip inline), the waterline at the junction when it is in view, the seen
@@ -513,13 +506,7 @@ export function ReadsView({
           <span className="meta num">{t("meta", { count: newCount })}</span>
         </div>
         <div className="stream-hints">
-          <span>
-            <Kbd>j</Kbd> <Kbd>k</Kbd> {t("hintNextPrev")}
-          </span>
-          <span>
-            <Kbd>↵</Kbd> {t("hintExpand")}
-          </span>
-          <span>{t("hintSeen")}</span>
+          <ShortcutHint />
         </div>
         {streamFresh.map(card)}
         {/* The waterline marks the fresh/seen junction, so it renders once the run has reached

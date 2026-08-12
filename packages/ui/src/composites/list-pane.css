@@ -29,18 +29,18 @@
 .rows{padding:0 16px} /* wide enough that a raised row's shadow isn't sheared at the pane edge */
 /* No-collapse rule: mail is never hidden behind a "+n more" affordance, so
    there is no collapse row to style. The tail-row only points at the server. */
-/* THE HINT ROW IS ONE LINE, AT EVERY WIDTH.
-   It was `flex-wrap:wrap`, so a narrow list pane — the split layout's, or a phone — broke
-   "j k move · ↵ read · t tag" onto two and sometimes three lines of chrome above the mail, which
-   is more of the pane spent on instructions than on the list they describe. Now it never wraps
-   and never scrolls: the row clips, and the hints give way from the RIGHT, which is the order
-   they are written in — the movement keys first, the incidental note last. `flex-shrink:999` on
-   the trailing hint is what makes it yield before any of the keyed ones; each item ellipsises
-   rather than truncating mid-glyph. */
+/* THE HINT ROW IS ONE LINE, AT EVERY WIDTH — BY CONTENT, NOT BY CLIPPING.
+   Its first fix kept the multi-key legend ("j k move · ↵ read · t tag …") and answered a
+   narrow pane with `overflow:hidden`, which traded wrapping for a strip that sat there
+   CLIPPED mid-word whenever the list shared the window with a reading column. The legend is
+   gone now: the row's one item is the `? shortcuts` affordance (the webapp's `ShortcutHint`),
+   which opens the sheet generated from the keyboard registry — a few characters that fit any
+   pane the row can find itself in. The nowrap/overflow declarations stay as the structural
+   guarantee the tests pin: whatever this row is ever handed, it cannot take a second line and
+   it cannot push the pane wider; per-item ellipsis is the graceful worst case, not the plan. */
 .list-hints{padding:10px 30px 14px;font-size:11px;color:var(--ink3);display:flex;gap:12px;align-items:center;flex:none;
   flex-wrap:nowrap;overflow:hidden;white-space:nowrap}
 .list-hints > *{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.list-hints > :last-child{flex-shrink:999}
 .tail-row{padding:14px 30px 20px;font-size:12px;color:var(--ink3)}
 /* empty state */
 .empty{padding:52px 20px;text-align:center;color:var(--ink2);font-size:13px}
