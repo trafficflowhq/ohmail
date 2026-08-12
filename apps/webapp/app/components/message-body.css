@@ -72,27 +72,34 @@
 .mb-bar-btn:disabled { cursor: default; opacity: 0.55; transform: none; box-shadow: var(--lift-0); }
 
 /* ── the way back to the sender's own rendering ─────────────────────────────────────────
-   A quiet text control under the body, not a pill in a bar. Mail that declares no canvas is
-   set in the app's own type by default; this is the one press that brings the sender's own
-   layout back, and takes the reader out of it again. Deliberately understated — it is an
-   escape hatch for the message this viewer guessed wrong about, not a primary action — so it
-   reads as a footnote to the letter above it rather than a second control surface. `flex-start`
-   because `.mb` is a stretch column and this must size to its text, left under the body. */
+   The quietest control on the surface, by intent. Mail that declares no canvas is set in the
+   app's own type by default; this is the one press that brings the sender's own layout back,
+   and takes the reader out of it again. It is an escape hatch for the message this viewer
+   guessed wrong about — rarely pressed — so it recedes to a footnote: the smallest quiet size,
+   the quietest ink, no underline at rest (the affordance surfaces on hover, and keyboard focus
+   has the app's own ring), tucked to the TRAILING corner under the body, off the leading edge
+   the reading eye travels. `flex-end` because `.mb` is a stretch column and this must size to
+   its text. It stays a real `<button>` with `aria-pressed` and this class — the browser
+   journeys locate it by class and read that attribute (labels are translated), and the prose
+   tests press it — so the treatment may get quieter but the contract may not move.
+   Guarded structurally by history-toggle-pill.test.ts in the webapp suite. */
 .mb-flip {
-  align-self: flex-start;
+  align-self: flex-end;
   border: 0;
   background: none;
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
   padding: 2px 0;
   color: var(--ink3);
-  text-decoration: underline;
-  text-decoration-color: var(--hair);
-  text-underline-offset: 2px;
-  transition: color 0.15s var(--swift), text-decoration-color 0.15s var(--swift);
+  transition: color 0.15s var(--swift);
 }
-.mb-flip:hover { color: var(--accent-ink); text-decoration-color: var(--accent-hair); }
+.mb-flip:hover, .mb-flip:focus-visible {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-hair);
+  text-underline-offset: 2px;
+}
 
 /* ── the sheet ────────────────────────────────────────────────────────────────────────
    A letter on the desk. Light by default in both themes — a sender's html assumes a light

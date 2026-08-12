@@ -1167,7 +1167,8 @@ function dkimAligned(signing: string, authorDomain: string): boolean {
 }
 
 /**
- * NO DEPLOYMENT TRUST DECISION HAS BEEN MADE — the day-one state of every producer.
+ * NO TRUST DECISION EXISTS FOR THIS MAILBOX — the state of every mailbox at an unlisted
+ * provider, and the day-one state every producer started in.
  *
  * A named symbol rather than an anonymous `new Set()` at each call site, for two reasons that
  * are both about the next reader:
@@ -1177,11 +1178,11 @@ function dkimAligned(signing: string, authorDomain: string): boolean {
  *    empty, so a producer holding this is exactly as permissive as the `"unauthenticated"`
  *    literal it replaced — see {@link AuthVerdict}). "Which paths are wired but unconfigured"
  *    is then a question with a mechanical answer.
- *  · An empty set is a CONFIGURATION state, not a defect, and naming it says so. Filling it in
- *    is a deployment decision — which authserv-id the account's own provider signs
- *    `Authentication-Results` with — that nobody can default for a host
- *    (`packages/api/src/routes/shared.ts#unsubscribes` already states this for the one
- *    pre-existing consumer).
+ *  · An empty set is a CONFIGURATION state, not a defect, and naming it says so. The
+ *    production population is `authserv-ids.ts#providerAuthservIds`, keyed on the IMAP host
+ *    the mailbox's own connection dials — Gmail and Microsoft resolve to their signing
+ *    authserv-id, and every other host resolves to THIS symbol, because for a server nobody
+ *    vouches for the honest trust decision is still "nobody".
  *
  * `Set<never>` and not `Set<string>` so a `.add()` on it does not typecheck. It is frozen at
  * the type level rather than by `Object.freeze` because `ReadonlySet` is what every consumer

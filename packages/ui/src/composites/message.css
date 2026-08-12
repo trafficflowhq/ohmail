@@ -21,8 +21,20 @@
  * top edge rests on the columns' shared top line, and the last panel bottoms out on the same
  * baseline the rail and list panels end on (the sub-pixel remainder is absorbed inside the
  * last panel — see the anchor effect in `MessagePane`). The 2px sides keep the panels' own
- * hairline ring (`--lift-1`'s first layer) inside the scrollport instead of shaving it off. */
-.read-col:has(> .conv){background:none;border-radius:0;box-shadow:none;padding:0 2px}
+ * hairline ring (`--lift-1`'s first layer) inside the scrollport instead of shaving it off.
+ *
+ * THE SHADOW STAYS WITH THE COLUMN, and only the paper leaves. This rule first dropped
+ * box-shadow along with the background, and that amputated the thread's bottom falloff: the
+ * column is the scroller, `overflow-y:auto` clips both axes, and the LAST panel rests flush
+ * against the scrollport's bottom edge — so that panel's own downward `--lift-1` is painted
+ * entirely outside the clip and the column ends in a bare cut line beside columns that
+ * dissolve into shadow. The column's OWN shadow is the one box that can cast past the clip,
+ * exactly where the single-message column casts its own; an outer box-shadow paints only
+ * outside the border box, never through a transparent element, so the canvas gaps between
+ * panels stay clean. `border-radius:20px` shapes the silhouette to the panels' corners and
+ * rounds the scroll clip the way every other panel column rounds it.
+ * Guarded structurally by thread-column-shadow.test.ts in the webapp suite. */
+.read-col:has(> .conv){background:none;border-radius:20px;box-shadow:var(--lift-1);padding:0 2px}
 /* THE MESSAGE FILLS THE COLUMN EVEN WHEN THE MAIL DOES NOT.
  *
  * A two-line message is a two-line box, so a bar parked at the end of it sits wherever the text
@@ -123,13 +135,27 @@
 .msg-attribution{margin:0 0 8px;color:var(--ink3);font-size:.92em;overflow-wrap:anywhere}
 /* THE FOLDED HISTORY'S HANDLE. `BodyText.tsx` collapses the trailing quoted run behind this
    chip; it stands where the history begins and reads in the quiet register of the in-header
-   "details" toggle — product chrome, never the sender's words. A hairline ring rather than a
-   fill, so a letter that ends in a chip still ends in air; the 14px below is `.msg-quote`'s own
-   step, so expanding does not reflow the lead. */
-.msg-history-toggle{display:inline-flex;align-items:center;border:1px solid var(--hair);
-  background:none;border-radius:99px;padding:3px 10px;margin:0 0 14px;
-  font:inherit;font-size:11.5px;line-height:1.5;color:var(--ink2);cursor:pointer;
+   "details" toggle — product chrome, never the sender's words. The viewer prototype's pill,
+   taken whole: an inset hairline ring rather than a border or a fill (a letter that ends in a
+   chip still ends in air), a "···" glyph before the label, the quietest ink until hovered.
+   CONTENT-WIDTH IS LOAD-BEARING. `inline-flex` alone shrink-wraps in a block container and
+   STRETCHES in a flex one — and `.mb` (message-body.css) is a stretch column, which is exactly
+   where the rich prose path renders this. The chip shipped as a bar spanning the whole letter
+   there; `align-self` pins the flex case and `width:fit-content` says the same thing everywhere
+   else. The 14px below is `.msg-quote`'s own step, so expanding does not reflow the lead.
+   Guarded structurally by history-toggle-pill.test.ts in the webapp suite. */
+.msg-history-toggle{display:inline-flex;align-items:center;gap:7px;align-self:flex-start;
+  width:fit-content;border:0;background:none;box-shadow:inset 0 0 0 1px var(--hair-soft);
+  border-radius:99px;padding:4px 12px;margin:0 0 14px;
+  font:inherit;font-size:11.5px;font-weight:500;line-height:1.5;color:var(--ink3);cursor:pointer;
   transition:background .15s var(--swift),color .15s var(--swift)}
+/* The glyph is a ::before, NOT a span: the button's text stays exactly its label, so the
+   BodyText tests' byte-for-byte "Show history" and an accessible name without ornament both
+   hold. The doubled `content` is deliberate — the `/ ""` alternative-text form strips the dots
+   from the accessibility tree where it is supported, and the bare form is the fallback that
+   keeps them visible everywhere else. */
+.msg-history-toggle::before{content:"···";content:"···" / "";letter-spacing:.18em;
+  font-weight:650;line-height:1}
 .msg-history-toggle:hover{background:var(--tint);color:var(--ink)}
 .msg-history-toggle:last-child{margin-bottom:0}
 /* A link in mail is the accent, quietly: coloured ink and a hairline underline rather than the
