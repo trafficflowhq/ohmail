@@ -109,6 +109,11 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // render one list rather than three copies of it. Two strings — the field's label and the
   // subtitle on the generic IMAP entry.
   "providerPicker",
+  // `reader` is the narrow-width reading overlay's chrome — AppShell addresses `reader.back` by
+  // dotted key through its unscoped `useTranslations()`, the second call shape the header above
+  // warns about. The overlay renders on every message opened under 900px, so without this the
+  // binary shows `reader.back` on the one control that leaves it.
+  "reader",
   "reply", "ribbon", "screener", "screening", "search", "session", "settings",
   // `sync` is the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares
