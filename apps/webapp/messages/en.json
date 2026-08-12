@@ -679,6 +679,7 @@
       "autoApplyTitle": "File obvious bulk out of my Screener for me",
       "autoApplyDescription": "When a first-time sender is plainly a newsletter or a receipt, file it to Reads or Receipts instead of holding it for you. Deterministic rules only — no AI, and it never spends. Security codes and other sensitive mail are never moved, and first-time people always wait for you. You can move anything back; nothing is deleted. Off by default.",
       "barLabel": "In your words, what belongs in your Ohbox",
+      "defaultBar": "Keep my Ohbox for real people writing to me and the service mail I actually act on — a delivery, a security alert, something that needs a reply. File the newsletters and promotions in Reads, the receipts and confirmations in Receipts, and hold first-time strangers in the Screener.",
       "save": "Save",
       "reset": "Use the default",
       "microcopy": "This changes how new mail is filed. It doesn't move mail already in your Ohbox.",

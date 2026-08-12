@@ -679,6 +679,7 @@
       "autoApplyTitle": "Offensichtliche Massenpost für mich aus dem Screener einsortieren",
       "autoApplyDescription": "Wenn ein Erstabsender ganz klar ein Newsletter oder ein Beleg ist, wird er nach Reads oder in die Belege einsortiert, statt für dich zurückgehalten zu werden. Nur feste Regeln — keine KI, und es kostet nie etwas. Sicherheitscodes und andere sensible Post werden nie verschoben, und Erstabsender aus Fleisch und Blut warten immer auf dich. Du kannst alles zurückholen; gelöscht wird nichts. Standardmäßig aus.",
       "barLabel": "In deinen Worten: was gehört in deine Ohbox",
+      "defaultBar": "Halte meine Ohbox frei für echte Menschen, die mir schreiben, und für die Service-Post, mit der ich wirklich etwas tue — eine Lieferung, eine Sicherheitswarnung, etwas, das eine Antwort braucht. Sortiere Newsletter und Werbung nach Reads, Quittungen und Bestätigungen in die Belege, und lass unbekannte Erstabsender im Screener warten.",
       "save": "Speichern",
       "reset": "Standard verwenden",
       "microcopy": "Das ändert, wie neue Post einsortiert wird. Post, die schon in deiner Ohbox liegt, wird nicht verschoben.",
