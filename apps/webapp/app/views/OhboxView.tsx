@@ -1386,10 +1386,14 @@ export function OhboxView({
       // read here, answered, or read on another mail client. See `slideOut`.
       className={settling.has(m.id) ? "settling" : undefined}
       threadCount={m.threadCount}
-      /* An own-sent row's circle is the RECIPIENT's and stays that way: the row is about the
-         person it went to, and a participant stack would take the one face "Me → Nora Lindt"
-         exists to show. The thread is still counted beside the subject. */
-      participants={sent ? undefined : participants}
+      /* An own-sent row's LEAD is the RECIPIENT's and stays that way: the row is about the
+         person it went to. The strip beside the subject is NOT suppressed with it — the faces
+         name who the CONVERSATION is between, which the reader's own reply is one voice of.
+         Suppressing them under the Me → label meant a thread lost its people the moment the
+         reader answered it (reported against a live two-person exchange); the strip rides the
+         subject line, so it takes nothing from the lead. `MessageRow` still draws nothing for
+         fewer than two, so a sent singleton is untouched. */
+      participants={participants}
       hasAttachment={m.hasAttachments}
       protected={m.protected != null}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
@@ -1496,8 +1500,9 @@ export function OhboxView({
      * reader's own words, and the row says who they went to rather than showing the reader
      * their own name (see `sentLabelOf`). Two arms, one label, never both:
      *   · everything read (the live shape — own-sent is never unread, so a folded reply sits
-     *     in an all-read "Earlier" row): the sender line and the circle are the recipient's,
-     *     exactly as on a singleton sent row;
+     *     in an all-read "Earlier" row): the sender line and the LEAD circle are the
+     *     recipient's, exactly as on a singleton sent row — the strip beside the subject keeps
+     *     the conversation's people either way;
      *   · unread members present: the distinct unread senders own the sender line, unchanged,
      *     and the snippet — which is the reply's — carries the label as its attribution.
      * A reply with no recipients on the row (pre-recipient mirror) is `sent == null`, and the
@@ -1528,9 +1533,9 @@ export function OhboxView({
         seen={g.unreadCount === 0}
         selected={selected != null && g.members.some((m) => m.id === selected.id)}
         threadCount={g.members.length}
-        /* the Me → recipient rule wins the circle for the same reason it wins the sender line:
-           see the singleton row above. */
-        participants={sentLeads ? undefined : participants}
+        /* the Me → recipient rule wins the LEAD circle and the sender line — not the strip,
+           which still names the conversation's people: see the singleton row above. */
+        participants={participants}
         hasAttachment={g.members.some((m) => m.hasAttachments)}
         protected={shown.protected != null}
         tags={tagsOfMessage(shown, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
