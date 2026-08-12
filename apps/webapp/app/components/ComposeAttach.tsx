@@ -31,24 +31,41 @@
  * keep-the-original guard are documented. This file's only job is to run it in the right place and
  * to say what happened.
  *
- * ── THE DIAL, IN THE ROW IT ACTS ON ──────────────────────────────────────────────────────
+ * ── THE DIAL, IN THE ROW IT ACTS ON — AND SCOPED TO IT ───────────────────────────────────
  *
- * The shrink level is offered beside the attach button as well as in Settings, and the two
- * controls edit ONE stored value through the same two functions (`readImageShrinkLevel` /
- * `writeImageShrinkLevel`) — one preference, shown where it is set and where it acts, never a
- * second answer. It is here because the moment the level matters is the pick: a person about to
- * send a photo at full size should not have to know that the dial lives two views away.
+ * The shrink level is offered beside the attach button because the moment the level matters is
+ * the pick: a person about to send a photo at full size should not have to know that a dial
+ * lives two views away.
  *
- * The pick itself still reads the STORE, not this component's state — the store is what the
- * Settings row writes too, so reading it at pick time is what makes the two surfaces incapable
- * of disagreeing about what a pick will do. The select's own state exists only to render the
- * current value, read post-mount for the hydration reason `readImageShrinkLevel` documents.
+ * IT IS THIS COMPOSE'S DIAL, NOT THE ACCOUNT-WIDE DEFAULT'S EDITOR. It opens at the stored
+ * Settings preference (`readImageShrinkLevel`) and moving it changes what the NEXT pick on this
+ * surface does — nothing else. It used to write the stored value back
+ * (`writeImageShrinkLevel`), which meant a control that looks compose-local silently rewrote
+ * the Settings → General preference for every later compose; a one-off "send this one at full
+ * size" quietly became the machine's new default. The Settings row remains the one editor of
+ * the stored default; this dial reads it as the starting point and diverges for this surface
+ * only.
+ *
+ * AND WHAT IT DOES NOT DO IS SAID ON SCREEN: files already in the list keep the bytes they were
+ * admitted with — re-encoding them here would silently replace what the user was shown and
+ * approved, and the originals are gone by design (only the admitted bytes are held). Moving the
+ * dial while files are attached therefore states the scope in a visible note instead of leaving
+ * the user to discover that the change did nothing to the rows above it.
  *
  * The options run strongest-first with Original last — a menu leads with the default, and
  * "Original" at the end anchors what the scale is FOR (everything above it trades fidelity for
  * bytes). The Settings segment reads the same table the other way, ascending; both orders come
  * from `IMAGE_SHRINK_LEVELS` and the labels from one catalog entry, so neither surface can grow
  * a level or a word the other lacks.
+ *
+ * ── PASTED AND DROPPED FILES ARE PICKS TOO ───────────────────────────────────────────────
+ *
+ * The message body takes no images (no-images is the product's rule), so pasting a picture into
+ * the editor used to do NOTHING — no attachment, no notice — and a file dropped on the surface
+ * was left to the browser, which navigates away to the file. Both now land HERE, through the
+ * same admit pipeline as the picker (shrink → cap → duplicate check → notes): the caller hands
+ * this component the surface to listen on (`dropZone`), because the files belong to the send
+ * exactly as a picked file does.
  *
  * ── COPY ─────────────────────────────────────────────────────────────────────────────────
  *
@@ -68,7 +85,6 @@ import {
   isImageShrinkLevel,
   readImageShrinkLevel,
   shrinkImage,
-  writeImageShrinkLevel,
 } from "./image-shrink";
 
 /**
@@ -163,6 +179,7 @@ export function ComposeAttach({
   onChange,
   disabled,
   maxTotalBytes = COMPOSE_ATTACH_MAX_TOTAL_BYTES,
+  dropZone,
 }: {
   attachments: ComposeAttachment[];
   onChange: (next: ComposeAttachment[]) => void;
@@ -177,6 +194,14 @@ export function ComposeAttach({
    * un-updated caller behaves exactly as it did.
    */
   maxTotalBytes?: number;
+  /**
+   * THE SURFACE WHOSE PASTES AND DROPS BELONG TO THIS SEND — the compose form, the reply panel.
+   * A picture pasted into the editor and a file dropped on the surface both land in the
+   * attachment list through the same admit pipeline as the picker; without a handler the paste
+   * is a silent nothing and the drop is the browser navigating away to the file. Optional
+   * because this component is mounted bare in harnesses with no surface to listen on.
+   */
+  dropZone?: React.RefObject<HTMLElement | null>;
 }) {
   const t = useTranslations("compose");
   // The LEVEL labels come from the Settings catalog, deliberately: one word per level in the
@@ -186,13 +211,19 @@ export function ComposeAttach({
   const levelId = useId();
   const [error, setError] = useState<string | null>(null);
   /**
-   * WHAT THE DIAL SHOWS — display state only; the pick reads the store (see the header note).
-   * Seeded with the default and corrected post-mount, never read during the first render: there
-   * is no `localStorage` on the server, and a mismatch would make React keep the server's value.
+   * THIS SURFACE'S LEVEL — the dial's value, and what the next pick applies. Seeded with the
+   * default and corrected to the STORED Settings preference post-mount, never read during the
+   * first render: there is no `localStorage` on the server, and a mismatch would make React
+   * keep the server's value. Moving the dial changes THIS state and nothing stored — see the
+   * header. The ref is the same value readable from inside async handlers without re-binding
+   * them per change.
    */
   const [level, setLevel] = useState<ImageShrinkLevel>(DEFAULT_IMAGE_SHRINK_LEVEL);
+  const levelRef = useRef<ImageShrinkLevel>(DEFAULT_IMAGE_SHRINK_LEVEL);
   useEffect(() => {
-    setLevel(readImageShrinkLevel());
+    const stored = readImageShrinkLevel();
+    setLevel(stored);
+    levelRef.current = stored;
   }, []);
   /**
    * WHAT THE SHRINK SAVED on the most recent pick — `null` when nothing was re-encoded, which is
@@ -200,10 +231,15 @@ export function ComposeAttach({
    * than as a rendered sentence so the copy stays in the catalog.
    */
   const [shrunk, setShrunk] = useState<{ from: number; to: number } | null>(null);
+  /** Files a pick skipped because identical bytes under the same name are already in the list. */
+  const [duplicates, setDuplicates] = useState<string[]>([]);
+  /** The dial moved while files were attached — say what the change does NOT touch. */
+  const [scopeNote, setScopeNote] = useState(false);
 
   const pick = useCallback(() => {
     setError(null);
     setShrunk(null);
+    setDuplicates([]);
     inputRef.current?.click();
   }, []);
 
@@ -212,14 +248,16 @@ export function ComposeAttach({
       if (!fileList || fileList.length === 0) return;
       setError(null);
       setShrunk(null);
-      // READ ONCE PER PICK, and inside the handler — never during a render. There is no
-      // `localStorage` on the server; see the note on `readImageShrinkLevel`.
-      const level = readImageShrinkLevel();
+      setDuplicates([]);
+      // THIS SURFACE'S DIAL, once per pick, off the ref — inside the handler because the level
+      // must be the one on screen at the moment of the pick, not the one a stale closure holds.
+      const level = levelRef.current;
       let running = totalBytes(attachments);
       const next = [...attachments];
       let refused = false;
       let savedFrom = 0;
       let savedTo = 0;
+      const skipped: string[] = [];
       for (const file of Array.from(fileList)) {
         try {
           // BEFORE THE CAP CHECK. The whole value of compressing on the client is that it changes
@@ -231,8 +269,18 @@ export function ComposeAttach({
             continue;
           }
           const contentBase64 = await readAsBase64(picture.blob);
+          const filename = file.name || "attachment";
+          /* THE SAME FILE TWICE IS A SKIP, NOT A SECOND ROW. Same name and byte-identical
+             content is the same attachment, and two indistinguishable rows invite deleting the
+             wrong one — or mailing both. Compared on the ADMITTED bytes, so the same photo
+             deliberately re-picked at a different level still attaches: those rows differ in
+             the size column, which is the difference the user asked for. */
+          if (next.some((a) => a.filename === filename && a.contentBase64 === contentBase64)) {
+            skipped.push(filename);
+            continue;
+          }
           next.push({
-            filename: file.name || "attachment",
+            filename,
             contentType: picture.contentType,
             contentBase64,
           });
@@ -252,6 +300,7 @@ export function ComposeAttach({
       // files being added, and for the single-picture case — which is nearly all of them — the two
       // numbers are that picture's own.
       if (savedFrom > 0) setShrunk({ from: savedFrom, to: savedTo });
+      if (skipped.length > 0) setDuplicates(skipped);
       onChange(next);
       // Clear the native input so re-picking the same file fires `change` again.
       if (inputRef.current) inputRef.current.value = "";
@@ -259,13 +308,54 @@ export function ComposeAttach({
     [attachments, onChange, maxTotalBytes, t],
   );
 
+  /**
+   * PASTE AND DROP, ON THE CALLER'S SURFACE. Native listeners rather than React props because
+   * the surface is the caller's element (the compose wrap, the reply panel), not something this
+   * component renders. `dragover` must prevent default or the browser never allows the drop and
+   * — for a file dropped anywhere else — navigates away to it. The recipient rows' own chip
+   * drags carry no `Files` entry, so they pass through untouched.
+   */
+  useEffect(() => {
+    const zone = dropZone?.current;
+    if (!zone || disabled) return;
+    const hasFiles = (dt: DataTransfer | null): boolean =>
+      Array.from(dt?.types ?? []).includes("Files");
+    const onPaste = (e: ClipboardEvent): void => {
+      const files = e.clipboardData?.files;
+      if (!files || files.length === 0) return;
+      e.preventDefault(); // the editor takes no images; the paste is an attach
+      void onFiles(files);
+    };
+    const onDragOver = (e: DragEvent): void => {
+      if (!hasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+    };
+    const onDrop = (e: DragEvent): void => {
+      if (!hasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      void onFiles(e.dataTransfer?.files ?? null);
+    };
+    zone.addEventListener("paste", onPaste);
+    zone.addEventListener("dragover", onDragOver);
+    zone.addEventListener("drop", onDrop);
+    return () => {
+      zone.removeEventListener("paste", onPaste);
+      zone.removeEventListener("dragover", onDragOver);
+      zone.removeEventListener("drop", onDrop);
+    };
+  }, [dropZone, disabled, onFiles]);
+
   const remove = useCallback(
     (index: number) => {
       setError(null);
       // The note described a pick that no longer stands once one of its files is gone. Dropping it
       // is the honest move; recomputing it would mean claiming a saving for bytes still in the list.
       setShrunk(null);
-      onChange(attachments.filter((_, i) => i !== index));
+      setDuplicates([]);
+      const next = attachments.filter((_, i) => i !== index);
+      // Nothing "already attached" is left for the scope note to be about.
+      if (next.length === 0) setScopeNote(false);
+      onChange(next);
     },
     [attachments, onChange],
   );
@@ -295,10 +385,10 @@ export function ComposeAttach({
             ? t("attachUsed", { used: formatSize(used), total: formatSize(maxTotalBytes) })
             : t("attachCap", { size: formatSize(maxTotalBytes) })}
         </span>
-        {/* THE DIAL. It writes the ONE stored level the Settings row edits and shows nothing of
-            its own — the pick, which reads the store, is what acts on it. Applies to the NEXT
-            pick: files already in the list keep the bytes they were admitted with, because
-            re-encoding them here would silently replace what the user was shown and approved. */}
+        {/* THE DIAL — this compose's, seeded from the Settings default and writing NOTHING back
+            to it (see the header: it used to rewrite the stored preference, silently). Applies
+            to the NEXT pick: files already in the list keep the bytes they were admitted with,
+            and moving the dial while any are attached says so in the note below. */}
         <label className="compose-attach-level" htmlFor={levelId}>
           {t("attachLevelLabel")}
           <select
@@ -308,10 +398,9 @@ export function ComposeAttach({
             onChange={(e) => {
               const next = e.target.value;
               if (!isImageShrinkLevel(next) || next === level) return;
-              // Storage first, then the control — the same non-async pairing as the Settings
-              // row, so the next pick reads back exactly what the dial shows.
-              writeImageShrinkLevel(next);
+              levelRef.current = next;
               setLevel(next);
+              if (attachments.length > 0) setScopeNote(true);
             }}
           >
             {LEVEL_CHOICES.map((id) => (
@@ -322,6 +411,14 @@ export function ComposeAttach({
           </select>
         </label>
       </div>
+
+      {/* THE SCOPE, SAID WHERE THE DIAL MOVED: the new level is for picks from now on, and the
+          rows above keep the bytes the user was shown and approved. `role="status"` because the
+          change happens with focus on the select — a visible-only sentence would be silent for
+          exactly the person the silence misled. */}
+      {scopeNote ? (
+        <p className="compose-attach-scope" role="status">{t("attachLevelScope")}</p>
+      ) : null}
 
       {attachments.length > 0 ? (
         <ul className="compose-attach-list">
@@ -351,6 +448,15 @@ export function ComposeAttach({
       {shrunk ? (
         <p className="compose-attach-shrunk">
           {t("attachShrunk", { from: formatSize(shrunk.from), to: formatSize(shrunk.to) })}
+        </p>
+      ) : null}
+
+      {/* A SKIP IS SAID, NOT SWALLOWED: a pick that silently added nothing reads as a broken
+          picker. The muted register, not the error's — nothing went wrong; the file is already
+          on the message. */}
+      {duplicates.length > 0 ? (
+        <p className="compose-attach-duplicate" role="status">
+          {t("attachDuplicate", { filenames: duplicates.join(", ") })}
         </p>
       ) : null}
 

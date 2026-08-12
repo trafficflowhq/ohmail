@@ -37,7 +37,7 @@
  * reports the press and says which kind of thing each row is.
  */
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineDraft } from "@ohmail/client-engine";
 import { Button, InfoNote, ListPane, ListRows } from "@ohmail/ui";
@@ -72,9 +72,30 @@ export function DraftsView({
   const t = useTranslations("drafts");
   /** The row whose Discard has been pressed once. One at a time — a list of open confirms is noise. */
   const [confirming, setConfirming] = useState<string | null>(null);
+  /**
+   * THE QUESTION IS A DIALOG TO THE ACCESSIBILITY TREE, and focus moves with it — the same
+   * treatment as the compose cancel confirm, for the same reason: an inline `group` that
+   * appears in silence is a destructive question a screen-reader user never hears. Focus lands
+   * on the panel when it opens; closing without acting puts it back on the row's own trigger.
+   */
+  const listRef = useRef<HTMLElement | null>(null);
+  const confirmRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (confirming !== null) confirmRef.current?.focus();
+  }, [confirming]);
+  const closeConfirm = useCallback((draftId: string) => {
+    setConfirming(null);
+    // `CSS.escape` is fenced because jsdom builds lack it; a draft id is a server UUID, so the
+    // raw fallback never actually differs.
+    const esc = (globalThis as { CSS?: { escape?: (s: string) => string } }).CSS?.escape
+      ?? ((s: string) => s);
+    listRef.current
+      ?.querySelector<HTMLButtonElement>(`.draft-row[data-id="${esc(draftId)}"] .draft-discard`)
+      ?.focus();
+  }, []);
 
   return (
-    <section className="view col view-drafts">
+    <section className="view col view-drafts" ref={listRef}>
       <ListPane
         title={t("title")}
         meta={drafts.length ? t("metaCount", { count: drafts.length }) : undefined}
@@ -132,10 +153,19 @@ export function DraftsView({
                     </button>
                   </div>
                   {confirming === d.id ? (
-                    <div className="draft-confirm" role="group" aria-label={t("discardConfirm")}>
+                    <div
+                      ref={confirmRef}
+                      className="draft-confirm"
+                      role="alertdialog"
+                      aria-label={t("discardConfirm")}
+                      aria-describedby={`draft-discard-what-${d.id}`}
+                      tabIndex={-1}
+                    >
                       {/* SAID BEFORE THE ACT, not after. A draft is the only copy of an unsent
                           message and the delete is real. */}
-                      <p className="set-note-inline">{t("discardWhat")}</p>
+                      <p className="set-note-inline" id={`draft-discard-what-${d.id}`}>
+                        {t("discardWhat")}
+                      </p>
                       <div className="gate-actions">
                         <Button
                           variant="primary"
@@ -143,7 +173,7 @@ export function DraftsView({
                         >
                           {t("discardConfirm")}
                         </Button>
-                        <Button variant="ghost" onClick={() => setConfirming(null)}>
+                        <Button variant="ghost" onClick={() => closeConfirm(d.id)}>
                           {t("discardCancel")}
                         </Button>
                       </div>

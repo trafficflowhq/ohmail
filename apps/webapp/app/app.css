@@ -2016,6 +2016,16 @@ textarea.c-input:read-only {
   color: var(--ink2);
   font-variant-numeric: tabular-nums;
 }
+/* The shrink dial's scope note and the duplicate-skip note: quiet captions in the shrunk note's
+   own register — nothing went wrong in either case, so neither may borrow the refusal's tinted
+   panel. Two classes, one look, because they are different live regions with different copy. */
+.compose-attach-scope,
+.compose-attach-duplicate {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink2);
+}
 /* THE SAME IDIOM AS `.c-error`, and for the reason stated there: this palette HAS NO RED, so a
    refusal is carried on the accent's soft surface in ordinary ink rather than in a colour the
    system would have to invent. Kept as its own rule instead of reusing `.c-error` because that

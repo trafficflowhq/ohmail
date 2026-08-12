@@ -61,7 +61,7 @@ import type { DraftReplyControl, DraftedReply } from "./draft-reply";
 import { SendStatus } from "./SendStatus";
 import { useMailboxFacts } from "./MailStateProvider";
 import {
-  formatRecipientLine,
+  formatRecipientChips,
   optionsFromFacts,
   replyAllRecipients,
   replyEnvelopeOnWire,
@@ -380,13 +380,13 @@ export function InlineReply({
     : (): void => {
         const to = all ? all.to : recipients ?? [message.from];
         // The trailing separator is what makes every prefilled entry a CHIP rather than text
-        // sitting in the input — `splitRecipients` reads the final segment as the tail being
-        // typed, and a prefill is settled, not half-typed.
-        const asChips = (list: readonly EmailAddress[]): string => {
-          const line = formatRecipientLine(list);
-          return line === "" ? "" : `${line}, `;
-        };
-        onEnvelope({ to: asChips(to), cc: asChips(all ? all.cc : []), bcc: "" });
+        // sitting in the input — see `formatRecipientChips`, which is the shared rule for
+        // every surface that seeds a recipient field from settled addresses.
+        onEnvelope({
+          to: formatRecipientChips(to),
+          cc: formatRecipientChips(all ? all.cc : []),
+          bcc: "",
+        });
       };
 
   /**
@@ -636,6 +636,9 @@ export function InlineReply({
           onChange={onAttachments}
           disabled={inFlight}
           maxTotalBytes={composeAttachCap(from.maxMessageBytes)}
+          /* The reply panel takes pastes and drops exactly as compose does — a pasted picture
+             is an attachment, not a silent nothing (`ComposeAttach.dropZone`). */
+          dropZone={box}
         />
       ) : null}
 

@@ -42,7 +42,7 @@
  * a `draft` entity with a body to review, which is the demo world today and the AI drafter
  * (Phase 3b) on a Cloud account later. Its label is app copy now, not a fixture string.
  */
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { addressBook } from "@ohmail/client-engine";
 import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
@@ -64,7 +64,7 @@ import {
 import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
 import { worthSaving } from "../shell/compose-autosave";
-import type { ResolvedFrom } from "../shell/compose-from";
+import { formatRecipientChips, type ResolvedFrom } from "../shell/compose-from";
 
 /**
  * The id the From control points `aria-describedby` at when the sender was matched to the
@@ -239,15 +239,36 @@ export function ComposeView({
    * whether to write a row in the first place, so "nothing was worth saving" and "there is
    * nothing to confirm" cannot drift apart.
    *
+   * ATTACHMENTS COUNT TOO, as their own term beside `worthSaving` and deliberately not inside
+   * it: autosave is right to ignore them (bytes are never stored, so they are not a reason to
+   * write a row), and this question is about what the user LOSES, which the picked files are.
+   * A compose holding only an attachment used to discard silently — the guard read the text
+   * fields, found nothing, and threw the files away with no question.
+   *
    * Anything written ⇒ the Drafts list's two-press idiom, in the panel's foot. Not an undo
    * toast: `DELETE /drafts/:id` is a real delete and the row is the only copy of an unsent
    * message, so an undo affordance would be offering something the product cannot do.
+   *
+   * THE QUESTION IS A DIALOG TO THE ACCESSIBILITY TREE, not a `group` that appears in silence:
+   * `role="alertdialog"` with the sentence as its description, and focus MOVES into it when it
+   * opens — a screen-reader user used to press Cancel and hear nothing at all while a
+   * destructive question sat on screen. Focus returns to the trigger when the question closes
+   * without acting; the destructive press navigates away, which is its own focus move.
    */
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const rootRef = useRef<HTMLElement | null>(null);
+  const confirmRef = useRef<HTMLDivElement | null>(null);
   const cancel = useCallback(() => {
-    if (worthSaving(fields)) setConfirmCancel(true);
+    if (worthSaving(fields) || (fields.attachments?.length ?? 0) > 0) setConfirmCancel(true);
     else onCancel();
   }, [fields, onCancel]);
+  useEffect(() => {
+    if (confirmCancel) confirmRef.current?.focus();
+  }, [confirmCancel]);
+  const keepWriting = useCallback(() => {
+    setConfirmCancel(false);
+    rootRef.current?.querySelector<HTMLButtonElement>(".compose-cancel")?.focus();
+  }, []);
 
   useKeyBindings([
     /* ONE Escape binding, branching — never two competing ones. It is the escape cascade's own
@@ -259,7 +280,7 @@ export function ComposeView({
       group: "app",
       label: confirmCancel ? t("keyCloseConfirm") : t("keyLeave"),
       inInput: true,
-      run: () => { if (confirmCancel) setConfirmCancel(false); else go("ohbox"); },
+      run: () => { if (confirmCancel) keepWriting(); else go("ohbox"); },
     },
     {
       chord: "mod+Enter",
@@ -283,10 +304,12 @@ export function ComposeView({
     // should not have to re-address.
     onFields({
       ...fields,
-      to: fields.to || draft.to.map((a) => (a.name ? `${a.name} <${a.address}>` : a.address)).join(", "),
+      // `formatRecipientChips`: the trailing separator is what renders every prefilled
+      // recipient as a settled chip instead of leaving the last one as raw text in the input.
+      to: fields.to || formatRecipientChips(draft.to),
       // A draft the drafter addressed a Cc to fills the Cc line too — the same rule as `to`, and the
       // reason `ccBccOpen` reveals the row when it is non-empty. `bcc` is never on an AI draft.
-      cc: fields.cc || draft.cc.map((a) => (a.name ? `${a.name} <${a.address}>` : a.address)).join(", "),
+      cc: fields.cc || formatRecipientChips(draft.cc),
       subject: fields.subject || draft.subject,
       body: draft.body,
       // `EngineDraft.body` IS PLAIN TEXT, so the markup half is emptied rather than left
@@ -309,7 +332,7 @@ export function ComposeView({
   const inFlight = send.phase === "sending" || send.phase === "queued";
 
   return (
-    <section className="view col view-compose">
+    <section className="view col view-compose" ref={rootRef}>
       <div className="vhead">
         <h1>{t("title")}</h1>
       </div>
@@ -610,6 +633,10 @@ export function ComposeView({
               attachments={fields.attachments ?? []}
               onChange={(next) => onFields({ ...fields, attachments: next })}
               disabled={inFlight}
+              /* The whole compose surface takes pastes and drops — a picture pasted into the
+                 editor and a file dropped on the form are attachments, not silence and not a
+                 navigation (`ComposeAttach.dropZone`). */
+              dropZone={rootRef}
               /* THE CEILING COMES FROM THE MAILBOX THIS WILL SEND FROM. `from` is the same
                  resolution `plan.mutation.mailboxId` was built from, so switching the From
                  selector moves the stated cap with it — a provider capping submission below the
@@ -622,8 +649,25 @@ export function ComposeView({
                 dialog the keyboard could not leave, and putting one back to ask about
                 abandoning a message would be the same mistake in a smaller box. */}
             {confirmCancel ? (
-              <div className="compose-confirm" role="group" aria-label={t("cancelConfirm")}>
-                <p className="set-note-inline">{t("cancelWhat")}</p>
+              /* AN alertdialog THAT TAKES FOCUS, because a destructive question that appears in
+                 silence is one a screen-reader user answers by accident. Focus lands on the
+                 panel itself (label + description are read together); Tab reaches the two
+                 answers. Deliberately still not modal and still inline — see the cancel note. */
+              <div
+                ref={confirmRef}
+                className="compose-confirm"
+                role="alertdialog"
+                aria-label={t("cancelConfirm")}
+                aria-describedby="compose-cancel-what"
+                tabIndex={-1}
+              >
+                {/* WHAT THE PRESS DELETES, stated exactly as widely as it is true: "on your
+                    account" only once autosave has actually written a row there. A never-saved
+                    message exists in this browser alone, and claiming more teaches people the
+                    warning exaggerates. */}
+                <p className="set-note-inline" id="compose-cancel-what">
+                  {plan.mutation.draftId ? t("cancelWhat") : t("cancelWhatLocal")}
+                </p>
                 <div className="gate-actions">
                   <Button
                     variant="primary"
@@ -631,7 +675,7 @@ export function ComposeView({
                   >
                     {t("cancelConfirm")}
                   </Button>
-                  <Button variant="ghost" onClick={() => setConfirmCancel(false)}>
+                  <Button variant="ghost" onClick={keepWriting}>
                     {t("cancelKeep")}
                   </Button>
                 </div>

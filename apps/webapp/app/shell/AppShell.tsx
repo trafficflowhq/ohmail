@@ -41,7 +41,6 @@ import {
   triagePiles,
   type ComposeAttachment,
   type ConsentPartition,
-  type EmailAddress,
   type EngineDraft,
   type EngineMessage,
   type EngineMutation,
@@ -106,6 +105,7 @@ import {
   writeComposeDraft,
   EMPTY_COMPOSE,
   type ComposeFields,
+  type MailSend as MailSendMutation,
 } from "./compose";
 import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text";
 import { useDraftReply, type DraftedReply } from "./draft-reply";
@@ -117,6 +117,7 @@ import { SyncBar } from "./SyncBar";
 import { MailStateProvider, useMailState, type MailboxProbe } from "./MailStateProvider";
 import { ViewBoundary } from "./ViewBoundary";
 import {
+  formatRecipientChips,
   optionsFromFacts,
   optionsFromMirror,
   replyAllRecipients,
@@ -1836,9 +1837,18 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * dependency array without throwing at render. The ref is assigned once the hook exists, which
    * is the shape `attachments.ts` uses for the same reason.
    */
-  const releaseDraft = useRef<() => void>(() => {});
+  const releaseDraft = useRef<(sentDraftId: string | null) => void>(() => {});
   /** Late-bound for the same reason as {@link releaseDraft} — see below where it is assigned. */
   const openMessageRef = useRef<(m: EngineMessage) => void>(() => {});
+  /**
+   * WHICH DRAFT ROW SEEDED WHICH REPLY EDITOR — `message id → draft id`, written by `openDraft`
+   * when a reply draft opens in its message's own inline editor. The inline reply has no
+   * autosave, so a send from that editor creates its own row; without this map the seeded row
+   * would survive the delivery as a phantom draft — the sent message sitting in Drafts under
+   * "haven't sent", reopenable with Send live. Entries leave when the send settles (discarded
+   * below) or when the row is discarded from the Drafts list (`discardDraft`).
+   */
+  const replySeedDrafts = useRef(new Map<string, string>());
 
   /**
    * The reply that most recently settled, handed to `OhboxView` for the animate-to-Earlier gesture
@@ -1848,14 +1858,24 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    */
   const [replyDone, setReplyDone] = useState<OhboxReplyDone | null>(null);
 
-  const onSendSettled = useCallback((key: string) => {
+  const onSendSettled = useCallback((key: string, m: MailSendMutation) => {
     if (key === COMPOSE_SEND_KEY) {
       setCompose(EMPTY_COMPOSE);
-      /* RELEASED, NOT DISCARDED. The row is the message that was just sent — `SendService` moved
-         it to `sent`, which is what takes it out of the Drafts list — so deleting it here would
-         destroy the account's record of an outgoing mail. The next compose starts a new row. */
-      releaseDraft.current();
+      /* RELEASED WHEN THE SEND USED THE ROW, DISCARDED WHEN IT DID NOT — `autosave.settled`
+         judges by the settled mutation's own `draftId`. A send that carried the row turned it
+         into a sent message (`SendService` moved it to `sent`), and deleting that would destroy
+         the account's record of an outgoing mail; a send pressed while the first save was still
+         on the wire carried NO id, made its own row, and the one autosave then adopted is a
+         phantom draft — the sent message sitting in Drafts, reopenable with Send live. */
+      releaseDraft.current(m.draftId ?? null);
       return;
+    }
+    // A reply seeded from a draft row settled: the row's message has been delivered (the send
+    // wrote its own row), so the seed is a phantom draft now — see `replySeedDrafts`.
+    const seeded = replySeedDrafts.current.get(key);
+    if (seeded) {
+      replySeedDrafts.current.delete(key);
+      void engine.mutate({ kind: "draft_discard", draftId: seeded });
     }
     // A reply settled. `key` is the answered message's id (`sendKeyOf`), which is exactly the row
     // that should move from "New for you" to "Earlier" — so hand it to the Ohbox for the gesture.
@@ -1888,7 +1908,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       return rest;
     });
     setFr({ ...fr, step: fr.step + 1 });
-  }, [fr]);
+  }, [fr, engine]);
   const mailSend = useMailSend(engine, toast, onSendSettled);
   /**
    * The body comes from REACT STATE, not from `readReplyDraft`. Private mode refuses the
@@ -2033,7 +2053,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     mailboxId: composeMailbox,
     active: route.view === "compose",
   });
-  releaseDraft.current = autosave.release;
+  releaseDraft.current = autosave.settled;
 
   /**
    * THE DRAFTS LIST, and the two things a row can do.
@@ -2068,8 +2088,6 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
   );
   const openDraft = useCallback(
     (d: EngineDraft) => {
-      const line = (xs: readonly EmailAddress[]): string =>
-        xs.map((a) => (a.name ? `${a.name} <${a.address}>` : a.address)).join(", ");
       const parent = d.inReplyToMessageId
         ? reader.get<EngineMessage>("message", d.inReplyToMessageId)
         : null;
@@ -2080,13 +2098,21 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
            for the same reason `releaseDraft` is. */
         setReplyBody({ text: d.body, html: "" });
         setReplyTo(parent.id);
+        /* REMEMBER WHICH ROW SEEDED THIS EDITOR. The inline reply has no autosave, so the send
+           will create its own row — and without this note the seeded row would stay in Drafts
+           as a copy of a message that has been delivered, reopenable with Send live: the
+           double-send bait. `onSendSettled` discards it when a reply to THIS message confirms. */
+        replySeedDrafts.current.set(parent.id, d.id);
         openMessageRef.current(parent);
         return;
       }
+      // `formatRecipientChips`, never a bare join: the seeded string must end in a separator
+      // or the LAST stored recipient reopens as raw text in the input — no ×, typing appends
+      // to the address — while the others are chips.
       const seeded: ComposeFields = {
-        to: line(d.to),
-        cc: line(d.cc),
-        bcc: line(d.bcc),
+        to: formatRecipientChips(d.to),
+        cc: formatRecipientChips(d.cc),
+        bcc: formatRecipientChips(d.bcc),
         subject: d.subject,
         body: d.body,
         // NO `html`. The row stores the markup the server derived its plain part FROM, and the
@@ -2120,6 +2146,10 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       // list while it is open would otherwise leave autosave PATCHing a row that is gone, and the
       // next pause would report a 404 nobody could act on.
       if (autosave.draftId === draftId) autosave.release();
+      // The reply editor may be holding it too — a settle after this delete must not delete twice.
+      for (const [msgId, dId] of replySeedDrafts.current) {
+        if (dId === draftId) replySeedDrafts.current.delete(msgId);
+      }
     },
     [engine, autosave],
   );
@@ -2223,7 +2253,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     (address: string, name?: string) => {
       const seeded: ComposeFields = {
         ...EMPTY_COMPOSE,
-        to: name ? `${name} <${address}>` : address,
+        // The chips form: a prefilled recipient is settled, so it must open as a chip, not as
+        // raw text in the input — the same rule as `openDraft`.
+        to: formatRecipientChips([{ name: name ?? null, address }]),
       };
       autosave.release();
       setCompose(seeded);

@@ -618,3 +618,18 @@ export function formatRecipientLine(list: readonly EmailAddress[]): string {
     .map((a) => (a.name && !/[<>,;"]/.test(a.name) ? `${a.name} <${a.address}>` : a.address))
     .join(", ");
 }
+
+/**
+ * The same line, ENDING IN A SEPARATOR — the prefill for a field whose entries are settled.
+ *
+ * `splitRecipients` reads the final segment of the value as the tail still being typed, so a
+ * prefill that stops at the last address renders that address as raw text in the input — no ×,
+ * typing appends to it — while everything before it is a chip. A stored recipient is settled,
+ * not half-typed, so every surface that seeds a recipient field from ADDRESSES (a reopened
+ * draft, the reply head opening for edit, the contact popover's Write) ends the string with
+ * `", "`; `parseRecipients` ignores the empty segment, so nothing on the wire changes.
+ */
+export function formatRecipientChips(list: readonly EmailAddress[]): string {
+  const line = formatRecipientLine(list);
+  return line === "" ? "" : `${line}, `;
+}

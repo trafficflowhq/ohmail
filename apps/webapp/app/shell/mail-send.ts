@@ -231,8 +231,13 @@ const BACKOFF_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
 export function useMailSend(
   engine: OhmailEngine,
   toast: ToastFn,
-  /** Close the surface if it is still the one open — see `AppShell.onSendSettled`. */
-  onSettled: (key: string) => void,
+  /**
+   * Close the surface if it is still the one open — see `AppShell.onSendSettled`. The settled
+   * MUTATION rides along because the shell's draft bookkeeping needs its `draftId`: a compose
+   * send that carried no row id made its own row, and the row autosave adopted in the meantime
+   * is then a phantom copy of a delivered message (`compose-autosave.ts` → `settled`).
+   */
+  onSettled: (key: string, m: MailSend) => void,
 ): MailSendApi {
   const t = useTranslations();
   const [states, setStates] = useState<Record<string, SendState>>({});
@@ -297,7 +302,7 @@ export function useMailSend(
       }
 
       setPhase(key, IDLE);
-      settledRef.current(key);
+      settledRef.current(key, m);
       toast(m.inReplyTo === null ? t("compose.toastSent") : t("reply.toastSent"));
     },
     [engine, setPhase, toast, t],
