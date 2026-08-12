@@ -143,6 +143,54 @@
    of these values comes from the sender — no sender style survives the walker — so this
    sheet IS the typography of a native table, list or heading, everywhere one renders. */
 
+/* ── code, as the sender typed it ──────────────────────────────────────────────────────
+   ONE CODE LOOK ACROSS COMPOSE AND READ. Every value below except the wrapping rule is the
+   composer's (`app.css`, `.rte-surface pre` / `.rte-surface code`): the same monospace stack,
+   the same `--tint2` ground, the same 0.92em, the same radii. A snippet should not change
+   character between the message being written and the message being read.
+
+   NO HIGHLIGHTING, deliberately. Colouring tokens means guessing a language from a stranger's
+   mail and then saying the guess out loud in colour; this is a reading surface, not an editor.
+
+   THE ONE DEPARTURE FROM THE COMPOSER IS THE WRAPPING, and it is the reason `.msg-pre-wrap`
+   exists. The composer wraps (`pre-wrap`) because the author is still writing and the column is
+   the canvas. Received mail is different on both counts: the indentation of a stack trace or the
+   columns of a header dump ARE the content, and re-flowing them to a 400px split column is a
+   different document. So the block preserves its whitespace literally, which makes it exactly as
+   wide as its longest line — and a line in real mail can be four thousand characters of base64.
+   That width is contained by the WRAPPER, not by the block: `.msg-pre-wrap` is the element that
+   scrolls, so a hostile code block scrolls inside the letter and the message pane never grows a
+   horizontal bar. Identical construction to `.msg-table-wrap` below, for identical reasons. */
+.msg-pre-wrap { overflow-x: auto; max-width: 100%; margin: 0 0 10px; }
+.msg-pre-wrap:last-child { margin-bottom: 0; }
+.msg-pre {
+  margin: 0;
+  padding: 0.62em 0.8em;
+  border-radius: 9px;
+  background: var(--tint2);
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+  line-height: 1.5;
+  /* The block is as wide as its longest line, and the wrapper is narrower. Without this the
+     tinted ground stops at the wrapper's edge and the scrolled-to part of a long line sits on
+     bare panel — the shading would then say "the snippet ends here" in the middle of it. */
+  min-width: max-content;
+}
+
+/* Inline code: a run of literal characters inside a sentence. Tint and nothing else — a border
+   at this size is noise around three words, and it would fight the surrounding line's rhythm.
+   `anywhere` because the run is frequently one unbroken token (a path, a message-id) and a
+   token that cannot break is a token that widens the column. */
+.msg-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+  background: var(--tint2);
+  padding: 0.1em 0.32em;
+  border-radius: 5px;
+  overflow-wrap: anywhere;
+}
+
 /* A genuinely wide table scrolls INSIDE the letter; the pane never grows a horizontal bar. */
 .msg-table-wrap { overflow-x: auto; max-width: 100%; margin: 0 0 10px; }
 .msg-table-wrap:last-child { margin-bottom: 0; }

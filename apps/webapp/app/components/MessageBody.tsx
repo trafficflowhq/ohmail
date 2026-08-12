@@ -1102,6 +1102,10 @@ export function isRigidLayout(root: Element, styleText: string): boolean {
  *   everything else the sanitizer admits (`span`, `font`, `center`, `section`, …) is
  *             TRANSPARENT: its words flow through, the element itself is never constructed.
  *
+ * `pre` is the one block read as literal TEXT instead of walked for structure ({@link preTextOf}):
+ * its whitespace is its content, and the renderer gives it a container that scrolls rather than a
+ * column that reflows.
+ *
  * `blockquote` maps to the SAME QuoteNode the plain-text parser builds, clamped by the same
  * {@link MAX_QUOTE_DEPTH}, which is what makes the trailing-history fold apply to html mail
  * with no further wiring. And the whole walk runs under {@link MAX_RICH_NODES}: past the cap
@@ -1179,6 +1183,14 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
     if (spend(b)) out.push({ kind: "underline", children: inlineOf(el, b, nest) });
     return;
   }
+  if (tag === "code") {
+    // Literal characters INSIDE a sentence — a path, a header name, a flag. The block form is
+    // `pre` (usually wrapping one of these), and the block walk claims it before this function
+    // is ever reached, so a `pre > code` becomes one preformatted block and not a code run
+    // inside a paragraph.
+    if (spend(b)) out.push({ kind: "code", children: inlineOf(el, b, nest) });
+    return;
+  }
   if (tag === "a") {
     /**
      * ONE GATE, the same one the plain-text path trusts. `anchorFor` re-parses the href and
@@ -1210,6 +1222,32 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
   }
   // Transparent: `span`, `font`, and any block the sender nested mid-line. Words flow on.
   for (const child of el.childNodes) appendInline(child, out, b, nest + 1);
+}
+
+/**
+ * The literal text of a `pre` subtree — the one place this walker reads a subtree as a string,
+ * and deliberately NOT `el.textContent`, for two reasons that are both invariants stated above.
+ *
+ *   · {@link RICH_SKIP}. `textContent` would fold a `<style>`'s stylesheet into the snippet as
+ *     if the sender had typed it there. The rule that "`style` content must not fall through to
+ *     a text run" does not stop being true inside a `pre`.
+ *   · `<br>`. Inside preformatted text a `br` is a line the sender drew, and `textContent`
+ *     silently drops it, joining two lines of a stack trace into one.
+ *
+ * The result is still only ever sender BYTES, never sender markup: it reaches the DOM as one
+ * React text node.
+ */
+function preTextOf(node: ChildNode, b: RichBudget, nest: number): string {
+  if (nest > MAX_WALK_DEPTH) { poison(b); return ""; }
+  if (node.nodeType === 3 /* TEXT_NODE */) return node.nodeValue ?? "";
+  if (node.nodeType !== 1 /* ELEMENT_NODE */) return "";
+  const el = node as Element;
+  const tag = el.tagName.toLowerCase();
+  if (RICH_SKIP.has(tag)) return "";
+  if (tag === "br") return "\n";
+  let s = "";
+  for (const child of el.childNodes) s += preTextOf(child, b, nest + 1);
+  return s;
 }
 
 function inlineOf(el: Element, b: RichBudget, nest: number): InlineNode[] {
@@ -1272,6 +1310,15 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
         if (item.length > 0) items.push(item);
       }
       if (items.length > 0 && spend(b)) out.push({ kind: "list", ordered: tag === "ol", items });
+    } else if (tag === "pre") {
+      // THE ONE BLOCK WHOSE WHITESPACE IS CONTENT. Everywhere else in this walk the sender's
+      // spacing is noise between elements; in a `pre` the indentation IS the structure, so the
+      // subtree is read as literal text (see {@link preTextOf}) and handed to `BodyText` as a
+      // string it renders in a container that scrolls. A `pre` of nothing but whitespace is the
+      // same non-content a blank paragraph is, and is dropped for the same reason.
+      let text = "";
+      for (const child of el.childNodes) text += preTextOf(child, b, nest + 1);
+      if (text.trim().length > 0 && spend(b)) out.push({ kind: "pre", text });
     } else if (tag === "table") {
       tableOf(el, depth, b, out, nest + 1);
     } else if (tag === "hr") {
@@ -1286,8 +1333,8 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
         });
       }
     } else {
-      // `p`, `div`, and every unhandled block container (`center`, `section`, `pre`, an
-      // orphaned `td`): a block boundary whose content is walked in place.
+      // `p`, `div`, and every unhandled block container (`center`, `section`, an orphaned
+      // `td`): a block boundary whose content is walked in place.
       out.push(...blocksOf(el, depth, b, nest + 1));
     }
   }

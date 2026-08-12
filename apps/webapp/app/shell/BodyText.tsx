@@ -63,10 +63,10 @@
  * A prose-classified html mail (see `MessageBody`'s `isRigidLayout`) no longer flattens to its
  * `text/plain` part. `MessageBody`'s walker re-reads the SANITIZED document through a second,
  * narrower allow-list and emits the {@link BodyNode} superset below — paragraphs, headings,
- * lists, tables, inline emphasis, gated links, and `blockquote` as the same {@link QuoteNode}
- * the plain-text path builds, so the trailing-history fold applies to both. This file renders
- * those nodes the only way it renders anything: `createElement`, text nodes, constructed
- * attributes. There is no serialized form anywhere between the sanitized DOM and the screen,
+ * lists, tables, code (inline and as {@link PreNode} blocks), inline emphasis, gated links, and
+ * `blockquote` as the same {@link QuoteNode} the plain-text path builds, so the trailing-history
+ * fold applies to both. This file renders those nodes the only way it renders anything:
+ * `createElement`, text nodes, constructed attributes. There is no serialized form anywhere between the sanitized DOM and the screen,
  * which is what keeps the sink invariant true while tables and lists render natively. No
  * sender `style`, `class`, `width` or `id` survives — the viewer's own type is the point.
  *
@@ -206,8 +206,14 @@ export interface QuoteNode { kind: "quote"; depth: number; children: BodyNode[] 
  */
 export interface TextRun { kind: "text"; text: string }
 export interface LineBreak { kind: "break" }
-/** Inline emphasis — `strong`/`b`, `em`/`i`, `u`, folded to one kind per meaning. */
-export interface StyledRun { kind: "strong" | "em" | "underline"; children: InlineNode[] }
+/**
+ * Inline emphasis — `strong`/`b`, `em`/`i`, `u` — and `code`, folded to one kind per meaning.
+ *
+ * `code` sits with the emphasis kinds because it has their shape and their job: it marks a run
+ * of the sentence as literal characters — a path, a header name, a flag — rather than words.
+ * The BLOCK form is {@link PreNode}, which is a different thing and is not built out of these.
+ */
+export interface StyledRun { kind: "strong" | "em" | "underline" | "code"; children: InlineNode[] }
 /**
  * A link that passed {@link anchorFor} — the same single gate the plain-text path uses; a
  * rejected href never becomes a node at all, its label stays in the surrounding run as text.
@@ -233,6 +239,18 @@ export interface RichParagraphNode { kind: "rich"; attribution: boolean; childre
 /** `h1`–`h6`, rendered at the app's own scale — a mail heading is not a page heading. */
 export interface HeadingNode { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; children: InlineNode[] }
 export interface RuleNode { kind: "rule" }
+/**
+ * A PREFORMATTED BLOCK — `pre`, which is how a code block, a header dump or a stack trace
+ * arrives (usually as `pre > code`).
+ *
+ * TEXT, not children, and that carries the whole meaning of the kind: a `pre`'s content is its
+ * LITERAL CHARACTERS — the indentation is the structure — so the walker flattens the subtree to
+ * the string the reader is meant to see and this file puts that string on screen as ONE React
+ * text node. Inline emphasis inside a code block is the sender's typesetting of somebody else's
+ * source; dropping it costs a reader of that source nothing, and keeping it would mean deciding
+ * how a bold run interacts with preserved whitespace.
+ */
+export interface PreNode { kind: "pre"; text: string }
 /** `ul`/`ol`; each item is its own block list, so nested lists nest. */
 export interface ListNode { kind: "list"; ordered: boolean; items: BodyNode[][] }
 /** Spans are PARSED, BOUNDED INTS — see `MessageBody`'s `boundedSpan` — never sender strings. */
@@ -247,6 +265,7 @@ export type BodyNode =
   | HeadingNode
   | RuleNode
   | ListNode
+  | PreNode
   | TableNode;
 /**
  * Fold the flat block list into the tree the reader actually means.
@@ -315,7 +334,7 @@ function carriesProse(n: BodyNode): boolean {
   switch (n.kind) {
     case "para": return !n.block.attribution;
     case "rich": return !n.attribution;
-    case "heading": case "list": case "table": return true;
+    case "heading": case "list": case "table": case "pre": return true;
     case "quote": case "rule": return false;
   }
 }
@@ -465,6 +484,9 @@ function renderInline(nodes: InlineNode[], keyBase: string): ReactNode[] {
       case "strong": return <strong key={key}>{renderInline(node.children, key)}</strong>;
       case "em": return <em key={key}>{renderInline(node.children, key)}</em>;
       case "underline": return <u key={key}>{renderInline(node.children, key)}</u>;
+      // Literal characters inside a sentence. Faint tint, no border, no highlighting — this is
+      // received mail, and the app is not pretending to be an editor for somebody else's source.
+      case "code": return <code className="msg-code" key={key}>{renderInline(node.children, key)}</code>;
       case "link":
         return (
           <a
@@ -517,6 +539,18 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
       }
       case "rule":
         return <hr className="msg-hr" key={key} />;
+      case "pre":
+        // TWO ELEMENTS, AND THE OUTER ONE IS THE LOAD-BEARING HALF. A code block preserves its
+        // whitespace, so it is exactly as wide as its longest line — and a line in received mail
+        // can be four thousand characters of base64. `.msg-pre-wrap` is the element that scrolls
+        // (message-body.css); the `pre` inside it is free to be as wide as the sender made it,
+        // and the pane never grows a horizontal bar. Same construction, same reason, as
+        // `.msg-table-wrap` below. The text is ONE React text node — the sink invariant, again.
+        return (
+          <div className="msg-pre-wrap" key={key}>
+            <pre className="msg-pre">{node.text}</pre>
+          </div>
+        );
       case "list": {
         const items = node.items.map((item, j) => (
           <li key={`${key}-${j}`}>{renderNodes(item, `${key}-${j}-`)}</li>
