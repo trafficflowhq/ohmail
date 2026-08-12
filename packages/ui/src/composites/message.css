@@ -18,23 +18,29 @@
  * an article cannot wrap N panels), and a stack of lift-1 panels inside a lift-1 panel is two
  * competing surfaces — so the column keeps only its job as the scroller and hands the paper to
  * the panels. No vertical padding: the thread is FLUSH at both ends of the scroll — the lede's
- * top edge rests on the columns' shared top line, and the last panel bottoms out on the same
- * baseline the rail and list panels end on (the sub-pixel remainder is absorbed inside the
- * last panel — see the anchor effect in `MessagePane`). The 2px sides keep the panels' own
+ * top edge rests on the columns' shared top line, and the column's CONTENT bottoms out on the
+ * same baseline the rail and list panels end on (the sub-pixel remainder is absorbed inside
+ * the last panel — see the anchor effect in `MessagePane`). The 2px sides keep the panels' own
  * hairline ring (`--lift-1`'s first layer) inside the scrollport instead of shaving it off.
  *
- * THE SHADOW STAYS WITH THE COLUMN, and only the paper leaves. This rule first dropped
- * box-shadow along with the background, and that amputated the thread's bottom falloff: the
- * column is the scroller, `overflow-y:auto` clips both axes, and the LAST panel rests flush
- * against the scrollport's bottom edge — so that panel's own downward `--lift-1` is painted
- * entirely outside the clip and the column ends in a bare cut line beside columns that
- * dissolve into shadow. The column's OWN shadow is the one box that can cast past the clip,
- * exactly where the single-message column casts its own; an outer box-shadow paints only
- * outside the border box, never through a transparent element, so the canvas gaps between
- * panels stay clean. `border-radius:20px` shapes the silhouette to the panels' corners and
- * rounds the scroll clip the way every other panel column rounds it.
+ * NO SHADOW ON THE WRAPPER — the panels' own light is the only light. This rule once cast
+ * `--lift-1` from the column box "to restore the thread's bottom falloff", and that painted a
+ * PHANTOM PANEL: an outer shadow draws the silhouette of an opaque surface around a box that
+ * paints none, so the pill band and the canvas gaps read as one glass shelf holding the
+ * messages. The premise behind it was wrong anyway — the LAST panel does not rest against the
+ * scrollport's bottom edge. The action pill is the wrapper's last flow child (`MessagePane`),
+ * so ITS flow box is what bottoms out on the baseline, and the ~40px it occupies is exactly
+ * the room the last panel's downward falloff renders into. Measured on the built page, both
+ * themes: nothing of a panel's `--lift-1` is cut at rest. The one shadow the clip does touch
+ * is the pinned pill's own `--lift-3` tail, 12px above the edge — the same cut the
+ * single-message column makes at the same offset, where it has never read as a defect.
+ *
+ * `border-radius:20px` stays, and it is a CLIP SHAPE, not paint: with no background and no
+ * shadow it draws nothing, but `overflow` clips to it, so a panel scrolled past the column's
+ * edge is cut on the 20px arc every other column ends in rather than on a bare right angle —
+ * the square-cornered cut is the thing that made the scrolled thread look bolted on.
  * Guarded structurally by thread-column-shadow.test.ts in the webapp suite. */
-.read-col:has(> .conv){background:none;border-radius:20px;box-shadow:var(--lift-1);padding:0 2px}
+.read-col:has(> .conv){background:none;border-radius:20px;box-shadow:none;padding:0 2px}
 /* THE MESSAGE FILLS THE COLUMN EVEN WHEN THE MAIL DOES NOT.
  *
  * A two-line message is a two-line box, so a bar parked at the end of it sits wherever the text
