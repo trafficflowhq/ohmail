@@ -221,9 +221,22 @@ export function ReceiptsView({
    */
   useEffect(() => {
     if (!cur) return;
+    /* Reveal an unmounted row before scrolling to it — the windowed list mounts its top, so
+       a search jump deep into the pile had no row to scroll to and arrived unmarked. Same
+       mechanism and reasoning as `ReadsView`'s effect of this name. */
+    const idx = all.findIndex((m) => m.id === cur);
+    if (idx >= 0 && (idx < win.start || idx >= win.end)) {
+      const el = listScrollerRef.current;
+      if (el) {
+        el.scrollTop = Math.max(0, idx * win.rowHeight - el.clientHeight / 2);
+        return;
+      }
+    }
     document
       .querySelector(`.view-receipts .row[data-id="${CSS.escape(cur)}"]`)
       ?.scrollIntoView({ block: "nearest" });
+    // Window fields are read at fire time — see ReadsView for why `cur` is the only key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cur]);
 
   /** The card under the cursor asks for its body. One id, never the pile — see `ReadsView`. */

@@ -7,7 +7,7 @@
  *   #/tag/pottery          one tag across everything
  * The query string (?demo=1) is untouched by navigation.
  */
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 
 export const VIEWS = [
   "ohbox",
@@ -96,6 +96,36 @@ export function parseHash(hash: string): Route {
   return { view, tagId: null, screenerSegment: "waiting", triagePile: "reply" };
 }
 
+/**
+ * The canonical hash for a route — `parseHash`'s inverse, spelled the way the `go*` helpers
+ * spell it (`#/triage` for the first pile, `#/screener` for waiting), so a rewrite can never
+ * mint a form navigation itself would not produce.
+ */
+export function canonicalHash(route: Route): string {
+  if (route.view === "tag") return `#/tag/${route.tagId}`;
+  if (route.view === "screener")
+    return route.screenerSegment === "waiting" ? "#/screener" : `#/screener/${route.screenerSegment}`;
+  if (route.view === "triage")
+    return route.triagePile === "reply" ? "#/triage" : `#/triage/${route.triagePile}`;
+  return `#/${route.view}`;
+}
+
+/**
+ * The hash the address bar SHOULD carry for what the deck is showing, or `null` when it
+ * already does.
+ *
+ * `parseHash` answers an unknown hash with the Ohbox — the right screen — but the URL kept
+ * the bogus fragment, so `#/bogus` sat in the bar over a rendered Ohbox: a link that
+ * reproduces nothing and a reload that silently "works". The empty hash is left alone — a
+ * bare `/` is how every session begins, and stamping `#/ohbox` onto it would rewrite the URL
+ * of a page nobody navigated yet.
+ */
+export function normalizedHash(hash: string): string | null {
+  if (hash === "" || hash === "#") return null;
+  const canonical = canonicalHash(parseHash(hash));
+  return canonical === hash ? null : canonical;
+}
+
 export function useHashRoute(): Route {
   const subscribe = useCallback((cb: () => void) => {
     window.addEventListener("hashchange", cb);
@@ -106,6 +136,18 @@ export function useHashRoute(): Route {
     () => window.location.hash,
     () => "",
   );
+  /**
+   * KEEP THE ADDRESS BAR HONEST — the URL says what is on screen. An unknown hash renders
+   * the Ohbox (the fallback in `parseHash`), and this rewrites the fragment to match, so a
+   * copied link and a reload land where the user is actually looking. `replaceState`, not
+   * an assignment to `location.hash`: the bogus entry is corrected in place rather than
+   * buried one Back-press deep — and it fires no `hashchange`, which is fine because the
+   * rendered route is already the fallback the rewrite spells out.
+   */
+  useEffect(() => {
+    const next = normalizedHash(hash);
+    if (next != null) window.history.replaceState(window.history.state, "", next);
+  }, [hash]);
   return useMemo(() => parseHash(hash), [hash]);
 }
 

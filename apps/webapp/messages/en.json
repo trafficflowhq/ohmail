@@ -7,7 +7,9 @@
   "markAll": {
     "label": "Mark all read",
     "aria": "Mark all {count} unread messages read",
-    "ariaFresh": "Mark all {count} new messages read"
+    "ariaFresh": "Mark all {count} new messages read",
+    "done": "Marked {count, plural, one {1 message} other {# messages}} read",
+    "undo": "Undo"
   },
   "ribbon": {
     "label": "<b>Demo.</b> Invented mail. Nothing leaves this tab.",
@@ -210,10 +212,16 @@
     "resurfacePick": "Pick a date",
     "actionMove": "Move",
     "actionDraftReply": "Draft reply",
-    "toastAlreadyQueued": "{name} is already queued — Answer Later ({count})",
     "toastQueued": "Queued in Answer Later",
+    "toastUnqueued": "Out of Answer Later",
     "toastAside": "Parked",
+    "toastUnparked": "Out of Parked",
     "toastResurface": "Resurfaces {when}",
+    "toastResurfaceCleared": "Resurface cancelled",
+    "stateLater": "Answer later",
+    "stateAside": "Parked",
+    "stateResurface": "Back {when}",
+    "stateResurfaceBare": "Resurfacing",
     "toastResurfaceNow": "Back at the top",
     "moveLabel": "move to",
     "moveCancel": "Cancel",
@@ -538,7 +546,8 @@
     "hitAria": "Result {n} of {total} — open it",
     "keyNext": "next result",
     "keyPrev": "previous result",
-    "keyOpen": "open the result where it lives"
+    "keyOpen": "open the result where it lives",
+    "keyClose": "clear the search — again to leave"
   },
   "compose": {
     "title": "Compose",

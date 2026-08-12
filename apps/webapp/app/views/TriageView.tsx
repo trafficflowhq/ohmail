@@ -161,6 +161,9 @@ export function TriageView({
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
 }) {
   const t = useTranslations("triage");
+  /* The message verbs' own labels, shared with the global map — the `?` sheet must read one
+     sentence for `a` whether the Ohbox's binding answers or this view's does. */
+  const ts = useTranslations("shortcuts");
   const total =
     piles.replyLater.length + piles.setAside.length + piles.resurface.length;
   const entries = PILE_ENTRIES[pile](piles);
@@ -186,6 +189,26 @@ export function TriageView({
   }, [shown?.id, hydrateBody]);
 
   // `f` starts the Reply Run from here without the shell's "go to Triage first" hop.
+  //
+  // ═══ THE MESSAGE VERBS, ALIVE IN THE PILES ═════════════════════════════════════════════
+  //
+  // `a`, `e`, `b` and `r` were dead inside this view — no request, no toast, no state change
+  // — while the footer buttons beside them worked and the same keys worked in the Ohbox. The
+  // cause was structural: the global bindings act on the shell's `focused`, which has no arm
+  // for this view because the cursor here (`shown`) is view-local state the shell cannot see.
+  // So the view declares its own, exactly as the registry intends ("views declare their own"),
+  // acting on the message the reading column is showing — the same `onAction` seam the pane's
+  // footer dispatches through, so the key and the button remain one code path. On a message
+  // already in the pile a key names, the shell's toggle takes it OUT (`state:"none"` — the
+  // un-triage path), which is what makes a mis-key recoverable from right here.
+  const verbs = shown
+    ? ([
+        { chord: "a", key: "answerLater", action: "later" },
+        { chord: "e", key: "park", action: "aside" },
+        { chord: "b", key: "resurface", action: "resurface" },
+        { chord: "r", key: "reply", action: "reply" },
+      ] as const)
+    : [];
   useKeyBindings([
     {
       chord: "f",
@@ -194,6 +217,12 @@ export function TriageView({
       disabled: piles.replyLater.length === 0,
       run: onStartFR,
     },
+    ...verbs.map((v) => ({
+      chord: v.chord,
+      group: "message" as const,
+      label: ts(v.key),
+      run: () => shown && onAction(v.action, shown),
+    })),
   ]);
 
   const openRow = (m: EngineMessage) => {
@@ -315,11 +344,16 @@ export function TriageView({
           ) : (
             /* THE PILE'S OWN EMPTINESS, in the `.empty` shape every other pile uses. It states
                what the pile is FOR, which is the only useful thing to say about an empty one —
-               the same job the tile stack's hint line did, one layer up. */
+               the same job the tile stack's hint line did, one layer up.
+
+               THE HINT RENDERS ONCE. On Parked and Resurface the header's `.triage-cta` line is
+               already this exact sentence, so the empty state repeating it put the same subtitle
+               on screen twice, ~150px apart. Only the Answer Later pane — whose header carries
+               the Reply Run's note instead — still needs the hint down here. */
             <div className="empty">
               <span className="glyph" aria-hidden="true">◷</span>
               <b>{t(PILE_EMPTY[pile])}</b>
-              {t(PILE_HINT[pile])}
+              {pile === "reply" ? t(PILE_HINT[pile]) : null}
             </div>
           )}
         </ListRows>

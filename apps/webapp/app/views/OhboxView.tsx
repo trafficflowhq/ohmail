@@ -23,7 +23,7 @@ import {
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { groupSection, sendTimeOf, singletonGroup, type OhboxRowGroup } from "./ohbox-groups";
-import { PLACE_LABEL, avatarOf, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
+import { PLACE_LABEL, avatarOf, resurfaceLabel, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
 import { BootSkeleton } from "../shell/BootSkeleton";
@@ -533,6 +533,35 @@ export function OhboxView({
    * state the product can be in rather than a message it chose for somebody.
    */
   const selected = all.find((m) => m.id === selectedId) ?? null;
+
+  /**
+   * REVEAL A SELECTION THE WINDOW HAS NOT MOUNTED — the search jump's landing.
+   *
+   * `openMessage` sets this pile's cursor and navigates here in one gesture, but the row it
+   * named only EXISTS if the window mounted it, and the window mounts the top of the list.
+   * A hit on anything deeper arrived at a list resting at its top: no row, no flash (the
+   * locate effect polls a selector against rows that were never in the DOM), and nothing on
+   * screen connecting the click to the arrival. Scrolling the SCROLLER is the fix the window
+   * is built for — the slice derives from `scrollTop`, so putting the row's offset in view
+   * mounts it, and the shell's locate pass then finds, centers and flashes it.
+   *
+   * Keyed on the SELECTION, and a no-op whenever the row is already mounted — an ordinary
+   * click (which can only land on a mounted row) changes nothing, and this never runs on
+   * scroll, so it cannot fight the reader for the viewport. Resurfaced rows render whole
+   * above the window and need no revealing; their negative `winIdx` returns early.
+   */
+  useEffect(() => {
+    if (!selectedId) return;
+    const idx = rowIndexOf(selectedId);
+    const winIdx = idx - displayResurfaced.length;
+    if (idx < 0 || winIdx < 0) return;
+    if (winIdx >= win.start && winIdx < win.end) return;
+    const el = listScrollerRef.current;
+    if (el) el.scrollTop = Math.max(0, winIdx * win.rowHeight - el.clientHeight / 2);
+    // Deliberately only the selection: the window's own fields are read at fire time, and
+    // re-running on every scroll-driven window change would re-scroll the list under the user.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   /* ── multi-select: VIEW-LOCAL, deliberately ──────────────────────────────
      It is a selection, not a document: it means nothing after you leave the
@@ -1389,6 +1418,26 @@ export function OhboxView({
     return { initials: a.avatarInitial, hue: a.avatarHue };
   };
 
+  /**
+   * THE ROW SAYS WHERE THE MESSAGE STANDS — the triage state, visible where the verbs fire.
+   *
+   * A queued or parked message rendered identically to its neighbours, so the state existed
+   * only on the Triage screen: `a` on something already in the Reply Run queue was pressed in
+   * good faith, and a resurface date was silently re-booked (now: cleared — the toggle) by a
+   * key whose target looked untouched. One quiet badge on the strip states it. `resurfaced`
+   * needs none — the pin group's own position is that statement.
+   */
+  const stateNoteOf = (m: EngineMessage): string | undefined => {
+    const s = m.triage?.state;
+    if (s === "reply_later") return t("stateLater");
+    if (s === "set_aside") return t("stateAside");
+    if (s === "bubbled_up")
+      return m.triage?.bubbleUpAt
+        ? t("stateResurface", { when: resurfaceLabel(m.triage.bubbleUpAt) })
+        : t("stateResurfaceBare");
+    return undefined;
+  };
+
   const row = (m: EngineMessage) => {
     // the conversation's people, computed by the shell's bound selector and never in the row.
     // Only for a threaded row; `[]` for a single-sender thread or none, and the row then leads
@@ -1424,6 +1473,7 @@ export function OhboxView({
       participants={participants}
       hasAttachment={m.hasAttachments}
       protected={m.protected != null}
+      stateNote={stateNoteOf(m)}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
       /* `picked` carries BOTH the styling and the ARIA now — it used to be a
          class name only, so `aria-selected` was set on zero rows and the selection existed
@@ -1542,6 +1592,10 @@ export function OhboxView({
       <MessageRow
         key={`t:${g.key}`}
         id={target.id}
+        /* The fold SHOWS every member, so anything locating "the row where message X is"
+           (the shell's flash after a search jump) must be able to match this row on any of
+           them — `data-id` alone named only the lead. See MessageRow.memberIds. */
+        memberIds={g.members.map((m) => m.id)}
         from={sentLeads ? sent.label : groupSenders(g)}
         {...(sentLeads ? sent.avatar : avatarOf(target))}
         /* The stamp is the newest member's, in whichever form the list is in — the same message
@@ -1566,6 +1620,10 @@ export function OhboxView({
         participants={participants}
         hasAttachment={g.members.some((m) => m.hasAttachments)}
         protected={shown.protected != null}
+        /* The open target's state, because the target is what the row's click and every verb
+           pressed on this row act on — a chip describing some OTHER member would promise a
+           toggle the keys cannot deliver. */
+        stateNote={stateNoteOf(target)}
         tags={tagsOfMessage(shown, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
         picked={g.members.every((m) => picked.has(m.id))}
         onClick={() => {

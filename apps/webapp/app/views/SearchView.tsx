@@ -95,6 +95,7 @@ export function SearchView({
   onOpen,
   placeOf,
   onServerSearch,
+  onExit,
 }: {
   engine: OhmailEngine;
   version: number;
@@ -126,6 +127,16 @@ export function SearchView({
    * a job in the meantime — the toast it is bound to is the claim this slice removed.
    */
   onServerSearch?: () => void;
+  /**
+   * ESCAPE'S SECOND PRESS — leave Search, back to the view it was opened over.
+   *
+   * The shell owns navigation (it remembers where `/` was pressed), the view owns the key:
+   * Escape is a VIEW binding here because the box holds focus (`autoFocus`) and only an
+   * `inInput` binding can reach a key typed into it — while the shell's `overlay` Escape
+   * still outranks this whenever a sheet, palette or reader is open on top. Optional so the
+   * desktop's fixture mount is unchanged; with no exit the key stops at clearing the box.
+   */
+  onExit?: () => void;
 }) {
   const t = useTranslations("search");
   const [filter, setFilter] = useState<Filter | null>(null);
@@ -333,7 +344,43 @@ export function SearchView({
   useEffect(() => setAt(0), [trimmed]);
   const cursor = shown.length === 0 ? -1 : Math.min(at, shown.length - 1);
 
+  /**
+   * RE-ENTRY DOES NOT APPEND. The query is shell state so an answer survives a round-trip to
+   * a hit — but the box also autofocuses with the caret at the end, so coming back and typing
+   * a NEW question glued it onto the old one ("invoicetickets"). Selecting the kept text makes
+   * the first keystroke replace it, which is both conventions at once: the old query is still
+   * readable (and Enter still re-asks it), and typing starts fresh. Mount-only by design —
+   * selecting on every query change would swallow the second character of live typing.
+   */
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const box = document.querySelector<HTMLInputElement>(".view-search .search-box input");
+    if (box && box.value.trim() !== "") box.select();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const keys: KeyBinding[] = [
+    /**
+     * ESCAPE, IN TWO HONEST STEPS — the app's own sentence is "esc — Close what is open".
+     * What is open here is first the QUESTION (a non-empty box: one press clears it, focus
+     * stays, the caret is ready for the next thought) and then the VIEW (a second press —
+     * or the first on an empty box — hands the screen back to wherever `/` was pressed).
+     * `inInput` for the same reason the two arrows and ↵ below carry it: the box holds focus
+     * from the moment this view mounts, so a binding without it would never fire. The shell's
+     * `overlay`-scope Escape outranks this while anything is open on top, so a reader sheet
+     * over Search still closes before the query is touched.
+     */
+    {
+      chord: "Escape",
+      group: "navigate",
+      label: t("keyClose"),
+      inInput: true,
+      disabled: trimmed === "" && onExit == null,
+      run: () => {
+        if (trimmed !== "") onQuery("");
+        else onExit?.();
+      },
+    },
     {
       chord: "ArrowDown",
       group: "navigate",

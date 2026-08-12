@@ -280,9 +280,29 @@ export function ReadsView({
    */
   useEffect(() => {
     if (!cur) return;
+    /**
+     * REVEAL BEFORE SCROLLING. The list is a window (`useListWindow`), so the row for a
+     * cursor set from OUTSIDE — a search jump landing deep in the pile — may simply not be
+     * mounted, and `scrollIntoView` on a missing node is a silent no-op: the jump's arrival
+     * had no row, no highlight and a list resting at its top. The window derives from
+     * `scrollTop`, so putting the row's offset in view is what mounts it; the shell's locate
+     * pass then finds and flashes it. A cursor moved by click or j/k is on a mounted row and
+     * takes the `scrollIntoView` path exactly as before.
+     */
+    const idx = all.findIndex((m) => m.id === cur);
+    if (idx >= 0 && (idx < win.start || idx >= win.end)) {
+      const el = listScrollerRef.current;
+      if (el) {
+        el.scrollTop = Math.max(0, idx * win.rowHeight - el.clientHeight / 2);
+        return;
+      }
+    }
     document
       .querySelector(`.view-reads .row[data-id="${CSS.escape(cur)}"]`)
       ?.scrollIntoView({ block: "nearest" });
+    // The window's fields are read at fire time; re-running this on every scroll-driven
+    // window change would fight the reader for the viewport.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cur]);
 
   /**

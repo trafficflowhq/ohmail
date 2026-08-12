@@ -7,7 +7,9 @@
   "markAll": {
     "label": "Alles als gelesen markieren",
     "aria": "Alle {count} ungelesenen Nachrichten als gelesen markieren",
-    "ariaFresh": "Alle {count} neuen Nachrichten als gelesen markieren"
+    "ariaFresh": "Alle {count} neuen Nachrichten als gelesen markieren",
+    "done": "{count, plural, one {1 Nachricht} other {# Nachrichten}} als gelesen markiert",
+    "undo": "Rückgängig"
   },
   "ribbon": {
     "label": "<b>Demo.</b> Erfundene Post. Nichts verlässt diesen Tab.",
@@ -210,10 +212,16 @@
     "resurfacePick": "Datum wählen",
     "actionMove": "Verschieben",
     "actionDraftReply": "Antwort entwerfen",
-    "toastAlreadyQueued": "{name} steht schon in der Liste — Später antworten ({count})",
     "toastQueued": "In „Später antworten“ vorgemerkt",
+    "toastUnqueued": "Aus „Später antworten“ entfernt",
     "toastAside": "Geparkt",
+    "toastUnparked": "Nicht mehr geparkt",
     "toastResurface": "Taucht {when} wieder auf",
+    "toastResurfaceCleared": "Taucht nicht wieder auf",
+    "stateLater": "Später antworten",
+    "stateAside": "Geparkt",
+    "stateResurface": "Zurück {when}",
+    "stateResurfaceBare": "Taucht wieder auf",
     "toastResurfaceNow": "Wieder ganz oben",
     "moveLabel": "verschieben nach",
     "moveCancel": "Abbrechen",
@@ -538,7 +546,8 @@
     "hitAria": "Treffer {n} von {total} — öffnen",
     "keyNext": "nächster Treffer",
     "keyPrev": "vorheriger Treffer",
-    "keyOpen": "Treffer dort öffnen, wo er liegt"
+    "keyOpen": "Treffer dort öffnen, wo er liegt",
+    "keyClose": "Suche leeren — nochmals: verlassen"
   },
   "compose": {
     "title": "Schreiben",

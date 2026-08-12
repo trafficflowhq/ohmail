@@ -78,6 +78,22 @@ export const StreamShell = forwardRef<
   const rafRef = useRef(0);
   const dwellRef = useRef(0);
   const curRef = useRef<string | null>(null);
+  /**
+   * A PROGRAMMATIC JUMP IN FLIGHT — its target, and when to stop protecting it.
+   *
+   * `scrollTo` animates (`behavior: "smooth"`), and every frame of that animation fires the
+   * scroll-spy below, which reads "current" off the geometry mid-flight: each intermediate
+   * card became current in turn, and when the target sat near the END of the pile the
+   * pinned-to-end rule handed the cursor to the LAST card — permanently, because a card
+   * below the reading line never reaches it. So a search jump landed cursor, highlight and
+   * (via the dwell, on a session the user had already scrolled) a `\Seen` write on a message
+   * nobody clicked. While a jump is in flight the spy stands down; it resumes when the
+   * target arrives at the line, when the scroller bottoms out with the target on screen
+   * (the cursor is then the TARGET, stated explicitly, not the pile's last card), or at a
+   * deadline that covers a smooth scroll with margin — so a jump that never lands (the card
+   * unmounted mid-flight) cannot mute the spy for the life of the view.
+   */
+  const jumpRef = useRef<{ id: string; until: number } | null>(null);
   const onCurrentRef = useRef(onCurrentChange);
   onCurrentRef.current = onCurrentChange;
   const onSeenRef = useRef(onSeen);
@@ -217,6 +233,32 @@ export const StreamShell = forwardRef<
         measureRef.current(); // keep the leave-commit's visible range current
         const cards = Array.from(el.querySelectorAll<HTMLElement>(".scast[data-sid]"));
         if (!cards.length) return;
+        // A jump in flight owns the cursor — see {@link jumpRef}.
+        const jump = jumpRef.current;
+        if (jump) {
+          const card = Date.now() > jump.until
+            ? null
+            : el.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(jump.id)}"]`);
+          if (card) {
+            const atLine = card.getBoundingClientRect().top - el.getBoundingClientRect().top <= 90;
+            const atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 2;
+            if (!atLine && !atEnd) return; // still travelling — emit nothing
+            jumpRef.current = null;
+            if (!atLine) {
+              // Bottomed out with the target short of the line: the target IS the cursor.
+              // Falling through would pin the pile's LAST card instead — the wrong-message
+              // landing this ref exists to prevent.
+              if (curRef.current !== jump.id) {
+                curRef.current = jump.id;
+                onCurrentRef.current(jump.id);
+              }
+              return;
+            }
+            // Arrived at the line — the ordinary computation below now lands on the target.
+          } else {
+            jumpRef.current = null; // expired, or the card left the stream mid-flight
+          }
+        }
         let current: HTMLElement | null = null;
         if (el.scrollTop + el.clientHeight >= el.scrollHeight - 2) {
           current = cards[cards.length - 1]!; // pinned to the end — the last card is current
@@ -268,6 +310,10 @@ export const StreamShell = forwardRef<
       const card = el.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(id)}"]`);
       if (!card) return;
       curRef.current = id;
+      // Protect the landing from the scroll-spy for the flight's duration — see {@link jumpRef}.
+      // The deadline is generous against a slow smooth-scroll; the in-flight checks usually
+      // clear it well before.
+      jumpRef.current = { id, until: Date.now() + 1500 };
       el.scrollTo({
         top:
           card.getBoundingClientRect().top -

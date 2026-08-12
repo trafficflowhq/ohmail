@@ -78,11 +78,11 @@ import {
   type ProvidedEngine,
 } from "./engine";
 import { useOlderMail } from "./older-mail";
-import { PLACE_LABEL, avatarHue, firstName, hueOf, initialsOf, nextFridayNine, resurfaceLabel } from "./format";
+import { PLACE_LABEL, avatarHue, hueOf, initialsOf, resurfaceLabel, tomorrowNine } from "./format";
 import { displayAddress, displayDomain } from "./idn";
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
 import { AttachmentPreview } from "../components/AttachmentPreview";
-import { dispatchMarkAllRead } from "./read-all";
+import { dispatchMarkAll, dispatchMarkAllRead } from "./read-all";
 import { useMessageAttachments } from "./attachments";
 import { useRemoteImages } from "./remote-images";
 import { useConsentState } from "./consent-state";
@@ -145,7 +145,7 @@ import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField }
 import { senderHitOf } from "./sender-hit";
 import {
   go, goScreener, goTag, goTriage, useHashRoute,
-  type ScreenerSegmentId, type TriagePileId,
+  type Route, type ScreenerSegmentId, type TriagePileId,
 } from "./routing";
 import { HistoryView } from "../views/HistoryView";
 import { SeedReviewView } from "../views/SeedReviewView";
@@ -1487,10 +1487,30 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
    * {@link MARK_SEEN_CHUNK} because a full-view selection can exceed the route's 200-id cap; each
    * chunk is a separate mutation with its own Idempotency-Key. The write reaches `\Seen` via the
    * worker; the API opens no IMAP. `dispatchMarkAllRead` is a no-op on an empty list.
+   *
+   * ── IT ANSWERS WITH AN UNDO, because the press is one click over hundreds ────────────────
+   *
+   * The button fired instantly, silently and irreversibly: no confirmation, no toast, and at
+   * three hundred unread the only way back was marking each row unread by hand. A confirm
+   * dialog is the wrong ceremony for a verb that is usually meant — the product's own pattern
+   * is the TRUE-UNDO toast (`ToastHost`: the toast carries the action, it fires at most once).
+   * The undo flips exactly the ids this press flipped, through the same chunked walk
+   * (`dispatchMarkAll`, unread direction), so what it restores is precisely what was taken —
+   * mail that was already read before the press stays read, which a blanket "mark everything
+   * unread" would get wrong. Held longer than the default toast, since reading "Marked 312
+   * read" and deciding takes longer than a confirmation glance.
    */
   const markAllRead = useCallback(
-    (ids: string[]) => { dispatchMarkAllRead((m) => engine.mutate(m), ids); },
-    [engine],
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      dispatchMarkAllRead((m) => engine.mutate(m), ids);
+      toast(t("markAll.done", { count: ids.length }), {
+        action: t("markAll.undo"),
+        onAction: () => { dispatchMarkAll((m) => engine.mutate(m), ids, true); },
+        duration: 6000,
+      });
+    },
+    [engine, toast, t],
   );
 
   /**
@@ -1622,9 +1642,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
   /* ── route transitions: overlays close, pending screener work lands ── */
   const prevRoute = useRef(route);
+  /**
+   * WHERE SEARCH WAS ENTERED FROM — Escape's way back out.
+   *
+   * Search is the one view a keyboard user is dropped INTO with focus in a text field, so
+   * every letter types and the view bindings are their only exit. Esc's second press (the
+   * first clears the query — see `SearchView`) returns HERE rather than to a hard-coded
+   * Ohbox, because `/` works from every pile and "close what is open" must hand back the
+   * screen it opened over. A ref, not state: nothing renders it.
+   */
+  const searchFrom = useRef<Route | null>(null);
   useEffect(() => {
     const prev = prevRoute.current;
     if (prev.view !== route.view || prev.screenerSegment !== route.screenerSegment || prev.tagId !== route.tagId) {
+      if (route.view === "search" && prev.view !== "search") searchFrom.current = prev;
       screener.flush();
       setReaderFor(null);
       setPicker(null);
@@ -2630,22 +2661,37 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           openReply(m.id, replyTo === m.id && replyAll);
           draftReply.open(m.id);
           break;
+        /**
+         * ═══ THE THREE HORIZONS ARE TOGGLES — the way OUT of a pile ═══════════════════════
+         *
+         * The wire has carried `state:"none"` since the triage route shipped
+         * (`TriageWireState`; `TriageService.setState` accepts it) and NOTHING in the UI ever
+         * dispatched it: the footer only switched piles, the ⋯ menu and ⌘K had no verb, and
+         * the key that filed a message answered a re-press with a toast about being already
+         * queued. One mis-key was irreversible until reply or resurface.
+         *
+         * So the verb that put a message IN a pile takes it out again — the same convention
+         * `r` (reply editor) and `u` (read state) already keep, reached from the same three
+         * places at once because the key, the footer button and the palette all dispatch
+         * through here. The toast states the direction each press actually took.
+         */
         case "later":
           if (m.triage?.state === "reply_later") {
-            toast(
-              t("ohbox.toastAlreadyQueued", {
-                name: firstName(m),
-                count: piles.replyLater.length,
-              }),
-            );
+            void engine.mutate({ kind: "triage_set", messageId: m.id, state: "none" });
+            toast(t("ohbox.toastUnqueued"));
           } else {
             void engine.mutate({ kind: "triage_set", messageId: m.id, state: "reply_later" });
             toast(t("ohbox.toastQueued"));
           }
           break;
         case "aside":
-          void engine.mutate({ kind: "triage_set", messageId: m.id, state: "set_aside" });
-          toast(t("ohbox.toastAside"));
+          if (m.triage?.state === "set_aside") {
+            void engine.mutate({ kind: "triage_set", messageId: m.id, state: "none" });
+            toast(t("ohbox.toastUnparked"));
+          } else {
+            void engine.mutate({ kind: "triage_set", messageId: m.id, state: "set_aside" });
+            toast(t("ohbox.toastAside"));
+          }
           break;
         case "unread":
           /**
@@ -2663,9 +2709,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
           markSeen([m.id], !m.unread);
           break;
         case "resurface": {
+          // A message already scheduled: the horizon-less verb CLEARS the booking rather than
+          // silently re-dating it — the toggle rule above, and the only way to take back a
+          // resurface that the popover's picker cannot offer (it has no "cancel this" row).
+          if (m.triage?.state === "bubbled_up") {
+            void engine.mutate({ kind: "triage_set", messageId: m.id, state: "none" });
+            toast(t("ohbox.toastResurfaceCleared"));
+            break;
+          }
           // The horizon-less default — the keyboard's `b` and the palette. The popover on the
-          // bar dispatches `resurface:<iso>` instead, handled in `default` below.
-          const when = nextFridayNine(now);
+          // bar dispatches `resurface:<iso>` instead, handled in `default` below. TOMORROW at
+          // 09:00, the picker's own first dated preset — it was next Friday, a horizon the
+          // picker never offers, so the key's outcome could not be reproduced (or predicted)
+          // from the control that documents the verb.
+          const when = tomorrowNine(now);
           void engine.mutate({
             kind: "triage_set",
             messageId: m.id,
@@ -2718,7 +2775,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         }
       }
     },
-    [engine, toast, t, piles.replyLater.length, now, openReply, toggleReply, markSeen, draftReply, replyTo, replyAll],
+    [engine, toast, t, now, openReply, toggleReply, markSeen, draftReply, replyTo, replyAll],
   );
 
   /**
@@ -2776,7 +2833,8 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       }
       if (action === "later" || action === "aside" || action === "resurface") {
         const state = action === "later" ? "reply_later" : action === "aside" ? "set_aside" : "bubbled_up";
-        const when = action === "resurface" ? nextFridayNine(now) : null;
+        // The same default the single-message verb uses — the picker's first dated preset.
+        const when = action === "resurface" ? tomorrowNine(now) : null;
         for (const messageId of ids) {
           void engine.mutate({
             kind: "triage_set",
@@ -3096,10 +3154,20 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
     const look = () => {
       if (done) return;
+      /**
+       * THE ROW THAT SHOWS THE MESSAGE, which is not always the row that IS the message.
+       * The Ohbox folds a conversation into one row carrying its lead's `data-id` — so a hit
+       * on any OTHER member matched nothing here, timed out, and the arrival flashed nothing
+       * (the reported half of TRI-F2's "no highlight"). Folded rows declare their members in
+       * `data-ids` (space-separated; `~=` is the attribute selector built for exactly that
+       * list shape), and the exact-id match stays first so a singleton row wins over a fold
+       * that happens to contain the same message twice-rendered.
+       */
       const row =
         typeof document === "undefined"
           ? null
-          : document.querySelector(`.view .row[data-id="${CSS.escape(located)}"]`);
+          : (document.querySelector(`.view .row[data-id="${CSS.escape(located)}"]`) ??
+             document.querySelector(`.view .row[data-ids~="${CSS.escape(located)}"]`));
       if (row) {
         done = true;
         found = row;
@@ -3204,6 +3272,11 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
     [senderMenu != null, () => setSenderMenu(null)],
     [picker != null, () => setPicker(null)],
     [fr != null, () => setFr(null)],
+    // The 390px navigation drawer. It sits over the deck and intercepts every press until it
+    // is dismissed, so while it is open it is the innermost thing a keyboard user is looking
+    // at that is not one of the anchored popovers above — Escape closed everything else in
+    // this list and left exactly this one standing (the backdrop tap was the only way out).
+    [railOpen, () => setRailOpen(false)],
     [replyTo != null, () => setReplyTo(null)],
     [readerFor != null, () => setReaderFor(null)],
   ];
@@ -3276,11 +3349,23 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       chord: "r",
       group: "message",
       label: t("shortcuts.reply"),
-      // Only the Ohbox renders a message pane to reply INSIDE; Reads and Receipts are
-      // skim streams. Listed everywhere, inert where there is nothing to reply in.
-      // A TOGGLE: `r` on the message whose plain-reply editor is already open closes it.
-      disabled: route.view !== "ohbox" || selectedOhbox == null,
-      run: () => selectedOhbox && toggleReply(selectedOhbox.id),
+      /**
+       * LIVE WHEREVER THE PILL THAT ADVERTISES IT IS — which is `focused`'s whole contract.
+       *
+       * This was `route.view !== "ohbox" || selectedOhbox == null`, so a message opened out
+       * of Search rendered a Reply pill printing `r` (the pill reads this registry, and a
+       * disabled binding still owns its chord) over a key that did nothing. The reader sheet
+       * IS a message pane; a verb pressed while it is open acts on the message being read —
+       * the rule `focused` already states. On the two skim streams the key takes the card
+       * button's own path (`onStreamAction`), which raises the reader first so the editor
+       * has a pane to land in. A TOGGLE, as before: `r` on the open editor closes it.
+       */
+      disabled: focused == null,
+      run: () => {
+        if (!focused) return;
+        if (readerMessage != null || route.view === "ohbox") toggleReply(focused.id);
+        else onStreamAction("reply", focused);
+      },
     },
     {
       // `shift+r` — the shifted variant of the verb it widens, the convention `shift+u`
@@ -3290,11 +3375,12 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       chord: "shift+r",
       group: "message",
       label: t("shortcuts.replyAll"),
-      disabled:
-        route.view !== "ohbox" ||
-        selectedOhbox == null ||
-        replyAllRecipients(selectedOhbox, ownAddresses) === null,
-      run: () => selectedOhbox && toggleReply(selectedOhbox.id, true),
+      disabled: focused == null || replyAllRecipients(focused, ownAddresses) === null,
+      run: () => {
+        if (!focused) return;
+        if (readerMessage != null || route.view === "ohbox") toggleReply(focused.id, true);
+        else onStreamAction("reply_all", focused);
+      },
     },
     {
       // SENDING FROM THE KEYBOARD. `inInput` is not optional: the editor takes
@@ -4369,6 +4455,16 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
                    deliberately not projected — mail in History must stay searchable. */
                 placeOf={consentView?.placeOf}
                 onServerSearch={() => toast(t("search.toastServer"))}
+                /* Esc's second press (the first clears the box) — back to the view `/` was
+                   pressed in, falling to the Ohbox when this tab's session began in Search. */
+                onExit={() => {
+                  const back = searchFrom.current;
+                  if (!back || back.view === "search" || (back.view === "tag" && !back.tagId)) go("ohbox");
+                  else if (back.view === "tag") goTag(back.tagId!);
+                  else if (back.view === "screener") goScreener(back.screenerSegment);
+                  else if (back.view === "triage") goTriage(back.triagePile);
+                  else go(back.view);
+                }}
               />
             ) : null}
 

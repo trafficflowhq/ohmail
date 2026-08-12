@@ -23,6 +23,16 @@ export const THREAD_CIRCLES_MAX = 3;
 export interface MessageRowProps {
   /** Stable id, stamped as data-id (and used by useSeenOnScroll). */
   id: string;
+  /**
+   * EVERY MESSAGE THIS ROW STANDS FOR — for rows that fold a conversation.
+   *
+   * `data-id` names the row's lead and always has; a folded row also SHOWS its other members,
+   * and anything that needs to find "the row where message X is" (the shell's locate-and-flash
+   * after a search jump) matched nothing when X was a folded member. Stamped as a space-
+   * separated `data-ids`, the list shape the `~=` attribute selector exists for. Absent ⇒ no
+   * attribute — a singleton row keeps rendering byte-for-byte as before.
+   */
+  memberIds?: string[];
   from: string;
   address?: string;
   time?: string;
@@ -156,6 +166,16 @@ export interface MessageRowProps {
   /** Cross-view badge naming the message's home (Tag view). */
   place?: string;
   /**
+   * A QUIET STATE NOTE on the badge strip — "Answer later", "Parked", "Back Tue 09:00".
+   *
+   * A message filed into a triage pile looked identical to its neighbours in the Ohbox, so
+   * re-queueing something already queued (and losing a resurface date to it) was routine —
+   * the state existed only on a different screen. Rendered with the `place` badge's own
+   * quiet treatment because it answers the same kind of question ("where does this stand"),
+   * not a tag's: a tag is the reader's mark, this is the product's.
+   */
+  stateNote?: string;
+  /**
    * The sender's initial circle. Started as the Screener's own variant and is now the
    * lead of every mail row — one row language, so the Ohbox and the Screener
    * do not describe the same person two different ways.
@@ -204,6 +224,7 @@ export interface MessageRowProps {
 export function MessageRow(props: MessageRowProps) {
   const {
     id,
+    memberIds,
     from,
     address,
     time,
@@ -224,6 +245,7 @@ export function MessageRow(props: MessageRowProps) {
     hasAttachment,
     tags,
     place,
+    stateNote,
     avatarInitial,
     avatarHue,
     aiSuggestion,
@@ -272,6 +294,12 @@ export function MessageRow(props: MessageRowProps) {
     badges.push(
       <Badge key="place" variant="place">
         {place}
+      </Badge>,
+    );
+  if (stateNote)
+    badges.push(
+      <Badge key="state" variant="place">
+        {stateNote}
       </Badge>,
     );
 
@@ -370,6 +398,7 @@ export function MessageRow(props: MessageRowProps) {
       type="button"
       className={cls}
       data-id={id}
+      data-ids={memberIds && memberIds.length > 0 ? memberIds.join(" ") : undefined}
       data-unseen={unread ? "1" : undefined}
       aria-label={`${from}: ${subject}`}
       {...selection}

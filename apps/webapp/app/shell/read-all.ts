@@ -20,9 +20,22 @@ export const MARK_SEEN_CHUNK = 200;
  * Returns the number of chunks dispatched — the guard asserts `ceil(ids / 200)`.
  */
 export function dispatchMarkAllRead(mutate: (m: EngineMutation) => unknown, ids: readonly string[]): number {
+  return dispatchMarkAll(mutate, ids, false);
+}
+
+/**
+ * The same chunked dispatch, direction as an argument — the UNREAD direction is the undo the
+ * mark-all toast offers. One walk for both directions, so the undo can never diverge from the
+ * write it reverses: same chunk size, same mutation kind, the exact ids that were flipped.
+ */
+export function dispatchMarkAll(
+  mutate: (m: EngineMutation) => unknown,
+  ids: readonly string[],
+  unread: boolean,
+): number {
   let chunks = 0;
   for (let i = 0; i < ids.length; i += MARK_SEEN_CHUNK) {
-    void mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_CHUNK), unread: false });
+    void mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_CHUNK), unread });
     chunks++;
   }
   return chunks;
