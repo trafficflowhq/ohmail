@@ -574,6 +574,7 @@
     "attachRefused": "Einige Dateien wurden nicht hinzugefügt — insgesamt sind höchstens {size} möglich.",
     "attachRemove": "{filename} entfernen",
     "attachShrunk": "Bilder verkleinert: {from} → {to}",
+    "attachLevelLabel": "Bilder verkleinern",
     "draftNote": "Bleibt in diesem Browser, bis du sendest",
     "editorAria": "Nachrichtentext",
     "editorPlaceholder": "Schreib deine Nachricht …",
@@ -650,10 +651,10 @@
     "themeDark": "Dunkel",
     "themeAria": "Erscheinungsbild",
     "imageShrink": "Bilder verkleinern",
-    "imageShrinkHint": "JPEG- und PNG-Anhänge werden vor dem Senden verkleinert; dabei entfallen die Kameradaten samt Standort. Ein Bild, das dadurch nicht kleiner würde, wird unverändert gesendet, und bei „Keine“ wird jedes Bild unverändert gesendet.",
+    "imageShrinkHint": "JPEG- und PNG-Anhänge werden vor dem Senden verkleinert; dabei entfallen die Kameradaten samt Standort. Ein Bild, das dadurch nicht kleiner würde, wird unverändert gesendet, und bei „Original“ wird jedes Bild unverändert gesendet.",
     "imageShrinkAria": "Bilder verkleinern",
     "imageShrinkLevel": {
-      "none": "Keine",
+      "none": "Original",
       "low": "Wenig",
       "medium": "Mittel",
       "high": "Stark"

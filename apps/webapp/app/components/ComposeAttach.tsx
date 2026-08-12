@@ -31,6 +31,25 @@
  * keep-the-original guard are documented. This file's only job is to run it in the right place and
  * to say what happened.
  *
+ * ── THE DIAL, IN THE ROW IT ACTS ON ──────────────────────────────────────────────────────
+ *
+ * The shrink level is offered beside the attach button as well as in Settings, and the two
+ * controls edit ONE stored value through the same two functions (`readImageShrinkLevel` /
+ * `writeImageShrinkLevel`) — one preference, shown where it is set and where it acts, never a
+ * second answer. It is here because the moment the level matters is the pick: a person about to
+ * send a photo at full size should not have to know that the dial lives two views away.
+ *
+ * The pick itself still reads the STORE, not this component's state — the store is what the
+ * Settings row writes too, so reading it at pick time is what makes the two surfaces incapable
+ * of disagreeing about what a pick will do. The select's own state exists only to render the
+ * current value, read post-mount for the hydration reason `readImageShrinkLevel` documents.
+ *
+ * The options run strongest-first with Original last — a menu leads with the default, and
+ * "Original" at the end anchors what the scale is FOR (everything above it trades fidelity for
+ * bytes). The Settings segment reads the same table the other way, ascending; both orders come
+ * from `IMAGE_SHRINK_LEVELS` and the labels from one catalog entry, so neither surface can grow
+ * a level or a word the other lacks.
+ *
  * ── COPY ─────────────────────────────────────────────────────────────────────────────────
  *
  * The two strings that state the cap are catalog keys (`compose.attach*`) taking the rendered size
@@ -38,11 +57,25 @@
  * value. They were inline literals holding a hard-coded "3 MB" — which was exactly the drift this
  * slice removes, in the one place a user reads a promise.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import type { ComposeAttachment } from "@ohmail/client-engine";
-import { readImageShrinkLevel, shrinkImage } from "./image-shrink";
+import {
+  DEFAULT_IMAGE_SHRINK_LEVEL,
+  IMAGE_SHRINK_LEVELS,
+  type ImageShrinkLevel,
+  isImageShrinkLevel,
+  readImageShrinkLevel,
+  shrinkImage,
+  writeImageShrinkLevel,
+} from "./image-shrink";
+
+/**
+ * The dial's own order: strongest first, Original last. Derived from the one table rather than
+ * restated, so a level added there surfaces here without anybody remembering this file exists.
+ */
+const LEVEL_CHOICES: readonly ImageShrinkLevel[] = [...IMAGE_SHRINK_LEVELS].reverse();
 
 /**
  * THE HOSTED SURFACE'S OWN CEILING on total attachment bytes — the mirror of the constant the
@@ -146,8 +179,21 @@ export function ComposeAttach({
   maxTotalBytes?: number;
 }) {
   const t = useTranslations("compose");
+  // The LEVEL labels come from the Settings catalog, deliberately: one word per level in the
+  // whole product, so "Original" here and "Original" there can never drift into synonyms.
+  const ts = useTranslations("settings");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const levelId = useId();
   const [error, setError] = useState<string | null>(null);
+  /**
+   * WHAT THE DIAL SHOWS — display state only; the pick reads the store (see the header note).
+   * Seeded with the default and corrected post-mount, never read during the first render: there
+   * is no `localStorage` on the server, and a mismatch would make React keep the server's value.
+   */
+  const [level, setLevel] = useState<ImageShrinkLevel>(DEFAULT_IMAGE_SHRINK_LEVEL);
+  useEffect(() => {
+    setLevel(readImageShrinkLevel());
+  }, []);
   /**
    * WHAT THE SHRINK SAVED on the most recent pick — `null` when nothing was re-encoded, which is
    * every pick containing no picture and every pick at level None. Held as the two totals rather
@@ -249,6 +295,32 @@ export function ComposeAttach({
             ? t("attachUsed", { used: formatSize(used), total: formatSize(maxTotalBytes) })
             : t("attachCap", { size: formatSize(maxTotalBytes) })}
         </span>
+        {/* THE DIAL. It writes the ONE stored level the Settings row edits and shows nothing of
+            its own — the pick, which reads the store, is what acts on it. Applies to the NEXT
+            pick: files already in the list keep the bytes they were admitted with, because
+            re-encoding them here would silently replace what the user was shown and approved. */}
+        <label className="compose-attach-level" htmlFor={levelId}>
+          {t("attachLevelLabel")}
+          <select
+            id={levelId}
+            value={level}
+            disabled={disabled}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (!isImageShrinkLevel(next) || next === level) return;
+              // Storage first, then the control — the same non-async pairing as the Settings
+              // row, so the next pick reads back exactly what the dial shows.
+              writeImageShrinkLevel(next);
+              setLevel(next);
+            }}
+          >
+            {LEVEL_CHOICES.map((id) => (
+              <option key={id} value={id}>
+                {ts(`imageShrinkLevel.${id}`)}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {attachments.length > 0 ? (

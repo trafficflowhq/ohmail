@@ -18,12 +18,14 @@
  * silently thrown away. The read is therefore an effect, which is one frame of the default followed
  * by the truth. This is the same shape, for the same reason, as `usePersistedFlag`.
  *
- * ── NO PER-COMPOSE OVERRIDE ───────────────────────────────────────────────────────────────────
+ * ── ONE VALUE, TWO SURFACES ───────────────────────────────────────────────────────────────────
  *
- * Deliberately one dial in one place. A per-message control would put a second answer next to the
- * attach button for a question almost nobody asks twice, and the case it exists for — "this one
- * needs to go at full size" — is served by moving the dial to None and back, which is two clicks
- * and leaves no ambiguity about what the setting means.
+ * The compose attach row surfaces this same dial (`ComposeAttach`), reading and writing the same
+ * stored value through the same two functions — so "this one needs to go at full size" is served
+ * where the file is being picked, without walking here. What remains deliberately absent is a
+ * PER-MESSAGE override: a level that applied to one compose and not the next would turn the
+ * stored setting into a default with invisible exceptions. Both controls move the one dial, and
+ * a move made in either place is what every later pick obeys.
  */
 
 import { useEffect, useState } from "react";
