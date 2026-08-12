@@ -13,7 +13,14 @@ export interface App {
 
 // Outermost → inner. Revised pipeline order (BC pipeline): requestId → errorEnvelope
 // → requestGuard → session → stepUp → spendGate → csrf → idempotency → handler.
-// (withRateLimit is deferred to the auth slice; the chain accepts it when it lands.)
+//
+// There is deliberately NO in-app `withRateLimit` in this chain. The concern it would address —
+// invocation cost from an unverified or anonymous read-poll — cannot be addressed from inside the
+// invocation: a 429 a middleware returns costs the same invocation as the read it refuses (the
+// same reason `withSpendGate` gives for not gating reads). The control is a per-IP rate limit at
+// the platform edge, keyed on the trusted client IP `context.ts` derives, applied before the
+// function runs; it is configured out of band, not in code. This module is also compiled into the
+// standalone local build, which has no accounts to rate-limit.
 //
 // `withRequestGuard` sits BEFORE `withSession` deliberately: it is the only guard the
 // PUBLIC cookie-minting auth routes get (`withCsrf` cannot fire without a cookie
