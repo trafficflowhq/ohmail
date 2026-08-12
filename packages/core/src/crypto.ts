@@ -35,6 +35,42 @@ interface Envelope {
 
 const AES = "aes-256-gcm";
 
+/**
+ * Reject a ring in which two VERSIONS hold identical bytes. A "rotation" that reuses
+ * key material is a cryptographic no-op with a persisted lie attached: new rows are
+ * stamped with the new `key_version` while the old bytes still decrypt them, and —
+ * because both hosts agree on the duplicated ring — the ring fingerprint that exists
+ * to expose KEK drift shows nothing wrong. Failing at load is the only place this is
+ * cheap; after rows carry the new version it is a data-correction exercise.
+ *
+ * The error names ONLY the version numbers. Never the bytes, a prefix, or any digest
+ * of them: boot failures end up in logs and issue trackers, and this one describes
+ * key material.
+ *
+ * Duplicates are detected on the BYTES (via an in-process SHA-256 of each key, so no
+ * hex copy of the material is interned as a string), not on the spelling — uppercase
+ * and lowercase hex of the same key are the same key.
+ */
+function assertDistinctKekBytes(keks: ReadonlyMap<number, Buffer>): void {
+  const byDigest = new Map<string, number[]>();
+  for (const [v, k] of [...keks.entries()].sort((a, b) => a[0] - b[0])) {
+    const digest = createHash("sha256").update(k).digest("base64");
+    const versions = byDigest.get(digest);
+    if (versions) versions.push(v);
+    else byDigest.set(digest, [v]);
+  }
+  const dupes = [...byDigest.values()].filter((vs) => vs.length > 1);
+  if (dupes.length) {
+    const groups = dupes.map((vs) => vs.map((v) => `V${v}`).join(" = ")).join("; ");
+    throw new Error(
+      `KEK versions hold identical bytes: ${groups}. A rotation that reuses key material ` +
+      "is a cryptographic no-op — rows stamped with the new version still decrypt under " +
+      "the old bytes, and both hosts agree, so ring-drift monitoring cannot see it. " +
+      "Generate a fresh 32-byte KEK for each version.",
+    );
+  }
+}
+
 export class StaticKeyProvider implements KeyProvider {
   private readonly keks: Map<number, Buffer>;
   private readonly current: number;
@@ -46,6 +82,9 @@ export class StaticKeyProvider implements KeyProvider {
     for (const [v, k] of this.keks) {
       if (k.length !== 32) throw new Error(`KEK v${v} must be 32 bytes (AES-256)`);
     }
+    // Checked here as well as in `readKeks`: the env loader is not the only door to a
+    // provider, and a hand-built ring must obey the same invariant.
+    assertDistinctKekBytes(this.keks);
     this.current = Math.max(...this.keks.keys());
   }
 
@@ -129,6 +168,11 @@ export class StaticKeyProvider implements KeyProvider {
 //   • Removing an old version is the one destructive step: do it only once no row
 //     references it. A provider that lacks the version a row was written under fails
 //     that row's decrypt with `no KEK for version N`.
+//   • Two versions holding IDENTICAL bytes are REJECTED at load (see
+//     `assertDistinctKekBytes`): pasting the old key into the new slot is a rotation
+//     that rotates nothing, and because both hosts agree on the duplicated ring, the
+//     drift fingerprint below cannot expose it. The error names the duplicate version
+//     numbers only — never the material.
 //   • An empty/whitespace value counts as ABSENT (a platform that materializes every
 //     declared variable as "" must not look like a broken KEK).
 //   • **The `TF_KEK_V` prefix is RESERVED.** Any non-empty variable whose name starts
@@ -203,6 +247,9 @@ function readKeks(env: NodeJS.ProcessEnv): Map<number, Buffer> {
       );
     }
   }
+  // Here as well as in the provider, so a host that only PUBLISHES its ring identity
+  // (kekEnvIdentity never constructs a provider) fails closed on a duplicated ring too.
+  assertDistinctKekBytes(keks);
   return keks;
 }
 
@@ -231,9 +278,10 @@ const KEK_RING_DOMAIN = "tf-kek-ring/1\n";
  * previous active-only fingerprint could not see the drift it existed to detect:
  * `{1=A, 2=B}` and `{1=C, 2=B}` published the SAME value even though neither host
  * can decrypt the other's `key_version = 1` rows. Including the version NUMBER beside
- * each key also separates `{1=A}` from `{1=A, 2=A}` — an operator who pasted the
- * same key twice during a rotation, where the bytes are identical but the two hosts
- * persist different `key_version` values.
+ * each key also separates `{1=A}` from `{1=A, 2=A}` — though a ring like the latter no
+ * longer loads at all (`assertDistinctKekBytes`); the construction stays
+ * version-qualified so the property holds even for a caller fingerprinting a map the
+ * loader never saw.
  */
 export function kekRingFingerprint(keks: ReadonlyMap<number, Buffer> | Record<number, Buffer>): string {
   const entries: Array<[number, Buffer]> = keks instanceof Map
