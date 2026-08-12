@@ -611,6 +611,9 @@
       "strike": "Strikethrough",
       "code": "Code",
       "link": "Link",
+      "linkApply": "Apply",
+      "linkRemove": "Remove link",
+      "linkBad": "Links can use http, https or mailto.",
       "bullet": "Bulleted list",
       "ordered": "Numbered list",
       "quote": "Quote"

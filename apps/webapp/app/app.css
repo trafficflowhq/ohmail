@@ -4247,6 +4247,10 @@ textarea.c-input:read-only {
   min-height: 0;
 }
 .rte-bar {
+  /* The link popover is the bar's own absolutely-positioned child, so `top: 100%` clears the
+     row wherever it wraps to — a fixed offset would be wrong at 390px, where the bar is two
+     rows tall. */
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
@@ -4298,6 +4302,86 @@ textarea.c-input:read-only {
 .rte-b[data-mark="strike"] { text-decoration: line-through; }
 .rte-b[data-mark="code"] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .rte-b[data-mark="ordered"] { font-variant-numeric: tabular-nums; }
+/* The one drawn glyph (the chain-link). `display: block` kills the baseline slot an inline
+   SVG reserves, so it centres in the button exactly as the letters do; its ink is
+   `currentColor`, so every state above already styles it. */
+.rte-b svg { display: block; }
+
+/* ── THE LINK POPOVER ────────────────────────────────────────────────────────────────────
+   Opened by the Link button and ⌘K (`LinkPopover.tsx`). Anchored under the bar rather than
+   floated at the selection: the bar is always in the same place, the popover under it is
+   always reachable, and nothing has to measure a caret. Same raised-surface treatment as the
+   sender popover (`.senderm`) — `--float` on `--lift-3` — because the theme's answer to
+   "a small panel above the page" is one answer. Tokens only; the dark theme redefines them. */
+.rte-linkpop {
+  position: absolute;
+  top: 100%;
+  left: 8px;
+  right: 8px;
+  max-width: 360px;
+  z-index: var(--z-pal);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 9px;
+  border-radius: 12px;
+  background: var(--float);
+  box-shadow: var(--lift-3);
+  animation: rise 0.2s var(--spring);
+}
+.rte-linkpop-url {
+  flex: 1 1 150px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  background: var(--canvas);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.rte-linkpop-url:focus-visible {
+  outline: 1.5px solid var(--accent);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+.rte-linkpop-apply,
+.rte-linkpop-remove {
+  padding: 6px 11px;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.rte-linkpop-apply {
+  background: var(--tint2);
+  color: var(--ink);
+}
+.rte-linkpop-apply:hover {
+  background: var(--tint);
+}
+.rte-linkpop-remove {
+  background: transparent;
+  color: var(--danger, #b3261e); /* same idiom as `.mbx-bad`: the token where a theme defines it */
+}
+.rte-linkpop-remove:hover {
+  background: var(--tint);
+}
+.rte-linkpop-apply:focus-visible,
+.rte-linkpop-remove:focus-visible {
+  outline: 1.5px solid var(--accent);
+  outline-offset: -1px;
+}
+/* The refusal, on its own line under the row. `role="alert"` in the markup is what announces
+   it; this only has to make it readable. */
+.rte-linkpop-err {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--danger, #b3261e);
+}
 
 .rte-surface {
   position: relative;

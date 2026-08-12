@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { EditorContent, Extension, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
+import { LinkPopover } from "./LinkPopover";
 import {
   EMPTY_RICH, escapeAsParagraphs, isRichEmpty, richToHtml, type RichValue,
 } from "./rich-text";
@@ -183,8 +184,6 @@ export function RichEditor({
   id, value, onChange, ariaLabel, placeholder, className, autoFocus, editable = true,
   onKeyDown, editorRef,
 }: RichEditorProps) {
-  const t = useTranslations("compose");
-
   /**
    * The last value this component EMITTED, so the sync effect below can tell the caller
    * echoing our own change back (do nothing) from the caller genuinely replacing the content
@@ -352,18 +351,42 @@ export function RichEditor({
   }, [editor, editorRef]);
 
   /**
-   * ⌘K / Ctrl+K — the one shortcut TipTap cannot ship, because a link needs a destination.
+   * THE LINK POPOVER'S ONE PIECE OF STATE, held here because two doors open it: the toolbar's
+   * Link button and ⌘K below. The popover itself (`LinkPopover.tsx`) reads the caret's link
+   * when it mounts and owns everything else — destination, normalisation, refusal, removal.
    *
-   * `window.prompt` and not a custom popover, deliberately: it is one line of code, it is
-   * keyboard-native, it is announced by screen readers, and Escape cancels it. A bespoke
-   * floating input is a second focus trap to get right in a surface that already has Escape
-   * precedence rules the shell owns. When the design system grows a real prompt, this is one
-   * call site.
+   * This used to be `window.prompt`, chosen deliberately for being keyboard-native, announced,
+   * and Escape-cancellable for free. The popover pays those costs explicitly (see its header)
+   * to buy what the prompt could not offer: a visible Remove, a stated refusal for a scheme
+   * the server would strip, and a control that belongs to the app rather than to the browser.
+   */
+  const [linkOpen, setLinkOpen] = useState(false);
+
+  /**
+   * Mid-send, the popover goes WITH the toolbar. A destination applied through a popover that
+   * outlived the lock would edit a document whose bytes were already handed to the send —
+   * the exact inert-affordance/live-affordance split the `editable` prop exists to enforce.
+   */
+  useEffect(() => {
+    if (!editable) setLinkOpen(false);
+  }, [editable]);
+
+  const closeLink = useCallback((focusEditor: boolean) => {
+    setLinkOpen(false);
+    // Escape hands focus back to the message; a click elsewhere took it somewhere on purpose.
+    if (focusEditor) editor?.commands.focus();
+  }, [editor]);
+
+  /**
+   * ⌘K / Ctrl+K — the one shortcut TipTap cannot ship, because a link needs a destination.
+   * The same toggle as the toolbar's Link button, so the keyboard and the mouse open one
+   * affordance rather than two that could drift. Gated on `editable` exactly as the button is
+   * disabled by it.
    */
   const onEditorKeyDown = (e: React.KeyboardEvent): void => {
-    if (editor && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    if (editor && editable && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
-      promptForLink(editor, t("linkPrompt"));
+      setLinkOpen((open) => !open);
       return;
     }
     onKeyDown?.(e);
@@ -412,7 +435,13 @@ export function RichEditor({
    */
   return (
     <div className={cls}>
-      <Toolbar editor={editor} editable={editable} />
+      <Toolbar
+        editor={editor}
+        editable={editable}
+        linkOpen={linkOpen}
+        onLinkToggle={() => setLinkOpen((open) => !open)}
+        onLinkClose={closeLink}
+      />
       <EditorContent editor={editor} className="rte-body" onKeyDown={onEditorKeyDown} />
     </div>
   );
@@ -430,7 +459,13 @@ export function RichEditor({
  * Each button reports its own pressed state from the editor, so the row says what the cursor
  * is standing in rather than what was last clicked.
  */
-function Toolbar({ editor, editable }: { editor: Editor | null; editable: boolean }) {
+function Toolbar({ editor, editable, linkOpen, onLinkToggle, onLinkClose }: {
+  editor: Editor | null;
+  editable: boolean;
+  linkOpen: boolean;
+  onLinkToggle: () => void;
+  onLinkClose: (focusEditor: boolean) => void;
+}) {
   const t = useTranslations("compose");
 
   /**
@@ -470,11 +505,13 @@ function Toolbar({ editor, editable }: { editor: Editor | null; editable: boolea
     key: string,
     isActive: boolean,
     run: () => void,
+    extra?: React.ButtonHTMLAttributes<HTMLButtonElement>,
   ) => (
     <button
       key={key}
       type="button"
       className="rte-b"
+      {...extra}
       // The glyph is a letter, so the letter has to carry the mark it stands for — a "B" that
       // is not bold and an "S" that is not struck are eight buttons that all look the same.
       // An attribute rather than a per-button class so the stylesheet names the mark, and so
@@ -503,18 +540,47 @@ function Toolbar({ editor, editable }: { editor: Editor | null; editable: boolea
       {btn("italic", active.italic, () => editor.chain().focus().toggleItalic().run())}
       {btn("strike", active.strike, () => editor.chain().focus().toggleStrike().run())}
       {btn("code", active.code, () => applyCode(editor))}
-      {btn("link", active.link, () => promptForLink(editor, t("linkPrompt")))}
+      {btn("link", active.link, onLinkToggle, { "aria-haspopup": "dialog", "aria-expanded": linkOpen })}
       {btn("bullet", active.bullet, () => editor.chain().focus().toggleBulletList().run())}
       {btn("ordered", active.ordered, () => editor.chain().focus().toggleOrderedList().run())}
       {btn("quote", active.quote, () => editor.chain().focus().toggleBlockquote().run())}
+      {/* Inside the bar so `position: absolute` anchors to the bar's own box, whatever height
+          the row wraps to at 390px. Out of flow, so the buttons never move when it opens. */}
+      {linkOpen && <LinkPopover editor={editor} onClose={onLinkClose} />}
     </div>
   );
 }
 
-/** Text glyphs, not an icon set: eight marks that read the same in every theme and at 390px. */
-const TOOLBAR_GLYPHS: Record<string, string> = {
+/**
+ * Text glyphs where a LETTER is the mark — seven that read the same in every theme and at
+ * 390px
+ * — and one drawing where no letter says it. The link is the conventional CHAIN-LINK, two
+ * interlocking halves, because that is the one shape every mail client and editor has taught
+ * people to read as "link"; the arrow it replaced read as "open in new window", which is a
+ * promise about navigation this button never made. Drawn in `currentColor` so it takes the
+ * button's own ink in light, dark, hover and pressed alike — the same property the letters
+ * get for free.
+ */
+const TOOLBAR_GLYPHS: Record<string, ReactNode> = {
   bold: "B", italic: "I", strike: "S", code: "‹›",
-  link: "↗", bullet: "•", ordered: "1.", quote: "❝",
+  link: (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  ),
+  bullet: "•", ordered: "1.", quote: "❝",
 };
 
 /**
@@ -604,26 +670,6 @@ function applyCode(editor: Editor): void {
   editor.chain().focus()
     .insertContentAt({ from, to }, { type: "codeBlock", content: [{ type: "text", text }] })
     .run();
-}
-
-/**
- * Ask for a link target and set it, or clear the link when the answer is empty.
- *
- * An empty answer UNSETS rather than doing nothing, because "remove this link" has no other
- * control and inventing a ninth button for it would cost more than it is worth. `prompt`
- * returning null is a cancel and leaves everything alone; that distinction is the reason the
- * two are not collapsed.
- */
-function promptForLink(editor: Editor, message: string): void {
-  const previous = (editor.getAttributes("link").href as string | undefined) ?? "";
-  const answer = window.prompt(message, previous);
-  if (answer === null) return;
-  const href = answer.trim();
-  if (href === "") {
-    editor.chain().focus().extendMarkRange("link").unsetLink().run();
-    return;
-  }
-  editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
 }
 
 export { EMPTY_RICH };

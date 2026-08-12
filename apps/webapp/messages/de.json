@@ -611,6 +611,9 @@
       "strike": "Durchgestrichen",
       "code": "Code",
       "link": "Link",
+      "linkApply": "Übernehmen",
+      "linkRemove": "Link entfernen",
+      "linkBad": "Links können http, https oder mailto verwenden.",
       "bullet": "Aufzählung",
       "ordered": "Nummerierte Liste",
       "quote": "Zitat"
