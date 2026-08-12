@@ -1538,11 +1538,23 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * React `Set` that a reload erased, and the Ohbox dispatched nothing at all — opening a
    * message left it bold forever. All three now write the same row, and the worker puts `\Seen`
    * on the user's own IMAP server, which is what makes the state survive the product.
+   *
+   * ── `via` IS A PASS-THROUGH, and no decision is taken here ──────────────────────────────
+   *
+   * A surface that marks mail read on the reader's BEHALF — the Ohbox's dwell commit, the
+   * Receipts per-card mark — labels itself `"glance"`, and the engine is the single place that
+   * acts on the label: it drops resurfaced ids from a glance, so a pin survives being merely
+   * looked at. Absent means deliberate, which is every other caller of this (the read pill,
+   * `⇧I`, bulk, read-all), and those spend pins exactly as they always have.
+   *
+   * Forwarding it is easy to lose and impossible to typecheck — a two-parameter callback is
+   * assignable where three are expected — so `resurface-now-shell.test.ts` asserts the label
+   * arrives at the adapter rather than trusting this line.
    */
   const markSeen = useCallback(
-    (ids: string[], unread: boolean) => {
+    (ids: string[], unread: boolean, via?: "glance") => {
       if (ids.length === 0) return;
-      void engine.mutate({ kind: "mark_seen", messageIds: ids, unread });
+      void engine.mutate({ kind: "mark_seen", messageIds: ids, unread, ...(via ? { via } : {}) });
     },
     [engine],
   );
@@ -4395,7 +4407,9 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 onCur={setReceiptsCur}
                 unreadCount={receiptsUnread}
                 isUnread={receiptsIsUnread}
-                markSeen={(id) => markSeen([id], false)}
+                /* The per-card dwell mark — a glance, like Reads' `readsMarkSeen`, and labelled
+                   so the engine holds a resurfaced row's pin back from it. */
+                markSeen={(id) => markSeen([id], false, "glance")}
                 onLeaveSeen={commitReceiptsSeen}
                 bodyOf={bodyOfMessage}
                 hydrateBody={hydrateBody}

@@ -201,8 +201,15 @@ export function OhboxView({
    * previously selected message.
    */
   onEnterReader: (messageId: string) => void;
-  /** The shell's `mark_seen` mutation — the one read-state writer. */
-  onMarkSeen: (ids: string[], unread: boolean) => void;
+  /**
+   * The shell's `mark_seen` mutation — the one read-state writer.
+   *
+   * `via` says whether the reader ASKED for this or the view decided for them; it travels
+   * because a resurfaced pin is answered by being dealt with, and a dwell is not dealing with
+   * anything. Only {@link commitPendingRead} claims `"glance"`. Omitting it means deliberate,
+   * which is what every other caller here is.
+   */
+  onMarkSeen: (ids: string[], unread: boolean, via?: "glance") => void;
   /**
    * WHICH MESSAGE THE READER SHEET IS SHOWING, or `null` when it is closed.
    *
@@ -792,7 +799,11 @@ export function OhboxView({
     if (id == null) return;
     if (pinnedUnread.current === id) return;
     if (!allRef.current.find((m) => m.id === id)?.unread) return;
-    markSeenRef.current([id], false);
+    // A GLANCE, and it says so. Nobody pressed anything to get here: the dwell armed on a cursor
+    // landing and this is a departure. A resurfaced row read this way keeps its pin — the engine
+    // drops it from the batch (`OhmailEngine.enrich`) — so "open it and leave" no longer answers
+    // a resurface the reader never dealt with. Every deliberate reader below omits the flag.
+    markSeenRef.current([id], false, "glance");
   }, []);
 
   /**

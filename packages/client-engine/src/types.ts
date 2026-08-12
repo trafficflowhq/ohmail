@@ -1055,7 +1055,31 @@ export type EngineMutation =
    * mirror, so `u` (toggle unread) and "mark selection read" are one mutation with two values
    * rather than two mutations that must be kept in agreement.
    */
-  | { kind: "mark_seen"; messageIds: string[]; unread: boolean }
+  | {
+      kind: "mark_seen";
+      messageIds: string[];
+      unread: boolean;
+      /**
+       * WAS THIS READ AN ACT, OR JUST A LOOK?
+       *
+       * The two are indistinguishable by the time they reach here — same verb, same ids, same
+       * `unread: false` — and exactly one thing turns on the difference: a resurfaced row is
+       * answered by being DEALT WITH, and the server spends its pin on any route that marks it
+       * read. So a surface that marks mail read on the reader's behalf has to say so, or a
+       * two-second dwell takes down a pin the user never answered.
+       *
+       * `"glance"` is claimed by the surfaces that decide FOR the reader: the Ohbox's dwell
+       * commit and the Receipts per-card mark. Everything else — the read pill, `⇧I`, a bulk
+       * selection, read-all, and the settled reply that marks its parent read — is the reader
+       * saying so, and omits this.
+       *
+       * ABSENT MEANS DELIBERATE, which is the safe default in the only direction that matters: a
+       * new call site that forgets this field spends the pin, which is the behaviour every caller
+       * had before the field existed. The failure mode of forgetting it is a pin that comes down
+       * a little too eagerly, never a pin that can never be answered.
+       */
+      via?: "glance";
+    }
   /**
    * SEND MAIL — the one mutation whose effect leaves the building.
    *

@@ -1,7 +1,7 @@
 import type { AttachmentWire, EngineAdapter, MutationOutcome } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SearchIndex, type LocalSearchResult } from "./search.js";
-import { sendingMailboxId } from "./selectors.js";
+import { isResurfaced, sendingMailboxId } from "./selectors.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
 import {
   CursorExpiredError,
@@ -1949,6 +1949,28 @@ export class OhmailEngine {
 
   // ── optimistic mutations ─────────────────────────────────────────────────
 
+  /**
+   * DROP THE RESURFACED IDS — the one place a glance is narrowed, for every verb that is one.
+   *
+   * Both callers sit in {@link enrich}, which is deliberate and is the whole design: the enriched
+   * mutation is what freezes onto the queue, and `mutationEffects` and the adapters all read the
+   * id list off it afterwards. So a single filter here moves the optimistic overlay, the demo
+   * backend's echo and the outgoing PATCHes together. Filtering per-consumer instead would let
+   * the wire spend a pin the overlay still showed, or the reverse — the same divergence in two
+   * directions, and neither is reachable from a chokepoint.
+   *
+   * An id the mirror does not hold is KEPT. It is not knowably a pin, and `mutationEffects`
+   * already declines to invent an effect for it; dropping it here would quietly turn "not synced
+   * yet" into "refused to send".
+   */
+  private withoutPins(ids: string[]): string[] {
+    const reader = this.read();
+    return ids.filter((id) => {
+      const msg = reader.get<EngineMessage>("message", id);
+      return msg === undefined || !isResurfaced(msg);
+    });
+  }
+
   /** Fill in wire-derivable fields so adapter + overlay agree on the payload. */
   private enrich(m: EngineMutation): EngineMutation {
     if (m.kind === "tag_assign" && m.labels === undefined) {
@@ -1960,15 +1982,64 @@ export class OhmailEngine {
         return { ...m, labels };
       }
     }
-    if (m.kind === "feed_mark_seen" && m.messageIds === undefined) {
+    if (m.kind === "feed_mark_seen") {
+      const reader = this.read();
       // The mark-the-whole-feed form: every unread id of the VIEW'S folder, so the wire PATCHes
       // exactly the set the optimistic effect flips — per `FeedView`, no longer Reads-only.
       const folder = FOLDER_OF_VIEW[m.view ?? "reads"];
-      const ids = this.read()
+      const given = m.messageIds ?? reader
         .list<EngineMessage>("message")
         .filter((msg) => msg.folder === folder && msg.unread)
         .map((msg) => msg.id);
-      return { ...m, messageIds: ids };
+      /**
+       * ── A GLANCE DOES NOT SPEND A RESURFACE, AND THIS IS THE ONLY PLACE THAT CAN SAY SO ─────
+       *
+       * `feed_mark_seen` is the client's INVOLUNTARY read: the per-card dwell mark fires while
+       * somebody is merely scrolling, and the leave-commit fires because they left. Its wire side
+       * is `PATCH /messages/:id {unread:false}` per id, which is a route that calls
+       * `MessageService.spendResurface` — so before this filter existed, scrolling past a pinned
+       * row, or just leaving the stream it sat in, took the pin down. The server's own comment
+       * states the rule the client was breaking: "Merely OPENING the row is deliberately neither:
+       * a glance does not spend the resurface."
+       *
+       * A resurfaced row is answered by DEALING with it — the read pill, `⇧I`, a bulk selection,
+       * read-all, filing it, or a reply whose settle marks the parent read. Not one of those
+       * comes through this verb, so this narrows the accidental read alone. See
+       * {@link withoutPins} for why the filter lives at this seam rather than at its consumers.
+       *
+       * BOTH FORMS ARE FILTERED, which is why this arm no longer waits for `messageIds ===
+       * undefined`: the whole-feed sweep derives its own ids just above, and "mark everything
+       * read" is no more an answer to a particular message than a scroll is.
+       *
+       * The consequence, stated because it is deliberate and looks like a bug: a pinned row that
+       * has been READ stays bold. `unread` and the pin are spent by the same act, so there is no
+       * state in which one is gone and the other stands. It is the honest rendering of "you have
+       * not dealt with this yet".
+       */
+      return { ...m, messageIds: this.withoutPins(given) };
+    }
+    if (m.kind === "mark_seen" && m.via === "glance" && !m.unread) {
+      /**
+       * THE OTHER GLANCE, and it is the one that matters most — because resurfaced rows are
+       * pinned in the OHBOX, and the Ohbox does not use `feed_mark_seen` at all.
+       *
+       * `feed_mark_seen` is a stream verb (Reads, Receipts). The Ohbox marks mail read through
+       * `mark_seen`, and it does so on a two-second cursor DWELL whose debt is spent on the way
+       * out — `OhboxView.commitPendingRead`, fired by leaving the view, closing the reader on a
+       * narrow width, or `pagehide`. That path is a glance by any reading of the word: nobody
+       * pressed anything. Without this arm, "resurface a message, open it, navigate away" spent
+       * the pin, which is precisely the thing that must not happen.
+       *
+       * GATED ON `via`, NOT GUESSED. A deliberate read and a dwell commit are identical here —
+       * same ids, same flag — so the surface that decided for the reader is the only thing that
+       * can know, and it says so. Absent ⇒ deliberate ⇒ spends, so the read pill, `⇧I`, bulk,
+       * read-all and the settled reply are all untouched by this and go on answering pins.
+       *
+       * `!m.unread` because marking UNREAD never spent a resurface on either side of the wire
+       * (`MessageService.patch` skips `spendResurface` unless `unread === false`), so filtering
+       * that direction would drop ids for no reason — and it is `u`, which is deliberate anyway.
+       */
+      return { ...m, messageIds: this.withoutPins(m.messageIds) };
     }
     if (m.kind === "mail_send") {
       // FREEZE THE ENVELOPE HERE, and nowhere else. The overlay effect and the wire body are
