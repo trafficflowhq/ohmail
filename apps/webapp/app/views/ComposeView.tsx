@@ -506,7 +506,6 @@ export function ComposeView({
                     {t("toInvalid", { entries: bccShownInvalid.join(", ") })}
                   </p>
                 ) : null}
-                <p className="c-hint">{t("bccHint")}</p>
               </>
             ) : null}
 

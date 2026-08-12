@@ -1684,6 +1684,25 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
 
   const closeReply = useCallback(() => setReplyTo(null), []);
 
+  /**
+   * REPLY IS A TOGGLE ON THE VERBS THAT SAY "Reply" — the pill's button and the `r`/`⇧R` keys.
+   * Pressing the verb that opened the editor closes it again; the draft survives, exactly as
+   * it survives Cancel and Escape (`closeReply` and the scratch buffer's own rule).
+   *
+   * The MODE is part of the identity, which is what keeps the narrowing `openReply` documents:
+   * Reply pressed while a reply-ALL editor is up on the same message is an explicit narrowing
+   * (and vice versa), not a close — only the same verb on the same message toggles. Retargeting
+   * paths (a panel's ⋯ menu, a sibling's footer verbs, the drafter) stay on `openReply`, because
+   * "reply to THIS message" is not a toggle.
+   */
+  const toggleReply = useCallback((messageId: string, all = false) => {
+    if (replyTo === messageId && replyAll === all) {
+      setReplyTo(null);
+      return;
+    }
+    openReply(messageId, all);
+  }, [replyTo, replyAll, openReply]);
+
   const onReplyBody = useCallback(
     (next: RichValue) => {
       setReplyBody(next);
@@ -2554,13 +2573,14 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         case "reply":
           // Inline, in place. This used to be `setReaderOpen(false); go("compose")` —
           // the message you were answering left the screen as you started answering it.
-          openReply(m.id);
+          // A TOGGLE: the same button on the same open editor closes it (see `toggleReply`).
+          toggleReply(m.id);
           break;
         case "reply_all":
           // The same editor, opened over the whole audience. The bar only dispatches this
           // where `replyAllRecipients` admitted a control (see `MessagePane.ActionBar`), and
-          // `sendReply` resolves that same call again for the wire.
-          openReply(m.id, true);
+          // `sendReply` resolves that same call again for the wire. A toggle like plain Reply.
+          toggleReply(m.id, true);
           break;
         case "draft":
           /**
@@ -2666,7 +2686,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         }
       }
     },
-    [engine, toast, t, piles.replyLater.length, now, openReply, markSeen, draftReply, replyTo, replyAll],
+    [engine, toast, t, piles.replyLater.length, now, openReply, toggleReply, markSeen, draftReply, replyTo, replyAll],
   );
 
   /**
@@ -3226,8 +3246,9 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
       label: t("shortcuts.reply"),
       // Only the Ohbox renders a message pane to reply INSIDE; Reads and Receipts are
       // skim streams. Listed everywhere, inert where there is nothing to reply in.
+      // A TOGGLE: `r` on the message whose plain-reply editor is already open closes it.
       disabled: route.view !== "ohbox" || selectedOhbox == null,
-      run: () => selectedOhbox && openReply(selectedOhbox.id),
+      run: () => selectedOhbox && toggleReply(selectedOhbox.id),
     },
     {
       // `shift+r` — the shifted variant of the verb it widens, the convention `shift+u`
@@ -3241,7 +3262,7 @@ function ShellInner({ accountSection, mailboxSection, billingSection, securitySe
         route.view !== "ohbox" ||
         selectedOhbox == null ||
         replyAllRecipients(selectedOhbox, ownAddresses) === null,
-      run: () => selectedOhbox && openReply(selectedOhbox.id, true),
+      run: () => selectedOhbox && toggleReply(selectedOhbox.id, true),
     },
     {
       // SENDING FROM THE KEYBOARD. `inInput` is not optional: the editor takes

@@ -55,28 +55,30 @@ body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
  * `.read-col` is one scroller (message.css). On a deep thread with the reply open, the editor
  * sat at the bottom of a tall column, below the fold — and an editor nobody can see is the
  * compose dialog this design rejected, wearing different clothes. At split width (≥901px, where
- * the reading column exists at all) AND with room for it, the reply dock instead STICKS to the
- * bottom of the scrollport with its own scroll: the conversation scrolls behind it and the
- * Send/Cancel row is always in view. Below that height, and in the reader overlay (which this
- * rule deliberately does not touch — it is `.read-col` only), the editor scrolls itself into
- * view on open instead (`InlineReply`, `block:"end"`).
+ * the reading column exists at all) AND with room for it, the reply dock STICKS to the bottom
+ * of the scrollport: the conversation scrolls behind it and the whole panel stays in view.
+ * Below that height, and in the reader overlay (which this rule deliberately does not touch —
+ * it is `.read-col` only), the editor scrolls itself into view on open instead (`InlineReply`,
+ * `block:"end"`).
  *
- * The dock paints the column's own ground so scrolled conversation does not bleed through the
- * card's margin, with a soft upward edge that reads as "pinned". The wrapper is `ReadingPane`'s
- * one added class; when the bar is stood down for the open reply (message.css `:has(.reply)`)
- * the static action row sits just above this dock. */
+ * THE DOCK ITSELF NO LONGER SCROLLS AND NO LONGER PAINTS A GROUND — deliberately, on both
+ * counts. It used to be a `max-height: 45vh; overflow-y: auto` strip on a solid `--panel`
+ * bleed: scrolling the PANEL meant the toolbar, the attachment strip and Send/Cancel could all
+ * leave the screen the moment the panel outgrew the strip (two attachments were enough), and
+ * the edge-to-edge ground swallowed the card's corners into a square box. The panel bounds its
+ * own height against the viewport now and scrolls ONLY its editor body (`.reply` in the
+ * webapp's app.css), so this wrapper is a pure positioner and the card floats on its own
+ * `--lift-3` over the conversation — the same layer grammar as the action pill above it.
+ * Re-adding an overflow or a height cap here reintroduces the scrolled-away chrome, and the
+ * panel's own stylesheet is guarded against exactly that. */
 @media (min-width: 901px) and (min-height: 640px) {
   .read-col .reply-dock {
     position: sticky;
     bottom: 0;
     z-index: 1;
-    max-height: 45vh;
-    overflow-y: auto;
-    background: var(--panel);
-    padding-top: 10px;
-    box-shadow: 0 -12px 16px -12px rgba(0, 0, 0, 0.16);
+    padding: 10px 0 12px;
   }
-  /* The pinned card needs no top margin of its own — otherwise it floats a 22px band of ground
+  /* The pinned card needs no top margin of its own — otherwise it floats a 22px band of air
      above itself inside the dock. */
   .read-col .reply-dock > .reply { margin-top: 0; }
 }

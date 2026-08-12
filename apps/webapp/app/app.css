@@ -1753,14 +1753,6 @@ textarea.c-input:read-only {
   font-weight: 500;
   letter-spacing: 0;
 }
-/* The one-line note under Bcc. Quieter than an error, and it is a statement of fact about how Bcc
-   behaves rather than a problem with what was typed. */
-.c-hint {
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--ink3);
-  margin: 6px 2px 0;
-}
 .draft-card {
   border-radius: 20px;
   background: var(--accent-soft);
@@ -3965,17 +3957,93 @@ textarea.c-input:read-only {
 }
 
 /* ================= inline reply =======================================
-   Inside <article class="msg">, under the actions: head, editor, controls, status. Nothing
-   else — the conversation it used to quote in a 190px `.reply-context` scroller (with
+   Inside <article class="msg">, under the actions: grip, head, editor, controls, status.
+   Nothing else — the conversation it used to quote in a 190px `.reply-context` scroller (with
    `.reply-quoted` / `.rq-*` entries and a `.reply-note` caveat, all deleted with it) is the
-   pane's copy above, which is the mail the reader was already looking at. */
+   pane's copy above, which is the mail the reader was already looking at.
+
+   ── THE PANEL IS A FIXED-CHROME COLUMN, AND ONLY THE BODY SCROLLS ────────────────────────
+   The panel is a flex column whose CHROME — grip, recipients, the From row, the drafter's
+   card, the formatting toolbar, the attachment strip with its size hint, Send/Cancel, the
+   status line — never leaves the screen: every direct child is `flex: none` except the
+   editor, which takes the slack and shrinks first, and the ONE scroll region in the panel is
+   the editor's own surface (`.rte-surface` below). It used to be the other way round — the
+   dock scrolled the whole panel (reader.css), so adding two attachments put Send below a fold
+   inside the editor you were typing in.
+
+   ── BOUNDED BY THE VIEWPORT, NEVER TALLER ────────────────────────────────────────────────
+   `min-height` is the resting posture (roomy on a desk, backing off on a short window);
+   `max-height` is the hard bound that keeps every control reachable — a panel taller than the
+   viewport is chrome nobody can reach. The user's own height (the grip → an inline style,
+   clamped in `InlineReply.clampReplyHeight`) lives between the drag floor and the same bound.
+   Each pair states `vh` first and `dvh` over it, so a browser without dynamic units keeps a
+   correct, slightly conservative bound.
+
+   ── THE FLOATING LAYER'S OWN SKIN ────────────────────────────────────────────────────────
+   `--float` on `--lift-3` with the panels' 20px radius — the treatment the tokens name for
+   the floating layer (dock, palette, reader), which is what a docked editor is: it rides over
+   the conversation, exactly like the action pill beside it (`.abar`). It wore the recessed
+   `--panel`/`--lift-1` before, and inside the old edge-to-edge dock strip that read as a
+   square box bolted under the thread. Tokens only; the hairline inset is what keeps the card
+   sculpted where float-on-float meets in the dark theme. */
 .reply {
   margin-top: 22px;
-  border-radius: 18px;
-  background: var(--panel);
-  box-shadow: var(--lift-1);
-  padding: 15px 17px 14px;
+  border-radius: 20px;
+  background: var(--float);
+  box-shadow: var(--lift-3), inset 0 0 0 1px var(--hair-soft);
+  padding: 0 18px 14px;
   animation: rise 0.22s var(--spring);
+  display: flex;
+  flex-direction: column;
+  min-height: clamp(240px, calc(100vh - 280px), 460px);
+  min-height: clamp(240px, calc(100dvh - 280px), 460px);
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+}
+.reply > * {
+  flex: none;
+}
+/* The editor is the panel's flexible middle: it grows into the slack and it is the only child
+   allowed to shrink (`min-height` under the chrome's `none`), which is what pins the toolbar
+   above it and everything below it on screen whatever the attachments and recipients do. */
+.reply > .reply-editor {
+  flex: 1 1 auto;
+  min-height: 88px;
+}
+/* ── THE GRIP — the top edge is the handle that sets the panel's height ─────────────────────
+   A full-width hit strip with the sheet-grabber bar in the middle; `touch-action: none` is
+   what lets the pointer own a vertical drag on touch instead of scrolling the column. No
+   transition rides the drag — direct manipulation needs nothing neutralized for reduced
+   motion. */
+.reply-grip {
+  height: 18px;
+  margin: 0 -18px;
+  display: grid;
+  place-items: center;
+  cursor: row-resize;
+  touch-action: none;
+  border-radius: 20px 20px 0 0;
+}
+.reply-grip-bar {
+  width: 44px;
+  height: 4px;
+  border-radius: 99px;
+  background: var(--hair);
+}
+.reply-grip:hover .reply-grip-bar,
+.reply-grip:focus-visible .reply-grip-bar {
+  background: var(--ink3);
+}
+.reply-grip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* Files are chrome, so the LIST is bounded: past three rows it scrolls inside its own strip
+   rather than eating the editor — the pick button, the size line and the first rows stay in
+   reach whatever was attached. */
+.reply .compose-attach-list {
+  max-height: 104px;
+  overflow-y: auto;
 }
 .reply-head {
   display: flex;
@@ -4032,6 +4100,19 @@ textarea.c-input:read-only {
 .reply-rcpt .c-field {
   font-size: 12.5px;
 }
+/* FROM AS THE STACK'S FIRST ROW — the same `.c-field` grammar as To/Cc/Bcc, so all four rows
+   share one label gutter and one input line (the caption-style From used to sit below the
+   stack at its own indent). It wraps so the substitution note can take a line of its own on a
+   narrow panel instead of shoving the address out. */
+.reply-rcpt .reply-from-row {
+  flex-wrap: wrap;
+}
+.reply-rcpt .reply-from-sub {
+  flex: none;
+  margin-left: auto;
+  padding-left: 10px;
+  font-size: 11.5px;
+}
 /* WHICH ADDRESS IS ANSWERING. One recessed line under the "Reply to …" head, in the
    head's own type size — it is context for the editor, not a heading of its own. */
 .reply-from {
@@ -4075,12 +4156,14 @@ textarea.c-input:read-only {
   color: var(--ink);
 }
 .reply-editor .rte-surface {
-  /* A REPLY IS THE MESSAGE, so give it room: the floor nearly doubled from 128px so a few
-     sentences no longer sit in a letterbox. It still GROWS with the text up to half the
-     viewport, then scrolls INSIDE itself rather than pushing the Send row off the bottom of a
-     tall reply — the reader column keeps its own scroll for everything above. */
-  min-height: 240px;
-  max-height: 50vh;
+  /* THE PANEL'S ONE SCROLL REGION. The surface fills whatever the panel's flexible middle
+     holds (`.reply > .reply-editor` above — the room the old 240px floor bought now comes
+     from the panel's own resting height) and scrolls INSIDE itself when the text outgrows
+     it, so the toolbar above and the Send row below never move. `min-height: 0` is
+     load-bearing: it is what lets the surface shrink under its content instead of pushing
+     the chrome out of the panel — the floor lives on `.reply > .reply-editor`, where the
+     flex column can honour it. */
+  min-height: 0;
   overflow-y: auto;
 }
 .reply-editor:focus-within {

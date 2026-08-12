@@ -41,6 +41,7 @@
  * itself; nothing here claims they already exist.
  */
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useTranslations } from "next-intl";
 import type {
   AddressBookEntry,
@@ -102,6 +103,51 @@ export interface DraftReplyChrome {
   pending: { draft: DraftedReply; messageId: string } | null;
   /** Place it. `replace` drops what was typed; `append` puts the draft below it. */
   resolve: (mode: "replace" | "append") => void;
+}
+
+/**
+ * ── THE PANEL'S HEIGHT IS THE USER'S, WITHIN BOUNDS ─────────────────────────────────────────
+ *
+ * The grip on the panel's top edge sets an explicit height; these are the bounds every path to
+ * that height goes through — the drag, the keyboard arrows on the separator, and the stored
+ * value read back on the next open (a height dragged on a tall window must not reopen taller
+ * than the window someone has now).
+ *
+ * The floor keeps the chrome usable — head, toolbar, a sliver of body, actions. The ceiling is
+ * the VIEWPORT'S, minus air, because a panel taller than the screen is chrome nobody can reach:
+ * the exact defect the fixed-chrome layout exists to remove, reintroduced by a drag. The CSS
+ * `max-height` on `.reply` states the same bound declaratively; this clamp is what keeps the
+ * inline style honest before the stylesheet ever has to catch it.
+ */
+export const REPLY_PANEL_MIN_PX = 220;
+export const REPLY_PANEL_VIEWPORT_MARGIN_PX = 48;
+export function clampReplyHeight(px: number, viewportPx: number): number {
+  const max = Math.max(REPLY_PANEL_MIN_PX, viewportPx - REPLY_PANEL_VIEWPORT_MARGIN_PX);
+  return Math.min(Math.max(Math.round(px), REPLY_PANEL_MIN_PX), max);
+}
+
+/**
+ * SESSION-scoped on purpose: a panel height is a working posture, not a setting. It survives
+ * closing and reopening the editor (the cheap half the request asked for) and dies with the
+ * tab. `sessionStorage` can throw in a private window; a panel that cannot remember its height
+ * still resizes, so every access is fenced.
+ */
+const REPLY_HEIGHT_KEY = "ohmail.reply.panelHeight";
+function readStoredReplyHeight(): number | null {
+  try {
+    const raw = window.sessionStorage.getItem(REPLY_HEIGHT_KEY);
+    const n = raw === null ? Number.NaN : Number(raw);
+    return Number.isFinite(n) ? clampReplyHeight(n, window.innerHeight) : null;
+  } catch {
+    return null;
+  }
+}
+function storeReplyHeight(px: number): void {
+  try {
+    window.sessionStorage.setItem(REPLY_HEIGHT_KEY, String(px));
+  } catch {
+    /* a panel that cannot remember still resizes */
+  }
 }
 
 export function InlineReply({
@@ -200,6 +246,63 @@ export function InlineReply({
 }) {
   const t = useTranslations("reply");
   const box = useRef<HTMLDivElement>(null);
+
+  /**
+   * ── DRAG-TO-RESIZE ─────────────────────────────────────────────────────────────────────
+   *
+   * `null` means nobody has dragged this session and the stylesheet's default posture stands
+   * (`.reply` in app.css: a clamp between its floor and the viewport bound). A number is the
+   * user's height, clamped through {@link clampReplyHeight} on every write AND on the read
+   * back, and mirrored to `sessionStorage` so reopening the editor keeps the posture.
+   *
+   * The inline style sets BOTH `height` and `min-height`: the stylesheet's default floor is
+   * taller than the drag floor, and `min-height` outranks `height` in CSS — without the
+   * override a panel dragged small would silently spring back to the default.
+   *
+   * No transition and no animation ride the drag — direct manipulation is its own motion, so
+   * there is nothing here for `prefers-reduced-motion` to have to neutralize.
+   */
+  const [panelPx, setPanelPx] = useState<number | null>(() =>
+    typeof window === "undefined" ? null : readStoredReplyHeight(),
+  );
+  const setPanelHeight = (px: number): void => {
+    const next = clampReplyHeight(px, window.innerHeight);
+    setPanelPx(next);
+    storeReplyHeight(next);
+  };
+  /**
+   * Where a resize starts from: the user's own height when one is set (it IS the rendered
+   * height then — the inline style), otherwise whatever the stylesheet's default posture
+   * rendered. Stated in that order because they only differ where layout does not run
+   * (jsdom renders every box 0 tall), and there the set height is the truthful base.
+   */
+  const currentPanelPx = (): number => panelPx ?? box.current?.offsetHeight ?? 0;
+  const dragFrom = useRef<{ y: number; h: number } | null>(null);
+  const onGripPointerDown = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    dragFrom.current = { y: e.clientY, h: currentPanelPx() };
+    // jsdom has no pointer capture; the window listeners below are the mechanism, capture is
+    // only the nicety that keeps the cursor owned while it leaves the grip.
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    const move = (ev: PointerEvent): void => {
+      const from = dragFrom.current;
+      if (!from || !box.current) return;
+      // Up is taller: the grip is the TOP edge, so the height grows by how far the pointer rose.
+      setPanelHeight(from.h + (from.y - ev.clientY));
+    };
+    const up = (): void => {
+      dragFrom.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  /** The separator is focusable, so the keyboard gets the same resize the pointer has. */
+  const onGripKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    setPanelHeight(currentPanelPx() + (e.key === "ArrowUp" ? 24 : -24));
+  };
 
   /**
    * WHICH ADDRESS IS ANSWERING.
@@ -339,6 +442,60 @@ export function InlineReply({
     ...replyEnvelopeOnWire(envPlan),
   });
 
+  /**
+   * THE FROM CONTROL, BUILT ONCE — the same `<select>` whether it stands in the collapsed
+   * caption or in the opened recipients stack, because it is the same decision: which address
+   * answers. Two renderings of one control, never two controls.
+   */
+  const fromSelect = onFrom && from.choices.length > 1 ? (
+    <span className="c-select">
+      <select
+        id={fromSelectId}
+        className="c-input"
+        value={from.mailboxId ?? ""}
+        disabled={inFlight}
+        onChange={(e) => onFrom(e.target.value)}
+      >
+        {/* Value is the mailbox id, label the address a human reads — the shape
+            `ComposeView` uses. Sendable choices only, so a disconnected address is never
+            offered and the wire cannot carry one the server would refuse. */}
+        {from.choices.map((o) => (
+          <option key={o.id} value={o.id}>{displayAddress(o.address)}</option>
+        ))}
+      </select>
+    </span>
+  ) : null;
+  const fromSub = from.substituted ? (
+    <span className="reply-from-sub">
+      {from.substitutedFrom
+        ? t("fromSubstituted", { was: displayAddress(from.substitutedFrom) })
+        : t("fromSubstitutedUnknown")}
+    </span>
+  ) : null;
+
+  /**
+   * FROM, INSIDE THE OPENED RECIPIENTS STACK — the first row, in the compose header's own
+   * `.c-field` grammar, so From, To, Cc and Bcc share ONE label gutter and one input line.
+   *
+   * It used to stay a caption BELOW the stack while the envelope was open, which broke twice
+   * at once: the caption's inline label put the From value at a different indent than every
+   * other row's, and opening Cc/Bcc grew the stack above it — inside the old scrolling dock
+   * that pushed the From line below the fold, which reads as the row DISAPPEARING the moment
+   * Cc/Bcc are switched on. As a `flex: none` row of the pinned chrome it can no longer be
+   * displaced by anything the stack does. Rendered exactly when the collapsed caption would
+   * have been (`from.address !== null` — a From line is a claim), with the same substitution
+   * note beside it.
+   */
+  const fromRow = from.address !== null ? (
+    <div className="c-field reply-from-row">
+      <label htmlFor={fromSelectId}>{t("fromLabel")}</label>
+      {fromSelect ?? (
+        <output id={fromSelectId} className="c-static">{displayAddress(from.address)}</output>
+      )}
+      {fromSub}
+    </div>
+  ) : null;
+
   /** The head's own sentence — shared by the static head and the button that opens the edit. */
   const headContent = all ? (
     <>
@@ -355,13 +512,51 @@ export function InlineReply({
   );
 
   return (
-    <div className="reply" data-reply-for={message.id} ref={box}>
+    <div
+      className="reply"
+      data-reply-for={message.id}
+      ref={box}
+      /* Both `height` AND `min-height`, or a drag below the stylesheet's default floor
+         silently springs back — see the state's own note. `undefined` leaves the default
+         posture entirely to the stylesheet. */
+      style={
+        panelPx !== null
+          ? { height: `${panelPx}px`, minHeight: `${REPLY_PANEL_MIN_PX}px` }
+          : undefined
+      }
+    >
+      {/* THE GRIP — the panel's top edge is the handle that sets its height. A separator in
+          the ARIA sense (it splits the conversation above from the editor below and is
+          focusable), so the keyboard has the same control the pointer does: arrows nudge,
+          the drag is free. `aria-valuenow` only once a height exists — before the first drag
+          the posture is the stylesheet's clamp, and announcing a number would be inventing
+          one. */}
+      <div
+        className="reply-grip"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label={t("resize")}
+        tabIndex={0}
+        aria-valuemin={REPLY_PANEL_MIN_PX}
+        aria-valuemax={
+          typeof window === "undefined"
+            ? undefined
+            : Math.max(REPLY_PANEL_MIN_PX, window.innerHeight - REPLY_PANEL_VIEWPORT_MARGIN_PX)
+        }
+        aria-valuenow={panelPx ?? undefined}
+        onPointerDown={onGripPointerDown}
+        onKeyDown={onGripKeyDown}
+      >
+        <span className="reply-grip-bar" aria-hidden="true" />
+      </div>
+
       {envelope !== null && onEnvelope ? (
         <ReplyRecipients
           envelope={envelope}
           onEnvelope={onEnvelope}
           book={book}
           disabled={inFlight}
+          fromRow={fromRow}
         />
       ) : expand ? (
         // The head IS the way in: pressing the audience opens it for editing. A button and
@@ -390,38 +585,20 @@ export function InlineReply({
           silences the "answers from the address above" line — the selector's value becomes the
           statement the sentence used to make, and re-announcing it as a substitution would be
           claiming the user was overruled when they were obeyed. */}
-      {from.address !== null ? (
+      {/* Collapsed head only: while the recipients stack is open, From stands as its FIRST
+          row (`fromRow` above) — one aligned block, never a caption trailing a stack that can
+          grow over it. */}
+      {from.address !== null && (envelope === null || !onEnvelope) ? (
         <p className="reply-from">
-          {onFrom && from.choices.length > 1 ? (
+          {fromSelect ? (
             <span className="reply-from-pick">
               <label htmlFor={fromSelectId} className="reply-from-label">{t("fromLabel")}</label>
-              <span className="c-select">
-                <select
-                  id={fromSelectId}
-                  className="c-input"
-                  value={from.mailboxId ?? ""}
-                  disabled={inFlight}
-                  onChange={(e) => onFrom(e.target.value)}
-                >
-                  {/* Value is the mailbox id, label the address a human reads — the shape
-                      `ComposeView` uses. Sendable choices only, so a disconnected address is never
-                      offered and the wire cannot carry one the server would refuse. */}
-                  {from.choices.map((o) => (
-                    <option key={o.id} value={o.id}>{displayAddress(o.address)}</option>
-                  ))}
-                </select>
-              </span>
+              {fromSelect}
             </span>
           ) : (
             <span>{t("from", { address: displayAddress(from.address) })}</span>
           )}
-          {from.substituted ? (
-            <span className="reply-from-sub">
-              {from.substitutedFrom
-                ? t("fromSubstituted", { was: displayAddress(from.substitutedFrom) })
-                : t("fromSubstitutedUnknown")}
-            </span>
-          ) : null}
+          {fromSub}
         </p>
       ) : null}
 
@@ -564,8 +741,8 @@ function DraftReplyCard({
  * the shell holds.
  *
  * The markup deliberately mirrors `ComposeView`'s header rows — `.c-field`, the label gutter,
- * the `Cc/Bcc` toggle inside the To row, the error line under the row it belongs to, the Bcc
- * hint — because "wherever this appears" means the SAME field, not a cousin. What differs is
+ * the `Cc/Bcc` toggle inside the To row, the error line under the row it belongs to —
+ * because "wherever this appears" means the SAME field, not a cousin. What differs is
  * only what must: ids come from `useId` (this editor is mounted twice while the reader is
  * open, and `compose-to` may exist on another route's DOM at the same time), and the invalid
  * entries are parsed here from the strings rather than handed down from a plan, gated by the
@@ -580,11 +757,19 @@ function ReplyRecipients({
   onEnvelope,
   book,
   disabled,
+  fromRow = null,
 }: {
   envelope: ReplyEnvelopeEdit;
   onEnvelope: (next: ReplyEnvelopeEdit) => void;
   book: readonly AddressBookEntry[];
   disabled: boolean;
+  /**
+   * The From row, composed by `InlineReply` (which owns the resolution and the pick), rendered
+   * FIRST so the opened audience reads as one aligned stack: From, To, Cc, Bcc, every row in
+   * the `.c-field` grammar with the shared label gutter. `null` where a From line would be a
+   * claim nobody can back (no mailbox facts).
+   */
+  fromRow?: ReactNode;
 }) {
   const t = useTranslations("compose");
   const base = useId();
@@ -636,6 +821,10 @@ function ReplyRecipients({
 
   return (
     <div className="reply-rcpt">
+      {/* From leads the stack — who this answers AS, then whom it answers TO. Every row below
+          shares the `.c-field` gutter, so toggling Cc/Bcc adds rows to one aligned block and
+          displaces nothing. */}
+      {fromRow}
       {row(
         "to",
         !open ? (
@@ -654,8 +843,6 @@ function ReplyRecipients({
         <>
           {row("cc")}
           {row("bcc")}
-          {/* Bcc says out loud what "blind" means — delivered on the envelope, never a header. */}
-          <p className="c-hint">{t("bccHint")}</p>
         </>
       ) : null}
     </div>
