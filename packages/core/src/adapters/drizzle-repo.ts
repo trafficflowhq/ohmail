@@ -302,6 +302,25 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return rows[0] ? rowToStored(rows[0]) : null;
   }
 
+  /**
+   * The own-sent twin lookup — see `RepoPort.findByMessageIdHeader` for the contract, including
+   * why only the `ownAuthored` gate in `resolveExisting` may call it. `accountId` is in the
+   * predicate so the `(account_id, message_id_header)` index serves the read; `created_at, id`
+   * makes "oldest row wins" deterministic when a mailbox already holds several rows under one id
+   * (the pre-fix doubles this lookup exists to stop collapsing onto a stable one of them).
+   */
+  async findByMessageIdHeader(accountId: string, mailboxId: string, messageIdHeader: string): Promise<StoredMessage | null> {
+    const rows = await this.db.select().from(messages)
+      .where(and(
+        eq(messages.accountId, accountId),
+        eq(messages.mailboxId, mailboxId),
+        eq(messages.messageIdHeader, messageIdHeader),
+      ))
+      .orderBy(asc(messages.createdAt), asc(messages.id))
+      .limit(1);
+    return rows[0] ? rowToStored(rows[0]) : null;
+  }
+
   async insertMessage(input: InsertMessageInput): Promise<InsertedMessage> {
     const inserted = await this.db.insert(messages).values({
       accountId: input.accountId, mailboxId: input.mailboxId,

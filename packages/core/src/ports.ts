@@ -352,6 +352,32 @@ export type InsertedMessage = StoredMessage & { created: boolean };
 export interface RepoPort {
   findByDedupKey(mailboxId: string, dedupKey: string): Promise<StoredMessage | null>;
   /**
+   * A stored message of THIS mailbox carrying this Message-ID (RFC 5322), spelled the way ingest
+   * stores it — bracket-stripped, case preserved; see `identity.ts#normalizeMessageId`. Oldest row
+   * wins when several match, so repeated observations keep converging on the same one.
+   *
+   * ── ONE CALLER, AND THE GATE IS THE CONTRACT ────────────────────────────────────────────────
+   *
+   * This is the OWN-SENT TWIN lookup (`pipeline.ts#resolveExisting`, third arm), reached only for
+   * a `Change.ownAuthored` create — one read out of the mailbox's own Sent folder. There, and
+   * only there, the Message-ID alone may name an existing row: everything in that folder was
+   * written by the user's own clients and transports, so the id is the user's own claim about
+   * the user's own mail. It exists because Exchange Online re-renders the copy it files for an
+   * SMTP submission (new Received chain, re-encoded MIME, re-wrapped body) beside the byte-exact
+   * copy the send path APPENDs, and the re-render defeats both fingerprint-keyed lookups — so a
+   * message sent through a Microsoft 365 mailbox used to ingest twice and ride the mirror as two
+   * sent rows.
+   *
+   * For INBOUND mail the Message-ID is a string a stranger types, and collapsing on it is the
+   * adoption attack `messageFingerprint` closed — see the docblock above `resolveExisting`.
+   * Never call this outside the `ownAuthored` gate; the forgery pin in `pipeline.sent.test.ts`
+   * goes red when the gate widens.
+   *
+   * `accountId` rides along so the read is served by the existing
+   * `(account_id, message_id_header)` index rather than a mailbox-only scan.
+   */
+  findByMessageIdHeader(accountId: string, mailboxId: string, messageIdHeader: string): Promise<StoredMessage | null>;
+  /**
    * Insert a message, or return the row a concurrent/earlier ingest already wrote.
    *
    * **Check {@link InsertedMessage.created} before writing anything else.** The winner owns the

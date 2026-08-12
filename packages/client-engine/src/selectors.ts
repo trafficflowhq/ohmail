@@ -251,10 +251,11 @@ export function bodyOf(
  *
  * NO FOLDER FILTER. A conversation legitimately spans folders: a stranger's first mail sits
  * in `ohmail/Screener` while their accepted follow-ups land in the Ohbox, and hiding the
- * held one would be the reader lying about what it has. The `Sent` folder is the other
- * side of that coin and is NOT watched — the user's own replies are not in
- * `messages` at all, so this can only ever return the counterpart's half. Callers say so;
- * see `Conversation.tsx`.
+ * held one would be the reader lying about what it has. The Sent folder is the other side of
+ * that coin: the worker watches it now, so the user's own replies ride the mirror under the
+ * SERVER'S own folder name — `Sent Items`, `Sent Messages`, `INBOX/Sent`, `[Gmail]/Sent Mail` —
+ * and the absence of a folder filter is what keeps them in the conversation they belong to.
+ * (This paragraph used to say Sent was not watched; the Sent-folder watch made that false.)
  *
  * O(n) over the mirror, like every selector here. Do NOT call it per row to build list
  * badges — that is O(n²) over a mailbox of any size and wants a one-pass count selector instead.

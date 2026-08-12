@@ -384,7 +384,9 @@ export interface CommitDeps {
  *  2. the legacy `mid:`/`body:` key — a hit is a CANDIDATE and nothing more. It is VERIFIED
  *     against four stored columns (`identity.ts#verifiesLegacyIdentity`) and, only if all four
  *     agree, accepted and its key rewritten to `fp1:` in the commit transaction.
- *  3. neither — a new message.
+ *  3. for an `ownAuthored` create only: the same mailbox's row under this Message-ID — the
+ *     own-sent twin arm, written out at its own comment below.
+ *  4. none of these — a new message.
  *
  * **Any mismatch in step 2 ⇒ NEW message. Never a partial collapse.** That is what makes the
  * fallback safe rather than a re-introduction of the very defect the new key fixes: the legacy key
@@ -395,7 +397,8 @@ export interface CommitDeps {
  * mailbox has been fully re-observed.
  */
 async function resolveExisting(
-  repo: RepoPort, mailboxId: string, normalized: NormalizedMessage,
+  repo: RepoPort, accountId: string, mailboxId: string, normalized: NormalizedMessage,
+  ownAuthored: boolean,
 ): Promise<{ key: string; existing: StoredMessage | null; upgrade?: DedupKeyUpgrade }> {
   const fpKey = fingerprintDedupKey(messageFingerprint(normalized));
   const onFingerprint = await repo.findByDedupKey(mailboxId, fpKey);
@@ -409,6 +412,31 @@ async function resolveExisting(
       existing: candidate,
       upgrade: { messageId: candidate.id, from: legacyKey, to: fpKey },
     };
+  }
+
+  //  3. THE OWN-SENT TWIN — by Message-ID alone, and ONLY for an `ownAuthored` create.
+  //
+  // Exchange Online files its own re-rendered copy of every SMTP submission into the Sent folder
+  // beside the byte-exact copy the send path APPENDs: new `Received:` chain, re-encoded MIME,
+  // re-wrapped body. Different bytes ⇒ a different fingerprint ⇒ both lookups above miss, and the
+  // twin used to ingest as a SECOND `messages` row — the user's just-sent message, twice in its
+  // own conversation. The same rewrite breaks the self-CC twin (`own_copy`) whenever the inbound
+  // and Sent copies were rendered by different transports.
+  //
+  // Message-ID alone is exactly the forgeable key the fingerprint replaced, and it stays banned
+  // for inbound mail: this arm is gated on `Change.ownAuthored`, which the ADAPTER stamps only on
+  // pure creates read out of the mailbox's own Sent folder (`ports.ts#Change.ownAuthored`) — a
+  // folder strangers cannot write into. Within that gate, matching the id is matching the user's
+  // own submission against the user's own submission; classifyDedup then answers `duplicate`
+  // (same folder) or `own_copy` (twin of a row elsewhere), and neither writes a placement.
+  //
+  // The key returned is still `fpKey`: it names THESE bytes, and no row is written under it on
+  // the non-`new` outcomes this arm produces. NO `upgrade` rides along, deliberately — rewriting
+  // the stored row's key to this observation's fingerprint would repoint the row's identity at
+  // whichever copy was seen last, and the stored key still names the copy the row was born from.
+  if (ownAuthored && normalized.canonical.messageIdHeader !== null) {
+    const twin = await repo.findByMessageIdHeader(accountId, mailboxId, normalized.canonical.messageIdHeader);
+    if (twin) return { key: fpKey, existing: twin };
   }
 
   // Either nothing was stored under the legacy key, or a row was and it is NOT this message. Both
@@ -463,7 +491,8 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
   const ohboxPolicy: OhboxPolicy = deps.ohboxPolicy ?? DEFAULT_OHBOX_POLICY;
 
   const normalized = await normalizeMime(change.raw);
-  const { key, existing, upgrade } = await resolveExisting(repo, mailboxId, normalized);
+  const { key, existing, upgrade } =
+    await resolveExisting(repo, accountId, mailboxId, normalized, change.ownAuthored === true);
 
   // Correlate against any outstanding move we issued for this message.
   const pendingMoveFolders = new Set<string>();

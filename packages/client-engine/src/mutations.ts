@@ -50,6 +50,24 @@ export function forwardSubject(originalSubject: string): string {
 }
 
 /**
+ * ONE SPELLING FOR A MESSAGE-ID — strip one pair of RFC 5322 angle brackets, trim, KEEP the case.
+ *
+ * The two sides of the optimistic-sent reconcile spell the same id differently: the send
+ * confirmation's `providerMessageId` is the minted header, `<id@domain>`, while the ingested
+ * row's `messageIdHeader` comes back bracket-stripped (server ingest normalises it exactly this
+ * way). Comparing the raw strings therefore NEVER matched, and the optimistic copy was only ever
+ * retired by its ten-minute TTL — the just-sent message stood twice in its conversation and in
+ * Earlier until then. Both sides go through this before any comparison.
+ *
+ * Case is preserved for the same reason ingest preserves it: `id-left` is a case-sensitive atom,
+ * and folding it would equate ids a sender chose to distinguish.
+ */
+export function messageIdKey(raw: string): string {
+  const m = raw.match(/<([^>]+)>/);
+  return (m ? m[1]! : raw).trim();
+}
+
+/**
  * THE OPTIMISTIC SENT COPY OF A CONFIRMED SEND — built on `{status:"sent"}`, never before it.
  *
  * A confirmed `mail_send` is the mailbox's own word that the message left and was appended to

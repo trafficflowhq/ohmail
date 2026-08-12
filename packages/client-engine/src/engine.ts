@@ -1,5 +1,5 @@
 import type { AttachmentWire, EngineAdapter, MutationOutcome } from "./adapters/adapter.js";
-import { mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
+import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SearchIndex, type LocalSearchResult } from "./search.js";
 import { sendingMailboxId } from "./selectors.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
@@ -2163,13 +2163,16 @@ export class OhmailEngine {
   private reconcileOptimisticSent(): void {
     if (this.optimisticSent.size === 0) return;
     const nowMs = this.now().getTime();
+    // BOTH sides through `messageIdKey`: the confirmation carries `<id@domain>`, the ingested row
+    // carries `id@domain`, and the raw compare that stood here retired copies by TTL alone — see
+    // the helper's docblock in `mutations.ts`.
     const landed = new Set<string>();
     for (const { entity } of this.store.entries<EngineMessage>("message")) {
       const h = entity.messageIdHeader;
-      if (h) landed.add(h);
+      if (h) landed.add(messageIdKey(h));
     }
     for (const [overlayId, meta] of this.optimisticSent) {
-      if (landed.has(meta.header) || nowMs >= meta.expiresAtMs) {
+      if (landed.has(messageIdKey(meta.header)) || nowMs >= meta.expiresAtMs) {
         this.overlays.delete(overlayId);
         this.optimisticSent.delete(overlayId);
       }
