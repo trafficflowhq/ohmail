@@ -149,7 +149,7 @@ export {
   type RemoteFetch, type PrivacyServiceDeps, type ProxyImageInput, type ProxyImageResult,
 } from "./privacy-service.js";
 export {
-  assertPublicHttpUrl, isBlockedAddress, nodeHostResolver, type HostResolver,
+  assertPublicHttpUrl, assertPublicHost, isBlockedAddress, nodeHostResolver, type HostResolver,
 } from "./ssrf-guard.js";
 // RFC 8058 one-click unsubscribe, server-side. `mailto:` is never used and there is no
 // mail port in the module; the auth verdict it persists is demote-only — it can never promote.

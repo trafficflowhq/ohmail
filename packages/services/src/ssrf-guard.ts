@@ -171,27 +171,54 @@ const refuse = (why: string): never => {
  *    ANY returned address is in a refused range — any, not the first, because
  *    a multi-record answer only needs one internal address to be useful.
  *
+ * ── THE RETURN VALUE IS LOAD-BEARING: IT IS THE PIN ──────────────────────────
+ *
+ * This used to return `void`, and returning `void` is what made it a HALF of the
+ * SSRF defence rather than the whole of it. The caller then handed the same
+ * *hostname* to a bare `fetch`, which resolves the name a SECOND time — so a
+ * DNS-rebinding server could answer this gate with a public address and answer
+ * `fetch`'s independent lookup with `169.254.169.254`. Validate-then-re-resolve
+ * is a time-of-check/time-of-use hole the size of the whole guard.
+ *
+ * So it returns the VALIDATED addresses. The fetch port must connect ONLY to one
+ * of these (see {@link pinnedLookup} / `pinned-fetch.ts`), never re-resolving the
+ * name — the socket goes to an address this function has already cleared, while
+ * the TLS SNI and the `Host` header still carry the original hostname. For an IP
+ * literal the pin is the literal itself; for a name it is every A/AAAA record,
+ * all of which were just proven public.
+ *
  * `redirect: "manual"` at the fetch port is the other half and is not optional:
  * this function can only ever speak about the URL it was given, and a 302 is a
  * second URL nobody validated.
  */
-export async function assertPublicHttpUrl(raw: string, resolver: HostResolver): Promise<void> {
+export async function assertPublicHttpUrl(raw: string, resolver: HostResolver): Promise<string[]> {
   let u: URL;
   try {
     u = new URL(raw);
   } catch {
     refuse("unparseable");
-    return;
   }
 
-  if (u.protocol !== "https:" && u.protocol !== "http:") refuse("scheme must be http or https");
-  if (u.username !== "" || u.password !== "") refuse("userinfo is not allowed");
+  if (u!.protocol !== "https:" && u!.protocol !== "http:") refuse("scheme must be http or https");
+  if (u!.username !== "" || u!.password !== "") refuse("userinfo is not allowed");
 
-  const defaultPort = u.protocol === "https:" ? "443" : "80";
-  if (u.port !== "" && u.port !== defaultPort) refuse("port is not allowed");
+  const defaultPort = u!.protocol === "https:" ? "443" : "80";
+  if (u!.port !== "" && u!.port !== defaultPort) refuse("port is not allowed");
 
   // `URL.hostname` brackets an IPv6 literal and keeps a FQDN's trailing dot.
-  const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  return assertPublicHost(u!.hostname, resolver);
+}
+
+/**
+ * The host half of {@link assertPublicHttpUrl}, without the http-only scheme/port
+ * checks — for a caller that has a HOSTNAME rather than a URL (the IMAP/SMTP
+ * add-time probe dials `host:port` on transports this file knows nothing about).
+ * Returns the validated address(es) to pin to; throws on anything private,
+ * unresolvable or unparseable. Fails CLOSED for the same reason
+ * {@link isBlockedAddress} does.
+ */
+export async function assertPublicHost(hostname: string, resolver: HostResolver): Promise<string[]> {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
   if (host === "") refuse("host is empty");
   if (host === "localhost" || BLOCKED_SUFFIXES.some((s) => host.endsWith(s))) refuse("host is not public");
 
@@ -200,7 +227,7 @@ export async function assertPublicHttpUrl(raw: string, resolver: HostResolver): 
   const isLiteral = bracketed || bare.includes(":") || /^[\d.]+$/.test(bare);
   if (isLiteral) {
     if (isBlockedAddress(bare)) refuse("host resolves to a non-public address");
-    return;                                      // a permitted literal needs no DNS
+    return [bare];                               // a permitted literal needs no DNS; it IS the pin
   }
 
   // Anything that is not a literal must look like a DNS name, and its last label
@@ -215,10 +242,10 @@ export async function assertPublicHttpUrl(raw: string, resolver: HostResolver): 
     addrs = await resolver.resolve(bare);
   } catch {
     refuse("host did not resolve");
-    return;
   }
-  if (addrs.length === 0) refuse("host did not resolve");
-  for (const a of addrs) {
+  if (addrs!.length === 0) refuse("host did not resolve");
+  for (const a of addrs!) {
     if (isBlockedAddress(a)) refuse("host resolves to a non-public address");
   }
+  return addrs!;                                 // every record cleared → the whole set is the pin
 }

@@ -428,10 +428,19 @@ const PROBE_REFUSAL: Record<MailboxErrorCode, { status: number; message: string;
 /**
  * The `tls` refusal, split by WHY the certificate (or its absence) stopped the dial. Every
  * sentence keeps the guarantee the generic one made — the password was never sent — and adds
- * the one fact the user (or their server's admin) can act on. The `hostname_mismatch` pair is
- * the vanity-CNAME shape: a customer domain pointed at a provider's server, whose certificate
- * is valid and names the provider. Naming both hosts is what turns "certificate refused" from
- * a dead end into a one-line fix.
+ * the one fact the user (or their server's admin) can act on.
+ *
+ * ── THE SERVER MESSAGE NAMES NO HOST FROM THE DIALED CERTIFICATE ──────────────────────────────
+ *
+ * The `hostname_mismatch` sentence USED to read "certificate is for {certHost}, not {expectedHost}
+ * … use {suggestedHost}", echoing the CN/SAN of whatever answered at the dialed `host:port` and a
+ * CNAME-derived suggestion. Behind a verified session that is a caller-driven disclosure of an
+ * internal hostname — point the probe at an internal server and read its certificate identity back
+ * out of the refusal. So this message names NEITHER `certHost` NOR `suggestedHost`; it states only
+ * that the certificate did not match and how to act on it. The structured `details.tls` still
+ * carries those fields for the client's own vanity-CNAME suggestion UX, and on the hosted
+ * deployment the probe's SSRF host guard (`imap-probe.ts#makeProbeHostGuard`) means the dialed host
+ * is public in the first place — but the server's own sentence leaks nothing regardless.
  */
 const tlsRefusalMessage = (tls: ProbeTlsDetail, transport: ProbeTransport): string => {
   const server = transport === "smtp" ? "That outgoing (SMTP) mail server" : "That mail server";
@@ -439,12 +448,8 @@ const tlsRefusalMessage = (tls: ProbeTlsDetail, transport: ProbeTransport): stri
   const stopped = "so we stopped before sending the password";
   switch (tls.kind) {
     case "hostname_mismatch": {
-      const pair = tls.certHost && tls.expectedHost
-        ? `${server}'s certificate is for ${tls.certHost}, not ${tls.expectedHost}, ${stopped}.`
-        : `${server}'s certificate does not match its hostname, ${stopped}.`;
-      return tls.suggestedHost
-        ? `${pair} Use ${tls.suggestedHost} as the ${proto} host — that is the name this server can prove.`
-        : `${pair} Check the ${proto} host with your provider.`;
+      return `${server}'s certificate does not match the host you entered, ${stopped}. ` +
+        `Check the ${proto} host with your provider.`;
     }
     case "expired":
       return `${server}'s certificate has expired, ${stopped}. Ask whoever runs the server to renew it.`;

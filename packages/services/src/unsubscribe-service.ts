@@ -9,6 +9,7 @@ import {
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { assertPublicHttpUrl, type HostResolver } from "./ssrf-guard.js";
+import { pinnedHttpRequest } from "./pinned-fetch.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -28,10 +29,14 @@ const ONE_CLICK_TIMEOUT_MS = 8_000;
 /**
  * ── THE OUTBOUND PORT, AND WHY ITS SIGNATURE IS A GUARANTEE ───────────────────────────────────
  *
- * `post(url)` takes the URL and NOTHING ELSE. There is no headers bag, no body parameter, no
- * request object — so there is no parameter through which the user's IP, cookies, referer,
- * address or message could reach the sender. {@link ONE_CLICK_BODY} is fixed by the
- * implementation, so "what we sent" is a property of this module and not of its caller.
+ * `post(url, pin)` takes the URL and the validated address(es) to connect to, and NOTHING ELSE.
+ * There is no headers bag, no body parameter, no request object — so there is no parameter through
+ * which the user's IP, cookies, referer, address or message could reach the sender. `pin` is not
+ * caller data: it is the output of {@link assertPublicHttpUrl}, the addresses that gate already
+ * cleared, and it is here so the POST connects to a PRE-VALIDATED address rather than re-resolving
+ * the sender's hostname — the DNS-rebinding hole a bare re-resolving fetch would leave open.
+ * {@link ONE_CLICK_BODY} is fixed by the implementation, so "what we sent" is a property of this
+ * module and not of its caller.
  *
  * This mirrors `PrivacyService`'s `RemoteFetch` deliberately: this repository has one shape for
  * "a server-side fetch on the user's behalf" and a second one would be a second thing to keep
@@ -43,31 +48,32 @@ const ONE_CLICK_TIMEOUT_MS = 8_000;
  * structural half of the same rule — a defeated parser still could not send.
  */
 export interface OneClickPost {
-  post(url: string): Promise<{ status: number }>;
+  post(url: string, pin: readonly string[]): Promise<{ status: number }>;
 }
 
 /**
  * Production {@link OneClickPost}.
  *
- * `redirect: "manual"` is load-bearing for the same reason it is on the image proxy:
- * {@link assertPublicHttpUrl} can only ever speak about the URL it was handed, and a sender who
- * answers `302 Location: http://169.254.169.254/` would otherwise have undici open that second
- * connection with nobody having looked at it. A 3xx is returned as-is and treated as a refusal.
+ * The POST is PINNED to the address the SSRF gate validated (see `pinned-fetch.ts`), so a sender
+ * whose name resolved to a public address for {@link assertPublicHttpUrl} cannot have the POST
+ * land on a private one — the DNS-rebinding hole a re-resolving fetch would leave open. Redirects
+ * are never followed, which the stdlib client gives for free: a sender who answers `302 Location:
+ * http://169.254.169.254/` gets that 3xx returned as-is and treated as a refusal, with no second
+ * connection opened by anyone.
  *
- * The response BODY is cancelled unread. We have no use for whatever a sender writes back, and
- * not reading it is one less piece of attacker-chosen data in the process.
+ * The response BODY is discarded unread. We have no use for whatever a sender writes back, and not
+ * reading it is one less piece of attacker-chosen data in the process.
  */
 export function makeNodeOneClickPost(opts: { timeoutMs?: number } = {}): OneClickPost {
   const timeoutMs = opts.timeoutMs ?? ONE_CLICK_TIMEOUT_MS;
   return {
-    async post(url: string) {
+    async post(url: string, pin: readonly string[]) {
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), timeoutMs);
       try {
-        const res = await fetch(url, {
+        const res = await pinnedHttpRequest(url, {
           method: "POST",
-          redirect: "manual",
-          referrer: "",
+          pin,
           signal: ac.signal,
           headers: {
             "content-type": "application/x-www-form-urlencoded",
@@ -76,7 +82,7 @@ export function makeNodeOneClickPost(opts: { timeoutMs?: number } = {}): OneClic
           },
           body: ONE_CLICK_BODY,
         });
-        await res.body?.cancel().catch(() => {});
+        res.stream.destroy();
         return { status: res.status };
       } finally {
         clearTimeout(timer);
@@ -363,9 +369,12 @@ export class UnsubscribeService {
     // The gate runs against the URL we are about to use, immediately before we use it. It is
     // INSIDE the claim deliberately: a refusal here consumes the claim rather than leaving the
     // list open for the next message to retry. At-most-once is the promise, and a URL our own
-    // gate rejects is not evidence that a different URL for the same list would be safe.
+    // gate rejects is not evidence that a different URL for the same list would be safe. It
+    // RETURNS the validated addresses; the POST is pinned to them so a rebinding sender cannot
+    // steer the second lookup to a private host.
+    let pin: string[];
     try {
-      await assertPublicHttpUrl(url!, this.deps.resolver);
+      pin = await assertPublicHttpUrl(url!, this.deps.resolver);
     } catch (err) {
       await this.settle(ctx, claim, { state: "refused", refusal: "ssrf_gate" });
       throw err;
@@ -373,7 +382,7 @@ export class UnsubscribeService {
 
     let status: number;
     try {
-      ({ status } = await this.deps.post.post(url!));
+      ({ status } = await this.deps.post.post(url!, pin));
     } catch (err) {
       // The transport itself raised — DNS, TLS, a timeout. Recorded as `failed` and NOT retried:
       // we cannot tell whether the sender received it, and at-most-once resolves that ambiguity

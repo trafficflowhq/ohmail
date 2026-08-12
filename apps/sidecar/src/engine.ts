@@ -24,7 +24,8 @@ import {
   type AuthConfig, type HostResolver, type MailboxAllowancePolicy, type PushService, type RemoteFetch,
 } from "@trafficflow/services/mail";
 import {
-  API_VERSION, createApp, DEFAULT_SSE, localRoutes, type ApiDeps, type ApiServices, type App,
+  API_VERSION, ALLOW_ANY_PROBE_HOST, createApp, DEFAULT_SSE, localRoutes,
+  type ApiDeps, type ApiServices, type App,
 } from "@trafficflow/api/local";
 // ── THE ONE PIPELINE ────────────────────────────────────────────────────────────────────────
 // `runSyncCycle` is imported, never reimplemented. There is ONE pipeline implementation and both
@@ -453,6 +454,11 @@ function localServices(
     sendSurfaceMaxTotalBytes: null,
     push: LOCAL_PUSH,
     imapAdmission: LOCAL_IMAP_ADMISSION,
+    // The add-time probe's SSRF gate is a no-op on a local install: a desktop user's own mail
+    // server may sit on a LAN address or a non-standard port, and this process opens sockets only
+    // on the user's own machine, so there is no cross-tenant network to protect. Named explicitly,
+    // never a default — the hosted deployment wires the enforcing `makeProbeHostGuard` instead.
+    probeHostGuard: ALLOW_ANY_PROBE_HOST,
     mailbox: makeMailboxService({ keyProvider, allowance: UNMETERED_MAILBOX_ALLOWANCE }),
     rules: rulesService,
     message: messageService,

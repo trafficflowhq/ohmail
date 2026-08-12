@@ -23,6 +23,9 @@ import type {
 /* What a completed SMTP login proved. From the adapter entrypoint rather than the mail barrel
  * because it belongs to the dial, and `imap-probe.ts` — the only implementor — imports it there. */
 import type { SmtpLoginProof } from "@trafficflow/core/adapters/imap";
+/* The add-time probe's SSRF/port gate. Type-only, so this stays a one-way dependency at runtime —
+ * `imap-probe.ts` imports `ApiDeps` from here, and only its TYPES travel back. */
+import type { ProbeHostGuard } from "./imap-probe.js";
 /* The spend gate's PORT, from the root barrel. `@trafficflow/db/cloud` is the half that answers,
  * and a route table must be able to say it may be handed a gate without depending on the ledger. */
 import type { AiCreditGate } from "@trafficflow/db";
@@ -79,6 +82,16 @@ export interface ApiServices {
   smtpVerify?: (
     smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } },
   ) => Promise<SmtpLoginProof | void>;
+  /**
+   * The add-time IMAP/SMTP probe's SSRF/port gate — see {@link ProbeHostGuard}. The hosted
+   * deployment wires the ENFORCING policy (`makeProbeHostGuard(nodeHostResolver)`), which refuses a
+   * host that resolves to a private/loopback/link-local/CGNAT address and a non-mail port before
+   * any dial. The desktop/local engine wires `ALLOW_ANY_PROBE_HOST` — a LAN mail server on a
+   * non-standard port is legitimate there and this process opens sockets only on the user's own
+   * machine. ABSENT resolves to `ALLOW_ANY_PROBE_HOST` (the local-safe default); the hosted
+   * deployment's own dependency wiring MUST set the enforcing one, and does.
+   */
+  probeHostGuard?: ProbeHostGuard;
   mailbox: MailboxService;
   rules: RulesService;
   message: MessageService;
@@ -265,6 +278,23 @@ export interface HealthConfig {
    * exists to report"). The fault is named, loudly, in a body an operator reads with one curl.
    */
   adminError?: string | null;
+  /**
+   * B1B-P2b — RUN THE CONTENT-BLIND ATTESTATION AND PUBLISH ITS RESULT, non-fatally.
+   *
+   * A capability, not a value: `/health` calls it and merges a `staffDbFault` string when it
+   * returns one. It awaits the memoised staff-handle factory, so it pays the census + bite
+   * round trips only on the first `/health` per cold instance and is instant thereafter; it
+   * never throws and never makes `/health` 503 — an over-privileged `DATABASE_URL_ADMIN` is a
+   * dark console, not a reason to take the product host out of rotation, exactly as
+   * {@link HealthConfig.adminError} is.
+   *
+   * It is the counterpart to `adminError`: that names the STATIC refusals (missing var, equal to
+   * the runtime URL, unusable for serverless), which are visible at boot; this names the one an
+   * absent-var check cannot see — a plausible role whose EFFECTIVE privileges exceed the
+   * allowlist — which previously surfaced only as a per-request 503 the first time the console
+   * was loaded. Absent on hosts with no blind connection (desktop, an unarmed deployment).
+   */
+  staffDbAttestation?: (() => Promise<string | null>) | null;
   /**
    * **THE PAGER IS CONFIGURED AND CANNOT RUN.**
    *

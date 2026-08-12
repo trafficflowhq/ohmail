@@ -19,6 +19,12 @@ export type {
 export { DEFAULT_SSE } from "./deps.js";
 export { createApp, type App } from "./app.js";
 export { localRoutes } from "./routes/local.js";
+// The add-time probe's SSRF/port gate. The local engine wires ALLOW_ANY (a LAN mail server on a
+// non-standard port is legitimate on a desktop install); the hosted deployment wires the enforcing
+// `makeProbeHostGuard`. See `imap-probe.ts`.
+export {
+  ALLOW_ANY_PROBE_HOST, makeProbeHostGuard, MAIL_PROBE_PORTS, type ProbeHostGuard,
+} from "./imap-probe.js";
 export {
   matchRoute, UNVERIFIED_MAY_REACH, unverifiedMayReach,
   type CostClass, type Route, type RouteOptions, type RouteParams, type Handler, type MatchResult,

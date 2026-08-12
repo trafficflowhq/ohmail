@@ -6,11 +6,87 @@ import {
   type ImapConfig, type SmtpLoginProof,
 } from "@trafficflow/core/adapters/imap";
 import {
-  ServiceError, type ProbeTlsDetail, type ProbeTlsFailureKind, type ProvenEndpoint,
+  ServiceError, assertPublicHost, type HostResolver,
+  type ProbeTlsDetail, type ProbeTlsFailureKind, type ProvenEndpoint,
   type SmtpProbe, type SmtpProbeInput,
 } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
 import { imapAdmission } from "./routes/shared.js";
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE ADD-TIME PROBE SSRF GUARD — resolve+validate the host, cap the port, before any dial
+   ══════════════════════════════════════════════════════════════════════════════════════════
+
+   The probe dials a `host:port` the CALLER typed, behind a verified step-up session. On the
+   HOSTED service that is a connect oracle into the deployment's own network and, on a TLS refusal,
+   a disclosure of the dialed server's certificate identity — so the hosted deployment resolves the
+   host and refuses a private/loopback/link-local/CGNAT address, and refuses a port that is not a
+   mail port, BEFORE the socket is opened.
+
+   On a LOCAL install this must NOT fire: a desktop user's own mail server may legitimately sit on
+   a LAN address, and refusing it would break the product for exactly the self-hosted user it is
+   for. So the guard is a POLICY the host states once — {@link ALLOW_ANY_PROBE_HOST} on the
+   sidecar, {@link makeProbeHostGuard} on Cloud — read from `deps.services.probeHostGuard`.
+
+   ── THE RESOLVER IS REQUIRED, WITH NO node:dns DEFAULT, AND THAT IS THE WHOLE TESTABILITY
+      ARGUMENT ──────────────────────────────────────────────────────────────────────────────────
+   The enforcing guard takes its {@link HostResolver} as a required argument. A default that fell
+   back to `node:dns` would be worse than none: the test sandbox blocks DNS, so every test would
+   take the refuse branch, the PERMIT branch (a public host is allowed to dial) would ship having
+   never executed, and the one thing a mutation test needs to watch — a private answer turning a
+   dial into a refusal — could not be driven at all. This is the same rule `ssrf-guard.ts`'s
+   {@link HostResolver} docblock spells out, and it is why the sidecar names its permissive policy
+   explicitly rather than getting it by omission. */
+
+/** The mail ports the hosted probe will dial. An explicit port outside this set is refused. */
+export const MAIL_PROBE_PORTS: Record<"imap" | "smtp", ReadonlySet<number>> = {
+  imap: new Set([143, 993]),
+  smtp: new Set([25, 465, 587]),
+};
+
+/**
+ * The add-time probe's host/port gate. `check` throws a {@link ServiceError} to refuse a dial
+ * before it happens; a return is permission to dial. Read from `deps.services.probeHostGuard`.
+ */
+export interface ProbeHostGuard {
+  check(host: string, port: number | undefined, transport: "imap" | "smtp"): Promise<void>;
+}
+
+/**
+ * The LOCAL policy: dial anything. A desktop install's own mail server may be on a LAN address or
+ * a non-standard port, and this process opens sockets only on the user's own machine, so there is
+ * no cross-tenant network to protect. Named explicitly (never a default) so that a HOSTED
+ * deployment cannot get "allow any host" by forgetting to wire the enforcing guard.
+ */
+export const ALLOW_ANY_PROBE_HOST: ProbeHostGuard = {
+  async check() { /* local install: a LAN mail server on a non-standard port is legitimate */ },
+};
+
+/**
+ * The HOSTED policy: resolve the host through the injected resolver and refuse any private,
+ * loopback, link-local, CGNAT, unresolvable or unparseable target (via {@link assertPublicHost}),
+ * and refuse an explicit port that is not a {@link MAIL_PROBE_PORTS} port. The resolver is
+ * REQUIRED — see the section header for why there is no `node:dns` default.
+ */
+export function makeProbeHostGuard(resolver: HostResolver): ProbeHostGuard {
+  return {
+    async check(host: string, port: number | undefined, transport: "imap" | "smtp"): Promise<void> {
+      if (port !== undefined && !MAIL_PROBE_PORTS[transport].has(port)) {
+        throw new ServiceError(
+          "validation_failed", 400,
+          `port ${port} is not a mail port this service will dial`,
+        );
+      }
+      // Throws on a private/unresolvable/unparseable host — the port must never be opened to one.
+      await assertPublicHost(host, resolver);
+    },
+  };
+}
+
+/** The active guard for a set of deps — the enforcing policy on Cloud, ALLOW_ANY otherwise. */
+function probeHostGuardFor(deps: ApiDeps): ProbeHostGuard {
+  return deps.services?.probeHostGuard ?? ALLOW_ANY_PROBE_HOST;
+}
 
 /**
  * **TRY THE CREDENTIALS BEFORE STORING THEM, AND SAY WHICH THING FAILED.**
@@ -593,7 +669,15 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
   const makeAdapter = opts.adapterFactory ?? ((config: ImapConfig): ProbeDialer => new ImapAdapter(config));
   const resolveCname = opts.resolveCname ?? nodeResolveCname;
 
+  const hostGuard = probeHostGuardFor(deps);
+
   return async (input: ImapProbeInput): Promise<ImapProbeVerdict> => {
+    // SSRF/port gate BEFORE admission and before any socket: on the hosted deployment this refuses
+    // a host that resolves to a private/loopback/link-local address and a non-mail port, closing
+    // the connect oracle and the cert-identity disclosure at the network layer. No-op on a local
+    // install (see {@link ALLOW_ANY_PROBE_HOST}). It throws its own ServiceError to refuse.
+    await hostGuard.check(input.imap.host, input.imap.port, "imap");
+
     const key = probeAdmissionKey(input.accountId, input.address);
 
     // ADMISSION FIRST, before a socket exists, and ONCE for the whole ladder: the rungs dial
@@ -891,8 +975,12 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
     ?? deps.services?.smtpVerify
     ?? ((smtp): Promise<SmtpLoginProof> => verifySmtpLogin(smtp, PROBE_TIMEOUTS));
   const resolveCname = opts.resolveCname ?? nodeResolveCname;
+  const hostGuard = probeHostGuardFor(deps);
 
   return async (input: SmtpProbeInput): Promise<ImapProbeVerdict> => {
+    // SSRF/port gate, same as the IMAP probe — refused hosts and non-mail ports never reach a dial.
+    await hostGuard.check(input.smtp.host, input.smtp.port, "smtp");
+
     const key = smtpProbeAdmissionKey(input.accountId, input.address);
     if (!await imapAdmission(deps).acquire(deps.db, { mailboxId: key, max, now: deps.now() })) throw busy();
 

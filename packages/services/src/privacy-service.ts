@@ -5,19 +5,29 @@ import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import { assertPublicHttpUrl, type HostResolver } from "./ssrf-guard.js";
+import { pinnedHttpRequest } from "./pinned-fetch.js";
 import type { Page, TrackerEventDTO } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
 /**
- * The INJECTED server-side fetch port (mirrors ClassifierPort). Its signature
- * takes ONLY the url — no request object, no headers bag — which is the
- * STRUCTURAL guarantee that the reader's IP / cookies / referer can never be
- * forwarded to the sender: there is literally no parameter through which a client
- * header could travel. Tests pass a mock; production passes {@link nodeRemoteFetch}.
+ * The INJECTED server-side fetch port (mirrors ClassifierPort). Its signature takes the url and a
+ * `pin` — the validated address(es) the socket must connect to — and NOTHING ELSE: no request
+ * object, no headers bag. That absence is still the STRUCTURAL guarantee that the reader's IP /
+ * cookies / referer can never be forwarded to the sender, because there is no parameter through
+ * which a client header could travel. Tests pass a mock; production passes {@link nodeRemoteFetch}.
+ *
+ * ── WHY `pin` IS A SECOND PARAMETER AND NOT A WIDENING ────────────────────────────────────────
+ *
+ * `pin` is not client-supplied data — it is the output of {@link assertPublicHttpUrl}, the
+ * addresses that gate already resolved and cleared. It is here so the port connects to a
+ * PRE-VALIDATED address instead of re-resolving the hostname, which is the DNS-rebinding hole the
+ * gate could not close on its own (validate here, re-resolve inside `fetch`, land on
+ * `169.254.169.254`). The SNI and `Host` header still carry the hostname; only the packets'
+ * destination is pinned. See `pinned-fetch.ts`.
  */
 export interface RemoteFetch {
-  fetch(url: string): Promise<{ status: number; contentType: string | null; body: Uint8Array }>;
+  fetch(url: string, pin: readonly string[]): Promise<{ status: number; contentType: string | null; body: Uint8Array }>;
 }
 
 export interface PrivacyServiceDeps {
@@ -132,12 +142,16 @@ export class PrivacyService {
     // host whose LITERAL or RESOLVED address is loopback/private/link-local/CGNAT
     // (and their IPv4-mapped forms). Throws before a socket is opened; the
     // `redirect: "manual"` in nodeRemoteFetch is the other half, since this can
-    // only speak about the url it was given.
-    await assertPublicHttpUrl(url, this.deps.resolver);
+    // only speak about the url it was given. It RETURNS the validated addresses,
+    // and pinning the fetch to them is what closes the DNS-rebind window — without
+    // the pin the port would re-resolve the name and a rebinding server could send
+    // the second lookup to a private address.
+    const pin = await assertPublicHttpUrl(url, this.deps.resolver);
 
-    // Fetch server-side. The port takes ONLY the url → no client header can ride
-    // along. The sender sees OUR request, never the reader's.
-    const fetched = await this.deps.remote.fetch(url);
+    // Fetch server-side, connected ONLY to the pinned address. The port takes the
+    // url and the pin → no client header can ride along, and no second DNS lookup
+    // can undo the gate. The sender sees OUR request, never the reader's.
+    const fetched = await this.deps.remote.fetch(url, pin);
 
     // A 3xx that reached here is a REFUSAL, not a hop: the port does not follow
     // redirects, so the only honest thing to do with a Location nobody validated
@@ -274,22 +288,23 @@ const REMOTE_TIMEOUT_MS = 8_000;
 const REMOTE_MAX_BYTES = 5 * 1024 * 1024;
 
 /**
- * Production {@link RemoteFetch}: a bare `fetch` that forwards NO client headers
- * (no cookie, no referer, a neutral UA only), so the upstream sender only ever
- * sees OUR server's request. The DEFAULT `fetch` already sends no client identity
- * here (there is no client context on the server), but we pin `redirect`/`referrer`
- * explicitly for defense in depth.
+ * Production {@link RemoteFetch}: a stdlib `http(s).request` PINNED to the address the SSRF gate
+ * validated (see `pinned-fetch.ts`), forwarding NO client headers (no cookie, no referer, a
+ * neutral UA only), so the upstream sender only ever sees OUR server's request from OUR chosen
+ * address.
  *
- * **`redirect: "manual"`, and it is load-bearing rather than defensive.** The
- * SSRF gate in {@link assertPublicHttpUrl} can only ever validate the url it was
- * handed; `redirect: "follow"` would let a public host answer `302 Location:
- * http://169.254.169.254/` and have undici open that second connection with nobody
- * having looked at it. A 3xx is therefore returned as-is with an empty body and
- * `proxyImage` refuses it — no second request is ever made.
+ * **The pin is load-bearing, not defensive.** {@link assertPublicHttpUrl} can only ever validate
+ * the name it was handed; a fetch that re-resolves that name would let a DNS-rebinding server send
+ * the second lookup to `169.254.169.254` after the gate cleared a public one. Connecting only to
+ * the pinned address is what removes that window.
  *
- * The **timeout** and **size cap** are not tidiness either: without them one
- * authenticated caller can pin a serverless socket open indefinitely, or make us
- * buffer a multi-gigabyte body into the function's memory.
+ * **Redirects are never followed**, and with the stdlib client that is by construction — it does
+ * not follow them at all, so a `302 Location: http://169.254.169.254/` comes back as a bare 3xx
+ * with an empty body and `proxyImage` refuses it. No second request is ever made.
+ *
+ * The **timeout** and **size cap** are not tidiness either: without them one authenticated caller
+ * can hold a serverless socket open indefinitely, or make us buffer a multi-gigabyte body into the
+ * function's memory.
  */
 export const nodeRemoteFetch: RemoteFetch = makeNodeRemoteFetch();
 
@@ -303,13 +318,12 @@ export function makeNodeRemoteFetch(
 ): RemoteFetch {
   const timeoutMs = opts.timeoutMs ?? REMOTE_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? REMOTE_MAX_BYTES;
-  return { async fetch(url: string) {
+  return { async fetch(url: string, pin: readonly string[]) {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
-      const res = await fetch(url, {
-        redirect: "manual",
-        referrer: "",
+      const res = await pinnedHttpRequest(url, {
+        pin,
         signal: ac.signal,
         // Leaves the building on every proxied image, so it is a PUBLIC brand surface — the one
         // string in this file a sender's analytics can see and log. It said "TrafficFlowMail",
@@ -321,12 +335,13 @@ export function makeNodeRemoteFetch(
       // A redirect is a refusal. Drop the body unread — its `Location` names a url
       // the gate never saw, and reading it buys us nothing.
       if (res.status >= 300 && res.status < 400) {
-        await res.body?.cancel().catch(() => {});
+        res.stream.destroy();
         return { status: res.status, contentType: null, body: new Uint8Array(0) };
       }
 
-      const body = await readCapped(res, maxBytes);
-      return { status: res.status, contentType: res.headers.get("content-type"), body };
+      const ct = res.headers["content-type"];
+      const body = await readCapped(res.stream, res.headers["content-length"], maxBytes);
+      return { status: res.status, contentType: typeof ct === "string" ? ct : null, body };
     } finally {
       clearTimeout(timer);
     }
@@ -334,32 +349,35 @@ export function makeNodeRemoteFetch(
 }
 
 /**
- * Read at most `max` bytes and ABORT the moment the cap is passed. Streaming
- * rather than `arrayBuffer()` is the point: `arrayBuffer()` would buffer the whole
- * response before anyone could object, so a cap applied afterwards would be a cap
- * on what we RETURN, not on what we ALLOCATE.
+ * Read at most `max` bytes from a Node response stream and ABORT the moment the cap is passed.
+ * Streaming rather than buffering the whole body is the point: a cap applied after a full read
+ * would be a cap on what we RETURN, not on what we ALLOCATE.
  */
-async function readCapped(res: Response, max: number): Promise<Uint8Array> {
-  const declared = Number(res.headers.get("content-length"));
+async function readCapped(
+  stream: import("node:http").IncomingMessage, contentLength: string | string[] | undefined, max: number,
+): Promise<Uint8Array> {
+  const declared = Number(Array.isArray(contentLength) ? contentLength[0] : contentLength);
   if (Number.isFinite(declared) && declared > max) {
-    await res.body?.cancel().catch(() => {});
+    stream.destroy();
     throw new ServiceError("upstream_failed", 502, "remote image is too large");
   }
-  if (!res.body) return new Uint8Array(0);
 
-  const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
-    total += value.byteLength;
-    if (total > max) {
-      await reader.cancel().catch(() => {});
-      throw new ServiceError("upstream_failed", 502, "remote image is too large");
+  try {
+    for await (const chunk of stream) {
+      const value = chunk as Uint8Array;
+      total += value.byteLength;
+      if (total > max) {
+        stream.destroy();
+        throw new ServiceError("upstream_failed", 502, "remote image is too large");
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch (err) {
+    if (err instanceof ServiceError) throw err;
+    // A stream that errors mid-body (a reset, an abort) is an upstream failure, not an image.
+    throw new ServiceError("upstream_failed", 502, "remote image could not be read");
   }
   const out = new Uint8Array(total);
   let at = 0;
