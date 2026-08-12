@@ -4814,3 +4814,22 @@ body.dnd-active * { cursor: grabbing !important; }
   background: var(--accent-soft);
   box-shadow: inset 0 0 0 1.5px var(--accent-hair);
 }
+
+/* ================= session-end prompt (the re-auth surface) =================
+   Rendered by `shell/engine.tsx` when the SERVER has confirmed this tab's session is over —
+   a coded 401 from POST /auth/refresh, never one failed request. The mail underneath is real
+   mail this browser really holds, so it stays visible; the scrim is what stops it reading as
+   LIVE, and the fixed layer is what stops it being interacted with. Above `--z-toast`: a toast
+   is a remark about an app that still works, and this is the statement that it does not.
+   The card is `.gate-card` — the refusal surface's own furniture, not a new dialect. Flat
+   scrim per the design system's flat-fills rule: no backdrop-filter, no gradient. */
+.session-end {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-toast) + 5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--scrim);
+}

@@ -15,6 +15,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -25,6 +26,7 @@ import { isDemoRequested } from "../demo-mode";
 import { createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
 import { useLoadingGrace } from "./loading-grace";
 import { readOwner } from "./owner-cookie";
+import { markSessionAlive, probeSessionNow, useSessionDead } from "./session-truth";
 import {
   sameSyncStatus,
   startSyncScheduler,
@@ -344,6 +346,19 @@ export function EngineProvider({
           setBinding({ status: "unauthenticated" });
           return;
         }
+        /**
+         * A CONFIRMED OWNER DISPROVES A HELD SESSION DEATH — and the latch has to be told,
+         * because the death store is module state and a sign-in is a CLIENT-SIDE navigation.
+         * Found in live verification: visiting `/login` signed out runs `auth.session()`,
+         * whose 401 sends `api()` through the refresh, whose own coded 401 (no refresh
+         * cookie is a session death, truthfully) latches the store — and `router.push("/")`
+         * then carried that latch into the freshly signed-in shell, which rendered the
+         * "signed out" prompt over a session the server had just confirmed. This resolver's
+         * answer IS the server's own "this browser holds a full session", read at exactly
+         * the boundary every sign-in re-crosses, so it is where the claim is withdrawn.
+         * A mid-use death is untouched: nothing re-runs this resolver on a live binding.
+         */
+        markSessionAlive();
         if (warm) {
           /**
            * THE SHARED-BROWSER CASE, AND THE ONLY REASON THE CHECK IS A COMPARISON RATHER THAN
@@ -490,7 +505,97 @@ export function EngineProvider({
       }}
     >
       {children}
+      {/* The re-auth surface, LIVE ENGINES ONLY. The demo has no session and the desktop's
+          store never leaves its resting value, so on both this renders nothing, forever. */}
+      {live ? <SessionEnded sync={sync} /> : null}
     </EngineContext.Provider>
+  );
+}
+
+/**
+ * ═══ THE RE-AUTH PROMPT — what a dead session shows instead of a quietly wrong mailbox ═══════
+ *
+ * When a session died mid-use the app used to keep rendering the mirror as though it were
+ * live: rows painted, counts frozen, every failure dressed as a content failure, and no
+ * surface anywhere offering the one act that fixes it. This is that surface. It renders over
+ * the shell — the mail stays visible underneath, because it is real mail this browser really
+ * holds — but dimmed behind a scrim and blocked from interaction, so nothing on screen can be
+ * mistaken for a live mailbox, and the prompt offers sign-in.
+ *
+ * ── IT SPEAKS ONLY ON THE CONFIRMED FACT ────────────────────────────────────────────────────
+ *
+ * The trigger is `useSessionDead()` — set exclusively by a coded 401 from `POST /auth/refresh`
+ * (`session-refresh.ts`), which is the server stating the refresh family is revoked and the
+ * cookie jar cleared. Never by one failed request: the sync scheduler's whole confirmation
+ * ladder exists because a transient 401 once told a signed-in user to sign in, and this surface
+ * — the loudest in the product — holds that discipline hardest.
+ *
+ * ── AND IT HURRIES THE QUESTION RATHER THAN THE ANSWER ─────────────────────────────────────
+ *
+ * The scheduler confirms a refusal by waiting sixty seconds and asking the same endpoint again.
+ * That is correct for the sync loop and slow for a person mid-task, so on the FIRST evidence —
+ * `sync.refused` or `sync.terminal` appearing — this probes the session through
+ * `probeSessionNow()`: one single-flight `POST /auth/refresh`, whose answer is definitive in
+ * both directions. A lapsed-but-resumable session is silently healed (the refresh mints new
+ * cookies and the confirm drain then succeeds); a revoked one is confirmed within one round
+ * trip instead of one minute. Rising-edge gated so a refusal episode costs one probe, not one
+ * per publish. On builds with no probe registered (desktop, demo, bare tests) the call is a
+ * no-op.
+ *
+ * ── `role="alertdialog"`, and focus moves to the remedy ────────────────────────────────────
+ *
+ * The session ending is the one mid-use fact worth interrupting for — the same judgement
+ * `SyncBar` makes with `role="alert"` for its `stopped` line — and the dialog carries the one
+ * action that exists. Focus is moved to the sign-in link when the prompt appears so a keyboard
+ * or screen-reader user is standing on the remedy, not somewhere in a mailbox that no longer
+ * answers.
+ */
+function SessionEnded({ sync }: { sync: SyncStatus }) {
+  const t = useTranslations("session");
+  const dead = useSessionDead();
+  const signInRef = useRef<HTMLAnchorElement | null>(null);
+
+  // One probe per refusal episode: fire when evidence APPEARS, stand down when it clears.
+  const evidence = sync.refused || sync.terminal;
+  const probed = useRef(false);
+  useEffect(() => {
+    if (!evidence) {
+      probed.current = false;
+      return;
+    }
+    if (probed.current) return;
+    probed.current = true;
+    probeSessionNow();
+  }, [evidence]);
+
+  useEffect(() => {
+    if (dead) signInRef.current?.focus();
+  }, [dead]);
+
+  if (!dead) return null;
+  return (
+    <div
+      className="session-end"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="session-end-title"
+      aria-describedby="session-end-body"
+    >
+      <div className="gate-card">
+        <span className="wordmark">
+          <b>
+            <em>oh</em>mail
+          </b>
+        </span>
+        <h1 id="session-end-title">{t("endedTitle")}</h1>
+        <p id="session-end-body">{t("endedMidUse")}</p>
+        <div className="gate-actions">
+          <a ref={signInRef} className="btn primary" href="/login">
+            {t("signIn")}
+          </a>
+        </div>
+      </div>
+    </div>
   );
 }
 

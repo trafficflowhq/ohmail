@@ -24,12 +24,18 @@
     "opening": "Postfach wird geöffnet …",
     "endedTitle": "Du bist abgemeldet.",
     "endedBody": "Diese Sitzung konnte nicht bestätigt werden, also wurde nichts geladen. Melde dich neu an — deine Post ist dann wieder da.",
+    "endedMidUse": "Diese Sitzung ist beendet — es wird nichts Neues mehr geladen; was du siehst, ist der Stand von davor. Melde dich an, um weiterzumachen.",
     "signIn": "Anmelden",
     "openDemo": "Demo öffnen"
   },
   "login": {
     "title": "Anmelden",
     "sub": "Erst dein Passwort, dann dein zweiter Faktor — Passkey oder Einmalcode.",
+    "subFirst": "Erst dein Passwort, dann dein zweiter Faktor.",
+    "subCode": "Dein Passwort stimmt — jetzt dein zweiter Faktor.",
+    "badCredentials": "E-Mail und Passwort passen nicht zusammen. Prüf beides und versuch es nochmal.",
+    "badCode": "Der Code hat nicht funktioniert. Codes laufen schnell ab — nimm den neuesten.",
+    "badPasskey": "Der Passkey wurde nicht akzeptiert. Versuch es nochmal oder nimm eine andere Methode.",
     "passkey": "Mit Passkey fortfahren",
     "passkeyNote": "Mit einem Passkey bestätigt Face ID, Touch ID oder die Geräte-PIN, dass du es bist — nichts zu tippen, nichts, was verloren gehen kann.",
     "totpToggle": "Stattdessen einen Einmalcode verwenden",
@@ -779,6 +785,8 @@
   "body": {
     "loading": "Vollständige Nachricht wird geladen …",
     "failed": "Die vollständige Nachricht ließ sich nicht laden — hier ist die Vorschau.",
+    "sessionEnded": "Deine Sitzung ist beendet, darum ließ sich die vollständige Nachricht nicht laden.",
+    "signIn": "Anmelden",
     "retry": "Erneut versuchen"
   },
   "message": {
@@ -1747,6 +1755,7 @@
     "listFailed": "Die Dateien dieser Nachricht ließen sich nicht laden.",
     "listOffline": "ohmail war nicht erreichbar — prüf deine Verbindung.",
     "listTimeout": "ohmail hat nicht rechtzeitig geantwortet.",
+    "listSignedOut": "Deine Sitzung ist beendet, darum konnte ohmail nicht antworten.",
     "listRetry": "Erneut versuchen",
     "listRetrying": "Wird nochmal nachgesehen …"
   },

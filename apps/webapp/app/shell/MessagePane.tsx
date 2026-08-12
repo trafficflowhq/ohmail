@@ -19,6 +19,7 @@ import { replyAllRecipients } from "./compose-from";
 import { InlineReply } from "./InlineReply";
 import { chordKeys, useBinding, useKeyPress } from "./keymap";
 import { useBodyStalled, useMessageChrome } from "./message-chrome";
+import { subscribeSessionRevival, useSessionDead } from "./session-truth";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import "./action-bar.css";
 
@@ -1167,16 +1168,48 @@ export function MessagePane({
    */
   const waitingForBody = body.state === "loading" || body.state === "snippet";
   const stalled = useBodyStalled(message.id, !isProtected && waitingForBody);
+  /**
+   * ── THE FAILURE'S TAXONOMY: AUTH LOSS IS NOT A CONTENT FAILURE ───────────────────────────
+   *
+   * "Couldn't load the full message — Retry" was this pane's one sentence for every failure,
+   * and during a dead session it was the WRONG one: the message is fine, the session is gone,
+   * and the offered Retry could only re-401 — observed in live use, with the reader told the
+   * MESSAGE was broken. So when the session's death is CONFIRMED (`session-truth.ts`: the
+   * server itself refused the refresh; never one request's evidence), the note names the real
+   * fact and offers the real remedy. On the desktop and in the demo the store never leaves its
+   * resting value and this branch is unreachable.
+   *
+   * And a failure recorded while the session was bad must not outlive the recovery: on every
+   * REVIVAL — a real 204 minting a real session — a body still sitting in `failed` is asked for
+   * once more. `retry: true` is legitimate here for the same reason the human press is: the
+   * engine's no-auto-re-ask rule guards against looping on a server that KEEPS refusing, and a
+   * freshly minted session is the world having changed, bounded to one ask per revival.
+   */
+  const sessionDead = useSessionDead();
+  const bodyFailed = body.state === "failed";
+  useEffect(() => {
+    if (!bodyFailed || isProtected) return;
+    return subscribeSessionRevival(() => chrome.hydrateBody(message.id, { retry: true }));
+  }, [bodyFailed, isProtected, chrome, message.id]);
   const bodyNote =
     isProtected || body.state === "full" ? undefined : body.state === "failed" || stalled ? (
-      <>
-        {tb("failed")}{" "}
-        {/* `retry` because this IS a human asking again. An automatic trigger deliberately
-            does not re-ask a server that already refused — see `hydrateBody`. */}
-        <Button variant="ghost" onClick={() => chrome.hydrateBody(message.id, { retry: true })}>
-          {tb("retry")}
-        </Button>
-      </>
+      sessionDead ? (
+        <>
+          {tb("sessionEnded")}{" "}
+          <a className="btn ghost" href="/login">
+            {tb("signIn")}
+          </a>
+        </>
+      ) : (
+        <>
+          {tb("failed")}{" "}
+          {/* `retry` because this IS a human asking again. An automatic trigger deliberately
+              does not re-ask a server that already refused — see `hydrateBody`. */}
+          <Button variant="ghost" onClick={() => chrome.hydrateBody(message.id, { retry: true })}>
+            {tb("retry")}
+          </Button>
+        </>
+      )
     ) : (
       tb("loading")
     );

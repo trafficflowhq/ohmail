@@ -24,12 +24,18 @@
     "opening": "Opening your mailbox…",
     "endedTitle": "You are signed out.",
     "endedBody": "We could not confirm this session, so nothing has been loaded. Sign in again and your mail will be here.",
+    "endedMidUse": "This session ended, so nothing new is loading — what is on screen is from before it ended. Sign in to pick up where you left off.",
     "signIn": "Sign in",
     "openDemo": "Open the demo"
   },
   "login": {
     "title": "Sign in",
     "sub": "Your password, then your second factor — a passkey or a one-time code.",
+    "subFirst": "Your password first, then your second factor.",
+    "subCode": "Your password checked out — now your second factor.",
+    "badCredentials": "That email and password didn't match. Check both and try again.",
+    "badCode": "That code didn't work. Codes expire quickly — try the newest one.",
+    "badPasskey": "That passkey wasn't accepted. Try again, or use another method.",
     "passkey": "Continue with passkey",
     "passkeyNote": "With a passkey, Face ID, Touch ID or your device PIN confirms it's you — nothing to type and nothing to leak.",
     "totpToggle": "Use a one-time code instead",
@@ -779,6 +785,8 @@
   "body": {
     "loading": "Loading the full message…",
     "failed": "Couldn't load the full message — showing the preview.",
+    "sessionEnded": "Your session ended, so the full message couldn't load.",
+    "signIn": "Sign in",
     "retry": "Retry"
   },
   "message": {
@@ -1747,6 +1755,7 @@
     "listFailed": "Couldn't load this message's files.",
     "listOffline": "Couldn't reach ohmail — check your connection.",
     "listTimeout": "ohmail didn't answer in time.",
+    "listSignedOut": "Your session ended, so ohmail couldn't answer.",
     "listRetry": "Try again",
     "listRetrying": "Looking again…"
   },

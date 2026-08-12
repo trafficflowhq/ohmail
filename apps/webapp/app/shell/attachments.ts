@@ -45,7 +45,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
-import type { AttachmentItem, AttachmentsView } from "../components/AttachmentStrip";
+import { isAuthListFailure, type AttachmentItem, type AttachmentsView } from "../components/AttachmentStrip";
+import { probeSessionNow, subscribeSessionRevival } from "./session-truth";
 
 /**
  * What `MessagePane` needs to render one message's strip.
@@ -236,8 +237,43 @@ export function useMessageAttachments(
     // Metadata only: `cost: "read"`, one indexed row read, nothing reaches IMAP. The bytes
     // are a separate, deliberate act — never speculative, never per row, because a paid fetch
     // needs a person behind it.
-    void engine.loadAttachments(messageId);
+    //
+    // An AUTH-shaped failure is escalated to the session probe: the reader is looking at this
+    // message right now, and "unauthorized" from our own envelope is exactly the evidence the
+    // probe exists to settle — one single-flight `POST /auth/refresh` whose answer either heals
+    // the session silently (and the revival below re-asks this list) or confirms the death that
+    // puts the real re-auth prompt on screen. A no-op wherever no probe is registered.
+    void engine.loadAttachments(messageId).then((outcome) => {
+      if (outcome.state === "failed" && isAuthListFailure(outcome.code)) probeSessionNow();
+    });
     return () => engine.releaseAttachments(messageId);
+  }, [engine, messageId, available]);
+
+  /**
+   * ── A SESSION FAILURE MUST NOT OUTLIVE THE SESSION IT FAILED IN ──────────────────────────
+   *
+   * The engine holds a `failed` list for the life of the engine and deliberately refuses the
+   * automatic re-ask (`loadAttachments` — the render-loop argument). Right for a server that
+   * REFUSED the content; wrong for one that refused the SESSION, because that refusal expires
+   * the moment a refresh mints a new one — and it did not: one 401'd metadata read during an
+   * auth outage kept "Couldn't load this message's files." on the message for the whole
+   * session, with the same endpoint answering 200 beside it. Observed in live use.
+   *
+   * So the seam listens for revivals — each one a real 204 from `/auth/refresh`, a
+   * server-confirmed new session — and re-asks THEN, exactly when the held failure's cause is
+   * known to be gone. Bounded twice over: revivals are at most one per successful refresh, and
+   * the re-ask fires only while the held state is a failure whose `code` names the session.
+   * The release first is what makes the re-ask a fresh question rather than the refused
+   * answer served from memory.
+   */
+  useEffect(() => {
+    if (!available || !messageId) return;
+    return subscribeSessionRevival(() => {
+      const held = engine.attachmentsOf(messageId);
+      if (held.state !== "failed" || !isAuthListFailure(held.code)) return;
+      engine.releaseAttachments(messageId);
+      void engine.loadAttachments(messageId);
+    });
   }, [engine, messageId, available]);
 
   /**

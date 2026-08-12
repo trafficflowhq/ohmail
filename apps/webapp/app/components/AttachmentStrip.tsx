@@ -186,6 +186,16 @@ const EN = {
    * request as it said this, so the sentence is not describing something still running.
    */
   listTimeout: "ohmail didn't answer in time.",
+  /**
+   * en.json: `code: "unauthorized"` / `"csrf_failed"` — ohmail refused the SESSION, not the
+   * message. The general sentence blamed the files ("Couldn't load this message's files.") for
+   * what was an auth loss, which is the mislabeling a reader cannot act on: the files are fine
+   * and retrying the files is not the remedy. This names the actual fact. The shell escalates
+   * the same code to the session probe, so a lapsed session heals and re-asks on its own, and a
+   * revoked one puts the real sign-in prompt on screen — this row is the local echo of that
+   * story, not the whole of it.
+   */
+  listSignedOut: "Your session ended, so ohmail couldn't answer.",
   listRetry: "Try again",
   listRetrying: "Looking again…",
 };
@@ -199,6 +209,21 @@ const EN = {
  */
 export const COPY: typeof EN = liveCopy("attachments", EN, { count: ["count"], preview: ["name"], download: ["name"], idle: ["size"], tooLarge: ["size"] });
 
+
+/**
+ * Is this list failure the SESSION's, not the content's? The engine carries the server's own
+ * `code` through unmodified (`AttachmentsOutcome`), and these are the two the auth middleware
+ * mints: `unauthorized` for a session it will not serve, `csrf_failed` for a live-looking
+ * session whose double-submit token lapsed with it. Both mean "the mail is fine, the session is
+ * not" — a different sentence AND a different remedy from every other failure here. Declared in
+ * this file rather than the shell seam because the import may only run this way (the shell reads
+ * components; a component reading the shell would drag session machinery into the strip's bare
+ * test mounts), and `shell/attachments.ts` — which escalates the same codes to the session
+ * probe — imports it from here so the two surfaces cannot drift.
+ */
+export function isAuthListFailure(code: string | null): boolean {
+  return code === "unauthorized" || code === "csrf_failed";
+}
 
 /** 1000-based, like the Finder the file is about to land in. One decimal below 100,
     never a trailing ".0" — "2.3 MB", "18.2 MB", "748 KB". */
@@ -510,24 +535,33 @@ export function AttachmentStrip({
     case "loading":
       /* Silent on the first ask; still standing on a re-ask. See {@link AttachmentsView}. */
       return items.retrying ? <ListState sentence={COPY.listRetrying} working /> : null;
-    case "failed":
+    case "failed": {
+      /* An auth-shaped refusal is the SESSION's failure, not the message's — the same predicate
+         `shell/attachments.ts` escalates to the session probe. It gets the session sentence, and
+         it gets a Retry DESPITE `retryable: false` on the wire: the server's flag describes the
+         request it refused, but this failure expires with the session that earned it, and after
+         a heal (or a sign-in in another tab) asking again is exactly the honest move. */
+      const authLoss = isAuthListFailure(items.code);
       return (
         <ListState
           /* Most specific first. `timeout` and `network` are both "no answer", and only the ORDER
              keeps them apart: a timeout that fell through to `listOffline` would tell somebody to
              check a connection that just carried the request out successfully. */
           sentence={
-            items.code === "timeout"
-              ? COPY.listTimeout
-              : items.code === "network"
-                ? COPY.listOffline
-                : COPY.listFailed
+            authLoss
+              ? COPY.listSignedOut
+              : items.code === "timeout"
+                ? COPY.listTimeout
+                : items.code === "network"
+                  ? COPY.listOffline
+                  : COPY.listFailed
           }
           title={items.error || undefined}
           working={false}
-          onRetry={items.retryable ? items.onRetry : undefined}
+          onRetry={items.retryable || authLoss ? items.onRetry : undefined}
         />
       );
+    }
     case "ready":
       return items.items.length === 0 ? null : (
         <ReadyStrip
