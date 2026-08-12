@@ -328,6 +328,12 @@ export interface AttachmentItem {
    */
   inline: boolean;
   /**
+   * The part's `Content-ID` (brackets stripped at ingest), or `null` for a part carrying none.
+   * It is the join key between the html body's `cid:<contentId>` references and this part —
+   * what {@link OhmailEngine.loadInlineImages} matches on to draw an embedded image in place.
+   */
+  contentId: string | null;
+  /**
    * A `blob:` URL for the fetched bytes, valid ONLY in the document that minted it.
    *
    * SAFE FOR `<img src>` AND `<a download>`. NOT safe to navigate to top-level: a `blob:` URL
@@ -439,6 +445,7 @@ function toAttachmentItem(wire: AttachmentWire): AttachmentItem {
     sizeBytes: wire.sizeBytes,
     state: "idle",
     inline: wire.inline === true,
+    contentId: typeof wire.contentId === "string" && wire.contentId !== "" ? wire.contentId : null,
   };
 }
 
@@ -453,6 +460,79 @@ function toAttachmentItem(wire: AttachmentWire): AttachmentItem {
  */
 function isPictureItem(item: AttachmentItem): boolean {
   return item.mimeType.startsWith("image/");
+}
+
+/**
+ * The MIME types an embedded (`cid:`) image may carry INTO THE MAIL DOCUMENT as a `data:` URI.
+ *
+ * A strict subset of {@link RENDERABLE_MIME}: the four raster image types and nothing else. PDF
+ * is renderable in the preview overlay but is not an `<img>`; SVG is excluded for the same reason
+ * it is excluded there — it is a document format that executes script, and although the mail
+ * frame's sandbox allows none, "the second gate would have caught it" is not a reason to open the
+ * first. Checked twice per part, deliberately: against the declared type before any bytes are
+ * paid for, and against the fetched Blob's OWN type before the URI is minted — the declaration is
+ * the sender's claim, the Blob type (post-downgrade, see {@link OhmailEngine.openAttachment}) is
+ * what a browser will honour.
+ */
+const INLINE_IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+/**
+ * The per-part ceiling on an AUTOMATICALLY fetched embedded image, in bytes — 4 MiB.
+ *
+ * Embedded images divide into two real populations: signature logos and newsletter art (tens to
+ * hundreds of KB), and pasted screenshots/photos (up to a few MB). 4 MiB covers both. Above it
+ * sits mail nobody embeds by reference, and the cost is not just the fetch: the image lands in
+ * the frame as base64 (+33%), so a part at this ceiling adds ~5.6 MB to one message's document.
+ * A part over the ceiling stays a blanked box — exactly what every message showed before this
+ * existed — and is still reachable through the strip's own explicit-press fetch, which allows
+ * eight times as much ({@link RENDERABLE_MIME}'s route enforces the server's 32 MiB).
+ */
+export const INLINE_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The per-message ceilings on the same automatic fetch: at most 12 parts, at most 16 MiB of
+ * DECLARED payload, taken in the order the document references them so the images a reader sees
+ * first are the ones that win the budget.
+ *
+ * These exist because the trigger is opening a message, and the per-fetch cost is the most
+ * expensive read in the product — one short-lived IMAP connection each ({@link
+ * OhmailEngine.openAttachment}). A hostile message can reference any number of `cid:` parts; a
+ * bound chosen by the sender is not a bound. Twelve covers every legitimate shape measured
+ * (signature blocks run one to three images; picture-heavy newsletters that EMBED rather than
+ * link run a handful) while capping what one open can spend.
+ */
+export const INLINE_IMAGE_MAX_PARTS = 12;
+export const INLINE_IMAGE_MAX_TOTAL_BYTES = 16 * 1024 * 1024;
+
+/** The stable empty answer of {@link OhmailEngine.inlineImagesOf} — one identity, never mutated. */
+const NO_INLINE_IMAGES: ReadonlyMap<string, string> = new Map();
+
+/**
+ * The fetched bytes of one embedded image, as a `data:` URI — or `null` for anything that is not
+ * a small raster image.
+ *
+ * BOTH refusals here are the enforcement, not the optimisation (the declared-type pre-filter in
+ * {@link OhmailEngine.loadInlineImages} is that):
+ *
+ *   · `blob.type` must be in {@link INLINE_IMAGE_MIME}. This is the POST-DOWNGRADE type — an
+ *     `image/svg+xml` part reaches here typed `application/octet-stream` (see
+ *     `RENDERABLE_MIME`) — so an SVG cannot be minted into a document no matter what the
+ *     metadata claimed. The type is interpolated into the URI, so it comes from this closed set
+ *     or the URI is never built; nothing sender-controlled is ever spliced into the scheme.
+ *   · `blob.size` is the REAL byte count, checked against {@link INLINE_IMAGE_MAX_BYTES}
+ *     because the metadata size the pre-filter read is only the sender's claim.
+ */
+async function mintInlineDataUrl(blob: Blob): Promise<string | null> {
+  const type = blob.type.toLowerCase();
+  if (!INLINE_IMAGE_MIME.has(type)) return null;
+  if (blob.size === 0 || blob.size > INLINE_IMAGE_MAX_BYTES) return null;
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  const CHUNK = 0x8000; // String.fromCharCode is applied per-chunk: one call over MBs overflows the arg limit.
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return `data:${type};base64,${btoa(binary)}`;
 }
 
 /**
@@ -693,6 +773,15 @@ export class OhmailEngine {
   private readonly attachmentListRequests = new Map<string, Promise<AttachmentsOutcome>>();
   /** In-flight byte fetches by attachment id — see {@link OhmailEngine.openAttachment}. */
   private readonly attachmentRequests = new Map<string, Promise<void>>();
+  /**
+   * `contentId → data: URI` per message — the embedded images already minted for the reader's
+   * frame, dropped with the rest of the message's byte state by
+   * {@link OhmailEngine.releaseAttachments}. The held map is REPLACED on every mint, never
+   * mutated, so a React memo keyed on its identity re-renders exactly when an image arrives.
+   */
+  private readonly inlineImages = new Map<string, ReadonlyMap<string, string>>();
+  /** In-flight inline-image passes by message id — single-flight, see {@link OhmailEngine.loadInlineImages}. */
+  private readonly inlineImageRequests = new Map<string, Promise<void>>();
 
   constructor(opts: EngineOptions) {
     this.adapter = opts.adapter;
@@ -2375,11 +2464,12 @@ export class OhmailEngine {
    * from anywhere in the product. So the list keeps every part and {@link OhmailEngine.attachmentsOf}
    * decides — files only by default, pictures too for a caller that says it is drawing none.
    *
-   * The paperclip's own inconsistency is untouched and still real. `hasAttachments` is derived from
-   * ALL parts (`mime.ts` — `attachments.length > 0`), so a message flagged for inline parts only
-   * still renders a paperclip over an empty strip anywhere the frameless rendering is not in use.
-   * The fix belongs where the flag is computed — an ingest change plus a backfill — and is filed as
-   * its own gap rather than papered over by listing tracking pixels as files.
+   * The paperclip agrees with this list now: `hasAttachments` is derived from REAL FILES at
+   * ingest (`mime.ts` — `isRealFile`, with cid-referenced parts classified inline wherever they
+   * sit in the MIME tree), and the flag backfill corrected the rows written under the old
+   * all-parts rule. What remains possible is a row ingested before the cid-reference signal
+   * existed whose signature logo sits under `multipart/mixed` — that one still counts as a file
+   * until re-ingested or backfilled, which is a fact about stored rows, not about this method.
    *
    * WHAT THIS METHOD ANSWERS IS STILL FILES, whatever the record holds. Every return below goes
    * through {@link OhmailEngine.attachmentsOf} with no options, so an awaiting caller gets exactly
@@ -2550,13 +2640,114 @@ export class OhmailEngine {
   }
 
   /**
+   * The embedded images already minted for one message: `contentId → data: URI`, the map a
+   * renderer resolves the html body's `cid:` references against. Synchronous, no side effects —
+   * the render path reads, {@link OhmailEngine.loadInlineImages} is what asks.
+   *
+   * The identity is stable between mints and changes exactly when an image arrives, so it is
+   * safe to use as a memo dependency around an expensive sanitize pass.
+   */
+  inlineImagesOf(messageId: string): ReadonlyMap<string, string> {
+    return this.inlineImages.get(messageId) ?? NO_INLINE_IMAGES;
+  }
+
+  /**
+   * FETCH THE EMBEDDED IMAGES a message's html actually references, and mint each as a
+   * `data:` URI for the mail frame. `contentIds` comes from the renderer's own pass over the
+   * sanitized document — the parts the reader is looking at blanked boxes for, in document
+   * order — and parts nothing references are never fetched.
+   *
+   * ── WHAT THIS SPENDS, AND WHY OPENING A MESSAGE MAY SPEND IT ─────────────────────────────
+   *
+   * One `cost: "connection"` fetch per part, through {@link OhmailEngine.openAttachment} —
+   * the same call a press on the strip makes, single-flight and never re-asked after a refusal.
+   * `openAttachment`'s own rule is "an explicit human act only", and this is that rule's second
+   * legitimate act: the reader OPENED this message, the document in front of them names these
+   * parts, and a signature logo rendered as a grey box in every mail from a colleague is the
+   * defect, not thrift. What keeps it bounded where a press is bounded by the pressing:
+   *
+   *   · only parts the html references, by `Content-ID` — never "everything on the message";
+   *   · only declared raster images within {@link INLINE_IMAGE_MAX_BYTES}, at most
+   *     {@link INLINE_IMAGE_MAX_PARTS} parts / {@link INLINE_IMAGE_MAX_TOTAL_BYTES} declared
+   *     bytes per message ({@link INLINE_IMAGE_MIME} has the second, post-fetch gate);
+   *   · SEQUENTIALLY, so the user's mail server sees one conversation at a time;
+   *   · a part that failed stays failed — `openAttachment` refuses the automatic re-ask, so a
+   *     re-render cannot loop a connection-cost fetch against a server that refused.
+   *
+   * Never rejects; the caller is a render effect. Single-flight per message: the pane is
+   * mounted twice while the reader is open, and both mounts ask for the same document.
+   */
+  async loadInlineImages(messageId: string, contentIds: readonly string[]): Promise<void> {
+    if (!this.attachmentsAvailable() || contentIds.length === 0) return;
+
+    const inFlight = this.inlineImageRequests.get(messageId);
+    if (inFlight) return inFlight;
+
+    const request = this.fetchInlineImages(messageId, contentIds)
+      .catch(() => {})
+      .finally(() => {
+        this.inlineImageRequests.delete(messageId);
+      });
+    this.inlineImageRequests.set(messageId, request);
+    return request;
+  }
+
+  /** The working half of {@link OhmailEngine.loadInlineImages}, behind its single-flight gate. */
+  private async fetchInlineImages(messageId: string, contentIds: readonly string[]): Promise<void> {
+    await this.loadAttachments(messageId);
+    const held = this.attachmentLists.get(messageId);
+    if (held?.state !== "ready") return;
+
+    const have = this.inlineImages.get(messageId);
+    const wanted: AttachmentItem[] = [];
+    const seen = new Set<string>();
+    let budget = INLINE_IMAGE_MAX_TOTAL_BYTES;
+    // Reference order — the order the reader meets the images — so the budget is spent on what
+    // is nearest the top of the document, not on whatever sorts first.
+    for (const cid of contentIds) {
+      if (wanted.length >= INLINE_IMAGE_MAX_PARTS) break;
+      if (seen.has(cid) || have?.has(cid)) continue;
+      seen.add(cid);
+      const item = held.items.find((i) => i.contentId === cid);
+      if (!item) continue;
+      // The declared-type/size gate: don't pay a connection for a part the mint below would
+      // refuse anyway. The declaration is the sender's claim; the REAL gates are post-fetch.
+      if (!INLINE_IMAGE_MIME.has(item.mimeType.toLowerCase())) continue;
+      if (item.sizeBytes > INLINE_IMAGE_MAX_BYTES || item.sizeBytes > budget) continue;
+      budget -= item.sizeBytes;
+      wanted.push(item);
+    }
+
+    const minted: Array<[string, string]> = [];
+    for (const item of wanted) {
+      await this.openAttachment(messageId, item.id);
+      const blob = this.attachmentBlobOf(messageId, item.id);
+      if (!blob) continue;
+      const url = await mintInlineDataUrl(blob);
+      if (url) minted.push([item.contentId!, url]);
+    }
+    if (minted.length === 0) return;
+
+    // Re-checked AFTER the awaits: a message released mid-pass (the reader moved on) must not
+    // have its map re-created to outlive the byte state it belongs with.
+    if (this.attachmentLists.get(messageId)?.state !== "ready") return;
+    const next = new Map(this.inlineImages.get(messageId) ?? NO_INLINE_IMAGES);
+    for (const [cid, url] of minted) next.set(cid, url);
+    // ONE replacement and ONE notification for the whole pass, not one per image: every map
+    // identity change re-sanitizes and re-measures the mail document downstream.
+    this.inlineImages.set(messageId, next);
+    this.notify();
+  }
+
+  /**
    * Revoke every object URL held for a message and forget its byte state.
    *
    * MUST be called when the surface stops rendering the message (a pane unmount, a different
    * message selected). A `blob:` URL pins its bytes in memory until it is revoked or the document
    * dies, so a session spent opening PDFs in a long-lived tab would otherwise accumulate every one
    * of them — the exact cost the "nothing is stored" design exists to avoid, reintroduced in the
-   * browser instead of the database.
+   * browser instead of the database. The minted `data:` URIs go with it — they pin the same bytes
+   * as base64 in a string instead of behind a URL.
    */
   releaseAttachments(messageId: string): void {
     const held = this.attachmentLists.get(messageId);
@@ -2564,6 +2755,7 @@ export class OhmailEngine {
       for (const item of held.items) this.revokeUrl(item.objectUrl);
     }
     this.attachmentLists.delete(messageId);
+    this.inlineImages.delete(messageId);
     this.notify();
   }
 

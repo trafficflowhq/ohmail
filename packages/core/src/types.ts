@@ -27,8 +27,9 @@ export type Destination =
  * stored server-side — only this metadata persists; the bytes are
  * fetched on-demand from IMAP by `partId`. `partId` is the IMAP MIME body-part
  * number (e.g. "2", "1.2") mailparser surfaces on each attachment node; it is what
- * `ImapAdapter.fetchPart` passes to `client.download`. `inline` marks a `related`
- * (cid:) part — an embedded image, not a user-facing file.
+ * `ImapAdapter.fetchPart` passes to `client.download`. `inline` marks an embedded part —
+ * a `related` (cid:) sibling of the html, or any part whose Content-ID the html body
+ * references (`mime.ts#referencesCid`) — not a user-facing file.
  */
 export interface AttachmentMeta {
   filename: string | null;

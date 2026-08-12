@@ -74,6 +74,14 @@ export interface AttachmentWire {
   contentType: string;
   sizeBytes: number;
   inline: boolean;
+  /**
+   * The part's `Content-ID` (brackets already stripped server-side), or `null`/absent. It is
+   * the join key between the html body's `cid:<contentId>` references and this part's bytes —
+   * what lets the reader see an embedded signature logo IN the body instead of a blanked box.
+   * OPTIONAL because absence is a real wire state, not a broken one: an older server that does
+   * not send it degrades to the image staying blanked, exactly as it always was.
+   */
+  contentId?: string | null;
   messageId: string;
 }
 

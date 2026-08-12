@@ -25,6 +25,13 @@ export interface AttachmentDTO {
   contentType: string;
   sizeBytes: number;
   inline: boolean;
+  /**
+   * The part's `Content-ID` (angle brackets stripped at ingest), or `null` for a part that has
+   * none. It is what lets a client resolve the html body's `cid:<contentId>` references to this
+   * very row and draw the embedded image in place — without it the client can see THAT the body
+   * references embedded parts but never WHICH row serves each one.
+   */
+  contentId: string | null;
   messageId: string;
 }
 
@@ -166,6 +173,7 @@ function toDTO(row: typeof attachments.$inferSelect): AttachmentDTO {
     contentType: row.contentType,
     sizeBytes: row.sizeBytes,
     inline: row.inline,
+    contentId: row.contentId,
     messageId: row.messageId,
   };
 }

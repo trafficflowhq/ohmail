@@ -115,6 +115,20 @@ export interface AttachmentsChrome {
    */
   downloadAll(messageId: string, opts?: { includeInlineImages?: boolean }): void;
   downloadingAll(messageId: string): boolean;
+  /**
+   * THE EMBEDDED IMAGES ALREADY IN HAND for one message — `contentId → data: URI`, straight off
+   * the engine (`inlineImagesOf`). Identity-stable between arrivals, so `MessageBody` can hang
+   * its sanitize memo on it. Empty until {@link needCidImages} has fetched something.
+   */
+  cidImagesOf(messageId: string): ReadonlyMap<string, string>;
+  /**
+   * ASK for the embedded parts a framed rendering is showing as blanked boxes — the Content-IDs
+   * come from the renderer's own pass over the sanitized document. Fire-and-forget: arrival is
+   * an engine notification, which re-renders the shell and hands a grown map back down through
+   * {@link cidImagesOf}. Budgets, single-flight and the no-retry-after-refusal rule all live in
+   * the engine (`loadInlineImages`); calling this again with the same ids is a cheap no-op.
+   */
+  needCidImages(messageId: string, contentIds: string[]): void;
 }
 
 /**
@@ -309,6 +323,20 @@ export function useMessageAttachments(
     [engine],
   );
 
+  const cidImagesOf = useCallback(
+    (id: string): ReadonlyMap<string, string> => engine.inlineImagesOf(id),
+    [engine],
+  );
+
+  const needCidImages = useCallback(
+    (id: string, contentIds: string[]): void => {
+      // Fire-and-forget on purpose: the outcome is not a return value but an engine
+      // notification, and `loadInlineImages` never rejects — its caller is a render effect.
+      void engine.loadInlineImages(id, contentIds);
+    },
+    [engine],
+  );
+
   /**
    * ── DOWNLOAD ALL — N FILES, NOT ONE ARCHIVE ──────────────────────────────────────────────
    *
@@ -405,8 +433,11 @@ export function useMessageAttachments(
    * consumer can see changes: the engine, or whether a zip is in flight.
    */
   const chrome = useMemo(
-    (): AttachmentsChrome => ({ itemsOf, open, ensure, blobOf, downloadAll, downloadingAll: downloadingAllOf }),
-    [itemsOf, open, ensure, blobOf, downloadAll, downloadingAllOf],
+    (): AttachmentsChrome => ({
+      itemsOf, open, ensure, blobOf, downloadAll, downloadingAll: downloadingAllOf,
+      cidImagesOf, needCidImages,
+    }),
+    [itemsOf, open, ensure, blobOf, downloadAll, downloadingAllOf, cidImagesOf, needCidImages],
   );
 
   return available ? chrome : undefined;

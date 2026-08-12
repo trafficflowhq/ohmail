@@ -1026,6 +1026,18 @@ export function MessagePane({
   );
   const nativeBody = bodyRendering === `${message.id}:prose`;
 
+  /**
+   * The framed rendering's unresolved `cid:` images, reported by `MessageBody` and forwarded to
+   * the attachment seam — which fetches the parts' own bytes and grows the map handed back down
+   * as `cidImages` below. Stable per message so the effect that calls it does not refire per
+   * render; absence of the chrome (demo, a client with no attachment service) is handled where
+   * the props are passed, by handing `MessageBody` neither of the pair.
+   */
+  const onCidImages = useCallback(
+    (contentIds: string[]) => chrome.attachments?.needCidImages(message.id, contentIds),
+    [chrome.attachments, message.id],
+  );
+
   const extra = message.protected;
   const focusedBody = isProtected ? (
     <ProtectedBlock
@@ -1073,6 +1085,12 @@ export function MessagePane({
             ? () => chrome.remoteImages!.consent(message.id)
             : undefined
         }
+        /* The message's own embedded (`cid:`) images — resolved from the parts' bytes through
+           the attachment seam, never from any url the sender wrote. Both halves travel
+           together or not at all: a client with no attachment service (`?demo=1`) hands
+           `MessageBody` neither, and every `cid:` box stays blanked exactly as before. */
+        cidImages={chrome.attachments ? chrome.attachments.cidImagesOf(message.id) : undefined}
+        onCidImages={chrome.attachments ? onCidImages : undefined}
         onRenderMode={onRenderMode}
       />
     </div>

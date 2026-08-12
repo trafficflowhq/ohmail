@@ -101,8 +101,10 @@
  * review, not a side effect of a rendering slice. `imageProxy` below is the seam it lands
  * on, and it is exercised by the tests so it is not an untested branch waiting to be wrong.
  *
- * It does not resolve `cid:` images either — those are attachment parts, they cannot phone
- * home, and the endpoint that serves their bytes belongs to the attachment surface.
+ * `cid:` images are the one exception, and they are not an exception to the PROMISE: a `cid:`
+ * names a part of this very message, so it cannot phone home. The engine fetches those bytes
+ * from the part itself and hands them in as `data:` URIs ({@link SanitizeOptions.cidImages});
+ * an unresolved reference stays a blanked box, exactly as every one did before.
  *
  * ── NOTHING RENDERED IS STORED ──────────────────────────────────────────────────────────
  *
@@ -295,6 +297,28 @@ const SAFE_HREF = /^(?:https?:|mailto:|tel:|cid:)/i;
 
 /** A scheme that fetches over the network. What "remote" means everywhere in this file. */
 const REMOTE_URL = /^https?:\/\//i;
+
+/** An `<img src>` naming a part of this very message. Resolved from the message's own bytes. */
+const CID_URL = /^cid:/i;
+
+/**
+ * THE ONLY SHAPE A RESOLVED EMBEDDED IMAGE MAY TAKE: a base64 `data:` URI of one of the four
+ * raster image types — the same closed set the engine mints from (`INLINE_IMAGE_MIME`).
+ *
+ * Enforced HERE, at the write into the document, not only at the mint: the map arrives through a
+ * prop, and "the engine is the only caller" is a fact about today's wiring rather than a property
+ * of this function. A value that is not this shape — `javascript:`, `data:text/html`,
+ * `data:image/svg+xml`, anything with characters outside the base64 alphabet — is treated exactly
+ * like an absent entry and the image stays blanked. `message-body.test.ts` proves the gate by
+ * handing this a hostile map and watching the src stay {@link BLANK_GIF}.
+ */
+const INLINE_IMAGE_SRC = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+/** The Content-ID an `<img src="cid:…">` names — brackets and the scheme stripped — or null. */
+function cidOfSrc(src: string): string | null {
+  const raw = src.slice(4).replace(/^</, "").replace(/>$/, "").trim();
+  return raw === "" ? null : raw;
+}
 
 /** A 1×1 fully-transparent GIF. Stands in for every blocked image, including the beacon. */
 const BLANK_GIF =
@@ -1403,6 +1427,19 @@ export interface SanitizeOptions {
    * seeing the reader's address.
    */
   imageProxy?: ((url: string) => string) | null;
+  /**
+   * THE MESSAGE'S OWN EMBEDDED IMAGES: `contentId → data: URI`, minted by the engine from the
+   * part's own bytes (`OhmailEngine.loadInlineImages`). A `cid:` `<img>` whose Content-ID is
+   * here renders in place; one that is not stays the blanked box it has always been and is
+   * reported in {@link SanitizedMail.cids} so a caller can go fetch it.
+   *
+   * Nothing here is fetched BY the document — the URI carries the bytes — so this admits no
+   * network reference of any shape, and the frame's CSP (`img-src data:`) needs no widening.
+   * The values are still not trusted on arrival: {@link INLINE_IMAGE_SRC} gates every one at
+   * the point of use, so a caller wired to something other than the engine cannot smuggle a
+   * `javascript:` or a `data:text/html` into a src through this map.
+   */
+  cidImages?: ReadonlyMap<string, string> | null;
 }
 
 export interface SanitizedMail {
@@ -1471,6 +1508,14 @@ export interface SanitizedMail {
    * nothing in the render path reads it.
    */
   background: Rgb | null;
+  /**
+   * The Content-IDs of every `cid:` image this document references and could NOT resolve —
+   * distinct, in document order, still rendered as blanked boxes. The component reports them
+   * so the shell can fetch exactly these parts and re-run the pass with
+   * {@link SanitizeOptions.cidImages} filled; a document whose references all resolved (or
+   * that has none) carries an empty array, which is what makes the fetch effect terminate.
+   */
+  cids: string[];
   /**
    * The html part was past {@link MAX_HTML_CHARS} and was not rendered at all. Present only
    * in that case, so an ordinary message carries no flag to test.
@@ -1543,6 +1588,15 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   const blocked: BlockedAsset[] = [];
   const sheets: string[] = [];
   const proxy = opts.imageProxy ?? null;
+  const cidImages = opts.cidImages ?? null;
+  // The unresolved `cid:` references — distinct, in document order. See {@link SanitizedMail.cids}.
+  const cids: string[] = [];
+  const cidsSeen = new Set<string>();
+  const recordCid = (cid: string): void => {
+    if (cidsSeen.has(cid)) return;
+    cidsSeen.add(cid);
+    cids.push(cid);
+  };
 
   // `light: true`, `reflow: false` and `prose: false` on both refusals are not readings of
   // anything — neither path renders a frame, so nothing consults any of them. They are stated
@@ -1550,10 +1604,10 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // conservative side: these branches produce no document to have read, and a `true` here would
   // send an unparseable message down the frameless path on the strength of nothing.
   if (!sanitizerAvailable()) {
-    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null };
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids };
   }
   if (html.length > MAX_HTML_CHARS) {
-    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, oversize: true };
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, oversize: true };
   }
 
   const seen = new Set<string>();
@@ -1695,9 +1749,28 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
         // the element, for a reader of the frame's own document. A sender's own copy of it cannot
         // survive `ALLOW_DATA_ATTR: false` — the single gate the anti-phishing markers rely on.
         if (pixel) node.setAttribute("data-ohmail-pixel", "1");
+      } else if (CID_URL.test(src)) {
+        // ── AN EMBEDDED IMAGE RESOLVES FROM THE MESSAGE'S OWN BYTES, OR STAYS BLANK ───────
+        //
+        // A `cid:` names a part of this very message; it cannot phone home, so resolving it
+        // costs the sender nothing to learn and the reader their own signature logos, pasted
+        // screenshots and embedded receipts. The caller supplies the bytes as `data:` URIs
+        // (the engine fetched them from the part itself — never from any url the sender wrote)
+        // and this branch does exactly one thing with them: an ATTRIBUTE write, the only kind
+        // of write the post-pass is allowed. {@link INLINE_IMAGE_SRC} gates every value, so a
+        // map entry that is not a small-raster data: URI blanks exactly like a missing one.
+        const cid = cidOfSrc(src);
+        const resolved = cid ? cidImages?.get(cid) : undefined;
+        if (cid && resolved && INLINE_IMAGE_SRC.test(resolved)) {
+          node.setAttribute("src", resolved);
+        } else {
+          if (cid) recordCid(cid);
+          node.setAttribute("src", BLANK_GIF);
+          node.setAttribute("data-ohmail-embedded", "1");
+        }
       } else if (!src.startsWith("data:")) {
-        // `cid:` and anything relative. Neither can be resolved from here, and a browser
-        // renders an unresolvable src as a broken-image glyph in the middle of the mail.
+        // Anything relative. It cannot be resolved from here, and a browser renders an
+        // unresolvable src as a broken-image glyph in the middle of the mail.
         node.setAttribute("src", BLANK_GIF);
         node.setAttribute("data-ohmail-embedded", "1");
       }
@@ -1807,7 +1880,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     }) as unknown as HTMLElement | null;
 
   // `IS_EMPTY_INPUT` returns null under `RETURN_DOM`, which is a message with no html left.
-  if (!sanitized) return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null };
+  if (!sanitized) return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids };
 
   // ── THE POST-PASS. Over the document the frame will have, not the one we handed over. ──
   for (const node of sanitized.querySelectorAll("*")) onAttributes(node);
@@ -1835,6 +1908,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     // data (text runs, bounded ints, gated hrefs); the serialized string stays the frame's.
     rich: rigid ? null : buildRichNodes(sanitized),
     background,
+    cids,
   };
 }
 
@@ -1866,11 +1940,11 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
  *
  * It was argued that `'self'` belongs in the BLOCKED policy too, so a future
  * `cid:`-attachment url could render. Not taken, and the disagreement is recorded rather
- * than silently dropped: blocked-by-default is the product's central promise, `'self'` in
- * that state would admit any same-origin image url a sanitizer bug let through, and nothing
- * needs it today — `cid:` references are blanked here, not resolved. The slice that resolves
- * them through `GET /attachments/:id` adds `'self'` deliberately, at the moment something
- * uses it.
+ * than silently dropped: blocked-by-default is the product's central promise, and `'self'`
+ * in that state would admit any same-origin image url a sanitizer bug let through. The slice
+ * that resolved `cid:` references confirmed the refusal was right: they resolve as `data:`
+ * URIs minted from the part's own bytes ({@link SanitizeOptions.cidImages}), which the
+ * blocked policy has always admitted, so `'self'` is still needed by nothing.
  */
 export function frameCsp(imagesLoaded: boolean): string {
   return [
@@ -2230,6 +2304,25 @@ export interface MessageBodyProps {
   /** Called when the reader asks for images. Absent ⇒ no button. */
   onLoadRemote?: () => void;
   /**
+   * The message's embedded images, `contentId → data: URI` — see
+   * {@link SanitizeOptions.cidImages}, which is where this goes verbatim. Absent ⇒ every
+   * `cid:` image stays a blanked box, which is what the demo and any client without an
+   * attachment service render. The map's IDENTITY is a memo dependency: hand a stable
+   * reference between arrivals (the engine's `inlineImagesOf` does) or the mail re-sanitizes
+   * per render.
+   */
+  cidImages?: ReadonlyMap<string, string>;
+  /**
+   * Called — from an effect, never during render — with the Content-IDs the FRAMED document
+   * references and cannot resolve, in document order, so the shell can fetch exactly those
+   * parts. Not called for the frameless rendering (it draws no images; the strip lists them
+   * there) and not called when everything resolved, which is what terminates the loop: fetch
+   * → map grows → re-sanitize → nothing unresolved → silence. Repeat calls with the same ids
+   * must be cheap; the engine's single-flight and its refusal to re-ask a failed part are
+   * what this leans on.
+   */
+  onCidImages?: (contentIds: string[]) => void;
+  /**
    * HOW THIS MESSAGE IS ACTUALLY BEING DRAWN, reported to whoever mounted the component.
    *
    * `"prose"` is the frameless path — {@link BodyText} in the app's own type, over the walker's
@@ -2266,6 +2359,8 @@ export function MessageBody({
   remoteLoaded = false,
   imageProxy = null,
   onLoadRemote,
+  cidImages,
+  onCidImages,
   onRenderMode,
 }: MessageBodyProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
@@ -2342,8 +2437,8 @@ export function MessageBody({
   const mail = useMemo(() => {
     if (!html) return null;
     if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const };
-    const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background } =
-      sanitizeMailHtml(html, { imageProxy: proxy });
+    const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, cids } =
+      sanitizeMailHtml(html, { imageProxy: proxy, cidImages });
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
     // frame, and never by taking however long the neutralising would have taken.
     if (oversize) return { state: "oversize" as const };
@@ -2390,11 +2485,15 @@ export function MessageBody({
       }),
       blocked,
       sheets,
+      /** The unresolved `cid:` references — what the request effect below reports upward. */
+      cids,
     };
     // `darkWanted` is intentionally omitted — it is applied live via toggleAttribute, never by
-    // rebuilding the frame; see the note on `doc` above.
+    // rebuilding the frame; see the note on `doc` above. `cidImages` IS a dep: an arrived
+    // embedded image can only reach the frame through a rebuild, and its identity moves once
+    // per arrival batch (the engine replaces the map, never mutates it).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, proxy, mounted]);
+  }, [html, proxy, mounted, cidImages]);
 
   /**
    * THE THREE-TERM ANSWER, IN ONE PLACE SO NOTHING DISAGREES WITH ANYTHING ELSE.
@@ -2592,6 +2691,25 @@ export function MessageBody({
   useEffect(() => {
     onRenderMode?.(framelessView ? "prose" : "framed");
   }, [framelessView, onRenderMode]);
+
+  /**
+   * ── ASK FOR THE EMBEDDED IMAGES THE FRAME IS SHOWING BLANKED — see {@link
+   * MessageBodyProps.onCidImages} ────────────────────────────────────────────────────────────
+   *
+   * Framed renderings only: the frameless path draws no images at all, and the strip lists the
+   * message's pictures there instead — fetching bytes a rendering cannot show would be pure
+   * spend. A reader's "Show original" press flips `framelessView`, this fires, and the frame's
+   * blanked boxes are asked for at that moment.
+   *
+   * TERMINATION is the `cids` array draining, not any state here: resolved references stop
+   * being reported by the sanitize pass, and the engine refuses to re-fetch what failed. So a
+   * re-fire with an unchanged list — a re-render, an unstable callback — is a cheap no-op by
+   * the callee's contract, not by this effect's memory.
+   */
+  const wantedCids = mail?.state === "ok" && !framelessView ? mail.cids : undefined;
+  useEffect(() => {
+    if (wantedCids && wantedCids.length > 0) onCidImages?.(wantedCids);
+  }, [wantedCids, onCidImages]);
 
   // ── no html, or nothing left after sanitizing: the text part, unchanged ──
   if (!mail) return <BodyText text={text} />;

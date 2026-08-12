@@ -127,10 +127,10 @@ function toAttachmentMeta(a: Attachment): AttachmentMeta {
  *
  * A `cid:` part is not nothing. `keepCidLinks` keeps its reference in the html and its row keeps
  * `content_id` precisely so a client can resolve it through `GET /attachments/:id` (see
- * {@link normalizeMime}'s header, and a test pins that behaviour). The renderer that
- * landed today blanks those, and resolving them is filed work. So this flag going false for a
- * newsletter is the CORRECT answer to "is there a file to download" and says nothing at all
- * about whether the message has pictures in it.
+ * {@link normalizeMime}'s header, and a test pins that behaviour). The mail renderer resolves
+ * those references from the part's own bytes and draws them in place. So this flag going false
+ * for a newsletter is the CORRECT answer to "is there a file to download" and says nothing at
+ * all about whether the message has pictures in it.
  *
  * ── WHAT SETS `inline`, STATED HERE BECAUSE IT IS NOT WHAT MOST READERS ASSUME ────────────────
  *
@@ -143,15 +143,43 @@ function toAttachmentMeta(a: Attachment): AttachmentMeta {
  * the body is embedded even when it declares `Content-Disposition: attachment`, and mailparser
  * does surface `contentDisposition` for anyone tempted to reach for it.
  *
- * The residual, named so nobody assumes it away: a cid part under `multipart/mixed` rather than
- * `multipart/related` is NOT marked inline, so it still counts as a file. A small minority of
- * non-inline rows carry a `content_id` and almost all of those are images, so this second
- * over-report is tiny next to the large class this predicate closes. Narrowing it means
- * changing what `inline` MEANS, which moves the Files list and download-all with it; that is a
- * different change with a different blast radius.
+ * The `related` signal alone had a residual: a cid part under `multipart/mixed` rather than
+ * `multipart/related` was NOT marked inline, so a signature logo from a sender who nests it
+ * that way still counted as a file. {@link normalizeMime} closes it with a second signal —
+ * a part whose `Content-ID` the html body actually names in a `cid:` reference is promoted to
+ * inline (see {@link referencesCid}) — which is the same principle as ignoring the disposition,
+ * read off the body instead of the tree: WHAT THE HTML PAINTS IS EMBEDDED, wherever it sits.
+ *
+ * What deliberately stays a FILE: a part carrying a `Content-ID` that nothing references. An
+ * unreferenced part is painted by no rendering, so classifying it inline would leave it
+ * reachable from nowhere — a photo a sender attached with a gratuitous Content-ID would simply
+ * vanish from the product. Unreferenced and standalone means downloadable, whatever its headers
+ * hint. And a `Content-Disposition: inline` on its own reclassifies NOTHING, in either
+ * direction: Apple Mail ships real PDFs as `inline; filename=…`, so a disposition-based rule
+ * hides exactly the files people mean to send.
  */
 export function isRealFile(a: AttachmentMeta): boolean {
   return !a.inline;
+}
+
+/**
+ * Does this html body reference the part carrying this `Content-ID`, as a `cid:` URL?
+ *
+ * A SUBSTRING check, exact and case-sensitive, on purpose:
+ *
+ *   · `cid:<contentId>` is the literal token a renderer resolves — `src="cid:logo@corp"`,
+ *     `url(cid:logo@corp)` — so the substring IS the reference, not a heuristic for one.
+ *   · Case-sensitive because RFC 5322 makes a msg-id's `id-left` case-significant, and the two
+ *     error directions are not symmetric. A missed match leaves a logo listed as a file beside
+ *     a blank box — the long-standing status quo, cosmetic. A false match reclassifies a REAL
+ *     file as inline, which drops it from the Files list and download-all: data loss. So the
+ *     comparison only ever errs toward the cosmetic direction.
+ *
+ * `contentId` arrives with its angle brackets already stripped ({@link toAttachmentMeta}).
+ */
+export function referencesCid(html: string | null, contentId: string | null): boolean {
+  if (!html || !contentId) return false;
+  return html.includes(`cid:${contentId}`);
 }
 
 /** How many of `attachments` the user could download. See {@link isRealFile}. */
@@ -435,6 +463,21 @@ export async function normalizeMime(raw: Buffer | string): Promise<NormalizedMes
   const html = typeof parsed.html === "string" ? scrubNul(parsed.html) : null;
   const fromObj = parsed.from?.value?.[0];
   const attachments = (parsed.attachments ?? []).map(toAttachmentMeta);
+
+  // ── A PART THE HTML PAINTS IS INLINE, WHEREVER IT SITS IN THE MIME TREE ────────────────────
+  //
+  // mailparser's `related` only marks a cid part under `multipart/related`; a signature logo
+  // nested under `multipart/mixed` arrived with `inline: false` and was listed as a file the
+  // reader could download — beside a body that draws that same picture. The body's own `cid:`
+  // reference is the second signal ({@link referencesCid}), and it runs HERE because this is the
+  // one moment both sides of the question are in hand: the decoded html (scrubbed, the exact
+  // string the renderer will resolve against) and the parts. Promotion only — a `related` part
+  // never loses its flag for going unreferenced, because `related` is already the tree saying
+  // "embedded" and demoting on a failed text scan would move real newsletters' logos into the
+  // Files list on a formatting quirk.
+  for (const a of attachments) {
+    if (!a.inline && referencesCid(html, a.contentId)) a.inline = true;
+  }
 
   // ── WHAT THE FALLBACK PARSE HASHES, AND WHY IT IS NOT `text` ──────────────────────────────
   //

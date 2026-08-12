@@ -692,6 +692,7 @@ export class HttpAdapter implements EngineAdapter {
           contentType: typeof r.contentType === "string" ? r.contentType : "application/octet-stream",
           sizeBytes: typeof r.sizeBytes === "number" && Number.isFinite(r.sizeBytes) ? r.sizeBytes : 0,
           inline: r.inline === true,
+          contentId: typeof r.contentId === "string" && r.contentId !== "" ? r.contentId : null,
           messageId: typeof r.messageId === "string" ? r.messageId : messageId,
         };
       }).filter((a) => a.id !== "");
