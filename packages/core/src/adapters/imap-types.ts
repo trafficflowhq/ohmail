@@ -628,8 +628,11 @@ export interface OutboundMessage {
    * message drives BOTH the SMTP delivery AND the raw bytes appended to the Sent folder
    * (`imap.ts#send` → `buildRaw`). The bytes therefore exist only in this in-memory object for the
    * life of the send: they arrive in the send request, ride here, and are gone when the request
-   * returns — never a row in `attachments`, `drafts` or anywhere else (§13.2/§14, and the
-   * zero-at-rest guard in `mail-send-attach.test.ts`). Two producers fill it: the compose form's
+   * returns — never a row in `attachments`, `drafts` or anywhere else (§13.2/§14). Two halves of that
+   * are guarded separately: that one compiled message carries the file into both the delivery and
+   * the Sent-folder copy, and that no row anywhere holds a byte of it. The citation that used to
+   * stand here named a test file that was never added on any branch, which reads as coverage and is
+   * not. Two producers fill it: the compose form's
    * own files (bytes uploaded with the send), and a FORWARD's original parts, which the server
    * streams from IMAP via `fetchPart` at send time and hands here without ever persisting them.
    *
@@ -646,7 +649,27 @@ export interface OutboundAttachment {
   /** A `related` inline part's Content-ID, carried so a forwarded body's `cid:` refs still resolve. */
   cid?: string;
 }
-export interface SendResult { providerMessageId: string; sentLocator: NativeLocator; }
+export interface SendResult {
+  providerMessageId: string;
+  sentLocator: NativeLocator;
+  /**
+   * THE EXACT BYTES THAT WERE APPENDED TO THE SENT FOLDER — `MailComposer`'s output, the same
+   * Buffer handed to `client.append`, carried out rather than dropped on the floor.
+   *
+   * It exists for ONE consumer and the reason is an identity rule, not a convenience:
+   * `identity.ts#messageFingerprint` derives a message's identity from its CONTENT, computed by
+   * `normalizeMime` over the raw source. So a caller that wants to record this send as a
+   * `messages` row before the mailbox is re-read (`sent-record.ts#recordSentMessage`) must
+   * fingerprint THESE bytes. Rebuilding an equivalent message from the `OutboundMessage` instead
+   * drifts by a byte — a boundary string, a header fold, a transfer encoding — which is a
+   * different fingerprint, which is a SECOND `messages` row the first time the Sent copy is
+   * observed, in every client, permanently, with no delta that removes either.
+   *
+   * Not optional, deliberately: an adapter that appends and cannot say what it appended has no
+   * business on this seam, and a `raw?` would let a future adapter opt out of the rule silently.
+   */
+  raw: Buffer;
+}
 
 /** One attachment BLOB fetched on-demand from IMAP — bytes are NEVER persisted (§13.2/§14). */
 export interface FetchedPart { contentType: string; filename: string | null; body: Uint8Array; }

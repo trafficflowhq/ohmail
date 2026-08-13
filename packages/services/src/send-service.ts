@@ -3,15 +3,26 @@ import {
   attachments, drafts, mailboxes, messageBodies, messages, outboundSends, recordChange, threads, type Tx,
 } from "@trafficflow/db";
 import {
-  mintMessageId,
-  type EmailAddress, type NativeLocator, type OutboundMessage, type OpenSendAdapter,
+  createLogger, mintMessageId, recordSentMessage,
+  type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundMessage,
+  type OpenSendAdapter, type RepoPort, type RoutingPort,
 } from "@trafficflow/core/mail";
+import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
 import type { OpenAdapter } from "./attachments-service.js";
 import { ServiceError } from "./errors.js";
 import { sanitizeOutboundHtml } from "./outbound-html.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+
+/**
+ * The default sink for the ONE thing on this path that is reported and never raised — a
+ * record-at-send projection that failed. See {@link SendService.projectSentCopy}.
+ *
+ * Module scope because it is three closures and an object, and overridable through
+ * {@link SendDeps.log} so a test can read the line rather than watch stdout.
+ */
+const defaultLog = createLogger({ service: "send" });
 
 /** The domain of an email identity (`user@host` → `host`), for minting the id. */
 function domainOf(address: string | null | undefined): string {
@@ -95,6 +106,15 @@ export interface SendDeps {
    * absence, instead of a rule somebody has to keep obeying.
    */
   stagedAttachments?: StagedAttachmentSource;
+  /**
+   * Where a RECORD-AT-SEND failure is reported. Absent ⇒ {@link defaultLog}, i.e. stdout, which is
+   * the drain an operator reads on both hosts.
+   *
+   * It exists so the guard for that failure can assert the line rather than the absence of a
+   * throw: "the send still succeeded" and "somebody can find out why the row is late" are two
+   * different claims and a swallowed exception only makes the first one.
+   */
+  log?: Logger;
 }
 
 /**
@@ -385,9 +405,17 @@ export class SendService {
     const adapter = await deps.openSendAdapter(mailboxId);
     try {
       let providerMessageId: string;
+      /**
+       * THE COPY THE SEND PATH JUST PUT IN THE USER'S SENT FOLDER — locator + the exact bytes.
+       *
+       * Absent for a spy, and for any adapter that files sent mail some other way; the projection
+       * below is then skipped and the Sent-folder watch is the only path, exactly as before.
+       */
+      let appended: AppendedSent | undefined;
       try {
         const res = await adapter.send(msg);
         providerMessageId = res.providerMessageId;
+        appended = res.appended;
       } catch {
         // SMTP threw → the delivery is AMBIGUOUS (it may have reached the server
         // before the failure). VERIFY by Sent rather than assume either way; NEVER
@@ -403,9 +431,82 @@ export class SendService {
 
       // ── 3. FINALIZE (short tx) ──────────────────────────────────────────────
       const seq = await this.finalizeSent(ctx, sendId, providerMessageId, draftId, mailboxId);
+
+      // ── 4. RECORD-AT-SEND (a SEPARATE short tx, best-effort) ────────────────
+      //
+      // AFTER the finalize and outside its transaction, both deliberately. See
+      // `projectSentCopy` for why a failure here may never reach the caller.
+      await this.projectSentCopy(ctx, mailboxId, appended, deps);
       return { status: "sent", providerMessageId, draftId, seq };
     } finally {
       await adapter.close();
+    }
+  }
+
+  /**
+   * PROJECT THE SENT COPY INTO THE DATABASE NOW, instead of waiting for the mailbox to be re-read.
+   *
+   * `ImapAdapter.send` has already APPENDed this message to the user's own Sent folder, so the
+   * master holds it before this function runs. Until this existed, the `messages` row was written
+   * only by the sync worker's next pass over that folder — a whole poll interval between pressing
+   * Send and the message existing anywhere the reader can see it.
+   * `sent-record.ts#recordSentMessage` is the projection and its header carries the design; this
+   * function is only the placement and the failure policy, and both are load-bearing.
+   *
+   * ── A SEPARATE TRANSACTION, AFTER THE FINALIZE, AND NEVER INSIDE IT ────────────────────────
+   *
+   * Folding this into `finalizeSent` would put a MIME parse, a thread resolution and five entity
+   * writes inside the transaction that holds the account's seq row lock and issues the
+   * mailbox doorbell — and, far worse, would make a failure to record roll the finalize back. The
+   * reservation would stay `pending` and the draft would never reach `sent` for a message that HAS
+   * ALREADY BEEN DELIVERED, which is the single outcome the whole reservation design exists to
+   * prevent (the same argument `finalizeSent`'s `SKIP LOCKED` note makes about a lock wait).
+   *
+   * ── AND A FAILURE IS LOGGED, NEVER THROWN ─────────────────────────────────────────────────
+   *
+   * The mail is gone. Nothing this function can discover changes that, and a 500 answering a send
+   * that succeeded is worse than a row that shows up on the worker's next cycle — which it will,
+   * because the Sent-folder watch is untouched and remains the backstop for exactly this case. So
+   * every fault is swallowed: a bad parse, an oversize body `normalizeMime` refuses, a serialization
+   * failure, a locator the instance table rejects. The send answers `sent` either way.
+   *
+   * ── AND THE RESPONSE'S `seq` IS DELIBERATELY STILL THE FINALIZE'S ─────────────────────────
+   *
+   * `seq` becomes `X-Sync-Seq`, the mark the client drains past. It is NOT advanced to the
+   * projection's rows, and it does not need to be: the client issues its drain AFTER this response
+   * arrives, and a `/sync` request reads the log at request time, so this transaction has already
+   * committed by the time that read happens. The message row is in the very next drain either way.
+   * Leaving `seq` alone keeps a send's echo meaning exactly what it always meant — the draft's own
+   * transition — and keeps a skipped projection indistinguishable from the pre-projection wire.
+   */
+  private async projectSentCopy(
+    ctx: ServiceContext,
+    mailboxId: string,
+    appended: AppendedSent | undefined,
+    deps: SendDeps,
+  ): Promise<void> {
+    // No append to project. Not a failure and not logged: a spy adapter is the ordinary case in
+    // tests, and an adapter that cannot say what it appended is covered by the Sent-folder watch.
+    if (!appended) return;
+    try {
+      await recordSentMessage(appended, {
+        accountId: ctx.accountId,
+        mailboxId,
+        // The read phase runs on the request's own handle, outside a transaction — the same shape
+        // the worker's plan phase has.
+        repo: makeDrizzleRepo(ctx.db as never) as RepoPort,
+        withTx: (run) => asTx(ctx).transaction(
+          (tx) => run(makeDrizzleRepo(tx as never) as RepoPort & RoutingPort),
+        ),
+      });
+    } catch (err) {
+      (deps.log ?? defaultLog).warn("sent_record_failed", {
+        accountId: ctx.accountId,
+        mailboxId,
+        err,
+        reason: "the message WAS delivered and appended to the Sent folder; only the local row is " +
+          "late. The sync worker's Sent-folder pass writes it on its next cycle",
+      });
     }
   }
 

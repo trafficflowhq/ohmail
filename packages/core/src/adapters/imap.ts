@@ -2115,7 +2115,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       ? { folder: sentCanonical, ref: makeRef(appended.uidValidity, appended.uid) }
       : { folder: sentCanonical, ref: "0:0" };
 
-    return { providerMessageId: messageId, sentLocator };
+    // `raw` rides out with the locator. Both halves are needed together and neither is
+    // reconstructable afterwards: the UID is only in the APPEND response, and the bytes are what
+    // decides the message's identity. See {@link SendResult.raw}.
+    return { providerMessageId: messageId, sentLocator, raw };
   }
 
   /**

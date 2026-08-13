@@ -79,6 +79,7 @@ export * from "./draft-prompt.js";
 // can validate and store a workflow, and cannot generate one.
 export * from "./workflow-shapes.js";
 export * from "./send.js";
+export * from "./sent-record.js";
 export * from "./outbound-text.js";
 export * from "./crypto.js";
 export * from "./log.js";

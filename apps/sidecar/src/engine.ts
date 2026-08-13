@@ -810,10 +810,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         smtp: { host: smtp.host, port: smtp.port, secure: smtp.secure, auth: { user, pass } },
       };
       // The one test seam this file already has. On the SEND path the factory is only ever a real
-      // `ImapAdapter` (or a wrapper of one), which is a full `SendAdapter` — the stub factories the
-      // other sidecar tests pass never reach send, so the widening cast is sound where it is used.
+      // `ImapAdapter` (or a wrapper of one), so the widening cast is sound where it is used — the
+      // stub factories the other sidecar tests pass never reach send.
+      //
+      // It is cast to the MAILBOX adapter's `send`, not to the narrow `SendAdapter`'s: the mailbox
+      // adapter answers a full `SendResult`, which carries the Sent-folder locator and the appended
+      // bytes, and both are needed to project the row below. `SendAdapter.send` reports only the
+      // provider id, so casting to it would discard exactly what this wrapper now forwards.
       const built = config.adapterFactory ? config.adapterFactory(sendConfig) : new ImapAdapter(sendConfig);
-      const adapter = built as unknown as SendAdapter & { connect(): Promise<void> };
+      const adapter = built as unknown as
+        Pick<MailboxAdapter, "send"> & Pick<SendAdapter, "messageInSent" | "close"> & { connect(): Promise<void> };
       // Close-then-rethrow around the login window, the shape used everywhere this codebase holds
       // an IMAP login across work that can fail (`send-adapter.ts`, `attachments-adapter.ts`, the
       // sync worker): `connect()` logs in and LISTs, so a failure after login would otherwise leak
@@ -826,7 +832,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         throw err;
       }
       return {
-        send: async (msg) => ({ providerMessageId: (await adapter.send(msg)).providerMessageId }),
+        // `appended` is the Sent-folder APPEND this send just made — the UID the server answered
+        // with and the exact bytes at it — and forwarding it is what lets the local engine write
+        // the `messages` row at send time instead of waiting for its own next pass over Sent. The
+        // desktop benefits identically to the hosted door: same `SendService`, same projection,
+        // and on a local install the mirror IS the database the reader queries, so the message is
+        // in the Ohbox as soon as the send returns.
+        send: async (msg) => {
+          const res = await adapter.send(msg);
+          return { providerMessageId: res.providerMessageId, appended: { locator: res.sentLocator, raw: res.raw } };
+        },
         messageInSent: (messageId) => adapter.messageInSent(messageId),
         close: () => adapter.close(),
       };
