@@ -16,6 +16,183 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.9.5] — 2026-08-13
+
+Mostly about mail being where you left it. A message you send is in the Ohbox the moment it
+goes; a message you put away is in exactly one place; a decision made in the Screener holds
+while you move around the app, and says so when it does not land; and clicking a search
+result opens the message you clicked. An install signed in to a hosted account also stops
+hiding settings that account has.
+
+### Sending
+
+**A sent message is in the Ohbox, at the top of Earlier, the moment you send it.** Three
+separate things stood between pressing Send and seeing the message, and none of them was
+the mail server — it holds the message before the app goes looking for it.
+
+The provisional local copy — built so a sent message can be read minutes before the Sent
+folder is read back from the mail server — was queued behind a full reconciliation pass
+that could never carry one, and on a mailbox still filling for the first time there is no
+bound on how long such a pass takes. It is built the instant the send is confirmed now, and
+the reconciliation runs behind it rather than in front of it.
+
+"Earlier" is ordered by when you finished with each message, and nothing stamps a reading
+time on mail you wrote — there was never a moment you opened it — so every message an
+account had ever sent sat under everything it had ever read. A sent message is ranked by
+when it was sent, because writing a message is finishing with it; a recorded reading time
+still wins, so re-reading your own sent mail still moves it.
+
+And the compose form did not leave when the message did. It emptied itself and stayed on
+screen, so the only thing saying the mail had gone was a passing notice over a blank form.
+A confirmed send returns to the Ohbox with nothing selected and the message as the first
+row — on the confirmation rather than on the press, so the list it lands on already holds
+the message, and a send that fails leaves you on the form where your text is.
+
+Three corrections found on the way. Mail sent before the account finished screening its
+backlog goes to History, on the same line as everything else from before it, rather than
+presenting years of Sent mail as recent. A sent reply on a conversation that is in the
+Ohbox follows that conversation rather than splitting away from it. And the list collapses
+the two copies of a just-sent message — the local one and the one read back from the
+server, which share a Message-ID — the way the reading pane already did.
+
+**The message is recorded when it is sent, not when the Sent folder is next read.** A send
+delivers over SMTP and then appends the finished message to your own Sent folder, and the
+server answers with the identifier of the copy it just filed. Both of those facts were
+discarded, so nothing knew the message existed until the next pass over that folder read it
+back — a whole poll interval between pressing Send and the message existing anywhere the
+reader can see it. The send path records it immediately now, from the exact bytes that were
+filed.
+
+This is not a second place your mail lives. The message was already written to the mailbox
+on your server, which is the only master there is; this records what was written, the
+folder is still watched exactly as before, and anything this misses is picked up on the
+next pass regardless. Nothing here writes to your mailbox.
+
+It uses the ordinary reading path rather than a shortcut: the message is handed to the same
+code that reads any message out of your mailbox — same parse, same identity, same threading
+— because that is the only way the record can be guaranteed to match what the folder pass
+would have produced. If the two disagreed, reading the folder later would file the same
+message a second time, and nothing removes a duplicate once it is on every device. That is
+also why the record is built from the bytes that were filed rather than from the message
+that was composed: the sent date is stamped when the mail is built and exists nowhere else,
+and identity reads the date.
+
+The mail has already gone by then, so a failure to record it is never allowed to fail the
+send — it is logged, the send succeeds, and the folder pass writes the message shortly
+afterwards. Both ways of sending are covered: through the hosted service, and an install
+talking to your own mail server. A provider that files its own version of the message
+beside ours resolves to the one message rather than two, including when the two copies are
+not byte-identical.
+
+### The Ohbox and the Screener
+
+**A message is in exactly one pile.** Mail you put away — Answer Later, Set aside,
+Resurface — was listed in its pile and still sitting in the Ohbox at the same time. Nothing
+moves a parked message on the mail server, and the Ohbox grouped mail by folder, so it
+never knew the message had been filed anywhere. The sharpest form of it: asking a
+resurfaced message to come back again put it straight back at the top of the Ohbox as
+unread, as though it had just arrived, while the Resurface pile listed it too.
+
+Which pile a triage state belongs to is now one function that the pile lister and the Ohbox
+both read, so the two cannot disagree, and the Ohbox holds every parked message out of all
+three of its groups. Parked mail therefore leaves "Earlier" as well as "New for you", which
+is the rule working rather than a side effect, and returns to the top of the Ohbox when its
+time comes, as it always did. Reads and Receipts are skim streams rather than piles and
+still list an issue you have queued.
+
+**Screening decisions hold, and the ones that do not land are reported.** Screening one
+sender in and another out, moving to another view and coming back could show both of them
+waiting again as though nothing had been decided. The decision was sent and the server's
+answer thrown away, so when the server declined it — which it does when the mail is no
+longer waiting at the gate, reachable whenever this device is a moment behind another one —
+the sender came back with nothing said about why, and the only message on screen was the
+one raised optimistically at the press. The answer is read now: a refused decision says so,
+names the sender, and marks the row that came back, so the record outlives the notice that
+fades. A decision merely waiting to retry is not treated as a refusal, because the intent
+still stands.
+
+The three controls that take a sender back **out** of Spam or Screened out — "Allow", "Not
+spam → Ohbox" and "Not spam → Screener" — did the same thing, and had less to fall back on:
+they have no undo window and no second notice, so the toast raised at the press was the
+only account of them a reader ever got. They report in the same words now. The note is
+keyed on the sender's whole bag of mail rather than on the message that was pressed,
+because a row in these piles stands for the newest message in it: release five, have one
+refused, and the row that comes back is a different message.
+
+### Finding
+
+**Clicking a search result opens the message you clicked.** A result for an older message
+in one of the reading streams took you to that stream and stopped somewhere with nothing in
+it. Cards in a reading stream are cheap while they are off screen — the browser is told to
+skip their layout and to stand a rough height in for each — so a jump computed the position
+of a card that had never been laid out, from a stack of rough heights, and scrolled to that
+fixed number while every card it passed replaced its guess with its real height. Measured
+over a pile eight hundred cards deep, jumping to the four-hundredth: the stream came to rest
+18,301 px short of the card that was asked for. On a mailbox whose cards run shorter than
+the guess the same arithmetic overshoots, into the blank space held open for the part of the
+pile that is not mounted yet — which is the "there is nothing here" this started as.
+
+The landing measures instead of predicting. It reads where the card actually is, corrects,
+and keeps doing that until the card is at the top of the reading area, or until the scroller
+is as far as it goes with the card in view. It has to hold for a few frames rather than
+merely happen once, because a card keeps moving after the scroller stops while the cards
+above it are still being laid out. Arriving also opens the card now, the same way clicking
+it does; the jump used to leave it collapsed, so the message you had just asked for was a
+two-line preview among two hundred identical ones. A card already laid out near the fold
+keeps the smooth single scroll it always had.
+
+A result can also name a message that is in no pile at all: search asks the whole archive,
+while a device keeps a window over it. Those were routed to the pile their folder named,
+where no row for them exists, and the reader refused to open a message it had no local copy
+of, so clicking did nothing whatever. Routing now asks whether the destination actually
+holds the message and falls back to the reader when it does not, and the reader opens with
+what search returned — the sender, the subject, the date and the preview. The full text
+cannot be fetched for a message there is no local record of, and the reader says as much
+rather than showing an empty sheet. Mail that is deliberately in no pile, filed under
+Answer Later or held back by the history cut-off, opens the same way.
+
+### Settings
+
+**An install signed in to a hosted account gets that account's settings.** In that mode the
+app showed a shorter settings surface than the same account showed in a browser, and nothing
+on screen said why. The shared settings screen asks "is there a server to reach?" by looking
+for the browser API client, which is not part of this build at all — the desktop talks to a
+mail engine on this machine over a pipe — so the answer was no on both doors. That is right
+for an install opening your own mail server: there is no account, nothing to store a
+preference on, nothing to bill. It was wrong for an install mirroring a hosted account,
+whose engine forwards these routes to that account.
+
+Four controls come back on the hosted door, and the account's own row is what they read and
+write: automatic suggestions for new senders, the dormancy window, whether screening a
+sender out also unsubscribes, and the account's choice of interface language. Only the wire
+is injected — the controls, the consent rules and the pricing are the shared ones,
+unchanged. That matters most for automatic suggestions, the one setting that authorises
+spending without a press: it is priced by the same endpoint against the same ledger, and the
+switch renders what the account stored rather than what was clicked.
+
+Three panes existed on the web and were absent here. **Subscription** shows the plan, the
+renewal date, the remaining AI budget and the managed-AI switch, all read through the
+engine. Everything else on **Security** and **Account** asks for a second factor asserted
+within the last few minutes, which this app has no way to give — it holds no password, no
+authenticator secret, and a passkey ceremony needs a real browser origin. So each of those
+panes is present with a button that opens the page in your own browser, where you are
+already signed in, rather than being missing: an absent entry reads as "this product does
+not have that", which for deleting an account would be untrue. The button passes a key and
+the app's own table decides what it means, so nothing that could get a string into the page
+can open an arbitrary address in your browser.
+
+Two settings stay deliberately absent on the desktop, both because their machinery calls the
+browser API client directly. The sent-mail review is a browser ceremony end to end. Remote
+images load through a proxy on the page's own origin, which is what keeps your address away
+from the sender, and a window that may not open a connection has no such origin — so the
+setting would govern nothing. An install opening your own mail server is unchanged in every
+respect: it supplies no wire and no pane, so none of the above reaches it.
+
+Settings → Account also had roughly a menu's height of blank space above "Delete your
+account". The sheet is a two-column grid and every direct child was a grid item, so the
+second of that pane's two cards started a second row as tall as the menu beside it. A pane
+stacks its own cards now.
+
 ## [0.9.4] — 2026-08-13
 
 Mostly about sending and finding. An install signed in to a hosted account can pick the
@@ -1466,7 +1643,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.5
 [0.9.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.4
 [0.9.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.3
 [0.9.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.2

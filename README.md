@@ -10,7 +10,7 @@ One app, on macOS, Windows and Linux.
 Free, GPL-3.0, no account, no subscription — this repository is the whole thing.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/badge/download-v0.9.4-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.4)
+[![latest release](https://img.shields.io/badge/download-v0.9.5-a3461c)](https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.5)
 [![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -44,9 +44,9 @@ push. It is a commercial service with a codebase of its own, built by the same
 people, and the desktop app neither asks for it nor needs it.
 [Desktop or Cloud](#desktop-or-cloud) is the full comparison, prices included.
 
-## The current release — v0.9.4
+## The current release — v0.9.5
 
-**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.4)**
+**[Download it here.](https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.5)**
 `ohmail.dmg` for macOS, an NSIS `-setup.exe` for Windows, an `.AppImage` and a
 `.deb` for Linux. Every file was built by GitHub Actions from the tree this tag
 points at, and the run that made them prints the SHA-256 of each one. Nothing is
