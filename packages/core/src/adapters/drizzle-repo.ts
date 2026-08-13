@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { messages, messageInstances, messageFailures, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -36,6 +37,17 @@ export interface KnownLocator {
 export interface PendingFolderState {
   messageId: string; desiredFolder: string; observedFolder: string;
   lastSetBy: "us" | "external"; nativeLocator: NativeLocator | null;
+  /**
+   * Refusals already on record for this move (mail 0058), which the reconciler's bounded backoff
+   * reads to decide how long to defer the next attempt.
+   *
+   * OPTIONAL on the port, unlike every field beside it, because the absent value is the SAFE one:
+   * a repo that does not report it (a fake, an older implementation) reads as zero refusals, so
+   * the next failure earns the FIRST and shortest deferral rather than the last and longest. The
+   * failure mode of guessing wrong here is a mutation retried a minute later instead of six hours
+   * later — never a mutation dropped.
+   */
+  attempts?: number;
 }
 /**
  * ONE message the re-route pass may reconsider: still desired into `ohmail/Screener`, and
@@ -67,6 +79,8 @@ export interface ThreadBacklogRow {
 export interface PendingFlagState {
   messageId: string; desiredSeen: boolean; observedSeen: boolean;
   lastSetBy: "us" | "external"; nativeLocator: NativeLocator | null;
+  /** Refusals on record for this `\Seen` write — see {@link PendingFolderState.attempts}. */
+  attempts?: number;
 }
 /** What `applyExternalFlag` did — `null` when no message sits at that locator. */
 export interface ExternalFlagOutcome {
@@ -208,8 +222,46 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * for ever. Oldest desired-state first is both fair and the order a person expects — the mail
    * they filed first reaches their server first. Absent ⇒ unbounded, which is what every caller
    * outside the reconciler wants.
+   *
+   * DUE ROWS ONLY (mail 0058): a row whose `next_attempt_at` is still in the future is a mutation
+   * the server refused and the reconciler has deferred, and it is omitted here. That omission is
+   * the whole point of the column — the budget above is a FIXED per-cycle allowance ordered
+   * oldest-first, so a stuck row is by construction one of the oldest and would otherwise sit at
+   * the head of it every cycle for ever, eventually consuming the entire allowance and starving
+   * mail the user filed a minute ago. Skipping it in the QUERY is the only place that can be
+   * fixed; no per-item error handling in the worker reaches it.
+   *
+   * The row is NOT retired, and this method is not the count anybody reads: it stays `pending` and
+   * `MailboxDTO.pendingMoves` still counts it, because we still owe it. See
+   * {@link deferFolderReconcile}.
    */
   listPendingFolderStates(mailboxId: string, limit?: number): Promise<PendingFolderState[]>;
+  /**
+   * DEFER one refused move: record the refusal and when it may be attempted again (mail 0058).
+   *
+   * Writes `attempts` and `next_attempt_at` and NOTHING ELSE — not `desired_folder`, not
+   * `observed_folder`, not `last_set_by`, not `reconcile_status`, and deliberately not
+   * `updated_at`. Every one of those omissions is load-bearing:
+   *
+   *  · touching the intent columns would let a server's refusal edit what the USER asked for;
+   *  · touching `reconcile_status` would invent a terminal state this design does not have — the
+   *    row is still owed, so it is still `pending`, and the client's "Filing N messages…" count
+   *    stays honest;
+   *  · touching `updated_at` would move the row's place in the oldest-first queue, so a mutation
+   *    that keeps failing would keep jumping the mail behind it. Its position is when it was
+   *    FILED, and a refusal is not a re-filing.
+   *
+   * `attempts` is passed absolutely rather than incremented in SQL because one organizer writes
+   * one mailbox (the lease is the product's central invariant), so the caller's read-then-write is
+   * not a race — and an absolute value is a value a test can assert instead of infer.
+   */
+  deferFolderReconcile(
+    messageId: string, next: { attempts: number; nextAttemptAt: Date },
+  ): Promise<void>;
+  /** {@link deferFolderReconcile}, one flag over: defer a refused `\Seen` write. */
+  deferFlagReconcile(
+    messageId: string, next: { attempts: number; nextAttemptAt: Date },
+  ): Promise<void>;
   /**
    * Append MANY audit rows in one INSERT.
    *
@@ -221,7 +273,13 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   recordAuditMany?(
     accountId: string, rows: ReadonlyArray<{ action: string; payload: unknown; inverse: unknown }>,
   ): Promise<void>;
-  /** Read-state rows still owed an IMAP `\Seen` write (mail 0024). */
+  /**
+   * Read-state rows still owed an IMAP `\Seen` write (mail 0024), DUE ONES ONLY.
+   *
+   * The due filter is {@link listPendingFolderStates}'s, for the reason that survives without a
+   * budget: this queue is unbounded, so a permanently refused STORE costs one IMAP round trip per
+   * cycle for the life of the account with nothing to show for it.
+   */
   listPendingFlagStates(mailboxId: string): Promise<PendingFlagState[]>;
   upsertFlagState(messageId: string, s: FlagStateRow): Promise<void>;
   /**
@@ -291,6 +349,24 @@ function reconcileStatusFor(s: FolderStateRow): "pending" | "reconciled" {
 /** The same derivation for read-state: never set by hand, so a row cannot lie about converging. */
 function flagStatusFor(s: FlagStateRow): "pending" | "reconciled" {
   return s.desiredSeen === s.observedSeen ? "reconciled" : "pending";
+}
+
+/**
+ * "This deferred mutation may be attempted again" — the due predicate both pending queries share
+ * (mail 0058).
+ *
+ * `IS NULL` is the FIRST arm and it is not a convenience: NULL is what every row is born with and
+ * what a fresh intent is reset to, so an implementation that only compared instants would hide
+ * every never-yet-refused mutation in the product. The two arms together are the whole meaning of
+ * the column — a schedule with "now" as its default.
+ *
+ * The instant comes from the APPLICATION clock rather than SQL `now()`, matching the write side
+ * (`deferFolderReconcile` is handed a `Date` the worker computed). One clock decides both when a
+ * mutation becomes due and when it was deferred to, so a skew between the database's clock and the
+ * worker's cannot make a deferral shorter or longer than the policy says.
+ */
+function dueNow(col: AnyPgColumn): SQL | undefined {
+  return or(isNull(col), lte(col, new Date()));
 }
 
 export class DrizzleRepo implements WorkerRepo, RoutingPort {
@@ -775,6 +851,25 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     };
   }
 
+  /**
+   * ── THE BACKOFF RESET IS PART OF THIS WRITE (mail 0058) ───────────────────────────────────
+   *
+   * `attempts: 0, nextAttemptAt: null` on every call, for the same reason `conflict: false` is
+   * written unconditionally: this method is how INTENT is expressed, and a deferral schedule
+   * belongs to the intent it was earned against, never to the row.
+   *
+   * The case that makes it necessary is the user's. A message whose move the server refused four
+   * times is deferred for an hour; the user then moves it somewhere else in the client. That is a
+   * NEW mutation — a different destination, quite possibly one the server is perfectly happy to
+   * accept — and it must be attempted on the next cycle rather than inheriting an hour of silence
+   * from the intent it just replaced. Without this reset the product would appear to ignore a
+   * user's action for an hour with nothing on screen to explain it.
+   *
+   * It is equally right on the COMPLETION write (`observed := desired`), where the row leaves the
+   * pending set anyway: a row that later goes pending again is a fresh mutation and starts its
+   * schedule clean. The one write that must NOT reset is the refusal itself, which is why
+   * {@link deferFolderReconcile} exists as a separate statement instead of a flag on this one.
+   */
   async upsertFolderState(messageId: string, s: FolderStateRow): Promise<void> {
     const reconcileStatus = reconcileStatusFor(s);
     await this.db.insert(folderState).values({
@@ -785,10 +880,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       set: {
         desiredFolder: s.desiredFolder, observedFolder: s.observedFolder, lastSetBy: s.lastSetBy,
         reconcileStatus, conflict: false, updatedAt: new Date(),
+        attempts: 0, nextAttemptAt: null,
       },
     });
   }
 
+  /** {@link upsertFolderState}'s read-state twin, backoff reset included and for its reasons. */
   async upsertFlagState(messageId: string, s: FlagStateRow): Promise<void> {
     const reconcileStatus = flagStatusFor(s);
     await this.db.insert(flagState).values({
@@ -799,6 +896,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       set: {
         desiredSeen: s.desiredSeen, observedSeen: s.observedSeen, lastSetBy: s.lastSetBy,
         reconcileStatus, conflict: false, updatedAt: new Date(),
+        attempts: 0, nextAttemptAt: null,
       },
     });
   }
@@ -1362,8 +1460,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     const base = this.db.select({
       messageId: folderState.messageId, desiredFolder: folderState.desiredFolder, observedFolder: folderState.observedFolder,
       lastSetBy: folderState.lastSetBy, nativeLocator: messages.nativeLocator,
+      attempts: folderState.attempts,
     }).from(folderState).innerJoin(messages, eq(messages.id, folderState.messageId))
-      .where(and(eq(messages.mailboxId, mailboxId), eq(folderState.reconcileStatus, "pending")))
+      .where(and(
+        eq(messages.mailboxId, mailboxId), eq(folderState.reconcileStatus, "pending"),
+        dueNow(folderState.nextAttemptAt),
+      ))
       // ORDERED WHETHER OR NOT IT IS LIMITED — see the port's doc. A LIMIT over physical row
       // order is a queue that can starve, and the ordering costs nothing on the unbounded call.
       .orderBy(asc(folderState.updatedAt), asc(folderState.messageId));
@@ -1371,6 +1473,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return rows.map((r) => ({
       messageId: r.messageId, desiredFolder: r.desiredFolder, observedFolder: r.observedFolder,
       lastSetBy: r.lastSetBy as "us" | "external", nativeLocator: (r.nativeLocator as NativeLocator | null) ?? null,
+      attempts: r.attempts,
     }));
   }
 
@@ -1378,12 +1481,36 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     const rows = await this.db.select({
       messageId: flagState.messageId, desiredSeen: flagState.desiredSeen, observedSeen: flagState.observedSeen,
       lastSetBy: flagState.lastSetBy, nativeLocator: messages.nativeLocator,
+      attempts: flagState.attempts,
     }).from(flagState).innerJoin(messages, eq(messages.id, flagState.messageId))
-      .where(and(eq(messages.mailboxId, mailboxId), eq(flagState.reconcileStatus, "pending")));
+      .where(and(
+        eq(messages.mailboxId, mailboxId), eq(flagState.reconcileStatus, "pending"),
+        dueNow(flagState.nextAttemptAt),
+      ));
     return rows.map((r) => ({
       messageId: r.messageId, desiredSeen: r.desiredSeen, observedSeen: r.observedSeen,
       lastSetBy: r.lastSetBy as "us" | "external", nativeLocator: (r.nativeLocator as NativeLocator | null) ?? null,
+      attempts: r.attempts,
     }));
+  }
+
+  async deferFolderReconcile(
+    messageId: string, next: { attempts: number; nextAttemptAt: Date },
+  ): Promise<void> {
+    // TWO COLUMNS AND NO OTHERS — see the port's doc for why each omission matters, `updated_at`
+    // most of all: it is this row's place in the oldest-first queue, and a refusal is not a
+    // re-filing.
+    await this.db.update(folderState)
+      .set({ attempts: next.attempts, nextAttemptAt: next.nextAttemptAt })
+      .where(eq(folderState.messageId, messageId));
+  }
+
+  async deferFlagReconcile(
+    messageId: string, next: { attempts: number; nextAttemptAt: Date },
+  ): Promise<void> {
+    await this.db.update(flagState)
+      .set({ attempts: next.attempts, nextAttemptAt: next.nextAttemptAt })
+      .where(eq(flagState.messageId, messageId));
   }
 
   /**

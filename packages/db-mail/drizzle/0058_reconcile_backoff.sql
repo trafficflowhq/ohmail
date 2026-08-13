@@ -1,0 +1,98 @@
+-- THE RECONCILER'S BOUNDED RETRY — two columns per desired-state table, so one mutation the mail
+-- server refuses can be DEFERRED instead of either abandoned or retried for ever.
+--
+-- ADDITIVE ONLY: four `ADD COLUMN IF NOT EXISTS` on two existing tables. No backfill (both columns
+-- carry the value an existing row should have: zero refusals, due now), no index, no constraint, no
+-- data statement, nothing dropped or renamed.
+--
+-- ══ WHAT THIS FIXES ══════════════════════════════════════════════════════════════════════════
+--
+-- `folder_state` and `flag_state` are the write-intent tables behind "move this mail" and "mark
+-- this read". The API never opens IMAP: it writes the intent and returns, and the always-on
+-- worker's reconcile pass performs the physical mutation. A pending row therefore means the
+-- server still owes us — or rather we still owe the server — one MOVE or one STORE.
+--
+-- Some mutations are refused deterministically by the host, not by us: a source folder that is
+-- read-only, an EXPUNGE the server will not perform, a destination it rejects. Before this
+-- migration the worker had exactly two responses to that, and both are wrong at the queue level:
+--
+--   · the folder pass recorded an audit row and retried the same mutation on EVERY cycle, for
+--     ever — one IMAP round trip per stuck row per cycle, unbounded in time;
+--   · the flag pass rethrew, which abandoned the rest of the pass and failed the whole cycle, so
+--     one message the server would not mark read stopped every other message being marked read
+--     and counted against the mailbox until it was quarantined.
+--
+-- The retry-for-ever half is the one that needs a schema change, because it is not a control-flow
+-- bug. `listPendingFolderStates` is ordered `updated_at` ASC under a fixed per-cycle budget
+-- (`RECONCILE_MOVES_PER_CYCLE = 500`), so immortal rows are exactly the OLDEST rows and they
+-- collect at the head of that budget. Enough of them and the reconciler spends its entire
+-- allowance re-refusing rows from last week while mail filed a minute ago never reaches the
+-- server. No `try`/`catch` in the worker can fix that: the QUERY has to be able to skip a row,
+-- which means the row has to be able to say when it is next due.
+--
+-- ══ THE COLUMNS ══════════════════════════════════════════════════════════════════════════════
+--
+--   attempts        integer NOT NULL DEFAULT 0
+--       How many times this specific mutation has been refused. The bounded backoff reads it, and
+--       the `reconcile.move.failed` / `reconcile.flags.failed` audit row publishes it — so a
+--       permanently stuck message is visible as a COUNT rather than as an audit row per cycle
+--       that nobody can distinguish from the previous one. DEFAULT 0 is the truth for every
+--       existing row: none of them has a refusal on record, because there was nowhere to record
+--       one.
+--
+--   next_attempt_at timestamptz NULL
+--       When this mutation may be attempted again. **NULL means DUE NOW, never "never".** That is
+--       the value every row is born with, the value every existing row gets here, and the value
+--       both columns are RESET to the moment the user expresses fresh intent — `upsertFolderState`
+--       and `upsertFlagState` clear the pair on every write, so a message the user moves again is
+--       attempted on the next cycle rather than inheriting a stale deferral from an intent it has
+--       replaced. The pending queries add `next_attempt_at IS NULL OR next_attempt_at <= now()`.
+--
+-- No error column, deliberately. What the server said is free text from somebody else's mail host;
+-- it already goes to the audit row, which is the table built to hold what happened. These two
+-- columns are a schedule, and a schedule is a coordinate — the same rule that keeps
+-- `message_failures` free of subjects, senders and messages.
+--
+-- No index. Both pending queries already join `messages` and filter `reconcile_status = 'pending'`
+-- with no index on either side; adding a predicate to a scan that is bounded by one mailbox's
+-- pending set does not change its plan. If the pending set ever justifies an index it wants
+-- `(reconcile_status, next_attempt_at)` and it is a separate, measured migration.
+--
+-- ══ THE BOUND, AND WHY IT IS A FLOOR AND NOT A CLIFF ═════════════════════════════════════════
+--
+-- There is no terminal state here and no "gave up" flag. `reconcile_status` stays `pending`, the
+-- row keeps counting toward `MailboxDTO.pendingMoves` (the "Filing N messages on your mail
+-- server…" number), and the retry interval merely widens — 1 minute, 5, 15, 60, then a 6-hour
+-- floor it never passes (`nextReconcileAttemptAfter`, `apps/worker/src/sync.ts`). A host that
+-- starts accepting the mutation next week converges next week.
+--
+-- That asymmetry is the point and it is the product's rule, not this file's preference: a move the
+-- user asked for is the user's state, and user state is not ours to discard because a server was
+-- difficult. Deferral changes how often we ask. It never changes whether we still owe it.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═══════════════════════════════════════════════════════════
+--
+-- Migration → API → worker, the ordinary order, and every adjacent pairing is safe:
+--
+--   · An API deployed AHEAD of this migration answers Postgres 42703 on the message list and the
+--     single read — `materializeMessages` selects WHOLE `folder_state` rows through the drizzle
+--     schema. The health marker `["folder_state","next_attempt_at"]` turns that into a
+--     `503 schema_incomplete` naming this file instead of an unattributable 500.
+--   · A WORKER deployed ahead of this migration 42703s inside the reconcile pass, which its
+--     ordinary per-mailbox quarantine already handles loudly. It cannot silently skip filing.
+--   · An API or worker deployed BEHIND this migration ignores two columns it does not select and
+--     writes rows whose defaults are exactly what it means: zero refusals, due now. The old
+--     worker's retry-every-cycle behaviour is unchanged by their presence, so the migration can
+--     land well ahead of the code that uses it.
+--   · A CLIENT never sees either column. Nothing projects them into a DTO.
+--
+-- ROLLBACK is `ALTER TABLE folder_state DROP COLUMN attempts, DROP COLUMN next_attempt_at;` and
+-- the same on `flag_state`. The cost is the deferral schedule of currently-refused mutations —
+-- every row returns to "due now" and the worker returns to retrying stuck rows every cycle. No
+-- intent is lost by the rollback, because the intent is `desired_folder` / `desired_seen` and this
+-- migration does not touch either.
+
+ALTER TABLE "folder_state" ADD COLUMN IF NOT EXISTS "attempts" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "folder_state" ADD COLUMN IF NOT EXISTS "next_attempt_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "flag_state" ADD COLUMN IF NOT EXISTS "attempts" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "flag_state" ADD COLUMN IF NOT EXISTS "next_attempt_at" timestamp with time zone;

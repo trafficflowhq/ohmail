@@ -7,7 +7,9 @@
     "./sync": "./src/sync.ts",
     "./lease": "./src/lease.ts",
     "./classifier-fault": "./src/classifier-fault.ts",
-    "./bubble-up": "./src/bubble-up-pass.ts"
+    "./bubble-up": "./src/bubble-up-pass.ts",
+    "./screener-auto-suggest": "./src/screener-auto-suggest.ts",
+    "./sender-name-backfill": "./src/sender-name-backfill.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

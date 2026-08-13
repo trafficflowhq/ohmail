@@ -573,6 +573,44 @@ export const messageFailures = pgTable("message_failures", {
   // every cycle walk the whole resolved history of the account.
 }));
 
+/**
+ * ── THE RECONCILE BACKOFF PAIR, ON BOTH DESIRED-STATE TABLES (mail 0058) ────────────────────
+ *
+ * `attempts` / `next_attempt_at` are the durable half of the reconciler's per-item failure
+ * isolation, and they are on BOTH `folder_state` and `flag_state` because the queue behind each
+ * one starves the same way.
+ *
+ * A pending row is an IMAP mutation the worker still owes the server. When the server refuses one
+ * particular mutation — a source folder that is read-only, an EXPUNGE the host will not perform, a
+ * destination it will not accept — retrying it changes nothing, and retrying it EVERY CYCLE costs
+ * an IMAP round trip per cycle for ever. Worse, `listPendingFolderStates` is ordered oldest-first
+ * under a fixed per-cycle budget (`RECONCILE_MOVES_PER_CYCLE`), so immortal rows collect at the
+ * HEAD of that budget and eventually consume all of it: mail the user filed a minute ago never
+ * reaches their server because the reconciler spends its whole allowance re-refusing rows from
+ * last week. That is head-of-line blocking by budget rather than by exception, and no amount of
+ * per-item `try`/`catch` in the worker fixes it — the queue query has to be able to SKIP a row.
+ *
+ * So a refused mutation is deferred rather than abandoned:
+ *
+ *   attempts         how many times THIS mutation has been refused. Bounded backoff reads it;
+ *                    the audit row publishes it, so a permanently stuck message is visible as a
+ *                    number rather than as a repeating log line.
+ *   next_attempt_at  when it may be attempted again. NULL ⇒ DUE NOW, which is what every row is
+ *                    born as and what every row is reset to the moment the user expresses fresh
+ *                    intent (`upsertFolderState` clears both columns on write). The pending
+ *                    queries add `next_attempt_at IS NULL OR next_attempt_at <= now()`.
+ *
+ * **The row is never dropped, and the backoff has a floor, not a cliff.** There is no "gave up"
+ * state and no terminal status: `reconcile_status` stays `pending`, the row keeps counting toward
+ * `MailboxDTO.pendingMoves`, and the retry interval tops out at a few hours
+ * (`nextReconcileAttemptAfter`, `apps/worker/src/sync.ts`). A user's move is their state and this
+ * product does not discard it — a host that starts accepting the mutation next week converges then.
+ * Deferral is about how OFTEN we ask, never about whether we still owe it.
+ *
+ * Deliberately no error column. What went wrong is free text from someone else's mail server; it
+ * belongs in the `reconcile.move.failed` / `reconcile.flags.failed` audit row, which is where it
+ * already goes. These two columns are a schedule, and a schedule is a coordinate.
+ */
 export const folderState = pgTable("folder_state", {
   id: uuid("id").defaultRandom().primaryKey(),
   messageId: uuid("message_id").notNull().references(() => messages.id),
@@ -582,6 +620,10 @@ export const folderState = pgTable("folder_state", {
   reconcileStatus: text("reconcile_status").notNull().default("pending"),
   conflict: boolean("conflict").notNull().default(false),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  /** Refusals recorded for this move. See the block above. */
+  attempts: integer("attempts").notNull().default(0),
+  /** NULL ⇒ due now. See the block above. */
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
 }, (t) => ({ uqMessage: unique().on(t.messageId) }));
 
 /**
@@ -618,6 +660,10 @@ export const flagState = pgTable("flag_state", {
   reconcileStatus: text("reconcile_status").notNull().default("pending"),
   conflict: boolean("conflict").notNull().default(false),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  /** Refusals recorded for this `\Seen` write — `folder_state`'s pair, same rules. */
+  attempts: integer("attempts").notNull().default(0),
+  /** NULL ⇒ due now. See the block above `folderState`. */
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
 }, (t) => ({ uqMessage: unique().on(t.messageId) }));
 
 export const rules = pgTable("rules", {

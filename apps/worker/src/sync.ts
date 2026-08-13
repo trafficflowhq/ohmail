@@ -297,6 +297,69 @@ async function fencedIngest<T>(deps: FenceScope, fn: (repo: DrizzleRepo) => Prom
   return underFence(deps.fence, fn);
 }
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  A GROUP OF WRITES THAT MUST NOT TEAR — TRANSACTIONAL WHETHER OR NOT THERE IS A FENCE
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * {@link fencedWrite} routes ONE statement. It is deliberately not transactional when there is no
+ * fence, and for a single statement that is exactly right — a `BEGIN`/`COMMIT` round trip around
+ * an UPDATE buys nothing.
+ *
+ * The bookkeeping that follows an IMAP mutation is not one statement. Filing a message writes the
+ * new locator (itself two statements: `messages.native_locator` and the primary
+ * `message_instances` row), then the converged `folder_state`, then the audit row. Under a fence
+ * those already committed together, because `SyncWriteFence.transaction` is a transaction. WITHOUT
+ * one — the reconcile cron, and the desktop engine, which is every LOCAL install of this product —
+ * they were three top-level awaits, and a crash or a failed statement between any two of them left
+ * a state that is neither before nor after:
+ *
+ *   · locator written, `folder_state` not ⇒ the row still says `observed = <source>`, `pending`,
+ *     while `native_locator` already names the DESTINATION. The next pass reads that row and asks
+ *     the server to move a message from the folder it is already in. A host that refuses a
+ *     same-folder MOVE turns this into a permanently stuck row — exactly the shape the deferral
+ *     below exists to contain — and a host that accepts it churns the UID for nothing.
+ *   · `folder_state` written, audit row not ⇒ the mail moved and the account's history does not
+ *     say so. The inverse the admin surface offers to undo the move is the audit row's `inverse`;
+ *     no row, no undo, and nothing anywhere records that the message ever left.
+ *
+ * Neither is visible afterwards. Both halves are individually valid rows, so nothing fails, no
+ * constraint fires and the mailbox reports healthy — which is why this is proven by killing the
+ * process between the statements against real Postgres (`reconcile-atomicity.pg.test.ts`) and not
+ * by reading the code.
+ *
+ * So a group commits or it does not exist. Unfenced callers get `repo.transaction`; fenced callers
+ * get the fence's transaction, which is the same guarantee with the leadership verdict inside it.
+ * That makes this byte-identical to {@link fencedIngest} — deliberately, because it is the same
+ * requirement — and it is a separate name because the two are separate contracts: one is "the
+ * ingest transaction", this one is "these reconcile writes are one fact". A future change to the
+ * ingest transaction must not silently retype the reconciler's.
+ *
+ * **The IMAP mutation is NEVER inside the callback.** A network call in a transaction holds a row
+ * lock for the length of somebody else's server, and — the reason that actually matters here — the
+ * move cannot be rolled back by the database anyway. Which is the next paragraph.
+ *
+ * ── WHICH SIDE LEADS, AND WHY THE RE-RUN CONVERGES ──────────────────────────────────────────
+ *
+ * IMAP leads; the database records what was observed. That is not a preference — the mailbox on
+ * the user's own mail server is the master copy of their mail, and everything stored here is a
+ * record of what was seen there, which is what makes leaving this product at any time cost the
+ * user nothing. It decides the shape of the one seam a transaction cannot
+ * cover: between the server's `MOVE` and the group below. A crash there leaves the mail moved on
+ * the server and NOTHING written here, which is the direction that converges, because the source
+ * copy is gone and the destination copy is enumerated by the next `changesSince`: the pending row
+ * survives, the per-message retry raises {@link MessageGoneError}, and adoption rewrites
+ * `folder_state` from what the server actually shows. The mailbox teaches us; we never teach it.
+ *
+ * The opposite order — write the database, then move — would produce the failure this product
+ * cannot have: a message the client shows in a folder it is not in, with no event coming to
+ * correct it, for ever.
+ */
+async function fencedGroup<T>(deps: FenceScope, fn: (repo: WorkerRepo) => Promise<T>): Promise<T> {
+  if (!deps.fence) return deps.repo.transaction(fn);
+  return underFence(deps.fence, fn);
+}
+
 async function underFence<T>(fence: SyncWriteFence, fn: (repo: DrizzleRepo) => Promise<T>): Promise<T> {
   if (fence.lost()) {
     throw new LeaderFencedError("the leader lease is gone — this write is refused before it is attempted");
@@ -882,6 +945,85 @@ export async function reconcileMailbox(deps: SyncDeps): Promise<{ owesMore: bool
 export const RECONCILE_MOVES_PER_CYCLE = 500;
 
 /**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE BOUNDED RETRY FOR A MUTATION THE SERVER REFUSES — minutes, then hours, then for ever
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Per-item isolation stops one refused mutation abandoning the pass. It does NOT stop that item
+ * being attempted again on the very next cycle, and again on the one after that, which is what the
+ * reconciler did for every stuck row for its whole life. Two costs, and the second is the one that
+ * hurts users who have nothing to do with the stuck message:
+ *
+ *  · one IMAP round trip per stuck row per cycle, for ever;
+ *  · `listPendingFolderStates` is ordered OLDEST FIRST under {@link RECONCILE_MOVES_PER_CYCLE}, so
+ *    a permanently refused row is by construction one of the oldest and sits at the head of that
+ *    fixed allowance every single cycle. Accumulate 500 of them and the reconciler's entire budget
+ *    goes on re-refusing rows from last month while mail the user filed a minute ago never reaches
+ *    their server. Head-of-line blocking by BUDGET rather than by exception — invisible in the
+ *    control flow, and unreachable from any `try`/`catch`.
+ *
+ * So a refusal buys silence, and the silence grows: one minute, five, fifteen, an hour, then a
+ * six-hour floor it never passes. The steps are minutes-scale at the start because the common
+ * "refusal" is not permanent at all — a folder briefly read-only during the provider's own
+ * maintenance, a transient `NO` — and those must not be punished with hours of delay. They widen
+ * because a mutation that has been refused five times is not going to be accepted on the sixth,
+ * and asking every cycle is how the budget above gets eaten.
+ *
+ * ── WHAT THIS IS NOT ────────────────────────────────────────────────────────────────────────
+ *
+ * There is no give-up, no terminal code, no write-off, and the schedule has a FLOOR rather than an
+ * end. `message_failures` has a `resolved_at` and this deliberately has no equivalent, because the
+ * two are about opposite things: that ledger records mail WE could not read, where the failure is
+ * ours and the message is still on the server either way. This records an instruction the USER
+ * gave — move my mail, mark it read — and their instruction is not ours to discard because a
+ * server was difficult. The row stays `pending`, keeps counting toward the "Filing N messages on
+ * your mail server…" number the client shows, and converges the day the host relents.
+ *
+ * `attempts` is what makes it visible rather than merely persistent: it rides the
+ * `reconcile.move.failed` / `reconcile.flags.failed` audit row, so "this one has failed 40 times"
+ * is a value somebody can select rather than a pattern somebody has to notice across 40 identical
+ * log lines.
+ */
+const RECONCILE_BACKOFF_MINUTES: readonly number[] = [1, 5, 15, 60, 360];
+
+/**
+ * When a mutation refused for the `attempts`-th time may be attempted again.
+ *
+ * `attempts` is the count INCLUDING the refusal being recorded now, so the first failure takes the
+ * first step. Beyond the last step the schedule stays on it — {@link RECONCILE_BACKOFF_MINUTES}
+ * for why the tail is a floor and not a cliff.
+ */
+export function nextReconcileAttemptAfter(attempts: number, now: Date): Date {
+  const step = Math.min(Math.max(1, attempts), RECONCILE_BACKOFF_MINUTES.length) - 1;
+  return new Date(now.getTime() + RECONCILE_BACKOFF_MINUTES[step]! * 60_000);
+}
+
+/**
+ * Is this throw evidence about THIS MUTATION, or about the pipes?
+ *
+ * The distinction decides whether a failure earns a deferral, and getting it backwards is
+ * expensive in both directions — the same trade `classifyIngestFault` documents, which is why this
+ * reuses it rather than growing a second opinion:
+ *
+ *  · Call a HOST OUTAGE per-message and a mailbox that was merely unreachable for ten minutes
+ *    comes back with its entire filing queue deferred for an hour, then six. The user's mail sits
+ *    unfiled while the server that would accept it is up and answering. Every pending row would
+ *    take the deferral, because during an outage every row fails.
+ *  · Call a PER-MESSAGE refusal infrastructure and nothing is ever deferred: back to one IMAP
+ *    round trip per stuck row per cycle and the budget starvation above.
+ *
+ * The infrastructure domain covers both sockets in play here — the customer's IMAP host and our
+ * own database — which is right, because neither is the message's fault. An infrastructure failure
+ * therefore leaves the row EXACTLY as it was: due now, attempts unchanged, no audit row. The pass
+ * still continues through the rest of the queue (see the call sites for why an outage is not
+ * converted into a mailbox-wide abort here), and the backlog drains the moment the host is back —
+ * which is precisely what `reconcile-resume.pg.test.ts` holds this to.
+ */
+function isTransportFailure(err: unknown): boolean {
+  return classifyIngestFault(err).domain === "infrastructure";
+}
+
+/**
  * Execute our intended moves, grouped by (source folder → destination) and filed in batches.
  *
  * Returns whether the budget was reached with rows still pending, which the caller turns into a
@@ -945,7 +1087,7 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
  * per-message path has always relied on for a crash between the IMAP move and the DB write.
  */
 async function fileChunk(deps: SyncDeps, chunk: PendingFolderState[]): Promise<boolean> {
-  const { adapter, accountId } = deps;
+  const { adapter, accountId, mailboxId, log } = deps;
   if (typeof adapter.moveMany !== "function") return false;
   const first = chunk[0]!;
   const srcFolder = first.nativeLocator!.folder;
@@ -970,34 +1112,51 @@ async function fileChunk(deps: SyncDeps, chunk: PendingFolderState[]): Promise<b
   }
   if (!result.batched) return false;
 
-  // One fenced write group for the whole chunk's bookkeeping. Unfenced callers run the same
-  // statements in the same order on the bare repo, exactly as before the fence existed.
-  await fencedWrite(deps, async (r) => {
-    const audits: Array<{ action: string; payload: unknown; inverse: unknown }> = [];
-    for (const p of chunk) {
-      const ref = p.nativeLocator!.ref;
-      const newLoc = result.moved.get(ref);
-      // NOT NAMED IN `moved` ⇒ the member was gone from the source, the batch's form of
-      // `MessageGoneError` — and the response is the per-message path's, exactly: leave the row
-      // pending for `changesSince` to adopt, unless the disappearance is already on durable
-      // record, in which case there is nothing left to adopt and the filing is voided. See
-      // {@link voidGoneFiling} for why those are the only two readings. Cross-checking
-      // `result.gone` as well would be a second reading of one fact, with a branch no test can
-      // redden.
-      if (!newLoc) { await voidGoneFiling(r, accountId, p); continue; }
-      await r.updateLocator(p.messageId, newLoc);
-      await r.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
-      // The audit rows are written together, AFTER the state they describe. One INSERT instead of
-      // fifty, and the same rows a per-message pass would have written — the admin surface and the
-      // inverse both read this table and neither can tell which path filed the mail.
-      audits.push({
-        action: "reconcile.move",
-        payload: { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
-        inverse: { action: "move", locator: newLoc, toFolder: p.nativeLocator!.folder },
-      });
-    }
-    if (audits.length > 0) await recordAudits(r, accountId, audits);
-  });
+  // ONE WRITE GROUP for the whole chunk's bookkeeping — a transaction whether or not there is a
+  // fence (see {@link fencedGroup}). It has to be: a chunk's worth of locator/state/audit writes
+  // that half-commits leaves some of its members claiming a destination their `folder_state` still
+  // disagrees with, and the batched path has no per-member retry to notice.
+  //
+  // A failure of the group is contained rather than rethrown, and the chunk still answers TRUE.
+  // The moves LANDED — `moveMany` reported `batched`, which it only does for a group it performed
+  // whole — so sending the members to `fileOne` would spend one round trip each rediscovering that
+  // the source is gone. Nothing was written, every row is still pending and due, and the next
+  // `changesSince` adopts what the server shows: the same convergence a crash here takes.
+  try {
+    await fencedGroup(deps, async (r) => {
+      const audits: Array<{ action: string; payload: unknown; inverse: unknown }> = [];
+      for (const p of chunk) {
+        const ref = p.nativeLocator!.ref;
+        const newLoc = result.moved.get(ref);
+        // NOT NAMED IN `moved` ⇒ the member was gone from the source, the batch's form of
+        // `MessageGoneError` — and the response is the per-message path's, exactly: leave the row
+        // pending for `changesSince` to adopt, unless the disappearance is already on durable
+        // record, in which case there is nothing left to adopt and the filing is voided. See
+        // {@link voidGoneFiling} for why those are the only two readings. Cross-checking
+        // `result.gone` as well would be a second reading of one fact, with a branch no test can
+        // redden.
+        if (!newLoc) { await voidGoneFiling(r, accountId, p); continue; }
+        await r.updateLocator(p.messageId, newLoc);
+        await r.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
+        // The audit rows are written together, AFTER the state they describe. One INSERT instead of
+        // fifty, and the same rows a per-message pass would have written — the admin surface and the
+        // inverse both read this table and neither can tell which path filed the mail.
+        audits.push({
+          action: "reconcile.move",
+          payload: { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
+          inverse: { action: "move", locator: newLoc, toFolder: p.nativeLocator!.folder },
+        });
+      }
+      if (audits.length > 0) await recordAudits(r, accountId, audits);
+    });
+  } catch (err) {
+    rethrowFenced(err);
+    log?.error("reconcile_move_batch_uncommitted", {
+      mailboxId, accountId, size: chunk.length, to: toFolder, err,
+      reason: "the batched IMAP move succeeded and its bookkeeping did not commit; every row " +
+        "stays pending and due, and the next cycle adopts the completed moves",
+    });
+  }
   return true;
 }
 
@@ -1060,21 +1219,37 @@ async function voidGoneFiling(repo: WorkerRepo, accountId: string, p: PendingFol
   );
 }
 
-/** The per-message path, unchanged: one move, its own verdict, its own audit row. */
+/**
+ * The per-message path: one move, its own verdict, its own audit row, its own deferral.
+ *
+ * ── THE TWO SEAMS ARE HANDLED SEPARATELY, AND THAT SPLIT IS THE POINT ───────────────────────
+ *
+ * A refused MUTATION and a failed COMPLETION look the same from a single `try` and mean opposite
+ * things, so they get one `try` each:
+ *
+ *  · `adapter.move` threw ⇒ the server did not perform the move. Nothing has changed anywhere, we
+ *    still owe it, and asking again immediately is what makes a permanently refused mutation eat
+ *    the filing budget. This is what earns a DEFERRAL.
+ *  · the write group threw ⇒ the server ALREADY MOVED THE MAIL and only our record of it failed.
+ *    The database and the mailbox now disagree, and deferring would hold that disagreement open
+ *    for the length of the backoff — an hour in which the client shows the message in a folder it
+ *    is not in. So this is never deferred and never recorded as the message's failure: the row is
+ *    left pending and DUE, and the next cycle converges it the documented way (the source copy is
+ *    gone, the retry raises {@link MessageGoneError}, `changesSince` adopts what the server shows).
+ *
+ * Folding them together — which is what one `try` around both did — produced a
+ * `reconcile.move.failed` audit row asserting that a move which HAD succeeded was refused, and put
+ * the correction to sleep behind it.
+ */
 async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
-  const { adapter, accountId } = deps;
+  const { adapter, accountId, mailboxId, log } = deps;
+  // Typed off the adapter's own signature rather than by importing `NativeLocator`: this module
+  // reaches core through `/mail` and `/adapters/imap` only, and neither exports that name — see the
+  // import block's note on what naming the bare barrel here would drag into the desktop engine.
+  let newLoc: Awaited<ReturnType<MailboxAdapter["move"]>>;
   try {
     await fenceImapMutation(deps);
-    const newLoc = await adapter.move(p.nativeLocator!, p.desiredFolder);
-    await fencedWrite(deps, async (r) => {
-      await r.updateLocator(p.messageId, newLoc);
-      await r.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
-      await r.recordAudit(
-        accountId, "reconcile.move",
-        { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
-        { action: "move", locator: newLoc, toFolder: p.nativeLocator!.folder },
-      );
-    });
+    newLoc = await adapter.move(p.nativeLocator!, p.desiredFolder);
   } catch (err) {
     // A fence refusal must not be recorded as this message's failure — it is the process's.
     rethrowFenced(err);
@@ -1082,10 +1257,27 @@ async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
       // Already moved (crash between IMAP move and DB update) → leave pending; the next
       // changesSince adopts it. Expunged outright → nothing will ever adopt it; see
       // voidGoneFiling for how the two are told apart.
-      await fencedWrite(deps, (r) => voidGoneFiling(r, accountId, p));
+      await fencedGroup(deps, (r) => voidGoneFiling(r, accountId, p));
       return;
     }
-    // ── ONE MESSAGE'S FAILURE MUST NOT ABANDON THE PASS ──────────────────────────────────
+    if (isTransportFailure(err)) {
+      // NOT EVIDENCE ABOUT THIS MESSAGE — the host is unreachable, or our own database is. The row
+      // is left exactly as it was: due now, attempts unchanged, no audit row. So a mailbox whose
+      // provider was down for ten minutes files its whole backlog the moment it is back, instead
+      // of coming up with every pending move deferred by a failure none of them caused.
+      //
+      // The pass CONTINUES rather than aborting the cycle, which is a deliberate choice and not an
+      // oversight: an abort here would convert one provider outage into the path that detaches and
+      // quarantines a mailbox, and blaming a mailbox for a fault that is not its own is a failure
+      // this loop already has to be careful about elsewhere. The cost of continuing is one refused
+      // round trip per pending row for the length of the outage — bounded by the cycle's own
+      // budget, and self-clearing the moment the host answers.
+      log?.warn("reconcile_move_transport_failure", {
+        mailboxId, accountId, messageId: p.messageId, to: p.desiredFolder, err,
+      });
+      return;
+    }
+    // ── ONE MESSAGE'S REFUSAL MUST NOT ABANDON THE PASS, AND MUST NOT REPEAT FOR EVER ────
     //
     // This used to rethrow, which took the whole reconcile pass with it: every OTHER pending
     // move, and — because `reconcileFlags` runs after this function — every pending `\Seen`
@@ -1098,22 +1290,62 @@ async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
     // expunge keeps failing now stays in this queue, and rethrowing would make one unhappy
     // message a mailbox-wide outage.
     //
-    // The retry itself is cheap and, importantly, no longer destructive: the adapter reads the
-    // destination before it writes, so a repeat costs one SEARCH and cannot leave another copy
-    // behind. It is unbounded in TIME, though, which is why the failure is recorded rather than
-    // swallowed — an audit row per cycle is what makes a permanently stuck message visible
-    // instead of silent.
-    await fencedWrite(deps, (r) => r.recordAudit(
-      accountId,
-      "reconcile.move.failed",
-      {
-        messageId: p.messageId,
-        from: p.nativeLocator,
-        to: p.desiredFolder,
-        error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
-      },
-      null,
-    ));
+    // Isolation alone left it unbounded in TIME, which is the half this deferral closes: the
+    // failure is recorded AND the row is put to sleep on a widening schedule, so a message the
+    // server will never accept stops eating the per-cycle filing budget that everyone else's mail
+    // is queued behind. See {@link RECONCILE_BACKOFF_MINUTES} — the schedule has a floor, never an
+    // end, and the intent is never discarded.
+    //
+    // Both writes are ONE GROUP. A deferral without its audit row is a message that went quiet
+    // with nothing saying why; an audit row without its deferral is the unbounded retry, restored.
+    const attempts = (p.attempts ?? 0) + 1;
+    const nextAttemptAt = nextReconcileAttemptAfter(attempts, new Date());
+    await fencedGroup(deps, async (r) => {
+      await r.recordAudit(
+        accountId,
+        "reconcile.move.failed",
+        {
+          messageId: p.messageId,
+          from: p.nativeLocator,
+          to: p.desiredFolder,
+          error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+          attempts, nextAttemptAt: nextAttemptAt.toISOString(),
+        },
+        null,
+      );
+      await r.deferFolderReconcile(p.messageId, { attempts, nextAttemptAt });
+    });
+    return;
+  }
+
+  // THE MOVE LANDED. Its completion is ONE FACT — locator, converged state and audit row commit
+  // together or not at all. {@link fencedGroup} carries the argument, including which side leads
+  // in the seam a transaction cannot cover (the server's, always).
+  try {
+    await fencedGroup(deps, async (r) => {
+      await r.updateLocator(p.messageId, newLoc);
+      await r.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
+      await r.recordAudit(
+        accountId, "reconcile.move",
+        { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
+        { action: "move", locator: newLoc, toFolder: p.nativeLocator!.folder },
+      );
+    });
+  } catch (err) {
+    rethrowFenced(err);
+    // The mail moved and we failed to write that down. Nothing was written (the group is a
+    // transaction), the row is left pending and DUE — not deferred — and the next cycle converges
+    // it: the source copy is gone, so the retry raises `MessageGoneError` and `changesSince`
+    // adopts what the server actually shows. This is byte-identical to a crash in the same place,
+    // which is the convergence this module has always relied on.
+    //
+    // Not rethrown, because a bookkeeping failure on one message is not a reason to abandon the
+    // filing of every message behind it — the whole finding this arm belongs to.
+    log?.error("reconcile_move_uncommitted", {
+      mailboxId, accountId, messageId: p.messageId, to: p.desiredFolder, err,
+      reason: "the IMAP move succeeded and its bookkeeping did not commit; the row stays pending " +
+        "and due, and the next cycle adopts the completed move",
+    });
   }
 }
 
@@ -1131,7 +1363,7 @@ async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
  * instead of a UID the STORE would miss.
  */
 async function reconcileFlags(deps: SyncDeps): Promise<void> {
-  const { repo, adapter, accountId, mailboxId } = deps;
+  const { repo, adapter, accountId, mailboxId, log } = deps;
   const pending = await repo.listPendingFlagStates(mailboxId);
   for (const p of pending) {
     if (p.lastSetBy !== "us") continue;                       // user-wins: never revert an external \Seen
@@ -1143,21 +1375,16 @@ async function reconcileFlags(deps: SyncDeps): Promise<void> {
     try {
       await fenceImapMutation(deps);
       await adapter.setFlags(p.nativeLocator, { seen: p.desiredSeen });
-      await fencedWrite(deps, async (r) => {
-        await r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
-        await r.recordAudit(
-          accountId, "reconcile.flags",
-          { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
-          { action: "setFlags", locator: p.nativeLocator, seen: !p.desiredSeen },
-        );
-      });
     } catch (err) {
+      // A fence refusal is proof of lost leadership, never evidence about this message. It is the
+      // ONE throw that still leaves this loop, and it must leave it unreclassified.
+      rethrowFenced(err);
       if (err instanceof MessageGoneError) {
         // The message left this locator between the DB read and the STORE. Mid-move, the next
         // changesSince refreshes the locator and this retries. Expunged outright, no refresh is
         // ever coming — voidGoneFiling's argument, one flag over — so the intent is voided the
         // same way rather than re-STOREd (one IMAP round trip per cycle) for ever.
-        await fencedWrite(deps, async (r) => {
+        await fencedGroup(deps, async (r) => {
           if (!(await r.primaryInstanceVanished(p.messageId))) return;
           await r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
           await r.recordAudit(
@@ -1168,8 +1395,71 @@ async function reconcileFlags(deps: SyncDeps): Promise<void> {
         });
         continue;
       }
-      // Includes a fence refusal from either write above — proof of lost leadership, rethrown.
-      throw err;
+      if (isTransportFailure(err)) {
+        // The host or our database, not this message. Row untouched and still due — see the same
+        // arm in `fileOne` for why an outage may not be converted into a per-message deferral, and
+        // why the pass continues rather than aborting the cycle.
+        log?.warn("reconcile_flag_transport_failure", {
+          mailboxId, accountId, messageId: p.messageId, seen: p.desiredSeen, err,
+        });
+        continue;
+      }
+      // ── THE RETHROW THAT USED TO BE HERE WAS A MAILBOX-WIDE OUTAGE PER MESSAGE ──────────
+      //
+      // Anything that was not a `MessageGoneError` left this loop, so it left `reconcileMailbox`,
+      // so it failed the whole cycle. One message whose `\Seen` the server refuses therefore
+      // meant: no other pending read-state reached the server, the folder pass's `owesMore`
+      // re-kick was discarded on the way out (it is returned by the call BEFORE this one), and
+      // `index.ts` counted a mailbox failure — every cycle, until the mailbox was detached and
+      // quarantined. Restart reconciliation reached the same row and did it again. The mailbox
+      // never got back to a steady state, and the reason was one flag on one message.
+      //
+      // The folder pass was given per-item isolation for exactly this and this loop was not, which
+      // is the asymmetry that made a refused STORE strictly more destructive than a refused MOVE.
+      // Same treatment now, deferral included: record it, sleep it on the widening schedule, keep
+      // going. The user's intent survives — `desired_seen` is untouched and the row stays pending
+      // — so a host that starts accepting the STORE converges then.
+      const attempts = (p.attempts ?? 0) + 1;
+      const nextAttemptAt = nextReconcileAttemptAfter(attempts, new Date());
+      await fencedGroup(deps, async (r) => {
+        await r.recordAudit(
+          accountId,
+          "reconcile.flags.failed",
+          {
+            messageId: p.messageId,
+            locator: p.nativeLocator,
+            seen: p.desiredSeen,
+            error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+            attempts, nextAttemptAt: nextAttemptAt.toISOString(),
+          },
+          null,
+        );
+        await r.deferFlagReconcile(p.messageId, { attempts, nextAttemptAt });
+      });
+      continue;
+    }
+
+    // THE STORE LANDED. Its bookkeeping is one fact — the converged flag and its audit row commit
+    // together or not at all — and a failure to write it is NOT the message's failure, so it is
+    // never deferred. `fileOne`'s completion arm carries the full argument; one flag over, the
+    // convergence is the inbound mirror: the server's `\Seen` is what the next `changesSince`
+    // reports, and `applyExternalFlag` adopts it.
+    try {
+      await fencedGroup(deps, async (r) => {
+        await r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
+        await r.recordAudit(
+          accountId, "reconcile.flags",
+          { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
+          { action: "setFlags", locator: p.nativeLocator, seen: !p.desiredSeen },
+        );
+      });
+    } catch (err) {
+      rethrowFenced(err);
+      log?.error("reconcile_flag_uncommitted", {
+        mailboxId, accountId, messageId: p.messageId, seen: p.desiredSeen, err,
+        reason: "the IMAP STORE succeeded and its bookkeeping did not commit; the row stays " +
+          "pending and due, and the server's own flag is adopted on a later cycle",
+      });
     }
   }
 }

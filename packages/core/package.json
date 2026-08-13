@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./mail": "./src/mail.ts",
+    "./ics": "./src/ics.ts",
     "./adapters/imap": "./src/adapters/imap.ts",
     "./adapters/organizer-lease": "./src/adapters/organizer-lease.ts",
     "./adapters/drizzle-repo": "./src/adapters/drizzle-repo.ts"

@@ -670,6 +670,26 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // is projected off rows already fetched by primary key or by the existing `from_address`
   // indexes, and it is never a predicate.
   ["messages", "from_name"],
+  // mail 0058_reconcile_backoff — the reconciler's bounded retry. FOUR columns land (`attempts`
+  // and `next_attempt_at` on both `folder_state` and `flag_state`) and one marker probes them, on
+  // this list's usual rule: probe the column a QUERY reads. `next_attempt_at` on `folder_state` is
+  // the one the pending-move query filters on, and the four are created by a single migration
+  // inside a single transaction, so no state exists in which one is present and another is not.
+  //
+  // It earns a marker for the widest form of the whole-row-select argument: `materializeMessages`
+  // does `select().from(folder_state)` for the message list, the single read and the bootstrap
+  // snapshot, so an API deployed ahead of this migration answers Postgres 42703 across the mail
+  // surface. The marker makes that a 503 naming this file rather than an unattributable 500.
+  //
+  // The WORKER half is loud too: the reconcile pass filters and writes both columns, so a worker
+  // ahead of the migration 42703s into the cycle's ordinary quarantine instead of silently filing
+  // nothing. Deploy order: migration → API → worker.
+  //
+  // No CHECK marker (any instant is a legal next attempt, and `attempts` closes no set — it is a
+  // count). No INDEX marker: the migration deliberately adds none, because the predicate joins a
+  // scan that is already bounded by one mailbox's pending set. It is the NEWEST entry in the mail
+  // journal.
+  ["folder_state", "next_attempt_at"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1172,9 +1192,20 @@ export const MAIL_EXPECTED_MARKERS =
  * 42703 into the cycle's ordinary quarantine rather than dropping names on the floor, which is
  * the defect this column ends. Deploy order: migration → API → worker. No CHECK marker (a
  * sender-chosen display name closes no set), no INDEX marker (projected off rows already fetched;
- * never a predicate). It is the NEWEST entry in the mail journal.
+ * never a predicate).
+ *
+ * `0058_reconcile_backoff` is probed ONCE, by `folder_state.next_attempt_at`, for four columns —
+ * `attempts` and `next_attempt_at` on `folder_state` and on `flag_state`, all created by one
+ * migration in one transaction, so a state where one exists without the others is unreachable. The
+ * probed column is the one the pending-move query FILTERS on. Widest whole-row-select argument
+ * again: `materializeMessages` selects whole `folder_state` rows for the message list, the single
+ * read and the bootstrap snapshot, so an API ahead of the migration 42703s the mail surface; the
+ * worker half is equally loud, because the reconcile pass both filters and writes the pair. Deploy
+ * order: migration → API → worker. No CHECK marker (an instant closes no set and `attempts` is a
+ * count), no INDEX marker (the migration adds none, by design). It is the NEWEST entry in the mail
+ * journal.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0057_message_from_name";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0058_reconcile_backoff";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
