@@ -30,7 +30,7 @@
   where it is release after release; holding it still is what keeps the ONE comparison that matters
   unambiguous, and bumping it would only invite the mistake of bumping it wrongly.
 
-  Held still at 0.9.3, deliberately, and the reasoning is worth restating because "bump the build
+  Held still at 0.9.4, deliberately, and the reasoning is worth restating because "bump the build
   number every release" is the habit this contradicts. The only reader of this key is a Sparkle
   client that has NOT yet taken the handover, and every such client is numbered at most 291; a
   client that HAS taken it is running this app and never reads the key again. So there is no

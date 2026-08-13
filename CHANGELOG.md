@@ -16,6 +16,90 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.9.4] — 2026-08-13
+
+Mostly about sending and finding. An install signed in to a hosted account can pick the
+address its mail leaves from and actually send from it; files and recipient chips can be
+dragged where the interface implies they can; search answers in the order you ask for; and
+mail you asked to see again stays in front of you until you deal with it.
+
+### Sending
+
+**Sending works again when the app is signed in to a hosted account.** That mode keeps a
+local database the window reads everything out of, and it was inventing a single
+placeholder mailbox to file all of it under. Three things followed from that: every send
+was refused, because a send names the mailbox it leaves from and an invented one is not one
+of the account's; the From selector offered that placeholder instead of the addresses mail
+can actually leave from, so an account with two addresses could not choose between them;
+and every reply announced that its sender had been substituted, whether or not anything had
+been. The app now mirrors the account's own mailboxes before it drains a single change, so
+each message is filed under the mailbox it really belongs to. An install that already holds
+a local database repairs itself once, in the background, on the next sync — nothing is
+re-downloaded and no message bodies are touched. Mail for a mailbox the account does not
+list is skipped rather than filed under the wrong address.
+
+**Drag a file onto an open compose to attach it, and drag a recipient between To and Cc.**
+Neither gesture did anything in the desktop app. Both are ordinary drag and drop, and
+neither ever reached the page: the window had the framework's own native drag handler on
+it, which answers the whole drag session itself and never lets the page see it. The window
+now switches that handler off, which is what a webview implementing its own drag and drop
+needs. Dragging a message row onto a pile or a tag in the rail was never affected — that
+gesture is built on pointer events for exactly this reason.
+
+**Large attachments can travel separately from the send on the hosted service.**
+Attachment bytes have always ridden inside the send request, which puts the hosted API's
+request-body ceiling in front of the feature: somebody whose own provider accepts
+twenty-five megabytes was told three. A client can now be told it may stage those files
+first and send references instead, and the server pulls them back and hands them to the
+transport exactly as before. **This app does not use it, on either door**, and a guard reads
+the app's own source and fails if it ever appears there — in local mode compose, the send
+handler and the connection to your mail server are one process with no request body in
+between, and in Cloud mode the send is forwarded unchanged. The standalone desktop's cap
+already follows what your own submission server announces, which 0.9.3 shipped.
+
+### Finding
+
+**Search results can be ordered — newest first, oldest first, by mailbox, by sender, or by
+best match**, which stays the default. The choice is remembered per account on that device.
+
+The ordering is not a sort over the page you were already going to be shown, and that
+distinction is invisible on a small mailbox: relevance ranking keeps only its best few
+hundred candidates before it trims to a page, so sorting *that* by date answers "of the most
+relevant few, which is newest" and quietly drops a message that matched weakly and arrived
+this morning. A chosen order therefore runs its own query across every message that matches,
+with the sort key deciding which rows come back. It reuses the same filters the count above
+the list is computed from, so the count and the list keep describing the same mail. The
+local index on the device and the full archive are merged in the chosen order too, rather
+than leaving the device's own hits in relevance order at the top of a list claiming to be
+sorted by date.
+
+### The Ohbox and the Screener
+
+**Mail you asked to see again stays until you answer it or mark it read.** A resurfaced
+message is pinned to the top of the Ohbox, and that pin was being spent by a glance —
+looking at the message, or just leaving the list it was in, filed it away again. Two of the
+ways the app marks mail read are not things anyone asks for: the reliability sweep the
+newsletter and receipt streams run as you scroll, and the Ohbox's own rest-for-two-seconds
+timer. Both now say what they are, and pinned mail is held back from them. Everything that
+is an actual answer still releases the pin — the read button, the shortcut, marking a
+selection or everything read, filing it, and replying to it. A pinned message you have
+looked at but not answered stays bold, deliberately: that is the whole point of having
+asked to see it again.
+
+**With automatic suggestions on, the Screener can suggest for senders as their mail
+arrives**, so opening the Screener finds the advice already there instead of fetching it
+while you wait. The option is still off by default, still decides nothing, and still leaves
+nothing behind but advice — no rule, no contact, no folder change, no mail moved. It is
+bounded three ways: only senders whose held mail arrived after you switched the option on,
+at most ten at a time, and the allowance is checked before every request, so an empty
+balance sends nothing anywhere.
+
+**The sentence that asks what belongs in your Ohbox prefills in the app's language.** It
+was English text in a German session, in the one control that asks you to write in your own
+words. Save stays inert for either language's default, so a German reader opening Settings
+is not one press away from storing a sentence they never typed; editing it still stores
+your own words exactly as before.
+
 ## [0.9.3] — 2026-08-12
 
 Mostly about mail rendering as what it is, and about the app staying truthful while work
@@ -1382,7 +1466,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.4
 [0.9.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.3
 [0.9.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.2
 [0.9.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.1
