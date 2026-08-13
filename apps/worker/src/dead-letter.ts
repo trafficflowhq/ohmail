@@ -2,6 +2,60 @@ import { MimeParseError, MimeTooLargeError, type NativeLocator } from "@trafficf
 import { parseRef } from "@trafficflow/core/adapters/imap";
 
 /**
+ * A throw that came out of THIS PROCESS'S DATABASE, whatever code it carries (X1H-6).
+ *
+ * ── WHY AN ORIGIN TAG EXISTS AT ALL ───────────────────────────────────────────────────────────
+ *
+ * {@link isDatabaseFault} below answers "is this the database's" from the error's `code`, and its
+ * header records why that answer has to stay narrow. The limit is not fixable by enumerating more
+ * codes. Measured against the real Postgres on :5433 while X1H-6 was designed:
+ *
+ *   | injected fault                        | what postgres.js throws                        |
+ *   |---------------------------------------|------------------------------------------------|
+ *   | Postgres not listening                | `AggregateError`, `code: "ECONNREFUSED"`       |
+ *   | pool `end()` under a live statement   | `Error`, `code: "CONNECTION_ENDED"`            |
+ *   | `statement_timeout`                   | `PostgresError`, `code: "57014"`               |
+ *   | dial into a blackhole                 | `Error`, `code: "EPERM"` / `"ETIMEDOUT"`       |
+ *   | DNS gone                              | `Error`, `code: "ENOTFOUND"`                   |
+ *   | wrong database name                   | `PostgresError`, `code: "3D000"`               |
+ *
+ * Rows 1, 4 and 5 are byte-identical, in `name` AND in `code`, to what a dead IMAP host throws —
+ * and rows 1 and 4 are precisely "the database is down", the case the taxonomy exists for. The
+ * information is not in the error; it is in WHERE THE CALL WAS MADE. So the hosted worker records
+ * it there (`db-fault.ts`), and the cycle loop exempts BY CLASS.
+ *
+ * ── WHAT THE TAG DOES *NOT* DECIDE ────────────────────────────────────────────────────────────
+ *
+ * It names the ORIGIN and nothing else. "It came out of the database" is not "the database is at
+ * fault": Postgres answering `23505` or `22021` is the database telling us about the VALUE this
+ * mailbox's mail carried, which is per-message evidence and keeps its per-message verdict.
+ * {@link classifyIngestFault} therefore unwraps this class before classifying, and
+ * {@link isSharedDatabaseFault} subtracts exactly those two SQLSTATE classes back out. Tagging the
+ * origin makes the domain question ANSWERABLE; it does not answer it.
+ *
+ * `cause` is always set and is always the original error, which is what makes the wrapper free to
+ * log: `packages/core/src/log.ts#describeCause` walks the chain to the first layer carrying a
+ * `code` and publishes `causeClass`/`causeCode` beside `errorClass`. An outage therefore reads
+ * `errorClass: "DatabaseFaultError", causeClass: "AggregateError", causeCode: "ECONNREFUSED"` —
+ * the wrapper says whose fault domain it is, the cause says what happened. That logger never
+ * publishes a message, only those two grammars, which is why this one carries no detail.
+ *
+ * IT LIVES HERE RATHER THAN BESIDE THE WRAPPER because this module is in the desktop engine's
+ * published source closure and the wrapper's module is not — see the header of `db-fault.ts`.
+ */
+export class DatabaseFaultError extends Error {
+  /** Which database call threw — `"repo.commitChange"`, `"fence.transaction"`. Built from our own
+   *  method names, never from anything a server chose. */
+  readonly op: string;
+
+  constructor(op: string, cause: unknown) {
+    super(`the database failed at ${op}`, { cause });
+    this.name = "DatabaseFaultError";
+    this.op = op;
+  }
+}
+
+/**
  * ══════════════════════════════════════════════════════════════════════════════════════════
  *  THE PER-MESSAGE TERMINAL-FAILURE LEDGER
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -171,6 +225,17 @@ const codeOf = (err: unknown): string => {
  * write-off of the mail it was asked to route.
  */
 export function classifyIngestFault(err: unknown): IngestFault {
+  // THE ORIGIN TAG IS UNWRAPPED FIRST, AND THIS LINE IS LOAD-BEARING.
+  //
+  // Since the worker wraps its repo (see `db-fault.ts`), every throw from a database call arrives
+  // as a `DatabaseFaultError` whose `code` is undefined. Without this unwrap the fall-through at
+  // the bottom would call each of them `{ message, unclassified }` — so an outage would spend two
+  // attempts per message and then DECLARE THE MAIL CONSUMED. Tagging the origin would have
+  // converted a database blip into mail loss, which is the exact failure this file exists to
+  // prevent, reintroduced by the fix for a different one. The tag says WHERE the throw came from;
+  // the domain question below is unchanged and still answered from what the database said.
+  if (err instanceof DatabaseFaultError) return classifyIngestFault(err.cause);
+
   // Deterministic in the raw bytes, by the contract on `mime.ts`'s two typed errors: "the same
   // source fails the same way every time … what makes them safe for a quarantine record to treat
   // as permanent". This is the first consumer that contract was written for.
@@ -216,17 +281,72 @@ export function classifyIngestFault(err: unknown): IngestFault {
  * database, and treating it as ours would stop quarantining genuinely unreachable mailboxes.
  *
  * The residual, stated: postgres.js surfaces a bare `ECONNREFUSED` when Postgres itself is down, so
- * a total database outage at this line is still rendered as a per-mailbox connect failure. That is
- * X1H finding 6's territory and is unchanged by this slice — it is self-clearing, and mis-blaming
- * a reachable mailbox for our outage is strictly less harmful than refusing to quarantine an
- * unreachable one.
+ * a total database outage at this line is still rendered as a per-mailbox connect failure. It is
+ * self-clearing, and mis-blaming a reachable mailbox for our outage is strictly less harmful than
+ * refusing to quarantine an unreachable one.
+ *
+ * X1H-6 CLOSED THAT RESIDUAL ON THE CYCLE PATH AND DELIBERATELY LEFT IT HERE. The cycle path's
+ * database calls all go through a wrapped repo, so their origin is recorded and no code has to be
+ * guessed at ({@link isSharedDatabaseFault}, `db-fault.ts`). The one call this seam makes —
+ * `loadMailboxCreds` — is not wrapped, because it reads a row AND decrypts the envelope in it, and
+ * a credential that will not decrypt is the most per-mailbox failure there is: tagging the whole
+ * call would promote a bad envelope to a shard-wide condition, which is this defect wearing the
+ * opposite sign. So this function keeps the narrow question, and this paragraph stays true of
+ * `attach()` alone.
  */
 export function isDatabaseFault(err: unknown): boolean {
+  // An ORIGIN tag outranks any code, because it is the one thing a code cannot say. See
+  // `db-fault.ts` for the measurement: three of the six database faults this worker can suffer
+  // are byte-identical, in `name` and in `code`, to a dead IMAP host.
+  if (err instanceof DatabaseFaultError) return true;
   const code = codeOf(err);
   if (!code) return false;
   if (PG_DRIVER_CODES.has(code)) return true;
   const cls = sqlStateClass(code);
   return cls !== null && INFRA_SQLSTATE_CLASSES.includes(cls);
+}
+
+/**
+ * SQLSTATE classes in which Postgres is answering about the VALUE WE SENT, not about itself.
+ *
+ * The same two {@link classifyIngestFault} maps to the message domain, and named here rather than
+ * derived from it because the two questions are genuinely different: that one asks "may this
+ * message be written off", this one asks "may this mailbox be quarantined". They agree today, and
+ * a change to either must be an explicit change to both.
+ */
+const DATA_SQLSTATE_CLASSES: readonly string[] = [
+  "22",   // data_exception — a decoded NUL in a subject, a timestamp out of range
+  "23",   // integrity_constraint_violation
+];
+
+/**
+ * Is this throw about a dependency THE WHOLE SHARD SHARES — and therefore never about the mailbox
+ * that happened to be mid-cycle when it landed?
+ *
+ * This is the cycle loop's question (X1H-6) and it is deliberately not
+ * {@link classifyIngestFault}'s. That one calls the customer's IMAP host "infrastructure" too,
+ * which is right where it is used — neither socket is the MESSAGE's fault — and would be wrong
+ * here, because a provider that will not answer is exactly what quarantine is for. Widening this
+ * predicate to `classifyIngestFault(err).domain === "infrastructure"` is the inverse defect: it
+ * dissolves mailbox isolation (X1H-3's ground), and `connection-error.e2e.test.ts` and
+ * `mailbox-failure.e2e.test.ts` are the two guards that go red when it is tried.
+ *
+ * Two arms, and the asymmetry between them is the conservative boundary:
+ *
+ *  · TAGGED — the throw came out of `SyncDeps.repo` or the fence's transaction, so the origin is
+ *    settled. It is shared UNLESS Postgres named a data class, which is the database reporting on
+ *    this mailbox's own mail and keeps its per-message cadence.
+ *  · UNTAGGED — no origin, so back to {@link isDatabaseFault}'s NARROW code-only question, which
+ *    admits SQLSTATEs and postgres.js's own names and refuses every raw errno. An ambiguous
+ *    timeout therefore stays a per-mailbox fault, which is the status quo and the safe direction:
+ *    a missed exemption costs a self-clearing quarantine, a wrong one costs isolation.
+ */
+export function isSharedDatabaseFault(err: unknown): boolean {
+  if (err instanceof DatabaseFaultError) {
+    const cls = sqlStateClass(codeOf(err.cause));
+    return cls === null || !DATA_SQLSTATE_CLASSES.includes(cls);
+  }
+  return isDatabaseFault(err);
 }
 
 /**

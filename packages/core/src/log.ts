@@ -301,6 +301,16 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // ── retry, failure and circuit accounting ──
   "attempt", "attempts", "consecutiveFailures", "maxSyncFailures", "consecutiveFaults",
   "opens", "open", "threshold", "circuit", "cooldownMs", "retryAt", "retryInMs",
+  // ── the worker's shared-DATABASE condition (X1H-6), added WITH its call sites ──
+  //
+  // `outageMs` is a `Date.now()` delta and `faults` is a `++` counter, so both are structurally
+  // integers naming no mailbox, no address and no statement. They are the whole content of
+  // `worker_database_recovered`, which is the line an operator reads to size an incident that by
+  // construction wrote nothing to the database — so a census drop here would silently delete the
+  // only durable record of it. NAMED rather than folded into `count`/`totalMs`, on this file's own
+  // rule: "how long was the database gone" and "how many mailboxes met it" are different
+  // quantities, and one key meaning either is not a claim a reviewer can check.
+  "outageMs", "faults",
   // ── alerting (the worker's alert loop and the API's internal alert route) ──
   "alertKey", "alertKeys", "alertSinks", "alertIntervalMs", "rosterIntervalMs",
   "pollIntervalMs", "firing", "delivered", "failedSinks", "oldestSeconds",
