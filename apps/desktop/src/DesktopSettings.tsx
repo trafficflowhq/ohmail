@@ -26,7 +26,6 @@ import { useState } from "react";
 import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
 
 import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
-import { openWeb } from "./native.js";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
 import type { LocalAiStatus } from "./local-ai.js";
 
@@ -38,9 +37,6 @@ import type { LocalAiStatus } from "./local-ai.js";
  * no clue that it is where the app itself is configured.
  */
 export const DESKTOP_PANE_LABEL = "Desktop";
-
-/** Said when the operating system would not open a browser. One sentence; there is no second. */
-const NO_BROWSER = "This computer would not open a browser. The page is at ohmail.app.";
 
 const DOOR_NAME: Record<string, string> = {
   local: "On this Mac",
@@ -182,28 +178,14 @@ export function DesktopSettings({
         />
       ) : null}
 
-      {/* THE ACCOUNT ITSELF IS ADMINISTERED ON THE WEB, and this is the door to it.
-          Not an omission being papered over: changing a password, enrolling an authenticator or
-          printing recovery codes are step-up ceremonies against the hosted account, and every one
-          of them needs a session this window does not hold and must not be given. What was missing
-          was a way to GET there — the app said "manage this on the web" and left somebody to retype
-          an address. The button opens the page in their own browser, where they are already signed
-          in. Offered on the hosted door only: a standalone install has no account to administer. */}
-      {status.mode === "cloud" ? (
-        <SettingsRow
-          label="Your ohmail account"
-          description={
-            "Your password, your authenticator, your recovery codes and your plan live with the " +
-            "account rather than with this install. They open in your browser, where you are " +
-            "already signed in."
-          }
-          control={
-            <Button onClick={() => void openWeb("account").catch(() => setProblem(NO_BROWSER))}>
-              Open in browser
-            </Button>
-          }
-        />
-      ) : null}
+      {/* "YOUR OHMAIL ACCOUNT" WAS HERE, AND IT HAS MOVED — into the three panes it was standing
+          in for. It was one row that named a password, an authenticator, recovery codes and a plan
+          together, on the pane about this INSTALL, because Settings had no Security, Account or
+          Subscription pane at all on the hosted door. Those panes exist now
+          (`DesktopWebSection`, `DesktopBilling`) and each carries its own door out, so keeping this
+          row would be a second door to the same place under different words — on the one pane
+          nobody looking for their password would think to open. Everything below this line is about
+          the install: which mailbox, which door, and how to change either. */}
 
       <SettingsRow
         label="Switch mailbox"

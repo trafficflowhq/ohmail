@@ -2061,16 +2061,31 @@ textarea.c-input:read-only {
   gap: 16px;
   align-items: start;
 }
-/* EVERY PANE SECTION LIVES IN THE CONTENT COLUMN, INCLUDING THE SECOND ONE.
-   `.set-layout` is nav (170px) | content (1fr), and every pane renders exactly one `.set-pane`
-   into the content column — except Account, which renders TWO (the sign-out card and the delete
-   card). With auto-placement the second `.set-pane` wrapped onto the next row into COLUMN 1 — the
-   nav column — squeezed to 170px and sitting under the nav. Pinning every direct `.set-pane` to
-   column 2 keeps the nav in column 1 and stacks a pane's sections down the content column with the
-   grid's own row gap. A no-op for single-section panes (they were already column 2); the mobile
-   single-column layout resets it below. */
-.set-layout > .set-pane {
-  grid-column: 2;
+/* THE CONTENT COLUMN IS ONE GRID ITEM, WHATEVER A PANE RENDERS INTO IT.
+   `.set-layout` is nav (170px) | content (1fr). Every pane renders one `.set-pane` except Account,
+   which renders TWO — the sign-out card and the delete card — and that pane is what this rule is
+   about.
+
+   THIS USED TO BE `.set-layout > .set-pane { grid-column: 2 }`, and that rule fixed HALF of one
+   mechanism. Both `.set-pane`s were direct grid items, so the second was auto-placed: first into
+   the NAV's 170px column (what the column pin cured), and then, pinned to column 2, onto grid ROW
+   2. A grid row is as tall as the tallest item in it, and the item in row 1 is the ten-entry nav —
+   so the delete card started below the BOTTOM OF THE NAV, with roughly a nav's height of blank
+   canvas above "Delete your account". A column pin cannot cure that: it says nothing about rows.
+
+   So the panes are wrapped in one element (`SettingsView`), the grid stays exactly two items wide,
+   and a pane's sections stack inside the wrapper with a flex gap that owes the nav nothing. The
+   mobile block below only re-spaces the gap — there is no placement left to reset. */
+.set-pane-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  /* The reflow rule below releases the WRAPPER's intrinsic minimum; this releases the sections'
+     inside it, so a nowrap rule row still cannot widen the sheet. See `.set-layout > *`. */
+  min-width: 0;
+}
+.set-pane-col > * {
+  min-width: 0;
 }
 /* THE PANES MAY NOT SET THE SHEET'S WIDTH. A `1fr` track is `minmax(auto, 1fr)`, and the
    `auto` minimum of a grid item is its MIN-CONTENT size — so one nowrap line anywhere inside
@@ -3213,10 +3228,10 @@ textarea.c-input:read-only {
     grid-template-columns: 1fr;
     gap: 10px;
   }
-  /* One column here, so the content-column pin above would push sections into an implicit
-     second column. Back to auto: the nav is a wrapping row of pills and the panes stack under it. */
-  .set-layout > .set-pane {
-    grid-column: auto;
+  /* The nav is a wrapping row of pills above a single column here, so there is no placement to
+     reset — only the gap between a pane's own sections, which follows the sheet's. */
+  .set-pane-col {
+    gap: 10px;
   }
   .set-nav {
     position: static;

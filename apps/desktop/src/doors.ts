@@ -233,6 +233,38 @@ export function awayDoorFor(status: EngineStatus | null): "cloud" | null {
   return status?.mode === "cloud" && status.credentialState === "ready" ? "cloud" : null;
 }
 
+/**
+ * WHETHER THIS INSTALL MAY ADMINISTER A HOSTED ACCOUNT FROM ITS SETTINGS — the gate on everything
+ * that belongs to an ACCOUNT rather than to this machine.
+ *
+ * One function for one question, so the whole family moves together: the consent row (the dormancy
+ * dial, the auto-suggest opt-in, auto-unsubscribe — `local-consent.ts`), the Screener's spend wire
+ * (`cloud-suggest.ts`, which the opt-in's quote runs on), and the three panes that exist only
+ * because there is an account behind this window — Subscription, Security and Account.
+ *
+ * It agrees with {@link awayDoorFor} on every status either has been shown, and it is deliberately
+ * a separate function rather than a second caller of that one. They ask different questions and one
+ * of them could move: that one is about whether a REPLY CAN BE SENT, a fact about the hosted
+ * worker's schedule; this one is about whether there is an ACCOUNT TO READ AND WRITE. Collapsing
+ * them would make a change to either a silent change to the other.
+ *
+ *  · STANDALONE. There is no account, so there is nothing here to administer: no consent row to
+ *    store a window or a spending watermark in, no ledger to price against, no subscription and no
+ *    second factor. Every one of those surfaces is withheld structurally rather than offered dead,
+ *    and expanding that door is not what this gate is for.
+ *  · HOSTED, SIGNED IN. The account is real and the engine forwards these routes to it with the
+ *    bearer, so what is read and written is the account's own row — identical to a browser tab with
+ *    one hop more.
+ *  · HOSTED, NOT SIGNED IN — or no door yet, or no answer from the shell. `null`. `READY`, not
+ *    merely present, for the reason {@link suggestDoorFor} gives: on this door the credential IS
+ *    the session, so `absent` is "signed out" and `unreadable`/`unknown` are "we cannot say", and
+ *    a settings pane whose only state is an error about something it cannot fix from inside itself
+ *    is worse than no pane.
+ */
+export function accountDoorFor(status: EngineStatus | null): "cloud" | null {
+  return status?.mode === "cloud" && status.credentialState === "ready" ? "cloud" : null;
+}
+
 /** What the local door's form collects. Every field is what the user typed, untrimmed. */
 export interface LocalDoorFields {
   /** The preset's id — `providerById` in the shared shell resolves it to hosts and ports. */

@@ -85,12 +85,12 @@ import { AttachmentPreview } from "../components/AttachmentPreview";
 import { dispatchMarkAll, dispatchMarkAllRead } from "./read-all";
 import { useMessageAttachments } from "./attachments";
 import { useRemoteImages } from "./remote-images";
-import { useConsentState } from "./consent-state";
+import { useConsentState, type ConsentTransport } from "./consent-state";
 import { readBootCache, writeBootCache } from "./boot-cache";
 import { readOwner } from "./owner-cookie";
 import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
-import { useScreenerSuggestions, type SenderSuggestion } from "./screener-suggest";
+import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
@@ -483,6 +483,8 @@ export function AppShell({
   screeningSection,
   screenerSuggest,
   awayTransport,
+  consentTransport,
+  suggestWire,
   aiCredits,
   onUnread,
 }: {
@@ -528,14 +530,23 @@ export function AppShell({
    */
   sendSurfaceMaxTotalBytes?: number | null;
   /**
-   * The Cloud client's Settings → Account pane, injected rather than imported — the same
-   * seam as `resolveOwner`, and see `views/SettingsView.tsx` for why it has to be one.
-   * Absent on Desktop, which is standalone and has no account.
+   * The host's Settings → Account pane, injected rather than imported — the same seam as
+   * `resolveOwner`, and see `views/SettingsView.tsx` for why it has to be one.
+   *
+   * Absent on a STANDALONE desktop install, which has no account. The desktop's HOSTED door does
+   * supply one, and it is a different node rather than the same one: erasure is a step-up
+   * ceremony no desktop session can satisfy, so what it offers is the way to the browser.
    */
   accountSection?: ReactNode;
-  /** The Cloud client's Settings → Mailboxes pane. Same seam. */
+  /** The host's Settings → Mailboxes pane. Same seam. */
   mailboxSection?: ReactNode;
-  /** The Cloud client's Settings → Subscription pane (plan, AI switch, Stripe portal). */
+  /**
+   * The host's Settings → Subscription pane (plan, AI switch, and the way to invoices).
+   *
+   * Same seam and the same standalone rule as {@link accountSection}: absent where there is
+   * nothing to bill, supplied on the desktop's hosted door, where the plan and the AI switch are
+   * ordinary forwarded calls and only checkout and the portal are a door out.
+   */
   billingSection?: ReactNode;
   securitySection?: ReactNode;
   /**
@@ -647,6 +658,50 @@ export function AppShell({
    */
   awayTransport?: AwayTransport;
   /**
+   * `GET /consent` AND ITS FOUR WRITES, WHEN THE HOST HAS ITS OWN WIRE — the desktop on its
+   * HOSTED door, and nobody else.
+   *
+   * The same seam as {@link awayTransport} and injected for the same reason, with a wider blast
+   * radius: `apiConfigured()` is false in every desktop build, so this shell's `GET /consent`
+   * never ran there, `consent.known` was false for the life of the process, and FOUR controls
+   * were withheld from an install that is mirroring a real account — the dormancy dial, the
+   * auto-suggest opt-in, auto-unsubscribe, and (through `consent.locale`) the account's own
+   * choice of interface language. Every one of those is stored on the hosted account and reached
+   * by forwarding, exactly as the away responder is.
+   *
+   * A TRANSPORT and not a set of sections, for the reason {@link awayTransport} gives and one
+   * sharper: `autoSuggest` is the only flag in this product that authorises SPENDING, and the
+   * spender (`useScreenerSuggestions` above) reads it off this one hook. A host that wrote the
+   * flag its own way would leave that copy stale, and the direction that costs money is OFF —
+   * revoked in Settings, still authorised in the Screener.
+   *
+   * The STANDALONE door hands in nothing, and that is a product boundary rather than a missing
+   * wire: it has no account, so there is no row to read and nowhere to put a window, a watermark
+   * or a consent instant. Absent ⇒ `consent.standalone`, and every control above is withheld
+   * structurally rather than offered dead.
+   */
+  consentTransport?: ConsentTransport;
+  /**
+   * THE SCREENER'S TWO SPEND CALLS, WHEN THE HOST HAS ITS OWN WIRE — the desktop on its HOSTED
+   * door, and nobody else.
+   *
+   * Distinct from {@link screenerSuggest}, which hands in a whole CONTROL, and the two are not
+   * alternatives: that one is the Screener's own purchase ladder, whose desktop version already
+   * exists (`CloudSuggest`). This is the wire the SHELL's copy of the machinery runs on, and it
+   * is needed for the part `CloudSuggest` structurally cannot do — `autoOptIn.supported`, which
+   * is `wire.configured()` and which gates the Settings opt-in row. `CloudSuggest` says so
+   * itself: *"the setting that authorises it is written from a Settings row this app does not
+   * render"*. This is that row's wire.
+   *
+   * Supplying it also lets the shell's overlay HYDRATE from `GET /screener` — the answers the
+   * account has already paid for — which on the desktop had never been read, so a relaunch lost
+   * every suggestion until it was bought again.
+   *
+   * Absent ⇒ the hosted client, which is what a browser tab has, and `false` on a standalone
+   * install: no account, no ledger, no spend control.
+   */
+  suggestWire?: SuggestWire;
+  /**
    * WHAT THE ACCOUNT'S AI ALLOWANCE IS DOING, said where AI actions are bought.
    *
    * The same seam as {@link screenerSuggest} and for the identical reason: the answer comes from
@@ -696,6 +751,8 @@ export function AppShell({
             screeningSection={screeningSection}
             screenerSuggest={screenerSuggest}
             awayTransport={awayTransport}
+            consentTransport={consentTransport}
+            suggestWire={suggestWire}
             aiCredits={aiCredits}
             onUnread={onUnread}
           />
@@ -741,7 +798,7 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, aiCredits, onUnread }: {
+function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, consentTransport, suggestWire, aiCredits, onUnread }: {
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
@@ -757,6 +814,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   }) => ReactNode;
   awayTransport?: AwayTransport;
+  consentTransport?: ConsentTransport;
+  suggestWire?: SuggestWire;
   aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
   onUnread?: (unread: number) => void;
 }) {
@@ -806,7 +865,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * senders who went quiet years ago and were never screened presents in History. Nothing
    * moves; this is a filter over the same mirror.
    */
-  const consent = useConsentState(!demo);
+  const consent = useConsentState(!demo, consentTransport);
   /**
    * THE ACCOUNT'S LANGUAGE WINS OVER THIS DEVICE'S — the whole of the account-tied half, and it
    * rides the `GET /consent` this shell already makes rather than a request of its own.
@@ -864,7 +923,24 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    */
   const [seedDismissed, setSeedDismissed] = useState(false);
   const [seedReopened, setSeedReopened] = useState(false);
-  const seedOwed = !demo && consent.known
+  /**
+   * THE REVIEW NEEDS THE BROWSER'S CLOUD CLIENT, and no injected wire substitutes for it.
+   *
+   * `consent.known` used to be the whole gate, and it was sufficient for exactly as long as
+   * "the server answered" and "this bundle can call the server" were one fact. A host with its
+   * own {@link consentTransport} splits them: `known` becomes true on the desktop's hosted door,
+   * and `SeedReviewView` still imports `app/api-client` DIRECTLY — `seedReview`, `confirmSeed`,
+   * a ceremony's worth of calls no transport carries. Without this clause an account that has
+   * never answered the review would have had it take the WHOLE STAGE of the desktop window, on
+   * top of its mail, unable to load its own candidates and unable to be completed.
+   *
+   * So the review is offered where the client that runs it exists, which is the browser. This is
+   * the same fact `seedSection` is gated on below — the settings door back to a screen that
+   * cannot open is a door to nothing — and it is why {@link ConsentState.cloudClient} is
+   * published separately from `standalone`.
+   */
+  const seedSupported = consent.cloudClient;
+  const seedOwed = !demo && consent.known && seedSupported
     && (seedReopened || (consent.seedConfirmedAt === null && !seedDismissed));
   /**
    * The account's OWN addresses, from `GET /mailboxes` — passed EXPLICITLY and not left to
@@ -1090,6 +1166,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     // 0040 — so the automatic purchase cannot happen on a guess.
     autoSuggest: consent.autoSuggest,
     toast,
+    /* The host's own wire where there is one — see {@link suggestWire}. Spread rather than passed
+       as `undefined`, so an absent prop leaves the hook on its documented default rather than
+       being handed a hole. */
+    ...(suggestWire ? { wire: suggestWire } : {}),
   });
   /**
    * `presented`, NOT `engine.read()` — the Screener is the cutline's own surface.
@@ -1142,9 +1222,12 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    *
    * TWO ways to be true, and they are the two installs that have a hosted account behind them:
    *
-   *  · `autoOptIn.supported` is `apiConfigured()` — a browser tab talking to the hosted API. Read
-   *    off the opt-in rather than by calling `apiConfigured()` here so there is one answer to that
-   *    question in this file, and because this shared shell does not import the Cloud API client;
+   *  · `autoOptIn.supported` is `wire.configured()` — the browser talking to the hosted API, OR a
+   *    host that handed in a {@link suggestWire}. It used to be exactly `apiConfigured()` and this
+   *    line used to say so; a host wire is what widened it, and the widening is in the same
+   *    direction and for the same installs, so this clause covers strictly more of what it always
+   *    meant. Read off the opt-in rather than by calling `apiConfigured()` here because this
+   *    shared shell does not import the Cloud API client at all;
    *  · a host handed in a transport — the desktop on its HOSTED door, whose window cannot open a
    *    socket but whose engine forwards this endpoint to the account. See {@link awayTransport},
    *    which also states why the STANDALONE door deliberately reaches neither branch.
@@ -4678,7 +4761,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    settings form, so the entry has to be able to reach `seedOwed`. Absent on
                    the demo for the same reason the others are: there is no server to read a
                    sent folder from. */
-                seedSection={demo ? undefined : {
+                seedSection={demo || !seedSupported ? undefined : {
                   label: t("seed.settingsLabel"),
                   /* No `SettingsSection` of its own — the Screener pane wraps the whole thing, and
                      this renders under its `seed.settingsLabel` subhead at the foot of it. */
@@ -4701,9 +4784,15 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    user just revoked. `autoOptIn` is bound to `screener.unsuggestedSenders` here,
                    at the render, so the set that is priced is the set that will be bought.
 
-                   `supported` is `apiConfigured()`, which is what withholds the row from the
-                   Desktop mirror this file is copied into: no server, no account, nothing to
-                   buy. `demo` is withheld for the same reason as every other injected pane. */
+                   `supported` is `wire.configured()`. It used to be `apiConfigured()` and this
+                   comment used to name that, which made it false of BOTH desktop doors: the row
+                   was withheld from a hosted install that has an account, an allowance and a
+                   balance behind it, for want of a way to ask — `CloudSuggest.tsx` states the
+                   consequence from the other side ("the setting that authorises it is written
+                   from a Settings row this app does not render"). A host that hands in a
+                   {@link suggestWire} has that way, and this is the row. A STANDALONE install
+                   hands in none: no server, no account, nothing to buy. `demo` is withheld for
+                   the same reason as every other injected pane. */
                 autoSuggestSection={
                   demo || !autoOptIn.supported ? undefined : (
                     <AutoSuggestRow
@@ -4734,10 +4823,19 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    reason: the resting value is MANUAL, so drawing the row before the server has
                    answered would show a switch in the OFF position to an account whose stored
                    setting is ON — and somebody who then left it alone would believe they had
-                   chosen the state they were merely shown. Absent on the demo (no server) and on a
-                   standalone install (`known` never becomes true), both of which keep the
-                   per-message flow that `useRemoteImages` gives them anyway. */
-                remoteImagesSection={demo || !consent.known ? undefined : (
+                   chosen the state they were merely shown. Absent on the demo (no server).
+
+                   AND ON EVERY DESKTOP DOOR, INCLUDING THE HOSTED ONE, which is the clause a
+                   `consentTransport` made necessary: `known` becomes true there, and this row
+                   would then govern a mechanism that does not exist in the window. Consented
+                   images load through `GET /img` on THIS ORIGIN — the proxy is what keeps the
+                   reader's address away from the sender, and the same-origin url is what carries
+                   the session cookie and satisfies the frame's `img-src 'self'`. A window under
+                   `connect-src 'none'` has no such origin and `useRemoteImages` hands back nothing
+                   at all there (`remote-images.ts`), so the switch would store a preference and
+                   change no picture. `cloudClient` is exactly that build fact, and it is checked
+                   rather than `remoteImages !== undefined` only because it names WHY. */
+                remoteImagesSection={demo || !consent.known || !consent.cloudClient ? undefined : (
                   <RemoteImagesRow
                     blocked={consent.blockRemoteImages}
                     setBlockRemoteImages={consent.setBlockRemoteImages}
@@ -4751,11 +4849,15 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    ON to an account that turned it OFF — and somebody who then left it alone would
                    believe they had chosen the state they were merely shown.
 
-                   `supported` (i.e. `apiConfigured()`) is the structural one, and it is why this is
-                   not simply `known`: a standalone install wires no unsubscribe service into its
-                   screener at all, so nothing there could be switched off. A control drawn on that
-                   build would store nothing and govern nothing. Withheld from the demo like every
-                   other injected pane. */
+                   `supported` is the structural one, and it is why this is not simply `known`: a
+                   STANDALONE install wires no unsubscribe service into its screener at all, so
+                   nothing there could be switched off, and a control drawn on that build would
+                   store nothing and govern nothing. It used to read `apiConfigured()`, which
+                   also excluded the desktop's HOSTED door — where the screening decisions this
+                   flag qualifies are forwarded to the account and the hosted pass is what sends
+                   the request, so the switch governs exactly what it says it does. That door
+                   hands in a wire; the standalone door hands in none and is still excluded.
+                   Withheld from the demo like every other injected pane. */
                 autoUnsubscribeSection={demo || !consent.known || !autoOptIn.supported ? undefined : (
                   <AutoUnsubscribeRow
                     on={consent.autoUnsubscribe}

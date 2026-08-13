@@ -13,10 +13,18 @@
  * `accountSection` is the same seam `AppShell`'s `resolveOwner` is, for the same reason.
  * This file is SHARED with `apps/desktop` and copied into a public GPL mirror that does not
  * contain `app/api-client` at all (`scripts/publish-desktop.mjs` DENYs it), so it cannot
- * import "erase this account from the server" — and Desktop, which is standalone and has no
- * account, must not grow an Account pane by accident. The Cloud client passes a node in
- * (`(product)/mailbox/AccountSection.tsx`); Desktop passes nothing and the pane does not
- * exist. Nothing about account deletion is written down in this file.
+ * import "erase this account from the server". The Cloud client passes a node in
+ * (`(product)/mailbox/AccountSection.tsx`). Nothing about account deletion is written down in
+ * this file.
+ *
+ * ── AND "DESKTOP HAS NO ACCOUNT" IS A STATEMENT ABOUT A DOOR, NOT ABOUT A BUILD ─────────
+ *
+ * This paragraph used to end "Desktop passes nothing and the pane does not exist", which was
+ * true of the app as a whole only while every install was standalone. An install on the
+ * HOSTED door mirrors a real account and does pass a node — a door out to the browser, since
+ * erasure is a step-up ceremony no desktop session can satisfy (`DesktopWebSection`). A
+ * STANDALONE install still passes nothing, which is the invariant that was always the point:
+ * no account, no pane, structurally rather than by remembering.
  */
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
@@ -719,6 +727,23 @@ export function SettingsView({
             ))}
           </nav>
 
+          {/* ── ONE GRID ITEM FOR THE WHOLE CONTENT COLUMN, AND THE ACCOUNT PANE IS WHY ───────
+              `.set-layout` is a two-column grid: nav | content. Every pane below renders ONE
+              `SettingsSection` into it except Account, which renders TWO (the sign-out card and
+              the delete card). While each section was its own GRID ITEM, the second one was
+              auto-placed into grid ROW 2 — and row 1's height is the tallest item in it, which is
+              the NAV. So on the Account pane the delete card began below the bottom of a
+              ten-entry nav, leaving roughly a nav's worth of blank canvas between the two cards
+              and above "Delete your account". Nothing was hidden and no rule was wrong; the
+              second card was simply obeying a row the nav had sized.
+
+              An earlier fix pinned every direct `.set-pane` to `grid-column: 2`, which cured the
+              other half of the same mechanism (the second card had been landing in the NAV's
+              170px column) and could not cure this half: a column pin does not stop a second item
+              from taking a second row. This wrapper does, by leaving the grid exactly two items
+              wide — nav, content — and stacking a pane's sections inside it with a flex gap that
+              owes the nav nothing. Pinned by `settings-account-layout.test.tsx`. */}
+          <div className="set-pane-col">
           {pane === "general" ? (
             <SettingsSection>
               {/* THE LANGUAGE, and the one control in this pane that is NOT injected as a node.
@@ -929,6 +954,7 @@ export function SettingsView({
           {/* No `SettingsSection` wrapper here: the node brings its own, because it renders
               several sections (the connection, then the actions) rather than one list. */}
           {pane === "desktop" ? desktopSection?.node : null}
+          </div>
         </div>
       </div>
     </section>

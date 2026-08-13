@@ -49,8 +49,14 @@ import { DesktopMailboxes, readMailboxFacts } from "./DesktopMailboxes.js";
 import { DesktopScreening } from "./DesktopScreening.js";
 import { GateNotice } from "./GateNotice.js";
 import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
-import { awayDoorFor, gateFor, mailMount, readShell, suggestDoorFor, type Shell } from "./doors.js";
+import { DesktopBilling } from "./DesktopBilling.js";
+import { DesktopWebSection } from "./DesktopWebSection.js";
+import {
+  accountDoorFor, awayDoorFor, gateFor, mailMount, readShell, suggestDoorFor, type Shell,
+} from "./doors.js";
 import { awayOverBridge } from "./local-away.js";
+import { consentOverBridge } from "./local-consent.js";
+import { cloudSuggestWire } from "./cloud-suggest.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
 import { LocalSuggest } from "./local-suggest.js";
 import { CloudSuggest } from "./CloudSuggest.js";
@@ -199,6 +205,22 @@ export function DesktopGate() {
 
   const status = shell.kind === "status" ? shell.status : null;
   const suggestDoor = suggestDoorFor(status);
+  /**
+   * IS THERE A HOSTED ACCOUNT BEHIND THIS WINDOW — the one gate every account-shaped surface below
+   * reads, so they can only appear and disappear together.
+   *
+   * The settings surface an install shows should be the settings surface the same account shows in
+   * a browser tab, wherever the routes behind it are reachable — and on this door they are: the
+   * engine serves the mail READS out of its mirror and forwards everything else to the account with
+   * its bearer (`cloud-proxy.ts`), so `/consent`, `/consent/settings`, `/screener`,
+   * `/billing/subscription` and `/account/ai` are the account's own rows, one hop away.
+   *
+   * What was missing was never the transport, it was the ASKING: `apiConfigured()` is false in
+   * every desktop build, so the shared shell's own reads never ran and each control was withheld as
+   * "there is no server here". That is true of the standalone door and false of this one.
+   * `accountDoorFor` is where the distinction lives, as a pure function a test can drive.
+   */
+  const accountDoor = accountDoorFor(status) === "cloud";
 
   /* Null on the one render where the engine has just been asked for and the state that holds it
      has not caught up. React re-renders before painting, so that render is never seen; it still
@@ -342,6 +364,56 @@ export function DesktopGate() {
            enablement episode begins — the key the worker files its at-most-once record under.
            `awayDoorFor` is where the rule lives, as a pure function a test can drive. */
         {...(awayDoorFor(status) === "cloud" ? { awayTransport: awayOverBridge } : {})}
+        /* SETTINGS → SCREENER AND GENERAL, THE ACCOUNT'S OWN ROW — the dormancy dial, the
+           auto-suggest opt-in and auto-unsubscribe, all of which the shared shell already builds
+           and all of which it withheld here because its `GET /consent` could not run. Two wires
+           rather than one, because the opt-in row needs both halves and they are different
+           questions: `consentTransport` is where the FLAG is read and written, and `suggestWire` is
+           what PRICES the batch turning it on would buy — a switch that authorises spending without
+           a quote is the one thing that control must never be. Both are the same transport-not-a-
+           section rule the away responder states: one implementation of what a consent means, one
+           implementation of how money moves, and only the bytes injected.
+
+           On the STANDALONE door neither is passed, and every one of those controls stays absent.
+           That is a product boundary, not a gap: there is no account row to hold a window, no
+           watermark for an automatic pass to measure from, and no ledger to price against. */
+        {...(accountDoor ? { consentTransport: consentOverBridge, suggestWire: cloudSuggestWire } : {})}
+        /* SETTINGS → SUBSCRIPTION, SECURITY AND ACCOUNT — the three panes the web client has on a
+           hosted account and this window did not, so its Settings nav was simply shorter with
+           nothing on screen saying why. An absent entry does not read as "this is done elsewhere";
+           it reads as "this product does not have that", which for account deletion contradicts
+           what the site promises.
+
+           Subscription carries real facts (the plan, the renewal, the actions left) and the one
+           control among the three that is an ordinary write — the managed-AI switch. The other two
+           are doors: every control behind them is step-up gated, and nothing this app can do
+           asserts a second factor, so a form here would collect a password and be refused. See
+           `DesktopWebSection`. */
+        {...(accountDoor ? { billingSection: <DesktopBilling /> } : {})}
+        {...(accountDoor
+          ? {
+              securitySection: (
+                <DesktopWebSection
+                  place="security"
+                  copy={{ title: "webSecurityTitle", why: "webSecurityWhy" }}
+                />
+              ),
+            }
+          : {})}
+        {...(accountDoor
+          ? {
+              accountSection: (
+                <DesktopWebSection
+                  place="account"
+                  copy={{
+                    title: "webAccountTitle",
+                    why: "webAccountWhy",
+                    note: "webAccountNote",
+                  }}
+                />
+              ),
+            }
+          : {})}
         onUnread={onUnread}
       />
       {overlay ? (

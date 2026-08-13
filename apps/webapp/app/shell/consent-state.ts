@@ -38,12 +38,51 @@
  * produce an error anybody has to read.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DEFAULT_DORMANCY_DAYS } from "@ohmail/client-engine";
 import { apiConfigured, consent as consentApi, type ConsentStateWire } from "../api-client";
 import { readBootCache, writeBootCache } from "./boot-cache";
 import { normalizeLocale, type AppLocale } from "./locale";
 import { readOwner } from "./owner-cookie";
+
+/**
+ * THE FIVE CALLS THIS HOOK MAKES, GATHERED INTO SOMETHING A HOST CAN HAND IN.
+ *
+ * The same seam as `AwayResponderRow`'s `AwayTransport` and `screener-suggest`'s `SuggestWire`, and
+ * it exists for the identical reason. `apiConfigured()` is FALSE in every desktop build, both doors
+ * — `apps/desktop/vite.config.ts` aliases `app/api-client` to a stub whose value exports refuse —
+ * so the fetch below never ran there, `known` stayed false for the life of the process, and every
+ * control gated on it was withheld: the dormancy dial, the auto-suggest opt-in, auto-unsubscribe.
+ * That was right for a STANDALONE install, which has no account and nowhere to store any of it. It
+ * was wrong for an install on the HOSTED door, which mirrors a real account: its window cannot open
+ * a socket (`connect-src 'none'`), but its mail engine holds the account's session and forwards
+ * `/consent` to it with the bearer, so the row that is read and written is the account's own.
+ *
+ * ONLY THE WIRE IS INJECTED, never the controls — the rule `AwayTransport` states. `autoSuggest` is
+ * the one flag in this product that authorises spending, and its echo-not-the-argument discipline,
+ * its resting values and the single `setState` every consumer reads are decided above this seam and
+ * cannot be varied by supplying one. A second implementation of them would be a second answer to
+ * "is auto-suggest on", and the direction that costs money is the one where they disagree.
+ *
+ * Every method is shaped like `api-client`'s own `consent` object, because that IS the default and a
+ * shape adapted for the second caller would be a shape invented for it.
+ */
+export interface ConsentTransport {
+  state: () => Promise<ConsentStateWire>;
+  setAutoSuggest: (enabled: boolean) => Promise<{ autoSuggestAt: string | null }>;
+  setDormancyDays: (days: number | null) => Promise<{ dormancyDays: number }>;
+  setBlockRemoteImages: (blocked: boolean) => Promise<{ blockRemoteImagesAt: string | null }>;
+  setBlockAutoUnsubscribe: (blocked: boolean) => Promise<{ blockAutoUnsubscribeAt: string | null }>;
+}
+
+/** The hosted transport — the browser talking to the API this app was written against. */
+const CLOUD_CONSENT: ConsentTransport = {
+  state: () => consentApi.state(),
+  setAutoSuggest: (enabled) => consentApi.setAutoSuggest(enabled),
+  setDormancyDays: (days) => consentApi.setDormancyDays(days),
+  setBlockRemoteImages: (blocked) => consentApi.setBlockRemoteImages(blocked),
+  setBlockAutoUnsubscribe: (blocked) => consentApi.setBlockAutoUnsubscribe(blocked),
+};
 
 export interface ConsentState {
   /** Null until the seed review has been confirmed. Drives which onboarding step is shown. */
@@ -146,14 +185,24 @@ export interface ConsentState {
    * would silently hide somebody's mail. Both halves of that reason presuppose a stored window
    * this client has not yet read.
    *
-   * On a standalone install there is no stored window. `apiConfigured()` is false, the fetch
-   * never runs, `known` is false for the life of the process — and the shell read that as "the
+   * On a standalone install there is no stored window. Nothing can be reached, the fetch never
+   * runs, `known` is false for the life of the process — and the shell read that as "the
    * answer has not arrived", switched the cutline off, and drew the Screener over the raw
    * mirror. No History pile at all, and every sender whose mail had already been filed into the
    * Screener folder sat in the queue for ever. `DEFAULT_DORMANCY_DAYS` is not a guess here: it
    * is the only window this build has, the one the engine uses unasked, and the one the dial
    * would have to be turned away from — but there is no dial, because there is nowhere to
    * store the number.
+   *
+   * ── IT IS "NOTHING TO REACH", NOT "NO CLOUD CLIENT IN THIS BUNDLE" ────────────────────────
+   *
+   * This used to be exactly `!apiConfigured()`, which made it true of BOTH desktop doors. It is
+   * now false wherever a host handed in a {@link ConsentTransport}, because that host has a
+   * hosted account behind it and its engine forwards these routes to it — the same widening
+   * `awaySupported` makes in `AppShell`, for the same reason and with the same effect on the
+   * consumer that matters: `autoUnsubscribeDiscloses` must warn about a request the hosted
+   * screener really does make, and must stay silent on the standalone door, which wires no
+   * unsubscribe service at all. The standalone door hands in no transport and so stays true.
    *
    * NOT reachable on the web. A live browser tab with no API base never renders this shell at
    * all: `createEngine` throws `EngineUnarmedError` rather than fall back to fixtures. So this
@@ -164,6 +213,27 @@ export interface ConsentState {
    * in it, and `AppShell` refuses to partition it for reasons of its own.
    */
   standalone: boolean;
+  /**
+   * DOES THIS BUNDLE CARRY THE BROWSER'S CLOUD CLIENT — a fact about the BUILD, and the one
+   * question {@link standalone} used to answer before it started answering a better one.
+   *
+   * Published from here because `AppShell` may not import `app/api-client` at all (it is copied
+   * into a published mirror that does not contain the module) and this hook has to read
+   * `apiConfigured()` anyway. Two questions now have different answers on the desktop's hosted
+   * door and both are needed:
+   *
+   *  · "is there a server to reach?" — {@link standalone}, transport-aware, and the gate for every
+   *    control whose read and write this hook performs;
+   *  · "can a hosted CEREMONY run in this window?" — this one. The sent-mail seed review
+   *    (`SeedReviewView`) and the remote-image proxy (`shell/remote-images.ts`) call
+   *    `app/api-client` DIRECTLY rather than through any injected wire, so no transport makes
+   *    them work. False ⇒ the shell must withhold them, or it offers a screen that can only
+   *    refuse. See `AppShell`'s `seedOwed`.
+   *
+   * Not a state field: it is settled before the first render and derived below, so a `setState`
+   * cannot leave it behind.
+   */
+  cloudClient: boolean;
 }
 
 const RESTING: ConsentState = {
@@ -193,6 +263,7 @@ const RESTING: ConsentState = {
   locale: null,
   known: false,
   standalone: false,
+  cloudClient: false,
 };
 
 /** The `boot-cache.ts` scope this hook owns. Exported for the sign-out test and nothing else. */
@@ -240,10 +311,16 @@ function acceptConsentCache(parsed: unknown): ConsentBootCache | null {
 }
 
 /**
- * @param active `false` on the demo and the desktop, which have no server. Both keep
- * {@link RESTING}, which is the same window the engine would have used unasked.
+ * @param active `false` on the demo. Keeps {@link RESTING}, which is the same window the engine
+ * would have used unasked.
+ * @param transport A host's own wire — the desktop on its HOSTED door. Absent ⇒ the browser's
+ * Cloud client, and where that is not configured either (a standalone install) nothing is asked.
+ * See {@link ConsentTransport}. It must be a STABLE value — a module constant, as
+ * `awayOverBridge` is — or, strictly, it must not change identity in a way the caller depends on:
+ * the effect below reads it through a ref and re-runs only on `active`/reachability, so a fresh
+ * object each render costs nothing but a mid-flight swap is not honoured until one of those moves.
  */
-export function useConsentState(active: boolean): ConsentState & {
+export function useConsentState(active: boolean, transport?: ConsentTransport): ConsentState & {
   /**
    * Flip auto-suggest and keep the local answer in step with the stored one.
    *
@@ -289,8 +366,18 @@ export function useConsentState(active: boolean): ConsentState & {
 } {
   const [state, setState] = useState<ConsentState>(RESTING);
 
+  /* IS THERE ANYWHERE TO ASK — the host's wire, or the browser's. One answer, read by the fetch
+     below, by all four writers, and by `standalone`, so those six can never disagree about
+     whether this account has a stored row. */
+  const reachable = transport !== undefined || apiConfigured();
+  /* The wire behind a stable identity, so the effect's dependencies stay `[active, reachable]` and
+     a host that builds its transport inline does not refetch on every render. The same `link` ref
+     `screener-suggest.ts` keeps around its own wire, for the same reason. */
+  const link = useRef<ConsentTransport>(transport ?? CLOUD_CONSENT);
+  link.current = transport ?? CLOUD_CONSENT;
+
   useEffect(() => {
-    if (!active || !apiConfigured()) return;
+    if (!active || !reachable) return;
     let live = true;
     /**
      * THE DEVICE'S LAST ANSWER, FIRST — synchronously, before the fetch below is even issued,
@@ -324,7 +411,7 @@ export function useConsentState(active: boolean): ConsentState & {
     }
     void (async () => {
       try {
-        const wire: ConsentStateWire = await consentApi.state();
+        const wire: ConsentStateWire = await link.current.state();
         if (!live) return;
         // KNOWN MEANS THE SERVER ANSWERED THIS QUESTION, not that a request returned 200.
         //
@@ -376,7 +463,10 @@ export function useConsentState(active: boolean): ConsentState & {
           // which lands on exactly the same branch as "this account has no preference".
           locale: normalizeLocale(wire.locale),
           known: true,
+          // Both of these are DERIVED on the way out (see the return) and are written here only
+          // because the state object carries them. Nothing may read them off `state`.
           standalone: false,
+          cloudClient: false,
         });
         // The next boot paints from THIS answer. Written after the state (never instead of
         // it), from the same normalised values, under the same account id the read used —
@@ -396,10 +486,10 @@ export function useConsentState(active: boolean): ConsentState & {
       }
     })();
     return () => { live = false; };
-  }, [active]);
+  }, [active, reachable]);
 
   const setAutoSuggest = useCallback(async (enabled: boolean): Promise<boolean> => {
-    const res = await consentApi.setAutoSuggest(enabled);
+    const res = await link.current.setAutoSuggest(enabled);
     const on = res.autoSuggestAt != null;
     // BOTH FIELDS FROM THE SAME ECHO. Setting the boolean from the server and the instant from
     // the argument (or leaving it stale) is how a row reads "On since <yesterday>" about a write
@@ -409,7 +499,7 @@ export function useConsentState(active: boolean): ConsentState & {
   }, []);
 
   const setDormancyDays = useCallback(async (days: number | null): Promise<number> => {
-    const res = await consentApi.setDormancyDays(days);
+    const res = await link.current.setDormancyDays(days);
     // FROM THE SERVER ECHO, never the argument — the server stores the default as NULL and reads it
     // back as the default number, so this is the window the partition memo must re-key on.
     setState((prev) => ({ ...prev, dormancyDays: res.dormancyDays }));
@@ -417,7 +507,7 @@ export function useConsentState(active: boolean): ConsentState & {
   }, []);
 
   const setBlockRemoteImages = useCallback(async (blocked: boolean): Promise<boolean> => {
-    const res = await consentApi.setBlockRemoteImages(blocked);
+    const res = await link.current.setBlockRemoteImages(blocked);
     const on = res.blockRemoteImagesAt != null;
     // BOTH FIELDS FROM THE SAME ECHO, as with auto-suggest — a row reading "Off since <yesterday>"
     // about a refused write is the failure that rule exists to prevent, and here the refused write
@@ -427,7 +517,7 @@ export function useConsentState(active: boolean): ConsentState & {
   }, []);
 
   const setBlockAutoUnsubscribe = useCallback(async (blocked: boolean): Promise<boolean> => {
-    const res = await consentApi.setBlockAutoUnsubscribe(blocked);
+    const res = await link.current.setBlockAutoUnsubscribe(blocked);
     // `== null` ⇒ the pass runs. The same collapse as the read above, for the same reason, and it
     // has to be spelled the same way in both places or a server that answered with the field
     // omitted would move the switch one way on load and the other on write.
@@ -440,12 +530,14 @@ export function useConsentState(active: boolean): ConsentState & {
     return on;
   }, []);
 
-  // Derived rather than stored, so it cannot be left behind by a `setState` that forgot it: it
-  // is a fact about the BUILD and the mode, and both are settled before the first render.
-  // `active` is `!demo`; see {@link ConsentState.standalone}.
+  // Derived rather than stored, so neither can be left behind by a `setState` that forgot it:
+  // both are facts about the BUILD and the mode, settled before the first render. `active` is
+  // `!demo`; see {@link ConsentState.standalone} and {@link ConsentState.cloudClient} for why
+  // these are now two questions rather than one.
   return {
     ...state,
-    standalone: active && !apiConfigured(),
+    standalone: active && !reachable,
+    cloudClient: apiConfigured(),
     setAutoSuggest,
     setDormancyDays,
     setBlockRemoteImages,
