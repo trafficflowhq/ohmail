@@ -274,6 +274,33 @@ export const DEFAULT_SSE: SseConfig = {
 };
 
 /**
+ * THE PER-INSTANCE `change_log` WAKE FAN-OUT — what turns `GET /events` from a poll relay into
+ * a push relay.
+ *
+ * The host that can hold a `LISTEN` builds ONE of these per warm instance — one session-mode
+ * Postgres connection, never one per stream; session slots are pinned backends and the scarce
+ * resource — and every open `/events` stream on the instance subscribes its account
+ * here. A NOTIFY from `recordChanges` (`packages/db/src/change-log.ts`, CHANGE_LOG_CHANNEL)
+ * fans out in process to exactly the streams whose account it names.
+ *
+ * IT IS A HINT, NOT A DEPENDENCY, on both sides of this interface:
+ *
+ *  · A host with no hub (`deps.changeWake` absent — the local sidecar host, a deployment with
+ *    no session-mode URL, every existing test) gets the route's own serialized poll loop and
+ *    nothing else, which is exactly the pre-hub behaviour.
+ *  · A hub whose LISTEN is down delivers nothing and the poll still carries the stream. The
+ *    route never asks the hub whether it is healthy; missed wakes are indistinguishable from
+ *    quiet, and the poll is what bounds the staleness either way.
+ *
+ * `subscribe` MUST NOT THROW (a broken hub is a hub that delivers nothing), and the returned
+ * unsubscribe must be idempotent — the route calls it from `stop()`, which can run twice
+ * (lifetime close racing a client cancel).
+ */
+export interface ChangeWakeHub {
+  subscribe(accountId: string, onWake: (seq: bigint) => void): () => void;
+}
+
+/**
  * What `GET /health` publishes about the host itself.
  *
  * `kek` is the {@link KekEnvIdentity} — `{ active, count, fingerprint }` — and it is
@@ -465,6 +492,14 @@ export interface ApiDeps {
   services?: ApiServices;
   /** SSE timings for `GET /events`; falls back to {@link DEFAULT_SSE}. */
   sse?: SseConfig;
+  /**
+   * The per-instance `change_log` wake fan-out for `GET /events`, or absent on a host that
+   * cannot hold a LISTEN (transaction-pooled connections cannot — a transaction-mode pooler
+   * multiplexes statements across backends, so a LISTEN lands on a backend the next statement
+   * has already left). Absent ⇒ the route's own poll loop is the only wake source, which is
+   * the pre-hub behaviour exactly. See {@link ChangeWakeHub}.
+   */
+  changeWake?: ChangeWakeHub | null;
   /**
    * Whether the `tf_session` COOKIE is an accepted credential on this deployment.
    * Default (absent or true) is the historical behaviour: cookie OR bearer.

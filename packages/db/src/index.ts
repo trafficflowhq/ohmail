@@ -38,6 +38,7 @@ export * from "./schema-mail.js";
 
 export {
   allocateSeq, allocateSeqRange, recordChange, recordChanges, minRetainedSeq, seqBounds,
+  CHANGE_LOG_CHANNEL, changeWakePayload, parseChangeWake,
   type Tx, type LedgerTx, type EntityType, type ChangeOp, type ChangeInput, type SeqBounds,
 } from "./change-log.js";
 export {

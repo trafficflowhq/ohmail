@@ -23,7 +23,7 @@ import {
 import { useTranslations } from "next-intl";
 import { OhmailEngine, type EntityReader } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
-import { createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
+import { cloudWakeStream, createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
 import { useLoadingGrace } from "./loading-grace";
 import { readOwner } from "./owner-cookie";
 import { markSessionAlive, probeSessionNow, useSessionDead } from "./session-truth";
@@ -477,14 +477,23 @@ export function EngineProvider({
       });
       return;
     }
-    // A DESKTOP build keeps polling while its window is occluded or unfocused; a browser tab keeps
-    // its hidden-tab-zero-syncs behaviour. `visibility: null` is the scheduler's "no visibility
-    // model" seam, and it is passed ONLY under the desktop build flag (`engine-config.ts`
-    // → `syncsWhileHidden`) — never unconditionally, or the web build would stop respecting a
-    // hidden tab. A web-side guard (grep `syncsWhileHidden`) fails on a leak.
+    // A DESKTOP build keeps its full cadence while its window is occluded or unfocused; a browser
+    // tab drops to the hidden cadence (one drain a minute, no stream — `sync-scheduler.ts`).
+    // `visibility: null` is the scheduler's "no visibility model" seam, and it is passed ONLY
+    // under the desktop build flag (`engine-config.ts` → `syncsWhileHidden`) — never
+    // unconditionally, or the web build would stop respecting a hidden tab. A web-side guard
+    // (grep `syncsWhileHidden`) fails on a leak.
+    //
+    // `wake` is the push half: an `EventSource` on `/events` whose `sync` frames drain through
+    // this same scheduler. `cloudWakeStream()` decides WHICH builds hold one (web live only —
+    // the desktop's API is the local sidecar, whose Cloud door wakes inside the sidecar); the
+    // scheduler decides WHEN (visible only) and survives the stream's absence byte-identically
+    // to the poll-only behaviour — the server's flag being off costs one refused request per
+    // session and nothing else.
     return startSyncScheduler(engine, {
       onStatus: onSyncStatus,
       ...(syncsWhileHidden() ? { visibility: null } : {}),
+      wake: cloudWakeStream(),
     });
   }, [engine, live, onSyncStatus]);
 

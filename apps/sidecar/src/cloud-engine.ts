@@ -17,6 +17,7 @@ import {
   type CloudSignInRequest,
 } from "./cloud-signin.js";
 import { createCloudMirror, CLOUD_SYNC_TYPES, type CloudMirror } from "./cloud-mirror.js";
+import { startCloudWake, type CloudWake } from "./cloud-wake.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
 import type { Diagnostic } from "./log.js";
@@ -277,6 +278,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       auth: CloudAuth;
       mirror: CloudMirror;
       proxy: WriteThroughProxy;
+      /** The `/events` subscription that kicks the mirror per commit. See `cloud-wake.ts`. */
+      wake: CloudWake;
     }
     let authed: Authed | null = null;
 
@@ -318,7 +321,20 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         ...(log ? { log } : {}),
       });
 
-      authed = { auth, mirror, proxy };
+      /**
+       * THE PUSH CHANNEL, beside the poll it accelerates. The SIDECAR holds the stream — it is
+       * the process with the session (`authedFetch`), and the webapp inside the desktop window
+       * talks only to this local engine, which serves no `/events`. Every `sync` frame kicks
+       * one bounded pull; with the stream refused (the hosted flag's default until the deploy
+       * flips it) the mirror's own poll carries the door exactly as before this existed.
+       */
+      const wake = startCloudWake({
+        auth,
+        onWake: () => { mirror.kick(); },
+        ...(log ? { log } : {}),
+      });
+
+      authed = { auth, mirror, proxy, wake };
       return authed;
     };
 
@@ -364,6 +380,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const signOut = async (): Promise<void> => {
       const live = authed;
       authed = null;
+      // The wake first — a frame arriving mid-sign-out must not kick a pull into a mirror that
+      // is being asked to leave.
+      live?.wake.stop();
       // AWAITED. A drain that outlived the sign-out would go on writing the previous account's mail
       // into a database this process has just declared signed out.
       await live?.mirror.stop();
@@ -591,6 +610,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         await authed?.mirror.start();
       },
       async stop() {
+        // The wake first, for `signOut`'s reason: no frame may kick a pull into a mirror that
+        // is leaving — and the abort inside also frees a reader that would otherwise sit on an
+        // idle stream past the shell's grace period.
+        authed?.wake.stop();
         // THE AWAIT IS THE FIX. `opened.close()` hands PGlite a close that queues behind whatever
         // the mirror has already asked it to do, so closing while a drain was still enqueuing pages
         // meant the close waited on a walk that had no idea it should stop — past the shell's grace

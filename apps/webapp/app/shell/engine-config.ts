@@ -6,7 +6,7 @@ import {
   purgeLegacyMirror,
   type StorePolicy,
 } from "@ohmail/client-engine";
-import { createSyncGate, registerSyncGate } from "./sync-scheduler";
+import { createSyncGate, registerSyncGate, type WakeStreamLike } from "./sync-scheduler";
 
 /**
  * THE ENGINE DECISION, extracted so it can be TESTED rather than described.
@@ -52,18 +52,19 @@ const BUILD_ENV: EngineEnv = {
 };
 
 /**
- * SHOULD THE SYNC SCHEDULER KEEP POLLING WHILE THE WINDOW IS HIDDEN?
+ * SHOULD THE SYNC SCHEDULER TREAT "HIDDEN" AS MEANINGFUL AT ALL?
  *
  * `startSyncScheduler` gates on `document.visibilityState`: a browser tab that goes to the
- * background performs ZERO syncs, because a background tab keeping a mailbox warm is API cost with
- * no one behind it (`sync-scheduler.ts`). That rule is right for a tab and wrong for the desktop
+ * background drops to the slow hidden cadence — one drain a minute, no wake stream held
+ * (`sync-scheduler.ts`; it was ZERO syncs before the realtime-wake slice). That rule is right
+ * for a tab and wrong for the desktop
  * app: a Tauri window the OS composites out of view — occluded by another window, on another
  * Space, or merely unfocused — ALSO reads `visibilityState: "hidden"`, so the shared shell would
- * silently stop syncing a mail client that is supposed to stay current in the background. The
- * symptom is mail that only arrives when you click the window.
+ * silently slow a mail client that is supposed to stay current in the background to the
+ * background cadence. The symptom is mail that arrives a minute late unless you click the window.
  *
  * The fix is the scheduler's existing seam: passing `visibility: null` tells it "this environment
- * has no visibility model", so `visible()` is always true and the loop never stops for occlusion.
+ * has no visibility model", so `visible()` is always true and the loop never slows for occlusion.
  * `engine.tsx` passes it exactly when this returns true.
  *
  * ── A BUILD FLAG, FOLDED HERE — NOT A PROP ──────────────────────────────────────────────────
@@ -73,12 +74,52 @@ const BUILD_ENV: EngineEnv = {
  * a shell that forgets to pass it loads fine and then quietly never syncs in the background, which
  * is the very bug re-created as a wiring bug (the same reasoning `engine.tsx` gives for wiring the
  * scheduler inside the provider). The Next web build never defines `NEXT_PUBLIC_DESKTOP`, so this
- * is false there and browser tabs keep hidden-tab-zero-syncs; only a desktop build turns it on.
+ * is false there and browser tabs keep their hidden cadence; only a desktop build turns it on.
  * A web-side test (grep `syncsWhileHidden` in this app's test suite) fails if the flag ever leaks
  * into the default (web) environment.
  */
 export function syncsWhileHidden(env: EngineEnv = BUILD_ENV): boolean {
   return env.NEXT_PUBLIC_DESKTOP === "1";
+}
+
+/**
+ * THE WAKE STREAM DECISION — which builds hold an `EventSource` on `/events`, decided here so
+ * it can be tested rather than described (this file's whole reason to exist).
+ *
+ * A factory, or `null` for "this build polls". Three refusals, each a different reason:
+ *
+ *  · **The desktop build** ({@link syncsWhileHidden}): its API base is the LOCAL engine
+ *    process, which serves no `/events` — the hosted door's wake lives in that process
+ *    itself, which holds the session and kicks its mirror pull per frame. Opening a stream
+ *    here would buy one guaranteed refusal per launch and nothing after it.
+ *  · **No API base**: nothing to connect to. (`createEngine` throws for the live path anyway;
+ *    this keeps the factory decision total rather than partial.)
+ *  · **No `EventSource` in the environment** (SSR, jsdom): the scheduler treats a throwing
+ *    factory as a dead stream, but "this build cannot push" is a fact known HERE, and a null
+ *    is honest where a throw is an event.
+ *
+ * The DEMO never reaches this: `engine.tsx` schedules live engines only, and the demo takes
+ * the bare `engine.start()` path — a self-contained surface holds no connection to anything.
+ *
+ * The scheduler owns everything after construction: one stream while visible, none while
+ * hidden, permanent fallback to polling on a terminal refusal (the production default — the
+ * server's SSE flag is off until the deploy flips it, and the refusal costs one request per
+ * session). `sync-scheduler.ts`'s header carries the three-state model.
+ */
+export function cloudWakeStream(
+  env: EngineEnv = BUILD_ENV,
+): (() => WakeStreamLike) | null {
+  if (syncsWhileHidden(env)) return null;
+  // Deliberately NOT spelled the way `createEngine` reads the same variable (a local named
+  // `apiBase`): `api-rewrite.test.ts` pins the ORDER of that exact line against the demo gate
+  // by `indexOf`, so an identical occurrence above the gate — even in a comment — would
+  // satisfy the grep for the wrong function and the guard would stop guarding.
+  const base = env.NEXT_PUBLIC_API_BASE;
+  if (!base) return null;
+  if (typeof EventSource === "undefined") return null;
+  // Same-origin (`/api/events` through the rewrite), so the session cookie rides along without
+  // `withCredentials` — the same reason every other engine request needs no auth wiring here.
+  return () => new EventSource(`${base}/events`);
 }
 
 /**

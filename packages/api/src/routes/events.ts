@@ -59,7 +59,23 @@ export function sseLiveCounts(): { total: number; byAccount: Record<string, numb
  * `retry:` hint. All durations are injectable via `deps.sse` (DEFAULT_SSE in prod; tiny
  * values in tests).
  *
- * ## Three cost/robustness properties, all previously absent
+ * ## Two wake sources, one stream
+ *
+ * **PUSH — `deps.changeWake`, when the host has one.** `recordChanges` NOTIFYs
+ * `ohmail_change_log` at commit from every writer (worker ingest, record-at-send, screener,
+ * triage), the host's per-instance LISTEN connection receives it, and the hub fans it out to
+ * this instance's streams by account. A wake whose seq is ahead of `lastSeq` emits the same
+ * `event: sync` frame the poll would — within milliseconds of the commit instead of within
+ * `pollMs`. The hub cannot exist on the request connection: a hosted deployment reaches its
+ * database through a TRANSACTION-mode pooler, which multiplexes statements across backends, so
+ * a LISTEN there lands on a backend the next statement has already left. The host holds ONE
+ * session-mode connection per instance for it, fanned out in process to that instance's streams.
+ *
+ * **POLL — always.** The serialized loop below is the reliability floor, not a fallback mode:
+ * it runs with and without the hub, so a dead LISTEN degrades latency to `pollMs` and changes
+ * nothing else. Push is a hint; it is never load-bearing.
+ *
+ * ## Three cost/robustness properties
  *
  * **1. It is OFF unless the SERVER says otherwise.** `sse.enabled === false` ⇒ 503
  * `sse_disabled`. SSE is behind a flag, but a flag in the CLIENT bundle is not a
@@ -81,7 +97,20 @@ export function sseLiveCounts(): { total: number; byAccount: Record<string, numb
  * `pollMs`, so there is never more than one poll in flight; a failed poll emits `sync_failed`
  * and closes, and the client reconnects — a closed stream that reconnects is honest, a
  * silently dead stream is not.
+ *
+ * **And a fourth, for the push path: a slow client is DROPPED, never waited on.** `enqueue`
+ * on a Web stream never blocks — it buffers — so a client that stops reading turns a pushed
+ * stream into unbounded server-side memory. When the buffer is {@link SSE_MAX_BUFFERED_FRAMES}
+ * frames behind, the stream closes; `EventSource` reconnects and starts clean. The lifetime
+ * already bounded the poll-only worst case; wakes can burst, so the bound is explicit now.
  */
+
+/**
+ * How many enqueued-but-unread frames a stream may hold before it is closed as unread. Frames
+ * here are tiny (a ping, a `{"seq":n}`), so this is about a CONSUMER that has stopped reading,
+ * not about volume: 32 frames is minutes of heartbeats or a burst of wakes nobody is draining.
+ */
+export const SSE_MAX_BUFFERED_FRAMES = 32;
 export const eventsRoutes: Route[] = [
   {
     method: "GET",
@@ -113,12 +142,16 @@ export const eventsRoutes: Route[] = [
       let lifetime: ReturnType<typeof setTimeout> | undefined;
       let wake: (() => void) | undefined;          // resolves the poll loop's sleep early
       let counted = false;
+      /** The hub unsubscribe, once subscribed. Idempotent by the hub's contract. */
+      let unhook: (() => void) | null = null;
 
       const stop = (): void => {
         if (heartbeat) clearInterval(heartbeat);
         if (lifetime) clearTimeout(lifetime);
         heartbeat = undefined;
         lifetime = undefined;
+        unhook?.();                                 // stop receiving pushed wakes at once
+        unhook = null;
         wake?.();                                   // let the loop observe `closed` at once
         if (counted) { closeStream(accountId); counted = false; }
       };
@@ -130,6 +163,14 @@ export const eventsRoutes: Route[] = [
 
           const send = (s: string): void => {
             if (closed) return;
+            // A consumer that has stopped reading must be DROPPED, not buffered for: `enqueue`
+            // never blocks, so without this bound a pushed stream to a stalled client is
+            // unbounded memory held by this instance. `desiredSize` goes negative by exactly
+            // the number of unread frames past the high-water mark.
+            if (controller.desiredSize !== null && controller.desiredSize <= -SSE_MAX_BUFFERED_FRAMES) {
+              finish();
+              return;
+            }
             try { controller.enqueue(enc.encode(s)); } catch { closed = true; }
           };
           const finish = (): void => {
@@ -146,6 +187,26 @@ export const eventsRoutes: Route[] = [
             send("event: sync_failed\ndata: {}\n\n");
             finish();
             return;
+          }
+
+          /**
+           * THE PUSHED WAKE. Subscribed AFTER the `maxSeq` read on purpose: a commit landing in
+           * the gap between the read and the subscription is missed here and caught by the poll
+           * — the benign direction. The other order would deliver a wake into an uninitialized
+           * `lastSeq`. Wrapped in a catch even though the hub's contract says it never throws,
+           * because the hub is a HINT and a hint must not be able to kill the stream it hints at.
+           * The seq comes from the NOTIFY payload, so a pushed frame costs zero DB reads.
+           */
+          try {
+            unhook = deps.changeWake?.subscribe(accountId, (seq) => {
+              if (closed) return;
+              if (seq > lastSeq) {
+                lastSeq = seq;
+                send(`event: sync\ndata: {"seq":${seq}}\n\n`);
+              }
+            }) ?? null;
+          } catch {
+            unhook = null;                       // push is unavailable; the poll carries the stream
           }
 
           heartbeat = setInterval(() => send(": ping\n\n"), cfg.heartbeatMs);

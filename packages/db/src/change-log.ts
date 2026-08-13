@@ -92,6 +92,57 @@ export interface ChangeInput {
 }
 
 /**
+ * THE WAKE CHANNEL — one `NOTIFY` per {@link recordChanges} call, on ONE shared channel.
+ *
+ * Emitted from the append chokepoint so that EVERY writer signals: the worker's ingest, the
+ * API's record-at-send, the screener, triage, the sidecar's local mirror — they all funnel
+ * through `recordChanges`, and `change-notify-chokepoint.test.ts` proves nothing else inserts
+ * into `change_log`. A NOTIFY issued inside the transaction is queued by Postgres and delivered
+ * AT COMMIT — after the row is durable, never for a rollback — which is exactly the contract a
+ * "drain now" hint needs.
+ *
+ * ── ONE CHANNEL + PAYLOAD FILTERING, NOT A CHANNEL PER ACCOUNT ─────────────────────────────
+ *
+ * A listener holds ONE session-mode connection per serving instance and fans out in process.
+ * With per-account channels that connection would have to `LISTEN`/`UNLISTEN` on every stream
+ * open/close — each a round trip serialized on the one connection, with a race window between
+ * subscribing and the first delivery, and `pg_listening_channels()` churn for nothing: Postgres
+ * delivers a notification to every listening BACKEND anyway, so account channels save no server
+ * work, they only move the filter from a Map lookup into connection state. One static channel is
+ * one `LISTEN` at connect (trivially re-issued on reconnect) and a pure in-process dispatch. The
+ * payload volume argument is also nothing: one `uuid:seq` line per committed mutation batch.
+ *
+ * The name is namespaced by prefix rather than by schema because NOTIFY channels live in a flat
+ * per-database namespace — there is no schema qualification to have — and it is identifier-safe
+ * (no dots, no quoting) so every client (`LISTEN`, postgres-js `sql.listen`, psql) spells it the
+ * same way.
+ *
+ * ── THE PAYLOAD CARRIES NO CONTENT, EVER ───────────────────────────────────────────────────
+ *
+ * `<account uuid>:<max seq of the batch>` and nothing else. NOTIFY payloads can surface in
+ * `pg_stat_activity` and server logs, so a subject line or an address here would be mail
+ * content in the log stream — which no log may ever carry. The seq lets a listener drop stale wakes
+ * without a read; the client's answer to a wake is `GET /sync?since=cursor`, so the frame never
+ * needs to carry an entity.
+ */
+export const CHANGE_LOG_CHANNEL = "ohmail_change_log";
+
+/** The NOTIFY payload for one appended batch. Account id and seq — never content. */
+export function changeWakePayload(accountId: string, seq: bigint): string {
+  return `${accountId}:${seq}`;
+}
+
+/** A parsed wake, or `null` for anything malformed (a foreign writer on the channel). */
+export function parseChangeWake(payload: string): { accountId: string; seq: bigint } | null {
+  const at = payload.lastIndexOf(":");
+  if (at <= 0 || at === payload.length - 1) return null;
+  const accountId = payload.slice(0, at);
+  const raw = payload.slice(at + 1);
+  if (!/^\d+$/.test(raw)) return null;
+  return { accountId, seq: BigInt(raw) };
+}
+
+/**
  * Allocate the next per-account, gap-free, strictly-monotonic sequence number.
  *
  *   UPDATE account_sync_state
@@ -227,6 +278,13 @@ export async function recordChanges(tx: LedgerTx, changes: readonly ChangeInput[
     op: c.op,
     meta: c.meta ?? null,
   })));
+  // The wake, INSIDE the transaction — Postgres queues it and delivers at COMMIT, so a listener
+  // is never woken for a row that rolled back, and never before the row it names is readable.
+  // One notification per batch (the highest seq), account id + seq only: see
+  // {@link CHANGE_LOG_CHANNEL} for the channel design and why no content may ever ride here.
+  await tx.execute(
+    sql`select pg_notify(${CHANGE_LOG_CHANNEL}, ${changeWakePayload(accountId, seqs[seqs.length - 1]!)})`,
+  );
   return seqs;
 }
 

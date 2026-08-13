@@ -238,6 +238,17 @@ export interface CloudMirrorConfig {
 export interface CloudMirror {
   /** Drain `/sync` to the horizon, then backfill bodies. Returns the number of applied entities. */
   pullOnce(): Promise<number>;
+  /**
+   * A WAKE: something committed on the hosted account — pull now, without disturbing the poll.
+   *
+   * The push channel's entry point (`cloud-wake.ts` calls it per `sync` frame), shaped for
+   * bursts: a kick while a pull is IN FLIGHT queues exactly ONE follow-up pull, however many
+   * kicks arrive — the in-flight pull may have read `/sync` before the commit that woke us,
+   * and the single follow-up reads everything, so N would buy nothing over 1. Failures are
+   * not retried here: the poll owns retries and backoff, and a kick is a hint, never a
+   * schedule. Fire-and-forget on purpose — a wake has no caller waiting on it.
+   */
+  kick(): void;
   /** Pull now, then poll. */
   start(): Promise<void>;
   /**
@@ -1658,6 +1669,27 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     return inflight;
   };
 
+  /** One queued follow-up, at most — see {@link CloudMirror.kick}. */
+  let kickQueued = false;
+  const kick = (): void => {
+    if (stopped) return;
+    if (inflight) {
+      kickQueued = true;
+      return;
+    }
+    void pullOnce()
+      .catch(() => {
+        // `runPull` logged it and flipped `reachable`; the POLL owns retries. A kick that also
+        // retried would double every backoff the moment the wake stream got chatty.
+      })
+      .finally(() => {
+        if (kickQueued && !stopped) {
+          kickQueued = false;
+          kick();
+        }
+      });
+  };
+
   const awaitCloudSeq = async (target: bigint, deadlineMs: number): Promise<boolean> => {
     const end = Date.now() + Math.max(0, deadlineMs);
     for (;;) {
@@ -1709,6 +1741,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
 
   return {
     pullOnce,
+    kick,
     draining: () => inflight !== null,
     online: () => reachable,
     markConnectivity: (v: boolean) => {
