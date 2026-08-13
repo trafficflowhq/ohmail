@@ -179,13 +179,22 @@ export function ReceiptsView({
     getRoot: () => streamRef.current?.element() ?? null,
   });
   /* A scroll to a card that is not in the DOM is a silent no-op (`StreamShell.scrollTo`), so
-     every jump extends the run first and scrolls AFTER the commit that mounted the target. */
-  const [pendingScroll, setPendingScroll] = useState<string | null>(null);
+     every jump extends the run first and scrolls AFTER the commit that mounted the target.
+     `open` marks a jump from OUTSIDE the pile, which must leave the message open and not merely
+     selected — the same pair, for the same reasons, as `ReadsView`. */
+  const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean } | null>(null);
+  /** Open the landed card the way a click opens it — see `ReadsView.openLandedCard`. */
+  const openLandedCard = useCallback((id: string) => {
+    document
+      .querySelector<HTMLElement>(`.view-receipts .scast[data-sid="${CSS.escape(id)}"]`)
+      ?.click();
+  }, []);
   useEffect(() => {
     if (!pendingScroll) return;
-    streamRef.current?.scrollTo(pendingScroll);
+    const { id, open } = pendingScroll;
+    streamRef.current?.scrollTo(id, open ? () => openLandedCard(id) : undefined);
     setPendingScroll(null);
-  }, [pendingScroll]);
+  }, [pendingScroll, openLandedCard]);
   const current = cur ?? all.find(isUnread)?.id ?? all[0]?.id ?? null;
 
   const seenMark = (id: string) => {
@@ -199,19 +208,26 @@ export function ReceiptsView({
     seenMark(id);
     onCur(id);
     stream.ensure(all.findIndex((m) => m.id === id));
-    setPendingScroll(id);
+    setPendingScroll({ id, open: false });
   };
 
+  /* A jump from outside the pile. `[jumpTo]` is the whole dependency list for the reason
+     `ReadsView`'s twin spells out: the shell's callbacks are fresh closures on every render and
+     `all` moves on every mirror delta, so anything else in here cancels the pending frame and
+     drops the jump. The latest callbacks and order are read through refs at fire time. */
+  const jumpRefs = useRef({ onCur, onJumped });
+  jumpRefs.current = { onCur, onJumped };
   useEffect(() => {
     if (!jumpTo) return;
     const timer = requestAnimationFrame(() => {
-      onCur(jumpTo);
-      stream.ensure(all.findIndex((m) => m.id === jumpTo));
-      setPendingScroll(jumpTo);
-      onJumped();
+      jumpRefs.current.onCur(jumpTo);
+      stream.ensure(allRef.current.findIndex((m) => m.id === jumpTo));
+      setPendingScroll({ id: jumpTo, open: true });
+      jumpRefs.current.onJumped();
     });
     return () => cancelAnimationFrame(timer);
-  }, [jumpTo, onCur, onJumped, stream.ensure, all]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpTo]);
 
   /**
    * Keep the row the USER selected in view — `cur`, never `current`.

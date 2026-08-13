@@ -202,12 +202,42 @@ export function ReadsView({
   });
   const streamFresh = partition.fresh.slice(0, Math.min(stream.count, freshCount));
   const streamSeen = partition.seen.slice(0, Math.max(0, stream.count - freshCount));
-  const [pendingScroll, setPendingScroll] = useState<string | null>(null);
+  /**
+   * THE SCROLL THAT WAITS FOR ITS CARD — and, for a jump from outside, the OPEN that waits for
+   * the scroll.
+   *
+   * `open` is what distinguishes a jump the reader arrived on (a search result, a tag row, a
+   * cross-view "show me this") from a step inside the pile (j/k, a click on a neighbouring row).
+   * The step only moves the cursor; the arrival has to leave the message OPEN, because the reader
+   * asked for that message and nothing else. See {@link openLandedCard} for why the open happens
+   * after the landing rather than with it.
+   */
+  const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean } | null>(null);
+  /**
+   * OPEN THE LANDED CARD THE WAY A CLICK OPENS IT.
+   *
+   * `StreamCard` owns its own expanded state, so there is no prop to set: a click on the card
+   * selects it and expands it in one gesture (`expandOnClick`, `packages/ui`), which is exactly
+   * what "the reader opened this message" means here — the body unclamps and the message's verbs
+   * come up. Driving that one mechanism is deliberate; a second way to open a card would be a
+   * second definition of open.
+   *
+   * AFTER the landing, never before. Expanding pins the clip's `max-height` to the content height
+   * measured at that moment, and a card the browser has not rendered yet (every card past the
+   * fold carries `content-visibility: auto`) measures its intrinsic box rather than its text —
+   * which would clip the message it was just asked to show.
+   */
+  const openLandedCard = useCallback((id: string) => {
+    document
+      .querySelector<HTMLElement>(`.view-reads .scast[data-sid="${CSS.escape(id)}"]`)
+      ?.click();
+  }, []);
   useEffect(() => {
     if (!pendingScroll) return;
-    streamRef.current?.scrollTo(pendingScroll);
+    const { id, open } = pendingScroll;
+    streamRef.current?.scrollTo(id, open ? () => openLandedCard(id) : undefined);
     setPendingScroll(null);
-  }, [pendingScroll]);
+  }, [pendingScroll, openLandedCard]);
   // The waterline marks the fresh/seen junction; render it only when that junction is inside
   // the mounted window, so it travels with the boundary instead of pinning to the list top.
   const showWaterline = partition.waterline != null && win.start <= freshCount && win.end > freshCount;
@@ -246,25 +276,40 @@ export function ReadsView({
     markSeen(id);
   };
 
-  // Row click / tag-view jump: extend the mounted run through the card, then scroll to it
-  // once the commit has it in the DOM (see `pendingScroll` above).
+  // Row click / j/k: extend the mounted run through the card, then scroll to it once the commit
+  // has it in the DOM (see `pendingScroll` above). A step inside the pile moves the cursor and
+  // nothing else — `StreamCard` opens on its own click, and j/k has ↵ for the clamp.
   const jump = (id: string) => {
     seenMark(id);
     onCur(id);
     stream.ensure(all.findIndex((m) => m.id === id));
-    setPendingScroll(id);
+    setPendingScroll({ id, open: false });
   };
 
+  /**
+   * A JUMP FROM OUTSIDE THE PILE — a search result, a tag row, any "show me this message".
+   *
+   * `[jumpTo]` IS THE WHOLE DEPENDENCY LIST, and that is the point rather than an omission. The
+   * work happens in a `requestAnimationFrame`, and the callbacks the shell passes are fresh
+   * closures on every one of its renders (`onJumped={() => setJump(null)}`) while `all` is
+   * re-derived on every mirror delta — so with either in the deps this effect re-ran, its cleanup
+   * cancelled the pending frame, and the jump was dropped for as long as the shell kept
+   * re-rendering. A jump is a one-shot response to a request, not a subscription to the pile, so
+   * the latest callbacks and the latest order are read through refs at fire time.
+   */
+  const jumpRefs = useRef({ onCur, onJumped });
+  jumpRefs.current = { onCur, onJumped };
   useEffect(() => {
     if (!jumpTo) return;
     const timer = requestAnimationFrame(() => {
-      onCur(jumpTo);
-      stream.ensure(all.findIndex((m) => m.id === jumpTo));
-      setPendingScroll(jumpTo);
-      onJumped();
+      jumpRefs.current.onCur(jumpTo);
+      stream.ensure(allRef.current.findIndex((m) => m.id === jumpTo));
+      setPendingScroll({ id: jumpTo, open: true });
+      jumpRefs.current.onJumped();
     });
     return () => cancelAnimationFrame(timer);
-  }, [jumpTo, onCur, onJumped, stream.ensure, all]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpTo]);
 
   /**
    * Keep the row the USER selected in view — `cur`, never `current`.

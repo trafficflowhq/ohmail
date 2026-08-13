@@ -266,6 +266,9 @@ export type OpenTarget =
  *                 see the screener arm.
  * @param placeOf  the consent cutline's presentation map, or undefined when there is no
  *                 partition (demo, desktop, or before `GET /consent` lands). See below.
+ * @param holds    does that pile actually hold this message? Optional; absent means "no pile
+ *                 knowledge", which routes exactly as this function did before it existed — the
+ *                 state a harness mounted without a shell is in. See below.
  *
  * ── PRESENTATION BEFORE PHYSICAL FOLDER, OR THE HIT LANDS IN THE WRONG PILE ──────────────
  *
@@ -299,6 +302,27 @@ export type OpenTarget =
  * the pile itself would be better and is deliberately not done here — `OpenTarget` has no triage
  * arm, the Triage view shows one message per pile behind a segmented control rather than a
  * locatable list, and inventing that navigation is a larger change than the hole needs.
+ *
+ * ── AND THE PILE HAS TO ACTUALLY HOLD IT, WHICH `placeOf` CANNOT ANSWER ───────────────────
+ *
+ * The Screener arm has always asked this question (`rowFor`), and `parked` above is the same
+ * question asked of one specific reason a row is absent. `holds` is the GENERAL form of it, put to
+ * the very lists the views render, and there are two ways for a message to need it.
+ *
+ * The reachable one is the ARCHIVE. Search runs two passes and the second is `GET /search` over
+ * the whole corpus, which returns mail this device's mirror does not hold at all (`SearchView`
+ * marks those hits, and the browser's mirror is a window over a server that keeps everything —
+ * see `older-mail.ts`). `placeOf` is built from the mirror, so it says nothing about such a row
+ * and the hit routes by the folder on the wire item: the shell then navigates to Reads, sets a
+ * cursor to an id no card and no row carries, and the reader is left looking at a pile with the
+ * message they asked for nowhere in it. The Ohbox arm is the same — `selectedOhbox` is a `find`
+ * over the pile, so it resolves to null and the reading column shows nothing.
+ *
+ * The second is any disagreement between a presentation map and the list a selector actually
+ * built. It should not happen; the point of asking is that it does not have to be trusted.
+ *
+ * `holds` is that question, and the answer for a message no pile holds is the same one History and
+ * a parked row get: the reader, in place. Search must open what it found.
  */
 export function openTargetFor(
   m: EngineMessage,
@@ -306,6 +330,7 @@ export function openTargetFor(
   rowFor: (m: EngineMessage, segment: ScreenerSegmentId) => string | null,
   placeOf?: ReadonlyMap<string, Folder | null>,
   parked?: ReadonlySet<string>,
+  holds?: (view: "ohbox" | "reads" | "receipts", id: string) => boolean,
 ): OpenTarget {
   const presented = placeOf?.get(m.id);
   // `null` ⟺ History (dormant, undecided) — pile-less, so the reader is where it opens.
@@ -319,10 +344,20 @@ export function openTargetFor(
     // Reads issue queued for Answer Later is still a locatable row in Reads and must keep routing
     // there. Diverting only where the surface genuinely cannot show the message is the whole of
     // what this function's return type promises.
+    //
+    // Kept as its own arm although `holds` below subsumes it: the parked rule is a statement about
+    // the triage model that is true whether or not a caller passes a pile predicate, and a caller
+    // that passes neither still gets it right.
     if (parked?.has(m.id)) return { kind: "reader", id: m.id };
-    return { kind: "ohbox", id: m.id, reader: narrow };
+    return holds && !holds("ohbox", m.id)
+      ? { kind: "reader", id: m.id }
+      : { kind: "ohbox", id: m.id, reader: narrow };
   }
-  if (view === "reads" || view === "receipts") return { kind: "stream", view, id: m.id };
+  if (view === "reads" || view === "receipts") {
+    return holds && !holds(view, m.id)
+      ? { kind: "reader", id: m.id }
+      : { kind: "stream", view, id: m.id };
+  }
   if (view === "screener" || view === "screened" || view === "spam") {
     const segment: ScreenerSegmentId =
       view === "screener" ? "waiting" : view === "screened" ? "screened" : "spam";
@@ -337,6 +372,41 @@ export function openTargetFor(
   // A folder no view owns. `Folder` is a closed six-member union today, so this is not
   // reachable from the wire — see `openMessage` for why it is written anyway.
   return { kind: "reader", id: m.id };
+}
+
+/**
+ * WHAT THE READER SHOWS — the mirror's own row, else the row the opener carried in with it.
+ *
+ * A named unit for the reason `makeHydrateBody` below is one: it used to be
+ * `reader.get("message", readerFor) ?? null` inline, and that `?? null` is the difference between
+ * a message opening and a click doing nothing at all.
+ *
+ * `GET /search` answers over the whole archive while this device's mirror is a window over it
+ * (`older-mail.ts`, and the engine prunes what nothing is looking at), so a search hit can name a
+ * message no local row exists for — `SearchView` marks those hits on screen. For one of those the
+ * mirror answers `undefined`, the reader's `open` prop was therefore false, and the sheet never
+ * came up: the reported "clicking it does not open it", in the one arm that has no pile to blame.
+ *
+ * The fallback is keyed on the ID, so a held row can never be shown for a different open. What it
+ * renders is exactly what the archive returned — sender, subject, date, and `bodyOf`'s honest
+ * `snippet` state — because a body cannot be fetched for a message the mirror has no row for
+ * (`OhmailEngine.bodyPlan` skips it). Opening what search found is the requirement; a snippet is
+ * the fidelity this device has for a row it does not hold, and it says so rather than showing an
+ * empty sheet.
+ *
+ * The mirror WINS whenever it has the row: it carries the optimistic overlay and this device's own
+ * triage and flag state, while the carried row is a snapshot from before whatever the reader just
+ * did — the same precedence `SearchView`'s merge keeps for the same reason.
+ */
+export function readerMessageFor(
+  readerFor: string | null,
+  fromMirror: (id: string) => EngineMessage | undefined,
+  offMirror: EngineMessage | null,
+): EngineMessage | null {
+  if (!readerFor) return null;
+  const mine = fromMirror(readerFor);
+  if (mine) return mine;
+  return offMirror?.id === readerFor ? offMirror : null;
 }
 
 /**
@@ -1347,6 +1417,15 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * rule rather than a race between two `setState`s and a `hashchange`.
    */
   const [readerPending, setReaderPending] = useState<string | null>(null);
+  /**
+   * THE ONE MESSAGE THE READER MAY SHOW WITHOUT A MIRROR ROW BEHIND IT.
+   *
+   * Written by `openMessage` from the row its caller handed in, and read only when
+   * `reader.get("message", readerFor)` answers nothing — see `readerMessage`. One entry, keyed on
+   * its own id, and never a source for anything but the reader: mutations, search and the piles
+   * all read the mirror, which is what keeps this from becoming a second, staler mirror of one.
+   */
+  const [readerOffMirror, setReaderOffMirror] = useState<EngineMessage | null>(null);
   const [railOpen, setRailOpen] = useState(false);
   /**
    * THE QUICK-LOOK PREVIEW — a message id and the attachment on screen, or `null`.
@@ -1599,9 +1678,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * `OhboxView.open` documents — the sheet swapping to a message nobody opened the moment
    * the list re-partitioned underneath it.
    */
-  const readerMessage: EngineMessage | null = readerFor
-    ? (reader.get<EngineMessage>("message", readerFor) ?? null)
-    : null;
+  const readerMessage: EngineMessage | null = readerMessageFor(
+    readerFor,
+    (id) => reader.get<EngineMessage>("message", id),
+    readerOffMirror,
+  );
 
   /**
    * Is the reading column absent? Under 900px `app.css` sets `display:none` on it, so a
@@ -3343,8 +3424,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    *   · **ohbox** — the split pane IS the open, so the cursor is enough… on a desktop. Under
    *     900px the reading column is hidden, so the reader sheet is what "opened" means
    *     there, exactly as `OhboxView`'s own tap handler already decided.
-   *   · **reads / receipts** — cursor plus a `jump`, which scrolls the stream to the card.
-   *     Unchanged: these piles open IN PLACE and the clamp is their contract.
+   *   · **reads / receipts** — cursor plus a `jump`, which extends the mounted run through the
+   *     card, anchors the stream on it and OPENS it (`ReadsView`, `StreamShell.scrollTo`). These
+   *     piles open in place, and "open" here is the card expanded with its verbs up — a card the
+   *     stream merely scrolled near is not the message the reader clicked.
    *   · **screener / screened / spam** — now SELECTS THE SENDER as well as navigating. The
    *     segment alone was the misroute the ruling named third: a consent surface that drops
    *     you at a queue of strangers when you asked about one of them. Reached whenever the
@@ -3359,13 +3442,36 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    *     is a closed union and `VIEW_OF_FOLDER` is total, so an unknown folder cannot reach here
    *     from the wire — and its answer is the same: the message itself.
    */
+  /**
+   * DOES THAT PILE HOLD THIS MESSAGE — asked of the SAME lists the views render.
+   *
+   * Not of the mirror and not of `placeOf`: the question is whether the surface about to be
+   * navigated to can show the row, and only the built list answers that. An archive-only search
+   * hit (a row `GET /search` returned and this device's mirror does not hold) is in none of them,
+   * and `openTargetFor` then opens it in the reader rather than navigating to a pile it is not in.
+   */
+  const pileHolds = useCallback(
+    (view: "ohbox" | "reads" | "receipts", id: string): boolean => {
+      if (view === "ohbox") return allOhbox.some((m) => m.id === id);
+      if (view === "receipts") return receipts.some((m) => m.id === id);
+      return partition.fresh.some((m) => m.id === id) || partition.seen.some((m) => m.id === id);
+    },
+    [allOhbox, receipts, partition.fresh, partition.seen],
+  );
+
   const openMessage = useCallback(
     (m: EngineMessage) => {
       // `consentView?.placeOf` is what turns "open it where its FOLDER is" into "open it where
       // it is PRESENTED" — the same map SearchView labels the hit's chip from, so the arrival
       // and the chip can no longer disagree. Undefined on demo/desktop, where folder is place.
+      // `pileHolds` is the second half: presentation says WHERE, the pile says WHETHER.
       const target = openTargetFor(
-        m, readColumnHidden(), screenerRowFor, consentView?.placeOf, parked,
+        m,
+        readColumnHidden(),
+        screenerRowFor,
+        consentView?.placeOf,
+        parked,
+        pileHolds,
       );
       switch (target.kind) {
         case "ohbox":
@@ -3394,11 +3500,19 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
           // No navigation, so no `readerPending` is needed: nothing will clear this. This is the
           // "folder no view owns" arm, the History arm and the PARKED arm — a message presented
           // in History, or filed into a bottom pile, belongs to no list, so the reader opens over
-          // wherever you are, exactly as HistoryView's own row does.
+          // wherever you are, exactly as HistoryView's own row does — and now also the arm for a
+          // hit no pile holds at all (an archive-only search result), which must still open the
+          // message it named.
+          //
+          // The row travels with the open so the reader has something to show even when the
+          // mirror holds none — see `readerOffMirror`. Set unconditionally: the mirror's own row
+          // wins whenever there is one, so this is only ever consulted for a message there is no
+          // other copy of.
+          setReaderOffMirror(m);
           setReaderFor(target.id);
       }
     },
-    [readColumnHidden, screenerRowFor, consentView?.placeOf, parked],
+    [readColumnHidden, screenerRowFor, consentView?.placeOf, parked, pileHolds],
   );
   /* Assigned here so `openDraft`, which is declared several hundred lines above this, can open a
      reply draft in its own conversation. See {@link openMessageRef}. */
