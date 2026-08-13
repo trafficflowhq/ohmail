@@ -81,6 +81,19 @@ export const fictionalNames: FictionalName[] = [
   { name: "Tim Berger", verdict: "invented-person", note: "invented" },
   { name: "Carla Meier", verdict: "invented-person", note: "invented" },
   { name: "Lena Kaufmann", verdict: "invented-person", note: "invented" },
+  // The Answer Later pair. Both write from brands ALREADY reviewed below — the pottery studio
+  // and Mila's own studio — so the pile cost this registry two person entries and no new brand
+  // claim, which is the half of it that has ever been wrong.
+  {
+    name: "Nadja Lehner",
+    verdict: "invented-person",
+    note: "invented; the pottery studio's workshop lead",
+  },
+  {
+    name: "Jonas Halter",
+    verdict: "invented-person",
+    note: "invented; Mila's second studio colleague",
+  },
   {
     name: "Mara",
     verdict: "invented-person",

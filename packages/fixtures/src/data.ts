@@ -202,6 +202,47 @@ export const ohbox: MessageFixture[] = [
     body: "Half the neighbourhood asked who made them. See you at the fest on Saturday — we saved you a raclette.\n\nCarla",
     rationale: "Ohbox — you said Yes to this sender",
   },
+  /*
+   * THE ANSWER LATER PAIR — the last two rows, and the only two the Ohbox does not show.
+   *
+   * `triage.replyLater` parks both, and a parked message is in its pile and nowhere else
+   * (`client-engine/selectors.ts#ohboxView`), so these two are absent from the Ohbox screen by
+   * construction. That rule is the reason they exist: the pile used to be spelled with `giulia`
+   * and `petra`, which meant the demo's two best messages vanished from the Ohbox the moment
+   * one-pile shipped. The Ohbox keeps its nine; the pile gets two mails written for it.
+   *
+   * WHAT THEY HAVE TO BE, since a pile of two is the whole feature on screen: mail that plainly
+   * owes a considered reply — a decision, a date, a number — from senders who appear nowhere
+   * else. A second message from a sender already in the Ohbox would read as the same mail listed
+   * twice, which is precisely the confusion one-pile exists to end.
+   *
+   * APPENDED, NOT INSERTED, and that is a constraint rather than a convenience: several callers
+   * address rows of this array by index rather than by id, so a message inserted anywhere but the
+   * tail silently re-points every one of them at a different mail. Both are read and dated before
+   * the weekend — Answer Later is where mail goes once you have seen it and owe more than a line.
+   */
+  {
+    id: "nadja",
+    folder: "ohbox",
+    from: { name: "Nadja Lehner", address: "nadja@erdton-atelier.ch" },
+    subject: "Would you teach the September glaze evening?",
+    time: "Mon",
+    unread: false,
+    snippet: "Two hours, twelve people — and your matte white is why they're asking.",
+    body: "Hi Mila\n\nYou were at «Glaze & Fire» in August, and three people have since asked us who made the matte white bowls on your table. So — would you teach the September glaze evening?\n\nTwo hours, twelve people, Thursday the 18th or the 25th, whichever suits you. Materials and firing are ours; tell me what you'd want for the evening itself.\n\nNo rush, but I'd like the programme at the printer by the end of next week.\n\nNadja\nAtelier Erdton",
+    rationale: "Ohbox — you said Yes to this sender",
+  },
+  {
+    id: "jonas",
+    folder: "ohbox",
+    from: { name: "Jonas Halter", address: "jonas@lichtgrat.studio" },
+    subject: "Open studio in October — which weekend?",
+    time: "Fri",
+    unread: false,
+    snippet: "The 11th or the 18th. I'll do the rest, I just need the date.",
+    body: "Mila — the open studio. If it's happening in October it's the 11th or the 18th, and the printer wants the date on Wednesday.\n\nThe 11th is quieter in town. The 18th shares the weekend with the market, so more people walk past and all of them are slower. I lean 18th.\n\nAlso: seconds table again? It outsold the good shelf last year, which I have decided not to take personally.\n\nJonas",
+    rationale: "Ohbox — rule: teammate @lichtgrat.studio → Ohbox",
+  },
 ];
 
 /* --------------------------------------------------------------- reads */
@@ -683,19 +724,30 @@ export const screenerEmptyStates: Record<
 /* -------------------------------------------------------------- triage */
 
 export const triage: TriageFixture = {
+  /*
+   * PARKING A MESSAGE TAKES IT OUT OF THE OHBOX, so what is listed here is what the Ohbox does
+   * NOT show. `giulia` and `petra` used to be these two entries, and the cost only became
+   * visible when the one-pile rule shipped and honoured them: the demo Ohbox dropped to seven
+   * rows, without its opening message or its attachment row. The pile now names the two mails
+   * written for it (`ohbox`'s last two), and the nine the Ohbox is meant to show all render.
+   *
+   * The title/subtitle/preview beside each `messageId` are for surfaces that read this fixture
+   * directly, without an engine under them. The engine ignores all three and derives them from
+   * the message instead — see `selectors.ts#triagePiles` — so they are a copy that has to be kept
+   * true, never a second source of the answer.
+   */
   replyLater: [
     {
-      messageId: "giulia",
-      title: "Giulia Ferrari",
-      subtitle: "Re: Glaze order #2214 — arriving early 🎉",
-      preview:
-        "Buongiorno Mila, buone notizie — la spedizione arriva già il 4 agosto…",
+      messageId: "nadja",
+      title: "Nadja Lehner",
+      subtitle: "Would you teach the September glaze evening?",
+      preview: "Two hours, twelve people — and your matte white is why they're asking.",
     },
     {
-      messageId: "petra",
-      title: "Petra Wyss",
-      subtitle: "Your talk is in! 🎈",
-      preview: "Great news — “Wabi-sabi for web people” made the final program…",
+      messageId: "jonas",
+      title: "Jonas Halter",
+      subtitle: "Open studio in October — which weekend?",
+      preview: "The 11th or the 18th. I'll do the rest, I just need the date.",
     },
   ],
   setAside: [{ title: "Alpenbahn", subtitle: "Itinerary Winterthur→Lugano, 12 Aug" }],
@@ -799,7 +851,15 @@ export const notificationSettings: NotificationSettingsFixture = {
 
 export const counts: CountsFixture = {
   ohboxUnread: 4,
-  ohboxTotal: 9,
+  /*
+   * MAIL FILED IN THE OHBOX FOLDER — eleven — which is NOT the nine rows the Ohbox screen shows.
+   * The two are different questions and the demo answers both: parking moves nothing on the mail
+   * server, so `nadja` and `jonas` are still Ohbox mail while Answer Later is the only place they
+   * are listed. Surfaces that apply the one-pile rule derive their own total from what they
+   * render (`AppShell` passes `allOhbox.length`, which is nine); this field is the folder, and
+   * `unreadCounts()` is what it is checked against.
+   */
+  ohboxTotal: 11,
   reads: 12,
   receipts: 7,
   screenerWaiting: 3,
