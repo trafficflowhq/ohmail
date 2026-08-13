@@ -304,6 +304,13 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // ── alerting (the worker's alert loop and the API's internal alert route) ──
   "alertKey", "alertKeys", "alertSinks", "alertIntervalMs", "rosterIntervalMs",
   "pollIntervalMs", "firing", "delivered", "failedSinks", "oldestSeconds",
+  // WHY a sink refused, and how long it has been refusing. `failedSinks` above names the sink
+  // and nothing else, which is what let a configured-and-permanently-broken webhook read as
+  // routine noise. `sinkErrors` is a flat ARRAY of `"<sink>: <reason>"` strings and not a
+  // record keyed by sink name ON PURPOSE: this census gates keys at EVERY depth, so a sink
+  // called `webhook` would have had its reason dropped for not being on this list — the
+  // diagnostic would have been added, deployed, and still said nothing.
+  "sinks", "sinkErrors", "sinkFailureStreak",
   // ── AI cost accounting: AnthropicCallReport, spread wholesale as `ai_call`. Per-action cost is
   //    measured from these five token counts, which is why they are named rather than eaten
   //    by a `token` substring rule. See SUBSTRING_EXEMPT_FIELDS.
