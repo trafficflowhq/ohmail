@@ -387,6 +387,22 @@ export class FixturesAdapter implements EngineAdapter {
       ...(m.kind === "draft_save" && m.draftId === null && effects[0]
         ? { entityId: effects[0].id }
         : {}),
+      /**
+       * THE MINTED Message-ID OF A SEND, because a demo that cannot show sent mail is not
+       * showing the product.
+       *
+       * `POST /drafts/:id/send` answers `{status:"sent", providerMessageId}` and the engine
+       * turns that into the optimistic Sent copy that puts the message at the top of "Earlier"
+       * the instant it is sent (`OhmailEngine.materializeSentOverlay`). Answering nothing here
+       * meant the demo — and every UI test that runs on it — took a branch the live client never
+       * takes: press Send and the message went nowhere visible at all.
+       *
+       * The shape is the wire's, brackets included, so the reconcile in the demo exercises the
+       * same normalisation a live one does ({@link messageIdKey}). Nothing ingests a real Sent
+       * row here, so the copy stands until its ten-minute TTL, which is the honest demo of a
+       * mailbox whose Sent folder is never read back.
+       */
+      ...(m.kind === "mail_send" ? { providerMessageId: `<${this.uuid()}@demo.ohmail.app>` } : {}),
     };
     this.replays.set(opts.idempotencyKey, outcome);
     return outcome;

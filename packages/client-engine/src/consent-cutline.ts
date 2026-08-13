@@ -360,6 +360,10 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const index = consentIndex(rulesList(reader));
   const own = ownSet(reader, opts);
   const activity = senderActivity(messages, opts, own);
+  // The same line {@link senderActivity} measures from, read here for outbound mail — see the
+  // own-sent branch below. One call, so the two halves of the partition cannot disagree about
+  // where the cutline is.
+  const { cutoff } = cutlineFor(opts);
 
   const placeOf = new Map<string, Folder | null>();
   /** Messages whose sender is consented, by thread — the anchor the thread rule uses. */
@@ -370,7 +374,42 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const dormantUndecided = new Set<string>();
 
   for (const m of messages) {
-    if (!KNOWN_FOLDERS.has(m.folder)) { placeOf.set(m.id, m.folder); continue; }
+    /* ── OUTBOUND MAIL MEETS THE SAME CUTLINE AS INBOUND MAIL ────────────────────────────
+     *
+     * A folder outside the presented set is the account's own Sent mail — that is the whole
+     * of {@link isOwnSent}, and the reason it needs no address list on a client that has none.
+     * Those rows ARE presented: the Ohbox's "Earlier" is a history of what the reader has
+     * finished with, and half of every conversation is what they wrote.
+     *
+     * This branch used to be an unconditional `placeOf.set(m.id, m.folder); continue;`, which
+     * exempted outbound mail from the cutline entirely. On a mailbox with years of Sent mail
+     * that pours the whole backlog into "Earlier" — the "1,847 unread" arrival state this
+     * product refuses, wearing a different label. There is no sender to weigh here (the user is
+     * not one of their own correspondents, and never a stranger to themselves), so the cutline
+     * reduces to its date half: mail written before the line is part of the backlog the
+     * baseline says is finished, and it is History, exactly as a dormant stranger's mail is.
+     *
+     * Two things it deliberately does NOT do. A RESURFACED row keeps its place, for the reason
+     * spelled out below — the state's only home is the Ohbox's pinned group, so filing it in
+     * History would orphan a message the user just asked to see. And an UNDATED row is never
+     * assumed historical: {@link messageMs} answers `null` for one, and a row nobody can place
+     * in time has not been shown to be finished with.
+     *
+     * The thread rule below then applies to what lands here unchanged, which is the point of
+     * routing outbound mail through `historyIds` rather than filing it directly: a pre-cutline
+     * reply on a thread that holds consented mail follows its thread, so the user's own half of
+     * a conversation is never in History while the other half is in the Ohbox.
+     */
+    if (!KNOWN_FOLDERS.has(m.folder)) {
+      const sentMs = messageMs(m);
+      if (!isResurfaced(m) && sentMs !== null && sentMs < cutoff) {
+        placeOf.set(m.id, null);
+        historyIds.add(m.id);
+      } else {
+        placeOf.set(m.id, m.folder);
+      }
+      continue;
+    }
 
     const key = senderKey(m.from.address);
     // The user is not one of their own correspondents. Their mail keeps the place it is in —
@@ -446,7 +485,17 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
       if (!anchor) continue;
       const anchorPlace = placeOf.get(anchor.id);
       if (anchorPlace === null || anchorPlace === undefined) continue;
-      placeOf.set(m.id, anchorPlace);
+      /* AN OWN-SENT ROW IS RESCUED TO ITS OWN FOLDER, NEVER TO THE ANCHOR'S.
+       *
+       * The rescue exists so a conversation is not split, and for inbound mail "not split" means
+       * "wherever the consented half is". For OUTBOUND mail it cannot: the anchor's place may be
+       * `ohmail/Reads` or `ohmail/Receipts`, and re-homing a sent row there would put the user's
+       * own mail into a reading stream — the piles group by folder, so the row would be counted
+       * and rendered as an issue in Reads. Keeping its own folder presents it in "Earlier"
+       * ({@link isOwnSent} is exactly "not one of the organised views"), which is the one place
+       * outbound mail belongs and is on the same screen as the thread it answers.
+       */
+      placeOf.set(m.id, KNOWN_FOLDERS.has(m.folder) ? anchorPlace : m.folder);
       historyIds.delete(m.id);
     }
   }

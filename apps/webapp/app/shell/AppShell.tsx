@@ -2079,6 +2079,32 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
          on the wire carried NO id, made its own row, and the one autosave then adopted is a
          phantom draft — the sent message sitting in Drafts, reopenable with Send live. */
       releaseDraft.current(m.draftId ?? null);
+      /**
+       * ── AND THE MESSAGE IS SENT, SO THE COMPOSE IS OVER ────────────────────────────────
+       *
+       * Compose used to stay on screen after a confirmed send: the form emptied and the view
+       * did not change, so the only thing that said the mail had gone was a toast, and the
+       * reader was left staring at a blank compose form wondering whether to press Send again.
+       * `cancelCompose` has always navigated (`go("ohbox")`); the successful path did not.
+       *
+       * ON THE CONFIRMATION AND NOT ON THE PRESS, which is the whole reason this can be here
+       * rather than in `sendCompose`. The Ohbox this lands on already holds the message: the
+       * engine materialises the optimistic Sent copy from the server's own `{status:"sent"}`
+       * answer, and `dispatch` now does that the instant that answer arrives rather than behind
+       * a reconciliation drain — so by the time this callback runs, the row is in the mirror and
+       * "Earlier" renders it first (`readTimeOf` ranks a sent message by when it was sent).
+       * Navigating at press time would show an Ohbox that does NOT yet hold it, and a message
+       * appearing a second after the list did is the flicker this is avoiding. A send that fails
+       * never reaches here at all — the compose stays put with its text, which is where somebody
+       * has to be to decide what to do about it.
+       *
+       * The selection is cleared with it. Arriving at a list with a message open from an
+       * earlier visit puts a stranger's mail in the reading column at the moment the reader is
+       * looking for their own — and the row this arrival is about is at the top of the list,
+       * unselected, exactly as arriving anywhere else in the product leaves it.
+       */
+      setOhboxSel(null);
+      go("ohbox");
       return;
     }
     // A reply seeded from a draft row settled: the row's message has been delivered (the send

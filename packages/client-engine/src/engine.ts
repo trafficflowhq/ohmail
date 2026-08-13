@@ -2122,10 +2122,64 @@ export class OhmailEngine {
   private async dispatch(p: PendingMutation): Promise<MutationResult> {
     try {
       const outcome = await this.adapter.mutate(p.mutation, { idempotencyKey: p.key });
+      /**
+       * THE SENT COPY IS MATERIALISED ON THE SERVER'S WORD AND ON NOTHING ELSE'S — which means
+       * HERE, the line after that word arrives, and not below the reconciliation branch.
+       *
+       * The invariant is unchanged and is the reason this is not simply moved into
+       * `mutationEffects`: a send is the one verb whose optimistic effect cannot be taken back,
+       * so its Sent row may only ever be a statement the server has already made. `outcome` IS
+       * that statement. What changes is that the statement is acted on immediately.
+       *
+       * ── WHY IT WAS BELOW THE DRAIN, AND WHAT THAT COST ─────────────────────────────────────
+       *
+       * This call used to sit after `await this.syncFresh()`, so the mechanism built to show a
+       * just-sent message "in under a second" was gated behind a full reconciliation drain — and
+       * that drain can never carry the message it was delaying. The only change a send records is
+       * the draft moving to `sent`; the Sent MESSAGE is not recorded at send time at all, and
+       * enters the feed minutes later, when the Sent folder is read back from the mail server.
+       * Meanwhile the drain itself is unbounded on a mailbox mid-backfill — see
+       * {@link OhmailEngine.syncFresh}, which states that a mutation landing during a cold
+       * bootstrap waits for the bootstrap AND a follow-up. The symptom was a message that
+       * appeared in the Ohbox about a minute after it had been sent.
+       *
+       * `notify` fires on its own overlay bump rather than riding the one below, because the
+       * whole point is that the row is on screen before the branch underneath is entered.
+       */
+      if (this.materializeSentOverlay(p.mutation, outcome)) {
+        this.overlayRev++;
+        this.notify();
+      }
       if (outcome.changes.length > 0) {
         // Read-your-writes echo (§3.4): idempotent apply — converges with the
         // delta that will arrive at the same seq.
         await this.store.applyChanges(outcome.changes);
+      } else if (p.mutation.kind === "mail_send") {
+        /**
+         * A SEND RECONCILES IN THE BACKGROUND, and it is the one kind that may.
+         *
+         * Every other no-echo mutation needs the drain before it can confirm: its overlay is
+         * dropped on confirm, and the settled row that has to replace it comes from that drain.
+         * Wait less and the row snaps back on screen — the whole subject of
+         * {@link OhmailEngine.syncFresh}.
+         *
+         * A send has no such row. Its overlay is a `sending` DRAFT nothing renders (`draftsList`
+         * excludes fresh `sending` rows), the message the reader is waiting for is the Sent copy
+         * materialised above, and the delta this drain carries is the account draft's flip to
+         * `sent` — a status `draftsList` also excludes, so the flip changes no list either way.
+         * Awaiting it therefore buys nothing and costs the whole latency of a drain on the one
+         * gesture where the user is watching for a result: `mutate()` resolves into
+         * `useMailSend`, which is what closes the compose, clears the form and returns to the
+         * Ohbox. That navigation may not be hostage to a poll.
+         *
+         * Still ISSUED, and issued the same way — the flip has to land, and this is a drain that
+         * started after the POST returned, so it carries it. Its failure is swallowed for
+         * exactly the reason the awaited branch swallows its own: the write succeeded, and the
+         * next poll catches the mirror up. `confirmed` remains the true statement about a
+         * delivered mail — reporting anything else is the double-delivery this path exists to
+         * make impossible.
+         */
+        void this.syncFresh().catch(() => { /* see above — the write landed */ });
       } else {
         /**
          * NO ECHO BODY — pull the authoritative delta from a drain that STARTED after this POST
@@ -2186,11 +2240,9 @@ export class OhmailEngine {
         }
       }
       this.overlays.delete(p.id);
-      // THE SENT COPY IS MATERIALISED HERE, on the confirmation and not before it — the send is
-      // the one verb whose optimistic effect is not reversible, so its Sent row is only ever a
-      // statement the server has already made (see `types.ts` `mail_send`). A rejection reaches the
-      // `catch` below and never gets here, which is the "DROP on send rejection" half.
-      this.materializeSentOverlay(p.mutation, outcome);
+      // The Sent copy was materialised the instant the server confirmed, above — a rejection
+      // reaches the `catch` below and never gets here, which is the "DROP on send rejection"
+      // half, unchanged by moving the call up.
       // Sweep the confirm's own drain-side reconcile (a real Sent row for an EARLIER send may have
       // just landed) and any expired copies, so the map cannot accumulate across a long session.
       this.reconcileOptimisticSent();
@@ -2230,19 +2282,24 @@ export class OhmailEngine {
    * so the {@link OverlayReader} merges it into every message read — the conversation and the Ohbox
    * see it with no change of their own — and its `messageIdHeader`/expiry are recorded in {@link
    * optimisticSent} for {@link reconcileOptimisticSent} to retire it by.
+   *
+   * Answers whether a copy was added, so the caller can paint immediately and only then — a
+   * bare `notify()` on every mutation would wake every subscriber for the seven kinds that
+   * never produce one.
    */
-  private materializeSentOverlay(m: EngineMutation, outcome: MutationOutcome): void {
-    if (m.kind !== "mail_send") return;
+  private materializeSentOverlay(m: EngineMutation, outcome: MutationOutcome): boolean {
+    if (m.kind !== "mail_send") return false;
     const header = outcome.providerMessageId;
-    if (!header) return;
+    if (!header) return false;
     const sent = sentOverlayMessage(this.read(), m, header, { now: this.now, uuid: this.uuid });
-    if (!sent) return;
+    if (!sent) return false;
     const overlayId = `sent:${sent.id}`;
     this.overlays.set(overlayId, [{ type: "message", id: sent.id, entity: sent }]);
     this.optimisticSent.set(overlayId, {
       header,
       expiresAtMs: this.now().getTime() + OPTIMISTIC_SENT_TTL_MS,
     });
+    return true;
   }
 
   /**

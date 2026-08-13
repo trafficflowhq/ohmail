@@ -481,10 +481,36 @@ export function isResurfaced(m: Pick<EngineMessage, "triage">): boolean {
  * to the sort. Normalising here — instead of handling `null` in the comparator and NaN separately
  * — is what stops an unparseable stamp from being ranked as a real one against a `null` row, and
  * keeps it from being read as the epoch, which is a position that looks deliberate and is not.
+ *
+ * ── OWN-SENT MAIL IS STAMPED BY WHEN IT WAS SENT, AND THAT IS A READING TIME ──────────────
+ *
+ * Nothing anywhere stamps `lastReadAt` on outbound mail, and nothing should: the ingest creates
+ * a Sent row already read — nothing you wrote is new to you — but with no reading INSTANT, since
+ * there was never a moment somebody opened it; and the optimistic copy the engine mints on a
+ * confirmed send has none either. So EVERY sent message an account has ever had was unstamped,
+ * and the rule above — an unstamped row sorts below every stamped one — put the message the
+ * reader had pressed Send on ten seconds ago underneath everything they had ever opened. On a
+ * live account that is hundreds of rows down, outside the mounted window: in the list, and not
+ * findable, which a reader cannot tell apart from not being there.
+ *
+ * The fix is not an exemption from the reading order — it is the observation that WRITING a
+ * message is finishing with it. The send time is the instant the reader last dealt with that
+ * mail, exactly as a read time is for mail somebody else wrote, so it belongs in the same block
+ * and ranks against the same numbers: a message sent five minutes ago sits above one read an
+ * hour ago, and below one read a minute ago. That is a claim about the reader's own activity,
+ * derived from something they did, which is what separates it from the fallback this comment's
+ * first paragraph refuses — an inbound row's date says when a STRANGER acted.
+ *
+ * A stamp, when there is one, still wins: the date stands in for the missing value and never
+ * overrides a present one, or re-reading your own sent mail could not move it.
  */
 function readTimeOf(m: EngineMessage): number | null {
   const raw = m.lastReadAt ?? null;
-  if (raw === null) return null;
+  if (raw === null) {
+    if (!isOwnSent(m) || m.date === null) return null;
+    const sent = Date.parse(m.date);
+    return Number.isNaN(sent) ? null : sent;
+  }
   const t = Date.parse(raw);
   return Number.isNaN(t) ? null : t;
 }
@@ -530,14 +556,28 @@ export function ohboxView(reader: EntityReader): OhboxView {
     // order to use and the question the group answers is what came in. Resurfaced rows are held
     // out — they sit pinned above, never doubled here.
     newForYou: inbox.filter((m) => m.unread && !pinned.has(m.id)),
-    // "Earlier" is read INBOX mail joined by the account's own sent mail. Sent rows carry no
-    // `lastReadAt`, so `byLastReadDesc` files them into its by-date tail — "sorted by date in the
-    // read block" — below mail with a real reading time, which is the honest place for them.
+    // "Earlier" is read INBOX mail joined by the account's own sent mail, ordered by when the
+    // reader finished with each — for a sent row that is when it was SENT (see `readTimeOf`), so
+    // the message somebody just pressed Send on is the first row here.
     // Pinned ids are held out of BOTH inputs, so a resurfaced row is never doubled below its pin.
-    previouslySeen: [
-      ...inbox.filter((m) => !m.unread && !pinned.has(m.id)),
-      ...sent.filter((m) => !pinned.has(m.id)),
-    ].sort(byLastReadDesc),
+    //
+    // COLLAPSED BY Message-ID, for the same reason the reading pane is ({@link collapseTwins}).
+    // A just-sent message legitimately stands in the mirror twice — the optimistic Sent copy
+    // beside the ingested row the worker's Sent-folder watch delivers minutes later — and
+    // `reconcileOptimisticSent` retires the copy only at the END of a drain. A backfill drain is
+    // many pages and notifies after every one of them, so between the page carrying the real row
+    // and the end of the drain the list rendered the same message twice; the same doubling is
+    // reachable outright from a provider that files its own re-rendered copy of an SMTP
+    // submission (Exchange). The reading pane has collapsed this ever since; the pile had no
+    // such rule. No `openId` here: a pile has no open message, and the ranking's remaining terms
+    // — a real row beats a `local: true` one, then reading order — are exactly what this wants.
+    previouslySeen: collapseTwins(
+      [
+        ...inbox.filter((m) => !m.unread && !pinned.has(m.id)),
+        ...sent.filter((m) => !pinned.has(m.id)),
+      ],
+      "",
+    ).sort(byLastReadDesc),
   };
 }
 
