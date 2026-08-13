@@ -398,6 +398,7 @@
     "toastUndone": "{count, plural, one {Rückgängig — 1 wartet wieder.} other {Rückgängig — # warten wieder.}}",
     "toastUndoExpired": "Zu spät — diese Entscheidung ist schon raus.",
     "toastDecideFailed": "{sender} wartet wieder — diese Entscheidung konnte nicht gespeichert werden. Versuch es noch einmal.",
+    "toastReleaseFailed": "{sender} ist weiterhin in {place} — diese Änderung konnte nicht gespeichert werden. Versuch es noch einmal.",
     "rowNotSaved": "Nicht gespeichert",
     "toastBulkDecided": "{count} entschieden — {parts}{unsub, select, true {. ohmail meldet dich bei den Abgelehnten auch ab, sofern sie Ein-Klick-Abmeldung anbieten.} other {}}",
     "toastBulkSpam": "{count} nach Spam verschoben{unsub, select, true {. ohmail meldet dich dort auch ab, sofern sie Ein-Klick-Abmeldung anbieten.} other {}}",

@@ -230,6 +230,16 @@ export interface ScreenerState {
    * So a refusal is now a STATE, not an absence. The row returns carrying it, and it survives the
    * toast — a capsule that has faded cannot be the only record of a decision that did not happen.
    * Cleared when the same row is decided again (see `decide`), because that is a fresh attempt.
+   *
+   * ── AND IT ANSWERS FOR THE UNDO OF A DECISION AS WELL AS THE DECISION ─────────────────────
+   *
+   * `allowScreened` and both halves of `notSpamToOhbox`/`notSpamToWaiting` — the controls that take
+   * a sender back OUT of Screened out or Spam — carried the identical defect for as long: an
+   * unwatched `void engine.mutate`, an optimistic toast stating the release as done, and a row that
+   * quietly reappeared where it had been. Worse in one respect, because there is no undo window on
+   * those presses, so the toast was the only account of them the reader ever got. They now report
+   * through the same mark, in the same words, keyed so a PARTIAL release still marks the row that
+   * comes back (see `refusalKeys`). Asked by all three segments' rows in `ScreenerView`.
    */
   refused: (id: string) => boolean;
   /** Commit every pending decision now (route/segment changes). */
@@ -421,9 +431,38 @@ export function useScreenerState(
   const heldMessageIds = (sender: ScreenerSenderDTO): string[] =>
     sender.derived ? sender.held.map((h) => h.id) : [];
 
-  const moveAll = (ids: string[], folder: Folder) => {
-    for (const messageId of ids) void engine.mutate({ kind: "move", messageId, folder });
-  };
+  /**
+   * Move a sender's whole bag, and ANSWER WHETHER IT ALL LANDED.
+   *
+   * ── THIS USED TO BE `for (…) void engine.mutate(…)` AND IT IS THE RELEASE FAMILY'S WHOLE BUG ──
+   *
+   * Every reversal on the Screened-out and Spam segments comes through here or through the two
+   * decides beside it: "Allow" on a screened-out sender, "Not spam → Ohbox", "Not spam → Screener".
+   * With the results thrown away, a refused move rolled the engine's overlay back — so the row
+   * reappeared in the segment it was pressed in — while the toast raised at press time went on
+   * stating the release as done. That is the same shape `commit` carried (see
+   * {@link ScreenerState.refused}), one surface over, and it is worse here in one respect: there is
+   * no undo window and no second confirmation, so the toast was the only thing the reader ever saw.
+   *
+   * `false` on ANY refusal, not on all of them: this is one act as far as the reader is concerned
+   * ("release this sender's mail"), and a release that moved four of five messages has not happened.
+   * The sender is still listed either way, because the mail that did not move keeps their row alive.
+   *
+   * A rejected promise counts as a refusal for the same reason it does in `commit`. A `queued`
+   * result does NOT — the mutation is on the retry queue with its Idempotency-Key and the user's
+   * intent stands, which is the one status where the mail staying visibly moved is truthful.
+   *
+   * Empty ⇒ `true`. Nothing was asked for and nothing failed; this is what the loop already did.
+   */
+  const moveAll = (ids: string[], folder: Folder): Promise<boolean> =>
+    Promise.all(
+      ids.map((messageId) =>
+        engine.mutate({ kind: "move", messageId, folder }).then(
+          (r) => r.status !== "rolled_back",
+          () => false,
+        ),
+      ),
+    ).then((landed) => landed.every(Boolean));
 
   /**
    * THE ROW CAME BACK AND IT SAYS SO — the durable half, with no sentence attached.
@@ -458,6 +497,67 @@ export function useScreenerState(
     markRefused(id);
     if (entry.quiet) return;
     toast(t("toastDecideFailed", { sender: senderLabel(entry.sender) }), { duration: UNDO_MS });
+  };
+
+  /**
+   * EVERY ID THIS ROW COULD COME BACK UNDER — the rep, plus the sender's whole derived bag.
+   *
+   * `markRefused` marks ONE id, which is exactly right for a queue row: `commit`'s row keeps its
+   * representative message, so the id the view asks about cannot change under the mark.
+   *
+   * A RELEASE CAN CHANGE THE REPRESENTATIVE, and that is why this exists. A derived Screened-out /
+   * Spam row's id is the sender's NEWEST message in that folder (`selectors.ts#screenerSegments`).
+   * Release five messages, have the newest land and an older one refused, and the row that comes
+   * back is minted on a DIFFERENT message — so a mark on the pressed row's id would be a mark on
+   * an id no row is asking about, which renders as nothing at all: the silent rollback again, in
+   * the one case a partial failure produces. Marking the bag means whichever message is still there
+   * carries the note.
+   *
+   * `heldMessageIds` and not `sender.held` directly, because a FIXTURE row's held ids are not
+   * message ids — it answers `[]` there and the rep id alone is correct, which is the demo world.
+   */
+  const refusalKeys = (sender: ScreenerSenderDTO): string[] => [
+    sender.id,
+    ...heldMessageIds(sender),
+  ];
+
+  /**
+   * A FRESH ATTEMPT CLEARS THE OLD NOTE — the reversal family's counterpart to the
+   * `s.refused.delete(id)` at the top of `decide`, and for the identical reason: the note says
+   * "your last press did not land", and leaving it on a row the reader has just pressed again
+   * would make it say that about the new press before the wire has been asked.
+   *
+   * Bumps, so the note is gone in the same frame as the press rather than on the next unrelated
+   * render. Also called on SUCCESS, so a sender whose mail is released for real leaves no stale key
+   * behind to mark a row minted on the same message later.
+   */
+  const clearRefused = (sender: ScreenerSenderDTO) => {
+    for (const id of refusalKeys(sender)) s.refused.delete(id);
+    bump();
+  };
+
+  /**
+   * A REVERSAL THE WIRE WOULD NOT TAKE — "Allow", "Not spam → Ohbox", "Not spam → Screener".
+   *
+   * Its own sentence rather than `toastDecideFailed`, because that one says *"… is back in the
+   * queue"* and none of these rows go there: a refused release leaves the sender exactly where they
+   * were, in the segment the reader pressed in. `segment` is the id and not a label so the mapping
+   * to words lives here once — the toast has to name a real pile or it is telling the reader to go
+   * and look somewhere the sender is not.
+   *
+   * No `quiet` flag: there is no bulk on these two segments. Every press is one sender, chosen from
+   * a confirm strip, so every refusal has a sentence of its own to raise.
+   */
+  const refuseRelease = (sender: ScreenerSenderDTO, segment: "screened" | "spam") => {
+    for (const id of refusalKeys(sender)) s.refused.add(id);
+    bump();
+    toast(
+      t("toastReleaseFailed", {
+        sender: senderLabel(sender),
+        place: segment === "spam" ? t("segSpam") : t("segScreened"),
+      }),
+      { duration: UNDO_MS },
+    );
   };
 
   const commit = (id: string) => {
@@ -577,6 +677,18 @@ export function useScreenerState(
     // the sender's mail already-seen. `read` is still not a field on `POST /screener/:id`, so the
     // seen half is the same `PATCH /messages` batch the Ohbox uses. Derived rows only; a fixture
     // row's held ids are not message ids. It is clamped away for the demoting piles in `decide`.
+    //
+    // ── THE ONE `void engine.mutate` LEFT IN THIS FILE, AND IT IS DELIBERATE ──────────────────
+    //
+    // Everything else here now reads its result (see {@link ScreenerState.refused} and `moveAll`).
+    // This does not, because the failure it can have is not the failure that family is about. The
+    // DECISION has already landed by the time this runs; only the seen flag on mail that is now
+    // filed can be lost. Calling `refuse`/`refuseRelease` for it would mark the row "Not saved" and
+    // name the sender in a toast — a statement that the decision failed, which would be false, and
+    // aimed at a row that is no longer in the queue to carry it. The real consequence is that some
+    // of the filed mail stays bold in the Ohbox, which is visible where it happened and is undone
+    // by reading it. Left unwatched on purpose rather than by omission, which is what the comment
+    // is for.
     if (derived && entry.read) {
       for (let i = 0; i < heldIds.length; i += MARK_SEEN_MAX) {
         void engine.mutate({
@@ -940,9 +1052,21 @@ export function useScreenerState(
    * DESIRED folder is still `ohmail/Screener`, so a screened-out or quarantined
    * representative is a 404. Per-message `move` releases the held mail for real. It
    * creates no rule, and the copy says so instead of promising future mail will follow.
+   *
+   * @param segment which pile the sender is being released FROM — the one the refusal names, and
+   * the one they are still in if it is refused. Passed rather than derived because `release`
+   * serves both `allowScreened` (Screened out) and `notSpamToOhbox` (Spam) and the two look
+   * identical from in here.
    */
-  const release = (sender: ScreenerSenderDTO, dest: "ohbox" | "reads") => {
-    moveAll(heldMessageIds(sender), FOLDER_OF_VIEW[dest]);
+  const release = (sender: ScreenerSenderDTO, dest: "ohbox" | "reads", segment: "screened" | "spam") => {
+    // The moves are WATCHED. `toastReleased` below is raised at press time and states the release
+    // as done — which was the only thing on screen when the moves were refused, beside a row that
+    // had not moved. Keeping it and adding the refusal is the same pairing `decide` uses: the
+    // optimistic sentence when the press happens, the truth when the wire has answered.
+    void moveAll(heldMessageIds(sender), FOLDER_OF_VIEW[dest]).then((landed) => {
+      if (landed) clearRefused(sender);
+      else refuseRelease(sender, segment);
+    });
     toast(
       t("toastReleased", {
         count: sender.held.length,
@@ -953,17 +1077,26 @@ export function useScreenerState(
   };
 
   const allowScreened = (sender: ScreenerSenderDTO, dest: "ohbox" | "reads") => {
+    clearRefused(sender);
     if (sender.derived) {
-      release(sender, dest);
+      release(sender, dest, "screened");
       return;
     }
+    // A FIXTURE row's decide, and it is watched for the same reason the derived moves are. It is
+    // served in-process by `FixturesAdapter` so it opens no socket, but `Engine.mutate` still
+    // answers `rolled_back` with nothing sent when `mutationEffects` finds no target — a sender
+    // whose fixture row has been drained away between the render and the press. That rolls the
+    // overlay back and put the row straight back into Screened out under a toast saying "Allowed".
     void engine.mutate({
       kind: "screener_decide",
       senderId: sender.id,
       decision: "yes",
       dest,
       scope: "sender",
-    });
+    }).then(
+      (res) => { if (res.status === "rolled_back") refuseRelease(sender, "screened"); },
+      () => refuseRelease(sender, "screened"),
+    );
     toast(
       t("toastAllowed", {
         count: sender.held.length,
@@ -975,20 +1108,30 @@ export function useScreenerState(
 
   const notSpamToWaiting = (row: SpamRow) => {
     if (row.pinned) return;
+    clearRefused(row.sender);
     if (row.sender.derived) {
       // Back to Waiting means the mail goes back to `ohmail/Screener` — the derived
       // queue reads the folder, so a local override would show a row whose mail is
       // still quarantined and whose decision would 404.
-      moveAll(heldMessageIds(row.sender), FOLDER_OF_VIEW.screener);
+      //
+      // WATCHED, like every other release: a refused move leaves the mail in Quarantine and the
+      // row in Spam, and the toast below states it as back in Waiting.
+      void moveAll(heldMessageIds(row.sender), FOLDER_OF_VIEW.screener).then((landed) => {
+        if (landed) clearRefused(row.sender);
+        else refuseRelease(row.sender, "spam");
+      });
       toast(t("toastNotSpamWaiting", { sender: senderLabel(row.sender) }));
       return;
     }
+    // Nothing to watch on this branch — `overrides` is a local view-state flip for a FIXTURE row
+    // and no mutation is sent. The demo's own semantics, stated in this file's header.
     s.overrides.add(row.sender.id);
     bump();
     toast(t("toastNotSpamWaiting", { sender: senderLabel(row.sender) }));
   };
 
   const notSpamToOhbox = (row: SpamRow) => {
+    clearRefused(row.sender);
     if (row.pinned) {
       // The engine already filed this sender's held mail to Quarantine —
       // release it to the Ohbox with real move mutations.
@@ -999,22 +1142,60 @@ export function useScreenerState(
             m.folder === FOLDER_OF_VIEW.spam &&
             m.from.address === row.sender.from.address,
         );
-      for (const m of quarantined) {
-        void engine.mutate({ kind: "move", messageId: m.id, folder: "INBOX" });
-      }
+      /**
+       * THE PIN IS OPTIMISTIC STATE, AND IT IS THE ONE PIECE THE ENGINE CANNOT ROLL BACK.
+       *
+       * Every other reversal on this segment is undone for us: the engine drops its overlay, the
+       * mail is reported where it still is, and the derived row reappears. The pin is ours — this
+       * session's memory of a spam decision, which `pinnedKeys` uses to hold the derived row for the
+       * same address OUT of the list.
+       *
+       * ── AND "THE DERIVED ROW COMES BACK ANYWAY" IS NOT AN ARGUMENT FOR DROPPING IT ────────────
+       *
+       * It does come back, and for one sender with one piece of quarantined mail it comes back under
+       * the very same id, which is why a first pass at the guard for this could not tell the restore
+       * from its absence. The case that separates them is a sender with OTHER, NEWER mail already in
+       * Quarantine from an earlier decision: the derived row is minted on the sender's newest
+       * quarantined message (`selectors.ts#screenerSegments`), so the row that surfaces is one this
+       * press never named, `refusalKeys` does not cover it, and the refusal renders as nothing at
+       * all. Restoring the pin keeps the row that was pressed — with the id the mark is on, and with
+       * its "You marked this" caption, which is still true of a release that was declined.
+       *
+       * Restored at its own index rather than prepended, because a pin's position is the order the
+       * reader marked senders in and a refused release is not a new decision. Guarded on absence so
+       * a sender re-pinned in the meantime is not listed twice.
+       */
+      const pinAt = s.pins.findIndex((p) => p.id === row.sender.id);
       s.pins = s.pins.filter((p) => p.id !== row.sender.id);
       bump();
+      void moveAll(quarantined.map((m) => m.id), "INBOX").then((landed) => {
+        if (landed) {
+          clearRefused(row.sender);
+          return;
+        }
+        if (!s.pins.some((p) => p.id === row.sender.id)) {
+          const back = [...s.pins];
+          back.splice(pinAt < 0 ? s.pins.length : pinAt, 0, row.sender);
+          s.pins = back;
+        }
+        // Bumps and raises the sentence — so the row is back and marked in one render.
+        refuseRelease(row.sender, "spam");
+      });
     } else if (row.sender.derived) {
-      release(row.sender, "ohbox");
+      release(row.sender, "ohbox", "spam");
       return;
     } else {
+      // The fixture decide, watched for the reason `allowScreened`'s is.
       void engine.mutate({
         kind: "screener_decide",
         senderId: row.sender.id,
         decision: "yes",
         dest: "ohbox",
         scope: "sender",
-      });
+      }).then(
+        (res) => { if (res.status === "rolled_back") refuseRelease(row.sender, "spam"); },
+        () => refuseRelease(row.sender, "spam"),
+      );
     }
     toast(t("toastNotSpamOhbox", { sender: senderLabel(row.sender) }));
   };

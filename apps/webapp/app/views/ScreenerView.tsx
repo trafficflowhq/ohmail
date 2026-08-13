@@ -1118,6 +1118,10 @@ export function ScreenerView({
           dull
           selected={w.id === activeId}
           heldCount={w.held.length}
+          /* "ALLOW" DID NOT LAND — the same note the waiting row carries, for the same reason.
+             A refused release leaves the sender here, and until this the row said nothing about
+             it while the toast claimed the mail had gone. See `ScreenerState.refused`. */
+          stateNote={state.refused(w.id) ? t("rowNotSaved") : undefined}
           onClick={() => selectRow(w.id)}
         />
       );
@@ -1137,6 +1141,11 @@ export function ScreenerView({
         selected={r.sender.id === activeId}
         heldCount={r.sender.held.length}
         detection={r.pinned ? t("markedByYou") : r.sender.detection?.label}
+        /* A REFUSED "NOT SPAM" SAYS SO, beside the detection badge rather than instead of it: the
+           two answer different questions ("why is this here" / "where does this stand"), and a
+           pinned row's "You marked this" is still true when the release that would have undone it
+           was declined. See `ScreenerState.refused`. */
+        stateNote={state.refused(r.sender.id) ? t("rowNotSaved") : undefined}
         onClick={() => selectRow(r.sender.id)}
       />
     );
