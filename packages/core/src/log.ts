@@ -203,6 +203,27 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // sites (`bubbleUpPass` → worker cycle + sidecar drain), per the paragraph above: the first
   // live line must not read `droppedFields=["rescued"]` on the event that exists to report it.
   "rescued",
+  // ── The sender-name / recipients backfill's three counters, added WITH the call sites ──
+  //
+  // `scanned` (candidate rows read), `fillable` (rows whose stored headers can supply a value) and
+  // `written` (rows the guarded UPDATE actually took) are integers accumulated by `++`/`+=` from
+  // that pass's own local counters and assigned by nothing else, so
+  // they are structurally content-free. Added here in the SAME change as the call sites rather
+  // than after a live run refused them — which is what the attach-phase and sensitivity-repair
+  // paragraphs above are both records of, and this pass logs progress across a walk of tens of
+  // thousands of rows, so a line reading only `droppedFields` would leave an operator with no way
+  // to tell a slow run from a stalled one.
+  //
+  // NAMED rather than folded into `count`, on this file's rule: three quantities behind one key is
+  // not a claim a reviewer can check. The pass's other numbers are deliberately NOT here — they
+  // reach the operator through the runner's console summary, and `skipped` in particular stays off
+  // the census exactly as the cron paragraph above decided. The cursor is logged as `messageId`,
+  // the row-uuid entry that already exists, not as a new `lastId`.
+  //
+  // What must never appear on this list is a key named for the VALUES this pass moves —
+  // `fromName`, `toAddresses`, `ccAddresses` are display names and recipient addresses, i.e.
+  // somebody's mail, and the pass logs counts of them and never one of them.
+  "scanned", "fillable", "written",
   // ── The sensitivity-false-positive repair's counts, added AFTER the first live run refused them ──
   //
   // The attach-phase paragraph four entries up, reproduced exactly, by somebody who had read it. The

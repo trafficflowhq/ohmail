@@ -509,3 +509,100 @@ export async function normalizeMime(raw: Buffer | string): Promise<NormalizedMes
     attachments,
   };
 }
+
+/**
+ * The three address headers as {@link normalizeMime} stored them — the values, not the names.
+ * Each is the array `message_bodies.headers` holds under that key: one entry per header LINE, so
+ * a message with two `To:` lines has two, and the parse below reproduces both.
+ */
+export interface StoredAddressHeaders {
+  from?: readonly string[] | null | undefined;
+  to?: readonly string[] | null | undefined;
+  cc?: readonly string[] | null | undefined;
+}
+
+/** What {@link parseStoredAddressHeaders} recovers. `from` is null ⇔ no From address was found. */
+export interface ParsedAddressHeaders {
+  from: EmailAddress | null;
+  to: EmailAddress[];
+  cc: EmailAddress[];
+}
+
+/**
+ * ── RE-READING WHO A STORED MESSAGE IS FROM AND TO, FROM ITS STORED HEADERS ─────────────────
+ *
+ * The columns `messages.from_name` (mail 0057), `to_addresses` and `cc_addresses` were each
+ * added after the rows that need them, and every one of those rows still holds the header the
+ * value came from — `message_bodies.headers` keeps the RAW line values, so `from` on a message
+ * ingested a year before the column reads `"Papierwerk Studio <hello@papierwerk.example>"`
+ * whatever the `messages` row says. This function is how a historical row is re-read.
+ *
+ * ── IT IS THE INGEST PARSE, NOT A SECOND ONE, AND THAT IS THE WHOLE POINT ───────────────────
+ *
+ * A backfill that disagreed with ingest would leave two populations of rows whose names came
+ * from different rules, which is worse than one population with no names at all — the disagreement
+ * is invisible, and it is invisible per row. So this shares every piece that decides a value:
+ * `simpleParser` under the same {@link PARSE_OPTIONS}, then {@link toAddr}/`addrList`, which are
+ * the same functions {@link normalizeMime} maps its own `parsed.from/to/cc` through. Nothing
+ * about an address is re-implemented here — the lowercasing, the NUL scrub, the empty-name→null
+ * collapse and the RFC 5322 group/comment handling all stay in one place.
+ *
+ * That equivalence is pinned by a test rather than by this paragraph: for a corpus of raw
+ * messages, `parseStoredAddressHeaders(normalizeMime(raw).headers)` deep-equals the `from`/`to`/`cc`
+ * that same `normalizeMime` returned. It is the round trip through the stored representation that
+ * is under test, which is exactly what a backfill does.
+ *
+ * `from` is `null` where `normalizeMime` yields `{ name: null, address: "" }` — the one shape
+ * difference, and it is deliberate: a caller filling a column has to be able to tell "the parse
+ * found nobody" from "the parse found someone anonymous", and the sentinel empty address cannot.
+ *
+ * ── WHY THE VALUES ARE RE-FOLDED BEFORE THEY GO BACK IN ────────────────────────────────────
+ *
+ * A stored value can contain a raw newline: `headerLines[].line` carries the header as it arrived,
+ * folding included, and only the ends were trimmed. Written back verbatim, a fold whose
+ * continuation lost its leading whitespace — or a value a sender crafted with a bare LF — would
+ * start a NEW header in the block this function builds, which is header injection into our own
+ * re-parse. Every newline not already followed by WSP therefore gets one, which is precisely
+ * RFC 5322 folding and reproduces the original unfolded value.
+ *
+ * The result is decoded, not raw. A display name that is not plain ASCII arrives as an RFC 2047
+ * encoded-word (`=?UTF-8?Q?…?=`), and only a real parser turns that back into text — so a
+ * backfill that read the stored line directly would write the encoding into the column and show it
+ * to the reader. On a mailbox with any non-English correspondents that is a large minority of the
+ * rows, not an edge case, which is why this goes through the parser rather than a regex.
+ */
+export async function parseStoredAddressHeaders(
+  stored: StoredAddressHeaders,
+): Promise<ParsedAddressHeaders> {
+  const lines: string[] = [];
+  const emit = (name: string, values: readonly string[] | null | undefined) => {
+    for (const v of values ?? []) {
+      if (typeof v !== "string") continue;
+      lines.push(`${name}: ${v.replace(UNFOLDED_NEWLINE, "\r\n ")}`);
+    }
+  };
+  emit("From", stored.from);
+  emit("To", stored.to);
+  emit("Cc", stored.cc);
+  // No headers at all still parses — mailparser answers an empty message and every field is
+  // absent, which is the honest result for a row whose body row holds no address header.
+  if (lines.length === 0) return { from: null, to: [], cc: [] };
+
+  let parsed: Awaited<ReturnType<typeof simpleParser>>;
+  try {
+    // A header-only message: the blank line closes the block and there is no body to decode, so
+    // none of the html/attachment machinery `normalizeMime` guards against can run at all.
+    parsed = await simpleParser(`${lines.join("\r\n")}\r\n\r\n`, PARSE_OPTIONS);
+  } catch (err) {
+    throw new MimeParseError(err);
+  }
+  const fromObj = parsed.from?.value?.[0];
+  return {
+    from: fromObj ? toAddr(fromObj) : null,
+    to: addrList(parsed.to),
+    cc: addrList(parsed.cc),
+  };
+}
+
+/** A newline that is NOT a fold — see {@link parseStoredAddressHeaders}. */
+const UNFOLDED_NEWLINE = /\r?\n(?![ \t])/g;
