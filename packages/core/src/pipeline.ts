@@ -25,6 +25,15 @@ import type { NormalizedMessage } from "./types.js";
 /** Confidence a graduated pattern must meet before the AI branch auto-applies. */
 export const AUTO_APPLY_CONFIDENCE_BAR = 0.7;
 
+/**
+ * The UIDVALIDITY half of a `NativeLocator.ref` (`${uidvalidity}:${uid}`).
+ *
+ * Hand-rolled rather than imported from `adapters/imap.ts#parseRef`: this module is the model layer
+ * and must not pull the IMAP adapter — and with it `imapflow` — into its import graph. The format is
+ * declared on {@link NativeLocator} and is the model's own, not the adapter's.
+ */
+const epochOfRef = (ref: string): string => ref.split(":")[0] ?? "0";
+
 export interface ApplyContext {
   messageId: string;
   locator: NativeLocator;   // the message's current native location
@@ -140,6 +149,21 @@ export interface NewPlan {
    * routed anything.
    */
   authVerdict: AuthVerdict;
+  /**
+   * THIS ARRIVAL IS IN A FOLDER THE CUSTOMER MADE — carried from {@link Change.passive}.
+   *
+   * It decides ONE thing at commit, and it is the third of the three structural gates listed on
+   * `imap-types.ts#PASSIVE_EXCLUDED_SPECIAL_USE`: the `folder_state` row is written
+   * `last_set_by: 'external'` instead of `'us'`.
+   *
+   * That is not a cosmetic label. `'external'` is defined as *"a placement the USER made in their own
+   * mail client"*, which is exactly what an archive folder is, and **every pass that moves mail
+   * requires `'us'`** — `reconcileFolders` skips a non-`'us'` row outright, and `rule-retro`,
+   * `ohbox-tidy`, `screener-auto` and `read-retro` all carry `eq(folderState.lastSetBy, "us")` in
+   * their candidate predicates. So a passive row is out of every mover's reach by DATA, not only by
+   * the early return in `planChange` that put it there. Two independent gates, either sufficient.
+   */
+  passive?: boolean;
   ai?: AiPlan;
 }
 
@@ -147,6 +171,27 @@ export interface ExistingPlan {
   kind: "duplicate" | "own_move" | "external_move";
   messageId: string;
   arrivalLocator: NativeLocator;
+  /**
+   * WHERE THE STORED ROW SAYS THIS MESSAGE IS — `messages.native_locator`, as it was read.
+   *
+   * REQUIRED, because the one thing it decides cannot be decided without it: whether the arrival is
+   * the SAME physical message re-observed or a SECOND copy sitting beside it. See the
+   * `secondCopyInSameEpoch` block in {@link commitChange} for the oscillation that answering "same"
+   * unconditionally produced on a real mailbox, and why an optional field with a
+   * fall-back-to-repoint default would have preserved it silently.
+   */
+  storedLocator: NativeLocator;
+  /**
+   * The arrival was read out of the mailbox's own SENT folder — {@link Change.ownAuthored}, carried.
+   *
+   * It gates exactly one thing, and the reason is about ENUMERATION rather than about authorship: see
+   * the `secondCopyInSameEpoch` block in {@link commitChange}. Sent is the one folder read from a UID
+   * WATERMARK instead of end to end, and a delete below that watermark is deliberately never reported
+   * (`imap.ts`, `enumFloorUid`) — so a second instance recorded there could outlive its primary with
+   * nothing left to promote it. Sent is also, for the same reason, the one folder where the
+   * re-download loop cannot arise: the watermark is its floor, not the known-set.
+   */
+  ownAuthored: boolean;
   state: FolderStateRow;
   action: ReconcileAction;
   /**
@@ -625,6 +670,57 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       };
     }
 
+    // ── MAIL THE CUSTOMER FILED THEMSELVES LEAVES THE PIPELINE HERE TOO ────────────────────
+    //
+    // `Change.passive` means the adapter read this out of a folder the CUSTOMER made — `Archive`,
+    // `Private/Editor`, `_archive/Clients/…`. See `imap-types.ts#passiveFolderExclusion` for
+    // which folders those are and which are held out.
+    //
+    // The reasoning is the `ownAuthored` block above, with one word changed: everything below is
+    // written for mail ohmail is asked to ORGANIZE, and this mail has already been organized, by
+    // the person whose mailbox it is.
+    //
+    //  · **The Screener.** `evaluateRules` files any message whose FROM is not a known contact into
+    //    `ohmail/Screener`. Applied to a folder somebody spent fifteen years filing, that is a bulk
+    //    MOVE of their archive into a consent queue — and the consent question is already answered:
+    //    they kept the mail and gave it a name.
+    //  · **Reads / Receipts.** A newsletter the customer deliberately archived under `News` would be
+    //    lifted out of `News` and filed under ohmail's own newsletter folder. Their filing is theirs.
+    //  · **The sensitive short-circuit.** Below, `sensitivity.sensitive` forces `INBOX`. An eight
+    //    year old password reset filed under `Private/Family` would surface in today's Ohbox.
+    //  · **The money gate.** With `desired` already decided there is no `unclear` residue, so the AI
+    //    branch cannot fire and `credits.tryDebit` is unreachable. Backfilling a customer's archive
+    //    must not spend one AI action — an archive is the largest thing in a mailbox and reading it
+    //    for the first time would otherwise be the largest bill the account ever saw.
+    //
+    // ABOVE the `listRules` / `knownSenders` reads, on the same cost argument: two database round
+    // trips per archived message whose result is discarded is not free at six thousand of them.
+    //
+    // `seen` is the SERVER's flag here, unlike the `ownAuthored` branch which forces true. Nothing
+    // the user wrote is new to them; mail they filed away may well be unread, and claiming otherwise
+    // would silently mark a whole archive read in their other mail clients on the first reconcile.
+    //
+    // `desired === arrival` is the whole never-reorganized statement: `reconcile` computes `none`,
+    // `folder_state` lands `reconciled`, and no IMAP move is ever issued. `commitChange` writes the
+    // row `last_set_by: 'external'` — see {@link NewPlan.passive} — which is what keeps every retro
+    // pass out as well, since all of them require `'us'`.
+    if (change.passive) {
+      return {
+        outcome: "new",
+        new: {
+          normalized,
+          dedupKey: key,
+          sensitivity,
+          arrivalLocator,
+          desired: arrivalLocator.folder,
+          snippet: bodySnippet(normalized),
+          seen: change.seen ?? false,
+          authVerdict,
+          passive: true,
+        },
+      };
+    }
+
     const rules = await repo.listRules(accountId);
     const known = await repo.knownSenders(accountId);
     const decision = evaluateRules({
@@ -953,6 +1049,8 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       kind: outcome.kind as ExistingPlan["kind"],
       messageId: existingMsg.id,
       arrivalLocator: change.locator,
+      storedLocator: existingMsg.nativeLocator,
+      ownAuthored: change.ownAuthored === true,
       state,
       action,
       ...(unexpungedSource ? { unexpungedSource } : {}),
@@ -1171,7 +1269,9 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     const initial: FolderStateRow = {
       desiredFolder: p.desired,
       observedFolder: p.arrivalLocator.folder,
-      lastSetBy: "us",
+      // `'external'` for a folder the CUSTOMER made — see {@link NewPlan.passive} for why this one
+      // word is a structural gate rather than a label.
+      lastSetBy: p.passive ? "external" : "us",
     };
     await repo.upsertFolderState(stored.id, initial);
 
@@ -1237,7 +1337,64 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   // next cycle as a stranger and paying a full RFC822 re-fetch. No tuple conflict is possible —
   // the primary is at the source, the copy is a different folder/uid — so unlike the repointing
   // path this write has no ordering constraint against the primary.
-  if (e.unexpungedSource) {
+  // ── A SECOND PHYSICAL COPY IS RECORDED, NEVER REPOINTED TO ─────────────────────────────────────
+  //
+  // `updateLocator` MOVES the message's one primary instance (`drizzle-repo.ts#setPrimaryInstance`
+  // is an UPDATE of the primary row, not an insert). So when two physical copies of one logical
+  // message sit in the SAME folder — a re-imported mailbox, a client that appended twice — only one
+  // of them can ever be in the known-set, and repointing hands the other one back to the next
+  // cycle as an unknown UID:
+  //
+  //     cycle 1: uid 400 known, uid 900 unknown → fetch 900 → duplicate → primary moves to 900
+  //     cycle 2: uid 900 known, uid 400 unknown → fetch 400 → duplicate → primary moves to 400
+  //     …for ever, one full RFC822 body per copy per cycle, and `fetchCapped` truncated on every
+  //     pass because the unknown set never shrinks — so `hasBacklog` is pinned true and
+  //     `initial_import_completed_at` is unreachable.
+  //
+  // MEASURED, not hypothesised. On a live mailbox in this state the observable signature is exact
+  // and worth recognising: the folder's `exists` far exceeds the instance rows recorded for it, the
+  // folder cursor's `uidnext` has been held at 0 since the mailbox was created, and the stored
+  // message count does not move across an hour of continuous cycling. It is a mailbox working hard
+  // and importing nothing.
+  //
+  // The rule below is stated in terms of what each answer MEANS, not of the outcome kinds:
+  //
+  // `external_copy` is NOT in the condition and needs no place there: it takes its own return above
+  // and already calls `recordInstance` without repointing. `duplicate` is the same observation in the
+  // same folder, and it was the one that repointed.
+  //
+  // ── AND THE SENT FOLDER IS EXCLUDED, ON AN ENUMERATION ARGUMENT, NOT AN AUTHORSHIP ONE ────────
+  //
+  // Sent is the one folder read from a UID WATERMARK rather than end to end, and a delete BELOW that
+  // watermark is deliberately never reported (`imap.ts`, `enumFloorUid`) — so the promotion in
+  // `forgetInstanceAt` that closes this change's residual would never be reached there, and a
+  // recorded non-primary copy could outlive its primary with nothing to move the row onto. The same
+  // property makes the exclusion free: the watermark, not the known-set, is that folder's
+  // enumeration floor, so a second copy in Sent cannot become a permanently-unknown UID and the loop
+  // this block exists to break cannot form. Exchange Online's shape — its own re-rendered copy filed
+  // beside the byte-exact one the send path appended — therefore keeps converging on the newest
+  // observed UID exactly as it did (`sent-record.test.ts`).
+  //
+  //  · a different UID in the SAME epoch is a genuine second copy on the server right now. Record it
+  //    (non-primary): it becomes known, its body is never fetched again, and the message keeps the
+  //    locator it already had. Repointing on the strength of a second copy is the same class of
+  //    mistake `external_copy` exists to refuse — a delivery deciding something.
+  //  · a different EPOCH is a RENUMBERING. The stored locator is meaningless, so repoint.
+  //  · the same locator is a replay. Repoint (a touch).
+  //  · `own_move` / `external_move` repoint by definition — the message really is at the arrival
+  //    locator, and the source is gone or being adopted.
+  //
+  // The residual this creates is closed in `forgetInstanceAt`: if the copy the primary points at is
+  // later expunged, that call PROMOTES a surviving instance, so `messages.native_locator` never
+  // names a UID the server does not hold. Before this change the same repair happened by accident —
+  // the survivor came back as "unknown" and repointed the primary — which is the oscillation itself.
+  const secondCopyInSameEpoch =
+    e.kind === "duplicate"
+    && !e.ownAuthored
+    && e.storedLocator.folder === e.arrivalLocator.folder
+    && epochOfRef(e.storedLocator.ref) === epochOfRef(e.arrivalLocator.ref)
+    && e.storedLocator.ref !== e.arrivalLocator.ref;
+  if (e.unexpungedSource || secondCopyInSameEpoch) {
     await repo.recordInstance(e.messageId, e.arrivalLocator);
   } else {
     await repo.updateLocator(e.messageId, e.arrivalLocator);

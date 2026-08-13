@@ -23,6 +23,47 @@ export type Destination =
   | "ohmail/Quarantine";
 
 /**
+ * The six {@link Destination} strings as a VALUE — the folders ohmail may put mail into.
+ *
+ * ── WHY THIS IS IN THE MODEL AND NOT BESIDE `WATCHED_FOLDERS` ────────────────────────────────
+ *
+ * The adapter's `WATCHED_FOLDERS` is a SCAN LIST: which folders one `changesSince` pass reads. The
+ * set it reads is strictly larger than the set it FILES INTO — the Sent folder and the customer's
+ * own folders are read and never organized — so the two questions are different and only one of them
+ * is a fact about IMAP.
+ *
+ * `isOrganizedFolder` is the predicate every path that WRITES to a mailbox asks, and several of
+ * those callers must never pull the IMAP adapter into their import graph. `apps/worker/src/
+ * rule-retro.ts` is the one that proved it: it needs this predicate for its candidate query and
+ * `rule-retro.no-imap.test.ts` scans its imports and fails on `adapters/imap` — the pass runs beside
+ * `reconcileFolders`, which holds the mailbox's adapter and its organizer lease, so a bulk mover
+ * that could dial would be a second organizer for one mailbox. Importing a six-string list from a
+ * module that carries `imapflow` is how that guard gets weakened by accident.
+ *
+ * This module has no imports at all, which is what makes it reachable from anywhere.
+ */
+export const DESTINATIONS: readonly Destination[] = [
+  "INBOX",
+  "ohmail/Screener",
+  "ohmail/Reads",
+  "ohmail/Receipts",
+  "ohmail/Screened",
+  "ohmail/Quarantine",
+];
+
+/**
+ * Does ohmail ORGANIZE this folder — is it one a decision may file mail into?
+ *
+ * NOT "do we read it". `Sent` is read and never organized; a customer's own folders
+ * (`imap-types.ts#passiveFolderExclusion`) are read and never organized. Both answer false here, and
+ * that is the point: conflating the two is how a folder somebody spent fifteen years filing acquires
+ * a mover.
+ */
+export function isOrganizedFolder(folder: string): boolean {
+  return (DESTINATIONS as readonly string[]).includes(folder);
+}
+
+/**
  * Attachment METADATA captured at ingest. The BLOB bytes are NEVER
  * stored server-side — only this metadata persists; the bytes are
  * fetched on-demand from IMAP by `partId`. `partId` is the IMAP MIME body-part

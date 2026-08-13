@@ -28,6 +28,26 @@ export interface Change {
    */
   ownAuthored?: boolean;
   /**
+   * THIS MAIL IS IN A FOLDER THE CUSTOMER MADE — passive presence. Absent ⇒ one of the folders
+   * ohmail organizes, which is what every adapter and fake without this flag produces.
+   *
+   * The ADAPTER sets it, and only the adapter can, for exactly {@link ownAuthored}'s reason: it is
+   * a fact about the server's folder inventory (`imap-types.ts#passiveFolderExclusion` over a LIST
+   * response), and a pipeline deriving it from the folder NAME would have to re-implement that
+   * decision and would get the Sent folder wrong on every server advertising no SPECIAL-USE.
+   *
+   * What it turns off is ORGANIZING, and nothing else. `planChange` returns before `listRules`,
+   * before `knownSenders`, before the classifier and before the credit gate, with `desired` equal to
+   * the arrival folder — so the message is stored, threaded, searchable and readable, and no rule,
+   * no Screener decision, no AI proposal and no IMAP move is ever computed for it. Their filing is
+   * theirs.
+   *
+   * Set ONLY on pure creates, never on a correlated `move`, on {@link ownAuthored}'s rule: a
+   * message correlated as moving INTO one of these folders is the customer filing mail we already
+   * hold, and `adopt_external` already follows their hand and writes `last_set_by = 'external'`.
+   */
+  passive?: boolean;
+  /**
    * WHEN THE SERVER RECEIVED THIS MESSAGE — IMAP `INTERNALDATE`, absent for adapters that do not
    * carry one.
    *

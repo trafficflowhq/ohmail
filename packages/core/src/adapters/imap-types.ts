@@ -2,6 +2,10 @@
 // re-exports the model half beside it — so naming it here would put the classifier and the drafter
 // into the import graph of every artifact that opens a mailbox.
 import type { Change, NativeLocator } from "../mail.js";
+// The ONE runtime import this module has, and it is a six-string array from a module with no
+// imports of its own — see the note on the TLS floor below for why that restriction exists and what
+// it is about (`imapflow` / `nodemailer` / `node:net`, none of which `types.js` touches).
+import { DESTINATIONS as DESTINATIONS_VALUE } from "../types.js";
 
 /**
  * Canonical folders the worker watches. INBOX = Imbox.
@@ -27,6 +31,183 @@ export const WATCHED_FOLDERS = [
 
 /** `ohmail/*` folders that ensureFolders() creates (INBOX always exists). */
 export const OHMAIL_FOLDERS = WATCHED_FOLDERS.filter((f) => f !== "INBOX");
+
+/**
+ * The ORGANIZE predicate lives in the model (`types.ts#isOrganizedFolder`), not here, and is
+ * re-exported so a caller already importing this module does not need two imports.
+ *
+ * Its docblock says why. In short: several callers that need it must not pull `imapflow` into their
+ * import graph, and this module's entry point does.
+ */
+export { isOrganizedFolder, DESTINATIONS } from "../types.js";
+
+/**
+ * `WATCHED_FOLDERS` and `DESTINATIONS` hold the same six strings, and this asserts it at module load
+ * — the {@link META_FOLDER_IS_UNWATCHED} idiom.
+ *
+ * They are two literals rather than one derivation on purpose: `apps/webapp/test/
+ * folder-showcase.test.ts` parses the `export const WATCHED_FOLDERS = [ … ] as const` literal out of
+ * this file's SOURCE to diff the marketing showcase against it, so replacing the literal with an
+ * expression makes that guard stop guarding while staying green. The duplication is therefore
+ * deliberate and this line is what keeps it honest.
+ */
+export const WATCHED_FOLDERS_ARE_THE_DESTINATIONS: boolean =
+  WATCHED_FOLDERS.length === DESTINATIONS_VALUE.length
+  && WATCHED_FOLDERS.every((f, i) => f === DESTINATIONS_VALUE[i]);
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  PASSIVE PRESENCE — the customer's OWN folders, read and never reorganized
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Mail the customer filed themselves — `Archive`, `Private/Editor`, `_archive/Clients/…`,
+ * fifteen years of nested folders made in Apple Mail — was invisible to ohmail entirely: the only
+ * folders ever enumerated were {@link WATCHED_FOLDERS} plus the resolved Sent folder, so a message
+ * living anywhere else was in no `messages` row, in no thread, and in no search result. Measured on
+ * a real mailbox whose server listed well over a hundred folders, of which seven were read.
+ *
+ * These folders are now ENUMERATED, INGESTED, SEARCHABLE and THREADED, and they are never
+ * REORGANIZED. The distinction is enforced in three independent places rather than by intention:
+ *
+ *  1. {@link isOrganizedFolder} answers false, so no rule, no Screener decision, no AI proposal and
+ *     no retro pass has them in its candidate set.
+ *  2. `pipeline.ts#planChange` returns before `listRules`/`knownSenders` and before the classifier
+ *     for a passive arrival — the same early return the Sent folder already has — so `desired` IS
+ *     the arrival folder, the reconciler answers `none`, and no IMAP move is ever issued.
+ *  3. the row is written `folder_state.last_set_by = 'external'`: a placement the USER made. Every
+ *     pass that moves mail requires `'us'`.
+ *
+ * ── WHAT IS EXCLUDED, AND WHY EACH ONE ─────────────────────────────────────────────────────────
+ *
+ * `\Junk` / `\Trash` / `\Drafts` are excluded on a product rule that predates this — the provider's
+ * own Junk/Spam folder is never watched and never written to — and on one shared argument: none of
+ * the three holds mail the customer FILED. Junk is the provider's verdict, Trash is mail they
+ * deleted, Drafts is mail they have not finished writing; putting any of it into their history and
+ * their search results would be inventing a decision rather than reading one.
+ *
+ * `\All` and `\Flagged` (Gmail's *All Mail* and *Starred*) are excluded because they are VIRTUAL:
+ * every message in the account appears in `\All` a second time, so ingesting it would double the
+ * whole mailbox and give every message a second physical instance in a folder nobody filed it into.
+ *
+ * `\Sent` is excluded HERE because it is watched by its own path, with the UID watermark
+ * {@link DEFAULT_SENT_HISTORY_MESSAGES} exists for. It is not less covered; it is covered already.
+ *
+ * The `ohmail` NAMESPACE is excluded whole — every path with an `ohmail` segment, which covers the
+ * five organized folders, the unsubscribed `ohmail/_meta` lease, and the namespace-prefixed forms a
+ * server with a personal prefix reports (`INBOX/ohmail/_meta` on a `.`-delimited server, measured).
+ * A watched `_meta` would ingest the organizer lease's own bookkeeping as mail.
+ */
+export const PASSIVE_EXCLUDED_SPECIAL_USE: ReadonlySet<string> = new Set([
+  "\\inbox", "\\sent", "\\drafts", "\\junk", "\\trash", "\\all", "\\flagged", "\\important",
+]);
+
+/**
+ * Leaf names that mean one of the excluded classes on a server that names no SPECIAL-USE for them.
+ *
+ * This is a BELT, not the primary rule, and it earns its place on measured data rather than on
+ * caution: a live dovecot deployment reports `INBOX.Trash` carrying the `\Trash` flag and, beside
+ * it, `INBOX.Deleted Messages` and `INBOX.Junk` with **no special-use at all** — two former
+ * specials a migration left behind, one of them still full. imapflow's own localized name table
+ * missed both. The cost of the belt is a customer folder deliberately named `Junk` staying
+ * invisible; the cost of not having it is ingesting a stranger's spam into somebody's search.
+ */
+export const PASSIVE_EXCLUDED_LEAF =
+  /^(drafts?|entw(?:ü|ue)rfe|junk[ -]?(?:e-?mail)?|spam|bulk[ -]?mail|unerw(?:ü|ue)nscht|trash|bin|recycle[ -]?bin|deleted[ -](?:items|messages)|gel(?:ö|oe)schte[ -](?:objekte|elemente|nachrichten)|papierkorb|all[ -]mail|alle[ -]nachrichten|starred|important|outbox|postausgang)$/i;
+
+/** The `ohmail` namespace, in canonical (`/`-delimited) form, at any depth. */
+const OHMAIL_SEGMENT = /(?:^|\/)ohmail(?:\/|$)/i;
+
+/** One folder as the server described it, reduced to what the passive decision reads. */
+export interface ListedFolder {
+  /** CANONICAL path — `/`-delimited, `ImapAdapter.toCanonical` applied. */
+  path: string;
+  /** imapflow's resolved special-use (`"\\Sent"`, …), or null/undefined when it named none. */
+  specialUse?: string | null;
+  /** The LIST flags, lowercased or not — membership is tested case-insensitively. */
+  flags?: ReadonlySet<string>;
+}
+
+/**
+ * Why this folder is NOT read as passive presence, or `null` when it IS — the
+ * {@link loopbackHarnessReason} shape, for the same reason: an operator looking at a folder that
+ * did not get ingested needs the sentence, not a boolean.
+ *
+ * `sentFolder` is the path the adapter resolved for THIS mailbox, which is the only way to exclude
+ * a Sent folder on a server that advertises no SPECIAL-USE (`INBOX/Sent`, matched by name).
+ */
+export function passiveFolderExclusion(
+  folder: ListedFolder, sentFolder: string | null,
+): string | null {
+  const path = folder.path;
+  const flags = new Set([...(folder.flags ?? [])].map((f) => String(f).toLowerCase()));
+  if (flags.has("\\noselect") || flags.has("\\nonexistent")) {
+    return "the server reports it as not selectable";
+  }
+  if (path.toUpperCase() === "INBOX") return "it is the Imbox and is watched already";
+  if (OHMAIL_SEGMENT.test(path)) return "it is inside the ohmail namespace";
+  if ((DESTINATIONS_VALUE as readonly string[]).includes(path)) {
+    return "it is one of the folders ohmail organizes";
+  }
+  if (sentFolder !== null && path === sentFolder) {
+    return "it is the mailbox's Sent folder, watched on its own watermark";
+  }
+  const special = (folder.specialUse ?? "").toLowerCase();
+  if (special && PASSIVE_EXCLUDED_SPECIAL_USE.has(special)) {
+    return `the server reports it as ${special}`;
+  }
+  const leaf = path.split("/").pop() ?? path;
+  if (PASSIVE_EXCLUDED_LEAF.test(leaf)) {
+    return `its name (${leaf}) is one of the excluded classes on a server that named none`;
+  }
+  return null;
+}
+
+/**
+ * How many of the customer's own folders one mailbox may have read — and it is TWO numbers, because
+ * the cost this bounds is not the folder count.
+ *
+ * ── WHAT IS ACTUALLY EXPENSIVE ──────────────────────────────────────────────────────────────────
+ *
+ * A folder in the scan costs a SELECT per cycle, and the worker's cycle is SERIAL across every
+ * mailbox on the shard — so an unbounded folder count is one customer's filing habit setting every
+ * other customer's sync latency. A mailbox with a hundred-odd folders, most of them the customer's
+ * own, is an ordinary shape rather than a pathological one.
+ *
+ * But with RFC 5819 LIST-STATUS the steady-state cost is not one SELECT per FOLDER — it is one LIST
+ * for the whole mailbox plus a SELECT per folder that actually CHANGED (see
+ * `ImapAdapter.unchangedPassive`). On a settled mailbox that is one command for all 126. So the
+ * ceiling that matters there is far higher than the one that matters on a server which must be asked
+ * folder by folder, and collapsing the two into one number prices every customer as though their
+ * provider were the worst one.
+ *
+ * ── AND WHY THE LOWER NUMBER IS NOT THE SAFE DEFAULT ────────────────────────────────────────────
+ *
+ * A ceiling here is not a throttle, it is INVISIBLE MAIL: everything past it is in no `messages`
+ * row, no thread and no search result, and the customer is told nothing. A ceiling low enough to
+ * bite lands its cut-line alphabetically, which is to say arbitrarily — it takes half of one branch
+ * of somebody's filing and leaves the other half. Choosing the conservative number "just in case"
+ * is choosing to hide their mail to save round trips their provider does not charge for.
+ *
+ * Both production providers measured on 2026-08-13 advertise LIST-STATUS.
+ *
+ * The residual is stated rather than hidden: past either ceiling the overflow is reported by
+ * `ImapAdapter.passiveFolderReport()` and read by nothing. That is a bounded, nameable gap; an
+ * unbounded per-cycle SELECT count is not.
+ *
+ * **The order is deterministic** — by path — so the SAME folders are read on every cycle and the
+ * overflow set does not oscillate. Sorting by activity would need a STATUS per folder to compute,
+ * which is exactly the cost the lower ceiling exists to bound.
+ */
+export const DEFAULT_PASSIVE_FOLDERS_MAX = 256;
+
+/**
+ * …and the ceiling for a server that cannot answer LIST-STATUS, where every folder in the scan is a
+ * SELECT on every cycle.
+ *
+ * 32 at ~2 round trips each is a few seconds of IMAP per cycle — inside the
+ * {@link WORKER_NET_TIMEOUTS} socket ceiling and far inside the 15-minute `sync_lag` alert.
+ */
+export const PASSIVE_FOLDERS_MAX_NO_STATUS = 32;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE TLS FLOOR ON THE ohmail→PROVIDER LEG.

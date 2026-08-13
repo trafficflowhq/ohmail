@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { ImapFlow, type ImapFlowOptions, type ListResponse, type MailboxObject } from "imapflow";
+import {
+  ImapFlow, type ImapFlowOptions, type ListResponse, type MailboxObject, type StatusObject,
+} from "imapflow";
 import nodemailer, { type Transporter } from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import type Mail from "nodemailer/lib/mailer/index.js";
@@ -21,9 +23,11 @@ import {
   WATCHED_FOLDERS, OHMAIL_FOLDERS, DEFAULT_NET_TIMEOUTS, DEFAULT_SENT_SCAN_MESSAGES,
   DEFAULT_SENT_HISTORY_MESSAGES,
   DEFAULT_SYNC_BATCH_MAX_MESSAGES, DEFAULT_SYNC_BATCH_MAX_BYTES, DEFAULT_SYNC_BATCH_MAX_FLAGS,
+  DEFAULT_PASSIVE_FOLDERS_MAX, PASSIVE_FOLDERS_MAX_NO_STATUS, passiveFolderExclusion,
   imapTlsFloor, smtpTlsFloor,
   type ImapConfig, type ImapAdapterOpts, type ImapCapabilities, type MailboxAdapter,
-  type ImapCursor, type ChangeBatch, type PersistedFolderCursor, type KnownEntry,
+  type ImapCursor, type ChangeBatch, type PersistedFolderCursor, type FolderCursor,
+  type KnownEntry,
   type OutboundMessage, type SendResult, type FetchedPart, type FetchPartOptions,
   type FetchRawOptions, type NetTimeouts, type FetchByUidOptions, type TargetedFetch,
   type ImapAuth, type ImapOAuthAuth, type ResolvedImapAuth,
@@ -46,6 +50,13 @@ export function parseRef(ref: string): { uidValidity: string; uid: number } {
   const [v, u] = ref.split(":");
   return { uidValidity: v ?? "0", uid: Number(u) };
 }
+
+/**
+ * The slice of imapflow's `StatusObject` the passive skip reads — see
+ * {@link ImapAdapter.unchangedPassive}. Named locally so a test fake can supply three numbers
+ * without constructing the library's whole response shape.
+ */
+type FolderStatus = Pick<StatusObject, "messages" | "uidNext" | "highestModseq">;
 
 /** Sent-folder names, for servers that do not advertise SPECIAL-USE. Canonical paths only. */
 const SENT_BY_NAME = /^(inbox\/)?sent( items| messages| mail)?$/i;
@@ -425,6 +436,28 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * on the next process restart.
    */
   private scanSentFolder: string | null = null;
+  /**
+   * The customer's OWN folders, canonical, sorted, capped — see {@link PASSIVE_EXCLUDED_SPECIAL_USE}
+   * for what this set is and what it excludes.
+   *
+   * Derived from the LIST that `connect()` and `ensureFolders()` already issue, so discovery costs
+   * NOTHING on the ordinary path: both of those call `list()` for their own reasons and this reads
+   * the same response. `changesSince` refreshes it every
+   * {@link ImapAdapter.PASSIVE_RELIST_CYCLES} passes, which is what makes a folder the customer
+   * creates mid-connection visible without a reconnect — an iCloud connection is held for hours.
+   *
+   * `null` means "never computed", which is distinct from "computed and empty": a mailbox whose
+   * server has no user folders answers `[]`, and only a caller that skipped `connect()` sees null.
+   */
+  private passiveFolders: string[] | null = null;
+  /** Folders LIST offered and the passive rule declined, path → reason. Reported, never read. */
+  private passiveExcluded = new Map<string, string>();
+  /** Customer folders beyond {@link DEFAULT_PASSIVE_FOLDERS_MAX} — reported, never read. */
+  private passiveOverflow: string[] = [];
+  /** `changesSince` passes since the folder inventory was LISTed. See `PASSIVE_RELIST_CYCLES`. */
+  private passiveCycle = 0;
+  /** Canonical path → the STATUS the last LIST volunteered. See {@link unchangedPassive}. */
+  private passiveStatus: ReadonlyMap<string, FolderStatus> = new Map();
   /** Folder → in-flight bounded flag drain. See {@link FlagDrain}. */
   private readonly flagDrain = new Map<string, FlagDrain>();
   /**
@@ -509,6 +542,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const list = await this.client.list();
     this.delimiter = list.find((f) => f.path.toUpperCase() === "INBOX")?.delimiter ?? list[0]?.delimiter ?? "/";
     this.sentFolder = this.findSent(list);
+    // AFTER the delimiter and the Sent resolution, both of which it reads. See
+    // {@link ImapAdapter.passiveFolders}: this is discovery for free, off a LIST already issued.
+    this.learnPassiveFolders(list);
     if (this.config.smtp) {
       this.transporter = nodemailer.createTransport(smtpTransportOptions(this.config));
     }
@@ -611,6 +647,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const list = await this.client.list();
     const existing = new Set(list.map((f) => f.path));
     this.sentFolder = this.findSent(list);
+    this.learnPassiveFolders(list);
     for (const canonical of OHMAIL_FOLDERS) {
       const path = this.toServerPath(canonical);
       if (existing.has(path)) continue;
@@ -718,6 +755,86 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const sent = list.find((f) => (f.specialUse ?? "").toLowerCase() === "\\sent");
     return sent ? this.toCanonical(sent.path) : null;
   }
+
+  /**
+   * Learn the customer's OWN folders from a LIST response — see {@link ImapAdapter.passiveFolders}.
+   *
+   * Called from `connect()` and `ensureFolders()`, both of which LIST for their own reasons, and
+   * from `foldersToScan` every {@link PASSIVE_RELIST_CYCLES} passes. It writes three fields and
+   * issues no command of its own.
+   *
+   * ── THE SENT PATH IT EXCLUDES AGAINST IS THE ONE `changesSince` WILL SCAN ──────────────────
+   *
+   * `this.sentFolder ?? this.scanSentFolder` and not `findSent(list)`, because a server that
+   * advertises no SPECIAL-USE resolves Sent BY NAME (`findSentForScan`) and only that field holds
+   * the answer. Getting this wrong would put the Sent folder into the passive set as well as the
+   * watched one: read twice per cycle, its creates no longer stamped `ownAuthored`, and every
+   * message the customer ever wrote handed to the Screener.
+   *
+   * A NEGATIVE Sent answer is not yet known on the `connect()` call (the name fallback runs on the
+   * first `changesSince`), so this can, on a no-SPECIAL-USE server, admit the Sent folder into the
+   * passive set for exactly one pass. `foldersToScan` therefore re-filters against the resolved
+   * path on every call — the field here is a candidate list, and that function is the authority.
+   */
+  private learnPassiveFolders(list: ListResponse[]): void {
+    const sent = this.sentFolder ?? this.scanSentFolder;
+    // The ceiling bounds SELECTS PER CYCLE, not folders — see {@link DEFAULT_PASSIVE_FOLDERS_MAX}.
+    // With LIST-STATUS a settled folder costs nothing at all, so the number that applies is the high
+    // one; without it every folder is a SELECT every cycle and the low one applies.
+    const cap = (this.client.capabilities?.has?.("LIST-STATUS") ?? false)
+      ? DEFAULT_PASSIVE_FOLDERS_MAX
+      : PASSIVE_FOLDERS_MAX_NO_STATUS;
+    const admitted: string[] = [];
+    const excluded = new Map<string, string>();
+    for (const entry of list) {
+      const path = this.toCanonical(entry.path);
+      const reason = passiveFolderExclusion(
+        { path, specialUse: entry.specialUse ?? null, flags: entry.flags }, sent,
+      );
+      if (reason === null) admitted.push(path);
+      else excluded.set(path, reason);
+    }
+    admitted.sort();
+    this.passiveFolders = admitted.slice(0, cap);
+    this.passiveOverflow = admitted.slice(cap);
+    this.passiveExcluded = excluded;
+    // The STATUS the server volunteered, when it was asked for one. REPLACED wholesale rather than
+    // merged: a stale entry would be read as "this folder is unchanged", which is the one wrong
+    // answer this map can give.
+    this.passiveStatus = new Map(
+      list.flatMap((e) => (e.status ? [[this.toCanonical(e.path), e.status] as const] : [])),
+    );
+  }
+
+  /**
+   * What the passive-folder decision did on this connection: what is read, what was declined and
+   * why, and what the {@link DEFAULT_PASSIVE_FOLDERS_MAX} ceiling left out.
+   *
+   * For an operator answering "why is this customer's `Private/Editor` not in search". Read
+   * by no product path — it exists so the ceiling and the exclusion list are observable rather than
+   * inferred from a folder's absence, which is the shape this whole slice exists because of.
+   */
+  passiveFolderReport(): {
+    read: readonly string[];
+    excluded: ReadonlyMap<string, string>;
+    overflow: readonly string[];
+  } {
+    return {
+      read: this.passiveFolders ?? [],
+      excluded: this.passiveExcluded,
+      overflow: this.passiveOverflow,
+    };
+  }
+
+  /**
+   * How many `changesSince` passes may go by before the folder inventory is re-LISTed.
+   *
+   * A folder the customer creates in Apple Mail must become visible without waiting for a
+   * reconnect, and an iCloud connection is held for hours. One LIST per 20 passes is one command
+   * every ~20 minutes at the default poll interval — against the ~110 SELECTs a passive scan of a
+   * large mailbox already costs, it does not register.
+   */
+  private static readonly PASSIVE_RELIST_CYCLES = 20;
 
   /**
    * The Sent folder for a READ, resolved without creating anything.
@@ -1022,23 +1139,124 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * The folders ONE `changesSince` pass reads: the frozen six, plus the mailbox's own Sent
-   * folder when the server has one.
+   * The folders ONE `changesSince` pass reads: the frozen six, the mailbox's own Sent folder when
+   * the server has one, and the customer's OWN folders LAST.
    *
    * `sent` is null on a server with no Sent folder at all, and is dropped when it collides with
    * a watched folder — a mailbox whose Sent path somehow resolved to `INBOX` must be read once,
    * not twice, and must not have its INBOX creates tagged as own-authored.
+   *
+   * ── PASSIVE FOLDERS ARE LAST, AND THAT ORDERING IS THE WHOLE COST ANSWER ───────────────────
+   *
+   * It is the same argument that admits the Sent folder (see the budget declaration in
+   * {@link changesSince}): ONE budget is spent in this order, so a folder at the end can only take
+   * what the folders before it left. Fifteen years of `_archive/Clients/…` therefore cannot delay
+   * this cycle's inbound mail by one message — it drains through `hasBacklog` re-kicks behind the
+   * Imbox, exactly as a Sent backlog does.
+   *
+   * ── AND THE SENT FOLDER IS RE-FILTERED HERE, NOT ONLY AT DISCOVERY ─────────────────────────
+   *
+   * `learnPassiveFolders` runs at `connect()`, where the name-based Sent fallback has not run yet.
+   * See its docblock: the field is a candidate list and this is the authority.
    */
-  private async foldersToScan(): Promise<{ folders: string[]; sent: string | null }> {
+  private async foldersToScan(): Promise<{
+    folders: string[];
+    sent: string | null;
+    passive: ReadonlySet<string>;
+    /** Canonical path → the STATUS the server volunteered this pass. Empty without LIST-STATUS. */
+    status: ReadonlyMap<string, FolderStatus>;
+  }> {
     const resolved = await this.findSentForScan();
     const watched = new Set<string>(WATCHED_FOLDERS);
     const sent = resolved && !watched.has(resolved) ? resolved : null;
-    return { folders: sent ? [...WATCHED_FOLDERS, sent] : [...WATCHED_FOLDERS], sent };
+    // ── THE LIST IS PER-CYCLE WHEN THE SERVER CAN ANSWER IT IN ONE COMMAND ────────────────────
+    //
+    // With RFC 5819 LIST-STATUS the server returns every folder's UIDNEXT / MESSAGES /
+    // HIGHESTMODSEQ inside the LIST response, so asking every cycle costs ONE command and buys the
+    // `unchangedPassive` skip below — which is what keeps a 110-folder mailbox from paying 110
+    // SELECTs per cycle to learn that nothing happened. Both providers measured on 2026-08-13
+    // advertise it.
+    //
+    // WITHOUT it, imapflow issues a STATUS *per listed folder* to satisfy `statusQuery`
+    // (`imapflow/lib/commands/list.js:418`) — 137 commands where the point was to save round trips
+    // — so the query is not sent at all, the skip never fires, and the LIST falls back to once per
+    // {@link PASSIVE_RELIST_CYCLES} passes. Correct either way; only the cost differs.
+    const wantStatus = this.client.capabilities?.has?.("LIST-STATUS") ?? false;
+    // `passiveCycle > 0` so the FIRST pass adds no LIST: `connect()` has just done one and this
+    // would be a second command for a byte-identical answer. Two Sent-folder tests count LISTs
+    // exactly and would go red on the difference, which is the right thing for them to do — a
+    // per-cycle LIST on every connection in the fleet is what the memoisation exists to avoid.
+    const stale = this.passiveCycle > 0
+      && this.passiveCycle % ImapAdapter.PASSIVE_RELIST_CYCLES === 0;
+    this.passiveCycle++;
+    if (this.passiveFolders === null || wantStatus || stale) {
+      try {
+        this.learnPassiveFolders(await this.client.list(
+          wantStatus
+            ? { statusQuery: { messages: true, uidNext: true, highestModseq: true } }
+            : undefined,
+        ));
+      } catch {
+        // A LIST that fails costs the refresh and nothing else: keep the inventory we have rather
+        // than dropping every customer folder out of the scan on one bad command.
+        this.passiveFolders ??= [];
+      }
+    }
+    const passive = (this.passiveFolders ?? []).filter(
+      (f) => !watched.has(f) && f !== sent && f !== resolved,
+    );
+    return {
+      folders: [...WATCHED_FOLDERS, ...(sent ? [sent] : []), ...passive],
+      sent,
+      passive: new Set(passive),
+      status: this.passiveStatus,
+    };
+  }
+
+  /**
+   * Is this PASSIVE folder provably unchanged since the cursor was written — may the pass skip it
+   * without so much as a SELECT?
+   *
+   * Three equalities, and all three are needed. This is the one place in the adapter that decides
+   * not to look at a folder at all, so it must fail CLOSED: any field the server did not volunteer
+   * answers false and the folder is read normally.
+   *
+   *  · `highestModseq` — no flag changed and no message arrived (RFC 7162 §3.1).
+   *  · `uidNext` — no message arrived. Redundant with the above on a correct server and kept
+   *    because a server whose CONDSTORE is decorative is not hypothetical: iCloud's `CHANGEDSINCE`
+   *    is inert (see the agreement filter in `changesSince`), so a modseq from such a server buys
+   *    less than it looks like it does.
+   *  · `messages` (EXISTS) equal to the count this cursor knows — **the expunge half, and the one
+   *    the other two cannot cover.** CONDSTORE does not raise HIGHESTMODSEQ for an EXPUNGE (that is
+   *    what QRESYNC's VANISHED exists for), so without this a message the customer deleted from
+   *    their own archive would leave a row pointing at a dead UID for ever. An arrival and an
+   *    expunge cancelling out in one interval is caught by `uidNext`.
+   *
+   * A folder holding a permanently-unknown UID — one enumerated but never ingested — never
+   * satisfies the third, so it is read every cycle. That is the safe direction: the skip is an
+   * optimisation and declining it costs round trips, never correctness.
+   *
+   * PASSIVE FOLDERS ONLY, deliberately. INBOX and the five organized folders are where the product
+   * happens and the pipeline writes to them; skipping a SELECT there to save a round trip on the
+   * hot path is not a trade worth making.
+   */
+  private unchangedPassive(
+    status: FolderStatus | undefined, prev: FolderCursor | undefined, condstore: boolean,
+  ): boolean {
+    if (!condstore || !status || !prev) return false;
+    if (prev.highestModseq === "0" || prev.uidNext === 0) return false;
+    if (status.highestModseq === undefined || status.uidNext === undefined) return false;
+    if (status.messages === undefined) return false;
+    return String(status.highestModseq) === prev.highestModseq
+      && Number(status.uidNext) === prev.uidNext
+      && Number(status.messages) === prev.known.length;
   }
 
   async changesSince(cursor: ImapCursor): Promise<ChangeBatch> {
     const caps = await this.capabilities();
-    const { folders: scanFolders, sent: sentFolder } = await this.foldersToScan();
+    const {
+      folders: scanFolders, sent: sentFolder, passive: passiveFolders, status: listStatus,
+    } = await this.foldersToScan();
     const sentHistory = this.opts.sentHistoryMessages ?? DEFAULT_SENT_HISTORY_MESSAGES;
     const creates: InternalCreate[] = [];
     const flagChanges: Change[] = [];
@@ -1128,8 +1346,18 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
     for (const [folderIndex, folder] of scanFolders.entries()) {
       const isSent = folder === sentFolder;
+      const isPassive = passiveFolders.has(folder);
       const serverPath = this.toServerPath(folder);
       const prev = cursor.folders[folder];
+      // PROVABLY UNCHANGED PASSIVE FOLDER — not even a SELECT. See {@link unchangedPassive} for the
+      // three equalities and why each is required. This is what keeps a mailbox with a hundred
+      // customer folders costing one LIST per cycle instead of a hundred SELECTs.
+      if (isPassive && this.unchangedPassive(listStatus.get(folder), prev, caps.condstore)) {
+        newFolders[folder] = {
+          uidValidity: prev!.uidValidity, uidNext: prev!.uidNext, highestModseq: prev!.highestModseq,
+        };
+        continue;
+      }
       let lock: { release(): void };
       try {
         lock = await this.client.getMailboxLock(serverPath);
@@ -1320,12 +1548,48 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             const known = effectiveKnown.get(m.uid);
             if (!known) { lastFlagUid = m.uid; continue; }
             const seen = m.flags?.has("\\Seen") ?? false;
-            // The fallback's whole filter: agreement with the baseline is not a change, and a
-            // baseline the repo could not state (`seen` null/absent — a dead-lettered UID) is
-            // never diffed. Free to step over for the resume point exactly like an unknown UID:
-            // an agreement examined is an agreement answered. The fast path takes no part —
-            // CONDSTORE already said these rows changed, and its cursor semantics own them.
-            if (!canFastPath && (known.seen == null || known.seen === seen)) {
+            // ── AGREEMENT WITH THE BASELINE IS NOT A CHANGE, ON *BOTH* PATHS ─────────────────
+            //
+            // A baseline the repo could not state (`seen` null/absent — a dead-lettered UID) splits
+            // the two paths and is the ONLY thing that does. The FALLBACK skips it: nothing was ever
+            // ingested for that UID, so there is no divergence to compute and inventing one would
+            // adopt a value nobody observed. The FAST PATH reports it: CONDSTORE named the row as
+            // changed, and with no baseline this code cannot prove the application would be a no-op
+            // — the only two positions available are "report it" and "invent a baseline", and the
+            // second one is not a position.
+            //
+            // Everything else is compared on both paths, and an agreement is stepped over for the
+            // resume point exactly like an unknown UID: an agreement examined is an agreement
+            // answered.
+            //
+            // THIS USED TO READ `!canFastPath && (…)`, exempting the CONDSTORE path on the argument
+            // that *"CONDSTORE already said these rows changed, and its cursor semantics own
+            // them."* That argument is a claim about the SERVER, and it is false on a server people
+            // actually use.
+            //
+            // **iCloud's `CHANGEDSINCE` IS INERT.** It advertises CONDSTORE and QRESYNC, and it
+            // answers `CHANGEDSINCE <modseq>` with EVERY message in the folder — verified by handing
+            // it the folder's own reported `HIGHESTMODSEQ`, above which RFC 7162 says nothing can
+            // exist, and getting one row per message back on every folder of the mailbox.
+            //
+            // With no agreement filter every one of those rows was a flag CHANGE. A mailbox with
+            // more messages than {@link DEFAULT_SYNC_BATCH_MAX_FLAGS} therefore truncated every
+            // folder on every cycle, held every folder's `highestModseq`, and pinned `hasBacklog`
+            // true — so the stamp that records a first import as finished, which the organizer
+            // writes only on a cycle that ends with no backlog, was unreachable FOR EVER. Nothing
+            // was wrong with such a mailbox: its cursors were exact and its every UID was known. It
+            // re-read a budget's worth of flags it already had, once a poll interval, indefinitely.
+            //
+            // ── WHY THIS CANNOT LOSE A FLAG, STATED AS AN EQUIVALENCE ────────────────────────
+            //
+            // `KnownEntry.seen` is `flag_state.observed_seen` — *what the database last observed the
+            // server holding* — which is the value `applyExternalFlag` compares against on the
+            // consuming side. So a row suppressed here is exactly a row whose application would have
+            // answered `changed: false` and written nothing. The filter is MONOTONE: it can only
+            // ever suppress reports, so it cannot introduce a flag application that did not happen
+            // before, and the ones it removes were no-ops. On a server whose CHANGEDSINCE works it
+            // suppresses almost nothing, because such a server has already pre-filtered.
+            if (known.seen == null ? !canFastPath : known.seen === seen) {
               lastFlagUid = m.uid;
               continue;
             }
@@ -1463,6 +1727,20 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // a correlated MOVE is the user filing an existing message and never reaches the gate.
         ...(c.internalDate ? { internalDate: c.internalDate } : {}),
         ...(sentFolder !== null && c.folder === sentFolder ? { ownAuthored: true } : {}),
+        // ── PASSIVE PRESENCE, STAMPED BY THE ONLY COMPONENT THAT KNOWS ──────────────────────
+        //
+        // `Change.passive` is on `ownAuthored`'s precedent and for the identical reason: the
+        // pipeline cannot derive it, because "is this one of the customer's own folders" is a fact
+        // about the SERVER's folder inventory and this class is the only thing that has LISTed it.
+        // A pipeline that guessed from the folder NAME would have to re-implement
+        // `passiveFolderExclusion` and would get the Sent folder wrong on every server that
+        // advertises no SPECIAL-USE.
+        //
+        // Stamped on pure creates only, exactly like `ownAuthored`. A correlated MOVE into a
+        // passive folder IS the customer filing mail we already hold, and `adopt_external` is
+        // already the right answer for that: it follows their hand to the new folder and writes
+        // `last_set_by = 'external'` itself.
+        ...(passiveFolders.has(c.folder) ? { passive: true } : {}),
       })),
       moves: correlated.moves,
       flagChanges,

@@ -646,14 +646,53 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * A DELETE and not a flag, because the table has no absent column and does not need one: the
    * row's existence IS the claim that the locator exists. Removing it also takes the locator out
    * of `listKnownLocators`, which is correct — the server no longer has it to enumerate.
+   *
+   * ── AND IF THE VANISHED INSTANCE WAS THE PRIMARY, A SURVIVOR IS PROMOTED ───────────────────
+   *
+   * The invariant this restores: **`messages.native_locator` names an instance that exists.** It is
+   * what every read through a locator depends on — on-demand attachment fetch, reply quoting, the
+   * reconciler's move — and until a message could legitimately have MORE THAN ONE instance in one
+   * folder it held by accident. It stopped holding when `commitChange` began recording a second
+   * physical copy instead of repointing at it (see `secondCopyInSameEpoch` there): the primary can
+   * now be expunged while a copy of the same message is still on the server, and the old accidental
+   * repair — the survivor coming back as an unknown UID and dragging the primary to itself — is
+   * exactly the per-cycle re-download loop that change removed.
+   *
+   * OLDEST survivor (`first_seen_at`), so the choice is stable: two passes that both need to promote
+   * pick the same row, and the message settles on the copy that has been on the server longest rather
+   * than on whichever one a scan happened to reach first.
+   *
+   * NO-OP when the deleted row was not primary, or when nothing survives — a message whose every
+   * instance is gone is a message the server no longer holds, and inventing a locator for it would be
+   * worse than leaving the last known one on the row for the reaper to find.
    */
   async forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<void> {
-    await this.db.delete(messageInstances).where(and(
+    const removed = await this.db.delete(messageInstances).where(and(
       eq(messageInstances.mailboxId, mailboxId),
       eq(messageInstances.folder, locator.folder),
       eq(messageInstances.uidvalidity, BigInt(parseUidValidity(locator.ref))),
       eq(messageInstances.uid, parseUid(locator.ref)),
-    ));
+    )).returning({ messageId: messageInstances.messageId, isPrimary: messageInstances.isPrimary });
+    const orphaned = removed.find((r) => r.isPrimary);
+    if (!orphaned) return;
+    const [survivor] = await this.db.select({
+      id: messageInstances.id,
+      folder: messageInstances.folder,
+      uidvalidity: messageInstances.uidvalidity,
+      uid: messageInstances.uid,
+    }).from(messageInstances)
+      .where(eq(messageInstances.messageId, orphaned.messageId))
+      .orderBy(asc(messageInstances.firstSeenAt), asc(messageInstances.uid))
+      .limit(1);
+    if (!survivor) return;
+    await this.db.update(messageInstances)
+      .set({ isPrimary: true }).where(eq(messageInstances.id, survivor.id));
+    await this.db.update(messages).set({
+      nativeLocator: {
+        folder: survivor.folder,
+        ref: `${String(survivor.uidvalidity)}:${survivor.uid}`,
+      },
+    }).where(eq(messages.id, orphaned.messageId));
   }
 
   /**
