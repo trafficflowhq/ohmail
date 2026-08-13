@@ -397,6 +397,8 @@
     "toastUndo": "Undo",
     "toastUndone": "{count, plural, one {Undone — 1 waiting again.} other {Undone — # waiting again.}}",
     "toastUndoExpired": "Too late to undo — that decision has already been sent.",
+    "toastDecideFailed": "{sender} is back in the queue — that decision could not be saved. Try it again.",
+    "rowNotSaved": "Not saved",
     "toastBulkDecided": "{count} decided — {parts}{unsub, select, true {. ohmail is also unsubscribing you from the ones you turned down, where they offer one-click.} other {}}",
     "toastBulkSpam": "{count} moved to Spam{unsub, select, true {. ohmail is also unsubscribing you, where they offer one-click.} other {}}",
     "toastAllowed": "Allowed — {count} held + future mail from {sender} go to {dest}.",

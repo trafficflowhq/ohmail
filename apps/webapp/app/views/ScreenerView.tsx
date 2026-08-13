@@ -1040,6 +1040,11 @@ export function ScreenerView({
           dull={w.dull}
           selected={w.id === activeId}
           className={state.isExiting(w.id) ? "out" : undefined}
+          /* THE ROW SAYS ITS LAST DECISION DID NOT LAND. `stateNote` is the badge strip's quiet
+             "where does this stand" slot, which is exactly the question here — and unlike the
+             toast it is still on screen a minute later. Before this, a refused decision put the
+             sender back in the queue looking untouched; see `ScreenerState.refused`. */
+          stateNote={state.refused(w.id) ? t("rowNotSaved") : undefined}
           aiSuggestion={
             w.ai
               ? {

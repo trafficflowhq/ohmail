@@ -114,6 +114,17 @@ interface PendingEntry {
   dest: DecisionDestination;
   read: boolean;
   scope: DecisionScope;
+  /**
+   * This decision raises no sentence of its own — it is one step of a BULK, which speaks once for
+   * the whole run.
+   *
+   * Carried on the entry rather than re-derived at commit time because the commit fires up to
+   * `COMMIT_MS` after the press and `s.bulkBusy` is long cleared by then: "was this part of a bulk"
+   * is a fact about the decision, so it travels with it. Read by `refuse` for exactly the reason
+   * `decide` reads `opts.quiet` — one refusal must not overwrite the summary of a run that mostly
+   * worked.
+   */
+  quiet: boolean;
   commitTimer: ReturnType<typeof setTimeout>;
   outTimer: ReturnType<typeof setTimeout>;
 }
@@ -203,6 +214,24 @@ export interface ScreenerState {
   notSpamToWaiting: (row: SpamRow) => void;
   notSpamToOhbox: (row: SpamRow) => void;
   deleteSpam: (row: SpamRow) => void;
+  /**
+   * THIS ROW'S DECISION WAS REFUSED, and it is back in the queue because of that.
+   *
+   * ── A SILENTLY ROLLED-BACK DECISION WAS THE WHOLE OF A REPORTED DEFECT ────────────────────
+   *
+   * `commit` used to fire `void engine.mutate({kind:"screener_decide", …})` and never look at the
+   * result. A refusal — the server's 404 for a row that is no longer held at the gate, which is
+   * reachable whenever this mirror is a poll behind another writer (a second device, the retro
+   * pass) — rolled the overlay back, restored nothing, and said nothing. The row simply reappeared
+   * on the next visit, indistinguishable from a decision never made. Reproduced end-to-end in
+   * `screener-decision-holds.test.ts`: screen one sender in and one out, leave for the Ohbox, come
+   * back, and both are waiting again with no error anywhere on the page.
+   *
+   * So a refusal is now a STATE, not an absence. The row returns carrying it, and it survives the
+   * toast — a capsule that has faded cannot be the only record of a decision that did not happen.
+   * Cleared when the same row is decided again (see `decide`), because that is a fresh attempt.
+   */
+  refused: (id: string) => boolean;
   /** Commit every pending decision now (route/segment changes). */
   flush: () => void;
 }
@@ -346,6 +375,8 @@ export function useScreenerState(
     pins: [] as ScreenerSenderDTO[],
     overrides: new Set<string>(),
     hidden: new Set<string>(),
+    /** See {@link ScreenerState.refused} — rows whose decision the wire would not take. */
+    refused: new Set<string>(),
     bulkBusy: false,
     /** See {@link ScreenerState.applying}. Guarded by `bulkBusy`, so only one run ever owns it. */
     applying: null as { done: number; total: number } | null,
@@ -392,6 +423,41 @@ export function useScreenerState(
 
   const moveAll = (ids: string[], folder: Folder) => {
     for (const messageId of ids) void engine.mutate({ kind: "move", messageId, folder });
+  };
+
+  /**
+   * THE ROW CAME BACK AND IT SAYS SO — the durable half, with no sentence attached.
+   *
+   * Separate from the toast because the two have different owners. The MARK belongs to every
+   * failure path without exception: a row that returns must carry why. The SENTENCE belongs only
+   * to a failure nothing else is already describing more precisely, and there are two cases where
+   * something is:
+   *
+   *  · the past-the-gate branch, where `screeningToast` answers `toastRuleFailed` — *"3 messages
+   *    from … moved, but the rule couldn't be made. Future mail is unchanged."* That distinguishes
+   *    a lost RULE from a lost decision, which this cannot, and the mail really did move;
+   *  · a BULK, which raises one summary for the whole run ("4 decided — …"). A per-row refusal
+   *    toast there replaces the summary of everything that DID work with a complaint about one row.
+   *
+   * `bump()` because the store is a ref: without it the mark appears on the next unrelated render,
+   * which is the shape the whole defect wore.
+   */
+  const markRefused = (id: string) => {
+    s.refused.add(id);
+    bump();
+  };
+
+  /**
+   * A refusal with nothing better to say about it: mark the row and name the sender.
+   *
+   * `quiet` is the bulk's own flag, threaded from `decide` through {@link PendingEntry} — the same
+   * flag that suppresses the per-row optimistic toast — so the two toasts are suppressed by one
+   * decision rather than by two guesses about who is calling.
+   */
+  const refuse = (id: string, entry: PendingEntry) => {
+    markRefused(id);
+    if (entry.quiet) return;
+    toast(t("toastDecideFailed", { sender: senderLabel(entry.sender) }), { duration: UNDO_MS });
   };
 
   const commit = (id: string) => {
@@ -443,6 +509,14 @@ export function useScreenerState(
         entry.dest === "screened" || (derived && entry.dest === "spam") ? "no" : "yes";
       // The destination rides the decide on BOTH branches (SCR-READ), so the server files where the
       // user pressed on all five; nothing is composed on top but "&read", which is a flag below.
+      //
+      // ── THE RESULT IS INSPECTED, AND IT USED TO BE THROWN AWAY ──────────────────────────────
+      //
+      // This was `void engine.mutate(…)`. See {@link ScreenerState.refused} for what that cost:
+      // a refusal rolled the overlay back and the sender reappeared as though undecided, with no
+      // error anywhere. `queued` is deliberately NOT a refusal — the mutation is on the retry queue
+      // with its Idempotency-Key and the user's intent still stands, which is the one status where
+      // the row staying gone is the truthful answer.
       void engine.mutate({
         kind: "screener_decide",
         senderId: id,
@@ -450,7 +524,9 @@ export function useScreenerState(
         dest: entry.dest as ScreenDest,
         ...(decision === "yes" ? { read: entry.read } : {}),
         scope: entry.scope,
-      });
+      }).then((res) => {
+        if (res.status === "rolled_back") refuse(id, entry);
+      }, () => refuse(id, entry));
     } else {
       // ── PAST THE GATE: a rule, not a decide (#116) ──────────────────────────────────────────
       //
@@ -473,8 +549,27 @@ export function useScreenerState(
         const who = entry.scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
         const place = PLACE_LABEL[dest] ?? dest;
         void dispatchScreeningChange(plan, (m) => engine.mutate(m)).then((key) => {
+          // THE SENTENCE IS UNCHANGED — `toastRuleFailed` says "… moved, but the rule couldn't be
+          // made. Future mail is unchanged.", which is strictly more informative than a generic
+          // refusal and is true: the mail moved, only the rule was lost. What was missing is the
+          // MARK. If nothing moved (a screen-in for a sender whose mail is already in the INBOX
+          // plans no `move` at all) the sender comes back into the queue, and it used to come back
+          // looking untouched while the only record faded with the toast.
+          if (key === "toastRuleFailed") markRefused(id);
           toast(ts(key, { sender: who, place, count: plan.moved }));
-        });
+        }, () => refuse(id, entry));
+      } else {
+        // ── THE REPRESENTATIVE IS GONE FROM THE MIRROR, and this branch was EMPTY ──────────────
+        //
+        // `senderScreening` answers null on exactly one condition: `reader.get("message", id)`
+        // found nothing. The row id is the representative MESSAGE's id and this runs up to
+        // `COMMIT_MS` after the press, so a drain or the windowed store's eviction pass in between
+        // is enough — the message the decision names is no longer held here.
+        //
+        // With no `else`, that dispatched NOTHING: no mutation, no toast, no error, and the row
+        // back in the queue on the next render. Of the three ways this commit can fail it was the
+        // only one that was completely silent, which makes it the one most worth naming.
+        refuse(id, entry);
       }
     }
 
@@ -525,6 +620,10 @@ export function useScreenerState(
   ) => {
     const id = sender.id;
     if (s.pending.has(id)) return;
+    // A FRESH ATTEMPT CLEARS THE OLD REFUSAL. The note answers "your last decision about this row
+    // did not land"; leaving it on a row the reader has just decided again would make it say that
+    // about the new one before the wire has been asked. See {@link ScreenerState.refused}.
+    s.refused.delete(id);
     // ── THE ONE PLACE "MARK READ" IS CLAMPED FOR THE DEMOTING PILES ─────────────────────────
     //
     // You do not read what you triage out: filing to Screen out or Spam carries no read verb.
@@ -540,6 +639,7 @@ export function useScreenerState(
       dest,
       read,
       scope: opts.scope,
+      quiet: opts.quiet === true,
       outTimer: setTimeout(() => {
         s.out.delete(id);
         bump();
@@ -966,6 +1066,7 @@ export function useScreenerState(
     screenedOut: segments.screenedOut,
     spam,
     isExiting: (id) => s.pending.has(id),
+    refused: (id) => s.refused.has(id),
     bodyStall,
     decide,
     applyAll,

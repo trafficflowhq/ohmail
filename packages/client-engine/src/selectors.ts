@@ -450,6 +450,96 @@ export function isResurfaced(m: Pick<EngineMessage, "triage">): boolean {
 }
 
 /**
+ * WHICH BOTTOM PILE A TRIAGE STATE FILES INTO — the ONE answer, for the lister and the filter.
+ *
+ * {@link triagePiles} calls this to decide which pile a record joins, and {@link parkedMessageIds}
+ * calls it to decide which rows the Ohbox holds out. That is the whole reason it is a named
+ * function rather than the ternary it used to be inside `triagePiles`: those two questions are the
+ * same question asked from opposite ends, and while they were two expressions they gave two
+ * answers. A message with a `bubbled_up` record was filed under Resurface by the lister and left
+ * standing in the Ohbox by the filter — one mail in two piles, which is the state the product
+ * exists to make impossible. See {@link ohboxView} for what that looked like on screen.
+ *
+ * `resurfaced` is deliberately NOT here and answers `null`: a resurfaced row belongs to no bottom
+ * pile — it is back at the TOP of the Ohbox, in {@link OhboxView.resurfaced} — so it is not parked
+ * and the Ohbox must not hold it out. `muted` and `none` answer `null` for the plainer reason that
+ * no pile renders them.
+ */
+export function pileOfState(
+  state: string,
+): "replyLater" | "setAside" | "resurface" | null {
+  return state === "reply_later" ? "replyLater"
+    : state === "set_aside" ? "setAside"
+      : state === "bubbled_up" ? "resurface"
+        : null;
+}
+
+/**
+ * THE WINNING `message_state` CLAIM PER MESSAGE — one record per message, newest claim first.
+ *
+ * ── ONE MESSAGE, ONE CLAIM ────────────────────────────────────────────────────────────────
+ *
+ * The mirror can briefly hold TWO `message_state` records for one message under different
+ * record ids: the live server keys the entity by the `message_states` ROW's uuid
+ * (`TriageService.setState` emits `entityId: row.id`), while an optimistic effect that found
+ * no settled record yet keys by the only id it has — the message's. A poll drain landing the
+ * settled row while that overlay still stands is therefore two records saying "this message
+ * is parked", and a pile that renders records verbatim counts the message twice — the rail
+ * badge inflating past the pile it renders beside (a drag-park was measured at 6-vs-1 on a
+ * live account, corrected only by reload). The message is the unit a pile is ABOUT, so the
+ * message is the dedup key; when two records disagree, the NEWEST `updatedAt` is the latest
+ * claim and ties keep the later-listed record (the overlay reads after the store, so the
+ * user's own in-flight intent wins a tie — user-always-wins).
+ *
+ * EXTRACTED so {@link triagePiles} and {@link parkedMessageIds} cannot disagree about which
+ * claim is current. Two copies of this loop would be two answers to "is this message parked",
+ * and the one the reader saw would depend on which surface asked.
+ */
+export function winningStates(reader: EntityReader): Map<string, MessageStateDTO> {
+  const claimOf = new Map<string, MessageStateDTO>();
+  for (const st of reader.list<MessageStateDTO>("message_state")) {
+    const held = claimOf.get(st.messageId);
+    if (held && Date.parse(held.updatedAt) > Date.parse(st.updatedAt)) continue;
+    claimOf.set(st.messageId, st);
+  }
+  return claimOf;
+}
+
+/**
+ * EVERY MESSAGE PARKED IN A BOTTOM PILE — the set the Ohbox holds out of all three of its groups.
+ *
+ * ── A MAIL IS IN EXACTLY ONE PILE, AND THIS IS WHAT MAKES THAT STRUCTURAL ──────────────────
+ *
+ * The Ohbox used to hold out only {@link isResurfaced} rows, which closed one case of a general
+ * hole: `triagePiles` files a row under a bottom pile from its `message_state` record, and
+ * `ohboxView` grouped by FOLDER and knew nothing about that record. So ANY parked row still
+ * sitting in the Ohbox folder — every `reply_later`, every `set_aside`, every not-yet-due
+ * `bubbled_up` — was listed in a bottom pile AND in the Ohbox at the same time. Nothing moves a
+ * parked message's folder (`TriageService.setState` writes state and never `folder_state`), so
+ * this was not an edge case: it was every parked message the product has ever had.
+ *
+ * The way it was reported is the sharpest form of it. Deferring an ALREADY-RESURFACED row —
+ * "resurface tomorrow" on a row sitting in the pin group — writes `bubbled_up` while the row
+ * still carries the forced `unread: true` its resurface put there (`mutations.ts` re-unreads for
+ * `resurfaced` only, so nothing takes it back). The row left the pin group, was filed under
+ * Resurface by the pile lister, and reappeared at the TOP OF THE OHBOX under "New for you" —
+ * bold, as if it had just arrived — then sank into "Earlier" when its read state settled, still
+ * listed under Resurface the whole time. The user put it away and the product handed it back.
+ *
+ * Derived from {@link winningStates} through {@link pileOfState} — the SAME two steps
+ * {@link triagePiles} takes to build its rows — so the filter and the lister are one derivation
+ * and cannot drift. A row this set contains is in a bottom pile by construction, and a row it
+ * does not is in none.
+ */
+export function parkedMessageIds(reader: EntityReader): Set<string> {
+  const parked = new Set<string>();
+  for (const [messageId, st] of winningStates(reader)) {
+    if (pileOfState(st.state)) parked.add(messageId);
+  }
+  return parked;
+}
+
+/**
  * "EARLIER" IS A HISTORY OF READING, SO IT IS ORDERED BY READING.
  *
  * `messagesIn` sorts date-descending, which is right for mail that has not been read — the
@@ -528,6 +618,19 @@ function byLastReadDesc(a: EngineMessage, b: EngineMessage): number {
   return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
 
+/**
+ * A MAIL IS IN EXACTLY ONE PILE, and these three groups plus the three bottom piles are the six.
+ *
+ * Every group here holds out {@link parkedMessageIds}, so mail the reader filed under Answer Later,
+ * Set aside or Resurface is absent from all of them — see that function for the double presentation
+ * this closes and how it was reported. The consequence is deliberate and worth stating plainly:
+ * parked mail leaves "Earlier" as well as "New for you". Putting a message away takes it out of the
+ * Ohbox; the pile you put it in is where it is, and the only place it is.
+ *
+ * SCOPE: this is the only surface that holds parked rows out. Reads and Receipts are STREAMS rather
+ * than piles and still list a parked issue — `openTargetFor` (`apps/webapp`) depends on that
+ * asymmetry, and `search-locate.test.ts` pins it.
+ */
 export function ohboxView(reader: EntityReader): OhboxView {
   const all = reader.list<EngineMessage>("message");
   const inbox = messagesIn(reader, FOLDER_OF_VIEW.ohbox);
@@ -550,12 +653,29 @@ export function ohboxView(reader: EntityReader): OhboxView {
   const resurfaced = all.filter(isResurfaced).sort(byDateDesc);
   const pinned = new Set(resurfaced.map((m) => m.id));
 
+  /**
+   * MAIL THE USER PUT AWAY IS NOT IN THE OHBOX — the whole of {@link parkedMessageIds}, applied
+   * to all three groups.
+   *
+   * Held out of the PIN group as well, and that is not redundancy: it is what makes "one pile"
+   * a property of this function rather than a property of two states happening not to overlap.
+   * `pileOfState("resurfaced")` is null, so a genuinely resurfaced row is never in this set and
+   * the pin is untouched; but if a row ever carried a stale `resurfaced` projection on
+   * `message.triage` while its winning `message_state` record said `bubbled_up`, the pile lister
+   * would file it under Resurface and the pin would show it at the top — the same double
+   * presentation, one entity over. Holding the parked set out of every group makes the bottom
+   * piles authoritative wherever the two sources could disagree, which is the only way the
+   * disjointness guard can be a statement about the derivation instead of about the fixtures.
+   */
+  const parked = parkedMessageIds(reader);
+  const held = (m: EngineMessage): boolean => !pinned.has(m.id) && !parked.has(m.id);
+
   return {
-    resurfaced,
+    resurfaced: resurfaced.filter((m) => !parked.has(m.id)),
     // Unread mail is ordered by ARRIVAL, unchanged: nothing has been read, so there is no reading
     // order to use and the question the group answers is what came in. Resurfaced rows are held
     // out — they sit pinned above, never doubled here.
-    newForYou: inbox.filter((m) => m.unread && !pinned.has(m.id)),
+    newForYou: inbox.filter((m) => m.unread && held(m)),
     // "Earlier" is read INBOX mail joined by the account's own sent mail, ordered by when the
     // reader finished with each — for a sent row that is when it was SENT (see `readTimeOf`), so
     // the message somebody just pressed Send on is the first row here.
@@ -573,8 +693,8 @@ export function ohboxView(reader: EntityReader): OhboxView {
     // — a real row beats a `local: true` one, then reading order — are exactly what this wants.
     previouslySeen: collapseTwins(
       [
-        ...inbox.filter((m) => !m.unread && !pinned.has(m.id)),
-        ...sent.filter((m) => !pinned.has(m.id)),
+        ...inbox.filter((m) => !m.unread && held(m)),
+        ...sent.filter(held),
       ],
       "",
     ).sort(byLastReadDesc),
@@ -1014,35 +1134,25 @@ export interface TriagePiles {
  * The bottom piles: `message_state` entities joined to their messages, merged
  * with fixture-only `triage_item` entries (demo entries with no backing message).
  *
- * ── ONE MESSAGE, ONE CLAIM — the records are deduped by MESSAGE id first ──────────────────
+ * ONE MESSAGE, ONE CLAIM — the records are deduped by MESSAGE id first, in
+ * {@link winningStates}, which states why (two record-id spellings of one fact, and a rail badge
+ * measured at 6-vs-1 against the pile beside it).
  *
- * The mirror can briefly hold TWO `message_state` records for one message under different
- * record ids: the live server keys the entity by the `message_states` ROW's uuid
- * (`TriageService.setState` emits `entityId: row.id`), while an optimistic effect that found
- * no settled record yet keys by the only id it has — the message's. A poll drain landing the
- * settled row while that overlay still stands is therefore two records saying "this message
- * is parked", and a pile that renders records verbatim counts the message twice — the rail
- * badge inflating past the pile it renders beside (a drag-park was measured at 6-vs-1 on a
- * live account, corrected only by reload). The message is the unit a pile is ABOUT, so the
- * message is the dedup key; when two records disagree, the NEWEST `updatedAt` is the latest
- * claim and ties keep the later-listed record (the overlay reads after the store, so the
- * user's own in-flight intent wins a tie — user-always-wins).
+ * WHICH PILE a claim joins is {@link pileOfState}, and that indirection is load-bearing:
+ * {@link parkedMessageIds} asks the same function which rows the Ohbox must hold out, so a
+ * message this lists in a bottom pile cannot also be listed in an Ohbox group.
  */
 export function triagePiles(reader: EntityReader): TriagePiles {
   const piles: TriagePiles = { replyLater: [], setAside: [], resurface: [] };
-  const pileOf = (state: string): TriagePileEntry[] | null =>
-    state === "reply_later" ? piles.replyLater
-      : state === "set_aside" ? piles.setAside
-      : state === "bubbled_up" ? piles.resurface
-      : null;
+  // THE SAME TWO STEPS `parkedMessageIds` TAKES — `winningStates` then `pileOfState`. A row this
+  // files into a pile is a row `ohboxView` holds out, because both read this one derivation
+  // rather than each spelling it themselves. See `pileOfState` for what the two spellings cost.
+  const pileOf = (state: string): TriagePileEntry[] | null => {
+    const name = pileOfState(state);
+    return name ? piles[name] : null;
+  };
 
-  const claimOf = new Map<string, MessageStateDTO>();
-  for (const st of reader.list<MessageStateDTO>("message_state")) {
-    const held = claimOf.get(st.messageId);
-    if (held && Date.parse(held.updatedAt) > Date.parse(st.updatedAt)) continue;
-    claimOf.set(st.messageId, st);
-  }
-  for (const st of claimOf.values()) {
+  for (const st of winningStates(reader).values()) {
     const pile = pileOf(st.state);
     if (!pile) continue;
     const msg = reader.get<EngineMessage>("message", st.messageId);

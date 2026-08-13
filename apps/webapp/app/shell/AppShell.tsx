@@ -38,6 +38,7 @@ import {
   threadOf,
   threadParticipantsIndex,
   threadSubject,
+  parkedMessageIds,
   triagePiles,
   type ComposeAttachment,
   type ConsentPartition,
@@ -283,12 +284,28 @@ export type OpenTarget =
  * `null` is History, which is pile-less by construction: a message there belongs to no list, so
  * the reader is the only surface that can show it — the same choice `HistoryView`'s own `onOpen`
  * makes, and the reason there is no "history" list-row to locate.
+ *
+ * ── AND PARKED MAIL IS PILE-LESS IN THE SAME SENSE ────────────────────────────────────────
+ *
+ * @param parked `parkedMessageIds` — mail the reader filed under Answer Later, Set aside or
+ * Resurface. Since a mail is in exactly one pile, no Ohbox group lists these rows
+ * (`selectors.ts#OhboxView`), so the `ohbox` arm below would name a surface that cannot show the
+ * message — the one thing this function's type exists to prevent. Without this arm, clicking a
+ * search hit for a message you had answered-later navigated to the Ohbox, found no row, selected
+ * nothing and flashed nothing: the identical dead end the `placeOf` paragraph above describes,
+ * reached through triage state instead of through consent.
+ *
+ * Answered with the READER for the reason History is: the surface that needs no list. Routing to
+ * the pile itself would be better and is deliberately not done here — `OpenTarget` has no triage
+ * arm, the Triage view shows one message per pile behind a segmented control rather than a
+ * locatable list, and inventing that navigation is a larger change than the hole needs.
  */
 export function openTargetFor(
   m: EngineMessage,
   narrow: boolean,
   rowFor: (m: EngineMessage, segment: ScreenerSegmentId) => string | null,
   placeOf?: ReadonlyMap<string, Folder | null>,
+  parked?: ReadonlySet<string>,
 ): OpenTarget {
   const presented = placeOf?.get(m.id);
   // `null` ⟺ History (dormant, undecided) — pile-less, so the reader is where it opens.
@@ -296,7 +313,15 @@ export function openTargetFor(
   // The presented folder when the cutline placed it, the physical one when it did not.
   const folder: Folder = presented ?? m.folder;
   const view: OhmailView | undefined = VIEW_OF_FOLDER[folder];
-  if (view === "ohbox") return { kind: "ohbox", id: m.id, reader: narrow };
+  if (view === "ohbox") {
+    // PARKED ⇒ in no Ohbox group, so the Ohbox cannot show it. Checked HERE and not at the top of
+    // the function on purpose: `ohboxView` is the only surface that holds parked rows out, so a
+    // Reads issue queued for Answer Later is still a locatable row in Reads and must keep routing
+    // there. Diverting only where the surface genuinely cannot show the message is the whole of
+    // what this function's return type promises.
+    if (parked?.has(m.id)) return { kind: "reader", id: m.id };
+    return { kind: "ohbox", id: m.id, reader: narrow };
+  }
   if (view === "reads" || view === "receipts") return { kind: "stream", view, id: m.id };
   if (view === "screener" || view === "screened" || view === "spam") {
     const segment: ScreenerSegmentId =
@@ -1112,6 +1137,14 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     [presented, version],
   );
   const piles = useMemo(() => triagePiles(presented), [presented, version]);
+  /**
+   * WHICH MAIL IS PARKED IN A BOTTOM PILE — the same derivation `piles` above is built from
+   * (`selectors.ts#parkedMessageIds`), so the set and the lists cannot disagree about it.
+   *
+   * Read by `openTargetFor`, which must not route a parked message to the Ohbox: no Ohbox group
+   * lists one, so the arrival would select nothing and flash nothing. See that function.
+   */
+  const parked = useMemo(() => parkedMessageIds(presented), [presented, version]);
   const tagGroups = useMemo(() => tagsCrossView(presented), [presented, version]);
   /**
    * History: dormant, undecided, and read by construction. Newest first.
@@ -3331,7 +3364,9 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       // `consentView?.placeOf` is what turns "open it where its FOLDER is" into "open it where
       // it is PRESENTED" — the same map SearchView labels the hit's chip from, so the arrival
       // and the chip can no longer disagree. Undefined on demo/desktop, where folder is place.
-      const target = openTargetFor(m, readColumnHidden(), screenerRowFor, consentView?.placeOf);
+      const target = openTargetFor(
+        m, readColumnHidden(), screenerRowFor, consentView?.placeOf, parked,
+      );
       switch (target.kind) {
         case "ohbox":
           setOhboxSel(target.id);
@@ -3356,14 +3391,14 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
           goScreener(target.segment);
           return;
         default:
-          // No navigation, so no `readerPending` is needed: nothing will clear this. This is
-          // both the "folder no view owns" arm and the History arm — a message presented in
-          // History belongs to no pile, so the reader opens over wherever you are, exactly as
-          // HistoryView's own row does.
+          // No navigation, so no `readerPending` is needed: nothing will clear this. This is the
+          // "folder no view owns" arm, the History arm and the PARKED arm — a message presented
+          // in History, or filed into a bottom pile, belongs to no list, so the reader opens over
+          // wherever you are, exactly as HistoryView's own row does.
           setReaderFor(target.id);
       }
     },
-    [readColumnHidden, screenerRowFor, consentView?.placeOf],
+    [readColumnHidden, screenerRowFor, consentView?.placeOf, parked],
   );
   /* Assigned here so `openDraft`, which is declared several hundred lines above this, can open a
      reply draft in its own conversation. See {@link openMessageRef}. */

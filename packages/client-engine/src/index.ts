@@ -114,6 +114,12 @@ export {
   messageDisplayTime,
   messagesIn,
   ohboxView,
+  // The pile derivation, exported so a guard can assert DISJOINTNESS over it directly rather
+  // than inferring it from two lists that happen to agree on one fixture — see
+  // `pileOfState`, which both `triagePiles` and `parkedMessageIds` read.
+  parkedMessageIds,
+  pileOfState,
+  winningStates,
   feedPartition,
   readsPartition,
   receiptsByDay,
