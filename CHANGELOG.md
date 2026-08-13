@@ -18,11 +18,51 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 ## [0.9.5] — 2026-08-13
 
-Mostly about mail being where you left it. A message you send is in the Ohbox the moment it
-goes; a message you put away is in exactly one place; a decision made in the Screener holds
-while you move around the app, and says so when it does not land; and clicking a search
-result opens the message you clicked. An install signed in to a hosted account also stops
-hiding settings that account has.
+Mostly about mail being where you left it — starting with the folders you made yourself,
+which the app reads for the first time and will not reorganise. A message you send is in the
+Ohbox the moment it goes; a message you put away is in exactly one place; a decision made in
+the Screener holds while you move around the app, and says so when it does not land; and
+clicking a search result opens the message you clicked. An install signed in to a hosted
+account also stops hiding settings that account has.
+
+### Your own folders
+
+**Mail in the folders you made is part of your mailbox.** Until now the app read a fixed set:
+your inbox, the five `ohmail/` folders and your Sent folder. Anything you had filed yourself
+was invisible — an Archive, a folder per client, years of nesting made in another mail app.
+None of it was in your history, none of it was in a conversation, and none of it came back
+from a search. All of it is read now, stored, threaded into its conversations, and findable.
+
+**And nothing moves it.** Your filing is yours: no rule runs on mail in your own folders, it
+is never held for screening, never filed as a newsletter or a receipt, and no AI is spent on
+it. That is three separate things in the code rather than a setting or a promise in a
+comment, any one of which would be enough on its own — those folders are not in the set
+anything may file into, the routing step returns before the rules are even loaded, and the
+message is recorded as placed by *you*, which every part of the app that moves mail refuses
+to touch. A test moves each of the three out of the way in turn and watches the mail get
+moved, so the guarantee is measured rather than asserted.
+
+Drafts, Junk and Trash stay out, and so do Gmail's All Mail and Starred. None of the first
+three holds mail you filed — one is unfinished writing, one is your provider's opinion, one
+is what you threw away — so reading them would be inventing a decision rather than following
+one; the other two already contain every message in the account, so reading them would
+duplicate the whole mailbox. An Archive is filing, and it is read.
+
+A mailbox with a hundred folders costs almost nothing per check: where the server supports
+it, one command asks after every folder at once and only the ones that actually changed are
+opened. The first pass through a large archive is spread over several rounds behind your
+incoming mail, so nothing you are waiting for is held up by years of history arriving.
+
+**Two reasons a mailbox could say "still importing" for ever are fixed**, both found on
+accounts that had been connected for days and were doing no work. Some servers ignore the
+question "what changed since I last looked" and answer with the whole folder, so read-state
+updates were re-read from scratch on every check — thousands of them, capped per round — and
+the end was never reached; the app now compares what the server says against what it already
+recorded and treats agreement as nothing to do. And a mailbox holding two copies of the same
+message in one folder — an import run twice, a client that filed twice — could only remember
+one of them, so the other looked new on every check, was downloaded again, and displaced the
+first. Both copies are remembered now, and if the one a message points at is deleted the
+record follows the copy that is still there.
 
 ### Sending
 
