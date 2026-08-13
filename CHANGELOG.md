@@ -16,6 +16,34 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.9.6] — 2026-08-13
+
+One change, and it is for installs signed in to a hosted account: the app is told the
+moment something happens, instead of only ever asking on a timer.
+
+### Signed in to a hosted account
+
+**Mail turns up when it arrives, not when the app next asks.** The engine that keeps this
+app's copy of a hosted mailbox current asked the service for changes every twenty seconds,
+so mail that had already landed — or a message you sent, or a decision you made, in the
+browser — could sit unseen for that long. The engine now holds one open
+connection to the service, the service sends a signal the moment anything on the account
+changes, and the engine answers each signal by fetching once. New mail is in the window a
+few seconds after the service records it instead of up to half a minute.
+
+The signal carries nothing and decides nothing. It says only "there is something to
+fetch": what gets fetched, how it is applied, and what happens when a fetch fails are all
+exactly as they were, and the twenty-second check keeps running underneath as the floor. So
+the app is never worse off when the connection is not there. If the service refuses it or
+does not offer it, the run costs one refused request and is never retried — an app that
+expected the channel cannot turn a service without it into a reconnect storm — and the door
+behaves as it did before the channel existed. However many signals arrive while a fetch is
+running, exactly one more is queued; a fetch that fails is left to the retry it already had
+rather than being repeated per signal.
+
+**A standalone install is not affected.** It talks to your own mail server on its own
+schedule, with no hosted service in between, and nothing about that changed.
+
 ## [0.9.5] — 2026-08-13
 
 Mostly about mail being where you left it — starting with the folders you made yourself,
@@ -1683,7 +1711,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.5...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.6...HEAD
+[0.9.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.6
 [0.9.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.5
 [0.9.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.4
 [0.9.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.3
