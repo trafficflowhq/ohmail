@@ -38,12 +38,21 @@ import {
  *    but it meant returning to a tab always began with a stale mailbox. One drain a minute is
  *    the cheap end of warm — ~60 requests/hour against a visible tab's ~450 — and it is the
  *    deliberate price of a mailbox that is current when you come back to it.
- *  · **Stream refused or absent** — the 8 s poll ({@link POLL_MS}), exactly as this module
- *    always behaved. A terminal stream refusal (the server's flag is off, capacity, an auth
- *    refusal — `EventSource` exposes no status, so they are indistinguishable here and the
+ *  · **Stream refused, absent, or failing** — the 8 s poll ({@link POLL_MS}), exactly as this
+ *    module always behaved. A terminal stream refusal (the server's flag is off, capacity, an
+ *    auth refusal — `EventSource` exposes no status, so they are indistinguishable here and the
  *    poll path's coded-envelope classification is what decides anything about auth) falls
  *    back PERMANENTLY for the session: zero reconnect attempts, no storm. A transient stream
  *    error keeps `EventSource`'s own native reconnect and the fast poll carries the gap.
+ *
+ * THAT LAST SENTENCE WAS A CLAIM, AND IT WAS FALSE. The fast poll did not carry the gap: a
+ * stream dying at the TRANSPORT layer rather than by status re-armed the poll on every failed
+ * reconnect, three seconds apart against an eight second period, and a re-arm restarted the
+ * countdown — so a live tab issued one `/api/sync` in 210 seconds and then went silent. The
+ * cadence is now a FLOOR that may only ever be pulled earlier (see `armFloor`), which is what
+ * makes the sentence true. The state is reached by the ordinary route too, with no fault
+ * anywhere: the server cycles its streams before the platform ceiling, and a reconnect that
+ * cannot land leaves the tab exactly here.
  *
  * Push is a HINT, never a data path and never a dependency: every wake funnels into the same
  * `tick()` → `engine.syncOnce()` drain the timer fires, and with SSE completely dead the
@@ -717,6 +726,13 @@ export function startSyncScheduler(
 
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * WHEN the armed timer is due to fire. Meaningless while `timer === null`.
+   *
+   * It exists so {@link armFloor} can tell "nothing is coming" from "something sooner is already
+   * coming", which `timer !== null` cannot. See the floor's own block for what that cost.
+   */
+  let timerDueAt = 0;
   /** A drain is in flight. Guards the timer arithmetic, not the request — see `syncOnce()`. */
   let running = false;
   let hydrated = false;
@@ -847,9 +863,12 @@ export function startSyncScheduler(
           closeStream();
           streamDead = true;
         }
-        // Whatever the failure, the pacing falls back to the fast poll at once: a timer armed at
-        // the safety cadence would otherwise honour a stream that is no longer listening.
-        if (!running && timer !== null && refusedAt === null) arm(pollMs);
+        // WHATEVER THE FAILURE — coded refusal, transport death, a reconnect that cannot land,
+        // a mid-stream abort — the floor comes back to the cadence for the CURRENT state: a
+        // timer armed at the safety cadence would otherwise honour a stream that is no longer
+        // listening. Through `armFloor`, and never `arm`, because this fires once per reconnect
+        // attempt and `arm` would restart the countdown each time — see the floor's block.
+        armFloor();
       });
     } catch {
       // No EventSource in this environment, or a factory that cannot build a listenable
@@ -880,6 +899,7 @@ export function startSyncScheduler(
   const arm = (ms: number): void => {
     disarm();
     if (stopped || terminal) return;
+    timerDueAt = Date.now() + ms;
     timer = setTimeout(() => {
       timer = null;
       void tick();
@@ -890,6 +910,50 @@ export function startSyncScheduler(
   const steadyDelay = (): number => {
     if (!visible()) return hiddenPollMs;
     return streamOpen ? wakeSafetyPollMs : pollMs;
+  };
+
+  /* ════════════════════════════════════════════════════════════════════════════════════════
+     THE POLL FLOOR, AND WHY IT MAY ONLY EVER BE PULLED EARLIER
+     ════════════════════════════════════════════════════════════════════════════════════════
+
+     A floor is a BOUND ON STALENESS. Every other timer in this loop is a schedule — a cadence,
+     a backoff step, a confirm window — and `arm()` is right for those: it disarms and re-sets,
+     because the new schedule replaces the old one. Re-arming a floor with it is a category
+     error, and one that shipped: `arm()` throws away the countdown that was already running, so
+     a floor re-armed more often than its own period NEVER FIRES.
+
+     ── MEASURED IN PRODUCTION, NOT REASONED ABOUT ──────────────────────────────────────────
+
+     The stream's `error` handler used to re-arm the fast poll directly. With `/api/events`
+     killed at the TRANSPORT layer (a proxy dropping SSE, a dead network, a blocked request),
+     `EventSource` retries on the server's `retry: 3000` hint and fires `error` on every failed
+     attempt — three seconds apart, against an eight second poll. The live tab issued EXACTLY
+     ONE `/api/sync` in 210 seconds and then none, through ~100 reconnect attempts, with a
+     127-second-old mutation still not on screen and nothing in the UI saying so. The same tab
+     reached the same state without any network fault at all, by the ordinary route: the server
+     cycles a stream at 270 s, and if the reconnect cannot land, the poll is starved from there.
+
+     The defect was NOT that the handler failed to re-arm. It re-armed about seventy times. It
+     is that "re-arm" meant "restart the countdown", so the sicker the stream got, the harder
+     the floor was held down — precisely backwards, and invisible to a test that fires one
+     `error` and waits, which is what the suite had.
+
+     ── THE RULE ────────────────────────────────────────────────────────────────────────────
+
+     `armFloor()` GUARANTEES a drain is pending no later than the current state's cadence and is
+     otherwise a no-op. It never delays a drain that is already sooner, so it is safe to call on
+     every stream event, however many arrive, and the caller does not have to know what else the
+     machine has armed. What it will not do is override the paths that own their own timing for
+     reasons stronger than staleness: a backoff (`failures > 0`) is already a bounded retry and
+     stomping it would turn one dead stream into an 8-second hammer on a mailbox that is failing
+     anyway; a refusal window is a contract with a claim the server made; `terminal` deliberately
+     holds no timer; and a running drain arms from its own settle, one line later, at the same
+     cadence this would have chosen. */
+  const armFloor = (): void => {
+    if (stopped || terminal || running || refusedAt !== null || failures > 0) return;
+    const ms = steadyDelay();
+    if (timer !== null && timerDueAt <= Date.now() + ms) return;
+    arm(ms);
   };
 
   /** A hidden tab never retries FASTER than its own cadence, whatever the backoff drew. */
@@ -1071,7 +1135,13 @@ export function startSyncScheduler(
       wake();
     } else {
       closeStream();
-      if (!running && !terminal && refusedAt === null && timer !== null) arm(hiddenPollMs);
+      // The hidden cadence is the one re-arm that legitimately pushes a drain OUT (8 s → 60 s),
+      // so it cannot go through `armFloor`. It is no longer conditional on a timer already
+      // being armed, though: that read as "slow down whatever is pending" and silently meant
+      // "and if nothing is pending, leave the tab with no timer at all" — the same assumption
+      // that starved the stream-error path. Hiding a tab must LEAVE it on a cadence, not
+      // depend on having found one.
+      if (!running && !terminal && refusedAt === null) arm(hiddenPollMs);
     }
   };
 
