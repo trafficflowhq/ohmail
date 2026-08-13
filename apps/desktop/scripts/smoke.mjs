@@ -308,6 +308,54 @@ function mailboxList() {
   };
 }
 
+/**
+ * `GET /consent` — THE THIRD ROUTE THE ENGINE-BEARING WINDOW ASKS FOR AT BOOT.
+ *
+ * It arrived with the hosted door's settings wire: `local-consent.ts` sends the shared shell's
+ * consent read down the bridge, `consentDoorFor` wires it on the hosted door only, and the engine
+ * FORWARDS it to the account rather than answering it out of the local mirror. This stub answers
+ * `mode: "cloud"` from `engine_status`, so it is that door the run exercises — the window is
+ * behaving correctly and a stub that 404s the route is out of date, which is exactly what the
+ * `unmodelled` list said when it named `GET /consent`. Same shape as the two routes above it.
+ *
+ * ── THE ANSWER IS THE SHELL'S OWN RESTING STATE, DELIBERATELY ──────────────────────────────
+ *
+ * Every field below is the value the shell already holds when the read has NOT happened, so
+ * modelling the route removes the 404 without moving one product decision in the window these
+ * checks then assert:
+ *
+ *  · `autoSuggestAt: null` — off, and it is the one setting that authorises spending;
+ *  · `blockRemoteImagesAt` SET, because `blockRemoteImagesAt !== null` is what "blocked" means on
+ *    this wire and blocked is the shell's resting value — a stub that sent null would quietly
+ *    answer a privacy question in the permissive direction;
+ *  · `blockAutoUnsubscribeAt: null`, which is `autoUnsubscribe` ON — again the resting value, and
+ *    the flag only decides whether a consequence is DISCLOSED;
+ *  · `locale: null` — the account states no preference, so the window keeps its own language.
+ *
+ * What the read does change is `known`, which is the point: the controls gated on it stop being
+ * withheld. None of them is on screen at boot, so no check here depends on that.
+ *
+ * `dormancyDays` is the product default (60) and `screeningBaselineAt` is the instant the mailbox
+ * above finished its first import, which is the same event. The pair is the cutline arithmetic —
+ * `cutoff = screeningBaselineAt - dormancyDays` — and it cannot move the served mail: both
+ * messages come with a rule for their sender, so they present in that rule's destination whatever
+ * the cutline says. The counts describe that same world: one decided sender, nothing undecided.
+ */
+function consentState() {
+  const at = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
+  return {
+    seedConfirmedAt: at(60 * 24 * 7),
+    screeningResetAt: null,
+    dormancyDays: 60,
+    screeningBaselineAt: at(90),
+    autoSuggestAt: null,
+    blockRemoteImagesAt: at(60 * 24 * 7),
+    blockAutoUnsubscribeAt: null,
+    locale: null,
+    counts: { decidedSenders: 1, activeUndecidedSenders: 0, dormantUndecidedSenders: 0 },
+  };
+}
+
 function installShellStub(window) {
   /* Four platform globals a webview has and jsdom does not, borrowed from this
      Node process. The bridge builds a `Response` out of the frame it was handed
@@ -356,6 +404,12 @@ function installShellStub(window) {
           return Promise.resolve(
             frame(200, "OK", { enabled: false, audience: "screened_in", body: "" }),
           );
+        }
+        /* Exact, and GET only. The four writes go to `/consent/settings` and a PATCH there is a
+           user action this boot never takes — so a prefix match would answer a mutation 200 and
+           hide it, where naming it is the whole job of the list below. */
+        if (url === "/consent" && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(frame(200, "OK", consentState()));
         }
         /* RECORDED, not silently 404'd into a console error the checks would then
            report as a product defect. A surface that starts calling a second route
