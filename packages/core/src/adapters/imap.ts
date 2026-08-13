@@ -1565,27 +1565,20 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             // THIS USED TO READ `!canFastPath && (…)`, exempting the CONDSTORE path on the argument
             // that *"CONDSTORE already said these rows changed, and its cursor semantics own
             // them."* That argument is a claim about the SERVER, and it is false on a server people
-            // actually use. Measured live against iCloud, 2026-08-13, on a mailbox whose
-            // `initial_import_completed_at` had been NULL for nine days:
+            // actually use.
             //
-            //     folder             cursor modseq == server HIGHESTMODSEQ   CHANGEDSINCE reported
-            //     INBOX              435431733336541 == 435431733336541      287 rows  (exists 287)
-            //     ohmail/Reads       435431733334563 == 435431733334563      2037 rows (exists 2037)
-            //     ohmail/Screener    435431733331747 == 435431733331747      1768 rows (exists 1768)
-            //     …7 folders, 7 802 rows, every message in every folder, every cycle
+            // **iCloud's `CHANGEDSINCE` IS INERT.** It advertises CONDSTORE and QRESYNC, and it
+            // answers `CHANGEDSINCE <modseq>` with EVERY message in the folder — verified by handing
+            // it the folder's own reported `HIGHESTMODSEQ`, above which RFC 7162 says nothing can
+            // exist, and getting one row per message back on every folder of the mailbox.
             //
-            // The modseq handed to `CHANGEDSINCE` was the folder's OWN reported `HIGHESTMODSEQ`, so
-            // by RFC 7162 no message can be above it and the correct answer is zero rows. iCloud
-            // advertises CONDSTORE and QRESYNC and returns the whole folder regardless: its
-            // `CHANGEDSINCE` filter is inert.
-            //
-            // With no agreement filter, all 7 802 of those rows were flag CHANGES. At
-            // {@link DEFAULT_SYNC_BATCH_MAX_FLAGS} = 500 a cycle, every folder truncated, every
-            // folder's `highestModseq` was held, `hasBacklog` was pinned true — and the stamp that
-            // records a first import as finished, which the organizer writes only on a cycle that
-            // ends with no backlog, was unreachable for ever. Nothing was wrong with the mailbox:
-            // its cursors were exact and its every UID was known. It simply re-read 500 flags it
-            // already had, once a minute, for nine days.
+            // With no agreement filter every one of those rows was a flag CHANGE. A mailbox with
+            // more messages than {@link DEFAULT_SYNC_BATCH_MAX_FLAGS} therefore truncated every
+            // folder on every cycle, held every folder's `highestModseq`, and pinned `hasBacklog`
+            // true — so the stamp that records a first import as finished, which the organizer
+            // writes only on a cycle that ends with no backlog, was unreachable FOR EVER. Nothing
+            // was wrong with such a mailbox: its cursors were exact and its every UID was known. It
+            // re-read a budget's worth of flags it already had, once a poll interval, indefinitely.
             //
             // ── WHY THIS CANNOT LOSE A FLAG, STATED AS AN EQUIVALENCE ────────────────────────
             //
