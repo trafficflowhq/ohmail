@@ -33,6 +33,28 @@ export interface HttpAdapterOptions {
   csrfCookieName?: string;
   /** Extra headers on every request (e.g. Authorization for bearer mode). */
   headers?: () => Record<string, string>;
+  /**
+   * MAY THIS CLIENT STAGE ATTACHMENT BYTES OUT OF THE SEND REQUEST? **Default: no.**
+   *
+   * A send's attachment bytes normally ride the send request base64-encoded, which is bounded by
+   * whatever request-body limit sits in front of the API. When this is on, a send whose bytes do
+   * not fit that limit instead mints an upload ticket per file (`POST /attachments/staging`), PUTs
+   * the bytes straight at the URL it is given, and sends REFERENCES — so the ceiling becomes the
+   * sending mailbox's own announced limit rather than the transport's.
+   *
+   * ── WHY THE DEFAULT IS `false`, AND WHY THAT IS THE SAFETY PROPERTY ───────────────────────
+   *
+   * This adapter is the transport for the browser app AND for both doors of the desktop app. The
+   * desktop's STANDALONE door talks to an engine in its own process that has no object storage
+   * behind it and no business putting anybody's attachment bytes into hosted storage; its CLOUD
+   * door forwards `POST /drafts/:id/send` verbatim to the hosted API, so the request it forwards
+   * must stay the shape it has always been for a build already installed on somebody's machine.
+   * Both are satisfied by one default: the desktop constructs this adapter with no options at all
+   * on either door, so neither stages, and the browser turns it on explicitly.
+   *
+   * Off, this class behaves exactly as it did — a send is byte-identical, including its body.
+   */
+  stageAttachments?: boolean;
 }
 
 function defaultGetCookie(name: string): string | null {
@@ -236,6 +258,8 @@ export class HttpAdapter implements EngineAdapter {
   private readonly getCookie: (name: string) => string | null;
   private readonly csrfCookieName: string;
   private readonly extraHeaders: () => Record<string, string>;
+  /** See {@link HttpAdapterOptions.stageAttachments}. `false` unless a host asked for it. */
+  private readonly stageAttachments: boolean;
   /** Highest X-Sync-Seq observed across mutations — converged once the /sync cursor reaches it. */
   lastSyncSeq: number | null = null;
   /**
@@ -270,6 +294,8 @@ export class HttpAdapter implements EngineAdapter {
     this.getCookie = opts.getCookie ?? defaultGetCookie;
     this.csrfCookieName = opts.csrfCookieName ?? "tf_csrf";
     this.extraHeaders = opts.headers ?? (() => ({}));
+    // `=== true` rather than `?? false`, so nothing truthy-but-not-boolean can turn this on.
+    this.stageAttachments = opts.stageAttachments === true;
   }
 
   /** The SSE wake-signal attach point (same origin/base as the sync API). */
@@ -1407,8 +1433,21 @@ export class HttpAdapter implements EngineAdapter {
     // none of them. `forwardOf` is just the original's id — the server reads the original, refuses a
     // no_forward one, builds the quoted MIME and streams its attachments. Omitted when neither is
     // set, so a plain send stays the bodyless request it has always been.
-    const sendBody: { attachments?: typeof m.attachments; forwardOf?: string } = {};
-    if (m.attachments && m.attachments.length) sendBody.attachments = m.attachments;
+    //
+    // ── …UNLESS THEY DO NOT FIT, AND THIS CLIENT IS ALLOWED TO STAGE ─────────────────────────
+    //
+    // See {@link HttpAdapter.stagedIdsFor}. The threshold, not "always", is the decision: under
+    // the inline ceiling the request is byte-identical to the one this client has always sent, so
+    // the overwhelming majority of sends gain no new failure mode, and the staged path exists for
+    // exactly the sends that are impossible without it.
+    const sendBody: {
+      attachments?: typeof m.attachments;
+      stagedAttachmentIds?: string[];
+      forwardOf?: string;
+    } = {};
+    const staged = await this.stagedIdsFor(m);
+    if (staged) sendBody.stagedAttachmentIds = staged;
+    else if (m.attachments && m.attachments.length) sendBody.attachments = m.attachments;
     if (m.forwardOf) sendBody.forwardOf = m.forwardOf;
     const res = await this.request("POST", `/drafts/${draftId}/send`, {
       idempotencyKey,
@@ -1482,4 +1521,139 @@ export class HttpAdapter implements EngineAdapter {
       retryable: env.error?.retryable ?? (res.status >= 500 || res.status === 429),
     });
   }
+
+  /**
+   * STAGE THIS SEND'S ATTACHMENT BYTES, or answer `null` for "send them inline as always".
+   *
+   * ── WHEN IT STAGES ────────────────────────────────────────────────────────────────────────
+   *
+   * Three conditions, all required: the host asked for staging
+   * ({@link HttpAdapterOptions.stageAttachments}), the send has files, and their total exceeds
+   * {@link SEND_INLINE_MAX_TOTAL_BYTES} — the ceiling the inline transport can carry.
+   *
+   * The THRESHOLD rather than "always" is a deliberate choice and worth defending. Staging every
+   * send would route the common case — one small file — through two extra network round trips and
+   * a storage dependency it does not need, adding a failure mode to sends that work today for no
+   * gain. Under the ceiling the request this method leaves alone is byte-for-byte the request this
+   * client has always sent, which is also the shape the server must keep accepting for already
+   * installed desktop builds; keeping the live path and the compatibility path THE SAME path is
+   * worth more than routing uniformity.
+   *
+   * ── ALL OR NOTHING ────────────────────────────────────────────────────────────────────────
+   *
+   * Every file is staged or none is. A mixed send is legal on the wire and would be strictly
+   * worse here: the server keeps the strict request-body surface for any send carrying an inline
+   * attachment (that half really did ride the body), so a mix would be capped as if nothing had
+   * been staged — the send would be refused for exactly the reason staging exists to remove.
+   *
+   * ── A FAILURE IS A REFUSAL, NOT A FALLBACK ────────────────────────────────────────────────
+   *
+   * There is no inline fallback from here, and that is the honest behaviour rather than a missing
+   * feature: this path only runs when the total is ALREADY over what the inline transport can
+   * carry, so falling back would produce a request the server refuses — a second, more confusing
+   * failure in place of the real one. Retryability follows the status, so a blip retries and a
+   * deployment with no storage configured does not.
+   */
+  private async stagedIdsFor(
+    m: Extract<EngineMutation, { kind: "mail_send" }>,
+  ): Promise<string[] | null> {
+    const files = m.attachments ?? [];
+    if (!this.stageAttachments || files.length === 0) return null;
+    const total = files.reduce((n, a) => n + base64ByteLength(a.contentBase64), 0);
+    if (total <= SEND_INLINE_MAX_TOTAL_BYTES) return null;
+    if (!m.mailboxId) {
+      // The mint refuses the file against the SENDING MAILBOX's announced limit, so it needs to
+      // know which mailbox. A send that could not resolve one cannot be staged — and it could not
+      // have been composed against a real cap either.
+      throw new MutationRejectedError(
+        "This message was not sent: no sending address was resolved for its attachments.",
+        { code: "staging_failed", retryable: false },
+      );
+    }
+
+    const ids: string[] = [];
+    for (const file of files) {
+      const bytes = base64ToBytes(file.contentBase64);
+      const minted = await this.request("POST", "/attachments/staging", {
+        body: {
+          mailboxId: m.mailboxId,
+          filename: file.filename,
+          contentType: file.contentType,
+          sizeBytes: bytes.byteLength,
+        },
+      });
+      if (!minted.ok) throw await this.rejectionOf(minted);
+      const grant = (await minted.json()) as {
+        id?: string; uploadUrl?: string; uploadMethod?: string;
+        uploadHeaders?: Record<string, string>;
+      };
+      if (!grant.id || !grant.uploadUrl) {
+        throw new MutationRejectedError(
+          "This message was not sent: the upload could not be prepared. Try again.",
+          { code: "staging_failed", retryable: true },
+        );
+      }
+
+      // THE UPLOAD DOES NOT GO THROUGH `request()`. It carries no session cookie, no CSRF token
+      // and none of this client's headers: its authority is the signed URL and nothing else, and
+      // sending a credential to a URL the server handed us would widen what that URL can do. The
+      // method and headers are used VERBATIM — the storage wire is the server's business, and a
+      // client that reconstructed them would be a second implementation of a one-sided contract.
+      let put: Response;
+      try {
+        put = await this.fetchImpl(grant.uploadUrl, {
+          method: grant.uploadMethod ?? "PUT",
+          headers: grant.uploadHeaders ?? {},
+          body: bytes as unknown as BodyInit,
+        });
+      } catch {
+        throw new MutationRejectedError(
+          "This message was not sent: an attachment could not be uploaded. Check your connection and try again.",
+          { code: "staging_failed", retryable: true },
+        );
+      }
+      if (!put.ok) {
+        throw new MutationRejectedError(
+          "This message was not sent: an attachment could not be uploaded. Try again.",
+          { status: put.status, code: "staging_failed", retryable: put.status >= 500 },
+        );
+      }
+      ids.push(grant.id);
+    }
+    return ids;
+  }
+}
+
+/**
+ * THE CEILING THE INLINE TRANSPORT CAN CARRY, in raw attachment bytes.
+ *
+ * A fact about the REQUEST PIPELINE, not about mail: inline bytes travel base64 on one JSON
+ * request, so their total has to clear the hosted API's serverless body limit (~4.5 MB) with room
+ * for the envelope and the ~1.33× base64 inflation. 3 MB of raw bytes encodes to about 4 MB.
+ *
+ * It is the same number as `SEND_ATTACHMENT_MAX_TOTAL_BYTES` (the send service's) and
+ * `COMPOSE_ATTACH_MAX_TOTAL_BYTES` (the compose form's), and the three are pinned to each other by
+ * the repository's `compose-attach-cap-parity` suite. Three copies because the three live in
+ * bundles that may not import each other; one value because a client that staged at a different
+ * threshold than the server refuses at would send a request nothing accepts.
+ */
+export const SEND_INLINE_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
+
+/** Decoded byte length of a base64 string, without decoding it. */
+function base64ByteLength(b64: string): number {
+  const len = b64.length;
+  if (len === 0) return 0;
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.floor((len * 3) / 4) - padding;
+}
+
+/**
+ * base64 → raw bytes. `atob` rather than `Buffer`, because this module is bundled for a browser
+ * and `Buffer` is not a thing there; Node has had `atob` as a global since 16.
+ */
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }

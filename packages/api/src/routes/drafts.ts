@@ -8,15 +8,47 @@ import { drafts, sends, readBody } from "./shared.js";
 
 /**
  * THE SEND REQUEST'S BODY — everything the delivery needs beyond the stored draft, and nothing
- * that is kept. `attachments` carries file bytes as base64 (JSON is the transport the send route
- * has always used); they are decoded here and handed to `SendService` as raw bytes that reach the
- * `OutboundMessage` and no table. An ordinary send sends no body at all — `readBody` returns `{}`.
+ * that is kept.
+ *
+ * ── TWO ACCEPTED SHAPES FOR ATTACHMENTS, AND BOTH ARE LIVE ────────────────────────────────
+ *
+ * `attachments` carries file bytes as base64 on this request. It is the original transport and it
+ * is KEPT, because a desktop build's Cloud door forwards this exact request verbatim to this API
+ * (`apps/desktop/src/DesktopGate.tsx` → `cloud-proxy.ts`): a shipped copy of the app knows only
+ * this shape, so removing it would break every installed one. A request in this shape produces
+ * byte-identical behaviour to the day it was the only shape.
+ *
+ * `stagedAttachmentIds` names upload tickets whose bytes are already in object storage, put
+ * there by the browser on a signed URL from `POST /attachments/staging`. This is the
+ * transport that lifts the ~4.5 MB serverless body limit off the feature and lets the compose form
+ * promise what the sending mailbox actually announced.
+ *
+ * A send may carry either or both. The service concatenates them (inline first) and applies one
+ * cap to the total — and the cap's SURFACE term depends on which shapes are present, because a
+ * request-body limit is not a statement about bytes that never rode the request body. See
+ * `sendSurfaceFor` in the send service.
+ *
+ * Neither shape is persisted. Both reach the one `OutboundMessage` and no table; the staged bytes
+ * additionally existed in a bucket for a bounded window on the way here, which is the fact the
+ * privacy copy states.
+ *
+ * An ordinary send sends no body at all — `readBody` returns `{}`.
  */
 interface SendAttachmentWire { filename?: string; contentType?: string; contentBase64?: string }
 interface SendRequestBody {
   attachments?: SendAttachmentWire[];
+  /** Upload-ticket ids. Account-scoped in the service; a foreign id is a 404. */
+  stagedAttachmentIds?: unknown;
   /** Forward this original — the server reads it, refuses a no_forward one, and quotes it. */
   forwardOf?: string;
+}
+
+/** The staged reference list, validated to strings. Absent/empty ⇒ `undefined`, so an inline-only
+ *  send builds the exact `SendInput` it always did. */
+function readStagedIds(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const ids = raw.filter((v): v is string => typeof v === "string" && v.length > 0);
+  return ids.length > 0 ? ids : undefined;
 }
 
 /** base64 → raw bytes, with lenient defaults; the total is capped in `SendService.reserve`. */
@@ -102,6 +134,7 @@ export const draftsRoutes: Route[] = [
       // ordinary send carries no body, so `readBody` answers `{}` and this is `undefined`.
       const body = await readBody<SendRequestBody>(req);
       const attachments = decodeSendAttachments(body.attachments);
+      const stagedAttachmentIds = readStagedIds(body.stagedAttachmentIds);
       const forwardOf = typeof body.forwardOf === "string" && body.forwardOf.length > 0 ? body.forwardOf : undefined;
       // Prod: decrypt both imap+smtp creds → connected ImapAdapter (R-P3-5). Tests
       // may inject a fake/GreenMail send spy via `deps.services.sendAdapter`.
@@ -119,9 +152,20 @@ export const draftsRoutes: Route[] = [
           // between this handler and SMTP. `SendService` takes the SMALLER of this and the
           // mailbox's own announced `SIZE`, so neither host can send past what the user's mail
           // server said it will accept.
+          //
+          // For a send whose bytes are STAGED the service resolves this to `null` itself — those
+          // bytes did not ride this host's request body, so a declaration about that body says
+          // nothing about them. `sendSurfaceFor` holds that rule; this stays the host's honest
+          // statement about its own pipeline.
           surfaceMaxTotalBytes: deps.services?.sendSurfaceMaxTotalBytes,
+          // WHERE STAGED BYTES COME FROM. Absent on a host with no object storage — a local
+          // install — and then a request naming staged references is REFUSED rather than sent
+          // without its files.
+          ...(deps.services?.attachmentStaging
+            ? { stagedAttachments: deps.services.attachmentStaging(deps.db).source }
+            : {}),
         },
-        { attachments, forwardOf },
+        { attachments, stagedAttachmentIds, forwardOf },
       );
       switch (result.status) {
         case "sent":

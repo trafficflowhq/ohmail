@@ -30,11 +30,18 @@ export interface EmailAddress {
  * ONE FILE THE COMPOSE FORM IS SENDING — bytes and nothing kept.
  *
  * It rides the `mail_send` mutation and then the send REQUEST (`POST /drafts/:id/send`), base64 so
- * a JSON body can carry it, and it is gone when the send returns: no `attachments` row, no `drafts`
- * column, nowhere. The compose surface reads a picked `File` into `contentBase64` and states the
- * total-size limit up front — the SMALLER of what the host carrying the request can take and what
- * the sending mailbox's own submission server announced it will accept. This is the SEND path only
- * — a draft is not given attachment bytes, because nothing on the account stores them.
+ * a JSON body can carry it, and nothing on the account keeps it: no `attachments` row, no `drafts`
+ * column. The compose surface reads a picked `File` into `contentBase64` and states the total-size
+ * limit up front — the SMALLER of what the sending SURFACE can carry and what the sending
+ * mailbox's own submission server announced it will accept. This is the SEND path only — a draft
+ * is not given attachment bytes, because nothing on the account stores them.
+ *
+ * ONE TRANSPORT QUALIFICATION. A client permitted to stage
+ * (`HttpAdapterOptions.stageAttachments`) sends these bytes to object storage on a signed URL when
+ * they exceed what one request body can carry, and puts REFERENCES on the send instead — which is
+ * what lets such a surface promise the mailbox's real limit rather than the request pipeline's.
+ * The bytes are then at rest, in a private bucket, for at most 24 hours. Every other client, both
+ * desktop doors included, still puts them in the request exactly as described above.
  */
 export interface ComposeAttachment {
   filename: string;

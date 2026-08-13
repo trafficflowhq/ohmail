@@ -85,6 +85,42 @@ export interface SendDeps {
    * plain send never touches it, and a caller that supplies none simply forwards no original files.
    */
   openFetchAdapter?: OpenAdapter;
+  /**
+   * THE STAGED-BYTES SOURCE — present only on a host that has object storage behind it.
+   *
+   * ABSENT is the local engine and every test that does not exercise staging, and a request that
+   * names staged references on such a host is REFUSED rather than silently sent without its files.
+   * That refusal is the whole reason this is an injected capability and not a module import: "the
+   * standalone door never stages" is then a fact about what the host composed, provable from the
+   * absence, instead of a rule somebody has to keep obeying.
+   */
+  stagedAttachments?: StagedAttachmentSource;
+}
+
+/**
+ * WHERE STAGED ATTACHMENT BYTES COME FROM, in two phases, and the split is the point.
+ *
+ * `declare` is metadata: it answers what the caller's own tickets say they weigh, at the cost of
+ * one query, so the send can be REFUSED for exceeding the cap before anything is transferred. A
+ * one-phase port would have to download in order to find out, which hands an authenticated caller
+ * a way to make this process pull an arbitrary number of bytes it is then going to throw away.
+ *
+ * `fetch` is the bytes, and it runs outside the reservation transaction for the same reason
+ * `streamForwardParts` does. It re-measures every object against the size its ticket declared:
+ * `declare` reports what a CLIENT asserted at mint time, so the cap would otherwise be enforced
+ * against a number the client chose.
+ */
+export interface StagedAttachmentSource {
+  /** The caller's own tickets. Ids that name nothing, or another account's row, are simply absent. */
+  declare(
+    accountId: string, ids: readonly string[],
+  ): Promise<Array<{ id: string; sizeBytes: number; expiresAt: Date }>>;
+  /**
+   * The bytes, in the order `ids` names them. Throws a {@link ServiceError} when an object is gone
+   * or larger than its ticket declared — a send that silently dropped an attachment is a wrong
+   * send, exactly as a forward that dropped the original's files would be.
+   */
+  fetch(accountId: string, ids: readonly string[], now: Date): Promise<SendAttachment[]>;
 }
 
 /** The decoded attachment shape carried on the SEND REQUEST — bytes only, never persisted. */
@@ -95,12 +131,32 @@ export type SendAttachment = NonNullable<OutboundMessage["attachments"]>[number]
  *
  * The draft row is the message as it was composed; these are the parts that exist only for the
  * one delivery and are DELIBERATELY not persisted (§13.2/§14): the files the sender attached, whose
- * bytes arrive with the send and are handed straight to the transport. Absent for an ordinary
- * send, which builds exactly the `OutboundMessage` it always did.
+ * bytes are handed straight to the transport and written to no table. Absent for an ordinary send,
+ * which builds exactly the `OutboundMessage` it always did.
+ *
+ * "Not persisted" is a statement about THIS DATABASE and it stays exactly true. Staged bytes
+ * (`stagedAttachmentIds`) reached this process from object storage rather than from the request
+ * body, so they were at rest for a bounded window before arriving — 24 hours at most, in a private
+ * bucket, swept whether the send happened or not. That is a fact about the TRANSPORT, it is stated
+ * in the privacy copy, and it changes nothing about where the bytes go from here: the one
+ * `OutboundMessage`, and no row.
  */
 export interface SendInput {
   /** Uploaded files — decoded bytes. Never written to any table; see {@link OutboundMessage}. */
   attachments?: SendAttachment[];
+  /**
+   * STAGED FILES — upload-ticket ids whose bytes are in object storage, not in this request.
+   *
+   * The second accepted shape of one thing, and both are live deliberately: a desktop build whose
+   * Cloud door forwards this request verbatim knows only {@link SendInput.attachments}, so removing
+   * the inline form would break every installed copy of it. A send may carry either, or both — the
+   * two lists are concatenated, inline first, and the cap is applied to the total.
+   *
+   * The bytes reach exactly the same place an inline attachment's do: the one `OutboundMessage`,
+   * and no table. What is different is that they existed in a bucket for a bounded window on the
+   * way here, which is why the privacy copy says so.
+   */
+  stagedAttachmentIds?: string[];
   /**
    * FORWARD THIS ORIGINAL — the id of the message being forwarded, or absent for a normal send.
    *
@@ -181,6 +237,40 @@ export function effectiveAttachmentCap(
 }
 
 /**
+ * WHICH SURFACE CEILING THIS PARTICULAR SEND RIDES — and the answer is a property of the
+ * TRANSPORT THE BYTES TOOK, not of the host.
+ *
+ * {@link SendDeps.surfaceMaxTotalBytes} describes the host's REQUEST PIPELINE, which is the right
+ * description of a send whose attachment bytes are in the request body. Staged bytes are not: they
+ * went from the browser to object storage on a signed URL and this process pulls them from there,
+ * so no request-body limit stands between the compose form and the transport and the host's
+ * declaration is simply not about them.
+ *
+ * So a send carrying ONLY staged references resolves the surface to `null` — explicitly uncapped,
+ * the same value the local engine declares for the same underlying reason — and the mailbox's own
+ * RFC 1870 `SIZE` announcement is then the only ceiling, with the usual "unknown is the strict
+ * one" fallback when the mailbox has never been probed.
+ *
+ * A send carrying ANY inline attachment keeps the host's declaration, including a MIXED send. That
+ * is the conservative direction and it is deliberate: the inline half of a mixed send really did
+ * ride the request body, and a rule that read "some of these were staged, so lift the limit"
+ * would let a request through that the platform in front of this handler refuses first — with an
+ * opaque error the user cannot act on, which is the exact failure
+ * {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES} exists to prevent.
+ *
+ * A send with no attachments at all keeps the host's declaration too, which is a distinction
+ * without a difference (the total is zero) and one fewer branch to reason about.
+ */
+export function sendSurfaceFor(
+  hostSurfaceMax: number | null | undefined,
+  input: Pick<SendInput, "attachments" | "stagedAttachmentIds">,
+): number | null | undefined {
+  const staged = input.stagedAttachmentIds?.length ?? 0;
+  const inline = input.attachments?.length ?? 0;
+  return staged > 0 && inline === 0 ? null : hostSurfaceMax;
+}
+
+/**
  * How old a `pending` reservation must be before it counts as ORPHANED rather than in flight.
  *
  * It has to exceed the longest possible lifetime of a sending invocation, or the recovery path
@@ -258,6 +348,29 @@ export class SendService {
     // ── 2. SMTP OUTSIDE the tx. Always close() in finally. ───────────────
     const { sendId, mintedMessageId, mailboxId, msg } = reservation;
 
+    // ── STAGED: PULL THE BYTES FROM OBJECT STORAGE onto the outgoing message ────────────────
+    //
+    // Here, outside the reservation tx (it is network) and BEFORE `send`, exactly where the
+    // forward's IMAP stream runs and for the same reasons: the files must be on the one
+    // `OutboundMessage` that both goes out and is appended to Sent, and they are never persisted.
+    //
+    // A failure is NOT swallowed. `fetch` throws when an object is gone or is bigger than its
+    // ticket declared, and that ends the send with the reservation still `pending` — the user
+    // retries under the same key. A send that quietly dropped an attachment the composer showed
+    // is a wrong send, which is the same ruling the forward path already made.
+    //
+    // The bytes were already refused against the cap BY DECLARATION in `reserve`; `fetch`
+    // re-measures each object against its own ticket, so what lands here can only be smaller.
+    const stagedIds = input.stagedAttachmentIds ?? [];
+    if (stagedIds.length > 0 && deps.stagedAttachments) {
+      const staged = await deps.stagedAttachments.fetch(ctx.accountId, stagedIds, ctx.now());
+      // INLINE FIRST, then staged — the order a mixed send's composer listed them in, and the
+      // order the recipient sees. `msg.attachments` is absent for a staged-only send (the
+      // reservation only sets it from `input.attachments`), so this is also where that key
+      // appears at all.
+      msg.attachments = [...(msg.attachments ?? []), ...staged];
+    }
+
     // ── FORWARD: STREAM THE ORIGINAL'S ATTACHMENTS, then send them with the message ──────────
     //
     // Done here, outside the reservation tx (it is IMAP network) and BEFORE `send`, so the
@@ -308,7 +421,71 @@ export class SendService {
   private async reserve(
     ctx: ServiceContext, draftId: string, idempotencyKey: string, deps: SendDeps, input: SendInput,
   ): Promise<Reservation> {
-    const attachTotal = (input.attachments ?? []).reduce((n, a) => n + a.content.byteLength, 0);
+    const inlineTotal = (input.attachments ?? []).reduce((n, a) => n + a.content.byteLength, 0);
+    // ── STAGED REFERENCES: WHAT THEY WEIGH, BEFORE ANYTHING IS TRANSFERRED ──────────────────
+    //
+    // Outside the transaction, deliberately: this is a second query and the reserve tx holds a
+    // `FOR UPDATE` lock on the draft row. It is also the ONLY place the total can be refused
+    // cheaply — after the reservation the bytes have to be pulled to be measured, and an
+    // authenticated caller that can make this process download an arbitrary amount it then throws
+    // away is a cost hole an authenticated caller could open at will.
+    //
+    // The numbers are the client's own declarations from mint time and are treated as such: they
+    // bound what we are WILLING to fetch. `fetch` re-measures, and a body larger than its ticket
+    // declared never reaches the transport.
+    const stagedIds = input.stagedAttachmentIds ?? [];
+    let stagedTotal = 0;
+    /**
+     * A STAGED-REFERENCE PROBLEM, HELD RATHER THAN THROWN — because an idempotent REPLAY must
+     * not be turned into an error by it.
+     *
+     * The refusals below are about the tickets a client named, and a same-key retry that reaches
+     * the CONFLICT branch is not asking to send anything: it is asking what happened last time.
+     * Thrown here, an expired ticket would answer "your upload expired" to a replay of a send
+     * that SUCCEEDED — telling the user their message failed when the mail is in their Sent
+     * folder, which is the worst ending available on this path. So the fault is carried into the
+     * transaction and raised beside the disabled-mailbox check, AFTER the conflict branch has
+     * returned, on exactly the same reasoning that check's own header sets out.
+     *
+     * `stagedTotal` is left at 0 when a fault is held, so the cap check (which runs before the
+     * INSERT) cannot fire a spurious 413 off a partial sum and mask the real answer.
+     */
+    let stagedFault: ServiceError | null = null;
+    if (stagedIds.length > 0) {
+      if (!deps.stagedAttachments) {
+        // A host with no staging capability was handed staged references. Refuse — sending the
+        // message without its attachments would be a wrong send, and this is the shape the
+        // standalone door would take if anything ever asked it to stage.
+        stagedFault = new ServiceError(
+          "validation_failed", 400,
+          "this server does not accept staged attachments",
+        );
+      } else {
+        const facts = await deps.stagedAttachments.declare(ctx.accountId, stagedIds);
+        const byId = new Map(facts.map((f) => [f.id, f]));
+        const now = ctx.now();
+        for (const id of stagedIds) {
+          const f = byId.get(id);
+          // ONE ANSWER for "not yours" and "never existed" — the lookup is account-scoped, so a
+          // foreign id is simply absent, and distinguishing the two would make this an oracle for
+          // whether an id exists in another account.
+          if (!f) {
+            stagedFault = new ServiceError("not_found", 404, "an uploaded attachment was not found");
+            break;
+          }
+          if (f.expiresAt.getTime() <= now.getTime()) {
+            stagedFault = new ServiceError(
+              "conflict", 409,
+              "an uploaded attachment has expired. Attach the file again and resend.",
+            );
+            break;
+          }
+          stagedTotal += f.sizeBytes;
+        }
+        if (stagedFault) stagedTotal = 0;
+      }
+    }
+    const attachTotal = inlineTotal + stagedTotal;
     return asTx(ctx).transaction(async (tx): Promise<Reservation> => {
       // `FOR UPDATE`, because this read decides the SENDING IDENTITY. The draft's `mailboxId`
       // is PATCHable while the row is a draft (`DraftsService.update`), and a plain read-
@@ -347,7 +524,13 @@ export class SendService {
       // announced. The reordering costs one thing worth naming — a send over the cap on a draft
       // that does not exist now answers 404 rather than 413, because the draft is loaded first.
       // That is the more truthful of the two answers to a request naming nothing.
-      const cap = effectiveAttachmentCap(deps.surfaceMaxTotalBytes, mb?.smtpMaxSizeBytes ?? null);
+      // The surface is `sendSurfaceFor`'s and not `deps`' directly — see that function: staged
+      // bytes did not ride this host's request body, so the host's declaration about that body is
+      // not a statement about them.
+      const cap = effectiveAttachmentCap(
+        sendSurfaceFor(deps.surfaceMaxTotalBytes, input),
+        mb?.smtpMaxSizeBytes ?? null,
+      );
       if (attachTotal > cap) {
         throw new ServiceError(
           "payload_too_large", 413,
@@ -414,6 +597,14 @@ export class SendService {
       // transport; `sync_blocked_reason` is a note about OUR infrastructure and is written
       // without touching `status` at all. Neither may strand a user's outbox — see the longer
       // note on `DraftsService.validMailbox`.
+      // THE HELD STAGED FAULT, raised here and not where it was found — see `stagedFault`. It
+      // sits with the disabled-mailbox check for the identical reason that check gives: above the
+      // INSERT it would also catch the CONFLICT branch, which returns before reaching here, and
+      // that branch is idempotent REPLAY. Throwing anywhere in this callback rolls the whole
+      // transaction back, the INSERT above included, so a NEW reservation refuses exactly as it
+      // would have and no `outbound_sends` row survives.
+      if (stagedFault) throw stagedFault;
+
       if (mb?.status === "disabled") {
         throw new ServiceError(
           "mailbox_disabled", 409,

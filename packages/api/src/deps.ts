@@ -63,6 +63,64 @@ export interface ImapAdmissionPort {
   release(db: Db, mailboxId: string, now: Date): Promise<void>;
 }
 
+/** What a mint hands the browser: a ticket id and the exact way to put bytes at it. */
+export interface StagedUploadGrantWire {
+  /** The ticket id — what a later send references in place of the bytes. */
+  id: string;
+  uploadUrl: string;
+  uploadMethod: string;
+  /** Sent verbatim on the upload. Opaque: the storage wire is the server's business. */
+  uploadHeaders: Record<string, string>;
+  /** ISO-8601. When the staged bytes stop existing. */
+  expiresAt: string;
+}
+
+/**
+ * HOW A HOST STAGES ATTACHMENT BYTES OUT OF THE REQUEST BODY — a port, and OPTIONAL, and the
+ * optionality is the security property rather than a convenience.
+ *
+ * Attachment bytes used to ride the send request base64-encoded, which bound every hosted send to
+ * the serverless body limit and made the compose surface promise 3 MB whatever the sender's own
+ * submission server announced. A host that has object storage behind it supplies this port; the
+ * browser then uploads directly and the send carries a reference.
+ *
+ * **A LOCAL INSTALL MUST NOT SUPPLY IT, AND STRUCTURALLY CANNOT WANT TO.** Its send handler runs in
+ * the same process as its own SMTP dial — there is no request body between the compose form and
+ * the wire, so there is nothing to stage around — and staging would mean a standalone desktop
+ * install sending somebody's attachment bytes to the hosted service's storage. Absent, the mint
+ * route is not mounted at all (it is on the hosted route table only) and `SendService` refuses a
+ * request that names staged references rather than sending a message without its files.
+ *
+ * Declared HERE rather than in `deps-cloud.ts` because `routes/drafts.ts` is the ONE send handler
+ * and both hosts compile it: the shared handler has to be able to say it may be handed this, and
+ * the local composition's answer is `undefined`.
+ */
+export interface AttachmentStagingPort {
+  /** Mint one ticket + upload grant. Writes the row BEFORE the object can exist; see the service. */
+  mint(input: {
+    accountId: string; filename: string; contentType: string; sizeBytes: number; now: Date;
+  }): Promise<StagedUploadGrantWire>;
+  /**
+   * The two-phase staged-bytes source `SendService` reads through — `declare` (metadata, so an
+   * over-cap send is refused before any transfer) and `fetch` (the bytes, re-measured).
+   */
+  source: {
+    declare(
+      accountId: string, ids: readonly string[],
+    ): Promise<Array<{ id: string; sizeBytes: number; expiresAt: Date }>>;
+    fetch(
+      accountId: string, ids: readonly string[], now: Date,
+    ): Promise<Array<{ filename: string; contentType: string; content: Buffer }>>;
+  };
+}
+
+/**
+ * Builds the staging port over THIS REQUEST's database handle, exactly as
+ * {@link AiCreditGateFactory} does over the same handle: the service bag is per cold instance and
+ * a database handle is not, so the bag holds the factory and the handler holds the port.
+ */
+export type AttachmentStagingFactory = (db: Db) => AttachmentStagingPort;
+
 /**
  * The typed service bag on `ApiDeps`. The test helper and each host construct these once and
  * expose them here so handlers never new-up a service.
@@ -168,6 +226,11 @@ export interface ApiServices {
    * before anybody has thought about it, and it is deliberately the strict branch.
    */
   sendSurfaceMaxTotalBytes?: number | null;
+  /**
+   * See {@link AttachmentStagingPort}. Present on a host with object storage; ABSENT on a local
+   * install, where its absence is what keeps the standalone door from staging to Cloud storage.
+   */
+  attachmentStaging?: AttachmentStagingFactory;
 }
 
 /**

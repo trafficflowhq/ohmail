@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -94,6 +94,75 @@ describe("the desktop window declares the surface uncapped on the LOCAL door onl
 
   it("…and never declares a NUMBER, which would re-impose a limit that is not this host's", () => {
     expect(src).not.toMatch(/sendSurfaceMaxTotalBytes:\s*\d/);
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────────────────
+   NEITHER DOOR STAGES TO CLOUD STORAGE, AND THE PROOF IS THE ABSENCE OF ONE WORD.
+
+   The hosted browser client can now put a send's attachment bytes into object storage on a
+   signed URL and send references instead, which is what lets it promise the mailbox's real
+   limit. That capability is a constructor option on the shared wire client, defaulting OFF,
+   and this app must never turn it on:
+
+    · the STANDALONE door talks to an engine in this same process. There is no hosted storage
+      behind it, and a standalone install posting somebody's attachment bytes to the hosted
+      service would be the exact inversion of what this build is for;
+    · the CLOUD door forwards `POST /drafts/:id/send` verbatim to the hosted API. A build
+      already on somebody's machine must keep sending the shape it has always sent — which the
+      server still accepts, deliberately, and which is byte-identical to what it accepted before
+      staging existed.
+
+   ONE construction serves both doors, so one assertion covers both. Asserted from source and
+   over stripped comments for the same reason the block above is: the alternative is an
+   engine's worth of setup to observe one constructor argument, and the regression this family
+   has already had is a property missing from a literal.
+   ───────────────────────────────────────────────────────────────────────────────────────── */
+
+function bridgeSource(): string {
+  try {
+    return readFileSync(resolve(process.cwd(), "apps/desktop/src/bridge-fetch.ts"), "utf8");
+  } catch {
+    return readFileSync(resolve(process.cwd(), "src/bridge-fetch.ts"), "utf8");
+  }
+}
+
+describe("neither desktop door stages attachment bytes to Cloud storage", () => {
+  const src = stripComments(bridgeSource());
+
+  it("resolved a real file", () => {
+    expect(src).toContain("export function createEngineAdapter()");
+  });
+
+  it("the adapter is constructed with a base url and a fetch, and nothing else", () => {
+    expect(src).toContain('new HttpAdapter({ baseUrl: "", fetch: bridgeFetch })');
+  });
+
+  it("the word `stageAttachments` does not appear anywhere in this app's source", () => {
+    // Widened past the one file on purpose: the option could be introduced through any other
+    // construction of the adapter, and what matters is that this application never asks for it.
+    const roots = ["apps/desktop/src", "src"];
+    let scanned = 0;
+    const hits: string[] = [];
+    const walk = (dir: string): void => {
+      let entries: Array<{ name: string; isDirectory(): boolean }>;
+      try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        const p = `${dir}/${e.name}`;
+        if (e.isDirectory()) { walk(p); continue; }
+        if (!/\.(ts|tsx)$/.test(e.name)) continue;
+        scanned += 1;
+        const text = stripComments(readFileSync(p, "utf8"));
+        // `no-http-adapter.ts` MIRRORS the option in its stub interface so a bundle that aliases
+        // the real module still type-checks; naming a field is not asking for the behaviour, and
+        // that file's `HttpAdapter` throws on construction.
+        if (e.name === "no-http-adapter.ts") continue;
+        if (text.includes("stageAttachments")) hits.push(p);
+      }
+    };
+    for (const r of roots) walk(r);
+    expect(scanned, "the scan found no desktop sources at all").toBeGreaterThan(5);
+    expect(hits, "a desktop surface asked the wire client to stage into Cloud storage").toEqual([]);
   });
 });
 

@@ -3,13 +3,21 @@
 /**
  * COMPOSE ATTACHMENTS — pick files, hold their bytes in memory, send them with the message.
  *
- * ── ZERO AT REST, RESTATED AT THE SURFACE ────────────────────────────────────────────────
+ * ── NOTHING IS FILED AGAINST THE ACCOUNT — AND ONE EXACT QUALIFICATION ───────────────────
  *
- * The bytes a user picks here ride the SEND request and are stored nowhere — not in the account's
- * `drafts` row, not in `attachments`, not in this browser's `localStorage` (the compose scratch
- * buffer strips them; see `compose.ts`). So an attachment lives for exactly as long as the compose
- * form is open. That is why this control keeps the decoded files in React state handed up through
- * `ComposeFields.attachments` rather than persisting them, and why a reload starts with none.
+ * The bytes a user picks here are stored against nothing that outlives the send: not the account's
+ * `drafts` row, not `attachments`, not this browser's `localStorage` (the compose scratch buffer
+ * strips them; see `compose.ts`). This control keeps the decoded files in React state handed up
+ * through `ComposeFields.attachments`, and a reload starts with none.
+ *
+ * THE QUALIFICATION IS THE TRANSPORT, and it is stated here because the sentence above used to
+ * read "ride the SEND request and are stored nowhere", which stopped being the whole truth. On the
+ * hosted browser client a send whose files exceed what one request body can carry uploads them to
+ * private object storage first and sends REFERENCES; the bytes sit there, unreadable without a
+ * service credential, until the send reads them, and a retention sweep removes them within 24
+ * hours whether the send happened or not. Still nothing on the account, still no row that names
+ * them after the window closes — but "nowhere" would be a claim the product cannot keep, so the
+ * privacy page says this too.
  *
  * ── THE CAP IS A UX PRE-CHECK; THE SERVER IS AUTHORITATIVE ───────────────────────────────
  *
@@ -97,13 +105,20 @@ import { readOwner } from "../shell/owner-cookie";
 const LEVEL_CHOICES: readonly ImageShrinkLevel[] = [...IMAGE_SHRINK_LEVELS].reverse();
 
 /**
- * THE HOSTED SURFACE'S OWN CEILING on total attachment bytes — the mirror of the constant the
+ * THE INLINE TRANSPORT'S OWN CEILING on total attachment bytes — the mirror of the constant the
  * hosted send handler enforces, kept as a literal rather than imported so this bundle pulls in no
  * server module.
  *
- * It is a fact about the REQUEST PIPELINE and not about mail: attachment bytes travel base64 on one
- * JSON request, so their total has to clear the hosted API's serverless body limit (~4.5 MB) with
- * room for the envelope and the ~1.33× base64 inflation. 3 MB of raw bytes encodes to about 4 MB.
+ * It is a fact about the REQUEST PIPELINE and not about mail: attachment bytes travelling base64 on
+ * one JSON request have to clear the hosted API's serverless body limit (~4.5 MB) with room for the
+ * envelope and the ~1.33× base64 inflation. 3 MB of raw bytes encodes to about 4 MB.
+ *
+ * IT IS NO LONGER WHAT THE HOSTED FORM PROMISES, and that is the point of the paragraph above:
+ * a window whose client can stage declares an uncapped SURFACE, so this number stops being the
+ * binding term and the mailbox's own announcement governs. It remains the strict fallback for
+ * every caller that has not declared a surface, and the client-engine's own
+ * `SEND_INLINE_MAX_TOTAL_BYTES` is the same value deciding the same boundary from the transport
+ * side — all three are pinned together by the repository's `compose-attach-cap-parity` suite.
  */
 export const COMPOSE_ATTACH_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
 

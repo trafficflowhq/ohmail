@@ -177,6 +177,10 @@ export {
   // The client↔server view vocabularies and the single table that joins them. Exported so the
   // translation can be checked against the server's own list rather than only through a request.
   SERVER_VIEW_OF,
+  // The ceiling the INLINE send transport can carry. Exported because the compose form needs the
+  // same number for a different job — it states a promise, this decides a transport — and the
+  // parity suite pins both to the send service's constant.
+  SEND_INLINE_MAX_TOTAL_BYTES,
   type FetchLike,
   type HttpAdapterOptions,
   type ServerMessageView,

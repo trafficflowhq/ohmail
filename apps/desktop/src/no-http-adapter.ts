@@ -108,12 +108,28 @@ export const SERVER_VIEW_OF: Record<string, ServerMessageView | null> = {
  */
 export const BODY_FETCH_TIMEOUT_MS = 12_000;
 
+/**
+ * Mirrored for the same reason as {@link BODY_FETCH_TIMEOUT_MS}: the package barrel re-exports it
+ * BY NAME, so a bundle that aliases this file in place of the real adapter fails at build time
+ * without it. The value is the real module's, so a reader comparing the two is not left wondering.
+ *
+ * It promises nothing here. A client-half preview never sends anything at all.
+ */
+export const SEND_INLINE_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
+
 export interface HttpAdapterOptions {
   baseUrl?: string;
   fetch?: FetchLike;
   getCookie?: (name: string) => string | null;
   csrfCookieName?: string;
   headers?: () => Record<string, string>;
+  /**
+   * Mirrored from the real module so this stub's shape is the same shape. Nothing in this build
+   * ever passes it — a client-half preview has no Cloud client at all, and the constructor below
+   * throws before an option could be read. It is named here for the reason `BODY_FETCH_TIMEOUT_MS`
+   * is: a bundler resolves this file for the name, and a missing one fails the bundle.
+   */
+  stageAttachments?: boolean;
 }
 
 const REFUSAL =
