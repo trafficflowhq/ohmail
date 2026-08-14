@@ -1,8 +1,8 @@
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
-  accountSettings, folderState, messages,
+  accountSettings, folderState, messages, routingDecisions,
   screenerLedgerSource, storeScreenerSuggestion,
-  screenerSuggestedSenderExists, hasScreenerSuggestionForSender, AI_ACTION_COST,
+  SCREENER_SUGGESTION_PROVENANCE, AI_ACTION_COST,
   type AiCreditGate, type Tx,
 } from "@trafficflow/db";
 import { askScreeningQuestion, silentLogger, type ClassifierPort, type Logger } from "@trafficflow/core/mail";
@@ -36,20 +36,12 @@ import { askScreeningQuestion, silentLogger, type ClassifierPort, type Logger } 
    waits for a human. What changes is that the human's press is now free and instant instead of
    costing a round trip they have to sit through.
 
-   ── THE FOUR BOUNDS ON SPEND, AND WHY EACH ONE IS LOAD-BEARING ──────────────────────────────
+   ── THE THREE BOUNDS ON SPEND, AND WHY EACH ONE IS LOAD-BEARING ─────────────────────────────
 
    This is the only thing in the product that spends an account's money with no press in the same
    minute, so "how much can it possibly cost" has to have an answer that does not depend on
    anybody's diligence:
 
-    0. **ONE PURCHASE PER SENDER.** The economic event is "advise this account about this sender",
-       so a sender the account already holds advice about is not a candidate — however much mail
-       they send afterwards. This bound is listed first because it is the newest and because
-       without it the other three are a rate limit rather than a ceiling: every one of them
-       (a watermark our clock writes, a page of ten, a balance) is spent PER MESSAGE, and the party
-       deciding how many messages exist is the sender. See {@link selectCandidates}' second
-       predicate for the identity, and the paragraph below it for what the message-keyed version
-       cost.
     1. **THE WATERMARK.** `account_settings.auto_suggest_at` is a TIMESTAMP, not a boolean, and it
        is read here as the instant consent began: only a sender whose held REPRESENTATIVE message
        was ingested AFTER it is a candidate. So the pre-opt-in backlog — 1 698 waiting senders on
@@ -67,45 +59,11 @@ import { askScreeningQuestion, silentLogger, type ClassifierPort, type Logger } 
        "no credits ⇒ nothing was sent to a third party and nothing was charged" is a property of
        the order of these lines and not of a check somebody remembered to write.
 
-   ── AND ONE BOUND THAT IS NOT ABOUT MONEY: FLAGGED MAIL IS NOT A CANDIDATE ──────────────────
-
-   A message carrying `no_ai`, or any `sensitivity_category` at all, is excluded from
-   {@link selectCandidates} — before the spend, before the model, before it can be anybody's
-   representative. The flags are the detector's answer to "does this look like it carries a
-   credential", and `sensitive.ts` routes its INDETERMINATE outcome into `no_ai` as well, so the
-   exclusion covers "we could not read this confidently" and not only "we recognised an OTP".
-
-   **This is deliberately NOT what the user-pressed path does, and the difference is the press.**
-   `ScreenerService.suggest` asks about every held sender, flagged or not, and redacts at the sink:
-   that is the AI-OPEN ruling of 2026-08-08, and it rests on a person selecting senders, being
-   quoted a price and pressing a button. This pass has none of that. The same ruling said so in as
-   many words about the automatic router — *"nobody presses anything there, so there is no consent
-   to point at"* — and this pass is automatic in exactly that sense, so it takes the automatic
-   answer. Redaction still runs underneath (`askScreeningQuestion` calls `redactForModel`); it is
-   the second layer here rather than the only one.
-
-   **A sender whose representative is flagged therefore stays UNSUGGESTED, and that is the honest
-   state rather than a gap.** Their row is still in the Screener, still decidable, and still
-   purchasable by the manual control under the rules that path already has — the user can press and
-   get an answer. What they do not get is an answer nobody asked for, bought with their money, about
-   mail the detector thinks holds a passcode.
-
    There is no persisted disarm column and no cursor table, and neither is missing. Progress is
-   the STORED SUGGESTION, read BY SENDER: a sender this account holds advice about has a
-   `routing_decisions` row against one of their messages, the candidate query excludes them, and
-   the next cycle therefore starts at the next unadvised sender. That is the same shape the sibling
-   pass uses (a moved row leaves the Screener and drops out), and it is durable across a restart
-   because it is in the database rather than in this process.
-
-   **A DERIVED MARKER RATHER THAN A NEW TABLE, and the choice is worth naming because the failure
-   direction is not symmetric.** "This account holds advice about this sender" is a join we can
-   already answer, so the entitlement needs no column, no migration and no second thing to keep in
-   step with the row the surface draws. What it inherits is the row's lifetime: delete a sender's
-   held mail and the advice goes with it, after which their next message is a genuinely new
-   first-contact event and costs one credit. That is the account owner's own action, it re-bounds to
-   ONE purchase, and it is the direction to be wrong in — the alternative (an entitlement that
-   outlives every trace of the advice) would leave a sender permanently un-advisable by the feature
-   the account is paying for, with nothing on screen to explain why.
+   the STORED SUGGESTION: a sender this pass bought for has a `routing_decisions` row, the
+   candidate query excludes them, and the next cycle therefore starts at the next unbought sender.
+   That is the same shape the sibling pass uses (a moved row leaves the Screener and drops out),
+   and it is durable across a restart because it is in the database rather than in this process.
 
    ── ONE IMPLEMENTATION OF BUYING, ACROSS A DEPENDENCY BOUNDARY ──────────────────────────────
 
@@ -121,8 +79,6 @@ import { askScreeningQuestion, silentLogger, type ClassifierPort, type Logger } 
       the routing one, and the account's Ohbox bar.
     · `storeScreenerSuggestion` (`@trafficflow/db`) — the provenance, the inert status and the
       per-message transaction.
-    · `screenerSuggestedSenderExists` / `hasScreenerSuggestionForSender` (`@trafficflow/db`) — the
-      SENDER identity of a suggestion, which the request path's read half needs in the same words.
 
    What is left here is selection and pacing, which is genuinely this pass's own: the watermark,
    the cap, and stopping on the first refusal. The ledger source is shared too
@@ -130,13 +86,6 @@ import { askScreeningQuestion, silentLogger, type ClassifierPort, type Logger } 
    the same message bought by the client's batch and by this pass in the same minute answers
    `duplicate` on the second `spend`, charges nothing, and the stored row makes the second one
    never reach the model at all.
-
-   **THAT SHARED SOURCE IS ALSO WHY THE PER-SENDER BOUND IS NOT WRITTEN AS A SECOND LEDGER
-   NAMESPACE.** Keying this pass's spend on `classify:screener-sender:<address>` reads like the
-   direct fix and undoes the paragraph above: the cron and the button would hold claims on two
-   different strings, so a press racing this pass over one sender would charge twice and call the
-   model twice for one visible answer. One source, one claim, and the entitlement asked as a
-   query — see `screener-suggestion.ts` for the privacy half of the same ruling.
 
    ── THE STANDALONE DOOR RUNS THIS SAME FUNCTION, AND "CONTINUOUSLY" MEANS SOMETHING ELSE THERE ─
 
@@ -327,37 +276,8 @@ export async function screenerAutoSuggestPass(
     // account spend" in the codebase, and the day somebody wired it to the hosted side by mistake
     // nothing would refuse. `charged` stays 0 there, which is the truth — a standalone install
     // moves no credits because it has none.
-    const source = screenerLedgerSource(c.messageId);
-    /**
-     * THE ATTEMPT THIS CANDIDATE CHARGED, when it charged one — what the reversal below must name.
-     *
-     * `undefined` covers both "nothing was charged" cases and they are different: an unmetered host
-     * (no gate at all) and a `duplicate` whose earlier attempt is still open. Neither may be
-     * refunded — the first has no ledger and the second's money bought a verdict this pass is about
-     * to serve for free.
-     */
-    let chargedAttempt: string | undefined;
     if (gate) {
-      const outcome = await gate.spend(source, { messageId: c.messageId });
-      // ── SOMEBODY IS ALREADY BUYING THIS ONE: SKIP THE CANDIDATE, NOT THE PASS ─────────────
-      //
-      // `continue`, where every other refusal below `break`s, and the difference is the whole
-      // reason this branch is separate. The other three are properties of the ACCOUNT — an empty
-      // balance, a subscription that may not spend, an unwell ledger — so every remaining
-      // candidate would be refused for the same reason and continuing is N useless round trips.
-      // This one is a property of ONE MESSAGE: the user is pressing Suggest for that sender in
-      // their browser right now, which is precisely the collision SEC3-MONEY-1 named and which
-      // needs no unusual behaviour from anybody, since this pass and that surface select the same
-      // representative held message by construction. The other candidates are unaffected.
-      //
-      // Nothing is lost by skipping: the request path is buying the verdict and storing it, and
-      // `selectCandidates` filters out messages that have one — so the next cycle simply does not
-      // see this candidate again. And it is NOT counted in `stopped`, because the pass was not
-      // stopped and reporting it as such would make a healthy cycle read as a refusal.
-      if (!outcome.permitted && outcome.refusal === "inflight") {
-        log.info("screener_auto_suggest_inflight", { accountId, messageId: c.messageId });
-        continue;
-      }
+      const outcome = await gate.spend(screenerLedgerSource(c.messageId), { messageId: c.messageId });
       if (!outcome.permitted) {
         // FIRST REFUSAL STOPS THE ACCOUNT'S PASS FOR THIS CYCLE. Every remaining candidate would be
         // refused for the same reason — the balance, the subscription state, or the ledger — so
@@ -370,47 +290,11 @@ export async function screenerAutoSuggestPass(
             : "spend_unavailable";
         break;
       }
-      // Recorded, not yet counted: `result.charged` is added to below, once this candidate is past
-      // the entitlement re-check, because a charge that is handed straight back moved nothing.
-      if (outcome.charged) chargedAttempt = outcome.attempt;
+      // `+= AI_ACTION_COST` and not `++`: the field is credits, and `spend()` moves that many per
+      // call. A `charged: false` is a free retry of an attempt already on record — reporting it as
+      // spend would say the account paid twice for one message.
+      if (outcome.charged) result.charged += AI_ACTION_COST;
     }
-
-    // ── THE ENTITLEMENT, RE-ASKED INSIDE THE EXCLUSIVE REGION (SEC3-MONEY-1, SEC3-MONEY-3) ────
-    //
-    // `selectCandidates` ran once at the top of this pass, so every answer it gave is as old as
-    // the query. A caller that advised this SENDER after that — the user's press, the client's
-    // on-open batch, another host's pass — leaves this loop holding a candidate list that predates
-    // the answer, and the claim cannot help: it has been released, correctly, because the work is
-    // over. So the question is asked again here, where it sees everything any earlier holder
-    // committed.
-    //
-    // **BY SENDER, AND UNCONDITIONALLY — both halves are corrections.** It used to ask about the
-    // MESSAGE and only when the gate answered `duplicate`, on the reasoning that a `charged: true`
-    // is a fresh attempt and therefore a purchase of a NEW verdict. That reasoning is right for the
-    // pressed path (a person asking again about mail the model has not read) and wrong here, where
-    // nobody asked: two hosts whose candidate queries picked DIFFERENT representatives for one
-    // sender hold two different ledger sources, so neither is a duplicate of the other and both
-    // would charge. Asking per sender closes it; asking on every outcome is what makes the answer
-    // reachable when this caller is the one that charged.
-    //
-    // THE CHARGE COMES BACK. `refundAttempt` and not `refund`: the marker `refund` consults is
-    // cleared by any non-charging decision, and what is held here is the attempt id this pass was
-    // told it charged, which is the stronger claim. Exactly-once is the ledger's — `UNIQUE
-    // (account_id, refund:<attempt>)` plus the refund-origin trigger — so a retry of this line
-    // cannot pay twice.
-    if (await hasScreenerSuggestionForSender(db, accountId, c.fromAddress)) {
-      if (chargedAttempt !== undefined) {
-        log.info("screener_auto_suggest_sender_already_advised",
-          { accountId, messageId: c.messageId, refunded: chargedAttempt });
-        await gate?.refundAttempt(chargedAttempt, { messageId: c.messageId, reason: "sender_already_advised" });
-      }
-      await gate?.release?.(source);
-      continue;
-    }
-    // `+= AI_ACTION_COST` and not `++`: the field is credits, and `spend()` moves that many per
-    // call. A `charged: false` is a free retry of an attempt already on record — reporting it as
-    // spend would say the account paid twice for one message.
-    if (chargedAttempt !== undefined) result.charged += AI_ACTION_COST;
 
     let verdict;
     try {
@@ -424,27 +308,14 @@ export async function screenerAutoSuggestPass(
       // STOP, where the user-pressed path CONTINUES — and the difference is that nobody is
       // waiting here. There, a person has paid for a set and the remaining senders may still
       // succeed; here a model fault is almost always the whole endpoint, and pressing on would
-      // charge the rest of the batch against an outage every cycle.
-      //
-      // **THE CHARGE IS NOT REFUNDED, AND THE REASON GIVEN HERE USED TO BE FALSE FOR THIS PASS.**
-      // It read: "the ledger source is the message, so the next cycle's attempt over it answers
-      // `duplicate` and the retry is free". True only while the representative does not move — and
-      // a sender who sends again during an outage moves it, so the "free retry" was a fresh source
-      // and a second charge, once per cycle for as long as the model was down. What makes the
-      // retry free now is the candidate query: the sender is unadvised, so the next cycle asks
-      // about their CURRENT representative, and the fault charge that bought nothing is bounded
-      // to one per cycle by the stop below and to a handful in total by the classifier's own fault
-      // gate (`classifierForCycle` withholds the port after repeated faults, and an absent port
-      // means this pass does not run).
+      // charge the rest of the batch against an outage every cycle. The charge is not refunded,
+      // for the reason the pressed path gives: the ledger source is the message, so the next
+      // cycle's attempt over it answers `duplicate` and the retry is free.
       //
       // It is the ONLY stop an unmetered host has, and it carries the same bound there: the local
       // engine hands in a classifier that is itself withheld after repeated faults, so a model
       // server somebody quit costs one call on the first drain and none on the drains after it.
       log.warn("screener_auto_suggest_model_failed", { accountId, messageId: c.messageId, err });
-      // The claim goes back before the pass stops, for the reason the request path gives: the
-      // charge stands and buys a free retry next cycle, and a claim left behind would make that
-      // retry wait out the TTL first.
-      await gate?.release?.(source);
       result.stopped = "model_unavailable";
       break;
     }
@@ -457,11 +328,6 @@ export async function screenerAutoSuggestPass(
       rationale: verdict.rationale,
       spam: verdict.spam,
     });
-    // RELEASED AFTER THE STORE AND NEVER BEFORE IT. Between a release and the insert there is a
-    // window with no suggestion on record and nothing holding the source, and a request landing
-    // in it would be told `duplicate` — already paid for, proceed — and call the model a second
-    // time. That is the defect this claim exists to stop, narrower and harder to see.
-    await gate?.release?.(source);
     result.bought++;
   }
 
@@ -476,7 +342,7 @@ export async function screenerAutoSuggestPass(
 }
 
 /**
- * THE ELIGIBLE SENDERS — one representative per held sender, watermarked, unadvised, oldest first.
+ * THE ELIGIBLE SENDERS — one representative per held sender, watermarked, unbought, oldest first.
  *
  * ## The representative is chosen by the SAME rule the Screener page and the purchase use
  *
@@ -487,39 +353,13 @@ export async function screenerAutoSuggestPass(
  * keyed by MESSAGE, so if this pass bought against a different representative than the surface
  * shows, the account would be charged twice for one sender and see the answer once.
  *
- * **THE REPRESENTATIVE IS STILL THE UNIT OF WORK; IT IS NO LONGER THE UNIT OF ENTITLEMENT.** Those
- * were one thing until SEC3-MONEY-3 and the conflation is what a sender could spend an allowance
- * through. The message decides WHICH mail the model reads and which ledger source pays for it; the
- * SENDER decides WHETHER this pass may buy at all (predicate 2). Keeping the first per message is
- * what the paragraph above requires; making the second per sender is what bounds the spend.
+ * ## The two outer predicates sit OUTSIDE the `DISTINCT ON`, and that is not cosmetic
  *
- * ## The three outer predicates sit OUTSIDE the `DISTINCT ON`, and that is not cosmetic
- *
- * Pushing any of them into the inner query would filter rows BEFORE the representative is
- * chosen, so a sender whose true representative is (say) flagged would have an OLDER held message
- * promoted to representative and be bought for, on different mail than the row on screen. The
+ * Pushing either of them into the inner query would filter rows BEFORE the representative is
+ * chosen, so a sender whose true representative is (say) already bought would have an OLDER held
+ * message promoted to representative and be bought a SECOND time, on different mail. The
  * predicate therefore applies to a set that is already one row per sender. This is the same
  * composition, for the same reason, that `heldSenderPage` documents for its keyset.
- *
- * Predicate 2 is now indifferent to the placement — it names the SENDER, and every row inside the
- * `DISTINCT ON` group shares one — which is a reason to leave it outside rather than to move it:
- * the three read as one statement about a set of representatives, and a reader checking the
- * composition should not have to establish which of them is exempt.
- *
- * **THE SENSITIVITY EXCLUSION IS THE SHARPEST CASE OF THAT RULE, and it is worth spelling out
- * because the obvious placement is the wrong one.** "Never let a flagged message become the
- * representative" sounds like an inner-query predicate, and written there it would do something
- * nobody wants: a sender whose newest held mail is a passcode would have their PREVIOUS message
- * promoted and bought for — so the row the Screener shows (the newest) and the message the
- * suggestion is stored against (an older one) would be different mail, which is the double-charge
- * this whole composition exists to prevent, arrived at by way of a privacy fix. Outside, the
- * meaning is the one the invariant actually wants: the representative is chosen by the same rule
- * the surface uses, and if THAT message is flagged the sender is not a candidate at all.
- *
- * The consequence is deliberate and is the stricter direction: a sender with older unflagged held
- * mail is still excluded while their newest is flagged, and a sender whose only held mail is
- * flagged is excluded permanently. Neither is a sender who gets a WORSE answer — they get no
- * automatic answer, and the manual control still works for them.
  *
  * ## THE WATERMARK CLOCK IS OURS. `messages.date` IS THE SENDER'S AND IS NOT USED
  *
@@ -556,10 +396,6 @@ async function selectCandidates(
     subject: messages.subject,
     snippet: messages.snippet,
     createdAt: messages.createdAt,
-    // CARRIED SO THE OUTER PREDICATE CAN READ THEM, and read there rather than here — see the
-    // sensitivity paragraph below for why filtering inside this `DISTINCT ON` would be a defect.
-    noAi: messages.noAi,
-    sensitivityCategory: messages.sensitivityCategory,
     sortKey: sortKey.as("sort_key"),
   }).from(messages)
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
@@ -579,29 +415,15 @@ async function selectCandidates(
     .where(and(
       // (1) THE WATERMARK — consent began before this message did.
       sql`${reps.createdAt} > ${opts.watermark.toISOString()}::timestamptz`,
-      // (2) THE PROGRESS MARKER AND THE PER-SENDER ENTITLEMENT, IN ONE PREDICATE: a SENDER this
-      // account already holds advice about — bought by this pass on an earlier cycle, by the
-      // client's on-open batch, or by the manual ladder — is not re-bought and not re-asked.
-      //
-      // **THIS ARM READ `rd.message_id = reps.messageId` AND THAT WAS THE DRAIN (SEC3-MONEY-3).**
-      // Worth writing out, because the defect was invisible in the line and lived in the
-      // COMPOSITION: the representative is the sender's NEWEST held message, so a sender sending
-      // again promoted a message that carried no suggestion row, satisfied this predicate,
-      // satisfied the watermark (our ingest stamp is later than the opt-in for every new arrival),
-      // and was charged under a brand-new ledger source. No aliases, no rotation, no user action
-      // after the opt-in — the guard's own comment claimed "a sender … is not re-bought and not
-      // re-asked", which was true until that sender sent one more message. Ten senders a cycle,
-      // until the balance was gone, at the choosing of anyone who can email the account.
-      sql`not ${screenerSuggestedSenderExists(opts.accountId, sql`lower(${reps.fromAddress})`)}`,
-      // (3) THE SENSITIVITY EXCLUSION — a flagged representative is not a candidate.
-      //
-      // Both halves, because they are two different answers and only one of them is "we saw an
-      // OTP": `sensitivity_category` is the detector's positive class, and `no_ai` additionally
-      // carries its INDETERMINATE outcome — `no_ai` true with a NULL category is "we could not
-      // read this confidently", which `sensitive.ts` routes here on purpose. An automatic pass
-      // must take the stricter reading of both.
-      eq(reps.noAi, false),
-      isNull(reps.sensitivityCategory),
+      // The progress marker AND the double-buy guard, in one predicate: a sender whose
+      // representative already carries a suggestion — bought by this pass on an earlier cycle, by
+      // the client's on-open batch, or by the manual ladder — is not re-bought and not re-asked.
+      sql`not exists (
+        select 1 from ${routingDecisions} rd
+         where rd.account_id = ${opts.accountId}::uuid
+           and rd.message_id = ${reps.messageId}
+           and rd.input_provenance = ${SCREENER_SUGGESTION_PROVENANCE}
+      )`,
     ))
     .orderBy(asc(reps.createdAt), asc(reps.messageId))
     .limit(opts.limit);
