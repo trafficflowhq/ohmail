@@ -356,20 +356,34 @@ function consentState() {
   };
 }
 
-function installShellStub(window) {
-  /* Four platform globals a webview has and jsdom does not, borrowed from this
-     Node process. The bridge builds a `Response` out of the frame it was handed
-     and decodes the metadata with a `TextDecoder`; without them the bundle would
-     die on a ReferenceError that says nothing about the product. jsdom's own
-     `Headers` is left alone — the bridge's `toHeaders` builds one and hands it to
-     the borrowed `Response`, which reads it as an iterable, and that pairing is
-     exercised on every request this stub answers. */
+/**
+ * Four platform globals a webview has and jsdom does not, borrowed from this Node process.
+ *
+ * THIS IS NOT PER-ARTIFACT, and it used to live inside `installShellStub` where it was. The
+ * bridge is the reason the list was written — it builds a `Response` out of the frame it was
+ * handed and decodes the metadata with a `TextDecoder` — but "which of these a bundle happens to
+ * touch" is not a fact the harness gets to assume. It was wrong the first time something else
+ * touched one: the fixtures adapter sizes a servable attachment with
+ * `new TextEncoder().encode(...)` while it builds the demo world, which runs in the PREVIEW,
+ * where the stub is deliberately absent — so the preview died at first render with
+ * `ReferenceError: TextEncoder is not defined` and reported twenty failed checks that all said
+ * "nothing drew". A real webview has all four in both artifacts; jsdom has none of them; so both
+ * artifacts get them, and only `__TAURI_INTERNALS__` stays behind the `ENGINE` branch, because a
+ * shell is the one thing the preview genuinely must not find.
+ *
+ * jsdom's own `Headers` is left alone — the bridge's `toHeaders` builds one and hands it to the
+ * borrowed `Response`, which reads it as an iterable, and that pairing is exercised on every
+ * request the shell stub answers.
+ */
+function installPlatformGlobals(window) {
   for (const name of ["Response", "Request", "TextEncoder", "TextDecoder"]) {
     if (typeof window[name] === "undefined" && typeof globalThis[name] !== "undefined") {
       window[name] = globalThis[name];
     }
   }
+}
 
+function installShellStub(window) {
   window.__TAURI_INTERNALS__ = {
     /* The runtime hands back a numeric callback id; `native.ts` only passes it
        on to `plugin:event|listen`, which this stub answers with null. */
@@ -504,6 +518,11 @@ const dom = new JSDOM(classic, {
         return new real(...a);
       };
     }
+
+    /* Both artifacts run in a webview, so both get the webview's platform globals. See the
+       docblock: putting these behind the branch below made a jsdom gap look like a product that
+       could not draw. */
+    installPlatformGlobals(window);
 
     /* THE ONE PIECE OF ENVIRONMENT THAT IS PER-ARTIFACT. The preview must find no
        shell — that is the "loaded outside the app" case `doors.ts` routes to the
