@@ -200,6 +200,19 @@ export function interceptLinkClicks(doc: Document, opts: InterceptOptions): () =
     if (href.startsWith("#")) return;
 
     const base = doc.baseURI;
+
+    // THE APP'S OWN NAVIGATION IS DECIDED FIRST, AND THE ORDER IS THE WHOLE OF IT.
+    //
+    // This test used to sit BELOW the one after it, which made it dead code for exactly the
+    // scheme it exists to judge: `/mailbox#/settings` resolves to an `http:` URL, so the
+    // classifier claimed it and the client's own route was posted to the platform's browser
+    // before the same-origin question was ever asked. On macOS that never showed — the window is
+    // served from `tauri://localhost`, so an in-app link is not http at all and fell through to
+    // the check below. On Windows and Linux the window is served from `http://tauri.localhost`,
+    // where every internal link in the app is same-origin http and would have left for the
+    // browser. One ordering, two platforms, and only one of them could see it.
+    if (opts.trustSameOrigin && sameOrigin(href, base)) return;
+
     const target = externalTargetOf(href, base);
     if (target !== null) {
       ev.preventDefault();
@@ -207,11 +220,10 @@ export function interceptLinkClicks(doc: Document, opts: InterceptOptions): () =
       return;
     }
 
-    // Not an address to open. In the app's document a same-origin link is the client's own
-    // navigation and is left alone; everything else — and everything in a message frame — is
-    // stopped here, because the one outcome that must never happen is the webview leaving the
-    // app for a place a message chose.
-    if (opts.trustSameOrigin && sameOrigin(href, base)) return;
+    // Not an address to open, and not this app's own. In a message frame that is every link the
+    // line above did not claim — `trustSameOrigin` is false there, so a sender cannot reach this
+    // point with a link to the app's origin either. Stopped, because the one outcome that must
+    // never happen is the webview leaving the app for a place a message chose.
     ev.preventDefault();
   };
 

@@ -188,6 +188,31 @@ describe("the desktop window, armed", () => {
     expect(invoked).toEqual([]);
   });
 
+  /**
+   * THE ORDERING CASE, and the one this file could not see until the handler was run in a real
+   * browser against a real origin.
+   *
+   * The same-origin test used to sit AFTER the http/https classifier, which made it dead code
+   * for the only scheme it judges: `/mailbox` resolves to an `http:` URL, the classifier claimed
+   * it, and the client's own route was posted to the platform's browser. macOS hid it — that
+   * window is served from `tauri://localhost`, so an in-app link is not http and reached the
+   * same-origin arm anyway — while on Windows and Linux, served from `http://tauri.localhost`,
+   * every internal link in the app would have left for the browser.
+   *
+   * jsdom's document has a real http origin, so the case belongs here and not only in a browser.
+   * Move the same-origin test back below the classifier and this goes red.
+   */
+  it("a same-origin PATH is the client's own route, not an address to open", async () => {
+    const mod = await freshModule();
+    mod.enableExternalLinks();
+    install(mod, document, true);
+
+    for (const own of ["/mailbox#/settings", "/login", "./drafts", location.origin + "/mailbox"]) {
+      expect(clickAnchor(document, own), `${own} was cancelled`).toBe(true);
+    }
+    expect(invoked, "the app's own routes were posted to the platform's browser").toEqual([]);
+  });
+
   it("installing twice does not answer one click twice", async () => {
     const mod = await freshModule();
     mod.enableExternalLinks();
