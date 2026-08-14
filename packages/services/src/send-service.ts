@@ -162,15 +162,24 @@ export type SendAttachment = NonNullable<OutboundMessage["attachments"]>[number]
  * `OutboundMessage`, and no row.
  */
 export interface SendInput {
-  /** Uploaded files — decoded bytes. Never written to any table; see {@link OutboundMessage}. */
+  /**
+   * UPLOADED FILES — decoded bytes, on the request itself. Never written to any table; see
+   * {@link OutboundMessage}.
+   *
+   * THE PRIMARY TRANSPORT, not a legacy one, and this is the field a future "can we drop it yet"
+   * lands on. Every shipping client still emits it: the browser app stages only ABOVE the inline
+   * ceiling, so every send at or under 3 MB arrives here, and the desktop app never stages on
+   * either of its doors. Update uptake does not bear on that and could not be measured anyway —
+   * no client-version signal reaches the hosted service. The inline form can only be reconsidered
+   * once the desktop's Cloud door stages and the browser client stages unconditionally.
+   */
   attachments?: SendAttachment[];
   /**
    * STAGED FILES — upload-ticket ids whose bytes are in object storage, not in this request.
    *
-   * The second accepted shape of one thing, and both are live deliberately: a desktop build whose
-   * Cloud door forwards this request verbatim knows only {@link SendInput.attachments}, so removing
-   * the inline form would break every installed copy of it. A send may carry either, or both — the
-   * two lists are concatenated, inline first, and the cap is applied to the total.
+   * The second accepted shape of one thing, and the narrower of the two: it exists for the sends
+   * the request body cannot carry at all. A send may carry either, or both — the two lists are
+   * concatenated, inline first, and the cap is applied to the total.
    *
    * The bytes reach exactly the same place an inline attachment's do: the one `OutboundMessage`,
    * and no table. What is different is that they existed in a bucket for a bounded window on the

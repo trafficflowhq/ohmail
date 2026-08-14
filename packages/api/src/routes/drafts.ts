@@ -13,10 +13,24 @@ import { drafts, sends, readBody } from "./shared.js";
  * ── TWO ACCEPTED SHAPES FOR ATTACHMENTS, AND BOTH ARE LIVE ────────────────────────────────
  *
  * `attachments` carries file bytes as base64 on this request. It is the original transport and it
- * is KEPT, because a desktop build's Cloud door forwards this exact request verbatim to this API
- * (`apps/desktop/src/DesktopGate.tsx` → `cloud-proxy.ts`): a shipped copy of the app knows only
- * this shape, so removing it would break every installed one. A request in this shape produces
- * byte-identical behaviour to the day it was the only shape.
+ * is the LIVE one — not a compatibility shim awaiting a sunset, and the difference is worth
+ * stating because the compatibility reading is the easy one to reach and it is wrong.
+ *
+ * EVERY CLIENT THAT SHIPS TODAY EMITS THIS SHAPE:
+ *  · the browser app stages only ABOVE the inline ceiling (`SEND_INLINE_MAX_TOTAL_BYTES`, the same
+ *    3 MB this handler caps at), so every send at or under it — which is nearly all of them — is
+ *    exactly this request;
+ *  · the desktop app never stages on EITHER door. The wire client's staging option defaults off
+ *    and that app's source does not contain its name, so its Cloud door forwards this shape at any
+ *    size, and its standalone door has no hosted storage behind it to stage into.
+ *
+ * So the reason to keep accepting it is NOT "installed copies have not updated yet". Update uptake
+ * is not the question and cannot settle it: the current release emits this shape too, and no
+ * client-version signal reaches this API in any case. Removing the inline form would first require
+ * the desktop's Cloud door to stage and the browser client to stage unconditionally, and until
+ * both of those are true this paragraph is the answer to "can we drop it yet".
+ *
+ * A request in this shape produces byte-identical behaviour to the day it was the only shape.
  *
  * `stagedAttachmentIds` names upload tickets whose bytes are already in object storage, put
  * there by the browser on a signed URL from `POST /attachments/staging`. This is the
