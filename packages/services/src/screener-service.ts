@@ -11,6 +11,7 @@ import {
   recordChange,
   screenerLedgerSource,
   storeScreenerSuggestion,
+  screenerSuggestionsBySender,
   SCREENER_SUGGESTION_PROVENANCE,
   AI_ACTION_COST,
   type Tx,
@@ -623,9 +624,26 @@ export class ScreenerReadService {
     const posture = resolveOhboxPolicy(ohboxPolicy);
 
     // ONE extra query for the whole page, not one per row, and none at all for an empty page.
-    const stored = await this.storedSuggestions(ctx, pageRows.map((r) => r.messageId), posture);
+    //
+    // ── BY SENDER, NOT BY REPRESENTATIVE (SEC3-MONEY-3) ────────────────────────────────────
+    //
+    // The row on screen is a SENDER and the advice bought is about that sender, so what this page
+    // answers is "does this account hold advice about them" — whichever of their messages the
+    // verdict was generated from. It used to ask about the representative alone, and because the
+    // representative is the sender's NEWEST held message, one more message from them made the
+    // advice the account had already paid for invisible: no chip, no "Apply all", and the client's
+    // automatic on-open batch — whose entire buy list is "senders with no answer" — put them
+    // straight back in the next purchase. One sender, re-sending, priced once per Screener open.
+    //
+    // The verdict may therefore have been generated from mail older than the row on screen. That
+    // is the honest reading of what was bought (the question is about the sender, not the subject),
+    // and a person who wants the model to read the newer mail has the re-ask ladder, which prices
+    // and charges it per message like any other purchase.
+    const stored = await this.senderSuggestions(
+      ctx, pageRows.map((r) => r.fromAddress.toLowerCase()), posture,
+    );
 
-    const items = pageRows.map((r) => toItem(r, stored.get(r.messageId) ?? null));
+    const items = pageRows.map((r) => toItem(r, stored.get(r.fromAddress.toLowerCase()) ?? null));
 
     // The quote. A sender is priced when they have not already been paid for (`!stored`) — and
     // that is now the WHOLE rule. The fact is in hand, so this costs no query.
@@ -636,11 +654,15 @@ export class ScreenerReadService {
     // is suggestable, so a quote that subtracted the credential-bearing ones would under-price a
     // purchase that then charged for them.
     //
-    // A sender whose stored suggestion belongs to an OLDER representative is priced again, and
-    // that is right: the rep rotates when they send again, so the suggestion on offer is about
-    // mail the model has not read. It is also charged again, under that message's own source.
+    // **A SENDER WHOSE STORED VERDICT BELONGS TO AN OLDER REPRESENTATIVE IS NO LONGER PRICED HERE,
+    // AND THIS COMMENT SAID THE OPPOSITE.** It read: "priced again, and that is right … also
+    // charged again, under that message's own source". Charged again is still true of the PRESSED
+    // path — `suggest` keeps its per-message identity, and a re-ask is a purchase — but this field
+    // is what an UNPRESSED batch reads as its buy list, so pricing them here is what made a
+    // re-sending stranger a recurring charge. They appear in the re-ask ladder instead, where a
+    // person sees the price before it is spent.
     const suggestable = pageRows
-      .filter((r) => !stored.has(r.messageId))
+      .filter((r) => !stored.has(r.fromAddress.toLowerCase()))
       .map((r) => r.fromAddress.toLowerCase());
 
     const last = pageRows[pageRows.length - 1];
@@ -1214,12 +1236,55 @@ export class ScreenerReadService {
   }
 
   /**
-   * The STORED suggestions for a page of representative messages — the whole read path.
+   * THE STORED SUGGESTIONS FOR A SET OF SENDERS — what {@link ScreenerReadService.list} draws.
    *
-   * One query for the page, none for an empty one, and the newest row wins per message (see
+   * ## Two reads, two different questions, and the difference is the money
+   *
+   * This one asks *"does this account hold advice ABOUT THIS SENDER"* and
+   * {@link storedSuggestions} asks *"has THIS MESSAGE been advised on"*. They used to be one read
+   * doing both jobs, and the per-message answer was wrong for the display: a sender's newest held
+   * message is their representative, so one more message from them hid advice the account had
+   * already bought, and every unpressed buyer that reads "senders with no answer" bought it again
+   * (SEC3-MONEY-3).
+   *
+   * The per-message read is still exactly right where it is used — {@link ScreenerService.suggest}'s
+   * layers, where a person pressing "Suggest again" is asking about mail the model has not read and
+   * must be charged for it. Neither read may be substituted for the other; the two docblocks are
+   * the whole of the distinction.
+   *
+   * The query, the `DISTINCT ON` that makes "newest wins" the database's job and the
+   * `lower(from_address)` normalisation all live in `@trafficflow/db`
+   * ({@link screenerSuggestionsBySender}), because the worker's always-on pass needs the same
+   * identity for its entitlement and cannot import this package. `senders` must already be
+   * lower-cased — this method does not fold, so a caller passing raw addresses gets misses rather
+   * than a silent mismatch.
+   */
+  protected async senderSuggestions(
+    ctx: ServiceContext, senders: string[], ohboxPolicy: OhboxPolicy,
+  ): Promise<Map<string, ScreenerItem["aiSuggestion"]>> {
+    const out = new Map<string, ScreenerItem["aiSuggestion"]>();
+    const rows = await screenerSuggestionsBySender(asTx(ctx), ctx.accountId, senders);
+    for (const [sender, r] of rows) {
+      out.set(sender, {
+        ...suggestionAdvice(r.destination, r.spam, r.rationale ?? "", ohboxPolicy),
+        confidence: r.confidence ?? 0,
+        rationale: r.rationale ?? "",
+      });
+    }
+    return out;
+  }
+
+  /**
+   * The STORED suggestions for a set of MESSAGES — the purchase path's "already bought" read.
+   *
+   * One query for the set, none for an empty one, and the newest row wins per message (see
    * {@link SUGGESTION_PROVENANCE} for why there can be more than one). `account_id` is in the
    * WHERE even though the ids are already this account's: the no-cross-account-disclosure rule
    * says the account leads every key, never a filter applied to a cross-account result.
+   *
+   * PER MESSAGE ON PURPOSE, and {@link senderSuggestions} is the other question — see there. Every
+   * caller of this one is inside a purchase a person pressed for, where the unit of "already
+   * bought" has to be the mail the model would read.
    */
   protected async storedSuggestions(
     ctx: ServiceContext, messageIds: string[], ohboxPolicy: OhboxPolicy,

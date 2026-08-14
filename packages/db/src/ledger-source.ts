@@ -219,6 +219,33 @@ export function classifyLedgerSource(mailboxId: string, dedupKey: string): strin
  * ask answers `duplicate` and costs nothing, so the suggestion is bought once per message and
  * then re-read for free — while a per-request identity would have charged an account with 20
  * held senders 20 credits per page view.
+ *
+ * ── IT STAYS THE MESSAGE, AND SEC3-MONEY-3 IS WHY THAT NEEDED DECIDING ──────────────────────
+ *
+ * That finding is exactly about this identity being too fine: the automatic pass bought one
+ * suggestion per SENDER while charging per MESSAGE, so a sender re-sending promoted a new
+ * representative and was bought again, ten a cycle, until the balance was gone. The obvious fix is
+ * to re-key this function on the normalised address. It was not taken, for two reasons that only
+ * appear once it is written out — and the entitlement moved instead, to a QUERY over the stored
+ * advice (`screener-suggestion.ts`, `screenerSuggestedSenderExists`):
+ *
+ *  · **THE LEDGER IS APPEND-ONLY AND AN ADDRESS IS REMOTE-CONTROLLED AND GUESSABLE.** This
+ *    source is built from a uuid WE minted, so it discloses nothing; a sender-keyed one would put
+ *    a normalised address into a record that cannot be un-written — raw, or hashed, which is the
+ *    same thing here for the reason {@link classifyLedgerSource} spells out at length ("the hash
+ *    is not a redaction … the input is guessable, so anyone who can read `source` can confirm
+ *    'this account received this exact message' from a candidate list"). That comment records the
+ *    plaintexts being DESTROYED to close that oracle. Re-opening it for a spend bound would trade
+ *    a money defect for a privacy one, in the one place with no way back.
+ *  · **ONE SOURCE IS WHAT MAKES SEC3-MONEY-1'S CLAIM SERIALISE THE TWO BUYERS.** The cron and the
+ *    button select the same representative by construction and therefore claim the same string, so
+ *    one of them waits and only one pays. Give the automatic path its own namespace and that
+ *    property is gone: a press racing the pass over one sender charges twice and calls the model
+ *    twice, for one visible answer.
+ *
+ * So the rule is: the MESSAGE is the unit of paid work (what the model read, and what a retry is a
+ * retry of), and the SENDER is the unit of automatic entitlement (whether an unpressed caller may
+ * buy at all). The second is not a ledger concept and does not belong in this vocabulary.
  */
 export function screenerLedgerSource(messageId: string): string {
   return ledgerSources.classify(`screener:${messageId}`);

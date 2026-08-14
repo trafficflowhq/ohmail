@@ -125,6 +125,10 @@ export {
  */
 export {
   storeScreenerSuggestion,
+  // The SENDER identity of a suggestion — the automatic path's entitlement, and the read that
+  // shows a sender's advice whichever of their messages it was bought about. Same barrel and the
+  // same closure rule: these name `messages` and `routing_decisions` and nothing else.
+  screenerSuggestedSenderExists, screenerSuggestionsBySender, hasScreenerSuggestionForSender,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
-  type ScreenerSuggestionRow,
+  type ScreenerSuggestionRow, type StoredSenderSuggestion,
 } from "./screener-suggestion.js";
