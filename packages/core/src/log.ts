@@ -326,6 +326,19 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // already gone wrong, so a census drop would leave `droppedFields=["survived"]` exactly where an
   // operator is trying to size a suppression — the same failure the `rescued` note above records.
   "survived",
+  // ── the auto-suggest pass's own count, added WITH its call site ──
+  //
+  // `bought` is the number of held senders a pass stored an advisory suggestion for — a `++`
+  // counter on a loop with a fixed page above it, so structurally an integer naming no sender, no
+  // subject and no verdict. It rides beside `examined` and `capped`, which are already here.
+  //
+  // NAMED rather than folded into `count`, on this file's own rule: "how many were eligible" and
+  // "how many were answered for" are different quantities and the gap between them IS the reading
+  // — a pass that examined ten and bought three stopped early, which is the one thing this line
+  // exists to make visible. It matters most on the desktop, where the pass runs against a model
+  // the person in front of it is paying for directly and a line saying `droppedFields=["bought"]`
+  // would leave them with no record of what was done on their key.
+  "bought",
   // ── alerting (the worker's alert loop and the API's internal alert route) ──
   "alertKey", "alertKeys", "alertSinks", "alertIntervalMs", "rosterIntervalMs",
   "pollIntervalMs", "firing", "delivered", "failedSinks", "oldestSeconds",

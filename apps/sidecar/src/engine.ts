@@ -49,8 +49,15 @@ import { readMailboxLease, LeaseUnavailableError } from "@trafficflow/worker/lea
 // SAME function against the store that is authoritative here. A local reimplementation would be a
 // second answer to "when is a resurface due", which is the one thing that must not differ.
 import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
+import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
+// The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
+// argument. The values it writes have to be the ones ingest would have written from the same
+// headers; a second parse here would leave two populations of rows decided by different rules, and
+// the disagreement would be invisible one row at a time.
+import { runSenderNameBackfill } from "@trafficflow/worker/sender-name-backfill";
 import { createLocalAi, type LocalAi } from "./ai-provider.js";
 import { localAiRoutes } from "./ai-routes.js";
+import { localAutoSuggestRoutes } from "./auto-suggest-routes.js";
 import { openLocalDb, type LocalDb, type LocalDbOpenPhase, type OpenLocalDb } from "./db.js";
 import { ensureLocalWorld, mintLaunchSession, type LocalWorld } from "./identity.js";
 import { stampSynced } from "./sync-stamp.js";
@@ -495,6 +502,32 @@ function localServices(
 export const DEFAULT_POLL_INTERVAL_MS = 15_000;
 
 /**
+ * THE BUDGET FOR THE HISTORICAL-NAME REPAIR, per drain. See `backfillStoredNames` below.
+ *
+ * Two numbers rather than one, because they bound different things. The BATCH is how many rows one
+ * transaction writes and one header-parse burst covers; the PAGES are how many of those a single
+ * drain is allowed before it yields the engine back. Their product — 200 rows — is the whole of what
+ * one visit does, and it is a deliberately small fraction of a store that may hold tens of
+ * thousands: the repair is cosmetic and the sync it rides on is not, so a visit that finished the
+ * job in one go would be trading mail for display names.
+ *
+ * The batch is HALF the shared default. That default is sized for a server draining a table it has
+ * to itself over a network; here the parse, the write and the request handler are one process on one
+ * machine, and the cost that matters is the longest single stretch in which the window gets no
+ * answer — which is a page, not a run. The parse itself is cheap enough that it is not the reason
+ * for either number: a header bag with an encoded word, a quoted name and two recipients takes
+ * about a sixth of a millisecond, so a whole visit's worth of them is tens of milliseconds. The
+ * write transaction behind it is what a page bounds.
+ *
+ * At this size a store of fifty thousand historical messages takes a few hundred drains. That is
+ * hours of the app being open, spread over as many sessions as it takes, and it is the intended
+ * shape rather than a limitation to be tuned away: nothing is broken while it is in progress, the
+ * rows simply read as they always have until their turn comes.
+ */
+export const LOCAL_NAME_BACKFILL_BATCH = 100;
+export const LOCAL_NAME_BACKFILL_PAGES = 2;
+
+/**
  * A DRAIN'S WALL-CLOCK SHAPE, from the per-cycle durations it measured.
  *
  * This is the number that attributes desktop CPU and quit lag. A drain runs its inner cycles
@@ -616,7 +649,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       now,
       ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
     });
-    const app = createApp([...localRoutes, ...localAiRoutes(ai)]);
+    /* `localAutoSuggestRoutes` is mounted HERE and nowhere else, which is what makes "this door
+       only" structural rather than a condition in a render. `cloud-engine.ts` composes its own
+       table (the read mirror plus a write-through proxy) and never this array, so a mirrored hosted
+       account still arms its opt-in on the account — where the ledger and the worker that spends
+       against it actually are. See `auto-suggest-routes.ts`. */
+    const app = createApp([
+      ...localRoutes,
+      ...localAiRoutes(ai),
+      ...localAutoSuggestRoutes({ db, accountId: world.accountId, ai, now }),
+    ]);
 
     /**
      * A FRESH `ApiDeps` PER REQUEST. `ApiDeps` is mutable by design — `withRequestId` writes
@@ -1195,6 +1237,204 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       }
     };
 
+    /**
+     * SUGGEST FOR THE SENDERS THAT JUST ARRIVED — "continuously", on a door that only runs while
+     * its window is open.
+     *
+     * The hosted service does this from an always-on worker cycle. A standalone install has no
+     * such process, by design and not by omission — this engine runs while the app is open and
+     * stops when it quits — so the honest reading of "continuously" here is **at the tail of a
+     * drain**: the moment mail has just been brought in is the only moment this install can have
+     * new held senders, and it is also the only moment it is awake.
+     *
+     * ── LAUNCH CATCH-UP NEEDS NO SECOND HOOK, AND THAT IS A FACT ABOUT THIS DOOR ─────────────
+     *
+     * The obvious second trigger would be "on launch, catch up on what arrived while we were
+     * closed". Nothing arrives while this app is closed — no process is syncing — so there is
+     * nothing of that kind to catch up on. What a launch CAN owe is a pass a quit interrupted
+     * half-way, and that resumes for free: progress is the stored suggestion, so the candidate
+     * query simply starts at the next unbought sender. `start()` runs a drain, this runs at its
+     * tail, and the catch-up is that same call rather than a special case that would need its own
+     * bounds and its own test.
+     *
+     * ── IT IS THE WORKER'S PASS, NOT A COPY OF IT ────────────────────────────────────────────
+     *
+     * `@trafficflow/worker/screener-auto-suggest`, for the reason `bubbleUpPass` above is the
+     * worker's: the watermark, the per-pass cap and the representative-per-sender ordering all
+     * have to agree character for character with what the Screener surface shows, or a suggestion
+     * is stored against a message the row on screen is not about. Two implementations of that
+     * agree until the day one of them is edited.
+     *
+     * ── WHAT DIFFERS ON THIS DOOR, AND WHAT DOES NOT ─────────────────────────────────────────
+     *
+     * `credits` is ABSENT and `unmetered: true` is DECLARED. This tier has no ledger: the model is
+     * the installer's own key or their own machine, which is exactly what `localServices` says
+     * about `aiCredits`. The declaration is required rather than inferred from the absence — see
+     * that field's own note — so a wiring mistake here is a pass that does nothing rather than one
+     * that spends unmetered.
+     *
+     * The other two bounds are unchanged. The WATERMARK is `account_settings.auto_suggest_at` on
+     * this machine's store, written by `PUT /local/auto-suggest` and by nothing else on this door,
+     * so turning the switch on never reaches back over a mailbox that was already synced. The CAP
+     * is the pass's own page, and it earns its place here for one case rather than for every
+     * drain: a first sync after the switch was turned on, where the screening baseline window can
+     * present many senders at once.
+     *
+     * The third bound — first refusal stops the pass — is the CLASSIFIER's here rather than the
+     * ledger's. `classifierForCycle()` is the same seam the sync loop uses, withheld after
+     * repeated faults with a growing cooldown, and the pass stops on its first throw. So a model
+     * server somebody quit costs one call on this drain and none on the next several.
+     *
+     * ── COST WHEN IT IS OFF, AND WHEN IT IS ON ──────────────────────────────────────────────
+     *
+     * OFF (the default) with no model: nothing at all — the port is absent, so the pass returns
+     * before it reads anything. OFF with a model: one indexed PK read per drain. ON: at most one
+     * model call per NEW held sender, ever, because the stored suggestion is the progress marker
+     * and the candidate query excludes it. That is strictly fewer calls than the drain it rides
+     * on already makes, since the pipeline classifies each new MESSAGE while this asks about each
+     * new first-contact SENDER.
+     *
+     * A failure is CONTAINED, exactly as `resurfaceDue`'s is: suggestions are one feature and mail
+     * arriving is another.
+     */
+    const suggestNew = async (ohboxBar?: string): Promise<void> => {
+      // The port FIRST, so an install with no model — the common case, and the product's floor —
+      // pays nothing and reads nothing. `classifierForCycle` and not `classifier`: this is
+      // background work with nobody waiting, so it must take the seam that withholds a model which
+      // has been failing rather than the one the Screener button uses.
+      const classifier = ai.classifierForCycle();
+      if (!classifier) return;
+      try {
+        const { bought, examined, capped } = await screenerAutoSuggestPass(db as unknown as Tx, {
+          accountId: world.accountId,
+          classifier,
+          // THE DECLARATION, not an omission. See `ScreenerAutoSuggestDeps.unmetered`.
+          unmetered: true,
+          ...(ohboxBar ? { ohboxBar } : {}),
+        });
+        // Only when something was bought: an install that has not opted in, or one whose queue is
+        // already answered for, stays silent every drain — the rule every other line here follows.
+        if (bought > 0) log("screener_auto_suggest", { examined, bought, capped });
+      } catch (err) {
+        log("screener_auto_suggest_failed", {
+          err,
+          reason: "no suggestion was bought for the senders that just arrived; nothing is marked " +
+            "and no cursor persists, so the next drain resumes at the next unanswered sender and " +
+            "the Screener's own button still works in the meantime",
+        });
+      }
+    };
+
+    /**
+     * How far the historical-name repair has walked THIS LAUNCH, and whether it is finished.
+     *
+     * Deliberately in memory and nowhere else. The database already holds the answer to "is this
+     * row repaired?" — the column is either set or it is not — so a persisted cursor would be a
+     * second, weaker copy of a fact the store keeps perfectly, and the two would drift the first
+     * time a write was lost. What memory buys instead is a WALK POSITION, which is a different
+     * thing and not durable state: see {@link backfillStoredNames}.
+     */
+    let namesCursor: string | undefined;
+    let namesDone = false;
+
+    /**
+     * FILL IN THE SENDER NAMES AND RECIPIENTS OF MESSAGES STORED BEFORE THERE WAS ANYWHERE TO PUT
+     * THEM — a one-time repair of this install's own store, spread over as many visits as it takes.
+     *
+     * ── WHAT IS WRONG WITHOUT IT ─────────────────────────────────────────────────────────────
+     *
+     * `messages.from_name` went in after the messages that need it, and until it existed the reader
+     * was handed a bare address for every sender. `to_addresses` and `cc_addresses` are the same
+     * story from the other end: the columns were there, nothing wrote them, so a message showed no
+     * "To" line at all. New mail has been stored complete since; the rows already on disk were left
+     * as they were, and they are the mail somebody actually has.
+     *
+     * A hosted account's rows were repaired in the hosted database, and every mirror above it —
+     * including the Cloud door of this app — learned the corrected values as ordinary `/sync`
+     * deltas, because that repair emitted a change per row it touched. A STANDALONE install shares
+     * none of that: the store under the user's home IS the authority, no process anywhere else has
+     * ever seen it, and nothing was ever going to reach it. So this door runs the repair itself.
+     *
+     * ── WHY IT IS THE SAME PASS ──────────────────────────────────────────────────────────────
+     *
+     * `@trafficflow/worker/sender-name-backfill`, for the reason `bubbleUpPass` and
+     * `screenerAutoSuggestPass` above are the worker's. What this writes is what INGEST would have
+     * written from those same headers, and ingest's parse handles RFC 2047 encoded words, quoted
+     * names containing commas and headers folded across lines. A second parse would produce a
+     * second population of rows decided by different rules, and the two would be indistinguishable
+     * afterwards — you cannot tell a name that was parsed wrongly from one the sender wrote.
+     *
+     * ── THE BUDGET, AND WHY THIS NEEDS NO STATE TO RESUME ─────────────────────────────────────
+     *
+     * {@link LOCAL_NAME_BACKFILL_PAGES} pages of {@link LOCAL_NAME_BACKFILL_BATCH} rows per visit,
+     * then it yields. A big store therefore takes many drains and quite possibly several sessions,
+     * which is the intended shape: the mail is what the drain is for and this is cosmetic.
+     *
+     * Nothing new is tracked. The pass only ever writes a column that is unset and repeats that
+     * predicate in its UPDATE, so a row it has done is not a candidate the next time and a row it
+     * has not is — the store's own contents are both the progress marker and the completion state,
+     * and a quit at any moment costs at most the visit that was in flight.
+     *
+     * `namesCursor` is NOT that state and does not need to survive anything. It is a position in
+     * one launch's walk, and it exists because a row can be a permanent candidate: a sender who set
+     * no display name leaves `from_name` NULL for ever, correctly, and a message addressed to
+     * nobody leaves `to_addresses` empty for ever. Those rows sit at the front of the ordering and
+     * accumulate, so a visit that always started at the beginning would spend a growing share of
+     * its budget re-reading rows it has already correctly decided to leave alone — and on a large
+     * store it would eventually spend ALL of it and stop making progress, silently, having done
+     * exactly the right thing with every row it looked at. Carrying the position forward within a
+     * launch is what keeps each visit's budget spent on rows nobody has looked at yet. A relaunch
+     * starts at the beginning again, which costs one cheap re-walk and is also how a row lost to a
+     * competing writer comes back into view.
+     *
+     * `namesDone` is the other half: once a walk reads a page with nothing after it, this launch is
+     * finished, and every later drain returns before touching the database. Without it a repaired
+     * store would pay a full scan for nothing every poll interval, for as long as the app is open.
+     *
+     * ── THE WINDOW SEES IT WITHIN THE SESSION, WHICH IS WHY THE CHANGE LOG IS NOT DEAD WEIGHT ─
+     *
+     * The pass emits one `message` update per row it writes. On this door that is not a note for
+     * some remote mirror — the window's own view IS a mirror, fed by `/sync` off this store through
+     * the same service Cloud serves, and it upserts the whole message projection per change. So a
+     * name filled here repaints the list in the same session instead of at the next launch. The
+     * rows cost one sequence allocation per page and would be needed anyway the moment this install
+     * is ever read by anything else.
+     *
+     * A failure is CONTAINED, exactly as the two passes above are: display names are cosmetic and
+     * mail arriving is not. The next drain simply asks again.
+     */
+    const backfillStoredNames = async (): Promise<void> => {
+      // Both guards before any query. A quitting engine must not open a transaction it may not
+      // finish, and a finished repair must cost nothing at all.
+      if (namesDone || stopped) return;
+      try {
+        const r = await runSenderNameBackfill({
+          db: db as unknown as Tx,
+          apply: true,
+          accountId: world.accountId,
+          batch: LOCAL_NAME_BACKFILL_BATCH,
+          maxRows: LOCAL_NAME_BACKFILL_BATCH * LOCAL_NAME_BACKFILL_PAGES,
+          ...(namesCursor === undefined ? {} : { startAfterId: namesCursor }),
+        });
+        if (r.cursor !== null) namesCursor = r.cursor;
+        if (r.exhausted) namesDone = true;
+        // Only when something was written. A store with nothing to repair — every install created
+        // after the columns existed, which is most of them — stays silent on every drain of its
+        // life, and so does a store this has already finished. Counts only: WHICH message got its
+        // sender back is a fact about somebody's mail, and how many did is not.
+        if (r.written > 0) log("sender_names_backfilled", {
+          scanned: r.scanned, fillable: r.fillable, written: r.written,
+        });
+      } catch (err) {
+        log("sender_names_backfill_failed", {
+          err,
+          reason: "some older messages keep showing a bare address instead of the sender's name; " +
+            "nothing is marked and no position is kept, so the next pass asks the store again and " +
+            "the mail itself is unaffected either way",
+        });
+      }
+    };
+
     /** The drain itself, ALREADY GATED. Never called from outside this closure. */
     const drain = async (maxCycles: number): Promise<number> => {
       // BEFORE the cycles, not after: a resurface is a local database fact and does not depend on
@@ -1248,6 +1488,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const shape = summarizeDrain(cycleMs);
         log("sync_drain", { cycles: shape.cycles, totalMs: shape.totalMs, slowestMs: shape.slowestMs, drained });
       }
+      /* AFTER THE CYCLES, AND THAT ORDER IS THE FEATURE. The senders this asks about are the ones
+         the cycles above just brought in, so running it first would spend a whole drain behind the
+         mail it is about. It is also OUTSIDE the loop for `resurfaceDue`'s reason turned round: a
+         backlog drain is up to a hundred cycles, and asking after each of them would page through
+         the same queue a hundred times for one arrival. Before the checkpoint below, so the rows it
+         writes are folded into the same fold. */
+      await suggestNew(screening.ohboxBar);
+      /* AND THE HISTORICAL-NAME REPAIR LAST OF ALL THE WORK, which is the ordering claim the
+         suite pins rather than a preference. It is about rows that have been on this disk for as
+         long as the install has existed, so nothing it does is urgent, and a cold launch's first
+         drain is exactly when the user is watching an empty window fill up. Running it before the
+         cycles — or between them — would spend a page of parsing and a write transaction in front
+         of the mail somebody is waiting for, every launch, to correct a display name they have
+         been reading past for months. Before the checkpoint below for `suggestNew`'s reason: the
+         rows it writes belong in the same fold. */
+      await backfillStoredNames();
       /* HOW FAR THIS MAILBOX HAS GOT, WRITTEN DOWN. On a hosted account these two columns are the
          worker's; here this process IS the worker, and the window's sync line reads them to tell a
          first import apart from a settled mailbox. `drained` is the distinction that matters for

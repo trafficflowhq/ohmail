@@ -13,12 +13,20 @@
  * all, so what is saved here is what the hosted worker files by. One module, two doors, and the
  * engine decides which — nothing here has to ask.
  *
- * ── WHAT DIFFERS BY DOOR, AND IT IS ONE SWITCH ──────────────────────────────────────────────
+ * ── WHAT DIFFERS BY DOOR, AND IT IS ONE SWITCH EACH WAY ─────────────────────────────────────
  *
  * AUTO-APPLY belongs to the hosted door alone. Its only consumer is the scheduled pass the hosted
  * worker runs, and a standalone install runs no such pass — a switch for it there would be a
  * control that does nothing, which is worse than an absent one. The posture and the bar are
  * honoured on both doors and are offered on both.
+ *
+ * AUTOMATIC SUGGESTIONS go the other way, and the asymmetry is real rather than an oversight. Both
+ * doors have the feature; they do not have the same one. The hosted door's spends an account's
+ * credit allowance with no press, so its control is the shared shell's priced confirm, reached over
+ * `/consent/settings`. The standalone door's asks a model the person configured themselves, at the
+ * tail of this install's own sync, with no ledger anywhere to price against — so it is served by a
+ * route that exists on this door only and drawn by `DesktopAutoSuggest`. Two features, two consents,
+ * two places they are stored; one switch each, never both on one door.
  *
  * ── THREE ABSENCES, AND ONLY ONE OF THEM IS SILENT ──────────────────────────────────────────
  *
@@ -31,6 +39,7 @@
 import { useEffect, useState } from "react";
 import { SettingsNote, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
 
+import { DesktopAutoSuggest } from "./DesktopAutoSuggest.js";
 import { DesktopScreeningWords } from "./DesktopScreeningWords.js";
 import {
   readScreening,
@@ -123,6 +132,22 @@ export function DesktopScreening({
           />
         }
       />
+
+      {/* SUGGEST FOR NEW SENDERS AUTOMATICALLY, ON THE STANDALONE DOOR ONLY — the mirror image of
+          the switch below it, and it is genuinely the other door's rather than the same one moved.
+
+          On the HOSTED door this consent lives on the account: `/consent/settings` writes it, the
+          hosted worker's cycle acts on it, and it authorises spending an ALLOWANCE, so the control
+          for it names a price and is drawn by the shared shell (`AutoSuggestRow`, reached through
+          `consentTransport` in `DesktopGate`). Drawing a second one here would be two switches over
+          one flag, and the direction that costs money is the one where they disagree.
+
+          On the STANDALONE door there is no account and no ledger; there is a model the person
+          configured themselves and a pass at the tail of this install's own sync. Different route,
+          different consumer, nothing to price — so it is a different control, gated the other way.
+          It renders itself away when the engine answers 404, so this condition and that one agree
+          without either having to be the authority. */}
+      {door === "local" ? <DesktopAutoSuggest /> : null}
 
       {/* AUTO-APPLY, ON THE HOSTED DOOR ONLY. See the header. */}
       {door === "cloud" ? (
