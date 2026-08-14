@@ -16,6 +16,219 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.9.7] — 2026-08-14
+
+Mostly about what a message carries. A meeting invitation is an event you can read rather
+than a file with a made-up name; an attachment opens in whatever your computer uses for
+that kind of file; a link goes to your browser. A message you asked to see again has a word
+for finishing with it. The Screener's automatic suggestions arrive on a standalone install,
+bounded, and they leave mail that looks like it holds a passcode alone.
+
+### Reading a message
+
+**Meeting invitations show as events you can read.** Calendar programs send the invite as a
+calendar part with no filename, so the attachment strip listed it under a generated name —
+downloadable, unreadable, and named in a way that hid the one thing it is. A nameless
+calendar part is now called `invite.ics` wherever a name is minted: the tile, a single
+download and a download-all archive all agree. And the invitation is readable in place —
+when a message's attachments load, its calendar parts are decoded and the strip draws the
+event instead of a tile: what it is, when, where, who. The message's own meaning is said
+plainly — an invitation, a proposed new time (the replaced time struck through under the
+new one, when the sender carried it), a cancellation, or an answer.
+
+Times are shown on your own clock and in your language. An all-day date stays a calendar
+day; a time in a zone this app cannot resolve is shown as written, with its zone label,
+claiming nothing more. Recurrence is put into words only where one line can be true
+("Weekly on Tuesday"); anything richer shows the first occurrence and stops. Every field of
+an invitation is a stranger's text, so the card renders text only — names and addresses are
+never links, and a summary carrying markup lands on screen as characters. A part that does
+not parse, or is too large, or is not calendar data at all, keeps its plain attachment row:
+the card is a promotion, never a claim. English and German.
+
+**Attachments open in your computer's own viewer.** Pressing an attachment did nothing at
+all — no file, no error, nothing anywhere. A PDF was worse: the reader got a panel saying to
+download it instead, above a Download button that could not deliver a file either. Two dead
+ends in one press, and neither of them said so. A page delivers a file by handing the
+webview a download to perform, and the webview forwards that to whatever the host program
+registered to perform one; this program registered nothing, so the press was answered
+correctly by a component whose correct answer is "no download".
+
+The app now takes the bytes it already fetched and the display name the message gave them,
+writes that file into a directory of its own, and opens it with the same platform opener a
+link goes to. On macOS that is the call the Finder makes, so a PDF lands in Preview with
+Quick Look's own gestures on it, a picture in the picture viewer, a spreadsheet in the
+spreadsheet program. Nothing is rendered inside the mail window, which is also the safest
+answer for bytes a stranger sent. The name is sanitised before it is joined to anything, and
+each attachment is written into its own randomly named holder, so two files called the same
+thing do not collide and neither is renamed. The files are created private, and opened files
+are swept a day later — on the way in rather than on a timer, so nothing is deleted out from
+under a viewer you are reading.
+
+A PDF is no longer offered the in-app viewer on the desktop, because this build cannot draw
+one: the in-page PDF renderer needs a worker, this window's policy forbids workers, and the
+library is left out of both desktop bundles. The tile's own press is the whole gesture here.
+On the web app, and for every other file type, the viewer and the press are exactly what
+they were.
+
+**Links in your mail open in your browser.** Clicking a link did nothing at all — no page,
+no error. Every outbound link the app renders asks for a new window, which in a browser tab
+means a tab; in this window it is a request the webview forwards to the host program, and
+this program answered none. Nothing was refused and nothing was blocked, which is why it was
+silent everywhere.
+
+An `http` or `https` click is now intercepted, cancelled so the window can never navigate
+away from the app, and handed to the platform's own opener — your browser then makes the
+request, as itself, with its own cookies. One handler covers both documents that exist: the
+app's own, and the separate document a designed HTML mail renders in. The app's own links
+still open in the window. `mailto:`, `tel:` and `cid:` are refused; `cid:` names a part of
+the message you are reading and must never leave the machine.
+
+On Windows the address is handed to the system opener directly rather than through the
+command interpreter. That was safe while the only addresses it could receive were the
+handful of pages Settings links to; an address out of a message is a different thing, and
+the interpreter re-parses its own command line — a URL with a query in it would have been
+split at the `&`.
+
+The interface preview is unchanged: both handoffs are armed only in the build that carries a
+mail engine, and the bundler removes them from the other one entirely.
+
+### The Ohbox
+
+**A message you asked to see again has a way out, and it is called Done.** A resurfaced
+message stays pinned to the top of the Ohbox until you answer it or deliberately mark it
+read — deliberately, so a glance never dismisses it. That rule is unchanged; what was
+missing was a name for the way out, and "Mark as read" does not read as an answer to "show
+me this again".
+
+One word, everywhere the state is visible: the pinned row carries a small **Done** control,
+shown when the row is hovered, focused or selected, and always where hover does not exist;
+the open message's action bar says Done where the read control would stand, with a check
+instead of the read dot, because what it completes is the resurface rather than the read
+mark; and a message scheduled to come back carries the same Done on its row in the Resurface
+pile, where it also cancels the scheduled return. Pressing it is the deliberate release that
+has existed all along — the message is marked read, the pin comes down, and the row files at
+the top of Earlier by when you finished with it. Nothing new is stored. German: "Erledigt",
+and the pinned group's own heading is translated with it instead of standing in English
+under a German interface.
+
+### The Screener
+
+**Automatic suggestions work on a standalone install too.** 0.9.4 announced this option
+without saying that it only ever ran for a mailbox organised by the hosted service. An install that organises its own mailbox has no process running all the
+time to notice mail arriving, so the setting had nowhere to run and was not offered there.
+It is now, and the moment it runs is the end of a sync — the only point at which this
+program can have senders it has not seen before and is also running. There is no separate
+catch-up at launch, because no mail arrives while the app is closed.
+
+It is the same pass the hosted service runs rather than a second copy of it, so which
+message stands for a sender, and in what order, agrees with what the Screener shows you.
+Three things bound it: it never reaches back past the moment you turned it on, so switching
+it on does not work through a mailbox you have already synced; it asks about at most ten
+senders per sync and the rest wait for the next one; and it stops on the first failure
+rather than trying the rest, which with a key of your own is the difference between one
+wasted call and one per sender, every sync, for as long as the model is down.
+
+The setting is in Settings → Screener and is off until you turn it on. It says whether this
+install has a model set up at all, because without one there is nothing for the pass to ask.
+Nothing it does is irreversible — it writes no rules and files nothing, exactly like pressing
+Suggest yourself, and only the sender, the subject and a short extract go to the model.
+
+**Mail that looks like it holds a passcode is left out of the automatic pass.** Every message
+is screened on arrival for things that look like credentials — a one-time code, a sign-in
+link, a passcode — and the flag that puts on a message is what keeps it away from a model.
+Pressing Suggest is a request you made about the senders you picked. The automatic version is
+a timer, so it now excludes flagged mail when it chooses which senders to ask about, and the
+exclusion is part of the query rather than a check inside the loop. It applies after each
+sender's most recent waiting message has been picked, not before: picking first and then
+excluding leaves a sender whose newest mail is a passcode alone, where excluding first would
+have quietly promoted an older message and made the suggestion about mail that is not the one
+on screen. Such a sender keeps their place in the Screener and every decision you can make
+about them, and can still be asked about with the button.
+
+**A sender is asked about once, not once per message they send.** The advice is about the
+sender — the row is a sender, and the verdict applies to their whole waiting bag — but
+everything deciding whether to ask for one was keyed on a message. The queue represents a
+sender by their newest waiting message, so a second message replaced the first, carried no
+answer of its own, and the automatic pass asked again. And again. A mailing list that sends
+daily produces that by sending. The pass now asks the question its answers are about — does
+this account already hold advice about this sender — and a sender who has been advised about
+is not a candidate however much mail arrives afterwards. The Screener page moved with it: it
+reports a sender's most recent answer whichever of their messages it came from, so one more
+message from a sender no longer hides an answer that already exists. Pressing Suggest still
+asks the model afresh, which is the point of pressing it.
+
+### What reaches a model
+
+**Short one-time codes are masked before a message reaches a model.** When you ask for a
+suggestion about a sender, the subject and the first part of the message go to the model.
+Before they do they are screened, and if they carry authentication material the value is
+taken out and only the words around it are sent. That a message is about signing in is not a
+secret; the code in it is.
+
+The removal had a gap, and it was in the length rather than in the idea. Two things were
+being taken out: a code written plainly as digits, and an encoded run of sixteen characters
+or more. A short code does not occupy sixteen characters in any encoding mail actually uses
+— six digits as base64 is eight — so the encoded form of the most common code shape fell
+under the threshold. Percent escapes and HTML entities were not covered at any length, and a
+code in mixed or lower case did not match the plain pattern, which recognised upper case
+only. In each of those the message was reported as redacted and left with the code still in
+it.
+
+Lowering the threshold would not have fixed it: at six characters an encoded run is any
+six-letter word. So short runs are decoded and looked at instead of measured, and replaced
+only when what they decode to is a code rather than a word — `NDgyOTEz` decodes to `482913`
+and goes, `Q29uZmlybQ` decodes to `Confirm` and stays. Percent escapes and both HTML entity
+forms go through the same test. For codes written in the clear there are three narrow
+additions: a token holding both letters and digits, a value directly after the word that
+names it, and a value after a colon with that word nearby — using the same list of
+credential words the screening step already uses, in every language it already covers.
+
+All of it runs only on a message the screen has already flagged, and only where a code is
+the kind of thing that would be there. A "new sign-in from Chrome on macOS in Zurich" notice
+is left alone: the browser, the system and the city are the whole of what it says, and each
+of them wears the shape of a code.
+
+### Signed in to a hosted account
+
+**Signing in as a different account starts from that account's own mail.** This mode keeps a
+local mirror of one account's mail, and it belongs to exactly one account. The app already
+discarded a mirror whose owner had changed — but it only asked the question while starting
+up. Signing out leaves the mirror where it is, deliberately: nothing can be read out of it
+without a session, and throwing it away would cost a full re-download the next time the same
+person signs back in. That meant the next sign-in arrived while the previous account's
+database was still open, and it was not checked against it, so signing in as somebody else
+put the new session on top of the previous account's mail.
+
+The app now resolves who a new session actually belongs to by asking the account, using the
+credentials just given, rather than by reading the address out of the sign-in form — the
+address on the form is typed by whoever is signing in, and the browser sign-in sends no
+address at all. If the answer is not the account this mirror was built for, the sign-in is
+refused before anything is stored or opened, and an answer that cannot be obtained refuses
+too rather than assuming a match. Switching accounts on a computer you own is an ordinary
+thing to do, so the app offers the way through: press Sign in again and it re-points the
+door, which starts a new engine, which discards the previous account's mail before opening
+anything. Signing back into the same account changes nothing at all — the mirror is
+untouched, and there is no re-download.
+
+### Mail stored by an earlier version
+
+**Sender names are filled in on an install that organises its own mailbox.** A message
+stored by an early version of this app shows the sender as a bare address where their name
+should be, and no "To" line at all. The information was never lost — the column to keep the
+name in arrived after those messages did — so a mailbox reads correctly at the top and
+plainly wrong further down, which is the confusing version of a defect. The material is on
+disk: every stored message keeps the header block it arrived with.
+
+A mailbox organised by the hosted service had this repaired centrally and picked the values
+up as ordinary sync updates. An install that organises its own mailbox has no such centre —
+the database under your home directory is the only copy — so the app now does the repair
+itself, at the end of a sync, two hundred messages a visit. A large mailbox is repaired over
+many syncs and quite possibly several sessions; bringing back a display name is worth
+nothing next to the mail arriving. It never replaces a value that is already there, and it
+never invents a name from an address: a sender who wrote no name keeps none, because a name
+made up from the address would afterwards be indistinguishable from one they chose. Repaired
+rows redraw in the window while you are looking at it.
+
 ## [0.9.6] — 2026-08-13
 
 One change, and it is for installs signed in to a hosted account: the app is told the
@@ -1711,7 +1924,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.6...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.7...HEAD
+[0.9.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.7
 [0.9.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.6
 [0.9.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.5
 [0.9.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.4
