@@ -61,32 +61,39 @@ export function autoSuggestCopy(value: AutoSuggestState): string {
 }
 
 export function DesktopAutoSuggest() {
+  /**
+   * NULL UNTIL THE ENGINE HAS ANSWERED WITH A VALUE, and null for ever on a door that has none.
+   *
+   * ONE state for three situations, deliberately, where the neighbouring panes keep two: not asked
+   * yet, this door serves no such route, and the read was refused. They differ in cause and not in
+   * what may be drawn — there is no stored value in any of them, and the only thing this row can
+   * render without one is a switch showing a position nobody chose. `local-screening.ts`'s pane
+   * needs the distinction because ONE of its absences (a hosted account out of reach) has a
+   * sentence worth printing; this route is answered out of a database file in this same process, so
+   * that case does not exist here and a second flag for it would be state nothing reads.
+   *
+   * The load-bearing half is therefore in the TRANSPORT rather than here: it must never invent a
+   * value for a door that has none. See `readAutoSuggest`.
+   */
   const [value, setValue] = useState<AutoSuggestState | null>(null);
-  /** True once the read has answered `not-served` or thrown: this door has no such setting. */
-  const [absent, setAbsent] = useState(false);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     void readAutoSuggest().then(
-      (read) => {
-        if (cancelled) return;
-        if (read.state === "not-served") setAbsent(true);
-        else setValue(read.value);
-      },
+      (read) => { if (!cancelled && read.state === "ready") setValue(read.value); },
       () => {
-        /* A refusal the engine composed, for a reason it has already logged. Undrawn rather than
-           shown broken: there is no value here to edit, and a switch in the OFF position over an
-           install that has this ON would be somebody believing they had chosen the state they were
-           merely shown. */
-        if (!cancelled) setAbsent(true);
+        /* A refusal the engine composed, for a reason it has already logged. Left undrawn rather
+           than shown broken: there is no value here to edit, and a switch in the OFF position over
+           an install that has this ON would be somebody believing they had chosen the state they
+           were merely shown. */
       },
     );
     return () => { cancelled = true; };
   }, []);
 
-  if (absent || value === null) return null;
+  if (value === null) return null;
 
   const write = (next: boolean): void => {
     if (pending) return;
