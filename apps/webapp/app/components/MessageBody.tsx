@@ -128,6 +128,7 @@ import {
   type TableRowNode,
 } from "../shell/BodyText";
 import { UI_KEYS, usePersistedIdSet } from "../shell/persisted-ui";
+import { interceptLinkClicks } from "../shell/open-external";
 import "./message-body.css";
 import { liveCopy } from "../shell/locale";
 
@@ -2986,7 +2987,20 @@ export function MessageBody({
             sandbox={FRAME_SANDBOX}
             referrerPolicy="no-referrer"
             srcDoc={mail.doc}
-            onLoad={() => { setReady(true); measure(); }}
+            onLoad={(ev) => {
+              /* THE SENDER'S OWN LINKS, which are in a document of their own.
+                 A click in here does not bubble to the app — separate documents — so the shell's
+                 one link handler is installed on this one too. It is inert unless the desktop
+                 build armed it (`shell/open-external.ts`), which is what leaves the web app's
+                 anchors exactly as the browser gives them.
+                 `contentDocument` is reachable because this frame's sandbox keeps
+                 `allow-same-origin`; scripts are still not in that list, so nothing in here can
+                 have moved the links before this runs. */
+              const frameDoc = (ev.currentTarget as HTMLIFrameElement).contentDocument;
+              if (frameDoc) interceptLinkClicks(frameDoc, { trustSameOrigin: false });
+              setReady(true);
+              measure();
+            }}
           />
         </div>
       )}

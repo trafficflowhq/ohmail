@@ -27,6 +27,7 @@ import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
+import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
 import { DesktopLocale } from "./DesktopLocale.js";
 import "../../webapp/app/app.css";
 
@@ -78,6 +79,24 @@ async function waitForBoot(): Promise<string | null> {
     console.warn(`ohmail: no local engine — ${String(err)}`);
     return errorSentence(err);
   }
+}
+
+/* ── LINKS GO TO THE USER'S OWN BROWSER, AND THIS IS WHERE THAT IS SWITCHED ON ──────────────
+   In a tab, `target="_blank"` opens a tab. In this window there is no tab: a `_blank` click is
+   a new-window REQUEST, and a webview whose host registered no handler for one answers it with
+   no window — silently, correctly, and with no error anywhere. Every link in the app did
+   nothing, in a mail body and out of it. `open-external.ts` carries the mechanism and why the
+   seam is here; this is the one call that arms it, and the two documents it is armed on are
+   this one and each message frame (`MessageBody.tsx`).
+
+   INSIDE THE ENGINE BRANCH, and not above it. The interface preview's window is granted
+   nothing and its published claim is that it calls no command — a click that invoked
+   `open_external` there would be refused by the ACL and still open nothing, having made the
+   claim false on the way. `__OHMAIL_LOCAL_ENGINE__` is a build-time literal, so the preview
+   does not carry this call or anything it reaches. */
+if (__OHMAIL_LOCAL_ENGINE__) {
+  enableExternalLinks();
+  interceptLinkClicks(document, { trustSameOrigin: true });
 }
 
 /* The pre-paint theme stamp. `themeInitScript()` from @ohmail/ui exists for

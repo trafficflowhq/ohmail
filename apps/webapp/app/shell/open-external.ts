@@ -1,0 +1,223 @@
+/**
+ * ═══ LINKS IN A MESSAGE, ON A DESKTOP THAT HAS NO SECOND WINDOW ════════════════════════════
+ *
+ * In a browser tab, `<a target="_blank">` opens a tab and there is nothing to write. In the
+ * desktop window there is no tab to open, and what happens instead is the defect this module
+ * exists for: **nothing at all, silently.**
+ *
+ * ── THE MECHANISM, BECAUSE IT IS NOT ANY OF THE THREE THINGS IT LOOKS LIKE ──────────────────
+ *
+ * Every outbound link this product renders carries `target="_blank"` — the mail sanitizer forces
+ * it onto every `<a>` in a body (`MessageBody.tsx`), and the five hand-written link-outs in the
+ * shell spell it out. A `_blank` click is not a navigation: it is a request for a NEW WINDOW,
+ * which the webview forwards to whatever the host application registered to answer it. This app
+ * registers nothing, and a webview with no new-window handler drops the request on the floor and
+ * returns no window. So:
+ *
+ *  · it is NOT the navigation policy refusing — no navigation is ever attempted;
+ *  · it is NOT the CSP — `connect-src 'none'` governs fetches, not window opening;
+ *  · it is NOT a missing Tauri permission — nothing was invoked to be denied.
+ *
+ * The click is answered correctly, by a component whose correct answer is "no window". Which is
+ * why it produced no error anywhere, in any log, on any platform.
+ *
+ * ── WHY THIS IS A CLICK INTERCEPTOR AND NOT A NEW-WINDOW HANDLER ────────────────────────────
+ *
+ * The webview CAN be given a new-window handler, and that would be one seam covering both
+ * documents. It is not the one taken, for a reason about the OTHER artifact: attaching it means
+ * this process owning the creation of the main window, and the window is created from
+ * `tauri.conf.json` — shared by the interface preview, whose published claim is that it spawns no
+ * process and calls no command. Buying one seam by moving both artifacts' window construction
+ * into Rust, to add a browser-spawn to the one that must not have it, is the expensive way round.
+ *
+ * So the seam is here, and it is still ONE mechanism: one classifier, one handler, installed on
+ * the two documents that exist. It is not a per-component patch — no link surface in the shell
+ * knows this module exists, and a link added tomorrow is covered by having been rendered.
+ *
+ * ── THE TWO DOCUMENTS, AND WHY EVENTS DO NOT REACH ACROSS ───────────────────────────────────
+ *
+ * A message body is drawn one of two ways: as the app's own elements (the prose path), or inside
+ * a sandboxed `<iframe srcdoc>` carrying the sender's own markup. A click in the frame does not
+ * bubble to the embedder — they are separate documents — so the handler is installed on each.
+ * The frame is reachable at all because its sandbox keeps `allow-same-origin`; without that, the
+ * links inside a designed HTML mail could not be fixed from here by any means.
+ *
+ * ── OFF EVERYWHERE EXCEPT THE ONE BUILD THAT NEEDS IT ───────────────────────────────────────
+ *
+ * {@link enableExternalLinks} is called by the desktop entry point of the engine-bearing build
+ * and by nothing else, so:
+ *
+ *  · in the WEB app nothing is installed, no listener exists, and an anchor keeps exactly the
+ *    semantics the browser gives it. This module is imported by shared code and is inert there
+ *    by construction rather than by a branch that could be got wrong;
+ *  · in the desktop PREVIEW nothing is installed either. That artifact's grant is empty and its
+ *    claim is that it calls no command; a click that invoked one and was refused by the ACL
+ *    would make the claim false while still opening nothing.
+ */
+
+/** The shell command that hands one address to the platform's opener. `engine.rs` owns the gate. */
+export const OPEN_EXTERNAL_COMMAND = "open_external";
+
+/**
+ * THE CLASSIFIER — pure, and the whole of the decision.
+ *
+ * Answers the address to open in the user's own browser, or `null` for "this is not one". Split
+ * out from the handler so the rule can be driven directly by the suite rather than through a
+ * synthesised event, and so it is the same rule for both documents.
+ *
+ * `base` decides two things: what a relative href resolves against, and what counts as this
+ * app's own origin. The second is why the frame passes `trustSameOrigin: false` — see
+ * {@link interceptLinkClicks}.
+ *
+ * Only `http:` and `https:` are ever an address. Everything else — `mailto:`, `tel:`, `cid:`,
+ * and anything the sanitizer would have removed — answers `null`, and `cid:` is the reason the
+ * default for an unrecognised scheme is "refuse" rather than "pass through": it names a part of
+ * the message being read, and it must not leave this machine.
+ */
+export function externalTargetOf(href: string, base: string): string | null {
+  const raw = href.trim();
+  if (raw === "") return null;
+  let url: URL;
+  try {
+    url = new URL(raw, base);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  // `href`, not the input: the browser's own serialisation is what the shell's gate is written
+  // against, and it percent-encodes every character that gate refuses.
+  return url.href;
+}
+
+/** Whether this document's own origin is somewhere a link may go without leaving the app. */
+function sameOrigin(href: string, base: string): boolean {
+  try {
+    return new URL(href, base).origin === new URL(base).origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether the interceptor has been switched on for this window.
+ *
+ * A module-level flag rather than a probe for `__TAURI_INTERNALS__`, because the probe cannot
+ * tell the two desktop artifacts apart: the runtime defines that object in the preview too, whose
+ * window is granted nothing and must call nothing. The build that has the command says so.
+ */
+let enabled = false;
+
+/** Switch the interceptor on. Called once, from the engine-bearing desktop build's entry point. */
+export function enableExternalLinks(): void {
+  enabled = true;
+}
+
+/** Whether {@link interceptLinkClicks} will do anything. Read by the suite, and by the frame. */
+export function externalLinksEnabled(): boolean {
+  return enabled;
+}
+
+interface TauriInternals {
+  invoke(command: string, payload?: Record<string, unknown>): Promise<unknown>;
+}
+
+/**
+ * Ask the shell to open one address, and say so if it will not.
+ *
+ * The rejection arm is a `console.error` and not a swallow: this whole slice exists because a
+ * link failed without a trace, and a second silent failure mode in the fix would be the same
+ * defect wearing the repair. There is no UI context at a document-level listener to raise a
+ * toast from — the caller is a click on any anchor in the window — so the window's own log is
+ * where it goes, which is the one place a report can quote.
+ */
+async function askShellToOpen(url: string): Promise<void> {
+  const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };
+  const internals = host.__TAURI_INTERNALS__;
+  if (typeof internals?.invoke !== "function") return;
+  try {
+    await (internals as TauriInternals).invoke(OPEN_EXTERNAL_COMMAND, { url });
+  } catch (err) {
+    console.error(`ohmail: the shell would not open ${url}`, err);
+  }
+}
+
+/** Documents already carrying the listener, so a second install is not a second handler. */
+const installed = new WeakSet<Document>();
+
+interface InterceptOptions {
+  /**
+   * Whether a link to this document's OWN origin may be left to the browser.
+   *
+   * `true` for the app's document, where same-origin anchors are the client's own navigation —
+   * the `#/settings` routes, the in-page jumps — and preventing them would break the app.
+   *
+   * `false` inside a message frame, where nothing is the app's own navigation. A `srcdoc`
+   * document inherits the embedder's base URL, so a sender writing `<a href="/x">` or an
+   * absolute link to the app's own origin would otherwise be handed straight to the webview,
+   * which would navigate the frame — or, having escaped it, the window — inside the app's origin.
+   * That is the catastrophic shape this file's header rules out, and it is ruled out by refusing
+   * every click in a frame that is not an http/https address to open.
+   */
+  trustSameOrigin: boolean;
+}
+
+/**
+ * Install the one handler on one document. Idempotent, and a no-op unless
+ * {@link enableExternalLinks} has been called.
+ *
+ * CAPTURE phase, so the decision is made before any component's own `onClick` — a surface that
+ * stops propagation for its own reasons must not be able to turn a link back into a silent
+ * no-op, which is the failure being fixed.
+ *
+ * Modifier keys are deliberately NOT inspected. In a browser ⌘-click means "open in a new tab",
+ * and here every one of these opens in the user's browser regardless; branching on the modifier
+ * would produce two behaviours where the platform offers one.
+ *
+ * Answers a disposer. Neither caller needs one — the app's document lives as long as the window
+ * and a frame's dies with the message — and it is returned because a listener with no way off is
+ * a listener no test can prove the ABSENCE of: the web app's case is "nothing is installed", and
+ * asserting that in a suite that shares one document means being able to get back to nothing.
+ */
+export function interceptLinkClicks(doc: Document, opts: InterceptOptions): () => void {
+  if (!enabled) return () => {};
+  if (installed.has(doc)) return () => {};
+  installed.add(doc);
+
+  const onClick = (ev: Event): void => {
+    const mouse = ev as MouseEvent;
+    // A handled click, or one of the secondary buttons the platform answers itself.
+    if (ev.defaultPrevented) return;
+    if (typeof mouse.button === "number" && mouse.button !== 0) return;
+
+    const from = ev.target as Element | null;
+    const anchor = from?.closest?.("a[href], area[href]") as
+      | (Element & { getAttribute(name: string): string | null })
+      | null;
+    if (!anchor) return;
+
+    const href = anchor.getAttribute("href") ?? "";
+    // An in-page jump is this document's own business in either document.
+    if (href.startsWith("#")) return;
+
+    const base = doc.baseURI;
+    const target = externalTargetOf(href, base);
+    if (target !== null) {
+      ev.preventDefault();
+      void askShellToOpen(target);
+      return;
+    }
+
+    // Not an address to open. In the app's document a same-origin link is the client's own
+    // navigation and is left alone; everything else — and everything in a message frame — is
+    // stopped here, because the one outcome that must never happen is the webview leaving the
+    // app for a place a message chose.
+    if (opts.trustSameOrigin && sameOrigin(href, base)) return;
+    ev.preventDefault();
+  };
+
+  doc.addEventListener("click", onClick, true);
+  return () => {
+    doc.removeEventListener("click", onClick, true);
+    installed.delete(doc);
+  };
+}

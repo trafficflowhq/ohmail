@@ -2938,24 +2938,30 @@ pub fn link_url_for(key: &str, challenge: Option<&str>) -> Result<String, String
     Ok(format!("{url}?challenge={challenge}"))
 }
 
-/// Open one of [`LINKS`] in the user's own browser.
+/// Hand ONE address to whatever this machine opens addresses with.
 ///
 /// The platform's own opener, by process rather than by a plugin: `open` on macOS, `xdg-open` on
-/// the desktop Unixes, and `cmd /c start` on Windows. That is one fewer dependency to audit for a
-/// three-line call, and it opens no socket in this process — the browser makes the request, as
-/// itself, with its own cookies. The engine-bearing build already spawns a process (the engine),
-/// so this adds no capability to the artifact that was not already there; the PREVIEW compiles
-/// none of it.
+/// the desktop Unixes, and `rundll32 url.dll,FileProtocolHandler` on Windows. That is one fewer
+/// dependency to audit for a three-line call, and it opens no socket in this process — the browser
+/// makes the request, as itself, with its own cookies. The engine-bearing build already spawns a
+/// process (the engine), so this adds no capability to the artifact that was not already there;
+/// the PREVIEW compiles none of it.
 ///
-/// `challenge` is the second parameter and it is NOT a step towards a URL argument — see
-/// [`link_url_for`], which owns every character of the address and admits 43 base64url characters
-/// after one parameter name of its own choosing, for one key.
+/// ── WINDOWS IS NOT `cmd /c start` ANY MORE, AND THE REASON IS THE NEW CALLER ─────────────────
+///
+/// `cmd /c start "" <url>` was correct while the only addresses reaching here were constants of
+/// [`LINKS`]. It is NOT correct for [`open_external`], whose argument comes out of a mail body:
+/// `cmd.exe` re-parses its own command line, and Rust's argument escaping is written for
+/// `CommandLineToArgvW` rather than for cmd's grammar — so a URL containing `&` (which is to say
+/// most URLs with a query) is passed WITHOUT quotes, and cmd then reads the `&` as a command
+/// separator. That is remote command execution from a link in a message, and no amount of
+/// validation on this side is a defence against a second parser downstream.
+///
+/// `rundll32.exe` is executed directly, so no shell parses anything, and `FileProtocolHandler` is
+/// the documented "open this address the way this user's own settings say to". Both callers use
+/// it, because two openers would mean the safe one is the one nobody exercised.
 #[cfg(feature = "local-engine")]
-#[tauri::command(async)]
-fn open_link(key: String, challenge: Option<String>) -> Result<(), String> {
-    let target = link_url_for(&key, challenge.as_deref())?;
-    let url: &str = &target;
-
+fn spawn_opener(url: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut c = std::process::Command::new("/usr/bin/open");
@@ -2964,10 +2970,8 @@ fn open_link(key: String, challenge: Option<String>) -> Result<(), String> {
     };
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut c = std::process::Command::new("cmd");
-        // The empty string is the window TITLE argument `start` takes; without it a URL
-        // containing a space would be read as the title and nothing would open.
-        c.args(["/c", "start", "", url]);
+        let mut c = std::process::Command::new("rundll32.exe");
+        c.args(["url.dll,FileProtocolHandler", url]);
         c
     };
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -2981,6 +2985,150 @@ fn open_link(key: String, challenge: Option<String>) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|err| format!("ohmail: this computer would not open a browser ({err})"))
+}
+
+/// Open one of [`LINKS`] in the user's own browser.
+///
+/// `challenge` is the second parameter and it is NOT a step towards a URL argument — see
+/// [`link_url_for`], which owns every character of the address and admits 43 base64url characters
+/// after one parameter name of its own choosing, for one key.
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn open_link(key: String, challenge: Option<String>) -> Result<(), String> {
+    let target = link_url_for(&key, challenge.as_deref())?;
+    spawn_opener(&target)
+}
+
+/// The longest address this shell will hand to a browser.
+///
+/// A bound rather than a limit anybody will meet: real links are hundreds of bytes, and the only
+/// thing that produces a four-kilobyte one is a message trying to find out what happens.
+#[cfg(feature = "local-engine")]
+const EXTERNAL_URL_MAX: usize = 4096;
+
+/// THE ONE PLACE A VALUE FROM A MESSAGE BECOMES AN ADDRESS IN THE USER'S REAL BROWSER.
+///
+/// [`LINKS`] exists because the window must not be able to name a URL, and its comment says so in
+/// as many words: "anything that ever got a string into the page — a mail body, a sender's display
+/// name, a bug in the sanitizer — could open an arbitrary address in the user's real browser".
+/// This function is that rule being deliberately crossed, once, with the reason written down
+/// rather than softened: **a link in a message is the mail client's job**, and a mail client whose
+/// links do nothing is not one. Every other caller still goes through the key table.
+///
+/// So this is the gate, and it is a gate and not a sanitiser — nothing here repairs a value, it
+/// only decides:
+///
+///  · the scheme is `http://` or `https://`, spelled out with the slashes rather than checked as
+///    "the scheme is http", so `http:evil` and `https:/\x` are refused rather than normalised.
+///    `mailto:`, `tel:` and `cid:` are refused HERE as well as upstream — `cid:` names a part of
+///    the message and must never leave this machine, and the other two are addressed in
+///    `open-external.ts`;
+///  · there is an authority: something stands between the `//` and the first `/`, `?` or `#`;
+///  · every character is one a URL may contain unencoded. Control characters and whitespace of
+///    any kind (Unicode included, so a bidi override cannot ride along) are refused, as are the
+///    seven the platform openers or a URL parser could read as structure. `URL.href` — which is
+///    what composes every value that reaches here — already percent-encodes all of them, so a
+///    value that fails this test is not a link that lost a character in transit, it is a caller
+///    doing something else.
+///
+/// ── NOTHING IS TRIMMED, AND THAT IS THE INTERESTING LINE ────────────────────────────────────
+///
+/// This function judged `raw.trim()` and returned the trimmed value, which is safe exactly as
+/// long as every caller spawns the RETURN value rather than the argument it passed in. That is a
+/// convention, and a mutation proved it was one: rewriting the caller to `external_url(&url)?;
+/// spawn_opener(&url)` left every case green while putting a trailing newline back on a string
+/// bound for a command line.
+///
+/// So the divergence is gone rather than guarded. Whitespace anywhere — leading, trailing or
+/// interior — is a refusal, the approved value and the argument are the same bytes, and the bug
+/// the mutation introduced is no longer expressible. `URL.href` is what composes every value that
+/// arrives here and it never has surrounding whitespace, so nothing legitimate is being turned
+/// away; a caller that would have needed the trim gets a refusal it can read instead of a
+/// silently different address.
+#[cfg(feature = "local-engine")]
+pub fn external_url(url: &str) -> Result<&str, String> {
+    let refuse = |why: &str| Err(format!("ohmail: this is not an address the app opens ({why})"));
+
+    if url.is_empty() {
+        return refuse("empty");
+    }
+    if url.len() > EXTERNAL_URL_MAX {
+        return refuse("longer than any real link");
+    }
+
+    let rest = if let Some(r) = strip_scheme(url, "http://") {
+        r
+    } else if let Some(r) = strip_scheme(url, "https://") {
+        r
+    } else {
+        return refuse("only http and https are opened");
+    };
+
+    // The authority runs to the first delimiter. Empty means `http:///path`, which names no host.
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() {
+        return refuse("no host");
+    }
+
+    // `"` `<` `>` `\` and backtick are the five, and the test for admitting a character here is
+    // "does `URL.href` ever emit it", not "does it look dangerous". Every one of these is
+    // percent-encoded or normalised away by the URL serialiser that composes each value reaching
+    // this function (`\` becomes `/`), so refusing them costs no real link and closes the two
+    // that matter on Windows: a `"` ends an argument under `CommandLineToArgvW`, and a `\` runs
+    // into its backslash-before-quote rule.
+    //
+    // `^` AND `|` ARE DELIBERATELY ADMITTED, and they were on this list until it was checked.
+    // `URL.href` leaves both alone — `?ids=1|2|3` survives serialisation exactly as written — so
+    // refusing them would silently kill ordinary links, which is the defect this whole slice
+    // exists to end rather than to relocate. They are shell metacharacters, and there is no
+    // longer a shell: `spawn_opener` executes `open`, `xdg-open` or `rundll32.exe` directly, and
+    // an argument handed to `CreateProcess`/`execve` is one argument whatever is in it. Their
+    // danger was real for `cmd /c start` and died with it.
+    //
+    // THE BIDI CONTROLS ARE NAMED SEPARATELY, and finding out why is what this test was for:
+    // `char::is_control()` is the Cc category and a bidi override is Cf, so `U+202E` passed a
+    // check whose comment claimed it did not. They are refused not because they could reach a
+    // shell — they could not, they are neither whitespace nor punctuation — but because their
+    // whole purpose is to make a string display as something other than what it is, and this
+    // string's next reader is a person looking at an address bar. Nothing legitimate puts one in
+    // a URL unencoded.
+    const BIDI: [char; 11] = [
+        '\u{200e}', '\u{200f}', // LRM, RLM
+        '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}', '\u{202e}', // the embedding/override set
+        '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}', // the isolates, opener and terminator
+    ];
+    if url.chars().any(|c| {
+        c.is_control()
+            || c.is_whitespace()
+            || matches!(c, '"' | '<' | '>' | '\\' | '`')
+            || BIDI.contains(&c)
+    }) {
+        return refuse("it carries a character a URL may not carry unencoded");
+    }
+
+    Ok(url)
+}
+
+/// The scheme prefix, matched case-insensitively, with the remainder returned.
+///
+/// Case-insensitive because `HTTPS://…` is the same address as `https://…` and a sender may write
+/// either; ASCII-only because a scheme is ASCII by definition and `to_lowercase` on the whole URL
+/// would be a copy of an attacker-sized string to compare seven characters.
+#[cfg(feature = "local-engine")]
+fn strip_scheme<'a>(url: &'a str, scheme: &str) -> Option<&'a str> {
+    let head = url.get(..scheme.len())?;
+    head.eq_ignore_ascii_case(scheme).then(|| &url[scheme.len()..])
+}
+
+/// Open an address a message carried, in the user's own browser.
+///
+/// The whole of the judgement is [`external_url`]; this is what spawns. A refusal comes back to
+/// the window as a rejected promise rather than as a silent no-op, because "the link did nothing"
+/// is precisely the failure this pair exists to end.
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn open_external(url: String) -> Result<(), String> {
+    spawn_opener(external_url(&url)?)
 }
 
 // ═══ THE WAY BACK IN: `ohmail://link?code=…` ═════════════════════════════════════════════════
@@ -3154,12 +3302,12 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), and listen for the shell's own events — including the handoff code an ohmail:// activation carried. Nothing else: no filesystem, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. Nothing else: no filesystem, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-open-link", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-open-link", "allow-open-external", "core:event:allow-listen"]
 }"#;
 
-/// Register the seven commands. Called from `main.rs` under the same feature.
+/// Register the eight commands. Called from `main.rs` under the same feature.
 ///
 /// It lives here rather than there so that `main.rs` contains no `invoke_handler` at all — the
 /// published shell's "registers no commands" is then a property of a file that is always compiled,
@@ -3209,11 +3357,12 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             engine_logout,
             notify,
             set_badge,
-            open_link
+            open_link,
+            open_external
         ])
 }
 
-/// Hand the shell to the window, grant the window the seven commands, and start listening for
+/// Hand the shell to the window, grant the window the eight commands, and start listening for
 /// `ohmail://` activations.
 ///
 /// The deep-link listener is registered HERE rather than from `Builder::setup`, and that is forced

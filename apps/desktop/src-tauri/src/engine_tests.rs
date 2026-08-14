@@ -1946,6 +1946,179 @@ fn a_commitment_may_be_appended_to_one_page_and_must_be_one() {
     );
 }
 
+/// THE GATE ON THE ONE COMMAND THAT TAKES AN ADDRESS FROM A MESSAGE.
+///
+/// `open_link` takes a key because a URL argument would let anything that got a string into the
+/// page open an arbitrary address. `open_external` takes the URL — that is what a link in a mail
+/// body IS — so the whole of the argument moves here, and it has to be a gate rather than a
+/// sanitiser: nothing below repairs a value, every case is a yes or a no.
+///
+/// ── THE MUTATIONS THESE CASES WERE WATCHED AGAINST ──────────────────────────────────────────
+///
+///  · match the scheme with `starts_with("http")` instead of the two spellings with their
+///    slashes → the `http:evil` and `httpsx://` rows go red;
+///  · use `to_lowercase().starts_with(…)` and drop the authority check → the `http:///etc` row
+///    goes red;
+///  · drop the character refusal → every row in the injection block goes red, and those are the
+///    ones that reach a second parser as structure rather than as text;
+///  · admit `mailto:` "because the sanitizer already allows it" → the scheme block goes red.
+#[test]
+fn only_an_http_address_with_a_host_is_ever_opened() {
+    // The ordinary shapes, returned verbatim — no normalisation, no re-encoding.
+    for good in [
+        "https://example.test/",
+        "http://example.test/a/b?c=1&d=2#frag",
+        "https://example.test:8443/path",
+        "https://user:pw@example.test/",
+        // Percent-encoding is how every character this gate refuses is legitimately carried, and
+        // `URL.href` is what produces it. A link is not rejected for having a query.
+        "https://example.test/search?q=a%20b%22c",
+        // Case is the sender's, and the same address either way.
+        "HTTPS://EXAMPLE.TEST/",
+        "HtTp://example.test/",
+        // NON-ASCII IS NOT THE SAME QUESTION AS NON-PRINTING, and admitting it is deliberate: the
+        // refusals below name control characters, whitespace and bidi, not "anything above 127".
+        // A fragment is where `URL.href` legitimately leaves a character as itself, and refusing
+        // that would be refusing links that work everywhere else.
+        "https://example.test/#überschrift",
+    ] {
+        assert_eq!(external_url(good), Ok(good), "external_url refused {good:?}");
+    }
+
+    // ── NOTHING IS TRIMMED, AND THE MUTATION IS WHY ─────────────────────────────────────────
+    //
+    // This gate used to judge `raw.trim()` and return the trimmed value, which is safe only while
+    // every caller spawns the RETURNED value. Rewriting `open_external` to validate its argument
+    // and then spawn that argument left every case in this file green while putting a trailing
+    // newline back on a string bound for a command line. A convention no case can see is not an
+    // invariant, so the divergence was removed instead of guarded: the approved value and the
+    // argument are now the same bytes, and that rewrite no longer expresses a bug.
+    //
+    // The cost is that a caller must send an address with nothing around it. `URL.href` is what
+    // composes every value that reaches here and never has any, so the rows below are refusals
+    // rather than a capability anybody loses.
+    for spaced in [
+        "  https://example.test/  ",
+        "https://example.test/\r\n",
+        " https://example.test/",
+        "https://example.test/\n",
+    ] {
+        assert!(external_url(spaced).is_err(), "external_url admitted {spaced:?}");
+    }
+
+    // ── THE SCHEME. Two spellings, with their slashes, and nothing else. ─────────────────────
+    for bad in [
+        // `cid:` names a part of the message being read and must never leave this machine.
+        "cid:part1@example.test",
+        // Refused HERE as well as upstream: this is the gate, not the second opinion.
+        "mailto:someone@example.test",
+        "tel:+41000000000",
+        "javascript:alert(1)",
+        "file:///etc/passwd",
+        "data:text/html,<script>alert(1)</script>",
+        "ohmail://link?code=stolen",
+        "vbscript:msgbox",
+        // The scheme is right and the slashes are not: a `starts_with("http")` check admits these.
+        "http:evil",
+        "https:/example.test",
+        "httpsx://example.test/",
+        "http//example.test/",
+        // A scheme this one is a prefix of.
+        "https-x://example.test/",
+    ] {
+        assert!(external_url(bad).is_err(), "external_url admitted {bad:?}");
+    }
+
+    // ── THE AUTHORITY. `http:///path` parses and names no host. ─────────────────────────────
+    for hostless in ["http:///etc/passwd", "https:///", "https://?q=1", "https://#f"] {
+        assert!(external_url(hostless).is_err(), "external_url admitted {hostless:?}");
+    }
+
+    // ── THE CHARACTERS. Each of these is structure to a shell, a URL parser or both. ────────
+    // `&` is NOT among them, and that is the point of the Windows change rather than an oversight:
+    // a query with two parameters is an ordinary link, so the defence against `cmd.exe` reading it
+    // as a command separator had to be "do not hand it to cmd.exe" and could not be "refuse it".
+    assert_eq!(
+        external_url("https://example.test/?x=1&y=2"),
+        Ok("https://example.test/?x=1&y=2"),
+        "an ordinary two-parameter query was refused",
+    );
+    // `^` and `|` are the same argument one step further, and they were on the refusal list until
+    // it was checked against the serialiser: `URL.href` leaves both exactly as written, so
+    // refusing them would turn an ordinary link back into one that does nothing — this slice's
+    // own defect, relocated. They are dangerous to a shell and there is no longer a shell.
+    for shell_ish in [
+        "https://example.test/?ids=1|2|3",
+        "https://example.test/a^b",
+    ] {
+        assert_eq!(external_url(shell_ish), Ok(shell_ish), "external_url refused {shell_ish:?}");
+    }
+
+    for hostile in [
+        "https://example.test/\"x",
+        "https://example.test/`id`",
+        "https://example.test/<script>",
+        "https://example.test\\@evil.test/",
+        // A newline splits a command line as surely as a `&` does.
+        "https://example.test/\nhttps://evil.test/",
+        "https://example.test/\ta",
+        "https://example.test/ b",
+        // NUL, and the bidi controls. The override is the one that found a real hole: it is Cf,
+        // not Cc, so `char::is_control()` answers false for it and the gate admitted it while the
+        // comment beside the gate said it did not.
+        "https://example.test/\u{0}",
+        "https://example.test/\u{202e}",
+        "https://example.test/\u{2067}",
+        "https://example.test/\u{200f}",
+        // Unicode whitespace is whitespace.
+        "https://example.test/\u{00a0}x",
+    ] {
+        assert!(external_url(hostile).is_err(), "external_url admitted {hostile:?}");
+    }
+
+    // ── THE BOUND. ──────────────────────────────────────────────────────────────────────────
+    let long = format!("https://example.test/{}", "a".repeat(EXTERNAL_URL_MAX));
+    assert!(external_url(&long).is_err(), "external_url admitted a {}-byte URL", long.len());
+    assert!(external_url("").is_err());
+    assert!(external_url("   ").is_err());
+}
+
+/// THE WINDOW'S GRANT NAMES THE COMMAND, or the command is registered and unreachable.
+///
+/// A command missing from [`LOCAL_ENGINE_CAPABILITY`] is refused at the ACL with no window, no
+/// dialog and no log — which looks exactly like a feature that was never wired up, and is the
+/// failure shape this whole family of commands is prone to. So the grant is asserted from the
+/// constant rather than read once by a person.
+///
+/// Drop `allow-open-external` from the permission list and this goes red.
+#[test]
+fn every_command_the_window_calls_is_granted_to_it() {
+    let cap: serde_json::Value =
+        serde_json::from_str(LOCAL_ENGINE_CAPABILITY).expect("the capability is not valid JSON");
+    let granted: Vec<&str> = cap["permissions"]
+        .as_array()
+        .expect("the capability has no permission array")
+        .iter()
+        .map(|p| p.as_str().expect("a permission is not a string"))
+        .collect();
+
+    for command in [
+        "engine-status", "engine-request", "engine-configure", "engine-logout",
+        "notify", "set-badge", "open-link", "open-external",
+    ] {
+        let permission = format!("allow-{command}");
+        assert!(
+            granted.contains(&permission.as_str()),
+            "the window may not call {command}: {permission} is not in the grant",
+        );
+    }
+    // The window may HEAR the shell and never make the shell hear it. Asserted with the rest so a
+    // widening of the grant lands in the same failure as a narrowing.
+    assert!(granted.contains(&"core:event:allow-listen"));
+    assert!(!granted.contains(&"core:event:allow-emit"), "the window was granted emit");
+    assert_eq!(cap["windows"], serde_json::json!(["main"]));
+}
+
 /// EVERY `ohmail://` LINK ON THE MACHINE ARRIVES HERE, so this is a grammar and not an extraction.
 ///
 /// Registering a scheme means a mail body, a chat message or a web page can all send this process a
