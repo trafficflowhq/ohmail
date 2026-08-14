@@ -151,6 +151,24 @@ export class DraftingService {
           "ai_unavailable", 503, "AI drafting is temporarily unavailable; please retry",
         );
       }
+      if (!outcome.permitted && outcome.refusal === "inflight") {
+        // ANOTHER CALLER HOLDS THIS DRAFT'S CLAIM (SEC3-MONEY-1). 503 for the same reason a fault
+        // is 503 and emphatically not 402: this account is fully funded and nothing is wrong with
+        // it, so a demand for money would be a bill for someone else's concurrency. Retryable,
+        // and the retry is free — the holder's charge is what pays for it.
+        //
+        // Unreachable today: the gate this service is handed does not ask for exclusivity. The
+        // case it would close is two same-key requests both missing the stored-response lookup
+        // (which runs in autocommit, before either transaction opens) and both calling the model.
+        // Switching it on is one option at whichever host constructs the gate, and it is
+        // deliberately not switched on here: the loser of that race is a person waiting on a
+        // draft, and that answer deserves designing rather than inheriting from a change made for
+        // a different call site. This branch exists so that the day it IS switched on is not also
+        // the day a concurrency overlap starts answering 402.
+        throw new ServiceError(
+          "ai_unavailable", 503, "AI drafting is temporarily unavailable; please retry",
+        );
+      }
       if (!outcome.permitted && outcome.reason === "ai_disabled") {
         // THE ACCOUNT'S OWN OFF SWITCH — 409, never 402. 402 means "pay us", and it would be the
         // wrong sentence three times over: this account is fully funded, nothing it could buy

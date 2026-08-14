@@ -260,6 +260,32 @@ const SUGGESTION_PROVENANCE = SCREENER_SUGGESTION_PROVENANCE;
  */
 export const MAX_SUGGEST_SENDERS = 50;
 
+/**
+ * How long ONE `POST /screener/suggest` will wait, in total, for verdicts another caller is
+ * already buying (SEC3-MONEY-1).
+ *
+ * The gate refuses a second caller on a source that is being worked on — that refusal is the fix,
+ * and this is what the request does with it. Waiting is what makes a correct system look correct:
+ * a person pressed Suggest, their sender's verdict is arriving within seconds because the worker's
+ * auto-suggest pass or their own other tab is paying for it, and a skip would send them back to
+ * press again for something already on its way.
+ *
+ * **2.5 s, and each of the two bounds it sits between is real.** Below it, a typical Haiku
+ * classification (~1 s, and the API's own client gives it 10 s with one retry) would routinely be
+ * reported as unavailable when it was merely in progress. Above it, the wait starts eating the
+ * 60 s serverless invocation the rest of the set still has to be classified inside. The budget is
+ * per REQUEST rather than per sender for the same reason — see its use.
+ *
+ * It bounds no correctness: exceeding it costs one honest "retry" answer, and the retry is free.
+ */
+const INFLIGHT_WAIT_MS = 2_500;
+
+/**
+ * How often that wait re-reads the store. Small enough to return promptly once the holder commits,
+ * large enough that a full budget is ~20 indexed point reads and not a spin.
+ */
+const INFLIGHT_POLL_MS = 120;
+
 export interface ScreenerSuggestBody {
   /** The explicit sender set. Absent, empty or unparseable ⇒ 400; never "all". */
   senders?: unknown;
@@ -321,8 +347,20 @@ export interface ScreenerSuggestion {
 export type ScreenerSuggestSkip =
   | "not_held"            // no mail from this sender is at the gate
   | "out_of_credits"      // the balance ran out part-way through the set
-  | "spend_unavailable"   // subscription state, AI switched off, or a gate fault
+  | "spend_unavailable"   // see below — every "not now, ask again" the gate can produce
   | "model_unavailable";  // charged, the model faulted; the free retry honours it
+/*
+ * `spend_unavailable` COVERS ONE MORE THING SINCE SEC3-MONEY-1, and it is deliberately not a new
+ * wire value: another caller holds the exclusive claim on this sender's message and did not
+ * finish inside this request's wait budget. Its cause is different from a subscription state or a
+ * gate fault; its INSTRUCTION to the client is identical and is the whole content of the value —
+ * nothing is owed, nothing is broken, ask again and it will be there. Minting a fourth reason
+ * would have added a branch to every consumer (two clients and their copy) to say the same
+ * sentence in a rarer case.
+ *
+ * The one thing it must never be is `out_of_credits`: the account is fully funded, and answering
+ * a concurrency overlap with a demand for money is the error that would matter.
+ */
 // `"withheld"` was here — a sender skipped because their mail looked like it carried a credential.
 // It is GONE rather than retained-and-never-emitted, and the compile errors that removal caused at
 // every consumer were the point: a value nothing can produce is a branch every reader has to keep
@@ -1288,7 +1326,7 @@ export class ScreenerService extends ScreenerReadService {
    * a sink that refused AFTER `gate.spend()` would charge a credit and return
    * `model_unavailable`.
    *
-   * ## Two clicks do not pay twice, at THREE independent layers
+   * ## Two clicks do not pay twice, at FOUR independent layers
    *
    *  1. **A stored suggestion is served, not re-bought.** The cheapest layer and the only one
    *     that also protects OUR cost: a `duplicate` charges the user nothing but still spends
@@ -1298,6 +1336,18 @@ export class ScreenerService extends ScreenerReadService {
    *  3. `classify:screener:<message_id>` — the ledger's own identity, and the backstop for
    *     everything the first two cannot see (two hosts, two keys, one message). It answers
    *     `duplicate`, which is why `charged` can be lower than `quoted` for an honest reason.
+   *  4. **The EXCLUSIVE CLAIM on that source** (SEC3-MONEY-1), and it is here because the three
+   *     above share a blind spot that cost real money. Every one of them is a statement about
+   *     work that is already OVER — a stored row, a claimed key, a committed debit — and a
+   *     request that OVERLAPS another passes all three, because at the instant it looks, none of
+   *     those exists yet. Layer 3 in particular answers `duplicate`, which reads as "already paid
+   *     for, proceed", so N simultaneous requests over one sender made N paid model calls against
+   *     ONE credit. The claim is the only layer that can say "somebody is doing this right now",
+   *     and it is taken in the same transaction as the debit, before the model call.
+   *
+   *     It needs no unusual behaviour to matter: two clicks land as two invocations with
+   *     DIFFERENT `Idempotency-Key`s (so layer 2 does not collapse them), and the worker's
+   *     auto-suggest pass selects the same held sender as a button press by construction.
    *
    * ## The model calls happen OUTSIDE any transaction, and each verdict lands ALONE
    *
@@ -1362,6 +1412,23 @@ export class ScreenerService extends ScreenerReadService {
     const stored = await this.storedSuggestions(ctx, [...rep.values()].map((r) => r.messageId), ohboxPolicy);
 
     const gate = this.credits?.(asTx(ctx), ctx.accountId);
+    /**
+     * THE WHOLE REQUEST'S patience for senders another caller is already buying, as a deadline
+     * rather than a per-sender allowance.
+     *
+     * Per-sender would multiply: a set of forty senders all held by the worker's pass would sit
+     * for forty × the budget inside one serverless invocation and time the invocation out — a
+     * request killed by its own politeness. One deadline for the run means the first overlap
+     * waits and the rest are answered immediately, which is also the honest shape: if the holder
+     * is slower than this, it is slower than this for every sender in the set.
+     *
+     * `Date.now()` and NOT `ctx.now()`, which is the injectable request clock every dated value
+     * in this service is built from. This is not a dated value — it is a measurement of elapsed
+     * real time against `setTimeout`, and a test clock frozen at a literal (which most of this
+     * suite uses) would put the deadline in the past on the first comparison and switch the wait
+     * off silently. The gate's own docs record the same trap for `retryWindowMs`.
+     */
+    const waitUntil = Date.now() + INFLIGHT_WAIT_MS;
     const suggestions: ScreenerSuggestion[] = [];
     const skipped: ScreenerSuggestResult["skipped"] = [];
     let quoted = 0;
@@ -1403,8 +1470,51 @@ export class ScreenerService extends ScreenerReadService {
       // model, so a quote cannot send mail to a third party. `quoted` is the whole answer.
       if (dryRun) continue;
 
+      const source = screenerLedgerSource(r.messageId);
       if (gate) {
-        const outcome = await gate.spend(screenerLedgerSource(r.messageId), { messageId: r.messageId });
+        const outcome = await gate.spend(source, { messageId: r.messageId });
+
+        // ── SOMEBODY ELSE IS BUYING THIS ONE RIGHT NOW (SEC3-MONEY-1) ──────────────────────
+        //
+        // The FOURTH layer, and the only one that can see a caller which has not finished. The
+        // three above are all statements about work that is already OVER — a stored suggestion,
+        // a claimed `Idempotency-Key`, a committed ledger row — and a request that overlaps
+        // another passes every one of them, because at the instant it looks, none of them exists
+        // yet. That is how N simultaneous requests over one sender used to make N paid model
+        // calls against ONE credit: the ledger answered `duplicate`, which reads as "already
+        // paid for, proceed", and each of them proceeded.
+        //
+        // The holder is either the user's own other tab or the worker's auto-suggest pass; the
+        // second needs no unusual behaviour from anyone, since the cron and a button press select
+        // the same held sender by construction. Either way this request is not entitled to a
+        // model call — the work is bought, once, and the answer is coming.
+        //
+        // SO IT WAITS FOR THAT ANSWER RATHER THAN REPORTING A FAILURE. A person pressed Suggest
+        // and there is a verdict for their sender arriving within seconds; handing them a skip
+        // would make a correct system look broken and send them back to press again. The wait is
+        // bounded and the budget is per-REQUEST, so a large set whose senders are all held
+        // elsewhere degrades to one wait and not one per sender.
+        if (!outcome.permitted && outcome.refusal === "inflight") {
+          const settled = await this.awaitHeldSuggestion(ctx, r.messageId, ohboxPolicy, waitUntil);
+          if (settled) {
+            // Charged NOTHING and asked NOTHING, and the sender is answered. `quoted` stays as it
+            // was: this request priced the sender honestly and then did not have to pay.
+            suggestions.push({ sender, messageId: r.messageId, ...settled });
+            continue;
+          }
+          // The holder is slower than the budget, or died mid-call and its claim has not expired
+          // yet. Both are temporary and both are cleared by asking again, which is what
+          // `spend_unavailable` already tells a client — so no new wire value is minted for a
+          // state whose whole content is "retry". It is NOT `out_of_credits`: this account is
+          // fully funded, and a 402 here would be a bill for somebody else's concurrency.
+          skipped.push({ sender, reason: "spend_unavailable" });
+          stopped ??= "spend_unavailable";
+          // `fault`, so a run that produced nothing at all answers 503 "temporarily unavailable;
+          // please retry" rather than 402. Refusing to demand money for this is the point.
+          refusal ??= { refusal: "fault" };
+          continue;
+        }
+
         if (!outcome.permitted) {
           const reason = outcome.refusal === "quantity" ? "out_of_credits" : "spend_unavailable";
           skipped.push({ sender, reason });
@@ -1423,9 +1533,58 @@ export class ScreenerService extends ScreenerReadService {
         // no number now; it is the increment that stays true if the constant ever moves, and
         // the alternative is a field whose name and its arithmetic disagree.
         if (outcome.charged) charged += AI_ACTION_COST;
+
+        // ── A FREE RETRY LOOKS FOR THE RESULT IT IS A RETRY OF, BEFORE RE-BUYING TOKENS ────
+        //
+        // `charged: false` means the gate found this work already paid for. Until this read that
+        // was taken as leave to call the model, and it is the LAST way N requests could still
+        // make more than one paid call for one credit — not through the claim (this caller holds
+        // it) but through the preflight SNAPSHOT above, which is read once for the whole set
+        // before the loop starts. A racer that stored its verdict after that read and released
+        // its claim leaves the next caller with a `stored` map that predates the answer: it sees
+        // nothing, is told `duplicate`, and buys the same tokens again. Measured, on two racers
+        // over five senders: eight model calls where the claim alone brought ten down to eight.
+        //
+        // So the check is re-made HERE, inside the exclusive region, where it can see everything
+        // any earlier holder committed. It is not a second copy of layer 1 — it is layer 1 asked
+        // at the only moment the answer is authoritative.
+        //
+        // Deliberately NOT run when `charged` is true. Then this caller has just opened a new
+        // attempt, which only happens when the previous one was refunded or aged out, and a new
+        // attempt is a purchase of a FRESH verdict — serving the old row would take the money and
+        // hand back what the customer already had.
+        if (!outcome.charged) {
+          const settled = (await this.storedSuggestions(ctx, [r.messageId], ohboxPolicy)).get(r.messageId);
+          if (settled) {
+            suggestions.push({ sender, messageId: r.messageId, ...settled });
+            await gate.release?.(source);
+            continue;
+          }
+        }
       }
 
       let result;
+      /*
+       * THE CLAIM IS GIVEN BACK WHEN THE WORK ENDS, WHICHEVER WAY IT ENDS — AND NOT ONE LINE
+       * SOONER THAN THE WRITE THAT MAKES THE WORK READABLE.
+       *
+       * There are two releases below rather than one `finally`, and the reason is a hole a
+       * `finally` around the model call quietly opens: it runs BEFORE `store`, so between the
+       * release and the insert there is a window in which the suggestion is not on record and
+       * nothing holds the source. A second caller landing in it reads no stored suggestion, takes
+       * the freed claim, is told `duplicate` — already paid for, proceed — and calls the model
+       * again. That is SEC3-MONEY-1 restored, narrower and harder to see.
+       *
+       * So: on SUCCESS the claim is released after the verdict is durable, and on FAILURE it is
+       * released in the catch. The failure path needs it as much as the success path, because a
+       * model fault leaves the charge standing on purpose — the source is stable, so the next
+       * attempt answers `duplicate` and is free — and holding the claim would make that free
+       * retry wait out the whole TTL first.
+       *
+       * Forgetting a release entirely would still be SAFE (the claim expires and the next caller
+       * takes it over), which is why these are the optimisation of a bound rather than the bound
+       * itself. `release` never throws — see the port.
+       */
       try {
         // ── THE REQUEST — `askScreeningQuestion`, ONE definition, in `@trafficflow/core/mail` ──
         //
@@ -1446,11 +1605,15 @@ export class ScreenerService extends ScreenerReadService {
         // Not refunded, and the charge is what buys the retry: the source is stable, so the
         // next attempt over this message answers `duplicate` and costs nothing.
         skipped.push({ sender, reason: "model_unavailable" });
+        await gate?.release?.(source);
         continue;
       }
 
       // Persisted NOW, in its own transaction, before the next model call is made.
       await this.store(ctx, r.messageId, result);
+      // …and only NOW is the source free. See the block above the `try` for the window this
+      // ordering closes.
+      await gate?.release?.(source);
       suggestions.push({
         sender,
         messageId: r.messageId,
@@ -1549,6 +1712,48 @@ export class ScreenerService extends ScreenerReadService {
    * per-message transaction are the row's definition, and the worker cannot reach this class. See
    * that module for the argument; this stays a method so the call sites above read the same.
    */
+  /**
+   * WAIT FOR THE CALLER THAT HOLDS THIS MESSAGE TO FINISH, then read what they bought.
+   *
+   * Reached only from the `inflight` branch of {@link ScreenerService.suggest}, which is to say
+   * only when the spend gate has just said, on the authority of a committed claim row, that
+   * another caller is inside a model call for this exact message. So the thing being waited for
+   * is not speculative: it is a verdict that has been paid for and is on its way.
+   *
+   * ## Why it polls the STORE and not the claim
+   *
+   * The claim disappearing means the holder stopped, not that it succeeded — a model fault
+   * releases it too. What a caller can actually serve is a stored suggestion, so that is what is
+   * waited for. It also makes the wait correct when the holder is not a request at all: the
+   * worker's auto-suggest pass writes the same rows through the same writer, and this reads them
+   * without knowing which of the two produced them.
+   *
+   * ## Why it is a poll
+   *
+   * `LISTEN`/`NOTIFY` is the shape that suggests itself and it is unavailable here: production
+   * runs through a transaction-pooling connection pooler, where no session is pinned long enough
+   * to hold a listener. A bounded poll of an indexed point read is the honest alternative — about
+   * twenty reads in the worst case, and none at all in the overwhelmingly common one where
+   * nothing is contended.
+   *
+   * @param deadline Wall-clock ms (`Date.now()` scale) shared by the whole request.
+   * @returns the stored suggestion, or `undefined` if the holder did not finish in time — in
+   *   which case the caller reports a retryable skip and charges nothing.
+   */
+  private async awaitHeldSuggestion(
+    ctx: ServiceContext, messageId: string, ohboxPolicy: OhboxPolicy, deadline: number,
+  ): Promise<ScreenerItem["aiSuggestion"] | undefined> {
+    // The budget is checked BEFORE the first sleep, so a request that has already spent it on an
+    // earlier sender does exactly one read here and returns — not one read plus a pointless wait.
+    for (;;) {
+      const stored = await this.storedSuggestions(ctx, [messageId], ohboxPolicy);
+      const found = stored.get(messageId);
+      if (found) return found;
+      if (Date.now() >= deadline) return undefined;
+      await new Promise<void>((resolve) => { setTimeout(resolve, INFLIGHT_POLL_MS); });
+    }
+  }
+
   private async store(ctx: ServiceContext, messageId: string, result: ClassifierResultLike): Promise<void> {
     await storeScreenerSuggestion(asTx(ctx), {
       accountId: ctx.accountId,

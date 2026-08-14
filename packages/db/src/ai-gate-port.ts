@@ -71,11 +71,37 @@ export type AiRefusalReason = "out_of_credits" | "ai_disabled" | EntitlementReas
  *  · `refusal: "state"` — the subscription may not spend at all; `reason` says which state.
  *  · `refusal: "quantity"` — the plan could spend, but the balance is empty.
  *  · `refusal: "fault"` — we do not know, because something broke. Never a payment demand.
+ *  · `refusal: "inflight"` — nothing is wrong at all: another caller holds the exclusive claim on
+ *    this exact work and is running the model for it right now. See below.
  */
 export type AiSpendOutcome =
   | { permitted: true; charged: boolean; attempt: string }
   | { permitted: false; refusal: "state" | "quantity"; reason: AiRefusalReason }
-  | { permitted: false; refusal: "fault"; error: unknown };
+  | { permitted: false; refusal: "fault"; error: unknown }
+  /*
+   * NOT A REFUSAL OF THE ACCOUNT — A REFUSAL OF THE DUPLICATE, and the distinction is the whole
+   * of SEC3-MONEY-1's fix.
+   *
+   * The gate used to answer a second concurrent caller `permitted: true, charged: false`, which
+   * is the right answer to *"is this work paid for?"* and the wrong answer to *"should I call the
+   * model?"* — the first caller is still inside its own call, so proceeding buys a second paid
+   * call for one credit. On an exclusive gate that caller is told this instead.
+   *
+   * Three obligations follow for anyone handling it, and each of them has been got wrong once:
+   *
+   *  · **never charge for it, and never demand payment because of it.** The account is fully
+   *    funded and its subscription is healthy; a 402 here would be a bill for someone else's
+   *    concurrency. It is not `quantity` and it is not `state`;
+   *  · **it is per-SOURCE, not per-account.** A batch loop must move to its next item rather than
+   *    stop the run — every other refusal applies to every remaining item and this one applies to
+   *    exactly one;
+   *  · **it is transient by construction.** The holder finishes or its claim expires (bounded by
+   *    `AI_CLAIM_TTL_MS`), so retrying is the correct instruction to give a caller — and the
+   *    retry is free, because the holder's charge is what pays for it.
+   *
+   * `source` is echoed back so a caller can wait on, or re-read, the work it names.
+   */
+  | { permitted: false; refusal: "inflight"; source: string };
 
 /**
  * The AI spend gate, as the narrow port every call site sees.
@@ -159,4 +185,22 @@ export interface AiCreditGate {
    * must not replace the diagnosis with itself.
    */
   refundAttempt(attempt: string, meta?: Record<string, unknown>): Promise<void>;
+  /**
+   * THE WORK IS OVER — give up the exclusive claim {@link spend} took for `source`.
+   *
+   * Call it when the model call ends, **whichever way it ended**. Releasing after a failure is as
+   * important as after a success: the charge stays (an open attempt is what makes the retry free)
+   * and a claim left behind would make that free retry wait out the TTL for nothing.
+   *
+   * OPTIONAL on the port, and deliberately so. A gate with no exclusivity has nothing to release,
+   * and the narrow test doubles this port exists to admit (`{ tryDebit: async () => false }`)
+   * must stay valid — a required method here would have been a compile error in every one of them
+   * and bought nothing. Call it as `await gate.release?.(source)`.
+   *
+   * Forgetting it is bounded rather than fatal: the claim expires on its own and the next caller
+   * takes it over, so the cost is at most one TTL of exclusivity on one source and never any
+   * money. Like `refund`, it **never throws** — it runs in `finally` blocks whose job is to let
+   * the original outcome through.
+   */
+  release?(source: string): Promise<void>;
 }

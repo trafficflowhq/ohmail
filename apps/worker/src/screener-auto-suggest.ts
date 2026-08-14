@@ -299,8 +299,28 @@ export async function screenerAutoSuggestPass(
     // account spend" in the codebase, and the day somebody wired it to the hosted side by mistake
     // nothing would refuse. `charged` stays 0 there, which is the truth — a standalone install
     // moves no credits because it has none.
+    const source = screenerLedgerSource(c.messageId);
     if (gate) {
-      const outcome = await gate.spend(screenerLedgerSource(c.messageId), { messageId: c.messageId });
+      const outcome = await gate.spend(source, { messageId: c.messageId });
+      // ── SOMEBODY IS ALREADY BUYING THIS ONE: SKIP THE CANDIDATE, NOT THE PASS ─────────────
+      //
+      // `continue`, where every other refusal below `break`s, and the difference is the whole
+      // reason this branch is separate. The other three are properties of the ACCOUNT — an empty
+      // balance, a subscription that may not spend, an unwell ledger — so every remaining
+      // candidate would be refused for the same reason and continuing is N useless round trips.
+      // This one is a property of ONE MESSAGE: the user is pressing Suggest for that sender in
+      // their browser right now, which is precisely the collision SEC3-MONEY-1 named and which
+      // needs no unusual behaviour from anybody, since this pass and that surface select the same
+      // representative held message by construction. The other candidates are unaffected.
+      //
+      // Nothing is lost by skipping: the request path is buying the verdict and storing it, and
+      // `selectCandidates` filters out messages that have one — so the next cycle simply does not
+      // see this candidate again. And it is NOT counted in `stopped`, because the pass was not
+      // stopped and reporting it as such would make a healthy cycle read as a refusal.
+      if (!outcome.permitted && outcome.refusal === "inflight") {
+        log.info("screener_auto_suggest_inflight", { accountId, messageId: c.messageId });
+        continue;
+      }
       if (!outcome.permitted) {
         // FIRST REFUSAL STOPS THE ACCOUNT'S PASS FOR THIS CYCLE. Every remaining candidate would be
         // refused for the same reason — the balance, the subscription state, or the ledger — so
@@ -317,6 +337,23 @@ export async function screenerAutoSuggestPass(
       // call. A `charged: false` is a free retry of an attempt already on record — reporting it as
       // spend would say the account paid twice for one message.
       if (outcome.charged) result.charged += AI_ACTION_COST;
+
+      // ── A FREE RETRY LOOKS FOR THE RESULT IT IS A RETRY OF (SEC3-MONEY-1) ────────────────
+      //
+      // `charged: false` says the gate found this work already paid for, and until this read that
+      // was taken as leave to call the model. It is the last window in which one credit can still
+      // buy two paid calls: `selectCandidates` ran once at the top of this pass, so a request
+      // that bought this sender AFTER that query and released its claim leaves this loop holding
+      // a candidate list that predates the answer. The claim cannot help — it has been released,
+      // correctly, because the work is over.
+      //
+      // So the question is re-asked here, inside the exclusive region, where it sees everything
+      // any earlier holder committed. NOT when `charged` is true: that is a fresh attempt on work
+      // whose previous attempt was refunded or aged out, and it is a purchase of a NEW verdict.
+      if (!outcome.charged && await hasStoredSuggestion(db, accountId, c.messageId)) {
+        await gate.release?.(source);
+        continue;
+      }
     }
 
     let verdict;
@@ -339,6 +376,10 @@ export async function screenerAutoSuggestPass(
       // engine hands in a classifier that is itself withheld after repeated faults, so a model
       // server somebody quit costs one call on the first drain and none on the drains after it.
       log.warn("screener_auto_suggest_model_failed", { accountId, messageId: c.messageId, err });
+      // The claim goes back before the pass stops, for the reason the request path gives: the
+      // charge stands and buys a free retry next cycle, and a claim left behind would make that
+      // retry wait out the TTL first.
+      await gate?.release?.(source);
       result.stopped = "model_unavailable";
       break;
     }
@@ -351,6 +392,11 @@ export async function screenerAutoSuggestPass(
       rationale: verdict.rationale,
       spam: verdict.spam,
     });
+    // RELEASED AFTER THE STORE AND NEVER BEFORE IT. Between a release and the insert there is a
+    // window with no suggestion on record and nothing holding the source, and a request landing
+    // in it would be told `duplicate` — already paid for, proceed — and call the model a second
+    // time. That is the defect this claim exists to stop, narrower and harder to see.
+    await gate?.release?.(source);
     result.bought++;
   }
 
@@ -421,6 +467,28 @@ export async function screenerAutoSuggestPass(
  * batch takes the FRONT of its queue instead — that one is answering "what is this person looking
  * at right now", which is a different question from "what has been waiting longest".
  */
+/**
+ * Is there already a stored suggestion for this message? One indexed point read.
+ *
+ * The same question `selectCandidates`' `NOT EXISTS` arm asks, asked again for ONE message at the
+ * moment the pass is about to spend tokens on it. It is not redundant with that arm: this one
+ * runs inside the exclusive claim, so it sees writes that landed after the candidate query — see
+ * its call site. Kept as a narrow `select 1` rather than reusing a projection, because nothing
+ * here needs the verdict, only its existence.
+ */
+async function hasStoredSuggestion(db: Tx, accountId: string, messageId: string): Promise<boolean> {
+  const [row] = await db.select({ id: routingDecisions.id })
+    .from(routingDecisions)
+    .where(and(
+      // `account_id` LEADS, never filters a cross-account result.
+      eq(routingDecisions.accountId, accountId),
+      eq(routingDecisions.messageId, messageId),
+      eq(routingDecisions.inputProvenance, SCREENER_SUGGESTION_PROVENANCE),
+    ))
+    .limit(1);
+  return row !== undefined;
+}
+
 async function selectCandidates(
   db: Tx, opts: { accountId: string; watermark: Date; limit: number },
 ): Promise<Candidate[]> {
