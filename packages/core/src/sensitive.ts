@@ -1478,6 +1478,307 @@ export const SEEDED_INDETERMINATE_CEILING = 0.05;
 const CODE =
   /\b([0-9]{4,8}|[A-Z0-9]{6,10}|[0-9]{3,4}[-\s][0-9]{3,4}|[A-Z0-9]{3,4}[-\s][A-Z0-9]{3,4})\b|(?<![\p{L}\p{Nd}_])(\p{Nd}{4,8}|\p{Nd}{3,4}[-\s]\p{Nd}{3,4})(?![\p{L}\p{Nd}_])/gu;
 
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+ * 7a. THE SHORT ONE-TIME CODE — the shapes {@link CODE} and {@link B64_RUN} both step over
+ * ════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ── WHY THIS SECTION EXISTS, AND WHAT WAS MEASURED ───────────────────────────────────────────
+ *
+ * {@link redactEncodedRuns}'s header used to close its own bound like this: *"a base64 fragment
+ * SHORTER than {@link B64_RUN}'s floor is not blanked here — but it is below
+ * {@link decodeEmbedded}'s floor too, so it is equally invisible to the detection this product
+ * has; nothing the screen can see is left unredacted."*
+ *
+ * **That argument assumes the screen fired BECAUSE of the encoded run. It usually does not.** The
+ * screen fires on the SUBJECT's vocabulary — "your login code", "Ihr Bestätigungscode" — and then
+ * the redactor is handed a snippet whose credential is in a form no pass reaches. A six-digit code
+ * `482913` base64-encoded is `NDgyOTEz`: **eight characters**, half of `B64_RUN`'s floor. The
+ * payload leaves marked `redacted: true`, describing a transform that removed nothing, and one
+ * decode at the model vendor recovers the live credential.
+ *
+ * Measured on this branch before any of the code below existed, over payloads the screen already
+ * flagged (`redacted: true` reported in every one). Each row is the SNIPPET as it left:
+ *
+ * | framing                        | value as sent                     | removed? |
+ * |--------------------------------|-----------------------------------|----------|
+ * | `Your login code`              | `NDgyOTEz`      (b64 of `482913`) | no       |
+ * | `Your login code`              | `NDgyOTEzMzc=`  (b64 of 8 digits) | no       |
+ * | `Your verification code`       | `QTNGOUtR`      (b64 of `A3F9KQ`) | no       |
+ * | `Your login code`              | `%34%38%32%39%31%33`              | no       |
+ * | `Your login code`              | `&#52;&#56;&#50;&#57;&#49;&#51;`  | no       |
+ * | `Your login code`              | `&#x34;&#x38;…`                   | no       |
+ * | `Your verification code`       | `a3F9kQ`        (mixed case)      | no       |
+ * | `Your verification code`       | `a3f9c1`        (lower-case hex)  | no       |
+ * | `Ihr Bestätigungscode`         | `a3F9kQ`                          | no       |
+ * | `Confirm your email`           | `bcpq-tsrn-mxvl` (grouped)        | no       |
+ * | `Your verification code`       | `482913` / `A3F9KQ`               | YES      |
+ *
+ * Only the last row — the plain digit run and the UPPER-case alphanumeric — was ever reached, by
+ * {@link CODE}. Everything above it is the same defect wearing a different encoding.
+ *
+ * ── WHY NOT SIMPLY LOWER THE FLOOR ───────────────────────────────────────────────────────────
+ *
+ * A blanket six-character alphanumeric rule eats half of ordinary mail, and a blanket
+ * six-character base64 rule blanks every six-letter word. The precision comes from asking a
+ * different question instead of a looser one:
+ *
+ *  · for an ENCODED run, DECODE IT AND LOOK. `NDgyOTEz` decodes to `482913`, which is a
+ *    credential value; `Q29uZmlybQ` decodes to `Confirm`, which is a word; and eight characters of
+ *    an ordinary word decode to bytes that are not UTF-8 at all. The run is blanked on what it
+ *    CONTAINS, not on how long it is — so the floor can go all the way down to four bytes without
+ *    costing anything. Both false positives in that sentence were found by running the predicate
+ *    over a word list, not reasoned about: `Q29uZmlybQ`→`Confirm` and `aGVsbG8gd29ybGQ`→`hello
+ *    world` are the two that a shape-only test admitted, and {@link looksLikeCredentialValue}'s
+ *    digit / pronounceability arm is what rejects them.
+ *  · for a PLAIN token, the discriminator is the same one {@link CODE} already uses on the
+ *    upper-case arm — a shape that is not a word — plus, for the letters-only shapes, the FRAME
+ *    the mail puts around it: sitting directly after a credential noun, or standing alone on its
+ *    own line. The vocabulary is {@link CRED_NOUN_SUBSTR} and {@link CRED_NOUN_GENERIC}, reused
+ *    rather than restated, so there is one lexicon for both locales and not two that drift.
+ *
+ * All of it runs ONLY on a payload {@link screenOutboundText} has already flagged, exactly like
+ * every other pass here, so ordinary mail is byte-identical.
+ */
+
+/** Latin vowels including the accented ones, and `y`, which carries a syllable in Welsh and in `rhythm`. */
+const VOWEL = /[aeiouyàáâãäåèéêëìíîïòóôõöùúûüýÿ]/i;
+
+/**
+ * A word has vowels; a randomly drawn code usually does not. `bcpq`, `tsrn`, `KMXQR` are codes;
+ * `Confirm`, `ready`, `hello` are not.
+ *
+ * The threshold is deliberately harsh (**under a quarter**), because German prose is vowel-poor in
+ * exactly this range — `nicht` is 1-in-5 and `schritt` is 1-in-7 — and this predicate is only ever
+ * consulted in a position a word can occupy. It is therefore paired with {@link STOPWORDS}
+ * everywhere it is used, and never used on its own to decide an unframed token.
+ */
+function looksUnpronounceable(token: string): boolean {
+  const letters = token.replace(/[^\p{L}]/gu, "");
+  if (letters.length < 4) return false;
+  let vowels = 0;
+  for (const ch of letters) if (VOWEL.test(ch)) vowels++;
+  return vowels / letters.length < 0.25;
+}
+
+/**
+ * The shape a one-time code occupies: one 4–12 run, or 2–4 hyphen-joined groups of 3–6
+ * (`482-913`, `bcp-qts`).
+ *
+ * **A SPACE IS NOT A GROUP SEPARATOR HERE, and that is not an oversight.** It was one for an hour,
+ * and the corpus caught it twice in the same run: `hello world` satisfied the grouped arm as two
+ * five-character groups, and `Ihr Code lautet a3F9kQ` satisfied it as four — so a whole German
+ * sentence was a "credential value" and the standalone-line rule blanked the line. The
+ * space-grouped DIGIT shape that providers really use (`448 213`) is not lost by this: {@link CODE}
+ * has carried `[0-9]{3,4}[-\s][0-9]{3,4}` since before any of this, and it runs first.
+ */
+// THE GROUPED ALTERNATIVE COMES FIRST, and that ordering is load-bearing wherever this source is
+// used UNANCHORED. Alternation is ordered, so with the single run first, `bcpq-tsrn-mxvl` matched
+// `bcpq`, the terminator `(?![-A-Za-z0-9_])` was satisfied by the hyphen, and the payload left as
+// `[REDACTED]-tsrn-mxvl` — a PARTIALLY redacted secret, which is the failure mode
+// {@link redactSensitiveText}'s ordering comment already names as worse than none. The hyphen is
+// in the terminator for the same reason: a run of five groups now matches nothing rather than its
+// first four.
+const VALUE_SHAPE_SRC = "[A-Za-z0-9]{3,6}(?:-[A-Za-z0-9]{3,6}){1,3}|[A-Za-z0-9]{4,12}";
+const VALUE_SHAPE = new RegExp(`^(?:${VALUE_SHAPE_SRC})$`);
+
+/**
+ * Is this string a credential VALUE rather than a word?
+ *
+ * Two arms, and the first carries almost all of the traffic. **A digit inside the run** is the
+ * discriminator that separates `a3F9kQ`, `a3f9c1`, `482913` and `bcp-1ts` from every word in every
+ * language this product reads — prose does not put digits inside words. The second arm is for the
+ * letters-only draws (`KMXQR`, `bcpq-tsrn-mxvl`): unpronounceable AND not a function word, and it
+ * is only ever reached from a FRAMED position, never from open text.
+ */
+function looksLikeCredentialValue(token: string): boolean {
+  if (!VALUE_SHAPE.test(token)) return false;
+  const compact = token.replace(/[- ]/g, "");
+  if (/[0-9]/.test(compact)) return true;
+  // A Capitalised word is a NAME, not a code. Measured: `Schmidt` alone on the signature line of a
+  // verification mail is 1 vowel in 7 and was blanked. Providers draw codes in one case —
+  // `bcpqtsrn`, `KMXQR` — so refusing the `Xxxxx` shape costs the letters-only arm nothing.
+  if (/^\p{Lu}\p{Ll}+$/u.test(compact)) return false;
+  return looksUnpronounceable(compact) && !STOPWORDS.has(compact.toLowerCase());
+}
+
+/**
+ * A short base64 run, BELOW {@link B64_RUN}'s floor — where a real one-time code lives.
+ *
+ * Six characters is the floor because four bytes (`1234`) encode to six plus padding, and four
+ * digits is the shortest PIN {@link CODE} recognises. The ceiling is fifteen so this pass and
+ * {@link B64_RUN} partition the space instead of overlapping: sixteen and up is already blanked
+ * unconditionally, and that rule is untouched — it exists for a different reason (a run that long
+ * is machine text whatever it decodes to) and keeps its floor.
+ */
+const SHORT_B64_RUN = /(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{6,15}={0,2}(?![A-Za-z0-9+/=])/g;
+/** Percent escapes, four or more: `%34%38%32%39%31%33`. Matched by no pass at all before this. */
+const PCT_ESCAPE_RUN = /(?:%[0-9A-Fa-f]{2}){4,}/g;
+/** Numeric HTML entities, decimal or hex, four or more: `&#52;&#56;…` / `&#x34;&#x38;…`. */
+const ENTITY_RUN = /(?:&#(?:[Xx][0-9A-Fa-f]{1,6}|[0-9]{1,7});){4,}/g;
+
+/**
+ * Decode one candidate run and answer whether it was carrying a credential.
+ *
+ * `Buffer.from(…, "base64")` SUBSTITUTES U+FFFD rather than throwing on bytes that are not UTF-8
+ * — the measurement {@link looksLikeText} was written under — so the replacement character is the
+ * decoder telling us the run was never base64 in the first place. {@link VALUE_SHAPE} then rejects
+ * anything that is not ASCII alphanumeric, which is every accidental decode that survives.
+ */
+function decodesToCredential(decode: () => string): boolean {
+  let plain: string;
+  try { plain = decode(); } catch { return false; }
+  if (!plain || plain.includes(REPLACEMENT_CHAR)) return false;
+  return looksLikeCredentialValue(plain.trim());
+}
+
+function redactShortEncodedRuns(text: string): string {
+  return text
+    .replace(SHORT_B64_RUN, (run) =>
+      decodesToCredential(() => Buffer.from(run, "base64").toString("utf8")) ? "[REDACTED]" : run)
+    .replace(PCT_ESCAPE_RUN, (run) =>
+      decodesToCredential(() => decodeURIComponent(run)) ? "[REDACTED]" : run)
+    .replace(ENTITY_RUN, (run) =>
+      decodesToCredential(() => decodeEntities(run)) ? "[REDACTED]" : run);
+}
+
+/**
+ * A 4–12 character run carrying BOTH a letter and a digit — `a3F9kQ`, `a3f9c1`, `q3wvsxca`.
+ *
+ * Unconditional within a code-framed payload, and that is a strictly SMALLER step than the one
+ * {@link CODE} already takes: its `[A-Z0-9]{6,10}` arm blanks `NEWSLETTER` and `REMINDER`, which
+ * are words, while nothing here matches a word at all. The residue is version-shaped tokens —
+ * `SHA256`, `iPhone15` — blanked inside an authentication mail, which is the trade
+ * {@link OPAQUE_TOKEN}'s docblock already prices for URL tails.
+ */
+const MIXED_ALNUM_TOKEN =
+  /(?<![A-Za-z0-9_])(?=[A-Za-z0-9]{4,12}(?![A-Za-z0-9_]))(?=[A-Za-z0-9]*[0-9])(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{4,12}/g;
+
+/**
+ * The value sitting DIRECTLY after a credential noun: `code: bcp-qts`, `Ihr Code lautet …`,
+ * `codice di verifica: …`. The noun list is {@link CRED_NOUN_SUBSTR} and
+ * {@link CRED_NOUN_GENERIC} spliced in by `.source` — the same lexicon the classifier's numeric
+ * backstop reads, so a locale added there is added here, and there is no second list to forget.
+ *
+ * Adjacency is what makes the letters-only arm of {@link looksLikeCredentialValue} safe to
+ * consult: `Your code is ready` puts `ready` in this position and `ready` is pronounceable, `Ihr
+ * Code ist nicht mehr gültig` puts `nicht` here and `nicht` is a {@link STOPWORDS} entry, and
+ * `one-time` is never in this position because it precedes the noun rather than following it.
+ */
+// NAMED groups, because {@link CRED_NOUN_GENERIC} carries a capturing group of its own and
+// splicing its `.source` in therefore shifts every positional index by one. Read positionally,
+// this rule handed `looksLikeCredentialValue` the matched NOUN instead of the value after it and
+// redacted nothing — a pass that ran, matched, and did no work.
+// The separator between the noun and the value: an optional copula, an optional colon, optional
+// emphasis asterisks, each with bounded whitespace around it. **BOUNDED and not `[ \t]*`**, because
+// four consecutive unbounded star groups backtrack polynomially on a long run of spaces that ends in
+// no match — a subject is not length-capped the way `bodySnippet`'s 200 characters are, and this
+// runs on sender-controlled bytes. Eight is generous enough for the aligned `Code:     482913`
+// layout templates produce.
+const CUE_GAP = "[ \\t]{0,8}(?:(?:is|ist|lautet|est|è|es|sind|são)[ \\t]{0,8})?"
+  + "(?:[:=][ \\t]{0,8})?\\*{0,2}[ \\t]{0,8}";
+const CUE_ADJACENT_VALUE = new RegExp(
+  `(?<cue>(?:${CRED_NOUN_SUBSTR.source}|${CRED_NOUN_GENERIC.source})${CUE_GAP})`
+  + `(?<val>${VALUE_SHAPE_SRC})(?![-A-Za-z0-9_])`,
+  "giu",
+);
+
+/**
+ * ── THE COLON RULE, AND THE TRANSPORT FACT THAT FORCED IT ────────────────────────────────────
+ *
+ * `Here is the code you need: KMXQR` puts four words between the noun and the value, so
+ * {@link CUE_ADJACENT_VALUE} does not reach it. In a BODY that shape usually presents the code on
+ * its own line and the standalone rule below would take it — **but the snippet this function
+ * actually receives has had its newlines collapsed.** `bodySnippet` (`pipeline.ts`) is
+ * `textBody.replace(/\s+/g, " ").trim().slice(0, 200)`, so by the time any model payload is built
+ * there are no lines left to stand alone on. A rule written against the body's layout would have
+ * been correct and dead.
+ *
+ * What survives the collapse is the COLON. So: a value directly after a colon, with a credential
+ * cue within {@link CODE_PROXIMITY} of that colon — the same distance and the same
+ * {@link hasCredentialCue} the classifier's numeric backstop uses, commerce rejection included, so
+ * `order code: 4821` is excluded here exactly as it is there.
+ *
+ * The colon is what keeps this from being "any word near the word code". `Your code is ready` and
+ * `Ihr Code ist nicht mehr gültig` have no colon; `Fordern Sie durch Klick einen neuen Code an` has
+ * none either, which matters because `durch` is one vowel in five and would otherwise be blanked by
+ * the letters-only arm.
+ */
+const COLON_FRAMED_VALUE = new RegExp(`:[ \\t]{0,8}\\*{0,2}[ \\t]{0,8}(${VALUE_SHAPE_SRC})(?![-A-Za-z0-9_])`, "gu");
+
+/**
+ * A token standing ALONE on its line — the way a provider presents a code in the BODY, and a
+ * position ordinary prose does not occupy. Leading/trailing markup and punctuation are peeled
+ * first, because a plain-text rendering of a bold HTML code arrives as `**bcpq-tsrn**`.
+ *
+ * Kept even though the collapse above means the live Screener payload never contains a newline:
+ * `redactForModel` is exported, the snippet's shape is `pipeline.ts`'s decision rather than this
+ * module's, and a rule that costs nothing is the wrong thing to remove on the strength of another
+ * file's current behaviour.
+ */
+const STANDALONE_TRIM = /^[\s*_>#|-]+|[\s*_.,:;!|-]+$/g;
+
+function redactFramedCodes(text: string): string {
+  const afterLines = text.split("\n").map((line) => {
+    const core = line.replace(STANDALONE_TRIM, "");
+    if (!core || !looksLikeCredentialValue(core)) return line;
+    return line.replace(core, "[REDACTED]");
+  }).join("\n");
+  const afterCue = afterLines.replace(CUE_ADJACENT_VALUE, (whole: string, ...rest: unknown[]) => {
+    const groups = rest[rest.length - 1] as Record<string, string | undefined> | undefined;
+    const cue = groups?.cue ?? "";
+    const val = groups?.val ?? "";
+    return val && looksLikeCredentialValue(val) ? `${cue}[REDACTED]` : whole;
+  });
+  // `afterCue`, not `afterLines` — the offset a `replace` callback is handed indexes the string
+  // being replaced, and the pass above can change its length. Reading the proximity window out of
+  // the pre-pass string would slide it by however many characters the cue rule removed.
+  const afterColon = afterCue.replace(COLON_FRAMED_VALUE, (whole: string, val: string, at: number) => {
+    if (!looksLikeCredentialValue(val)) return whole;
+    const window = afterCue.slice(Math.max(0, at - CODE_PROXIMITY), at + 1);
+    return hasCredentialCue(window, window) ? whole.replace(val, "[REDACTED]") : whole;
+  });
+  return afterColon.replace(MIXED_ALNUM_TOKEN, "[REDACTED]");
+}
+
+/**
+ * Run `f` over everything that is NOT inside a URL.
+ *
+ * {@link redactUrlTails} owns URLs and deliberately KEEPS THE HOST — `url7965.thechosen.tv` is the
+ * single most useful routing signal in a payload and it is not a secret. `url7965` is also a
+ * letter-and-digit run, so without this the host rule and the token rule would contradict each
+ * other and the newer one would win.
+ */
+function outsideUrls(text: string, f: (s: string) => string): string {
+  URL_RUN.lastIndex = 0;
+  const out: string[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = URL_RUN.exec(text)) !== null) {
+    out.push(f(text.slice(last, m.index)), m[0]);
+    last = m.index + m[0].length;
+  }
+  out.push(f(text.slice(last)));
+  return out.join("");
+}
+
+/**
+ * Does the screen's own verdict say a CODE is expected in this payload?
+ *
+ * The gate for the plain-text passes above, and it is read from {@link OutboundScreen} rather
+ * than re-derived. `security_alert` is excluded on purpose: "New sign-in from Chrome on macOS in
+ * Zurich" carries no code, and the device and place are exactly what the user is paying the model
+ * to read. A security alert that DOES frame a code classifies `otp` instead — {@link categoryOf}'s
+ * precedence comment says so — so nothing is lost by the exclusion. `auth_url_token` is excluded
+ * for the same reason: a bare magic link has no code beside it, and {@link redactUrlTails} has
+ * already taken the token.
+ */
+function codeFramed(screen: OutboundScreen): boolean {
+  if (screen.reason === "credential_shape") return true;
+  return screen.category === "otp" || screen.category === "verification"
+    || screen.category === "password_reset";
+}
+
 /**
  * A magic link is a credential in URL form, and {@link CODE} does not reach it — `SECRET-LOGIN-
  * TOKEN` is not a digit run and the `?t=` is not a word boundary away from anything. Redacting
@@ -1770,14 +2071,29 @@ export interface ModelSafeText {
  * and never used as a veto.
  */
 export function redactForModel(subject: string, snippet: string): ModelSafeText {
-  if (screenOutboundText(subject, snippet).safe) return { subject, snippet, redacted: false };
+  // The whole screen, not just `.safe` — {@link codeFramed} reads the category to decide whether
+  // the short-code passes may run, and re-screening each field separately would answer a
+  // different question from the one the sink asked about the joined payload.
+  const screen = screenOutboundText(subject, snippet);
+  if (screen.safe) return { subject, snippet, redacted: false };
+  const framed = codeFramed(screen);
   // Order: QP soft breaks are unfolded first, so a value wrapped across lines is contiguous when
   // {@link CODE} reads it; then the plain-text passes blank values and URL tails; then
   // {@link redactEncodedRuns} blanks every run the embedded decoder could have read — the pass
   // that keeps a base64/QP-encoded credential from leaving in its encoded form. Encoded-last is
   // load-bearing too: whatever the earlier passes leave of a machine run, this one removes.
-  const clean = (t: string): string =>
-    redactEncodedRuns(redactUrlTails(redactSensitiveText(t.replace(QP_SOFT_BREAK, ""))));
+  //
+  // {@link redactFramedCodes} sits between the two, and it is placed there rather than earlier for
+  // one reason: it must run AFTER {@link redactSensitiveText} so that everything `CODE` already
+  // reaches is gone, and OUTSIDE URLs so it cannot contradict {@link redactUrlTails}'s decision to
+  // keep the host. {@link redactShortEncodedRuns} runs last of all, on text whose plain values are
+  // already `[REDACTED]`, so the only runs left for it to decode are genuinely encoded ones.
+  const clean = (t: string): string => {
+    const unfolded = t.replace(QP_SOFT_BREAK, "");
+    const plain = redactUrlTails(redactSensitiveText(unfolded));
+    const short = framed ? outsideUrls(plain, redactFramedCodes) : plain;
+    return redactShortEncodedRuns(redactEncodedRuns(short));
+  };
   return { subject: clean(subject), snippet: clean(snippet), redacted: true };
 }
 
@@ -1846,9 +2162,19 @@ const TAIL_SEGMENT = /[A-Za-z0-9_\-.~+%=]{16,}/g;
  * trade {@link redactUrlTails} makes for URL tails. Hosts survive — `.` is not in the base64
  * alphabet, so a hostname's labels break the run.
  *
- * Bounded honestly: a base64 fragment SHORTER than {@link B64_RUN}'s floor is not blanked here —
- * but it is below {@link decodeEmbedded}'s floor too, so it is equally invisible to the
- * detection this product has; nothing the screen can see is left unredacted.
+ * ── THE BOUND THIS DOCBLOCK USED TO CLAIM WAS SAFE, AND WAS NOT ──────────────────────────────
+ *
+ * It said: *"a base64 fragment SHORTER than {@link B64_RUN}'s floor is not blanked here — but it
+ * is below {@link decodeEmbedded}'s floor too, so it is equally invisible to the detection this
+ * product has; nothing the screen can see is left unredacted."*
+ *
+ * The second clause is true and the conclusion does not follow from it, because the screen does
+ * not have to have fired on the encoded run — it usually fires on the subject's vocabulary, and
+ * then this pass is handed a snippet whose credential is eight characters of base64. See section
+ * 7a and {@link redactShortEncodedRuns}, which closes it by decoding the run instead of measuring
+ * it. THIS rule keeps its sixteen-character floor unchanged: it exists for the different reason
+ * stated above — a run that long is machine text whatever it decodes to — and lowering it would
+ * have blanked every six-letter word in every authentication mail.
  */
 const QP_HEX_RUN = /(?:=[0-9A-Fa-f]{2})+/g;
 /** A quoted-printable soft line break: `=` at end of line — "the value continues on the next". */
