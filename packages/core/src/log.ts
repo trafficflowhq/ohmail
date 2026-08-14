@@ -311,6 +311,21 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // rule: "how long was the database gone" and "how many mailboxes met it" are different
   // quantities, and one key meaning either is not a claim a reviewer can check.
   "outageMs", "faults",
+  // ── a crash the contract deliberately did NOT exit on, added WITH its call site ──
+  //
+  // `survived` is a `++` counter on `uncaught_exception_survived` — the running number of times a
+  // process's crash handlers have met an uncaught throw its host named as survivable, rather than
+  // exiting on it. (Today there is one such shape: a database driver that throws from a timer when
+  // a connection dies with a write still buffered, which is not evidence about the process at all
+  // and whose only effect on `exit(1)` is a restart loop through the outage.) Structurally an
+  // integer naming no mailbox, no address and no path.
+  //
+  // It is on this list because it is the ESCALATION SIGNAL and there is no other: one of these is
+  // a known driver defect riding out an outage, and a thousand is a process that should have died
+  // an hour ago. The line is emitted from the one code path that only runs when something has
+  // already gone wrong, so a census drop would leave `droppedFields=["survived"]` exactly where an
+  // operator is trying to size a suppression — the same failure the `rescued` note above records.
+  "survived",
   // ── alerting (the worker's alert loop and the API's internal alert route) ──
   "alertKey", "alertKeys", "alertSinks", "alertIntervalMs", "rosterIntervalMs",
   "pollIntervalMs", "firing", "delivered", "failedSinks", "oldestSeconds",
