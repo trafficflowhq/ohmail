@@ -416,10 +416,29 @@ function wait(ms: number): Promise<void> {
 }
 
 /** What a door attempt ended as. `status` is what the shell last said, whatever happened. */
+/**
+ * The engine's code for "the account you just signed in as is not the one this mirror holds".
+ *
+ * Named here rather than matched inline because two files read it and a typo would be silent: the
+ * refusal would simply look like any other, and the window would offer no way through it.
+ */
+export const MIRROR_OWNER_MISMATCH = "mirror_owner_mismatch";
+
 export interface DoorResult {
   status: EngineStatus | null;
   /** Null on success. A sentence for the field the person is looking at, never a code. */
   problem: string | null;
+  /**
+   * The sign-in was refused because THIS INSTALL IS MIRRORING A DIFFERENT ACCOUNT.
+   *
+   * Not an error variant so much as an instruction about what the next attempt has to be. The
+   * engine will not activate a session over another account's database, and it is right not to —
+   * but the person asking is very often entitled to switch, and the way to switch is the door
+   * CONFIGURE path: it replaces the engine, and the replacement discards the foreign mirror before
+   * it opens the database. So the chooser reads this and sends the next submit down that path
+   * instead of down the one-request one. See `DoorChooser`.
+   */
+  switchAccount?: boolean;
 }
 
 /**
@@ -530,7 +549,18 @@ export async function signInToCloud(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: address.trim(), password, totp: totp.trim() }),
     });
-    if (!res.ok) return { status: known ?? null, problem: await refusal(res) };
+    if (!res.ok) {
+      const { problem: refusalText, code } = await refused(res);
+      // The engine will not put a session for one account over another account's mirror. Signing
+      // in HERE cannot fix that — this request deliberately does not touch the engine's lifetime —
+      // so the answer carries the flag that sends the next attempt through the door configure,
+      // which replaces the engine and discards the foreign mirror before opening the database.
+      return {
+        status: known ?? null,
+        problem: refusalText,
+        ...(code === MIRROR_OWNER_MISMATCH ? { switchAccount: true } : {}),
+      };
+    }
   } catch (err) {
     return { status: known ?? null, problem: sentence(err) };
   }
@@ -673,7 +703,18 @@ export async function signInToCloudWithCode(
       // reader think either shape might be in play here.
       body: JSON.stringify({ handoffCode: code.trim() }),
     });
-    if (!res.ok) return { status: known ?? null, problem: await refusal(res) };
+    if (!res.ok) {
+      // THE SAME FLAG AS THE PASSWORD PATH, because the hazard is the same one. The browser path
+      // sends no address at all, so a code claimed from a browser signed in to a different account
+      // reaches this install as a session with nowhere legitimate to go — and the engine refuses it
+      // for the reason it refuses the typed one.
+      const { problem: refusalText, code: refusalCode } = await refused(res);
+      return {
+        status: known ?? null,
+        problem: refusalText,
+        ...(refusalCode === MIRROR_OWNER_MISMATCH ? { switchAccount: true } : {}),
+      };
+    }
   } catch (err) {
     return { status: known ?? null, problem: sentence(err) };
   }
@@ -707,6 +748,17 @@ function stalled(status: EngineStatus): string {
  * handler that was trying to explain the first failure.
  */
 async function refusal(res: Response): Promise<string> {
+  return (await refused(res)).problem;
+}
+
+/**
+ * A refusal as both halves: the sentence for the person, and the CODE for the caller.
+ *
+ * Split out because one refusal is not merely text — `mirror_owner_mismatch` tells the window that
+ * the next attempt has to take a different path, and a reader that only ever saw the message would
+ * have to match on English to find that out.
+ */
+async function refused(res: Response): Promise<{ problem: string; code: string | null }> {
   let body = "";
   try {
     body = await res.text();
@@ -715,12 +767,16 @@ async function refusal(res: Response): Promise<string> {
   }
   try {
     const parsed = JSON.parse(body) as { error?: { message?: string; code?: string } };
+    const code = parsed.error?.code ?? null;
     const message = parsed.error?.message ?? parsed.error?.code;
-    if (message) return message;
+    if (message) return { problem: message, code };
   } catch {
     /* not JSON */
   }
-  return res.statusText ? `${res.status} ${res.statusText}` : `The request was refused (${res.status}).`;
+  return {
+    problem: res.statusText ? `${res.status} ${res.statusText}` : `The request was refused (${res.status}).`,
+    code: null,
+  };
 }
 
 /** Whatever was thrown, as something a person can read. */

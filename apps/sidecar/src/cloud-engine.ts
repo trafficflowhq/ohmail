@@ -11,6 +11,7 @@ import {
   createCloudAuth, loadSealedTokens, sealTokens, type CloudAuth, type CloudTokens,
 } from "./cloud-auth.js";
 import {
+  cloudIdentity,
   cloudSignIn,
   CloudSignInError,
   newDesktopLinkPair,
@@ -171,6 +172,33 @@ const json = (body: unknown, status = 200): Response =>
 export const MIRROR_OWNER_FILE = "mirror-owner";
 
 /**
+ * How two addresses are compared for the purpose of "is this the same account".
+ *
+ * One function rather than two spellings, because the launch check and the sign-in check must
+ * agree exactly: a difference of case or padding that one of them read as a change of owner and
+ * the other did not would be a discard on every launch, or a foreign session admitted.
+ */
+const sameOwner = (v: string): string => v.trim().toLowerCase();
+
+/**
+ * The address this mirror was bootstrapped for, or null when the marker file is ABSENT.
+ *
+ * Written by {@link enforceMirrorOwner} at construction, so from the moment the engine is serving
+ * it holds exactly the address the local world was built for and the reads are scoped by.
+ *
+ * A file that EXISTS AND IS EMPTY returns `""`, and the distinction is deliberate rather than
+ * pedantic: absent means "this install predates the marker", which is adopted, and empty means "a
+ * write of this marker was torn", which is an owner that cannot be established and must never be
+ * read as a match. Collapsing the two would turn a crash between the discard and the rewrite into
+ * the one thing this whole mechanism exists to refuse.
+ */
+export function readMirrorOwner(dataDir: string): string | null {
+  const ownerPath = join(dataDir, MIRROR_OWNER_FILE);
+  if (!existsSync(ownerPath)) return null;
+  return readFileSync(ownerPath, "utf8").trim();
+}
+
+/**
  * ONE MIRROR, ONE ACCOUNT — enforced before the database is opened.
  *
  * The cloud mirror's directory is keyed by MODE, not by account: `src-tauri/src/config.rs`
@@ -191,6 +219,17 @@ export const MIRROR_OWNER_FILE = "mirror-owner";
  * so they are discarded with it; the next launch establishes a session for the new address and
  * bootstraps from `since=0`.
  *
+ * ── AND IT IS NOT THE ONLY PLACE THE QUESTION IS ASKED ────────────────────────────────────────
+ *
+ * This settles a LAUNCH. It cannot settle a sign-in, which happens after the database is open and
+ * against a mirror this function has already approved for a different address: `signOut` leaves
+ * the mirror, the cursor and the marker where they are, so the next `POST /cloud/signin` may carry
+ * another account's credentials. That handler therefore resolves the hosted identity from the
+ * minted pair and compares it against the marker written here, and refuses rather than activating.
+ * The DISCARD stays here — the only point at which the files can be removed without a live PGlite
+ * holding them — and a refused sign-in sends the shell back through a door configure, which is a
+ * relaunch, which is this function.
+ *
  * Called BEFORE {@link openLocalDb}, so nothing holds the files being removed. Idempotent: a
  * launch whose owner matches — every ordinary relaunch — removes nothing and only rewrites the
  * same marker. An install that predates this marker (a `pgdata` with no owner file) is ADOPTED as
@@ -201,9 +240,10 @@ export const MIRROR_OWNER_FILE = "mirror-owner";
  * @returns whether a foreign mirror was discarded — for the log line and the test, nothing reads it.
  */
 export function enforceMirrorOwner(dataDir: string, address: string, log?: Diagnostic): boolean {
-  const served = address.trim().toLowerCase();
+  const served = sameOwner(address);
   const ownerPath = join(dataDir, MIRROR_OWNER_FILE);
-  const prior = existsSync(ownerPath) ? readFileSync(ownerPath, "utf8").trim().toLowerCase() : null;
+  const priorRaw = readMirrorOwner(dataDir);
+  const prior = priorRaw === null ? null : sameOwner(priorRaw);
   const foreign = prior !== null && prior !== served;
   if (foreign) {
     // The database, its cursor and the previous account's sealed session are all stale. Remove
@@ -345,6 +385,15 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       if (!sealed && keyProvider) {
         await sealTokens(sealPath, keyProvider, launchTokens);
       }
+      // NO IDENTITY ROUND TRIP HERE, and that is a decision rather than an omission. The mirror-owner
+      // check the sign-in path runs (see `POST /cloud/signin`) would have to dial the hosted
+      // service before this engine could serve anything, which would make a launch with no
+      // network a launch with no mailbox — and reading your own mirrored mail offline is the
+      // point of a mirror. It is safe to skip because a SEALED pair cannot be foreign: it is
+      // written inside this data directory, and `enforceMirrorOwner` deletes it, above, in the
+      // same breath as the mirror whenever that address changes. `config.tokens` is the same pair
+      // arriving from the environment on a launch that has no seal yet, against a directory that
+      // check has just adopted or emptied.
       activate(launchTokens);
     } else {
       // NOT A FAILURE. See the pre-auth section in this file's header: the engine serves
@@ -489,16 +538,87 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           }
           throw err;
         }
-        // SEALED BEFORE THE MIRROR IS TOLD ABOUT IT. A pair that could not be written to disk is a
-        // session that survives until the next quit and then silently is not there — better to say
-        // so now, while the person who typed the password is still looking at the app.
-        if (keyProvider) await sealTokens(sealPath, keyProvider, tokens);
         // SPENT. The commitment it was made against belongs to a code that has just been consumed,
         // so keeping it would only mean a later handoff silently reusing a digest the browser has
-        // already published. Cleared on success only: a claim that FAILED did not consume the code
-        // (the hosted side's binding is a predicate on the burn), and the person whose browser is
-        // still showing that code must be able to press the button again.
+        // already published. Cleared once the pair EXISTS — which is the moment the code was
+        // burned — and not once the sign-in has been admitted below: a claim that FAILED did not
+        // consume the code (the hosted side's binding is a predicate on the burn) and leaves this
+        // line unreached, so the person whose browser is still showing that code can press the
+        // button again, while a claim that succeeded and is then turned away at the mirror-owner check
+        // has still spent it.
         linkVerifier = null;
+
+        // ── ONE MIRROR, ONE ACCOUNT — THE SECOND ENFORCEMENT POINT ────────────────────────────
+        //
+        // `enforceMirrorOwner` runs at construction and settles the question for a LAUNCH. It
+        // cannot settle it for a sign-in, because a sign-in happens after the database is open:
+        // signing out leaves the mirror, the cursor and the marker exactly where they are (see
+        // `signOut`), so the very next `POST /cloud/signin` can carry a DIFFERENT account's
+        // credentials into an engine whose `world`, `db` and cursor are still the previous
+        // account's — and `ctxFor(core.accountId, …)` would then serve that account's mail to this
+        // session. Construction was one entry point too few.
+        //
+        // The comparison is against the mirror's RECORDED OWNER and the resolved HOSTED identity,
+        // and neither of those is an input. `body.email` is what somebody typed and the browser
+        // path sends no address at all, so a check against either would be a check against the
+        // attacker's own claim; `cloudIdentity` asks the account instead. The marker is what
+        // `enforceMirrorOwner` wrote for this data directory, and from a serving engine it always
+        // equals `config.address` — the fallback covers only the impossible-in-practice case of a
+        // marker that has gone missing under a running engine, where the address the local world
+        // was actually built for is the honest thing to compare against.
+        let hostedAddress: string;
+        try {
+          hostedAddress = await cloudIdentity(
+            {
+              baseUrl: config.cloudUrl,
+              ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
+              ...(log ? { log } : {}),
+            },
+            tokens,
+          );
+        } catch (err) {
+          // The same mapping the sign-in itself gets, and the same refusal: an identity that could
+          // not be established is not a session. Nothing has been sealed and nothing activated.
+          if (err instanceof CloudSignInError) {
+            return json({ error: { code: err.code, message: err.message } }, err.status);
+          }
+          throw err;
+        }
+        const recordedOwner = readMirrorOwner(config.dataDir) ?? config.address;
+        if (sameOwner(hostedAddress) !== sameOwner(recordedOwner)) {
+          // REFUSED, AND NOTHING IS KEPT. The pair is not sealed and `activate` is not called, so
+          // `authed` stays null and every read below this stays a `409 not_signed_in` — there is
+          // no window in which this session can reach the previous account's rows.
+          //
+          // The DISCARD is deliberately not done here. Throwing the mirror away means removing
+          // `pgdata` out from under an open PGlite instance and rebuilding the world, the launch
+          // session and every closure that captured them; the constructor already does all of it,
+          // correctly, before the database is opened. So this refuses and names the remedy, and
+          // the shell re-points the door — which restarts the engine and takes the ONE code path
+          // that has always been able to do this. One discard, one place.
+          //
+          // The message never names the other account. Somebody standing at this machine signing
+          // in with their own credentials must not be told whose mail is on it.
+          log?.("cloud_signin_owner_mismatch", { changed: true });
+          return json(
+            {
+              error: {
+                code: "mirror_owner_mismatch",
+                message:
+                  "this install is set up for a different ohmail account, so signing in here has " +
+                  "to start that account's mail over from scratch",
+              },
+            },
+            409,
+          );
+        }
+
+        // SEALED BEFORE THE MIRROR IS TOLD ABOUT IT, and after the mirror-owner check for the reason
+        // above: a foreign pair must not be written into this account's directory even briefly. A
+        // pair that could not be written to disk is a session that survives until the next quit and
+        // then silently is not there — better to say so now, while the person who typed the
+        // password is still looking at the app.
+        if (keyProvider) await sealTokens(sealPath, keyProvider, tokens);
         const live = activate(tokens);
         log?.("cloud_signed_in", { mailboxId: world.mailboxId });
         // NOT AWAITED, and for the reason the launch path does not await it either: a first pull of

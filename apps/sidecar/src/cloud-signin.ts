@@ -216,6 +216,60 @@ async function readJson(res: Response): Promise<unknown> {
 const trimmed = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
 /**
+ * WHOSE ACCOUNT A TOKEN PAIR BELONGS TO — asked of the hosted service, never of the caller.
+ *
+ * A sign-in body names an address, and that address is an INPUT: it is what the person typed into
+ * a field, and on the browser path it is not sent at all. Neither is evidence of which account the
+ * pair that came back actually opens. The mirror-owner decision may not rest on an input, so it
+ * rests on this: one authenticated read of `GET /auth/session`, whose answer is composed by the
+ * account itself from the row the access token resolves to.
+ *
+ * FAIL CLOSED, and that is the whole reason this returns an address or throws rather than
+ * answering "unknown". Its one caller uses the result to decide whether a session may be activated
+ * over a mirror already holding somebody's mail; an unconfirmed identity that fell through as a
+ * match would be the leak this exists to prevent, arriving by way of a network blip. A sign-in that
+ * cannot be attributed is refused, and the pair is discarded unsealed.
+ *
+ * Cheap by construction: it runs once per sign-in, against a host that answered a login a moment
+ * ago. It is deliberately NOT on the launch path — see the sealed-token note in `cloud-engine.ts`.
+ */
+export async function cloudIdentity(opts: CloudSignInOptions, tokens: CloudTokens): Promise<string> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const base = opts.baseUrl.replace(/\/+$/, "");
+  const unconfirmed = (): CloudSignInError =>
+    new CloudSignInError(
+      "identity_unconfirmed",
+      502,
+      "the hosted service would not say which account this sign-in belongs to, so this install " +
+        "cannot tell whether the mail it already holds is yours",
+    );
+
+  let res: Response;
+  try {
+    res = await fetchImpl(`${base}/auth/session`, {
+      headers: { authorization: `Bearer ${tokens.accessToken}` },
+    });
+  } catch (err) {
+    // The ADDRESS is not a log field here for the reason it is not one in `enforceMirrorOwner`:
+    // which account an install is signing in as is the identifying fact the sidecar log census
+    // exists to keep off the line. That the identity could not be resolved is the whole of it.
+    opts.log?.("cloud_identity_unresolved", { err, reason: "the hosted service could not be reached" });
+    throw unconfirmed();
+  }
+  if (!res.ok) {
+    opts.log?.("cloud_identity_unresolved", { status: res.status, reason: "the hosted service refused the read" });
+    throw unconfirmed();
+  }
+  const body = await readJson(res);
+  const email = trimmed((body as { user?: { email?: unknown } } | null)?.user?.email);
+  if (!email) {
+    opts.log?.("cloud_identity_unresolved", { status: res.status, reason: "the answer carried no address" });
+    throw unconfirmed();
+  }
+  return email;
+}
+
+/**
  * Sign in to the hosted account and return the pair the mirror pulls with.
  *
  * Throws {@link CloudSignInError} for every refusal, with a `status` this install can answer its own

@@ -95,6 +95,27 @@ export function DoorChooser({
    */
   const [handedOff, setHandedOff] = useState<string | null>(null);
 
+  /**
+   * THE ENGINE REFUSED A SIGN-IN BECAUSE THIS INSTALL MIRRORS A DIFFERENT ACCOUNT.
+   *
+   * The same kind of remembered fact as `handedOff` above, doing the same kind of job: it selects
+   * which sign-in the NEXT submit takes. A door that is already chosen signs in with one request
+   * and deliberately does not touch the engine's lifetime — which is exactly why that request can
+   * never be the one that switches accounts. The engine will not activate a session over another
+   * account's database (it would be that account's mail in this window), and it cannot discard that
+   * database either, because by then it is open. The one code path that can is the door CONFIGURE:
+   * it replaces the engine, and the replacement throws a foreign mirror away before it opens
+   * anything. So this flips the form onto that path.
+   *
+   * A BOOLEAN AND NOT AN ADDRESS, unlike `handedOff` — the address to use is whatever is in the
+   * field, because switching accounts is precisely the case where the field is the true thing and
+   * the configured door is the stale one. It is never cleared: taking the configure path with the
+   * install's own address again costs a restart and discards nothing, so the worst case of leaving
+   * it set is a few seconds, and the worst case of clearing it too eagerly is a person stuck on a
+   * refusal with no way through.
+   */
+  const [mustSwitch, setMustSwitch] = useState(false);
+
   /* One attempt at a time, and the result travels up whole. A door attempt restarts the engine
      and can take tens of seconds on a first run, so a second press while the first is in flight
      would reconfigure underneath it — the shell would stop an engine that was still starting. */
@@ -105,6 +126,7 @@ export function DoorChooser({
     try {
       const result = await run();
       setProblem(result.problem);
+      if (result.switchAccount) setMustSwitch(true);
       if (!result.problem) onEntered(result);
     } finally {
       setBusy(false);
@@ -127,7 +149,12 @@ export function DoorChooser({
     setBusy(true);
     setProblem(null);
     try {
-      const started = await beginBrowserSignIn(address, cloudAction === "signIn");
+      /* `configured` is false once a switch has been demanded, and that is not a detail. Leaving it
+         true would mint a commitment inside an engine still pointed at the OTHER account, and the
+         claim that followed would be refused all over again — a loop with no way out of it. Passing
+         false reconfigures the door first, which discards the foreign mirror, so the code is claimed
+         against a mirror that already belongs to the account being signed in to. */
+      const started = await beginBrowserSignIn(address, cloudAction === "signIn" && !mustSwitch);
       if (!started.challenge) {
         setProblem(started.problem ?? "The browser sign-in could not be started.");
         return;
@@ -174,14 +201,19 @@ export function DoorChooser({
             signInOnly={cloudAction === "signIn"}
             onSubmit={(address, password, totp) =>
               attempt(() =>
-                cloudAction === "signIn"
+                cloudAction === "signIn" && !mustSwitch
                   ? signInToCloud(address, password, totp)
                   : enterCloudDoor(address, password, totp),
               )
             }
             onSubmitCode={(address, code) =>
               attempt(() =>
-                cloudAction === "signIn" || handedOff !== null
+                /* `handedOff` still wins: a handoff started under `mustSwitch` has ALREADY taken
+                   the configure path (see `startHandoff`), so reconfiguring again here would
+                   discard the verifier the code it is about to send is bound to. The switch only
+                   redirects a code that arrives with no handoff behind it — a retype from a
+                   browser — which is the case that has had no configure yet. */
+                handedOff !== null || (cloudAction === "signIn" && !mustSwitch)
                   ? signInToCloudWithCode(handedOff ?? address, code)
                   : enterCloudDoorWithCode(address, code),
               )
