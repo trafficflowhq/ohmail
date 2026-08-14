@@ -435,6 +435,18 @@ export default defineConfig({
       { find: "@ohmail/fixtures", replacement: r("../../packages/fixtures/src/index.ts") },
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
+
+      /* The calendar reader, and the ONE `@trafficflow/*` specifier that reaches this bundle.
+         It is imported by `packages/client-engine/src/engine.ts` and by the attachment strip
+         and event card under `apps/webapp/app/components/`, all three of which are published.
+         In THIS tree the specifier resolves without help, through the workspace link and
+         `packages/core`'s own exports map — which is exactly why its absence here was
+         invisible until the published tree built it: over there `packages/core/src/ics.ts` is
+         a single published FILE with no package.json beside it and no workspace to link, so
+         Rollup could not resolve the import and every platform job died at `vite build` while
+         the engine bundle (which has its own resolver) went green beside them. Same reason the
+         four entries above exist; listed after them because it is the same kind of seam. */
+      { find: "@trafficflow/core/ics", replacement: r("../../packages/core/src/ics.ts") },
     ],
   },
 

@@ -44,7 +44,14 @@
       "@ohmail/tokens": ["../../packages/tokens/src/index.ts"],
       "@ohmail/fixtures": ["../../packages/fixtures/src/index.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
-      "@ohmail/ui": ["../../packages/ui/src/index.ts"]
+      "@ohmail/ui": ["../../packages/ui/src/index.ts"],
+      /* The calendar reader — the one `@trafficflow/*` specifier the desktop program compiles,
+         read by the client engine and by the attachment strip and event card. Same fallback
+         argument as the dompurify/tiptap block above: in this tree the workspace resolves it
+         through `packages/core`'s exports map and this entry is inert, and in the published
+         mirror it is the only thing that can resolve it, because there `ics.ts` is a lone file
+         with no package.json beside it. */
+      "@trafficflow/core/ics": ["../../packages/core/src/ics.ts"]
     }
   },
   "include": ["src", "vite.config.ts"]
