@@ -136,9 +136,13 @@ export interface StagedAttachmentSource {
     accountId: string, ids: readonly string[],
   ): Promise<Array<{ id: string; sizeBytes: number; expiresAt: Date }>>;
   /**
-   * The bytes, in the order `ids` names them. Throws a {@link ServiceError} when an object is gone
-   * or larger than its ticket declared — a send that silently dropped an attachment is a wrong
-   * send, exactly as a forward that dropped the original's files would be.
+   * The bytes, in the order `ids` names them, ONE ENTRY PER DISTINCT ID. A repeated id is one
+   * file and one download — see `resolveStagedAttachments`, which holds that invariant for every
+   * caller rather than trusting each one to deduplicate first.
+   *
+   * Throws a {@link ServiceError} when an object is gone or larger than its ticket declared — a
+   * send that silently dropped an attachment is a wrong send, exactly as a forward that dropped
+   * the original's files would be.
    */
   fetch(accountId: string, ids: readonly string[], now: Date): Promise<SendAttachment[]>;
 }
@@ -200,6 +204,76 @@ export interface SendInput {
 /** How many original parts a forward may re-attach, and their combined byte ceiling. */
 export const FORWARD_MAX_PARTS = 100;
 export const FORWARD_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
+/**
+ * HOW MANY ATTACHMENT PARTS ONE SEND REQUEST MAY NAME — per list, inline or staged.
+ *
+ * ── WHY A COUNT CEILING EXISTS AT ALL, GIVEN THE BYTE ONE ────────────────────────────────────
+ *
+ * Because {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES} does not bound either list's LENGTH, and the
+ * reading that it does is the one that left both lists open:
+ *
+ *  · an INLINE entry carrying no `contentBase64` decodes to zero bytes, so any number of them sum
+ *    to zero and clear every byte cap there is. For that list this constant is the ONLY bound.
+ *  · a STAGED ticket may declare ONE byte (the mint's floor is a positive integer), so a 3 MB
+ *    ceiling still admits millions of references — and before the dedupe below each one was a
+ *    separate object-storage round trip for the same object.
+ *
+ * ── WHY 100 ─────────────────────────────────────────────────────────────────────────────────
+ *
+ * It is {@link FORWARD_MAX_PARTS}, and deliberately the same number: that is already the ceiling
+ * on the OTHER list of attachment parts this same service assembles onto an outgoing message, and
+ * two different answers to "how many parts may ride one message" would be a distinction with no
+ * reason behind it.
+ *
+ * Pinning rather than picking is the house rule for this decision, not a preference — `MARK_SEEN_MAX_IDS`
+ * takes its 200 from `DEFAULT_SYNC_BATCH_MAX_MESSAGES` and says why in the same words: *"a second,
+ * different 'how many is too many' would be a number nobody could justify"*. That constant also
+ * settles the two questions this one would otherwise have to answer alone — it refuses on the RAW
+ * array with `payload_too_large`/413 and deduplicates what survives, which is exactly the order
+ * the send route follows.
+ *
+ * It is not a limit legitimate use meets. The staged transport only engages above 3 MB of files,
+ * and the ceiling that then binds is the mailbox's own announced `SIZE` — typically 25–35 MB, so
+ * 100 files inside it average 250–350 KB each. A compose surface with no count field at all is not
+ * a surface anyone assembles a hundred-file message on; the byte cap is what stops them long
+ * before this does. This is the defence-in-depth term, and its job is to make the length of these
+ * lists a number rather than whatever fits in a request body.
+ *
+ * Applied PER LIST rather than to the sum, so each reader owns its own boundary. A mixed send is
+ * therefore bounded at 200 parts and a mixed forward at 300 — the same order of magnitude, and far
+ * inside what MIME assembly on this host carries.
+ */
+export const SEND_MAX_ATTACHMENT_PARTS = 100;
+
+/**
+ * THE STAGED LIST, WITH EACH TICKET NAMED ONCE — first occurrence wins, order preserved.
+ *
+ * ── A REPEAT IS A SKIP, NOT A REFUSAL ───────────────────────────────────────────────────────
+ *
+ * The product already ruled on this one surface up, and this is that ruling carried to the wire.
+ * `ComposeAttach` answers a re-picked file with *"THE SAME FILE TWICE IS A SKIP, NOT A SECOND
+ * ROW"* — collapsed, and said in the muted register because nothing went wrong. Erroring here
+ * would contradict the form directly above it, and would spend a composed message on what is at
+ * worst a client bug.
+ *
+ * ── WHY THE INLINE LIST IS NOT DEDUPED, AND THE ASYMMETRY IS THE POINT ──────────────────────
+ *
+ * A staged id is a REFERENCE: naming it twice names one object, so the second naming buys the
+ * caller a second download of bytes it did not have to send — that is the amplification. An inline
+ * entry CARRIES its bytes: naming it twice costs the caller twice and is counted twice against the
+ * cap, so there is nothing to amplify, and collapsing it would mean hashing every attachment's
+ * bytes on the send path to undo something the compose form already did.
+ *
+ * ── WHAT THIS DOES NOT DECIDE ───────────────────────────────────────────────────────────────
+ *
+ * Not the count ceiling. {@link SEND_MAX_ATTACHMENT_PARTS} is refused against the list AS SENT,
+ * ahead of this — the ceiling bounds how many references one request may name, and this decides
+ * how many files those references are. `MARK_SEEN_MAX_IDS` orders its two the same way.
+ */
+export function dedupeStagedIds(ids: readonly string[] | undefined): string[] {
+  return ids ? [...new Set(ids)] : [];
+}
 
 /** One original part to re-stream on a forward — metadata only; the bytes are fetched at send. */
 interface ForwardPart {
@@ -390,7 +464,12 @@ export class SendService {
     //
     // The bytes were already refused against the cap BY DECLARATION in `reserve`; `fetch`
     // re-measures each object against its own ticket, so what lands here can only be smaller.
-    const stagedIds = input.stagedAttachmentIds ?? [];
+    //
+    // DEDUPED, and the same list `reserve` weighed. One ticket named twice is one file: the bytes
+    // are pulled once and the recipient gets one copy. Both halves of that mattered — before it,
+    // a repeated id was a second object-storage download AND a second copy of the file on the
+    // message, so the amplification and a plain correctness bug sat on the same line.
+    const stagedIds = dedupeStagedIds(input.stagedAttachmentIds);
     if (stagedIds.length > 0 && deps.stagedAttachments) {
       const staged = await deps.stagedAttachments.fetch(ctx.accountId, stagedIds, ctx.now());
       // INLINE FIRST, then staged — the order a mixed send's composer listed them in, and the
@@ -543,7 +622,12 @@ export class SendService {
     // The numbers are the client's own declarations from mint time and are treated as such: they
     // bound what we are WILLING to fetch. `fetch` re-measures, and a body larger than its ticket
     // declared never reaches the transport.
-    const stagedIds = input.stagedAttachmentIds ?? [];
+    //
+    // DEDUPED HERE TOO, and it has to be the same list `send` will fetch, or the total refused
+    // against the cap is not the total that gets pulled. Summing per OCCURRENCE would also let a
+    // repeated one-byte ticket inflate the declared total until the cap fired on bytes nobody was
+    // going to transfer twice — a 413 for a send that is under the limit.
+    const stagedIds = dedupeStagedIds(input.stagedAttachmentIds);
     let stagedTotal = 0;
     /**
      * A STAGED-REFERENCE PROBLEM, HELD RATHER THAN THROWN — because an idempotent REPLAY must

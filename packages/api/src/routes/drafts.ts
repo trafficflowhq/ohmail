@@ -1,4 +1,7 @@
-import { ServiceError, type CreateDraftBody, type PatchDraftBody } from "@trafficflow/services/mail";
+import {
+  ServiceError, SEND_MAX_ATTACHMENT_PARTS, dedupeStagedIds,
+  type CreateDraftBody, type PatchDraftBody,
+} from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import { makeSendAdapter } from "../send-adapter.js";
@@ -57,19 +60,83 @@ interface SendRequestBody {
   forwardOf?: string;
 }
 
-/** The staged reference list, validated to strings. Absent/empty ⇒ `undefined`, so an inline-only
- *  send builds the exact `SendInput` it always did. */
+/**
+ * WHY BOTH LISTS ARE COUNTED HERE, AT THE DOOR.
+ *
+ * The byte ceiling the send enforces bounds neither list's LENGTH, and reading it as if it did is
+ * what left both of them open. A staged reference weighs whatever its ticket DECLARED — the mint's
+ * floor is one byte — and an inline entry that carries no `contentBase64` decodes to zero bytes and
+ * so weighs nothing at all. Either way a caller can name arbitrarily many parts and stay under
+ * every byte cap in the path; the only thing that was bounding them was how many fit in a request
+ * body, which is not a product rule.
+ *
+ * So the length is refused here rather than deeper in: it is a fact about the REQUEST, knowable
+ * before a transaction is opened or an object is fetched, and an answer carrying both numbers is
+ * one a client can act on. See {@link SEND_MAX_ATTACHMENT_PARTS} for where 100 comes from.
+ *
+ * `payload_too_large`/413 rather than a 400, and the RAW list length rather than the deduplicated
+ * one, because `MarkSeenBody`'s cap on `PATCH /messages` (`MARK_SEEN_MAX_IDS`) already decided both
+ * for the same shape of request — a client-supplied id array on one write — and answers 413 on the
+ * array it was handed, then deduplicates what is left. Two id lists on one API disagreeing about
+ * which status a length refusal carries, or about whether repeats count toward it, would be a
+ * distinction a client has to learn per route.
+ */
+function refuseOverLongList(kind: "attachments" | "staged attachments", n: number): void {
+  if (n > SEND_MAX_ATTACHMENT_PARTS) {
+    throw new ServiceError(
+      "payload_too_large", 413,
+      `${kind} must contain at most ${SEND_MAX_ATTACHMENT_PARTS} entries; this request named ${n}`,
+    );
+  }
+}
+
+/**
+ * The staged reference list, validated to strings and DEDUPLICATED. Absent/empty ⇒ `undefined`, so
+ * an inline-only send builds the exact `SendInput` it always did.
+ *
+ * ── THE SAME TICKET TWICE IS COLLAPSED, NOT REFUSED ─────────────────────────────────────────
+ *
+ * A staged id names an OBJECT, so naming it twice names one file — and before this, each naming
+ * was a separate `storage.download` of the same bytes plus a second copy of the file on the
+ * message the recipient got. One authenticated request bought as many round trips as it had room
+ * for ids.
+ *
+ * A skip rather than a 400, because that is the ruling the product already made one surface up:
+ * `ComposeAttach` collapses a re-picked file with *"THE SAME FILE TWICE IS A SKIP, NOT A SECOND
+ * ROW"* and says so in the muted register, because nothing went wrong. Refusing here would
+ * contradict the form the user is actually looking at, and would spend a composed message on what
+ * is at worst a client bug. `dedupeStagedIds` is the send service's own function rather than a
+ * second copy of the rule — the service dedupes at its own boundary too, and the two must not be
+ * able to disagree about what a duplicate is.
+ *
+ * The count is checked on the list AS SENT, before the dedupe — see {@link refuseOverLongList} for
+ * why that order rather than the other. The two rules do not fight: the ceiling bounds how many
+ * references one request may name, and the dedupe decides how many files those references are.
+ */
 function readStagedIds(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined;
-  const ids = raw.filter((v): v is string => typeof v === "string" && v.length > 0);
+  refuseOverLongList("staged attachments", raw.length);
+  const ids = dedupeStagedIds(
+    raw.filter((v): v is string => typeof v === "string" && v.length > 0),
+  );
   return ids.length > 0 ? ids : undefined;
 }
 
-/** base64 → raw bytes, with lenient defaults; the total is capped in `SendService.reserve`. */
+/**
+ * base64 → raw bytes, with lenient defaults; the total is capped in `SendService.reserve`, and the
+ * COUNT here — see {@link refuseOverLongList}, which is the only bound this list has.
+ *
+ * NOT deduplicated, and the asymmetry with the staged list above is deliberate. An inline entry
+ * CARRIES its bytes: a caller that names the same file twice pays for it twice and is charged for
+ * it twice against the cap, so there is nothing to amplify. Collapsing it would mean hashing every
+ * attachment's bytes on the send path to undo something the compose form already did on the
+ * bytes it had in hand.
+ */
 function decodeSendAttachments(
   items: SendAttachmentWire[] | undefined,
 ): Array<{ filename: string; contentType: string; content: Buffer }> | undefined {
   if (!Array.isArray(items) || items.length === 0) return undefined;
+  refuseOverLongList("attachments", items.length);
   return items.map((a) => ({
     filename: typeof a.filename === "string" && a.filename.length > 0 ? a.filename : "attachment",
     contentType: typeof a.contentType === "string" && a.contentType.length > 0
