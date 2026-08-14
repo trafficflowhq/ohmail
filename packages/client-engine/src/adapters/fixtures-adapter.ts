@@ -23,7 +23,7 @@ import {
   type SyncResponse,
   type TriageItemDTO,
 } from "../types.js";
-import type { EngineAdapter, MutationOutcome, SyncParams } from "./adapter.js";
+import type { AttachmentWire, EngineAdapter, MutationOutcome, SyncParams } from "./adapter.js";
 
 /** The demo world's fixed "now" — a Wednesday; "Tue" fixtures land the day before. */
 export const DEMO_NOW = new Date("2026-07-29T12:00:00.000Z");
@@ -90,6 +90,16 @@ export class FixturesAdapter implements EngineAdapter {
   private readonly now: () => Date;
   private readonly uuid: () => string;
   private seq = 0;
+  /**
+   * The attachments the demo can actually SERVE — metadata per message and bytes per part, both
+   * built from fixtures whose `attachment` carries `content`. Implementing the two optional
+   * adapter methods flips `attachmentsAvailable()` on for the demo, which is what lets the
+   * strip (and the calendar event card on an invite) render there with zero network: a fixture
+   * attachment without `content` — the display-only kind — is simply not listed, so its message
+   * keeps the old honest state, a paperclip over a silent strip.
+   */
+  private readonly attachmentWires = new Map<string, AttachmentWire[]>();
+  private readonly attachmentBytes = new Map<string, { content: string; contentType: string }>();
 
   constructor(opts: FixturesAdapterOptions = {}) {
     this.now = opts.now ?? (() => DEMO_NOW);
@@ -223,6 +233,26 @@ export class FixturesAdapter implements EngineAdapter {
       list.forEach((f, i) => {
         const msg = this.toMessage(f, i, states.get(f.id) ?? null);
         this.emit("message", msg.id, msg);
+        // Servable attachments only — see the field's note. One part per fixture, its id
+        // deterministic so UI tests can name it.
+        if (f.attachment?.content !== undefined) {
+          const id = `${f.id}-att-1`;
+          this.attachmentWires.set(f.id, [
+            {
+              id,
+              filename: f.attachment.filename.trim() || null,
+              contentType: f.attachment.contentType ?? "application/octet-stream",
+              sizeBytes: new TextEncoder().encode(f.attachment.content).length,
+              inline: false,
+              contentId: null,
+              messageId: f.id,
+            },
+          ]);
+          this.attachmentBytes.set(id, {
+            content: f.attachment.content,
+            contentType: f.attachment.contentType ?? "application/octet-stream",
+          });
+        }
       });
     }
     for (const st of states.values()) this.emit("message_state", st.messageId, st);
@@ -358,6 +388,24 @@ export class FixturesAdapter implements EngineAdapter {
    */
   async fetchBody(): Promise<null> {
     return null;
+  }
+
+  /**
+   * The demo's attachment metadata — the rows the strip lists. Empty for a message whose
+   * fixture attachment is display-only, which renders as the strip's silent `ready, []` state
+   * (the same honest answer a live inline-only message gets).
+   */
+  async listAttachments(messageId: string): Promise<AttachmentWire[]> {
+    return this.attachmentWires.get(messageId) ?? [];
+  }
+
+  /** The demo's attachment bytes — fixture text, minted as a typed Blob. Zero network. */
+  async fetchAttachment(attachmentId: string): Promise<Blob> {
+    const held = this.attachmentBytes.get(attachmentId);
+    if (!held) {
+      throw new MutationRejectedError("attachment not found", { status: 404, code: "not_found" });
+    }
+    return new Blob([held.content], { type: held.contentType });
   }
 
   async mutate(m: EngineMutation, opts: { idempotencyKey: string }): Promise<MutationOutcome> {

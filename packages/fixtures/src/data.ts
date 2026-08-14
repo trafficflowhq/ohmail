@@ -123,6 +123,93 @@ export const ohbox: MessageFixture[] = [
     rationale: "Ohbox — rule: domain makersfest.ch → Ohbox",
   },
   {
+    id: "techcheck",
+    folder: "ohbox",
+    from: { name: "Petra Wyss", address: "petra@makersfest.ch" },
+    subject: "Invitation: Tech check — main hall",
+    time: "08:39",
+    unread: true,
+    /* A NAMELESS text/calendar part — the wire shape Google and Outlook actually send — so the
+       demo shows the invite exactly as a live mailbox would: an event card, downloadable as
+       invite.ics. The content is served by the fixtures adapter with zero network. */
+    attachment: {
+      filename: "",
+      size: "1 KB",
+      contentType: "text/calendar; charset=utf-8; method=REQUEST",
+      content: [
+        "BEGIN:VCALENDAR",
+        "PRODID:-//Google Inc//Google Calendar 70.9054//EN",
+        "VERSION:2.0",
+        "METHOD:REQUEST",
+        "BEGIN:VEVENT",
+        "DTSTART;TZID=Europe/Zurich:20260911T160000",
+        "DTEND;TZID=Europe/Zurich:20260911T163000",
+        "ORGANIZER;CN=Petra Wyss:mailto:petra@makersfest.ch",
+        "ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN=Mila Brunner:mailto:mila@lichtgrat.studio",
+        "ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN=Petra Wyss:mailto:petra@makersfest.ch",
+        "SUMMARY:Tech check — main hall",
+        "LOCATION:Makersfest\\, Halle 2\\, Zürich",
+        "UID:techcheck-2026@makersfest.ch",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\r\n"),
+    },
+    snippet: "Petra Wyss invited you: Friday, September 11 · 16:00, main hall.",
+    body: "Hi Mila\n\nQuick tech check before your talk — mics, slides, the clicker. Fifteen minutes on stage, the Friday before the weekend.\n\nThe invite is attached; just accept if the slot works.\n\nPetra",
+    rationale: "Ohbox — rule: domain makersfest.ch → Ohbox",
+  },
+  {
+    id: "glazecall",
+    folder: "ohbox",
+    from: { name: "Nadja Lehner", address: "nadja@erdton-atelier.ch" },
+    subject: "New time proposed: Glaze evening — planning call",
+    time: "08:35",
+    unread: true,
+    /* An Outlook counter-proposal: METHOD:COUNTER with the original time in X-MS-OLDSTART/END
+       and a WINDOWS zone name — the Exchange dialect, VTIMEZONE trap lines included. */
+    attachment: {
+      filename: "",
+      size: "1 KB",
+      contentType: "text/calendar; charset=utf-8; method=COUNTER",
+      content: [
+        "BEGIN:VCALENDAR",
+        "METHOD:COUNTER",
+        "PRODID:Microsoft Exchange Server 2010",
+        "VERSION:2.0",
+        "BEGIN:VTIMEZONE",
+        "TZID:W. Europe Standard Time",
+        "BEGIN:STANDARD",
+        "DTSTART:16010101T030000",
+        "TZOFFSETFROM:+0200",
+        "TZOFFSETTO:+0100",
+        "RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=-1SU;BYMONTH=10",
+        "END:STANDARD",
+        "BEGIN:DAYLIGHT",
+        "DTSTART:16010101T020000",
+        "TZOFFSETFROM:+0100",
+        "TZOFFSETTO:+0200",
+        "RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=-1SU;BYMONTH=3",
+        "END:DAYLIGHT",
+        "END:VTIMEZONE",
+        "BEGIN:VEVENT",
+        "ORGANIZER;CN=Mila Brunner:mailto:mila@lichtgrat.studio",
+        "ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN=Nadja Lehner:mailto:nadja@erdton-atelier.ch",
+        "SUMMARY:Glaze evening — planning call",
+        "DTSTART;TZID=W. Europe Standard Time:20260730T150000",
+        "DTEND;TZID=W. Europe Standard Time:20260730T153000",
+        "X-MS-OLDSTART:20260730T080000Z",
+        "X-MS-OLDEND:20260730T083000Z",
+        "LOCATION:Phone",
+        "UID:planning-call-2026@erdton-atelier.ch",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\r\n"),
+    },
+    snippet: "Nadja proposed a new time: Thursday 15:00 instead of 10:00.",
+    body: "Hi Mila\n\nTomorrow morning is suddenly full here — could we do the planning call at 15:00 instead of 10:00? Same half hour, I'll call you.\n\nNadja\nAtelier Erdton",
+    rationale: "Ohbox — you said Yes to this sender",
+  },
+  {
     id: "cinderlock",
     folder: "ohbox",
     from: { name: "Cinderlock", address: "no-reply@cinderlock.app" },
@@ -850,16 +937,16 @@ export const notificationSettings: NotificationSettingsFixture = {
 /* -------------------------------------------------------------- counts */
 
 export const counts: CountsFixture = {
-  ohboxUnread: 4,
+  ohboxUnread: 6,
   /*
-   * MAIL FILED IN THE OHBOX FOLDER — eleven — which is NOT the nine rows the Ohbox screen shows.
-   * The two are different questions and the demo answers both: parking moves nothing on the mail
-   * server, so `nadja` and `jonas` are still Ohbox mail while Answer Later is the only place they
-   * are listed. Surfaces that apply the one-pile rule derive their own total from what they
-   * render (`AppShell` passes `allOhbox.length`, which is nine); this field is the folder, and
-   * `unreadCounts()` is what it is checked against.
+   * MAIL FILED IN THE OHBOX FOLDER — thirteen — which is NOT the eleven rows the Ohbox screen
+   * shows. The two are different questions and the demo answers both: parking moves nothing on
+   * the mail server, so `nadja` and `jonas` are still Ohbox mail while Answer Later is the only
+   * place they are listed. Surfaces that apply the one-pile rule derive their own total from
+   * what they render (`AppShell` passes `allOhbox.length`, which is eleven); this field is the
+   * folder, and `unreadCounts()` is what it is checked against.
    */
-  ohboxTotal: 11,
+  ohboxTotal: 13,
   reads: 12,
   receipts: 7,
   screenerWaiting: 3,

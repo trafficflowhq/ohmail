@@ -1,0 +1,134 @@
+/* ═══ THE EVENT CARD — a calendar invitation drawn as the event it carries ═══════════════
+ *
+ * Blanc grammar, applied: the card exists only once its bytes are FETCHED and PARSED, so it
+ * stands on the surface (`--panel` + `--lift-0`, the `rise` entrance) exactly like a ready
+ * tile — presence encoded by light, not by a new palette. Until then the ordinary tile is on
+ * screen doing its ordinary truth-telling ("Fetching from your mailbox…"), and any calendar
+ * part that fails to parse keeps that tile forever: the card is a promotion, never a claim.
+ *
+ * It is NOT a button. The tile's press means "look at it", and the card already IS the look —
+ * a press that opened a raw-text overlay over the same facts would be a second name for less.
+ * The one verb is SAVE, the strip's own corner control (`.att-side`), so a reader can still
+ * put the .ics into their real calendar. That is also why the card spans the strip's full
+ * grid row: it is a reading surface, and 210px tracks are sized for names, not sentences.
+ *
+ * The DATE GLYPH is a calendar page: month band over day numeral, the leaf's own geometry
+ * (panel-on-tint figure/ground flip) one size up. On a CANCELLED event the glyph goes quiet
+ * (`--ink3`) and the kicker carries the fact in the accent register — Blanc defines no danger
+ * colour, and a cancellation is a fact, not an alarm.
+ *
+ * Both themes come free: every colour below is a token.
+ */
+
+.ics-item { grid-column: 1 / -1; }
+
+.ics-card {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 13px;
+  padding: 12px 13px;
+  border-radius: 13px;            /* the strip's object radius */
+  background: var(--panel);
+  box-shadow: var(--lift-0);
+  animation: rise .25s var(--spring);
+}
+/* Room for the corner save control — the tile's own rule, restated for the card. */
+.att-item[data-side] > .ics-card { padding-right: 46px; }
+
+/* ── the calendar-page glyph ─────────────────────────────────────────────────────────── */
+
+.ics-date {
+  width: 44px;
+  flex: none;
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  text-align: center;
+  border-radius: 10px;
+  background: var(--tint);        /* the leaf's flip: figure recessed against the risen card */
+}
+.ics-date-mo {
+  padding: 2.5px 0 2px;
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+.ics-date-day {
+  padding: 1px 0 3px;
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.25;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.ics-card[data-cancelled] .ics-date-mo { color: var(--ink3); background: var(--tint2); }
+.ics-card[data-cancelled] .ics-date-day { color: var(--ink3); }
+
+/* ── the reading column ──────────────────────────────────────────────────────────────── */
+
+.ics-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* What KIND of calendar message this is — product speech, quieter than the event's own name.
+   A cancellation speaks in the accent register; everything else in the meta voice. */
+.ics-kicker {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.ics-kicker[data-tone="cancel"] { color: var(--accent-ink); }
+
+/* The event's name — the mail's voice, one step above the tile's filename size. */
+.ics-summary {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* When. The card's second-loudest line, because "when" is what an invitation IS. */
+.ics-when {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink2);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* The time a COUNTER proposes to replace: struck through, quiet — old under new. */
+.ics-prev {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+.ics-prev s { text-decoration-thickness: 1px; }
+
+/* Where, who, and the spoken recurrence — the meta voice, one per line, each with its glyph. */
+.ics-meta {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--ink3);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.ics-meta .ic { flex: none; margin-top: 1.5px; }
+
+/* A hair of air between the when-block and the meta block, only when both exist. */
+.ics-when + .ics-meta, .ics-prev + .ics-meta { margin-top: 3px; }
+.ics-meta + .ics-meta { margin-top: 0; }

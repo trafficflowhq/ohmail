@@ -41,9 +41,11 @@
  * land in both, and a new sentence gets its key at the same time as its constant, which is
  * why each one names its key. Same shim-with-one-exit pattern as `ActionBar`'s `copy()`.
  */
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
+import { isCalendarMime, parseIcsEvent } from "@trafficflow/core/ics";
 import "./attachment-strip.css";
 import { liveCopy } from "../shell/locale";
+import { IcsEventCard } from "./IcsEventCard";
 
 export interface AttachmentItem {
   id: string;
@@ -135,6 +137,17 @@ export interface AttachmentStripProps {
   canPreview?(item: AttachmentItem): boolean;
   onDownloadAll(): void;
   downloadingAll: boolean;
+  /**
+   * THE EVENT PREVIEW's data feed: the decoded text of this message's calendar parts, by
+   * attachment id — `undefined` while the automatic fetch is still running (the plain tile
+   * stands and names that wait, exactly as for any other file) or where it was refused.
+   *
+   * A calendar item whose text parses renders as an {@link IcsEventCard} — the event readable
+   * in place — with the strip's own corner Save; one that does not parse keeps its ordinary
+   * tile, which is the whole degradation story. Optional: a surface without the feed renders
+   * every calendar part as a plain tile, exactly as before the card existed.
+   */
+  calendarTextOf?(id: string): string | undefined;
 }
 
 /**
@@ -528,6 +541,7 @@ export function AttachmentStrip({
   canPreview,
   onDownloadAll,
   downloadingAll,
+  calendarTextOf,
 }: AttachmentStripProps) {
   switch (items.state) {
     case "unavailable":
@@ -571,6 +585,7 @@ export function AttachmentStrip({
           canPreview={canPreview}
           onDownloadAll={onDownloadAll}
           downloadingAll={downloadingAll}
+          calendarTextOf={calendarTextOf}
         />
       );
     default: {
@@ -583,13 +598,53 @@ export function AttachmentStrip({
   }
 }
 
-function ReadyStrip({ items, onOpen, onPreview, canPreview, onDownloadAll, downloadingAll }: {
+/**
+ * ── ONE CALENDAR ITEM: THE EVENT CARD WHERE IT PARSES, THE PLAIN TILE EVERYWHERE ELSE ─────
+ *
+ * The parse is memoized on the TEXT (the engine's map is identity-stable, so the string is
+ * too), and `parseIcsEvent` answers `null` for anything malformed, oversized or alien — which
+ * makes the fallback structural: there is no half-parsed state a card could render. The card
+ * keeps the item's corner Save (`.att-side`, the strip's own control), because the bytes on
+ * disk are still the point of an attachment; what it does NOT keep is the tile's press —
+ * the card already is the look.
+ */
+function CalendarSlot({
+  item,
+  text,
+  onOpen,
+  tile,
+}: {
+  item: AttachmentItem;
+  text: string;
+  onOpen: (id: string) => void;
+  tile: ReactNode;
+}) {
+  const event = useMemo(() => parseIcsEvent(text), [text]);
+  if (!event) return <>{tile}</>;
+  return (
+    <div className="att-item ics-item" data-side="">
+      <IcsEventCard event={event} />
+      <button
+        type="button"
+        className="att-side"
+        aria-label={COPY.download(item.filename)}
+        title={COPY.download(item.filename)}
+        onClick={() => onOpen(item.id)}
+      >
+        {GLYPH_SAVE}
+      </button>
+    </div>
+  );
+}
+
+function ReadyStrip({ items, onOpen, onPreview, canPreview, onDownloadAll, downloadingAll, calendarTextOf }: {
   items: AttachmentItem[];
   onOpen: (id: string) => void;
   onPreview?: (id: string) => void;
   canPreview?: (item: AttachmentItem) => boolean;
   onDownloadAll: () => void;
   downloadingAll: boolean;
+  calendarTextOf?: (id: string) => string | undefined;
 }) {
   const total = items.reduce((sum, item) => sum + item.sizeBytes, 0);
   return (
@@ -624,17 +679,28 @@ function ReadyStrip({ items, onOpen, onPreview, canPreview, onDownloadAll, downl
         </div>
       ) : null}
       <div className="att-grid">
-        {items.map((item) => (
-          <Tile
-            key={item.id}
-            item={item}
-            onOpen={onOpen}
-            /* The look is offered per FILE, not per strip: a message can carry a PDF this app
-               will draw and an SVG it will only ever save, and the second must not grow an eye
-               because the first one did. */
-            onPreview={onPreview && canPreview?.(item) ? onPreview : undefined}
-          />
-        ))}
+        {items.map((item) => {
+          const tile = (
+            <Tile
+              key={item.id}
+              item={item}
+              onOpen={onOpen}
+              /* The look is offered per FILE, not per strip: a message can carry a PDF this app
+                 will draw and an SVG it will only ever save, and the second must not grow an eye
+                 because the first one did. */
+              onPreview={onPreview && canPreview?.(item) ? onPreview : undefined}
+            />
+          );
+          /* A calendar part whose text is in hand may stand as the event it carries. Text
+             still arriving, refused, or unparseable → the tile above, which already tells
+             each of those truths in its own state line. */
+          const calendarText = calendarTextOf && isCalendarMime(item.mimeType) ? calendarTextOf(item.id) : undefined;
+          return calendarText !== undefined ? (
+            <CalendarSlot key={item.id} item={item} text={calendarText} onOpen={onOpen} tile={tile} />
+          ) : (
+            tile
+          );
+        })}
       </div>
     </div>
   );

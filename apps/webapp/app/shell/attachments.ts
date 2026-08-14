@@ -130,6 +130,14 @@ export interface AttachmentsChrome {
    * the engine (`loadInlineImages`); calling this again with the same ids is a cheap no-op.
    */
   needCidImages(messageId: string, contentIds: string[]): void;
+  /**
+   * THE CALENDAR TEXTS ALREADY IN HAND for one message — `attachmentId → decoded ics text`,
+   * straight off the engine (`calendarTextsOf`). What the strip's event card parses and draws.
+   * Filled automatically when the message's list loads (the same effect that loads the list
+   * asks — budgets and single-flight live in the engine, `loadCalendarTexts`); empty until
+   * then, and empty is the strip's signal to keep the plain tile standing.
+   */
+  calendarTextsOf(messageId: string): ReadonlyMap<string, string>;
 }
 
 /**
@@ -245,6 +253,10 @@ export function useMessageAttachments(
     // puts the real re-auth prompt on screen. A no-op wherever no probe is registered.
     void engine.loadAttachments(messageId).then((outcome) => {
       if (outcome.state === "failed" && isAuthListFailure(outcome.code)) probeSessionNow();
+      // A meeting invitation should be readable, not merely saveable: fetch the message's
+      // calendar parts (tiny, budgeted, single-flight — the engine owns all three bounds) so
+      // the strip can draw the event card. Fire-and-forget for the reason needCidImages is.
+      if (outcome.state === "ready" && outcome.items.length > 0) void engine.loadCalendarTexts(messageId);
     });
     return () => engine.releaseAttachments(messageId);
   }, [engine, messageId, available]);
@@ -364,6 +376,11 @@ export function useMessageAttachments(
     [engine],
   );
 
+  const calendarTextsOf = useCallback(
+    (id: string): ReadonlyMap<string, string> => engine.calendarTextsOf(id),
+    [engine],
+  );
+
   const needCidImages = useCallback(
     (id: string, contentIds: string[]): void => {
       // Fire-and-forget on purpose: the outcome is not a return value but an engine
@@ -471,9 +488,9 @@ export function useMessageAttachments(
   const chrome = useMemo(
     (): AttachmentsChrome => ({
       itemsOf, open, ensure, blobOf, downloadAll, downloadingAll: downloadingAllOf,
-      cidImagesOf, needCidImages,
+      cidImagesOf, needCidImages, calendarTextsOf,
     }),
-    [itemsOf, open, ensure, blobOf, downloadAll, downloadingAllOf, cidImagesOf, needCidImages],
+    [itemsOf, open, ensure, blobOf, downloadAll, downloadingAllOf, cidImagesOf, needCidImages, calendarTextsOf],
   );
 
   return available ? chrome : undefined;

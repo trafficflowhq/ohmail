@@ -1,3 +1,7 @@
+// `@trafficflow/core/ics` maps to a dependency-free SOURCE module (see its header) — the ONE
+// core entry point browser bundles may import. Never the barrel or `./mail` from here: both
+// carry mailparser and `node:crypto`, which no consumer of this engine can load.
+import { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 import type { AttachmentWire, EngineAdapter, MutationOutcome } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SearchIndex, type LocalSearchResult } from "./search.js";
@@ -455,15 +459,19 @@ const RENDERABLE_MIME = new Set([
 /**
  * Wire → surface, in one place (the mapper the whole strip is rendered from).
  *
- * The filename fallback is `attachment-${id}.bin`, which is the SERVER'S own stem for a nameless
- * part (`attachments-service.ts` `uniqueName`). Matching it deliberately: the name in the strip is
- * then the same name that appears in a download-all zip entry, so a user reading both sees one
- * file, not two.
+ * The filename fallbacks are the SERVER'S own stems for a nameless part (`attachments-service.ts`
+ * `uniqueName`): `invite.ics` for a calendar part — the COMMON nameless case, because Google and
+ * Outlook nest the invitation as an unnamed `text/calendar` alternative — and
+ * `attachment-${id}.bin` for everything else. Matching them deliberately: the name in the strip
+ * is then the same name that appears in a download-all zip entry, so a user reading both sees
+ * one file, not two.
  */
 function toAttachmentItem(wire: AttachmentWire): AttachmentItem {
   return {
     id: wire.id,
-    filename: wire.filename?.trim() || `attachment-${wire.id}.bin`,
+    filename:
+      wire.filename?.trim() ||
+      (isCalendarMime(wire.contentType || "") ? CALENDAR_FALLBACK_FILENAME : `attachment-${wire.id}.bin`),
     mimeType: wire.contentType || "application/octet-stream",
     sizeBytes: wire.sizeBytes,
     state: "idle",
@@ -529,6 +537,30 @@ export const INLINE_IMAGE_MAX_TOTAL_BYTES = 16 * 1024 * 1024;
 
 /** The stable empty answer of {@link OhmailEngine.inlineImagesOf} — one identity, never mutated. */
 const NO_INLINE_IMAGES: ReadonlyMap<string, string> = new Map();
+
+/**
+ * The per-part ceiling on an AUTOMATICALLY fetched calendar part, in bytes — 256 KiB.
+ *
+ * Real invites are 1–4 KB (the live corpus's 646 calendar parts top out at 4 035 bytes), so this
+ * is two orders of magnitude of headroom, and it is an order of magnitude UNDER the inline-image
+ * ceiling because the payload is a text file, not a photograph. A part over it is not fetched by
+ * the automatic pass and stays an ordinary tile — the reader can still press it.
+ */
+export const CALENDAR_TEXT_MAX_BYTES = 256 * 1024;
+
+/**
+ * At most this many calendar parts fetched automatically per message. Real meeting mail carries
+ * exactly one; a hostile message can declare hundreds, and each fetch is an IMAP connection.
+ */
+export const CALENDAR_TEXT_MAX_PARTS = 3;
+
+/** The stable empty answer of {@link OhmailEngine.calendarTextsOf} — one identity, never mutated. */
+const NO_CALENDAR_TEXTS: ReadonlyMap<string, string> = new Map();
+
+/** The parts the automatic calendar pass may consider: real files declared as calendar data. */
+function isCalendarItem(item: AttachmentItem): boolean {
+  return !item.inline && isCalendarMime(item.mimeType);
+}
 
 /**
  * The fetched bytes of one embedded image, as a `data:` URI — or `null` for anything that is not
@@ -805,6 +837,16 @@ export class OhmailEngine {
   private readonly inlineImages = new Map<string, ReadonlyMap<string, string>>();
   /** In-flight inline-image passes by message id — single-flight, see {@link OhmailEngine.loadInlineImages}. */
   private readonly inlineImageRequests = new Map<string, Promise<void>>();
+  /**
+   * `attachmentId → decoded ics text` per message — what an event-preview surface parses and
+   * renders. Text, not a parsed structure: the engine holds bytes and their decodings, and the
+   * ics grammar belongs to `@trafficflow/core/ics` at the render site. Replaced on every fill,
+   * never mutated, and dropped with the rest of the message's byte state by
+   * {@link OhmailEngine.releaseAttachments} — the same lifecycle as {@link inlineImages}.
+   */
+  private readonly calendarTexts = new Map<string, ReadonlyMap<string, string>>();
+  /** In-flight calendar passes by message id — single-flight, see {@link OhmailEngine.loadCalendarTexts}. */
+  private readonly calendarTextRequests = new Map<string, Promise<void>>();
 
   constructor(opts: EngineOptions) {
     this.adapter = opts.adapter;
@@ -2902,6 +2944,88 @@ export class OhmailEngine {
   }
 
   /**
+   * The decoded text of a message's calendar parts already in hand: `attachmentId → ics text`,
+   * what an event-preview surface parses ({@link import("@trafficflow/core/ics").parseIcsEvent})
+   * and renders. Synchronous, no side effects — the render path reads,
+   * {@link OhmailEngine.loadCalendarTexts} is what asks. Identity-stable between fills, so a
+   * memoized parse can key on the map.
+   */
+  calendarTextsOf(messageId: string): ReadonlyMap<string, string> {
+    return this.calendarTexts.get(messageId) ?? NO_CALENDAR_TEXTS;
+  }
+
+  /**
+   * FETCH THE CALENDAR PARTS a message carries and hold their decoded text for the event
+   * preview. The third legitimate automatic act on the `cost: "connection"` path, and it stands
+   * on {@link OhmailEngine.loadInlineImages}'s argument verbatim: the reader OPENED this message,
+   * a meeting invitation drawn as an opaque tile named `invite.ics` is the defect rather than
+   * thrift, and what keeps an automatic trigger bounded where a press is bounded by the pressing:
+   *
+   *   · only parts DECLARED as calendar data ({@link isCalendarItem}) within
+   *     {@link CALENDAR_TEXT_MAX_BYTES}, at most {@link CALENDAR_TEXT_MAX_PARTS} per message —
+   *     real meeting mail carries exactly one, 1–4 KB;
+   *   · the real byte count is re-checked post-fetch — the declaration is the sender's claim;
+   *   · SEQUENTIALLY, through {@link OhmailEngine.openAttachment} — single-flight per part, and
+   *     a part that failed stays failed (no automatic re-ask against a server that refused);
+   *   · the bytes were being fetched for the tile anyway on the first press — this pass just
+   *     spends them on a card the reader can read instead of a name they can only save.
+   *
+   * Never rejects; the caller is a render effect. Single-flight per message (the pane is
+   * mounted twice while the reader is open, and both mounts ask).
+   */
+  async loadCalendarTexts(messageId: string): Promise<void> {
+    if (!this.attachmentsAvailable()) return;
+
+    const inFlight = this.calendarTextRequests.get(messageId);
+    if (inFlight) return inFlight;
+
+    const request = this.fetchCalendarTexts(messageId)
+      .catch(() => {})
+      .finally(() => {
+        this.calendarTextRequests.delete(messageId);
+      });
+    this.calendarTextRequests.set(messageId, request);
+    return request;
+  }
+
+  /** The working half of {@link OhmailEngine.loadCalendarTexts}, behind its single-flight gate. */
+  private async fetchCalendarTexts(messageId: string): Promise<void> {
+    await this.loadAttachments(messageId);
+    const held = this.attachmentLists.get(messageId);
+    if (held?.state !== "ready") return;
+
+    const have = this.calendarTexts.get(messageId);
+    const wanted = held.items
+      .filter((i) => isCalendarItem(i) && !have?.has(i.id) && i.sizeBytes <= CALENDAR_TEXT_MAX_BYTES)
+      .slice(0, CALENDAR_TEXT_MAX_PARTS);
+    if (wanted.length === 0) return;
+
+    const decoded: Array<[string, string]> = [];
+    for (const item of wanted) {
+      await this.openAttachment(messageId, item.id);
+      const blob = this.attachmentBlobOf(messageId, item.id);
+      // The REAL byte gate — `sizeBytes` above was only the sender's claim.
+      if (!blob || blob.size === 0 || blob.size > CALENDAR_TEXT_MAX_BYTES) continue;
+      try {
+        decoded.push([item.id, await blob.text()]);
+      } catch {
+        // Undecodable bytes: the tile stands, the card simply never appears.
+      }
+    }
+    if (decoded.length === 0) return;
+
+    // Re-checked AFTER the awaits: a message released mid-pass (the reader moved on) must not
+    // have its map re-created to outlive the byte state it belongs with.
+    if (this.attachmentLists.get(messageId)?.state !== "ready") return;
+    const next = new Map(this.calendarTexts.get(messageId) ?? NO_CALENDAR_TEXTS);
+    for (const [id, text] of decoded) next.set(id, text);
+    // ONE replacement and ONE notification for the whole pass — a map identity change re-parses
+    // and re-renders the card downstream.
+    this.calendarTexts.set(messageId, next);
+    this.notify();
+  }
+
+  /**
    * Revoke every object URL held for a message and forget its byte state.
    *
    * MUST be called when the surface stops rendering the message (a pane unmount, a different
@@ -2909,7 +3033,8 @@ export class OhmailEngine {
    * dies, so a session spent opening PDFs in a long-lived tab would otherwise accumulate every one
    * of them — the exact cost the "nothing is stored" design exists to avoid, reintroduced in the
    * browser instead of the database. The minted `data:` URIs go with it — they pin the same bytes
-   * as base64 in a string instead of behind a URL.
+   * as base64 in a string instead of behind a URL. The calendar texts too: they are decodings of
+   * the same released bytes.
    */
   releaseAttachments(messageId: string): void {
     const held = this.attachmentLists.get(messageId);
@@ -2918,6 +3043,7 @@ export class OhmailEngine {
     }
     this.attachmentLists.delete(messageId);
     this.inlineImages.delete(messageId);
+    this.calendarTexts.delete(messageId);
     this.notify();
   }
 

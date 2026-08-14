@@ -52,8 +52,17 @@ export interface TagFixture {
 export type Folder = "ohbox" | "reads" | "receipts";
 
 export interface AttachmentFixture {
+  /** Display name. Empty string = a NAMELESS part (the common wire shape for calendar invites). */
   filename: string;
   size: string;
+  /**
+   * The part's MIME type and its literal bytes as text, for fixtures whose attachment the demo
+   * can actually SERVE — the fixtures adapter lists and fetches exactly the attachments that
+   * carry `content`, still with zero network. A fixture with only the display fields above
+   * keeps the old behavior: a paperclip whose strip holds nothing to download.
+   */
+  contentType?: string;
+  content?: string;
 }
 
 export interface ProtectedFixture {

@@ -84,6 +84,13 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // The derivation in `test/desktop-messages.test.ts` counts `liveCopy("<ns>", …)` as a read for
   // exactly this reason: it is a read.
   "attachmentPreview", "away", "place",
+  // `icsEvent` is the calendar event card the attachment strip promotes a parsed `text/calendar`
+  // part into — read by `app/components/IcsEventCard.tsx` through `liveCopy("icsEvent", …)`, the
+  // same non-hook route as `attachmentPreview`, and counted by the derivation for the same
+  // reason. Unreachable in the fixtures-only preview today (the desktop tier serves no
+  // attachment bytes), listed for the reason `body` is: the guard compares what the sources
+  // READ, and omitting it would put `icsEvent.request` in the binary where "Einladung" belongs.
+  "icsEvent",
   // `bodyText` is the quoted-history fold's copy ("Show history"/"Hide history"), read by
   // `app/shell/BodyText.tsx` through `liveCopy("bodyText", …)` since the fold landed — the same
   // non-hook route `attachmentPreview` takes, and counted by the derivation for the same reason:

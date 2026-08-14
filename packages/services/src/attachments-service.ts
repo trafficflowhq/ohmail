@@ -1,7 +1,7 @@
 import JSZip from "jszip";
 import { and, asc, eq, gt, gte, inArray } from "drizzle-orm";
 import { attachments, messages } from "@trafficflow/db";
-import type { NativeLocator, EmailAddress } from "@trafficflow/core/mail";
+import { CALENDAR_FALLBACK_FILENAME, isCalendarMime, type NativeLocator, type EmailAddress } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
@@ -155,10 +155,23 @@ export function downloadAllOpenFailure(err: unknown): string {
   return "mail server unavailable";
 }
 
+/**
+ * The name a nameless part is served and listed under.
+ *
+ * `invite.ics` for a calendar part — the COMMON nameless shape (Google and Outlook nest the
+ * invitation as an unnamed `text/calendar` alternative) — and the generic id-stem for the rest.
+ * The engine's `toAttachmentItem` mirrors BOTH fallbacks deliberately, so the tile, the single
+ * download and a zip entry all name one file; its comment points here.
+ */
+function partFallbackName(part: { id: string; contentType: string }): string {
+  return isCalendarMime(part.contentType) ? CALENDAR_FALLBACK_FILENAME : `attachment-${part.id}.bin`;
+}
+
 /** A resolved attachment carrying everything the on-demand IMAP fetch needs. */
 interface ResolvedPart {
   id: string;
   filename: string | null;
+  contentType: string;
   partId: string | null;
   mailboxId: string;
   locator: NativeLocator;
@@ -221,8 +234,10 @@ export class AttachmentsService {
       // and the `finally` below closes it, so the poisoned-connection cost of a mid-stream abort is
       // a connection we were about to discard anyway.
       const fetched = await adapter.fetchPart(part.locator, part.partId, { maxBytes: ATTACHMENT_MAX_FETCH_BYTES });
-      // Prefer the DB filename (stable) but fall back to what IMAP reported.
-      return { ...fetched, filename: part.filename ?? fetched.filename };
+      // Prefer the DB filename (stable), then what IMAP reported; a part nameless in BOTH
+      // places downloads under the type-aware fallback (invite.ics for a calendar part) rather
+      // than the route's bare "attachment" — see {@link partFallbackName}.
+      return { ...fetched, filename: part.filename ?? fetched.filename ?? partFallbackName(part) };
     } catch (err) {
       // TRANSLATE, or the route loses it. `routes/attachments.ts` maps `ServiceError` and turns
       // everything else into a blanket 502 `upstream_unavailable` — so an un-translated ceiling
@@ -406,6 +421,7 @@ export class AttachmentsService {
     const rows = await ctx.db.select({
       id: attachments.id,
       filename: attachments.filename,
+      contentType: attachments.contentType,
       partId: attachments.partId,
       sizeBytes: attachments.sizeBytes,
       mailboxId: messages.mailboxId,
@@ -418,7 +434,7 @@ export class AttachmentsService {
     for (const r of rows) {
       const locator = r.nativeLocator as NativeLocator | null;
       if (!locator) continue;   // a message with no native locator cannot be fetched
-      out.push({ id: r.id, filename: r.filename, partId: r.partId, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes });
+      out.push({ id: r.id, filename: r.filename, contentType: r.contentType, partId: r.partId, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes });
     }
     return out;
   }
@@ -428,6 +444,7 @@ export class AttachmentsService {
     const [r] = await ctx.db.select({
       id: attachments.id,
       filename: attachments.filename,
+      contentType: attachments.contentType,
       partId: attachments.partId,
       sizeBytes: attachments.sizeBytes,
       mailboxId: messages.mailboxId,
@@ -439,7 +456,7 @@ export class AttachmentsService {
     if (!r) throw new ServiceError("not_found", 404, "attachment not found");
     const locator = r.nativeLocator as NativeLocator | null;
     if (!locator) throw new ServiceError("upstream_unavailable", 502, "message location unknown");
-    return { id: r.id, filename: r.filename, partId: r.partId, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes };
+    return { id: r.id, filename: r.filename, contentType: r.contentType, partId: r.partId, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes };
   }
 
   private async ownedRow(ctx: ServiceContext, attachmentId: string): Promise<typeof attachments.$inferSelect> {
@@ -459,7 +476,7 @@ export class AttachmentsService {
 
   /** De-duplicate zip entry names (Apple-Mail behavior on same-named parts). */
   private uniqueName(part: ResolvedPart, used: Set<string>): string {
-    const base = part.filename?.trim() || `attachment-${part.id}.bin`;
+    const base = part.filename?.trim() || partFallbackName(part);
     if (!used.has(base)) { used.add(base); return base; }
     const dot = base.lastIndexOf(".");
     const stem = dot > 0 ? base.slice(0, dot) : base;

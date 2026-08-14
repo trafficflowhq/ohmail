@@ -1163,6 +1163,11 @@ export function MessagePane({
           canPreview={(item) => isPreviewable(item.mimeType)}
           onDownloadAll={() => attachments.downloadAll(message.id, { includeInlineImages: nativeBody })}
           downloadingAll={attachments.downloadingAll(message.id)}
+          /* THE EVENT CARD's feed: a calendar part whose decoded text is in hand renders as
+             the event it carries (what · when · where · who), in place of its tile. The map
+             is filled by the same effect that loads the list — engine-budgeted — and stays
+             empty wherever fetching was refused, which keeps the plain tile standing. */
+          calendarTextOf={(attachmentId) => attachments.calendarTextsOf(message.id).get(attachmentId)}
         />
       ) : null}
     </>
