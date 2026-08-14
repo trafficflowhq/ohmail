@@ -2170,3 +2170,200 @@ fn only_one_shape_of_link_carries_a_handoff_code() {
         Some(at_bound.as_str()),
     );
 }
+
+// ═══ AN ATTACHMENT BECOMES A FILE THIS COMPUTER CAN OPEN ═════════════════════════════════════
+//
+// The window sends bytes and a DISPLAY NAME out of a message somebody else wrote. Everything about
+// where those bytes land is decided in `engine.rs`, and these are the cases that hold that down.
+
+/// A DISPLAY NAME FROM A STRANGER CANNOT NAME A FILE OUTSIDE THE DIRECTORY WE CHOSE.
+///
+/// This is the whole security argument for the command, so the traversals are asserted as a
+/// PROPERTY of the result rather than as a table of rewrites: whatever comes out carries no
+/// separator and is not a directory, and is therefore a name that can only be joined to the
+/// directory `open_attachment` composed. The rows after it are the second half of the job —
+/// that an ordinary name survives unchanged, since the name is what the viewer shows and what the
+/// reader recognises, and a sanitiser that mangled ordinary names would trade one defect for a
+/// quieter one.
+///
+/// Mutations watched red:
+///  · take the whole string instead of the last path segment  → the traversal rows go red;
+///  · drop `\` from the separator split                       → the Windows-path rows go red;
+///  · stop mapping `:`                                        → the NTFS-stream row goes red;
+///  · stop trimming trailing dots                             → the `report.pdf .` row goes red;
+///  · drop the reserved-name prefix                           → the `NUL.pdf` rows go red;
+///  · truncate without keeping the extension                  → the long-name rows go red.
+#[test]
+fn a_display_name_from_a_message_can_only_name_a_file_in_our_own_directory() {
+    for hostile in [
+        "../../.ssh/authorized_keys",
+        "../../../etc/passwd",
+        "/etc/passwd",
+        "/",
+        "..",
+        ".",
+        "....//....//etc/passwd",
+        r"..\..\Windows\System32\drivers\etc\hosts",
+        r"C:\Windows\System32\calc.exe",
+        r"\\server\share\payload.dll",
+        // A separator that survived at all would be the whole bug, on whichever platform reads it.
+        "a/b",
+        r"a\b",
+    ] {
+        let out = attachment_file_name(hostile);
+        assert!(
+            !out.contains('/') && !out.contains('\\'),
+            "attachment_file_name({hostile:?}) kept a separator: {out:?}",
+        );
+        assert!(out != "." && out != "..", "attachment_file_name({hostile:?}) named a directory");
+        assert!(!out.is_empty(), "attachment_file_name({hostile:?}) named nothing");
+    }
+
+    // The answers are the ones a person would expect, not merely safe ones.
+    assert_eq!(attachment_file_name("../../.ssh/authorized_keys"), "authorized_keys");
+    assert_eq!(attachment_file_name(r"C:\Windows\System32\calc.exe"), "calc.exe");
+    assert_eq!(attachment_file_name("/etc/passwd"), "passwd");
+    // Nothing usable left: a NAME rather than a refusal, because refusing would hand a sender a
+    // way to make somebody's attachment permanently unopenable.
+    assert_eq!(attachment_file_name(".."), ATTACHMENT_FALLBACK_NAME);
+    assert_eq!(attachment_file_name(""), ATTACHMENT_FALLBACK_NAME);
+    assert_eq!(attachment_file_name("   "), ATTACHMENT_FALLBACK_NAME);
+    assert_eq!(attachment_file_name("/"), ATTACHMENT_FALLBACK_NAME);
+
+    // ── an ordinary name is carried through EXACTLY ─────────────────────────────────────────
+    for ordinary in [
+        "Quarterly report.pdf",
+        "Rechnung Nr. 2026-08.pdf",
+        "photo (1).jpeg",
+        "notes_v2-final.txt",
+        "Präsentation.pptx",
+        "議事録.pdf",
+        "a.b.c.tar.gz",
+    ] {
+        assert_eq!(attachment_file_name(ordinary), ordinary, "an ordinary name was rewritten");
+    }
+
+    // ── the characters that mean something structural to a filesystem ────────────────────────
+    // `:` is an alternate-data-stream separator on NTFS: `report.pdf:evil.exe` writes a stream
+    // nothing lists and the opener would never find.
+    assert_eq!(attachment_file_name("report.pdf:evil.exe"), "report.pdf_evil.exe");
+    assert_eq!(attachment_file_name("a<b>c|d?e*f\"g.txt"), "a_b_c_d_e_f_g.txt");
+    // A newline in a name is a name that misreports itself everywhere it is printed.
+    assert_eq!(attachment_file_name("report\n.pdf"), "report_.pdf");
+    assert_eq!(attachment_file_name("report\u{0}.pdf"), "report_.pdf");
+
+    // ── Windows strips these on create, so a name keeping them is one we could not find again ─
+    assert_eq!(attachment_file_name("report.pdf ."), "report.pdf");
+    assert_eq!(attachment_file_name("report.pdf..."), "report.pdf");
+    assert_eq!(attachment_file_name("  report.pdf  "), "report.pdf");
+
+    // ── the device names, reserved with ANY extension and in any case ────────────────────────
+    for reserved in ["NUL.pdf", "con", "CoN.txt", "aux.jpeg", "COM1.dat", "lpt9"] {
+        let out = attachment_file_name(reserved);
+        assert!(
+            out.starts_with('_'),
+            "attachment_file_name({reserved:?}) left a reserved device name: {out:?}",
+        );
+        // Prefixed rather than replaced — the reader still recognises the file they were sent.
+        assert!(out.to_lowercase().contains(&reserved.to_lowercase()));
+    }
+
+    // ── the length cap KEEPS THE EXTENSION, which is the whole of how a program is chosen ────
+    let long = format!("{}.pdf", "n".repeat(400));
+    let capped = attachment_file_name(&long);
+    assert!(capped.len() <= ATTACHMENT_NAME_MAX, "a {}-byte name survived", capped.len());
+    assert!(capped.ends_with(".pdf"), "the truncation took the extension: {capped:?}");
+
+    // A multi-byte name must not be sliced through the middle of a character — that is a PANIC
+    // rather than a wrong name, and it would take the whole command down with it.
+    let wide = format!("{}.pdf", "é".repeat(200));
+    let capped_wide = attachment_file_name(&wide);
+    assert!(capped_wide.len() <= ATTACHMENT_NAME_MAX);
+    assert!(capped_wide.ends_with(".pdf"));
+
+    // A long run with no extension worth protecting keeps its stem instead.
+    let no_ext = "z".repeat(400);
+    let capped_plain = attachment_file_name(&no_ext);
+    assert!(capped_plain.len() <= ATTACHMENT_NAME_MAX);
+    assert!(capped_plain.starts_with('z'));
+}
+
+/// THE FILE IS WRITTEN WHERE WE SAID, UNDER A NAME OF ITS OWN, AND TWO OF THEM DO NOT COLLIDE.
+///
+/// The collision case is the one worth stating: the obvious way to keep two files called
+/// `Invoice.pdf` apart is to rename one, and that loses both the name the reader recognises and —
+/// if the rename reached the tail — the extension the platform picks the program by. So the unique
+/// part is the DIRECTORY and the file keeps its name, which this proves by asserting both.
+///
+/// Mutations watched red:
+///  · resolve collisions by renaming instead of by a unique directory → the same-name assertion
+///    goes red;
+///  · drop the `0o600` mode from the open options                     → the permission row goes red;
+///  · drop `tighten` on the root                                      → the directory row goes red.
+#[test]
+fn two_attachments_with_one_name_are_two_files() {
+    let fixture = Fixture::new("open-attachment");
+    let root = attachment_root(Some(&fixture.dir)).expect("root");
+    assert!(root.starts_with(&fixture.dir), "the directory escaped the app's own");
+
+    let first = write_attachment(&root, "Invoice.pdf", b"first").expect("first write");
+    let second = write_attachment(&root, "Invoice.pdf", b"second").expect("second write");
+
+    assert_ne!(first, second, "two attachments with one name overwrote each other");
+    assert_eq!(first.file_name(), second.file_name(), "the display name was not preserved");
+    assert_eq!(fs::read(&first).expect("read first"), b"first");
+    assert_eq!(fs::read(&second).expect("read second"), b"second");
+
+    // Both inside the directory this app owns, with nothing between them and it but the unique
+    // holder — so the path is ours from the root down.
+    for path in [&first, &second] {
+        assert!(path.starts_with(&root), "{path:?} is not under {root:?}");
+        assert_eq!(path.parent().and_then(|p| p.parent()), Some(root.as_path()));
+    }
+
+    // Somebody's mail, readable by them and by nobody else on the machine.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&first).expect("stat").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "an attachment was written world-readable: {mode:o}");
+        let dir_mode = fs::metadata(root.as_path()).expect("stat").permissions().mode();
+        assert_eq!(dir_mode & 0o777, 0o700, "the directory is not private: {dir_mode:o}");
+    }
+}
+
+/// THE SWEEP READS ITS WINDOW, IN BOTH DIRECTIONS.
+///
+/// The direction that matters is the second one: deleting a file out from under a viewer somebody
+/// is reading is worse than leaving one behind, which is why the sweep runs on the way IN and why
+/// the window is a day rather than a session.
+///
+/// Mutation watched red: invert the comparison (`age > keep` → `age < keep`) and both rows go red,
+/// which is the point of asserting the pair rather than either alone.
+#[test]
+fn the_sweep_reads_its_window_in_both_directions() {
+    let fixture = Fixture::new("sweep-attachment");
+    let root = attachment_root(Some(&fixture.dir)).expect("root");
+    let written = write_attachment(&root, "today.pdf", b"today").expect("write");
+
+    // The real window: a file written a moment ago is being read right now.
+    sweep_attachments(&root, ATTACHMENT_KEEP);
+    assert!(written.exists(), "the sweep deleted a file somebody may still be reading");
+
+    // A window of nothing: everything is old, so everything goes. This is the arm that proves the
+    // sweep removes anything at all rather than being a no-op the row above cannot tell apart.
+    sweep_attachments(&root, Duration::ZERO);
+    assert!(!written.exists(), "the sweep left a file older than its whole window");
+    assert!(root.exists(), "the sweep took the directory it sweeps");
+}
+
+/// THE CEILING IS THE SHELL'S OWN, and not a number it inherits by agreement with the window.
+///
+/// 32 MiB is `ATTACHMENT_MAX_FETCH_BYTES` in `packages/services` — the point at which the mail
+/// service refuses to fetch a single part at all. Written down twice on purpose: the client refuses
+/// first (such a part is a tile that is deliberately not a button), and the process that does the
+/// WRITING carries its own bound rather than trusting the caller to have one.
+#[test]
+fn the_write_ceiling_is_the_services_single_fetch_ceiling() {
+    assert_eq!(ATTACHMENT_MAX_BYTES, 32 * 1024 * 1024);
+}

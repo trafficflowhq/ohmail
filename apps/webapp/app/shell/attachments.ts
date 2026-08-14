@@ -46,6 +46,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { isAuthListFailure, type AttachmentItem, type AttachmentsView } from "../components/AttachmentStrip";
+import { desktopAttachmentsEnabled, openAttachmentWithSystemViewer } from "./open-attachment";
 import { probeSessionNow, subscribeSessionRevival } from "./session-truth";
 
 /**
@@ -155,6 +156,40 @@ export function saveObjectUrl(url: string, filename: string, doc: Document): voi
   doc.body.appendChild(a);
   a.click();
   a.remove();
+}
+
+/**
+ * DELIVER ONE FILE, by whichever route this window actually has.
+ *
+ * ── WHY THIS IS NOT ONE LINE ────────────────────────────────────────────────────────────────
+ *
+ * In a browser tab {@link saveObjectUrl} is the whole answer. In the desktop window it is answered
+ * "no": the `download` attribute asks the webview to turn the navigation into a download, and a
+ * webview whose host registered no download handler CANCELS it — silently, with no error anywhere,
+ * which is why every attachment press in the app did nothing. `open-attachment.ts` carries the
+ * mechanism and the reasoning; this is the one place either route is chosen.
+ *
+ * The desktop arm NEVER falls back to the anchor. A fallback would be a second silent no-op behind
+ * a fix for the first, and the two are not interchangeable: the anchor there is not a slower way to
+ * the same file, it is nothing at all.
+ *
+ * `blob` is the engine's RETAINED typed Blob for the item — the same bytes the object URL points
+ * at, minted together so the two cannot diverge ({@link OhmailEngine.attachmentBlobOf}). It is
+ * optional because the object URL is the older half of that pair and a caller may hold one without
+ * the other; without bytes there is nothing to hand a viewer, so the anchor is all that is left and
+ * it is used even on the desktop, where it does what it has always done.
+ */
+export function deliverFile(
+  blob: Blob | undefined,
+  url: string,
+  filename: string,
+  doc: Document,
+): void {
+  if (desktopAttachmentsEnabled() && blob) {
+    void openAttachmentWithSystemViewer(blob, filename);
+    return;
+  }
+  saveObjectUrl(url, filename, doc);
 }
 
 /**
@@ -346,9 +381,11 @@ export function useMessageAttachments(
 
         const after = itemOf(engine, id, attachmentId);
         // Nothing to save on `failed` or `too_large`: the tile carries the server's own
-        // sentence and a silent no-op here is what lets it be read.
+        // sentence and a silent no-op here is what lets it be read. `too_large` is also the
+        // reason nothing over the fetch ceiling can reach the desktop's file write — such a part
+        // never has bytes in the window, and the early return above refuses the press outright.
         if (after?.state === "ready" && after.objectUrl) {
-          saveObjectUrl(after.objectUrl, after.filename, document);
+          deliverFile(engine.attachmentBlobOf(id, attachmentId), after.objectUrl, after.filename, document);
         }
       })();
     },
@@ -459,7 +496,14 @@ export function useMessageAttachments(
             : [];
 
           // ── the synchronous half. No `await` may appear inside this loop. ──
-          for (const item of saved) saveObjectUrl(item.objectUrl!, item.filename, document);
+          //
+          // `deliverFile` keeps that property on both routes: the browser arm is the same
+          // synthetic click it always was, and the desktop arm hands each file to the shell
+          // without waiting for it — the shell answers each on its own thread, and a loop that
+          // awaited them would open the viewers one at a time over the length of the slowest.
+          for (const item of saved) {
+            deliverFile(engine.attachmentBlobOf(id, item.id), item.objectUrl!, item.filename, document);
+          }
 
           // Reported only when NOTHING could be saved. A partial result needs no toast: every
           // file that could not be fetched is a `failed` tile carrying the server's own sentence,

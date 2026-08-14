@@ -18,8 +18,23 @@
  * The consequence is worth stating rather than leaving to be discovered: **inline PDF preview is
  * not a capability either desktop artifact has.** The interface preview serves no attachment
  * bytes at all. The engine-bearing build does serve them — it is a mail client reading a real
- * mailbox — and a PDF among them still cannot be drawn in the window; it is downloaded and opened
- * in whatever the operating system uses for PDFs.
+ * mailbox — and a PDF among them still cannot be drawn in the window; it is written to a file and
+ * opened in whatever the operating system uses for PDFs.
+ *
+ * ── THAT LAST SENTENCE WAS A CLAIM AND NOT A DESCRIPTION, UNTIL IT WAS MADE ONE ─────────────
+ *
+ * It used to say the PDF "is downloaded and opened in whatever the operating system uses for
+ * PDFs", and no part of that happened. The webview cancels a `<a download>` when its host has
+ * registered no download handler, and this app had registered none — so the panel this stub
+ * produces said to download the file, above a button that delivered nothing. Two dead ends in one
+ * press, and the second was written down here as though it worked.
+ *
+ * It now works, by a route that does not involve a download at all:
+ * `apps/webapp/app/shell/open-attachment.ts` hands the bytes to the shell, which writes the file
+ * under its own directory and opens the path with the platform's opener. And a PDF no longer
+ * reaches this stub from the reading pane in the first place — `MessagePane` withholds the in-app
+ * viewer for the one type this build cannot draw, so the tile's own press is the whole gesture.
+ * `getDocument` below stays a throw for anything that reaches it another way.
  *
  * WHICH LINE REFUSES, exactly, because the chain is not the obvious one: the shared surface sets
  * `GlobalWorkerOptions.workerSrc` and then checks it is non-empty before calling `getDocument`.

@@ -11,6 +11,7 @@ import { FOLDER_OF_VIEW, isProtectedMessage, type EngineMessage, type OhmailView
 import { Button, Chip, Icon, InfoNote, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
 import { AttachmentStrip } from "../components/AttachmentStrip";
 import { isPreviewable } from "../components/AttachmentPreview";
+import { opensInSystemViewer } from "./open-attachment";
 import { MessageBody } from "../components/MessageBody";
 import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
@@ -1158,9 +1159,18 @@ export function MessagePane({
              THE SWAP CHANGED THE GEOMETRY, NOT THIS LINE. `isPreviewable` is the same predicate
              with the same owner and the same refusals; what moved is which control is the big
              one. An attachment is usually opened to be read once, and a press that put the file
-             in ~/Downloads made the reader find it, open it elsewhere and then delete it. */
+             in ~/Downloads made the reader find it, open it elsewhere and then delete it.
+
+             AND ON THE DESKTOP, A PDF IS NOT ONE OF THEM — `opensInSystemViewer` is the second
+             half, and it subtracts rather than adds. That window cannot draw a PDF at all: the
+             renderer needs a worker, the window's policy is `worker-src 'none'`, and both desktop
+             bundles alias the library away for it. Offering the eye there produced a viewer whose
+             only possible outcome was a panel saying to download the file instead — over a
+             Download that, until this slice, could not deliver one. Without the eye, the tile's
+             own press is the whole gesture and it opens the PDF in the program this computer uses
+             for PDFs. It answers false everywhere else, including the whole web app. */
           onPreview={(attachmentId) => chrome.openAttachmentPreview(message.id, attachmentId)}
-          canPreview={(item) => isPreviewable(item.mimeType)}
+          canPreview={(item) => isPreviewable(item.mimeType) && !opensInSystemViewer(item.mimeType)}
           onDownloadAll={() => attachments.downloadAll(message.id, { includeInlineImages: nativeBody })}
           downloadingAll={attachments.downloadingAll(message.id)}
           /* THE EVENT CARD's feed: a calendar part whose decoded text is in hand renders as

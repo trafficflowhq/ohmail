@@ -2630,7 +2630,7 @@ fn install_key(app_data: Option<&Path>) -> Result<String, String> {
 
 // ── What the window may ask ──────────────────────────────────────────────────────────────────
 //
-// Six commands, and they are the only thing the webview can call. `engine_status` is what a surface
+// Nine commands, and they are the only thing the webview can call. `engine_status` is what a surface
 // renders; `engine_request` is the bridge the client engine's `fetch` goes down; `engine_configure`
 // and `engine_logout` are the two that change which door this install came in by. `notify` and
 // `set_badge` are the two pieces of native chrome the WINDOW drives rather than the shell: what
@@ -2960,31 +2960,63 @@ pub fn link_url_for(key: &str, challenge: Option<&str>) -> Result<String, String
 /// `rundll32.exe` is executed directly, so no shell parses anything, and `FileProtocolHandler` is
 /// the documented "open this address the way this user's own settings say to". Both callers use
 /// it, because two openers would mean the safe one is the one nobody exercised.
+/// THE ONE PLATFORM TABLE, shared by the two things this shell asks the system to open.
+///
+/// An address goes to it from [`spawn_opener`] and a file this process has just written goes to it
+/// from [`spawn_file_opener`]. ONE table rather than two, for the reason the Windows change was
+/// made in the first place: two openers would mean the careful one is the one nobody exercised.
+///
+/// The argument is an `OsStr` rather than a `&str` so a path crosses without a UTF-8 round trip —
+/// a Windows path and a Linux path are both sequences the platform defines, and re-encoding one to
+/// hand it to `Command` is a conversion that can only lose.
+///
+/// `rundll32.exe url.dll,FileProtocolHandler` answers both kinds on Windows: it is the documented
+/// "open this the way this user's own settings say to", and it takes a local path as readily as a
+/// URL. It is executed DIRECTLY, so no shell parses anything — see [`open_external`] for the
+/// injection this replaced.
+#[cfg(feature = "local-engine")]
+fn opener_command(target: &std::ffi::OsStr) -> Command {
+    #[cfg(target_os = "macos")]
+    {
+        let mut c = Command::new("/usr/bin/open");
+        c.arg(target);
+        c
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let mut c = Command::new("rundll32.exe");
+        c.arg("url.dll,FileProtocolHandler");
+        c.arg(target);
+        c
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let mut c = Command::new("xdg-open");
+        c.arg(target);
+        c
+    }
+}
+
 #[cfg(feature = "local-engine")]
 fn spawn_opener(url: &str) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut c = std::process::Command::new("/usr/bin/open");
-        c.arg(url);
-        c
-    };
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut c = std::process::Command::new("rundll32.exe");
-        c.args(["url.dll,FileProtocolHandler", url]);
-        c
-    };
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let mut command = {
-        let mut c = std::process::Command::new("xdg-open");
-        c.arg(url);
-        c
-    };
-
-    command
+    opener_command(url.as_ref())
         .spawn()
         .map(|_| ())
         .map_err(|err| format!("ohmail: this computer would not open a browser ({err})"))
+}
+
+/// Hand ONE file this process has just written to whatever this machine opens that kind with.
+///
+/// On macOS that is `open`, which is the same call the Finder makes — a PDF lands in Preview, a
+/// picture in Preview, a text file in the editor the user has chosen. The path is never the
+/// window's: it is composed by [`open_attachment`] under this app's own directory, from a name that
+/// function sanitised, so nothing a message carried decides where this points.
+#[cfg(feature = "local-engine")]
+fn spawn_file_opener(path: &Path) -> Result<(), String> {
+    opener_command(path.as_os_str())
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("ohmail: this computer would not open that file ({err})"))
 }
 
 /// Open one of [`LINKS`] in the user's own browser.
@@ -3129,6 +3161,322 @@ fn strip_scheme<'a>(url: &'a str, scheme: &str) -> Option<&'a str> {
 #[tauri::command(async)]
 fn open_external(url: String) -> Result<(), String> {
     spawn_opener(external_url(&url)?)
+}
+
+// ═══ AN ATTACHMENT OPENS IN THE VIEWER THIS COMPUTER ALREADY HAS ═════════════════════════════
+//
+// ── THE DEFECT, WHICH IS THE SAME CLASS AS THE LINK ONE AND NOT THE SAME BUG ────────────────
+//
+// The web client delivers a file the way a page can: it mints a `blob:` URL and clicks a hidden
+// `<a download>`. In a browser that saves the file. In this window it does NOTHING, silently, and
+// the reason is one line in the webview layer: a `download` attribute makes the webview ask its
+// host whether the navigation should become a download, and a host that registered no download
+// handler answers by CANCELLING the navigation. So the click was answered correctly, by a
+// component whose correct answer is "no", and there was no error to find anywhere — exactly the
+// shape that made every link in the app do nothing before [`open_external`] existed.
+//
+// The PDF viewer is a second, independent reason and it is a deliberate one: this window's policy
+// says `worker-src 'none'`, the in-page PDF renderer will not run without a worker, and it is
+// aliased out of both bundles for that reason. So a reader who pressed a PDF got a panel saying to
+// download it instead, over a Download that could not deliver a file. Two dead ends, one press.
+//
+// ── THE SHAPE, WHICH IS WHAT A DESKTOP MAIL CLIENT HAS ALWAYS DONE ─────────────────────────
+//
+// The window sends the bytes it already fetched; this process writes them into a directory it owns
+// and hands the PATH to the same platform opener a link goes to. A PDF opens in the computer's own
+// PDF viewer, a picture in its picture viewer, a spreadsheet in its spreadsheet program. Nothing is
+// rendered inside the mail window, which is also the safest possible answer for bytes a stranger
+// sent: they are never a document in this app's origin.
+//
+// ── WHAT THE WINDOW MAY DECIDE, AND WHAT IT MAY NOT ────────────────────────────────────────
+//
+// It supplies BYTES and a DISPLAY NAME. It does not supply a path, a directory, or any part of
+// one: the directory is this app's own, the unique component is minted here from the system's
+// random source, and the name is put through [`attachment_file_name`] before it is joined to
+// anything. There is therefore no value the window can send that names a file outside the
+// directory below — which matters more here than for a link, because the argument came out of a
+// message somebody else wrote.
+
+/// The most bytes this shell will write to disk to open.
+///
+/// The same number the mail service refuses a single attachment fetch at, so this is the second
+/// ring rather than a new rule: a part over it never becomes bytes in the window at all — the
+/// client renders it as a tile that is deliberately not a button, and the seam that would call this
+/// returns before asking. It is repeated here because the process that does the WRITING should
+/// carry its own bound rather than inherit one by agreement.
+#[cfg(feature = "local-engine")]
+const ATTACHMENT_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+/// The directory, under this app's own data directory, that opened attachments are written into.
+#[cfg(feature = "local-engine")]
+const ATTACHMENT_DIR: &str = "opened";
+
+/// How long an opened file is left on disk before a later open sweeps it away — 24 hours.
+///
+/// Not "delete it when the viewer closes", because nothing here can know that: `open` returns as
+/// soon as the other program has been asked, and that program holds the file for as long as
+/// somebody is reading it. A sweep on the way IN is the shape that cannot delete a file out from
+/// under the person looking at it, since anything old enough to be swept was opened a day ago.
+#[cfg(feature = "local-engine")]
+const ATTACHMENT_KEEP: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// The longest file name written, in bytes.
+///
+/// Every filesystem this app runs on takes 255; the cap is well under it so that the unique
+/// directory, the app's own path and a long home directory cannot add up to a path the platform
+/// refuses. A refusal here would be a file that does not open, which is the defect being fixed.
+#[cfg(feature = "local-engine")]
+const ATTACHMENT_NAME_MAX: usize = 120;
+
+/// The name used when a sender supplied nothing a filesystem can take.
+#[cfg(feature = "local-engine")]
+const ATTACHMENT_FALLBACK_NAME: &str = "attachment";
+
+/// The device names Windows reserves, which are not files and cannot be made into one.
+///
+/// They are reserved with ANY extension and in any case — `CON`, `con.txt` and `CoN.pdf` all name
+/// the console — so the test below is on the stem and is case-insensitive. On the other two
+/// platforms these are ordinary names; the list is applied everywhere regardless, because a name
+/// that behaves differently per platform is one that gets tested on the platform where it works.
+#[cfg(feature = "local-engine")]
+const RESERVED_STEMS: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// A DISPLAY NAME FROM A MESSAGE, MADE INTO A FILE NAME — a total function, never a refusal.
+///
+/// Total on purpose, and that is the one interesting decision here. A refusal would mean an
+/// attachment whose name a stranger chose badly cannot be opened at all, which hands the sender a
+/// way to make the reader's file useless; every input therefore produces SOME name, and the
+/// question this answers is only which one.
+///
+/// What it does, in order, and each line has a reason:
+///
+///  · **the last segment only.** Everything up to the final `/` or `\` is dropped, which is what
+///    disposes of `../../.ssh/authorized_keys`, `/etc/passwd` and `C:\Windows\System32\x` in one
+///    rule rather than three. Both separators always, on every platform: a `\` is an ordinary
+///    character in a Linux name and a separator on Windows, and the name is composed on one
+///    machine and may be read on another;
+///  · **`.` and `..` are not names.** After the segment rule they are all that a path of dots can
+///    still be, and joining either to a directory names the directory or its parent;
+///  · **the characters no name may carry** become `_`: the control range (a newline in a file name
+///    is a name that misreports itself everywhere it is printed), and `< > : " / \ | ? *`, which
+///    Windows refuses outright and which each mean something structural to something. `:` in
+///    particular is a stream separator on NTFS and was a separator on older macOS;
+///  · **trailing dots and spaces are stripped.** Windows silently removes them when creating a
+///    file, so `report.pdf .` becomes a file this process did not name and cannot then find;
+///  · **a reserved stem is prefixed**, never dropped, so `NUL.pdf` stays recognisable as itself;
+///  · **the length cap keeps the EXTENSION**, and that is not a nicety: the extension is the whole
+///    of how every one of these platforms decides which program opens the file, so a truncation
+///    that took it would produce a file that opens in nothing — this function's own failure mode.
+#[cfg(feature = "local-engine")]
+pub fn attachment_file_name(raw: &str) -> String {
+    // The last path segment, by either separator.
+    let last = raw.rsplit(['/', '\\']).next().unwrap_or("");
+
+    let mut cleaned: String = last
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+
+    // Windows drops these on create, so a name keeping them is a name this process cannot find
+    // again. Leading whitespace goes too — a file called " report.pdf" is a file nobody can type.
+    cleaned = cleaned.trim().trim_end_matches(['.', ' ']).trim().to_string();
+
+    if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
+        return ATTACHMENT_FALLBACK_NAME.to_string();
+    }
+
+    // The stem is everything before the FIRST dot, which is the rule Windows applies: `con.txt.pdf`
+    // is the console device, not a PDF.
+    let stem = cleaned.split('.').next().unwrap_or("");
+    if RESERVED_STEMS.iter().any(|r| stem.eq_ignore_ascii_case(r)) {
+        cleaned.insert(0, '_');
+    }
+
+    truncate_keeping_extension(&cleaned)
+}
+
+/// Bring a name under [`ATTACHMENT_NAME_MAX`] bytes without losing what opens it.
+///
+/// The extension is taken from the LAST dot and is kept only when it is short enough to plausibly
+/// be one — a name that is one long dotted string has no extension worth protecting, and treating
+/// its tail as one would keep 100 bytes of the sender's choosing and throw away the part a person
+/// recognises. Truncation is on a char boundary, because a `String` sliced through the middle of a
+/// multi-byte character panics.
+#[cfg(feature = "local-engine")]
+fn truncate_keeping_extension(name: &str) -> String {
+    if name.len() <= ATTACHMENT_NAME_MAX {
+        return name.to_string();
+    }
+    // At most 16 bytes of extension, dot included, and only when there is a stem in front of it.
+    let ext = match name.rfind('.') {
+        Some(at) if at > 0 && name.len() - at <= 16 => &name[at..],
+        _ => "",
+    };
+    let room = ATTACHMENT_NAME_MAX - ext.len();
+    let mut end = room.min(name.len());
+    while end > 0 && !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut out = name[..end].to_string();
+    out.push_str(ext);
+    // A stem truncated to nothing (a 120-byte extension is not one, but a caller could still send
+    // a name that is all one character) must not leave a bare dot.
+    if out.is_empty() || out == ext {
+        return ATTACHMENT_FALLBACK_NAME.to_string();
+    }
+    out
+}
+
+/// The directory opened attachments live under, made if it is not there.
+#[cfg(feature = "local-engine")]
+fn attachment_root(app_data: Option<&Path>) -> Result<PathBuf, String> {
+    let Some(dir) = app_data else {
+        return Err("ohmail: this computer named no place for the app to keep its files".to_string());
+    };
+    let root = dir.join(ATTACHMENT_DIR);
+    fs::create_dir_all(&root)
+        .map_err(|err| format!("ohmail: the folder for opened files could not be made ({err})"))?;
+    tighten(&root);
+    Ok(root)
+}
+
+/// Make a directory this process owns readable by nobody else. A no-op off unix, where the app's
+/// own data directory already carries the user's ACL.
+#[cfg(feature = "local-engine")]
+fn tighten(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Best effort: a directory that could not be tightened is still inside the app's own data
+        // directory, and refusing to open somebody's attachment over it would be the wrong trade.
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// Delete anything under `root` that was opened longer ago than `keep`.
+///
+/// Best effort throughout, and deliberately so: this is housekeeping on the way in, and a file that
+/// could not be removed — because the viewer still has it open, because a permission changed — must
+/// never stop the attachment somebody just pressed from opening. Errors are dropped rather than
+/// reported for the same reason.
+///
+/// `keep` is a PARAMETER rather than a read of [`ATTACHMENT_KEEP`], and the reason is that the
+/// alternative is untestable without backdating a file's modification time, which `std` has no
+/// setter for. With the window passed in, the two directions the threshold can be wrong in are one
+/// call each: a zero window must take a file written a moment ago, and the real window must leave
+/// it. The one caller passes the constant.
+#[cfg(feature = "local-engine")]
+fn sweep_attachments(root: &Path, keep: Duration) {
+    let Ok(entries) = fs::read_dir(root) else { return };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        // Modified rather than created: `created` is not available on every filesystem this app
+        // runs on, and these files are written once and never touched again, so the two agree.
+        let Ok(modified) = meta.modified() else { continue };
+        let Ok(age) = now.duration_since(modified) else { continue };
+        if age < keep {
+            continue;
+        }
+        if meta.is_dir() {
+            let _ = fs::remove_dir_all(entry.path());
+        } else {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Write `bytes` under `root` in a directory of their own and answer the path written.
+///
+/// ── THE UNIQUE PART IS THE DIRECTORY AND NEVER THE NAME, AND THAT IS THE DESIGN ────────────
+///
+/// The obvious way to keep two attachments called `Invoice.pdf` apart is to rename one of them,
+/// and it is the wrong way twice over: the name is what the viewer puts in its title bar and what
+/// the reader recognises, and the EXTENSION is how the platform picks the program at all. So the
+/// file keeps the name the message gave it and the collision is resolved one level up, by putting
+/// each in a directory nobody else names.
+///
+/// The unique component is 16 bytes from the operating system's own random source, hex-encoded.
+/// Not a counter and not the clock: two windows of this app, or two presses in the same
+/// millisecond, must not be able to choose the same directory and overwrite each other's bytes
+/// while a viewer is reading them.
+#[cfg(feature = "local-engine")]
+fn write_attachment(root: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    let mut unique = [0u8; 16];
+    getrandom::fill(&mut unique)
+        .map_err(|err| format!("ohmail: this computer would not supply random bytes ({err})"))?;
+    let dir: String = unique.iter().map(|b| format!("{b:02x}")).collect();
+
+    let holder = root.join(dir);
+    // `create_dir` and not `create_dir_all`: this name has never existed, so a directory that is
+    // already there means the random source repeated itself, and quietly writing into somebody
+    // else's directory is not the answer to that.
+    fs::create_dir(&holder)
+        .map_err(|err| format!("ohmail: a place for this file could not be made ({err})"))?;
+    tighten(&holder);
+
+    let path = holder.join(name);
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&path)
+        .map_err(|err| format!("ohmail: this file could not be written ({err})"))?;
+    file.write_all(bytes)
+        .map_err(|err| format!("ohmail: this file could not be written ({err})"))?;
+    // Flushed before the opener is spawned. The other program opens the path immediately and a
+    // buffered tail would reach it as a truncated document — which reads as a damaged attachment.
+    file.sync_all()
+        .map_err(|err| format!("ohmail: this file could not be flushed to disk ({err})"))?;
+    Ok(path)
+}
+
+/// Open one attachment in whatever program this computer opens that kind of file with.
+///
+/// The window sends the bytes it already fetched and the name the message gave them. Everything
+/// about WHERE they go is decided here — see the section header — and the answer is a rejected
+/// promise rather than a silent nothing, because "the press did nothing" is the defect this
+/// command exists to end.
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn open_attachment(
+    shell: tauri::State<'_, Arc<Shell>>,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    if bytes.is_empty() {
+        return Err("ohmail: there are no bytes in this file to open".to_string());
+    }
+    if bytes.len() > ATTACHMENT_MAX_BYTES {
+        return Err(format!(
+            "ohmail: this file is {} MiB, over the {} MiB limit for opening one",
+            bytes.len() / (1024 * 1024),
+            ATTACHMENT_MAX_BYTES / (1024 * 1024),
+        ));
+    }
+
+    let root = attachment_root(shell.paths.app_data.as_deref())?;
+    // Before the write, so a run of opens cannot let the directory grow without bound, and never
+    // after the spawn, where a failure would leave the sweep unowned.
+    sweep_attachments(&root, ATTACHMENT_KEEP);
+
+    let path = write_attachment(&root, &attachment_file_name(&filename), &bytes)?;
+    spawn_file_opener(&path)
 }
 
 // ═══ THE WAY BACK IN: `ohmail://link?code=…` ═════════════════════════════════════════════════
@@ -3302,12 +3650,12 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. Nothing else: no filesystem, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-open-link", "allow-open-external", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-open-link", "allow-open-external", "allow-open-attachment", "core:event:allow-listen"]
 }"#;
 
-/// Register the eight commands. Called from `main.rs` under the same feature.
+/// Register the nine commands. Called from `main.rs` under the same feature.
 ///
 /// It lives here rather than there so that `main.rs` contains no `invoke_handler` at all — the
 /// published shell's "registers no commands" is then a property of a file that is always compiled,
@@ -3358,11 +3706,12 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             notify,
             set_badge,
             open_link,
-            open_external
+            open_external,
+            open_attachment
         ])
 }
 
-/// Hand the shell to the window, grant the window the eight commands, and start listening for
+/// Hand the shell to the window, grant the window the nine commands, and start listening for
 /// `ohmail://` activations.
 ///
 /// The deep-link listener is registered HERE rather than from `Builder::setup`, and that is forced

@@ -150,10 +150,33 @@ const absent = MARKERS.filter((m) => !present.includes(m));
  */
 const HOSTED_SUGGEST_MARKER = "SuggestRefused";
 
+/**
+ * THE SHELL COMMANDS THIS BUNDLE CAN NAME — the preview's "it calls no command", in the bytes.
+ *
+ * Two of the app's commands are reached from modules that live in the SHARED frontend
+ * (`apps/webapp/app/shell/open-external.ts` and `open-attachment.ts`), which the preview compiles
+ * as surely as the engine build does. What keeps them out of the preview is a build-time literal in
+ * `src/main.tsx`: the calls that arm them sit inside `if (__OHMAIL_LOCAL_ENGINE__)`, so with the
+ * flag off the bundler folds the branch out and the modules become unreachable.
+ *
+ * That is the MECHANISM. This is the evidence, and the two are not the same thing — tree-shaking is
+ * exactly the kind of reasoning that is right until a later edit gives one of those modules a
+ * second, unguarded caller. The preview's published claim is that it spawns no process and calls no
+ * command; a press that invoked one and was refused by the ACL would make the claim false while
+ * still opening nothing, which is the silent shape both of those slices exist to end.
+ *
+ * Checked in BOTH directions, like everything else in this file: absent from the preview, and
+ * PRESENT in the engine build — where a missing one means an app whose links or whose attachments
+ * do nothing, which is precisely the defect each command was added to fix.
+ */
+const SHELL_COMMAND_MARKERS = ["open_external", "open_attachment"];
+
 const STUB_REFUSAL = "there is no Cloud sync client in this build";
 const REAL_CLIENT_MARKERS = ["x-csrf-token", "/sync/snapshot"];
 
 const hostedSuggestPresent = text.includes(HOSTED_SUGGEST_MARKER);
+const commandsPresent = SHELL_COMMAND_MARKERS.filter((m) => text.includes(m));
+const commandsMissing = SHELL_COMMAND_MARKERS.filter((m) => !commandsPresent.includes(m));
 const stubPresent = text.includes(STUB_REFUSAL);
 const realPresent = REAL_CLIENT_MARKERS.filter((m) => text.toLowerCase().includes(m));
 const realMissing = REAL_CLIENT_MARKERS.filter((m) => !realPresent.includes(m));
@@ -194,6 +217,14 @@ if (wantsEngine) {
         "Nothing but the protocol client itself puts those strings in a bundle.",
     );
   }
+  if (commandsMissing.length > 0) {
+    failures.push(
+      `the engine bundle names no ${commandsMissing.join(" and no ")} command. Each of those is ` +
+        "armed inside `if (__OHMAIL_LOCAL_ENGINE__)` in src/main.tsx; a missing one means the " +
+        "branch stopped arming it, and the app it ships in has links or attachments that do " +
+        "nothing at all — silently, which is what both of them were added to end.",
+    );
+  }
 } else {
   if (present.length > 0) {
     failures.push(`the interface preview carries the local-model surface: ${present.join(", ")}`);
@@ -213,6 +244,14 @@ if (wantsEngine) {
   if (realPresent.length > 0) {
     failures.push(
       `the interface preview carries a real sync client: ${realPresent.join(", ")} is in the bundle`,
+    );
+  }
+  if (commandsPresent.length > 0) {
+    failures.push(
+      `the interface preview names a shell command: ${commandsPresent.join(", ")}. That artifact's ` +
+        "published claim is that it calls no command — check that the arming call in src/main.tsx " +
+        "is still inside `if (__OHMAIL_LOCAL_ENGINE__)`, and that nothing else in the shared " +
+        "frontend reaches the module unguarded.",
     );
   }
 }

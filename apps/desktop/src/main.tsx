@@ -27,6 +27,7 @@ import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
+import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
 import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
 import { DesktopLocale } from "./DesktopLocale.js";
 import "../../webapp/app/app.css";
@@ -94,9 +95,20 @@ async function waitForBoot(): Promise<string | null> {
    `open_external` there would be refused by the ACL and still open nothing, having made the
    claim false on the way. `__OHMAIL_LOCAL_ENGINE__` is a build-time literal, so the preview
    does not carry this call or anything it reaches. */
+/* AND AN ATTACHMENT OPENS IN THE VIEWER THIS COMPUTER ALREADY HAS, SWITCHED ON HERE FOR THE SAME
+   REASONS AND WITH THE SAME BOUNDARY. In a tab, a hidden `<a download>` saves the file. In this
+   window the webview asks its host to perform the download and, finding no handler registered,
+   cancels it — so every attachment press did nothing, silently, exactly as every link did.
+   `open-attachment.ts` carries the mechanism; the shell writes the bytes under its own directory
+   and opens the path with the platform's opener, which is Preview and Quick Look on macOS.
+
+   INSIDE THE ENGINE BRANCH, like the line above it. The interface preview serves no attachment
+   bytes and its published claim is that it calls no command; `__OHMAIL_LOCAL_ENGINE__` is a
+   build-time literal, so that artifact does not carry this call or the command's name. */
 if (__OHMAIL_LOCAL_ENGINE__) {
   enableExternalLinks();
   interceptLinkClicks(document, { trustSameOrigin: true });
+  enableDesktopAttachments();
 }
 
 /* The pre-paint theme stamp. `themeInitScript()` from @ohmail/ui exists for

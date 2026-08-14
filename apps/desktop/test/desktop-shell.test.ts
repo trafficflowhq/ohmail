@@ -812,6 +812,25 @@ describe("the Rust side", () => {
       "fs::set_permissions", // re-tighten a file an earlier run or a backup tool widened
       "fs::Permissions", // …the mode handed to it
       "fs::read_to_string", // read the key back — the one read in this module
+      /* ── THE OPENED-ATTACHMENT DIRECTORY'S FOUR, AND THE CONSUMER THEY WERE ADDED FOR ──────
+       * An attachment could not be opened in this window at all: the web client delivers a file
+       * by clicking a hidden `<a download>`, and a webview whose host registered no download
+       * handler CANCELS that navigation — silently, which is why every attachment press did
+       * nothing. `open_attachment` is the answer, and it is the only reason this module now
+       * writes a file it did not write before: the bytes go into a directory under the app's own
+       * data directory, each in a holder of its own, and the path is handed to the platform's
+       * opener so the file lands in the program this computer already uses for that kind.
+       *
+       * Four calls, and each is bounded by an assertion further down rather than by this comment:
+       * one `create_dir` for the holder (never `create_dir_all`, so a repeated random name is an
+       * error rather than a write into somebody else's directory), one `read_dir` and two removals
+       * for the sweep that keeps the directory from growing without bound. The removals are the
+       * entries this list would have been most wrong to absorb quietly, so what they may reach is
+       * asserted below. */
+      "fs::create_dir", // the unique holder one opened attachment is written into
+      "fs::read_dir", // the sweep, over that directory and nothing else
+      "fs::remove_file", // …a swept file
+      "fs::remove_dir_all", // …or the holder it sat in
     ]);
     const used = [...engine.matchAll(/\bfs::(\w+)/g)].map((m) => `fs::${m[1]}`);
     // The harness bites only if it found something to classify.
@@ -835,7 +854,41 @@ describe("the Rust side", () => {
     // so the ban is narrowed to a count rather than dropped: a second `read_to_string`, a
     // `File::open` or a directory listing is a new capability and fails here as it always did.
     expect(engine.match(/fs::read_to_string/g)).toHaveLength(1);
-    expect(engine).not.toMatch(/fs::File::open|read_dir/);
+    expect(engine).not.toMatch(/fs::File::open/);
+
+    /* ── THE DIRECTORY LISTING AND THE TWO REMOVALS ARE COUNTED, NOT BANNED ────────────────
+     * `read_dir` used to be forbidden outright on this line, beside `File::open`. It is here now
+     * because opened attachments accumulate and something has to take them away, and the ban is
+     * NARROWED TO A COUNT rather than dropped — the same move this file already made for
+     * `read_to_string`. One listing and one of each removal: a second listing is a second place
+     * this module can learn what is on the disk, and a second removal is a second place it can
+     * take something off it.
+     *
+     * WHAT THEY MAY REACH IS THE POINT, and a count alone would not say it, so the sweep's own
+     * signature is asserted: it takes the root it is given and iterates that one directory's
+     * entries. Its only caller passes `attachment_root(...)`, which is composed from the app's own
+     * data directory and a constant — so there is no path from a value in the window to a file
+     * this module can delete. Change the sweep to take a caller-supplied path, or point it
+     * anywhere but `attachment_root`, and this goes red. */
+    expect(engine.match(/fs::read_dir/g)).toHaveLength(1);
+    expect(engine.match(/fs::remove_file/g)).toHaveLength(1);
+    expect(engine.match(/fs::remove_dir_all/g)).toHaveLength(1);
+    expect(engine).toMatch(/fn sweep_attachments\(root: &Path, keep: Duration\)/);
+    expect(engine).toMatch(/let Ok\(entries\) = fs::read_dir\(root\)/);
+    expect(engine.match(/sweep_attachments\(&root, ATTACHMENT_KEEP\)/g)).toHaveLength(1);
+    expect(engine).toMatch(/const ATTACHMENT_DIR: &str = "opened"/);
+    expect(engine).toMatch(/let root = dir\.join\(ATTACHMENT_DIR\)/);
+
+    /* ── AND THE HOLDER IS `create_dir`, WHICH IS THE LINE THAT CANNOT BE RELAXED ──────────
+     * The unique component is 16 random bytes, so the directory has never existed. `create_dir_all`
+     * would succeed on one that somehow did, writing this attachment's bytes into a holder another
+     * one is being read from; `create_dir` fails instead, which is the correct answer to a random
+     * source that repeated itself. */
+    expect(engine.match(/fs::create_dir\(&holder\)/g)).toHaveLength(1);
+
+    /* The opened attachment is somebody's mail: private at creation on the file, and on the two
+     * directories above it, for the same reason the key file is. */
+    expect(engine).toMatch(/Permissions::from_mode\(0o700\)/);
 
     /* ── THE KEY FILE IS PRIVATE AT CREATION, NOT PRIVATE SHORTLY AFTERWARDS ───────────────
      * A key written world-readable and chmoded a moment later has already leaked to anything
