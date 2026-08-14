@@ -218,12 +218,33 @@ export const withSession: Middleware = (next, route) => async (req, deps, params
   return next(req, deps, params);
 };
 
-/** Enforce a recent 2FA on step-up routes: null session / null / stale `lastTwofaAt` → 403. */
+/**
+ * Enforce a recent 2FA on step-up routes: null / stale `lastTwofaAt` → 403.
+ *
+ * ── NO SESSION AT ALL IS A 401, NOT A 403, AND THAT SPLIT IS NEW ────────────────────────────
+ *
+ * It used to answer 403 for a missing session too, and on every route that existed at the time
+ * the branch was unreachable: `stepUp` implied `!public`, so `withSession` had already returned
+ * 401 before this middleware ran. `GET /oauth/authorize` (SEC3-AUTH-6) is the first route that
+ * is BOTH `public` and `stepUp` — it has to be `public`, because an enrollment-scoped cookie
+ * must be DROPPED rather than 403'd on the way in — so the branch became reachable and its
+ * answer became wrong.
+ *
+ * Wrong in a way that matters twice. It would have told an anonymous caller to "step up", which
+ * it cannot do, instead of to authenticate; and `withSession` has an argument riding on the 401
+ * (`"dropping the identity turns that into the 401 it must be instead of a password-only
+ * escalation to full bearer tokens"`) which a 403 here would have quietly overturned, along with
+ * the `enrollment-flow.test.ts` case that asserts it.
+ *
+ * On every protected step-up route this changes nothing at all, because `withSession` still
+ * answers first and this branch stays unreachable there.
+ */
 export const withStepUp: Middleware = (next, route) => async (req, deps, params) => {
   if (route.options?.stepUp) {
     const s = deps.session;
+    if (!s) return errorResponse("unauthorized", 401, "authentication required");
     const withinWindow =
-      s?.lastTwofaAt != null && deps.now().getTime() - s.lastTwofaAt.getTime() <= deps.authConfig.stepUpWindowMs;
+      s.lastTwofaAt != null && deps.now().getTime() - s.lastTwofaAt.getTime() <= deps.authConfig.stepUpWindowMs;
     if (!withinWindow) return errorResponse("step_up_required", 403, "recent two-factor authentication required");
   }
   return next(req, deps, params);

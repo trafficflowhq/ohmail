@@ -52,7 +52,22 @@ const FULL_PIPELINE: Middleware[] = [
 //
 // It is safe here despite the missing `withErrorEnvelope`: the gate RETURNS an
 // `errorResponse`, it never throws, so there is nothing for the absent envelope to catch.
-const RAW_PIPELINE: Middleware[] = [withRequestId, withRequestGuard, withSession, withSpendGate];
+//
+// AND IT NOW KEEPS `withStepUp`, for the same reason and after the same kind of miss. Putting
+// `stepUp: true` on `GET /oauth/authorize` — the fix the register asks for — would have done
+// NOTHING while this chain omitted the middleware that reads the flag, and it would have looked
+// like it did something: the route table would have shown the gate, the census would have agreed,
+// and the route would have gone on minting 400-day native credentials for any bearer token. That
+// is the identical shape as the `withSpendGate` paragraph above, one flag along, which is the
+// reason to state it rather than quietly add the entry.
+//
+// A `stepUp` flag on a route whose chain cannot enforce it is worse than no flag, because it
+// reads as a control. Both raw + step-up routes therefore run the real middleware, and
+// `raw-pipeline-parity.test.ts` asserts the membership rather than trusting this comment.
+//
+// Safe for the same reason `withSpendGate` is: `withStepUp` RETURNS an `errorResponse` and never
+// throws, so the absent envelope has nothing to catch.
+const RAW_PIPELINE: Middleware[] = [withRequestId, withRequestGuard, withSession, withStepUp, withSpendGate];
 
 // `anonymous` routes: NO session resolution at all (`/health`).
 //
