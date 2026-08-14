@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import {
   accountSettings, folderState, messages, routingDecisions,
   screenerLedgerSource, storeScreenerSuggestion,
@@ -58,6 +58,29 @@ import { askScreeningQuestion, silentLogger, type ClassifierPort, type Logger } 
        refused gate call and zero model calls: the refusal is pre-model by control flow, so
        "no credits ⇒ nothing was sent to a third party and nothing was charged" is a property of
        the order of these lines and not of a check somebody remembered to write.
+
+   ── AND ONE BOUND THAT IS NOT ABOUT MONEY: FLAGGED MAIL IS NOT A CANDIDATE ──────────────────
+
+   A message carrying `no_ai`, or any `sensitivity_category` at all, is excluded from
+   {@link selectCandidates} — before the spend, before the model, before it can be anybody's
+   representative. The flags are the detector's answer to "does this look like it carries a
+   credential", and `sensitive.ts` routes its INDETERMINATE outcome into `no_ai` as well, so the
+   exclusion covers "we could not read this confidently" and not only "we recognised an OTP".
+
+   **This is deliberately NOT what the user-pressed path does, and the difference is the press.**
+   `ScreenerService.suggest` asks about every held sender, flagged or not, and redacts at the sink:
+   that is the AI-OPEN ruling of 2026-08-08, and it rests on a person selecting senders, being
+   quoted a price and pressing a button. This pass has none of that. The same ruling said so in as
+   many words about the automatic router — *"nobody presses anything there, so there is no consent
+   to point at"* — and this pass is automatic in exactly that sense, so it takes the automatic
+   answer. Redaction still runs underneath (`askScreeningQuestion` calls `redactForModel`); it is
+   the second layer here rather than the only one.
+
+   **A sender whose representative is flagged therefore stays UNSUGGESTED, and that is the honest
+   state rather than a gap.** Their row is still in the Screener, still decidable, and still
+   purchasable by the manual control under the rules that path already has — the user can press and
+   get an answer. What they do not get is an answer nobody asked for, bought with their money, about
+   mail the detector thinks holds a passcode.
 
    There is no persisted disarm column and no cursor table, and neither is missing. Progress is
    the STORED SUGGESTION: a sender this pass bought for has a `routing_decisions` row, the
@@ -353,13 +376,28 @@ export async function screenerAutoSuggestPass(
  * keyed by MESSAGE, so if this pass bought against a different representative than the surface
  * shows, the account would be charged twice for one sender and see the answer once.
  *
- * ## The two outer predicates sit OUTSIDE the `DISTINCT ON`, and that is not cosmetic
+ * ## The three outer predicates sit OUTSIDE the `DISTINCT ON`, and that is not cosmetic
  *
- * Pushing either of them into the inner query would filter rows BEFORE the representative is
+ * Pushing any of them into the inner query would filter rows BEFORE the representative is
  * chosen, so a sender whose true representative is (say) already bought would have an OLDER held
  * message promoted to representative and be bought a SECOND time, on different mail. The
  * predicate therefore applies to a set that is already one row per sender. This is the same
  * composition, for the same reason, that `heldSenderPage` documents for its keyset.
+ *
+ * **THE SENSITIVITY EXCLUSION IS THE SHARPEST CASE OF THAT RULE, and it is worth spelling out
+ * because the obvious placement is the wrong one.** "Never let a flagged message become the
+ * representative" sounds like an inner-query predicate, and written there it would do something
+ * nobody wants: a sender whose newest held mail is a passcode would have their PREVIOUS message
+ * promoted and bought for — so the row the Screener shows (the newest) and the message the
+ * suggestion is stored against (an older one) would be different mail, which is the double-charge
+ * this whole composition exists to prevent, arrived at by way of a privacy fix. Outside, the
+ * meaning is the one the invariant actually wants: the representative is chosen by the same rule
+ * the surface uses, and if THAT message is flagged the sender is not a candidate at all.
+ *
+ * The consequence is deliberate and is the stricter direction: a sender with older unflagged held
+ * mail is still excluded while their newest is flagged, and a sender whose only held mail is
+ * flagged is excluded permanently. Neither is a sender who gets a WORSE answer — they get no
+ * automatic answer, and the manual control still works for them.
  *
  * ## THE WATERMARK CLOCK IS OURS. `messages.date` IS THE SENDER'S AND IS NOT USED
  *
@@ -396,6 +434,10 @@ async function selectCandidates(
     subject: messages.subject,
     snippet: messages.snippet,
     createdAt: messages.createdAt,
+    // CARRIED SO THE OUTER PREDICATE CAN READ THEM, and read there rather than here — see the
+    // sensitivity paragraph below for why filtering inside this `DISTINCT ON` would be a defect.
+    noAi: messages.noAi,
+    sensitivityCategory: messages.sensitivityCategory,
     sortKey: sortKey.as("sort_key"),
   }).from(messages)
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
@@ -415,7 +457,7 @@ async function selectCandidates(
     .where(and(
       // (1) THE WATERMARK — consent began before this message did.
       sql`${reps.createdAt} > ${opts.watermark.toISOString()}::timestamptz`,
-      // The progress marker AND the double-buy guard, in one predicate: a sender whose
+      // (2) The progress marker AND the double-buy guard, in one predicate: a sender whose
       // representative already carries a suggestion — bought by this pass on an earlier cycle, by
       // the client's on-open batch, or by the manual ladder — is not re-bought and not re-asked.
       sql`not exists (
@@ -424,6 +466,15 @@ async function selectCandidates(
            and rd.message_id = ${reps.messageId}
            and rd.input_provenance = ${SCREENER_SUGGESTION_PROVENANCE}
       )`,
+      // (3) THE SENSITIVITY EXCLUSION — a flagged representative is not a candidate.
+      //
+      // Both halves, because they are two different answers and only one of them is "we saw an
+      // OTP": `sensitivity_category` is the detector's positive class, and `no_ai` additionally
+      // carries its INDETERMINATE outcome — `no_ai` true with a NULL category is "we could not
+      // read this confidently", which `sensitive.ts` routes here on purpose. An automatic pass
+      // must take the stricter reading of both.
+      eq(reps.noAi, false),
+      isNull(reps.sensitivityCategory),
     ))
     .orderBy(asc(reps.createdAt), asc(reps.messageId))
     .limit(opts.limit);
