@@ -770,6 +770,30 @@ export interface ChangeBatch {
    * Optional so every existing fake adapter keeps compiling; absent ⇒ `false`.
    */
   hasBacklog?: boolean;
+  /**
+   * UIDs this pass ASKED THE SERVER FOR AND DID NOT GET BACK — and the caller owes each one a
+   * durable failure row BEFORE it writes the folder cursor.
+   *
+   * RFC 3501 lets a `UID FETCH` return fewer messages than the UID set names, with no error and no
+   * per-UID signal, so "the message did not arrive" is indistinguishable from "the message does not
+   * exist" at the protocol level. The adapter cannot tell the difference either; what it CAN do is
+   * refuse to be silent about it, which is what this field is.
+   *
+   * The cursor for such a folder is published ADVANCED, exactly as it is for a message that was
+   * fetched and then failed to parse. That is safe for the same reason and only for the same
+   * reason: `message_failures` holds the UID, `buildCursor` merges it into the known-set, and the
+   * targeted retry re-reads it by UID on a schedule and on every deploy. A caller that ignores this
+   * field instead publishes a watermark over mail nothing will ever enumerate again — see
+   * `sync.ts`, which records these and DEFERS the folder's cursor when the record cannot be written.
+   *
+   * Empty on almost every cycle. It is populated by servers that cannot serialize some field of a
+   * particular message (measured: iCloud omits the row for a quoted-string `Message-ID` when
+   * ENVELOPE is requested), which is why `fetchCapped` first re-asks without the field it suspects
+   * before giving up on the UID — most of what would land here is recovered instead.
+   *
+   * Optional so every existing fake adapter keeps compiling; absent ⇒ nothing was withheld.
+   */
+  unanswered?: ReadonlyArray<{ folder: string; uidValidity: string; uid: number }>;
 }
 
 export interface OutboundMessage {

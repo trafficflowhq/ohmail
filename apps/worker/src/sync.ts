@@ -628,6 +628,52 @@ export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolea
     });
   }
 
+  // ── UIDS THE SERVER WITHHELD — RECORDED HERE, BEFORE ANY CURSOR MOVES ───────────────────────
+  //
+  // `batch.unanswered` is the set the adapter asked for and did not receive (see its doc on
+  // `ChangeBatch`). No `Change` was ever produced for these, so the `attempt` boundary above never
+  // saw them and the dead-letter path they would otherwise take was unreachable — they were
+  // crossed in SILENCE, which is the one thing the cursor rule forbids. A folder's cursor may
+  // advance over a UID only once a durable row for it is committed, so that row is written here.
+  //
+  // `unclassified` is the honest code: the closed set names failures we can attribute to the
+  // MESSAGE (`mime_too_large`, `mime_unparseable`, …) and this is not one of them — the bytes were
+  // never seen. It is also the right RETRY behaviour, which matters more: `nextAttemptAfter` gives
+  // the non-deterministic codes a doubling clock capped at a day, and `claimMessageFailures`'
+  // version arm re-reads every owed UID once per deploy. So a server that starts answering, or a
+  // build that stops asking for the field it chokes on, recovers the message on its own.
+  //
+  // Same failure semantics as the ingest path, deliberately: a row that cannot be written DEFERS
+  // the folder, which holds its cursor and fails the cycle. Losing this write while advancing the
+  // watermark is precisely the mail-loss shape the ledger exists to prevent.
+  for (const site of batch.unanswered ?? []) {
+    try {
+      const attempts = await fencedWrite(deps, (r) => r.recordMessageFailure(mailboxId, {
+        accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+        code: "unclassified", version,
+        nextAttemptAt: nextAttemptAfter("unclassified", 1, new Date()),
+      }));
+      log?.warn("sync_uid_unanswered", {
+        mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+        attempts,
+        reason: "the server listed this UID and returned nothing for it, twice — once for the " +
+          "batch fetch and once for the envelope-free retry. Recorded as owed so the cursor may " +
+          "cross it and the targeted retry keeps re-reading it",
+      });
+    } catch (writeErr) {
+      rethrowFenced(writeErr);
+      deferred.add(site.folder);
+      if (firstDeferredError === null) firstDeferredError = writeErr;
+      log?.error("sync_uid_unanswered_unrecordable", {
+        mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+        err: writeErr,
+        reason: "the server withheld this UID AND the durable record of that could not be written " +
+          "— the folder's cursor is held rather than advanced past mail nothing would ever " +
+          "enumerate again",
+      });
+    }
+  }
+
   // AFTER the commit loop, deliberately. The adapter holds a truncated folder's cursor at its
   // previous value, so this writes the ADVANCED cursor only for folders that genuinely
   // drained; advancing mid-loop would put `highestModseq` past mail this process has not

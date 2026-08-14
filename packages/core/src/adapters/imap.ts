@@ -370,6 +370,38 @@ export const DEFAULT_FETCH_RAW_MAX_BYTES = 8 * 1024 * 1024;
 interface InternalCreate { folder: string; uidValidity: bigint; uid: number; raw: Buffer; seen: boolean; messageId: string | null; internalDate?: Date; }
 interface InternalDelete { folder: string; uidValidity: bigint; uid: number; messageId: string | null; }
 
+/**
+ * The `Message-ID` of a raw message (RFC 5322), read from the HEADER BLOCK ONLY.
+ *
+ * The envelope is normally where this comes from. This exists for the messages whose envelope the
+ * SERVER will not produce — see the recovery fetch in {@link ImapAdapter.fetchCapped} — so it has
+ * to read the same value from the bytes.
+ *
+ * Three details, each of which changes the answer:
+ *
+ *  · **The header block only.** Scanning the whole message would match a `Message-ID:` quoted
+ *    inside a forwarded body or a `message/rfc822` attachment, and hand back the WRONG identity —
+ *    which `correlateMoves` would then pair a delete against, reporting a move that never happened.
+ *    The block ends at the first empty line (CRLF CRLF, or LF LF from a server that stores bare
+ *    LF); absent one, the whole buffer IS the header block.
+ *  · **Unfolded first.** RFC 5322 §2.2.3 lets a long header wrap onto continuation lines beginning
+ *    with whitespace, and a wrapped `Message-ID` is what a line-anchored match would truncate.
+ *  · **`latin1`, not `utf8`.** Header bytes above 0x7F are not valid UTF-8 in general (RFC 2047
+ *    encodes them precisely because they are not), and decoding as UTF-8 replaces them with U+FFFD.
+ *    A Message-ID is `dot-atom-text`/quoted-string — ASCII — so a byte-preserving decode is both
+ *    safe here and the only one that cannot corrupt the surrounding text mid-scan.
+ */
+export function messageIdFromRaw(raw: Buffer): string | null {
+  if (raw.length === 0) return null;
+  const crlf = raw.indexOf("\r\n\r\n");
+  const lf = raw.indexOf("\n\n");
+  const end = crlf >= 0 && (lf < 0 || crlf < lf) ? crlf : (lf >= 0 ? lf : raw.length);
+  const head = raw.subarray(0, end).toString("latin1");
+  const unfolded = head.replace(/\r?\n[ \t]+/g, " ");
+  const m = /^message-id:[ \t]*(.+)$/im.exec(unfolded);
+  return m ? normalizeMessageId(m[1].trim()) : null;
+}
+
 /** Pair a vanished message with a re-appeared one sharing the same canonical Message-ID → a single MOVE. */
 export function correlateMoves(creates: InternalCreate[], deletes: InternalDelete[]): {
   moves: Change[]; creates: InternalCreate[]; deletes: InternalDelete[];
@@ -1057,9 +1089,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     folder: string,
     curUidValidity: bigint,
     budget: { messages: number; bytes: number },
-  ): Promise<{ fetched: InternalCreate[]; truncated: boolean }> {
+  ): Promise<{ fetched: InternalCreate[]; truncated: boolean; unanswered: number[] }> {
     const fetched: InternalCreate[] = [];
-    if (uids.length === 0) return { fetched, truncated: false };
+    if (uids.length === 0) return { fetched, truncated: false, unanswered: [] };
 
     const dates = await this.arrivalDatesFor(folder, curUidValidity, uids);
     const newestFirst = orderCandidates(uids, dates);
@@ -1083,7 +1115,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       take.push(uid);
       bytes += size;
     }
-    if (take.length === 0) return { fetched, truncated };
+    if (take.length === 0) return { fetched, truncated, unanswered: [] };
 
     for await (const m of this.client.fetch(
       take,
@@ -1134,8 +1166,62 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
      * failed against the ORIGINAL code too, so this was already true before that change and the UID
      * sort above was never reaching the wire order at all.
      */
+    // ── THE SERVER MAY ANSWER WITH FEWER MESSAGES THAN IT WAS ASKED FOR ────────────────────────
+    //
+    // RFC 3501 lets a `UID FETCH` simply return fewer messages than the UID set names, with no
+    // error and no per-UID signal — `fetchByUid` has always said so and derives its `absent` set by
+    // subtraction for exactly that reason. THIS function did not, and read a short answer as a
+    // complete one: `truncated` was computed only from the count cap and the byte cap, so a UID the
+    // server withheld left no create, no `hasBacklog`, and no ledger row, while the cursor below
+    // published `mb.uidNext` and advanced `highestModseq` as though the folder had drained.
+    //
+    // NOT HYPOTHETICAL, and the trigger is a header the sender chose. iCloud cannot serialize an
+    // ENVELOPE for a message whose `Message-ID` is a QUOTED STRING — RFC 5322 §3.6.4 allows
+    // `msg-id` to carry one, and `<"2015-01-12T20:15:35.803795+00:00.26974-mail"@hardwax.com>` is a
+    // real one — and rather than failing the command it omits the row. Measured on a live iCloud
+    // mailbox: `UID SEARCH ALL` returns the UID, `FETCH (FLAGS RFC822.SIZE)` returns it,
+    // `FETCH (BODY.PEEK[])` returns it, and `FETCH (ENVELOPE)` returns nothing at all for it. One
+    // folder held two such messages and therefore imported ZERO of its mail while its cursor read
+    // as complete — and `initial_import_completed_at`, which is written on a cycle that ends with
+    // no backlog, landed over it.
+    //
+    // ── SO ASK AGAIN WITHOUT THE FIELD THE SERVER CANNOT PRODUCE ───────────────────────────────
+    //
+    // The envelope is wanted for ONE value here — the Message-ID `correlateMoves` pairs on — and
+    // the raw source carries that same header. A second fetch over just the shortfall, with
+    // `envelope` dropped, therefore recovers the message in full rather than writing it off: the
+    // body, the flags and the receive time are all fields this server answers happily.
+    //
+    // A UID still absent after that is genuinely unanswerable and is returned to the caller, which
+    // must record it durably BEFORE the cursor crosses it (see `ChangeBatch.unanswered`). Silence
+    // is the one thing this path may not do with it.
+    const answered = new Set(fetched.map((f) => f.uid));
+    const withheld = take.filter((u) => !answered.has(u));
+    let unanswered: number[] = [];
+    if (withheld.length > 0) {
+      for await (const m of this.client.fetch(
+        withheld,
+        { uid: true, flags: true, source: true, internalDate: true },
+        { uid: true },
+      )) {
+        const raw = (m.source ?? Buffer.alloc(0)) as Buffer;
+        answered.add(m.uid);
+        fetched.push({
+          folder, uidValidity: curUidValidity, uid: m.uid,
+          raw,
+          seen: m.flags?.has("\\Seen") ?? false,
+          // From the RAW HEADERS, because the envelope is the field this retry exists to avoid.
+          messageId: messageIdFromRaw(raw),
+          ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
+            ? { internalDate: m.internalDate }
+            : {}),
+        });
+      }
+      unanswered = withheld.filter((u) => !answered.has(u));
+    }
+
     fetched.sort((a, b) => (dates.get(b.uid) ?? 0) - (dates.get(a.uid) ?? 0) || b.uid - a.uid);
-    return { fetched, truncated };
+    return { fetched, truncated, unanswered };
   }
 
   /**
@@ -1262,6 +1348,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const flagChanges: Change[] = [];
     const deletes: InternalDelete[] = [];
     const newFolders: Record<string, PersistedFolderCursor> = {};
+    /** UIDs this pass asked for and the server did not return — see {@link ChangeBatch.unanswered}. */
+    const unanswered: Array<{ folder: string; uidValidity: string; uid: number }> = [];
     // ONE budget for the whole call, spent in WATCHED_FOLDERS order (INBOX first, Sent LAST),
     // so the bound is per-cycle rather than per-folder — six folders each fetching a full batch
     // would be six times the memory this is supposed to cap.
@@ -1451,11 +1539,19 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // as a cold sync. The unknown-UID diff is a strict superset of the creates
         // `changedSince` could report, so nothing is lost by sourcing them here instead.
         const unknownUids = currentUids.filter((u) => !effectiveKnown.has(u));
-        const { fetched, truncated } = await this.fetchCapped(unknownUids, folder, curUidValidity, budget);
+        const {
+          fetched, truncated, unanswered: withheldUids,
+        } = await this.fetchCapped(unknownUids, folder, curUidValidity, budget);
         creates.push(...fetched);
         budget.messages -= fetched.length;
         for (const f of fetched) budget.bytes -= f.raw.length;
         if (truncated) hasBacklog = true;
+        // Reported, never swallowed. The cursor written at the bottom of this loop ADVANCES over
+        // these UIDs, so the caller owes each one a durable record first — see
+        // {@link ChangeBatch.unanswered}, which is where that obligation is stated.
+        for (const uid of withheldUids) {
+          unanswered.push({ folder, uidValidity: String(curUidValidity), uid });
+        }
 
         // A UIDVALIDITY reset makes every remembered UID meaningless, including a drain's
         // resume point. Drop it before anything can read it.
@@ -1747,6 +1843,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       deletes: correlated.deletes.map((d): Change => ({ type: "delete", locator: { folder: d.folder, ref: makeRef(d.uidValidity, d.uid) } })),
       newCursor: { folders: newFolders },
       hasBacklog,
+      unanswered,
     };
   }
 
@@ -1826,8 +1923,42 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           });
         }
       }
-      // A UID in `take` that the body fetch did not answer for was expunged between the two
-      // commands. It belongs in `absent` with the rest, which the subtraction below handles.
+      // ── A UID THE BODY FETCH WITHHELD IS NOT NECESSARILY GONE ──────────────────────────────
+      //
+      // This used to read "a UID in `take` that the body fetch did not answer for was expunged
+      // between the two commands", and let the subtraction below drop it into `absent`. The
+      // consequence was not a lost retry but a DURABLE LIE: `sync.ts` closes an `absent` UID as
+      // `gone_from_server` and deletes its failure row, so a message that is still sitting on the
+      // server stops being owed by anything.
+      //
+      // The premise is false on a real server. iCloud answers `RFC822.SIZE` for a message whose
+      // `Message-ID` is a quoted string and then omits that same message from any fetch requesting
+      // ENVELOPE — so the UID is in `seen`, absent from `creates`, and demonstrably not expunged.
+      // See the matching recovery in `fetchCapped`, which is where this shape was first measured.
+      //
+      // So ask again without the field, exactly as the batch path does. Only a UID that is still
+      // missing after the envelope-free retry is treated as gone — and that one really did fail to
+      // answer two different commands, which is the strongest evidence this protocol offers.
+      const answered = new Set(creates.map((c) => parseRef(c.locator.ref).uid));
+      const withheld = take.filter((u) => !answered.has(u));
+      if (withheld.length > 0) {
+        for await (const m of this.client.fetch(
+          withheld,
+          { uid: true, flags: true, source: true, internalDate: true },
+          { uid: true },
+        )) {
+          creates.push({
+            type: "create",
+            locator: { folder, ref: makeRef(curUidValidity, m.uid) },
+            raw: (m.source ?? Buffer.alloc(0)) as Buffer,
+            seen: m.flags?.has("\\Seen") ?? false,
+            ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
+              ? { internalDate: m.internalDate }
+              : {}),
+            ...(sent !== null && folder === sent ? { ownAuthored: true } : {}),
+          });
+        }
+      }
       const returned = new Set(creates.map((c) => parseRef(c.locator.ref).uid));
       return {
         uidValidity: String(curUidValidity),
