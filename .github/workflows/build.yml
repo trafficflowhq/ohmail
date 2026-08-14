@@ -24,21 +24,47 @@ name: build
 #                       are inside it, executable, and that the binary reaches
 #                       nothing but its own update feed.
 #
-# ── BOTH BUNDLES ARE RENDERED, AND ONLY ONE OF THEM HERE ──────────────────
+# ── BOTH BUNDLES ARE RENDERED, AND THE ENGINE ONE IS RENDERED TWICE ───────
 #
-# Step 1 smokes the preview. The ENGINE-bearing bundle is smoked inside
-# `app:build:engine` (see `apps/desktop/scripts/build-engine-app.mjs`), which is
-# what every one of the three jobs below already calls — so it runs on all three
-# platforms with no step of its own, and there is deliberately not a second
-# invocation here. Two callers of one check is one caller that can drift: the
-# one that matters is the one beside the artifact, where a red smoke stops the
-# build rather than being reported next to it.
+# Step 1 of each platform job smokes the PREVIEW. The ENGINE-bearing bundle is
+# smoked in two places, and the second one exists because the first one alone
+# was not enough:
 #
-# It went unsmoked for its whole life until then, and the cost was measured: a
-# released build showed a blank white window the moment a mailbox started
-# serving, because its copy of the client's HTTP adapter was the preview's
-# throwing stub and that constructor runs inside a React render. Nothing in this
-# file could have seen it — the preview it smoked was fine.
+#   · inside `app:build:engine` (see `apps/desktop/scripts/build-engine-app.mjs`),
+#     which all three platform jobs call. That one is beside the artifact, where
+#     a red smoke STOPS the build instead of being reported next to it. It is
+#     the gate, and it stays exactly where it is.
+#   · in the `engine-ui-smoke` job below, which builds the engine-bearing bundle,
+#     reads it, renders it, and does nothing else. That one is the VERDICT, and
+#     it is a separate job precisely so that nothing else can decide whether it
+#     runs.
+#
+# This file used to argue the opposite — that one caller was better than two,
+# because two callers of one check is one caller that can drift. That reasoning
+# was right about drift and wrong about what it was buying. Steps inside a job
+# are sequential and a failure ends the job: the engine smoke sat a dozen steps
+# behind the preview smoke in the same job, so a red PREVIEW meant the engine
+# bundle was never rendered at all. Not failed, not skipped — never asked. It went
+# unrun that way for two releases, on a preview smoke reddened by a fixture
+# change that had nothing to do with the engine bundle, and the gap it would
+# have caught surfaced when the release was cut instead.
+#
+# So the engine smoke now has a verdict that does not depend on the preview's,
+# and the preview keeps its fail-fast position in front of the expensive
+# platform builds — a red preview still stops those before they spend an hour.
+#
+# What makes a job of its own cheap enough to be worth having: neither caller
+# needs the engine binary or the vendored Node runtime. `smoke.mjs --expect
+# engine` serves the window from a stub Tauri channel, so the whole check is a
+# `vite build` and a jsdom render on the cheapest runner. It adds no wall time,
+# because it finishes long before any platform job does.
+#
+# The engine bundle went unsmoked for its whole life until the first caller
+# existed, and the cost was measured: a released build showed a blank white
+# window the moment a mailbox started serving, because its copy of the client's
+# HTTP adapter was the preview's throwing stub and that constructor runs inside
+# a React render. Nothing in this file could have seen it — the preview it
+# smoked was fine.
 #
 # Nothing here is signed: no Apple Developer ID, no Authenticode certificate.
 # See the per-platform "unsigned" notes in the README; the macOS artifact is
@@ -930,4 +956,81 @@ jobs:
               m="$(grep -m1 '^engine layout manifest sha256: ' build/engine-repro.log | cut -d' ' -f5 || true)"
               [ -n "$m" ] && echo "| engine layout manifest sha256 | \`$m\` |"
             fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ==========================================================================
+  # THE ENGINE-BEARING BUNDLE'S OWN VERDICT.
+  #
+  # The three platform jobs already build this bundle and smoke it, inside
+  # `app:build:engine`, beside the artifact it is about to be packaged into.
+  # That is the right place for a GATE and the wrong place for an ANSWER: it
+  # sits a dozen steps beyond the preview smoke in the same job, so for two
+  # releases a red preview meant this bundle was never rendered on any machine,
+  # and nothing said so — the platform jobs were red for the preview's reason
+  # and the engine bundle's question was simply never put.
+  #
+  # This job puts it, and can be stopped by nothing else. No `needs:`, no
+  # preview smoke, no Rust, no engine binary, no vendored Node runtime: the
+  # engine smoke serves the window from a stub Tauri channel, so building the
+  # bundle and rendering it is a `vite build` and a jsdom render. It is the
+  # cheapest job in the file and it finishes before any platform job has
+  # finished installing its toolchain.
+  #
+  # It runs the SAME two checks over the SAME bundle as `app:build:engine` does,
+  # spelled identically on purpose — `scan:engine` reads the bundle's bytes for
+  # the surface that belongs to this artifact and not the preview, and
+  # `smoke.mjs --expect engine` executes it. Two callers of one check can drift;
+  # what stops that here is that both call the same script with the same
+  # argument, and that the answer this one gives is the answer the release is
+  # read against.
+  # ==========================================================================
+  engine-ui-smoke:
+    name: engine-bearing UI · scan · smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # `apps/desktop` only, and no workspace: the Vite config aliases every
+      # `@ohmail/*` specifier straight at a source path, which is why the three
+      # platform jobs install exactly this and nothing else.
+      - name: npm install
+        working-directory: apps/desktop
+        run: npm install --no-audit --no-fund
+
+      - name: Build the engine-bearing UI bundle
+        working-directory: apps/desktop
+        run: npm run ui:build:engine
+
+      # Reading the bundle and rendering it answer different questions, and the
+      # scan is masked in exactly the same way the smoke was — it also lives
+      # only inside `app:build:engine`. Both come out here together.
+      - name: Read what came out
+        working-directory: apps/desktop
+        run: npm run scan:engine
+
+      - name: Render it
+        working-directory: apps/desktop
+        run: node scripts/smoke.mjs --expect engine
+
+      - name: Run summary
+        if: always()
+        run: |
+          {
+            echo '### ohmail — the engine-bearing UI bundle'
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`${GITHUB_SHA:0:9}\` |"
+            echo "| node | $(node --version) |"
+            echo
+            echo 'Built with the bridge and rendered against a stub shell.'
+            echo 'This job produces no artifact. It is red or green on its own,'
+            echo 'so that a red preview smoke can never again mean this bundle'
+            echo 'went unrendered — and a red here fails the run like any other.'
           } >> "$GITHUB_STEP_SUMMARY"
