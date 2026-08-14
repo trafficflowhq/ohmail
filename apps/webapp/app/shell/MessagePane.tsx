@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { FOLDER_OF_VIEW, isProtectedMessage, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, isProtectedMessage, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, Icon, InfoNote, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
 import { AttachmentStrip } from "../components/AttachmentStrip";
 import { isPreviewable } from "../components/AttachmentPreview";
@@ -72,6 +72,19 @@ export type MessageAction =
    * pinned by the time the request returns.
    */
   | "resurface_now"
+  /**
+   * DONE WITH A RESURFACE — the deliberate release, named.
+   *
+   * The release has existed as long as the pin has: a deliberate `mark_seen` (no `via`) spends
+   * it, stamps `lastReadAt`, and the row files at the top of "Earlier". What it never had was a
+   * face — the only doors were "Mark as read", `⇧I` and the bulk verbs, none of which says
+   * "this resurface is finished". This action is that face, NOT a new mechanism: the shell
+   * answers it with the same `mark_seen` every deliberate read dispatches, plus a
+   * `triage_set: none` first when the message is merely SCHEDULED (`bubbled_up`) rather than
+   * pinned — cancelling the booking is the release's other half there, and it is the existing
+   * triage vocabulary, no new wire verb anywhere.
+   */
+  | "resurface_done"
   | "draft"
   | "unread"
   | `move:${MoveTarget}`;
@@ -612,15 +625,44 @@ function ActionBar({
 
         <div className="abar-g abar-read-g">
           {/*
-           * ONE SLOT, TWO DIRECTIONS — see `markUnread` and `markRead` above.
+           * ONE SLOT, TWO DIRECTIONS — AND A THIRD FACE ON A RESURFACED MESSAGE. See
+           * `markUnread` and `markRead` above for the two directions.
            *
            * Exactly one of the two renders, in the same position, with the same shape: the verb as
            * the label (not a `role="switch"` reporting a state with the action hidden in a
            * `title`), a dot PREVIEWING the outcome, and a keycap read from the live registry, so a
            * chord that moves takes the hint with it and an unbound chord shows nothing. Filled dot
            * ⇒ the row will have one; hollow ⇒ it will not — the same mark the list uses.
+           *
+           * A RESURFACED MESSAGE OWNS THE SLOT WITH "DONE". On a pinned message the deliberate
+           * read IS the release — one act spends both, there is no un-bold-but-pinned state — so
+           * "Mark as read" here was the release wearing the wrong name: nothing on the whole
+           * surface said how to END a resurface, reported from real use in exactly those terms.
+           * The verb is
+           * renamed where the state gives it its real meaning, not added beside it: a "Done" AND
+           * a "Mark as read" would be one mutation behind two buttons, and the slot's own rule is
+           * one control per state. It dispatches `resurface_done` (the shell's one release arm,
+           * shared with the pin-group row and the Resurface pile) rather than pressing `⇧I`,
+           * because the key acts on the SELECTED message and this bar can be mounted over an
+           * unselected one (a stream card); the keycap still shows `⇧I` where it is bound, since
+           * that key performs the same release on the open message. A check instead of the dot:
+           * the outcome being previewed is "finished", not a read mark.
+           *
+           * IT REPLACES THE SLOT AT EVERY WIDTH AND FOLDS NOWHERE — the slot always stands in the
+           * ladder, and "Done" plus the check is NARROWER than either label it replaces, so no
+           * tier moves. Re-measure per the ladder's rule if this label ever grows.
            */}
-          {read ? (
+          {isResurfaced(message) ? (
+            <button
+              type="button"
+              className="abar-b abar-solo abar-read abar-done"
+              onClick={() => onAction("resurface_done")}
+            >
+              <Icon name="check" size={13} className="abar-check" />
+              {t("actionDone")}
+              <Key chord="shift+i" />
+            </button>
+          ) : read ? (
             <button
               type="button"
               className="abar-b abar-solo abar-read"

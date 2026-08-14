@@ -282,6 +282,14 @@
   background: transparent;
   border-color: var(--hair);
 }
+/* The slot's THIRD face — "Done" on a resurfaced message (see `ActionBar`). The check wears the
+   accent for the reason the dot does: it previews the outcome, and the outcome here is the one
+   affirmative act on the bar. Narrower than either read label, so the density ladder is
+   untouched. */
+.abar-done .abar-check {
+  color: var(--accent);
+  flex: none;
+}
 
 /* ── the More panel and the Move row: the bar is REPLACED, never grown ────────────── */
 

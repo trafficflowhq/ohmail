@@ -1090,6 +1090,52 @@ body.reading .shell {
     pointer-events: auto;
   }
 }
+/* ── "DONE" ON A RESURFACED ROW — the release, in the quick-adjust's reveal grammar ─────────
+ *
+ * The same rules as `.scn-act` above and for the same reasons, stated once more rather than
+ * shared through a class the Screener owns: hidden until the row is hovered, focused-within or
+ * selected — and INERT while hidden, because `.row-actions` floats over the row's trailing end
+ * and an invisible control must not swallow a click meant for the row; revealed unconditionally
+ * where hover does not exist. The hover face borrows the accept button's affirmative tint —
+ * pressing it completes something, it does not merely adjust it. */
+.rsf-done {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 550;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--ink2);
+  cursor: pointer;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s var(--swift), background 0.14s var(--swift), color 0.14s var(--swift);
+}
+.row-slot:hover .rsf-done,
+.row-slot:focus-within .rsf-done,
+.row-slot:has(.row.sel) .rsf-done {
+  opacity: 1;
+  pointer-events: auto;
+}
+.rsf-done:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.rsf-done:hover {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+@media (hover: none) {
+  .rsf-done {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
 /* the suggestion purchase — batch size, the server's price, confirm */
 .scn-suggest {
   display: flex;

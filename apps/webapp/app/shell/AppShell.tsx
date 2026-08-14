@@ -3114,6 +3114,31 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
           void engine.mutate({ kind: "triage_set", messageId: m.id, state: "resurfaced" });
           toast(t("ohbox.toastResurfaceNow"));
           break;
+        case "resurface_done": {
+          /**
+           * THE DELIBERATE RELEASE, NAMED — "Done" on a resurfaced or scheduled message.
+           *
+           * FOR A PINNED MESSAGE IT IS ONE MUTATION AND IT ALREADY EXISTED: a deliberate
+           * `mark_seen` (no `via`) spends the pin in the same act on both sides of the wire
+           * (`spentResurface` in the overlay, `MessageService.spendResurface` in the route's
+           * transaction), stamps `lastReadAt`, and the row files at the top of "Earlier" — the
+           * choreography `OhboxView.slideOut` already draws. Nothing new is dispatched for it,
+           * deliberately: a second wire verb for the same release would be two writers of one
+           * fact.
+           *
+           * FOR A SCHEDULED MESSAGE (`bubbled_up`, sitting in the Resurface pile) the release
+           * has an extra half: the booking is cleared FIRST (`triage_set: none` — the same
+           * un-triage the horizon toggles use), then the same deliberate read files it. Same end
+           * state, never a new one: unscheduled, read, top of "Earlier". Skipping the clear
+           * would leave the pile listing a message the reader just said they were done with.
+           */
+          if (m.triage?.state === "bubbled_up") {
+            void engine.mutate({ kind: "triage_set", messageId: m.id, state: "none" });
+          }
+          markSeen([m.id], false);
+          toast(t("ohbox.toastResurfaceDone"));
+          break;
+        }
         default: {
           // RESURFACE AT A CHOSEN INSTANT — the bar's popover feeds the day here. The wire has
           // always carried an arbitrary `bubbleUpAt`; this is the caller that fills it with

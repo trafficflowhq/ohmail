@@ -46,6 +46,7 @@ import { useTranslations } from "next-intl";
 import type { EngineMessage, TagDTO, TriagePileEntry, TriagePiles } from "@ohmail/client-engine";
 import {
   Button,
+  Icon,
   ListPane,
   ListRows,
   MessageRow,
@@ -164,6 +165,9 @@ export function TriageView({
   /* The message verbs' own labels, shared with the global map — the `?` sheet must read one
      sentence for `a` whether the Ohbox's binding answers or this view's does. */
   const ts = useTranslations("shortcuts");
+  /* The "Done" release control's copy lives in the Ohbox namespace with the verb's other faces
+     (the action bar's `actionDone`, the pinned row's) — ONE wording source, not a per-view copy. */
+  const to = useTranslations("ohbox");
   const total =
     piles.replyLater.length + piles.setAside.length + piles.resurface.length;
   const entries = PILE_ENTRIES[pile](piles);
@@ -290,6 +294,29 @@ export function TriageView({
         protected={m.protected != null}
         tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
         {...(done ? { className: "fr-done" } : {})}
+        /* "DONE" ON A SCHEDULED RESURFACE — the same release verb the pinned row and the action
+           bar carry, read honestly for a row that is NOT pinned yet: the shell's `resurface_done`
+           arm clears the booking (`triage_set: none`) and then files the message with the same
+           deliberate read every release takes — unscheduled, read, top of "Earlier". Never a new
+           state. Only this pile's rows carry it: Answer Later and Parked have their own toggles,
+           and "done" is a claim about a RESURFACE. Same reveal grammar as the pinned row's
+           control (`.rsf-done`, app.css). */
+        {...(pile === "resurface"
+          ? {
+              actions: (
+                <button
+                  type="button"
+                  className="rsf-done"
+                  aria-label={to("rowDoneScheduledAria")}
+                  title={to("rowDoneScheduledAria")}
+                  onClick={() => onAction("resurface_done", m)}
+                >
+                  <Icon name="check" size={12} />
+                  {to("actionDone")}
+                </button>
+              ),
+            }
+          : {})}
         onClick={() => openRow(m)}
       />
     );

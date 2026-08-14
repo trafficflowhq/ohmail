@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { isOwnSent } from "@ohmail/client-engine";
+import { isOwnSent, isResurfaced } from "@ohmail/client-engine";
 import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
 import {
   Doorbell,
@@ -1449,7 +1449,47 @@ export function OhboxView({
     return undefined;
   };
 
-  const row = (m: EngineMessage) => {
+  /**
+   * "DONE" ON A PINNED ROW — the deliberate release, standing where the eye looks for it.
+   *
+   * A resurfaced row's one way out (short of answering it) was a read verb that never said so:
+   * `⇧I`, the bar's "Mark as read", a bulk Read. Reported from real use in exactly those terms —
+   * "we need a clear action to mark it done, it must be clear how to remove the resurfaced
+   * state" — and the question is asked AT THE PIN, so the answer stands on the pinned row itself, in the
+   * Screener quick-adjust's own reveal grammar (`MessageRow.actions`, shown on hover, focus and
+   * selection; always shown where hover does not exist — see `.rsf-done` in `app.css`).
+   *
+   * IT DISPATCHES `resurface_done` — the shell's one release arm, shared with the action bar's
+   * Done — for THIS row's message, never the selected one, which is why it does not press `⇧I`.
+   * The choreography that follows is entirely the existing one: the deliberate `mark_seen`
+   * spends the pin first-frame, `lastReadAt` files the row at the top of "Earlier", and
+   * `slideOut` draws the descent.
+   *
+   * NULL, NOT ABSENT, ONCE THE PIN IS SPENT: the slot must survive the 280 ms slide
+   * (`MessageRow.actions` — dropping the prop remounts the button and kills the transition),
+   * and a control that offered "Done" on a row already released would be a press that does
+   * nothing. The rows of the other groups never carry the slot at all.
+   */
+  const doneFor = (m: EngineMessage): ReactNode =>
+    isResurfaced(m) ? (
+      <button
+        type="button"
+        className="rsf-done"
+        aria-label={t("rowDoneAria")}
+        title={t("rowDoneAria")}
+        onClick={() => onAction("resurface_done", m)}
+      >
+        <Icon name="check" size={12} />
+        {t("actionDone")}
+      </button>
+    ) : null;
+
+  /**
+   * `actions` is threaded only by the pin group's own mapper below — `row` itself stays unary
+   * because it is passed straight to `.map(row)` in two places, where a second parameter would
+   * silently receive the INDEX.
+   */
+  const rowWith = (m: EngineMessage, actions?: ReactNode) => {
     // the conversation's people, computed by the shell's bound selector and never in the row.
     // Only for a threaded row; `[]` for a single-sender thread or none, and the row then leads
     // with the one full-size circle it always did.
@@ -1490,6 +1530,7 @@ export function OhboxView({
          class name only, so `aria-selected` was set on zero rows and the selection existed
          for sighted mouse users and nobody else. See `MessageRow`. */
       picked={picked.has(m.id)}
+      actions={actions}
       onClick={() => {
         if (window.matchMedia("(max-width: 900px)").matches) {
           // Mobile: a tap IS the open — there is no reading column to preview into. `open`
@@ -1510,6 +1551,9 @@ export function OhboxView({
     />
     );
   };
+
+  /** The plain row, exactly as it always rendered — safe under `.map(row)`. */
+  const row = (m: EngineMessage) => rowWith(m);
 
   /**
    * THE VOICES A GROUPED ROW SPEAKS FOR — one message per distinct sender, newest first.
@@ -1817,11 +1861,13 @@ export function OhboxView({
             does — but only once the selector actually files it there, which is the whole reason the
             slide keys on section membership rather than on the read flag (see `earlierIds`). Until
             that answer arrives the row stays pinned, read, exactly where the reader left it.
-            COPY-SHIM: the label is an inline literal pending an `en.json` key. */}
+            Each pinned row carries the "Done" release control — see `doneFor`. */}
         {displayResurfaced.length > 0 ? (
           <>
-            <ListGroupLabel>Resurfaced</ListGroupLabel>
-            <ListRows multiSelectable ariaLabel="Resurfaced">{displayResurfaced.map(row)}</ListRows>
+            <ListGroupLabel>{t("resurfacedGroup")}</ListGroupLabel>
+            <ListRows multiSelectable ariaLabel={t("resurfacedGroup")}>
+              {displayResurfaced.map((m) => rowWith(m, doneFor(m)))}
+            </ListRows>
           </>
         ) : null}
         {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
