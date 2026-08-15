@@ -24,6 +24,29 @@ name: build
 #                       are inside it, executable, and that the binary reaches
 #                       nothing but its own update feed.
 #
+# ── KNOWN GAP: NOTHING HERE EVER STARTS THE PACKAGED APP ──────────────────
+#
+# Every check below is a build or a static read. The renders run against a stub
+# channel rather than a real window, and `inspect` opens the artifact without
+# launching it. So a fault that only exists once the real binary creates a real
+# window — a panic between process start and first paint — is green all the way
+# through this file and dead on every install.
+#
+# This is not hypothetical. 0.9.7 shipped past a fully green matrix and aborted
+# seconds after launch on all three platforms, because the window was granted
+# two commands the compiled manifest did not declare and the framework resolves
+# that mismatch by aborting. Worse, the abort landed before the launch update
+# check, so the release could not deliver its own fix and had to be reinstalled
+# by hand.
+#
+# The missing gate is a launch-survival check: start the packaged binary this
+# run produced, headless, and assert it is still alive well past the point such
+# a fault would kill it, that the engine log shows a completed boot, and that it
+# did not exit on a signal. Capture the process status directly — a pipeline
+# into `grep` reports the wrong command's exit code. Until that job exists the
+# check is run by hand at release time, which is a person remembering rather
+# than a guard.
+#
 # ── BOTH BUNDLES ARE RENDERED, AND THE ENGINE ONE IS RENDERED TWICE ───────
 #
 # Step 1 of each platform job smokes the PREVIEW. The ENGINE-bearing bundle is
