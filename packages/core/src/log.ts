@@ -44,8 +44,10 @@
  *     per-action cost"). A `key` rule eats `alertKey` and `keyVersion`. An allowlist keeps
  *     them by naming them; a denylist can only keep them by being weakened.
  *   · The field vocabulary is small and closed: 79 names across every call site in
- *     `packages/**` and `apps/**` (86 logger calls, 82 with a literal fields object, ZERO
- *     with a computed one). Enumerable means allowlistable.
+ *     `packages/**` and `apps/**` when that extraction was made (86 logger calls, 82 with a
+ *     literal fields object, ZERO with a computed one). Enumerable means allowlistable — and it
+ *     has stayed enumerable: {@link ALLOWED_FIELDS} holds 127 names today, grown one reviewed
+ *     diff at a time, which is the shape this design predicted rather than a drift away from it.
  *
  * The honest cost of an allowlist is that a field an operator needs at 3am can go missing. It
  * is paid down two ways rather than denied: a dropped key's NAME (never its value) is reported
@@ -128,6 +130,16 @@ export type LogFields = Record<string, unknown>;
  * the same two field leaks stood unfixed in a second implementation. The guard against a third is
  * a census test scoped to the sidecar package, which fails when a call site there passes a field
  * name absent from this list; its header says why it covers one package for now.
+ *
+ * THE COST OF THAT SCOPE IS NOW MEASURED RATHER THAN ASSUMED, which is the one thing worth adding
+ * here — the decision itself lives in that test's header and is not repeated. Since it was written
+ * this census has refused a live line's fields three more times, all of them in `apps/worker`, the
+ * package the scanner does not cover: the sensitivity repair's counts, `messageId`, and every
+ * number on `known_set_read`. A sweep of `apps/worker/src` taken while adding the last of those
+ * found the condition is not exhausted — the message-retry and reconcile lines pass `folder`,
+ * `uid` and `uidValidity`, none of which is on this list, so those lines drop the two facts they
+ * exist to name. Widening the scanner is what closes the class; adding entries one live line at a
+ * time is what this file has been doing instead.
  *
  * `err`, `errorClass` and `errorCode` are deliberately absent: they are logger-owned slots
  * handled in {@link createLogger}'s `emit`, before this gate runs.
@@ -339,6 +351,43 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // the person in front of it is paying for directly and a line saying `droppedFields=["bought"]`
   // would leave them with no record of what was done on their key.
   "bought",
+  // ── The known-set memo's per-cycle census (`known_set_read`), added AFTER the first live run
+  //    refused ALL FOUR of them ──
+  //
+  // The fifth time the attach-phase paragraph above has been reproduced as a defect
+  // (`log-fields.test.ts` numbers the third and the fourth), and the first where the line reached
+  // the drain carrying nothing but its own explanation: every live `known_set_read` read
+  // `droppedFields=["rows","bytes","bytesSaved","droppedBy"]` while the `reason` sentence telling an
+  // operator how to READ those four numbers survived, because `reason` was already here. The worker
+  // suite could not see it for the reason that paragraph gives — those tests inject a fake logger,
+  // so they assert what the call site HANDS OVER and never what this census lets through.
+  //
+  // All four are structurally content-free, which is the question this list exists to ask.
+  // `rows` is `rows.length` of the last `listKnownLocators` read. `bytes` and `bytesSaved` are sums
+  // of column WIDTHS (`estimateWireBytes` adds `Buffer.byteLength` of each field to a fixed
+  // per-field overhead) — arithmetic over lengths and never over the values, so no folder name, no
+  // `Message-ID` and no address can survive the addition.
+  //
+  // `droppedBy` is the only string and the only one that needed checking rather than arguing. Its
+  // value set is closed and author-written: either a `WorkerRepo` METHOD NAME, captured by the
+  // memo's proxy from a property key of a class in this repository, or one of the leadership
+  // sentences the worker hands `KnownSetCache.drop` (`"lease-lost"`, `"fenced"`, `"cycle-threw"`,
+  // `"leader lock lost"`, `` `detached: ${reason}` ``) — the same static English a human wrote that
+  // `reason` carries, which is why `reason` is on neither denylist. Nothing runtime-composed and
+  // nothing mailbox-derived reaches it.
+  //
+  // NAMED rather than folded into `count`/`totalMs`, on this file's own rule: `rows` is the SIZE of
+  // the read, `bytes` its cost once, and `bytesSaved` the cost the memo has avoided since the
+  // attachment began — three quantities, and the reading IS the ratio between the last two. One
+  // `count` meaning any of them is not a claim a reviewer can check. `droppedBy` is what makes the
+  // line actionable rather than merely informative: a memo re-reading every cycle is a
+  // classification bug in `KNOWN_SET_NEUTRAL`, and this names the method to classify.
+  //
+  // `dbReads` and `hits` are deliberately absent, on the cron paragraph's rule. The call site emits
+  // only when `dbReads > 0`, so the event's EXISTENCE already says what `dbReads` would, and `hits`
+  // is per-cycle bookkeeping the operator has no question about — and every entry added here is
+  // another chance to repeat the mistake this paragraph records.
+  "rows", "bytes", "bytesSaved", "droppedBy",
   // ── alerting (the worker's alert loop and the API's internal alert route) ──
   "alertKey", "alertKeys", "alertSinks", "alertIntervalMs", "rosterIntervalMs",
   "pollIntervalMs", "firing", "delivered", "failedSinks", "oldestSeconds",
