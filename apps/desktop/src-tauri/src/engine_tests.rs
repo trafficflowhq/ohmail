@@ -2104,7 +2104,7 @@ fn every_command_the_window_calls_is_granted_to_it() {
 
     for command in [
         "engine-status", "engine-request", "engine-configure", "engine-logout",
-        "notify", "set-badge", "open-link", "open-external",
+        "notify", "set-badge", "open-link", "open-external", "open-attachment",
     ] {
         let permission = format!("allow-{command}");
         assert!(
@@ -2117,6 +2117,73 @@ fn every_command_the_window_calls_is_granted_to_it() {
     assert!(granted.contains(&"core:event:allow-listen"));
     assert!(!granted.contains(&"core:event:allow-emit"), "the window was granted emit");
     assert_eq!(cap["windows"], serde_json::json!(["main"]));
+}
+
+/// THE GRANT NAMES NOTHING THE BINARY NEVER DECLARED — the other direction of the test above,
+/// and the one 0.9.7 shipped without.
+///
+/// tauri resolves this grant against the manifest `build.rs` compiled, and a permission the
+/// manifest lacks is not a refused command — it is an internal `unwrap()` inside tauri's
+/// `add_capability`, an abort under `panic = "abort"`, at launch, on every install, before the
+/// launch update check ever runs. 0.9.7 granted `allow-open-external` and
+/// `allow-open-attachment` while `build.rs` declared neither command, and every install died
+/// seconds in. The runtime path now degrades (see [`resolvable_grant`]); this test is the other
+/// defence, holding the grant and `build.rs`'s `WINDOW_COMMANDS` together where a mismatch is a
+/// red suite instead of a dead fleet.
+///
+/// Remove `open_external` from `WINDOW_COMMANDS` in `build.rs` and this goes red.
+#[test]
+fn every_granted_permission_is_declared_by_the_build() {
+    let (grant, missing) = resolvable_grant(LOCAL_ENGINE_CAPABILITY, DECLARED_WINDOW_COMMANDS)
+        .expect("the window's grant did not parse");
+    assert!(
+        missing.is_empty(),
+        "granted but never declared in build.rs's WINDOW_COMMANDS: {missing:?} — handed to \
+         tauri unchecked, this aborts the app at launch",
+    );
+    // Nothing missing must also mean nothing rewritten: the string tauri receives is the string
+    // `engine.rs` wrote.
+    assert_eq!(grant, LOCAL_ENGINE_CAPABILITY);
+}
+
+/// A GRANT THE MANIFEST CANNOT RESOLVE LOSES THAT PERMISSION AND NOTHING ELSE — named to the
+/// caller, never handed to tauri, never a panic.
+///
+/// This is the contract `manage` relies on to stay alive: hand tauri an unresolvable permission
+/// and tauri aborts the process before any `Err` arm runs, so this filter is the whole
+/// difference between "one feature is dead and the log says why" and the app dying before the
+/// window exists — with the updater never reached, which is what turns one bad build into a
+/// fleet that cannot be fixed by shipping again. Make [`resolvable_grant`] pass unknown
+/// permissions through — the 0.9.7 behaviour — and this goes red.
+#[test]
+fn an_undeclared_permission_is_dropped_and_named_not_fatal() {
+    let capability = r#"{
+      "identifier": "local-engine",
+      "windows": ["main"],
+      "permissions": ["allow-engine-status", "allow-no-such-command", "deny-also-missing", "core:event:allow-listen"]
+    }"#;
+    let (grant, missing) =
+        resolvable_grant(capability, "engine_status,engine_request").expect("did not parse");
+    assert_eq!(missing, ["allow-no-such-command", "deny-also-missing"]);
+    let grant: serde_json::Value =
+        serde_json::from_str(&grant).expect("the filtered grant is not JSON");
+    assert_eq!(
+        grant["permissions"],
+        serde_json::json!(["allow-engine-status", "core:event:allow-listen"]),
+        "the declared and the namespaced permissions survive; only the unresolvable go",
+    );
+    // The rest of the capability is untouched — same identifier, same window.
+    assert_eq!(grant["identifier"], "local-engine");
+    assert_eq!(grant["windows"], serde_json::json!(["main"]));
+
+    // The hyphen/underscore seam works the way tauri-build made it: command `open_external`
+    // generates permission `allow-open-external`, so that permission must resolve.
+    let (_, missing) = resolvable_grant(
+        r#"{"identifier":"x","windows":["main"],"permissions":["allow-open-external"]}"#,
+        "open_external",
+    )
+    .expect("did not parse");
+    assert!(missing.is_empty(), "allow-open-external must resolve to command open_external");
 }
 
 /// EVERY `ohmail://` LINK ON THE MACHINE ARRIVES HERE, so this is a grammar and not an extraction.

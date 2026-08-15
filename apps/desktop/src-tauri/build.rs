@@ -9,6 +9,41 @@
 // capability is added, so the published shell's window can still call nothing at all — a property
 // of the binary rather than of a list somebody could edit. A build script reads a feature as
 // `CARGO_FEATURE_<NAME>`, upper-cased with hyphens turned into underscores.
+/// Every command the window may call — the whole list, in one place.
+///
+/// Each name here becomes an `allow-…`/`deny-…` permission pair in the manifest tauri compiles;
+/// `LOCAL_ENGINE_CAPABILITY` in `engine.rs` grants the `allow-…` half at runtime. The two lists
+/// have to agree, and the failure when they do not is NOT a refused command: tauri resolves a
+/// runtime capability with an internal `unwrap()`, so a granted permission this list never
+/// produced used to be an abort at launch, on every install, before the window existed — 0.9.7
+/// shipped exactly that, with `open_external`/`open_attachment` granted and not declared. Two
+/// defences now, one at each end: this list is baked into the binary (`OHMAIL_WINDOW_COMMANDS`
+/// below) so `engine.rs` checks the grant BEFORE tauri sees it and degrades instead of dying,
+/// and `every_granted_permission_is_declared_by_the_build` in `engine_tests.rs` holds the two
+/// lists together at test time.
+const WINDOW_COMMANDS: &[&str] = &[
+    "engine_status",
+    "engine_request",
+    "engine_configure",
+    "engine_logout",
+    // The two pieces of native chrome the WINDOW drives: what is unread is a fact about
+    // mail, so the client decides and the shell performs.
+    "notify",
+    "set_badge",
+    // The one place this window may reach the WEB, and it may not name it: the command
+    // takes a key and `engine.rs`'s table decides which of a handful of ohmail.app pages
+    // that means.
+    "open_link",
+    // The one place the window may hand this process an address of its own — an http/https
+    // link a person clicked inside a message, opened in the user's browser, never in the
+    // webview. `engine.rs` validates the URL; this line is what makes the command reachable.
+    "open_external",
+    // The bytes of one attachment and a display name, written under the shell's own
+    // directory and opened in the platform's usual viewer. Same shape: `engine.rs` owns the
+    // path discipline, this line makes the command exist at all.
+    "open_attachment",
+];
+
 fn main() {
     // PACKAGING GATE — never ship an updater that would trust an unsigned feed.
     //
@@ -22,27 +57,20 @@ fn main() {
     // `test/desktop-shell.test.ts` — empty the pubkey and the guard bites.
     assert_updater_pubkey();
 
+    let engine = std::env::var_os("CARGO_FEATURE_LOCAL_ENGINE").is_some();
     let mut attributes = tauri_build::Attributes::new();
-    if std::env::var_os("CARGO_FEATURE_LOCAL_ENGINE").is_some() {
-        attributes = attributes.app_manifest(tauri_build::AppManifest::new().commands(&[
-            "engine_status",
-            "engine_request",
-            "engine_configure",
-            "engine_logout",
-            // The two pieces of native chrome the WINDOW drives: what is unread is a fact about
-            // mail, so the client decides and the shell performs. Declared here like the four
-            // above, because a command absent from this list has no `allow-…` permission for the
-            // capability to reference and the app panics on launch rather than at compile time.
-            "notify",
-            "set_badge",
-            // The one place this window may reach the WEB, and it may not name it: the command
-            // takes a key and `engine.rs`'s table decides which of a handful of ohmail.app pages
-            // that means. Declared here for the same reason as the six above — an undeclared
-            // command has no permission to grant, and the app panics on launch rather than at
-            // compile time.
-            "open_link",
-        ]));
+    if engine {
+        attributes =
+            attributes.app_manifest(tauri_build::AppManifest::new().commands(WINDOW_COMMANDS));
     }
+    // The same list, baked into the binary so `engine.rs` can compare the runtime grant
+    // against what was actually declared instead of letting tauri abort over the difference.
+    // Emitted in every build — empty with the feature off, matching the manifest above, and
+    // so that `env!` resolves regardless of features.
+    println!(
+        "cargo:rustc-env=OHMAIL_WINDOW_COMMANDS={}",
+        if engine { WINDOW_COMMANDS.join(",") } else { String::new() }
+    );
     tauri_build::try_build(attributes).expect("ohmail: failed to build the Tauri context");
 }
 

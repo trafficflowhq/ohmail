@@ -3647,6 +3647,11 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
 /// frontend's navigation — and has no matching `allow-emit`, so it cannot make the shell hear
 /// anything. That asymmetry is what a menu wants, and granting the pair would have been the easy
 /// thing to write.
+///
+/// Every un-namespaced permission here must name a command in `build.rs`'s `WINDOW_COMMANDS` —
+/// tauri aborts the launch over one that does not (see [`resolvable_grant`] for the mechanism
+/// and the release that proved it), and `every_granted_permission_is_declared_by_the_build`
+/// holds the two lists together.
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
@@ -3654,6 +3659,69 @@ const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "windows": ["main"],
   "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-open-link", "allow-open-external", "allow-open-attachment", "core:event:allow-listen"]
 }"#;
+
+/// The commands `build.rs` declared to the ACL manifest, baked in at compile time.
+///
+/// Comma-separated (`engine_status,engine_request,…`), empty when the feature is off. It exists
+/// so the grant above can be checked against the manifest BEFORE tauri sees it — see
+/// [`resolvable_grant`] for why that check cannot be left to tauri.
+#[cfg(feature = "local-engine")]
+const DECLARED_WINDOW_COMMANDS: &str = env!("OHMAIL_WINDOW_COMMANDS");
+
+/// Split a capability into the grant this binary can honour and the permissions it cannot,
+/// instead of letting tauri find out.
+///
+/// Tauri resolves a runtime capability against the manifest `build.rs` compiled, and an unknown
+/// permission there is not a refused command or a returned error — it is an internal `unwrap()`
+/// inside `add_capability` (tauri's `ipc/authority.rs`), which `panic = "abort"` turns into the
+/// process dying on the spot, so the caller's own error handling never runs. 0.9.7 shipped with
+/// `allow-open-external` and `allow-open-attachment` granted and neither command declared, and
+/// every install aborted seconds after launch — before `updater::on_launch` ever ran, so the
+/// fleet could not even be fixed by shipping again. The grant is therefore compared here
+/// first: a permission the manifest cannot resolve is DROPPED and reported to the caller, and
+/// the window keeps every command that exists. Namespaced permissions (`core:…`, a plugin's)
+/// belong to other manifests and pass through unexamined; the un-namespaced ones map to
+/// commands the way tauri-build made them — `allow-`/`deny-` off the front, hyphens back to
+/// underscores.
+///
+/// Returns the grant to hand tauri — byte-identical to `capability` when nothing is missing —
+/// and the permissions that were dropped. `Err` only when the capability is not the JSON shape
+/// [`LOCAL_ENGINE_CAPABILITY`] writes.
+#[cfg(feature = "local-engine")]
+fn resolvable_grant(capability: &str, declared_commands: &str) -> Result<(String, Vec<String>), String> {
+    let declared: Vec<&str> = declared_commands.split(',').filter(|c| !c.is_empty()).collect();
+    let mut cap: serde_json::Value = serde_json::from_str(capability)
+        .map_err(|err| format!("the capability is not valid JSON: {err}"))?;
+    let permissions = cap
+        .get("permissions")
+        .and_then(|p| p.as_array())
+        .ok_or("the capability has no permissions array")?
+        .clone();
+
+    let mut kept = Vec::with_capacity(permissions.len());
+    let mut missing = Vec::new();
+    for permission in &permissions {
+        let name = permission.as_str().ok_or("a permission is not a string")?;
+        let resolvable = name.contains(':')
+            || name
+                .strip_prefix("allow-")
+                .or_else(|| name.strip_prefix("deny-"))
+                .is_some_and(|p| {
+                    let command = p.replace('-', "_");
+                    declared.iter().any(|d| *d == command)
+                });
+        if resolvable {
+            kept.push(permission.clone());
+        } else {
+            missing.push(name.to_string());
+        }
+    }
+    if missing.is_empty() {
+        return Ok((capability.to_string(), missing));
+    }
+    cap["permissions"] = serde_json::Value::Array(kept);
+    Ok((cap.to_string(), missing))
+}
 
 /// Register the nine commands. Called from `main.rs` under the same feature.
 ///
@@ -3735,10 +3803,36 @@ pub fn manage(app: &tauri::App, shell: Arc<Shell>) {
     });
 
     app.manage(shell);
-    if let Err(err) = app.add_capability(LOCAL_ENGINE_CAPABILITY) {
-        // Fatal, and loudly. A window that cannot call the bridge is a window that renders nothing
-        // — and silently continuing would produce exactly the failure this slice exists to prevent:
-        // an app that looks like it is working and is not.
-        panic!("ohmail: the local engine's capability could not be granted: {err}");
+    // The grant, checked before tauri sees it — and this is the ONE startup step that must never
+    // abort. Tauri's `add_capability` aborts the process over a permission the compiled manifest
+    // lacks (an internal `unwrap()`, unreachable to the `Err` arm below, fatal under
+    // `panic = "abort"`), and it runs BEFORE `updater::on_launch` — so a bad grant shipped once
+    // is a fleet of installs that die too early to ever fetch the release that fixes them.
+    // 0.9.7 was that shipment. A window short one command — or short all of them — still draws,
+    // still carries the menu, and still reaches the update feed; so a mismatch degrades, with
+    // every dropped permission named in the log, and tauri's own refusal logged too if it still
+    // has one. This used to be a deliberate panic ("a window that cannot call the bridge renders
+    // nothing"); it was wrong twice over — the abort fired inside tauri before it, and a blank
+    // window with a log line and a live updater beats a corpse.
+    match resolvable_grant(LOCAL_ENGINE_CAPABILITY, DECLARED_WINDOW_COMMANDS) {
+        Ok((grant, missing)) => {
+            for permission in &missing {
+                log_line(format_args!(
+                    "the window's grant names {permission}, which this binary never declared; \
+                     dropped from the grant so the rest of the window keeps working — \
+                     this is a build defect, report it"
+                ));
+            }
+            if let Err(err) = app.add_capability(grant.as_str()) {
+                log_line(format_args!(
+                    "the window's grant was refused ({err}); \
+                     the window will draw but cannot call the shell"
+                ));
+            }
+        }
+        Err(reason) => log_line(format_args!(
+            "the window's grant could not be read ({reason}); \
+             the window will draw but cannot call the shell"
+        )),
     }
 }
