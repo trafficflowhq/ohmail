@@ -13,6 +13,7 @@ import {
   DeadLetterLedger, classifyIngestFault, nextAttemptAfter,
   MAX_MESSAGE_RETRIES_PER_CYCLE,
 } from "./dead-letter.js";
+import { KnownSetCache, watchKnownSet } from "./known-set.js";
 // `./build-version.js` and NOT `./config.js`, which re-exports the same symbol: `config.ts` imports
 // the bare `@trafficflow/core` barrel, and `apps/sidecar` imports THIS file as
 // `@trafficflow/worker/sync`. Naming config here would put the classifier and the drafter into the
@@ -150,6 +151,27 @@ export interface SyncDeps {
    */
   deadLetters?: DeadLetterLedger;
   /**
+   * The in-memory memo of this mailbox's known-set — one per attached mailbox, beside
+   * {@link deadLetters} and for the same reason: it is per-attachment state whose lifetime is the
+   * design.
+   *
+   * ABSENT ⇒ EVERY CYCLE RE-READS `listKnownLocators`, byte-identically to before this field
+   * existed. That is the direction an omission has to fail in, and it is what the reconcile
+   * backstop and every test rely on: a caller that has not reasoned about who leads this mailbox
+   * pays the query and gets the database's answer.
+   *
+   * Present ⇒ the read is served from memory for as long as nothing this process wrote could have
+   * changed it, and it is DROPPED on every leadership-relevant event — a fence refusal, the
+   * lock-loss tripwire, a database fault, any throw out of the cycle, detach and stand-down. See
+   * `known-set.ts` for the three legs that make an in-process copy sound and for why it memoizes
+   * rather than mirroring the writes.
+   *
+   * The memo is never served across an organizer handover. That is not a property of this object
+   * alone: `index.ts` re-verifies the lease BEFORE every cycle and builds a fresh cache per attach,
+   * so a mailbox that changed hands is served by a new runtime with a cold memo.
+   */
+  knownSet?: KnownSetCache;
+  /**
    * WHICH BUILD is running — the second arm of the durable ledger's due predicate.
    *
    * Absent ⇒ resolved from the environment by {@link buildVersionOf}, the same three sources
@@ -277,7 +299,7 @@ function siteOf(ch: Change): { folder: string; uidValidity: string; uid: number 
   return { folder: ch.locator.folder, uidValidity, uid };
 }
 
-type FenceScope = Pick<SyncDeps, "repo" | "fence">;
+type FenceScope = Pick<SyncDeps, "repo" | "fence" | "knownSet">;
 
 /**
  * Route one bare write through the fence when there is one; unfenced callers run it directly on
@@ -285,7 +307,7 @@ type FenceScope = Pick<SyncDeps, "repo" | "fence">;
  */
 async function fencedWrite<T>(deps: FenceScope, fn: (repo: WorkerRepo) => Promise<T>): Promise<T> {
   if (!deps.fence) return fn(deps.repo);
-  return underFence(deps.fence, fn);
+  return underFence(deps, fn);
 }
 
 /**
@@ -294,7 +316,7 @@ async function fencedWrite<T>(deps: FenceScope, fn: (repo: WorkerRepo) => Promis
  */
 async function fencedIngest<T>(deps: FenceScope, fn: (repo: DrizzleRepo) => Promise<T>): Promise<T> {
   if (!deps.fence) return deps.repo.transaction(fn);
-  return underFence(deps.fence, fn);
+  return underFence(deps, fn);
 }
 
 /**
@@ -357,15 +379,33 @@ async function fencedIngest<T>(deps: FenceScope, fn: (repo: DrizzleRepo) => Prom
  */
 async function fencedGroup<T>(deps: FenceScope, fn: (repo: WorkerRepo) => Promise<T>): Promise<T> {
   if (!deps.fence) return deps.repo.transaction(fn);
-  return underFence(deps.fence, fn);
+  return underFence(deps, fn);
 }
 
-async function underFence<T>(fence: SyncWriteFence, fn: (repo: DrizzleRepo) => Promise<T>): Promise<T> {
+/**
+ * ── AND THIS IS WHERE THE KNOWN-SET MEMO MEETS THE FENCE ────────────────────────────────────
+ *
+ * Two things happen here that `deps.repo` alone cannot do. The repo the FENCE hands its callback
+ * is built inside `makeSyncWriteFence` over the transaction's own connection, so it is not the
+ * object `runSyncCycle` wrapped — it is wrapped HERE instead, which is what puts the ingest and
+ * reconcile groups (nearly every write in this file) under the memo's classification.
+ *
+ * And a refusal DROPS the memo. Both refusal arms are proof that this process may no longer be the
+ * organizer, and an in-memory copy of a mailbox's known-set is exactly the thing that must not
+ * survive a handover: the successor is free to write those rows, so anything remembered from
+ * before the refusal is a claim about somebody else's mailbox. Dropping costs one query on the
+ * next cycle this process is allowed to run — and if it never runs one, it costs nothing at all.
+ */
+async function underFence<T>(deps: FenceScope, fn: (repo: DrizzleRepo) => Promise<T>): Promise<T> {
+  const fence = deps.fence as SyncWriteFence;
   if (fence.lost()) {
+    deps.knownSet?.drop("lease-lost");
     throw new LeaderFencedError("the leader lease is gone — this write is refused before it is attempted");
   }
-  const out = await fence.transaction(fn);
+  const cache = deps.knownSet;
+  const out = await fence.transaction(cache ? (r) => fn(watchKnownSet(r, cache)) : fn);
   if (out.fenced) {
+    deps.knownSet?.drop("fenced");
     throw new LeaderFencedError("the heartbeat no longer names this instance as the shard leader — the write was refused");
   }
   return out.result;
@@ -412,7 +452,42 @@ function rethrowFenced(err: unknown): void {
  * would never have earned that stamp if a filing queue could hold the flag high — the import
  * would read as permanently partial for a reason that has nothing to do with importing.
  */
-export async function runSyncCycle(deps: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
+export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
+  const cache = input.knownSet;
+  // NO CACHE ⇒ NOT ONE LINE OF THIS RUNS. The loop below is reached with the caller's own repo and
+  // reads `listKnownLocators` exactly as it always did.
+  if (!cache) return syncCycleWithin(input);
+  cache.beginCycle();
+  try {
+    const out = await syncCycleWithin({ ...input, repo: watchKnownSet(input.repo, cache) });
+    const census = cache.census();
+    // Logged only on a cycle that actually went to the database, which is the cycle where the memo
+    // cost something. An idle cycle is SILENT: a host serving many mailboxes at a short poll
+    // interval would otherwise emit one line per mailbox per interval, for ever, to say that
+    // nothing happened.
+    if (census.dbReads > 0) {
+      input.log?.info("known_set_read", {
+        mailboxId: input.mailboxId, accountId: input.accountId,
+        rows: census.rows, bytes: census.bytes, bytesSaved: census.bytesSaved,
+        droppedBy: census.droppedBy,
+        reason: "the in-memory known-set was cold or had been dropped, so this cycle re-read it " +
+          "from the database. `droppedBy` names the repo write (or the leadership event) that " +
+          "dropped it; `bytesSaved` is the estimated wire bytes this attachment has not read " +
+          "since it began",
+      });
+    }
+    return out;
+  } catch (err) {
+    // ANY throw, and deliberately without inspecting it. A cycle that died may have died between a
+    // write and its own record of that write — a `DatabaseFaultError` most of all, where the true
+    // outcome of the statement is exactly what is unknown. The conservative rule is the whole
+    // contract of this object: any ambiguity, drop it and re-read.
+    cache.drop("cycle-threw");
+    throw err;
+  }
+}
+
+async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
   const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, log } = deps;
   const deadLetters = deps.deadLetters ?? new DeadLetterLedger();
   const version = deps.buildVersion ?? buildVersionOf(process.env);
