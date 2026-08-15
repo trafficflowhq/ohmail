@@ -27,9 +27,9 @@ Switzerland. They are *included* in this repository because the project builds
 with them — not offered under GPL-3.0.
 
 The image files above are the only binary artwork excluded from the GPL grant.
-The other four binaries in this tree — the screenshots in `docs/`
-(`ohbox-light.png`, `ohbox-dark.png`, `screener-light.png`, `screener-dark.png`)
-— are renders of this source tree and are GPL-covered along with it; see
+The other binaries in this tree — the feature recordings under
+`docs/assets/feature-wall/` — are renders of this source tree over its built-in
+fictional mailbox and are GPL-covered along with it; see
 [COPYRIGHT](COPYRIGHT). Everything else here is source, and all of that source
 is GPL-3.0-or-later.
 
