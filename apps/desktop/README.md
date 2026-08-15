@@ -361,7 +361,7 @@ verification; the cost was a second data directory for the same mailbox and an
 update path that could never hand over between them, which is a permanent fork in
 every path the app touches in exchange for a convenience while testing.
 
-The version is **`0.9.7`**, bare, in every place it is written: `tauri.conf.json`,
+The version is **`0.9.8`**, bare, in every place it is written: `tauri.conf.json`,
 `Cargo.toml`, `Cargo.lock`, `package.json`, and the macOS `Info.plist`. The
 `-preview` suffix earlier builds carried is retired — it marked "this build
 cannot update itself yet", and this build ships the auto-updater, so the claim is
@@ -380,7 +380,7 @@ identifier and updated through Sparkle, which compares a feed's version against
 the installed `CFBundleVersion` — so a bundle announcing `0.8.0` there would be
 read as a downgrade from a four-digit build number, and every installed copy
 would report itself up to date for ever. Nothing a person sees uses it:
-`CFBundleShortVersionString` is `0.9.7` and is what the app and every download
+`CFBundleShortVersionString` is `0.9.8` and is what the app and every download
 page show. The floor is asserted in `release-feeds.yml`, so a plist that loses
 the key fails the release instead of stranding the installs it protects.
 

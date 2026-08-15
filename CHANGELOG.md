@@ -16,6 +16,76 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.9.8] — 2026-08-15
+
+**0.9.7 quits a few seconds after you open it, on every platform, every launch. This
+release fixes that — and if you are on 0.9.7 you have to install it by hand.** The crash
+happens before the app reaches its own update check, so a copy of 0.9.7 can never fetch
+this release for itself; there is no version of waiting that works. Download the installer
+for your platform from [the release page](https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.8)
+and install it over what you have. Your mail, your account and your settings are in your
+data directory, not in the app, and are untouched by reinstalling.
+
+**On 0.9.6 or earlier, nothing is required of you.** Those builds reach their update check
+normally and will offer this release the way they always have. Only 0.9.7 is stranded, and
+only because it cannot stay running long enough to ask.
+
+### The launch crash
+
+**The app no longer quits at launch over the window's link and attachment permissions.**
+0.9.7 granted the window two commands — "open this link in your browser" and "open this
+attachment" — without declaring either of them in the build's own manifest of what the app
+is allowed to do. The framework resolves a window's permissions against that manifest while
+the window is being created, and a permission it cannot find there is a failure it does not
+return from: these builds abort the process instead. So the failure was total and immediate
+rather than partial and quiet, the same on macOS, Windows and Linux, and unaffected by
+anything in your mailbox or your settings.
+
+Both commands are now declared. The build keeps its whole command list in one place and
+bakes that list into the binary, and the window's permissions are checked against it before
+the framework is asked for anything: a permission the compiled manifest cannot resolve is
+dropped and named in the engine log, rather than handed over to be aborted on. A failed
+grant is also no longer treated as fatal — a window short one command still draws, still
+has its menus, and still reaches the update feed. That last property is the one that
+decides whether a release like this one can be delivered at all, which is why it is now a
+behaviour with a test on it rather than a hope. Two tests hold the halves together: a
+command that is granted but not declared is red before it is built, and a permission that
+cannot be resolved is required to be dropped and logged rather than passed through.
+
+### Mail on your own server
+
+**A folder is no longer reported as fully downloaded when the server quietly held a message
+back.** A mail server is allowed to answer a request for a batch of messages with fewer
+messages than were asked for, with no error and nothing to mark which ones are missing. The
+download pass did not check. It asked for a page of unknown messages, compared what came
+back against its own size limits, found neither limit reached, and concluded the folder had
+drained. Any message the server had declined to return produced nothing at all — no
+message, no record that one was owed, and a folder marker moved past it as though it had
+arrived. A folder in that state looks finished to everything downstream, including the mark
+that says a mailbox's first import is done.
+
+What triggers it is a header the sender chose. A message identifier may legally be written
+as a quoted string, and at least one large provider cannot assemble its summary reply for
+such a message, so it leaves the row out instead of failing the command. Checked against a
+live account one command at a time: search lists the message, flags return it, size returns
+it, date returns it, and the full body returns it. Only the summary does not.
+
+Because the body is available, the message is recoverable rather than lost. Both download
+paths now compare what came back against what they asked for and re-issue the shortfall
+without the summary, reading the message identifier out of the raw headers instead — the
+summary was only ever wanted for that one value. A message still unanswered after the second
+attempt gets a durable record written before any folder marker moves, and the folder's
+marker is held where it is if that record cannot be written. The retry pass re-reads owed
+messages on a schedule and on every new build, so anything stuck behind a server limitation
+is picked up when either side changes. The targeted retry path had the same defect with a
+worse ending — it treated a message the body fetch skipped as deleted from the server, and
+discarded the outstanding record for a message still sitting there.
+
+Guards for both paths, each watched failing: a server that withholds exactly these rows, and
+a database check that the record is committed before the marker crosses and that the marker
+is held when it is not. The raw-header reader is pinned to the message's own header block,
+so an identifier quoted inside a forwarded message is never mistaken for the message's own.
+
 ## [0.9.7] — 2026-08-14
 
 Mostly about what a message carries. A meeting invitation is an event you can read rather
@@ -1924,7 +1994,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.7...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.8...HEAD
+[0.9.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.8
 [0.9.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.7
 [0.9.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.6
 [0.9.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.5

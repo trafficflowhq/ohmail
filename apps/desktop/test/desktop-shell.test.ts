@@ -68,7 +68,7 @@ describe("tauri.conf.json", () => {
     // preview, and reusing the number would leave the two sets of checksums
     // ambiguous about which artifact they describe. A version is how a
     // downloader names what they have.
-    expect(conf.version).toBe("0.9.7");
+    expect(conf.version).toBe("0.9.8");
     expect(conf.identifier).toBe("io.ohmail.desktop");
   });
 
@@ -499,7 +499,7 @@ describe("the Rust side", () => {
    * naming its `allow-…` permission cannot be resolved — so neither `cargo check` nor `cargo test`
    * can see it. The set equality below is the only thing that does.
    */
-  it("declares and registers its seven commands only in the local build", () => {
+  it("declares and registers its nine commands only in the local build", () => {
     const build = read("src-tauri/build.rs");
     const engine = read("src-tauri/src/engine.rs");
     const COMMANDS = [
@@ -516,16 +516,36 @@ describe("the Rust side", () => {
       // mean anything that got a string into the page could open an arbitrary address in the
       // user's real browser.
       "open_link",
+      // The one place the window DOES hand this process an address of its own: an http/https link
+      // a person pressed inside a message, opened in their browser and never in the webview.
+      // `engine.rs` validates the URL. These two were granted to the window without being declared
+      // here, which resolved to nothing at window creation and aborted the process on launch —
+      // 0.9.7 shipped that way, so the set equality below is the guard that was missing, not a
+      // hypothetical one.
+      "open_external",
+      // The bytes of one attachment and a display name, written under the shell's own directory
+      // and opened in the platform's usual viewer.
+      "open_attachment",
     ];
 
     expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
-    /* THE NAMES ARE READ OFF THE `commands(&[…])` CALL, NOT MATCHED BY SHAPE.
+    /* THE NAMES ARE READ OFF THE `WINDOW_COMMANDS` CONST, NOT MATCHED BY SHAPE.
        This used to scan build.rs for `"engine_…"` literals, which is a filter and not a census:
        the two commands added with the native chrome are not named `engine_*`, so a pattern like
        that would have declared the set equal while silently ignoring both — and a command missing
        from build.rs has no `allow-…` permission for the capability to reference, which panics on
-       launch and is invisible to `cargo check` and `cargo test` alike. */
-    const list = /\.commands\(&\[([^\]]*)\]\)/s.exec(build)?.[1] ?? "";
+       launch and is invisible to `cargo check` and `cargo test` alike.
+
+       The list moved out of the `.commands(&[…])` call into a const, because the RUNTIME half now
+       reads it too: build.rs bakes it in as `OHMAIL_WINDOW_COMMANDS` so `engine.rs` can compare a
+       grant against what was actually declared before tauri is handed it. So the census reads the
+       const — and asserts BOTH of its consumers still take it, or this test would go on reading a
+       list the build had stopped using. */
+    expect(build, "build.rs no longer declares its commands from WINDOW_COMMANDS")
+      .toMatch(/\.commands\(WINDOW_COMMANDS\)/);
+    expect(build, "WINDOW_COMMANDS is no longer baked in for the runtime check")
+      .toMatch(/OHMAIL_WINDOW_COMMANDS=/);
+    const list = /const WINDOW_COMMANDS: &\[&str\] = &\[([^\]]*)\]/s.exec(build)?.[1] ?? "";
     const declared = [...list.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]!);
     expect(declared.length, "build.rs declares no commands at all — the harness found nothing")
       .toBe(COMMANDS.length);
@@ -1092,9 +1112,20 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/check\(app\.clone\(\), false\)/);
     expect(read("src-tauri/src/main.rs")).toMatch(/updater::on_launch\(app\.handle\(\)\)/);
 
-    // The webview gains no updater permission and no way to ask for a check: the runtime
-    // capability lists the engine's commands and `core:event:allow-listen`, and nothing else.
-    expect(read("src-tauri/src/engine.rs")).not.toMatch(/updater/);
+    /* The webview gains no updater permission and no way to ask for a check: the runtime
+       capability lists the engine's commands and `core:event:allow-listen`, and nothing else.
+
+       COMMENTS ARE STRIPPED FIRST, and that is a narrowing rather than a softening. The claim is
+       about what engine.rs COMPILES — no updater import, no updater call, no `allow-updater-…` in
+       the capability — and a raw text match cannot tell that from a sentence. It stopped being able
+       to when the launch-abort fix documented why a failed grant must not be fatal, which cannot be
+       explained without the words "before `updater::on_launch` ever ran": the file whose CODE may
+       not name the updater is exactly the file whose PROSE has to. Matching source only keeps the
+       assertion pointed at the thing it protects. */
+    const engineCode = read("src-tauri/src/engine.rs")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^[ \t]*\/\/.*$/gm, "");
+    expect(engineCode).not.toMatch(/updater/);
   });
 
   /**
