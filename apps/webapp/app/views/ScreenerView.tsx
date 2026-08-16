@@ -149,7 +149,7 @@ export const HELD_ANCHOR_PAD_PX = 14;
  * WROTE ({@link ANCHOR_TOLERANCE_PX}) and re-anchors only while the scroller is still there, so a
  * reader who scrolled owns the column and a body landing does not yank them — the promise the old
  * dependency list was keeping, kept without giving up the anchor. See the effect, and
- * `screener-latest-anchor.test.tsx`, which models the growth because jsdom reports no layout.
+ * `test/screener-latest-anchor.test.tsx`, which models the growth because jsdom reports no layout.
  */
 export function heldAnchorTop(
   readTop: number, lastTop: number, scrollTop: number, pad = HELD_ANCHOR_PAD_PX,
@@ -538,7 +538,7 @@ function RowActions({
  * not the wording: the fixtures package is Mila's world, it is the ONE place in this repo where
  * invented people and invented brands are allowed to live, and a live surface reading strings
  * out of it has no way to stay honest as those strings change. It is app copy, so it lives with
- * the app's copy. `demo-zero-network.test.ts` now forbids the import class outright.
+ * the app's copy. `test/demo-zero-network.test.ts` now forbids the import class outright.
  */
 function Empty({ segment, settled }: { segment: ScreenerSegmentId; settled: boolean }) {
   const t = useTranslations("screener");
@@ -771,7 +771,7 @@ export function ScreenerView({
    *
    * The second shape is every mailbox whose bodies are fetched on demand rather than shipped with
    * the row — which is the ordinary one, and the reason this looked correct while being wrong
-   * wherever it mattered. Both shapes are exercised in `screener-latest-anchor.test.tsx`, which
+   * wherever it mattered. Both shapes are exercised in `test/screener-latest-anchor.test.tsx`, which
    * models the growth explicitly because jsdom reports no layout and any assertion about this
    * arithmetic is otherwise green by construction.
    *
@@ -988,7 +988,8 @@ export function ScreenerView({
     // carry a ⇧ twin that marks the held mail read; the demoting ones (Screen out, Spam) do
     // NOT — you don't read what you triage out, so the twin is dropped rather than made a
     // silent no-op, which would print the same destination twice in the `?` sheet. The
-    // decision funnel in `screener-state.ts` clamps read for these regardless. SCR-READBOX.
+    // decision funnel in `screener-state.ts` clamps read for these regardless — the
+    // demote-stays-unread rule.
     ...(["ohbox", "reads", "receipts", "screened", "spam"] as DecisionDestination[]).flatMap(
       (dest): KeyBinding[] => {
         const file: KeyBinding = {
@@ -1259,7 +1260,7 @@ export function ScreenerView({
           </div>
         }
         /* THE LEGEND IS GONE ENTIRELY NOW. Its previous trim (recorded in
-           `screener-cloud.test.ts`) had already deleted the filing keys — `o r c n x file`
+           `test/screener-cloud.test.ts`) had already deleted the filing keys — `o r c n x file`
            named capsules in the other pane, and `y accept suggestion` named a key bound
            nowhere — on the rule that a key is documented on the verb it fires. The j/k/↵
            remainder fell to the same rule's last step: clamped to one line, it clipped

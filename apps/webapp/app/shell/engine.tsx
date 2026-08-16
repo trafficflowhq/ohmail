@@ -418,7 +418,7 @@ export function EngineProvider({
    * enforced that coincidence, and both fields exist precisely so a surface can render "this
    * session has stopped" or "still retrying, briefly" differently from a healthy tick — a dedup
    * blind to one of them is one refactor away from swallowing the transition. The comparator
-   * names all four, and `sync-liveness.test.ts` guards it.
+   * names all four, and `test/sync-liveness.test.ts` guards it.
    */
   const [sync, setSync] = useState<SyncStatus>(SYNC_BOOTSTRAPPING);
   const onSyncStatus = useCallback((next: SyncStatus) => {

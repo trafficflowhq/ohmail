@@ -34,7 +34,7 @@ import { liveCopy, activeFormatLocale, activeFormatZone } from "../shell/locale"
 
 /**
  * THE ENGLISH SENTENCES — the fallback for the `icsEvent` namespace and the parity oracle for
- * it (`locale-shim-parity.test.ts` holds the two together). `liveCopy` and not the hook, for
+ * it (`test/locale-shim-parity.test.ts` holds the two together). `liveCopy` and not the hook, for
  * the reason the strip's own table states: this component mounts bare in unit tests.
  */
 const EN = {

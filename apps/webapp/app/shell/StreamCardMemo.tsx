@@ -31,7 +31,7 @@
  * expand re-renders that one card and no other. `now` is `useMemo`'d on `demo` in the shell.
  *
  * The inline `onToggle`/`onAction`/`bodySlot`/`art` closures are built INSIDE this component, so
- * they cost nothing on a render it skips. The guard is `stream-rerender.test.tsx`, which drives the
+ * they cost nothing on a render it skips. The guard is `test/stream-rerender.test.tsx`, which drives the
  * cards through `presentationReader` so a reference memo cannot pass it.
  */
 

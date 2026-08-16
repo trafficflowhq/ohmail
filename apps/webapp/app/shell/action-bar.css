@@ -295,7 +295,7 @@
 
 /* Both sub-rows may wrap — they are a menu that has taken the bar's place for one
    interaction, not the resting bar, and a menu that clipped its own last item would be the
-   defect this slice exists to remove. */
+   defect this change exists to remove. */
 .abar-panel {
   display: flex;
   align-items: center;
@@ -311,7 +311,7 @@
 }
 /* A panel section is a grouping for the container queries below and NOT a box: its buttons
    must be flex children of the panel itself, or they would lay out as one unbreakable unit
-   and reintroduce the clipping this slice removes. */
+   and reintroduce the clipping this change removes. */
 .abar-pg { display: contents; }
 .abar-chev {
   transform: rotate(90deg);
@@ -478,7 +478,7 @@
  *      576        reply · defer · TAG · read+More            517   ← the widest a message bar gets
  *
  * No row exceeds its container at any tier a message bar can reach, and Tag is standing at both
- * of the two widths a message is actually read at. That is the claim this slice is making.
+ * of the two widths a message is actually read at. That is the claim this change is making.
  */
 .abar-defer,
 .abar-file,
@@ -592,7 +592,7 @@
  *     the same block, so the verb is in the row or behind More, never both, PER SURFACE.
  *
  * The cumulative arithmetic — every tier against its own standing row, and the standing row at
- * 628 against the conversation's pill — is asserted by `action-bar.test.ts`, from these same
+ * 628 against the conversation's pill — is asserted by `test/action-bar.test.ts`, from these same
  * measured widths. Re-measure the widths when a label changes; the tiers must then follow. */
 @container abar (min-width: 601px) {
   .pick-bar .abar-file { display: flex; }

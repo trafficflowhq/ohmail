@@ -224,7 +224,7 @@ export interface ScreenerState {
    * reachable whenever this mirror is a poll behind another writer (a second device, the retro
    * pass) — rolled the overlay back, restored nothing, and said nothing. The row simply reappeared
    * on the next visit, indistinguishable from a decision never made. Reproduced end-to-end in
-   * `screener-decision-holds.test.ts`: screen one sender in and one out, leave for the Ohbox, come
+   * `test/screener-decision-holds.test.ts`: screen one sender in and one out, leave for the Ohbox, come
    * back, and both are waiting again with no error anywhere on the page.
    *
    * So a refusal is now a STATE, not an absence. The row returns carrying it, and it survives the
@@ -290,7 +290,7 @@ const OUT_MS = 330;
 export const UNDO_MS = 8000;
 const COMMIT_GRACE_MS = 400;
 /**
- * Exported so the suite reads the REAL number. `screener-cloud.test.ts` carried
+ * Exported so the suite reads the REAL number. `test/screener-cloud.test.ts` carried
  * `const COMMIT_MS = 6200` — a hand-copied duplicate of a value it does not own, which would
  * have gone green against a shipped 8400 for exactly as long as nobody re-ran it.
  */
@@ -607,7 +607,7 @@ export function useScreenerState(
       // `FixturesAdapter`, which serves `mutationEffects` in-process and never opens a socket.
       const decision: "yes" | "no" =
         entry.dest === "screened" || (derived && entry.dest === "spam") ? "no" : "yes";
-      // The destination rides the decide on BOTH branches (SCR-READ), so the server files where the
+      // The destination rides the decide on BOTH branches, so the server files where the
       // user pressed on all five; nothing is composed on top but "&read", which is a flag below.
       //
       // ── THE RESULT IS INSPECTED, AND IT USED TO BE THROWN AWAY ──────────────────────────────
@@ -744,7 +744,7 @@ export function useScreenerState(
     // suggestion of a demoting destination), so clamping HERE is what makes the guarantee
     // structural rather than three UI branches that each have to remember. `commit` reads
     // `entry.read` for both the wire `read` flag and the derived-row `mark_seen` batch, so a
-    // false here stops both. SCR-READBOX.
+    // false here stops both — the demote-stays-unread rule.
     const read = opts.read && !DECISION_QUIET.has(dest);
     const entry: PendingEntry = {
       sender,

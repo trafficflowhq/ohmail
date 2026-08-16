@@ -212,7 +212,7 @@ export function MessageHeader({
    * The RAW `m.subject`, reply prefixes included: "AW: …" is what this message is called, and
    * printing it is what lets a thread's panels tell each other apart now that the one large
    * heading is deleted (`MessagePane`'s `<h2>` and the thread lede both — see
-   * `conversation.test.ts`). No normalization, no suppression against a thread heading that no
+   * `test/conversation.test.ts`). No normalization, no suppression against a thread heading that no
    * longer exists. The line is the subject-rule entry where the shell provides the sheet
    * (`chrome.openSubjectRule`, dispatching THIS message's id) and plain text where it does not
    * — never a dead control. An empty subject renders no line rather than an empty one.
@@ -417,7 +417,7 @@ export function MessageCard({
         {failedNote}
         {/* NO VERB FOOTER, AND NOT AN OVERSIGHT. Reply / Reply all / Forward live in the
             header's ⋯ menu now (`MessageHeader`), per panel, through the same chrome the old
-            `.hm-foot` buttons dispatched — `conversation.test.ts` holds the footer's absence
+            `.hm-foot` buttons dispatched — `test/conversation.test.ts` holds the footer's absence
             and the menu's dispatch-by-panel-id. Still deliberately NOT a second ActionBar: a
             full bar per panel would stack the file / defer / read machinery onto a message the
             reader is only glancing back at. */}

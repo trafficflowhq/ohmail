@@ -110,7 +110,7 @@ import { stripSpeaks, type MailState } from "./mail-state";
  * gap: at a fractional width between them neither query matched, both copies were painted, and
  * the sentence stood on screen twice with two live regions announcing it. It is one `min-width`
  * now, swapping both halves together, so "exactly one is on screen" holds at every width by
- * construction rather than by arithmetic. `sync-notice-one-copy.test.ts` sweeps it.
+ * construction rather than by arithmetic. `test/sync-notice-one-copy.test.ts` sweeps it.
  *
  * The other half of the same lesson, and the reason this note is here rather than only in
  * `app.css`: because the shell renders the strip BEFORE the deck, the hidden copy is the FIRST

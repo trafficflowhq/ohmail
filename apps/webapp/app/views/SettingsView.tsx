@@ -449,7 +449,7 @@ export function SettingsView({
    * There is no mirror fallback any more. This pane used to fall back to
    * `reader.list<MailboxEntity>("mailbox")`, but `"mailbox"` is not one of the entity types the
    * `/sync` change feed carries, so `/sync` never emits one and the list was empty for
-   * every real account — the built-tested-unreachable branch this slice deletes rather than
+   * every real account — the built-tested-unreachable branch this change deletes rather than
    * layers over. Both surfaces now bring the real list from `GET /mailboxes`: the Cloud client
    * from `(product)/mailbox/MailboxSection` through `app/api-client`, the desktop shell from the
    * sidecar's mounted API over its bridge. Each pane HEADS itself with the mode it is showing —
@@ -742,7 +742,7 @@ export function SettingsView({
               170px column) and could not cure this half: a column pin does not stop a second item
               from taking a second row. This wrapper does, by leaving the grid exactly two items
               wide — nav, content — and stacking a pane's sections inside it with a flex gap that
-              owes the nav nothing. Pinned by `settings-account-layout.test.tsx`. */}
+              owes the nav nothing. Pinned by `test/settings-account-layout.test.tsx`. */}
           <div className="set-pane-col">
           {pane === "general" ? (
             <SettingsSection>
@@ -797,8 +797,8 @@ export function SettingsView({
                   mirror's `view_meta` row) exists only in the fixture world — `/sync` has no
                   such entity — so gating the prototype screen on it keeps the DEMO's
                   Notifications pane exactly as designed, framed by the demo ribbon.
-                  Guarded by notifications-honest-state.test.tsx; the consumer that replaces
-                  this sentence is the slice that ships real permission + subscription +
+                  Guarded by test/notifications-honest-state.test.tsx; the consumer that replaces
+                  this sentence is the change that ships real permission + subscription +
                   delivery. */}
               {!notifications ? (
                 <p className="set-note-inline">{t("notificationsUnavailable")}</p>

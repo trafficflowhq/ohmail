@@ -4,7 +4,7 @@
  * THE DEVICE'S COPY OF A SERVER ANSWER THE BOOT RENDER NEEDS — per account, read at boot,
  * overwritten by every fresh answer, wiped on sign-out.
  *
- * ── THE DEFECT THIS EXISTS FOR — measured live, 2026-08-12 ────────────────────────────────
+ * ── THE DEFECT THIS EXISTS FOR — measured live ────────────────────────────────────────────
  *
  * The warm open paints the mirror from IndexedDB in the first frame, but the consent partition
  * (`consentPartition` — the projection that decides where every message PRESENTS) is keyed on
@@ -31,7 +31,7 @@
  * What may be cached is bounded by one rule: NOTHING THAT AUTHORISES. A cached flag must never
  * be able to spend money (`autoSuggest`) or load a sender's remote content
  * (`blockRemoteImages`); those keep their safe resting values until the live answer, and
- * `consent-boot-cache.test.tsx` watches that boundary.
+ * `test/consent-boot-cache.test.tsx` watches that boundary.
  *
  * ── MECHANICS ─────────────────────────────────────────────────────────────────────────────
  *

@@ -17,7 +17,7 @@
  *     the pressed destination and promotes a rule pointing at that same folder, in one
  *     transaction. Nothing is composed on top;
  *   · a sender whose mail has left the Screener, which is the Ohbox case, would 404. There is
- *     no un-screen endpoint and this slice does not invent one. Their mail is moved with
+ *     no un-screen endpoint and this change does not invent one. Their mail is moved with
  *     `move` and the rule is written with `rule_create`.
  *
  * ── THE SENTENCE THIS FILE USED TO CARRY, AND WHY IT IS WORTH KEEPING ────────────────────
@@ -552,7 +552,7 @@ export function planScreeningChange(
     // held mail, because `decide` re-routes what its scope covers
     // (`screener-service.ts#heldRowsForDomain`).
     //
-    // THE CONDITION THAT USED TO GUARD THIS IS GONE, and its removal is the slice.
+    // THE CONDITION THAT USED TO GUARD THIS IS GONE, and its removal is the whole change.
     // `WIRE_DECIDE_FOLDER[decision] === wanted` was true only for Ohbox and Screen-out; for
     // the other three it was false, which is what let the `move` fan-out below cover them —
     // the composition that lost the race. With the destination on the decide it would be
@@ -643,7 +643,7 @@ export function screeningToast(
      * THE DECIDE PATH IS NOT AWAITED AND KEEPS THE SENTENCE IT SHIPPED WITH. Its rule is
      * written by the server inside the decision's own transaction — there is no separate
      * request whose outcome could differ from the decision's — and that path was verified when
-     * it shipped. Widening the await to it would change a shipped behaviour this slice was not
+     * it shipped. Widening the await to it would change a shipped behaviour this change was not
      * asked to touch.
      */
     case "promoted":
@@ -675,7 +675,7 @@ export function worstStatus(results: readonly { status: MutationStatus }[]): Mut
  * `tag_assign` had a finished picker over an adapter that threw; the rules surface had a
  * three-outcome vocabulary under a toast that fired on click. Both were green. So the awaiting, the
  * fire-and-forget and the choice of sentence are ONE function with a `mutate` seam, and
- * `sender-screening.test.ts` drives it with an adapter that refuses.
+ * `test/sender-screening.test.ts` drives it with an adapter that refuses.
  *
  * ── EXACTLY ONCE, AND ONLY THE RULE IS AWAITED ──────────────────────────────────────────
  *

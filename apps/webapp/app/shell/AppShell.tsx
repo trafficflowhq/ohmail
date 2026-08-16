@@ -423,7 +423,7 @@ export function readerMessageFor(
  * body 500'd could not be recovered without reloading the tab, and in the Screener that is a
  * consent decision left standing on a one-line snippet. The declared type accepted `opts` and the
  * implementation ignored them — the "type-level guard that silently does not guard", so it is a
- * named unit now, with `hydrate-body-retry.test.ts` watching the forward.
+ * named unit now, with `test/hydrate-body-retry.test.ts` watching the forward.
  */
 export function makeHydrateBody(
   engine: { hydrateBody: (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => unknown },
@@ -925,7 +925,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    */
   /**
    * `settled` travels to the piles as a PROP and not through `useMailState()` at their top
-   * level, and that is a hard constraint rather than a preference: `ohbox-read-state.test.ts`
+   * level, and that is a hard constraint rather than a preference: `test/ohbox-read-state.test.ts`
    * mounts `OhboxView` under `KeymapProvider` alone, and `useMailState` THROWS without a
    * provider by design (`MailStateProvider`'s header argues why a resting default would be
    * worse). A hook at the top of the view would take that harness down on mount, in every
@@ -1745,7 +1745,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * `⇧I`, bulk, read-all), and those spend pins exactly as they always have.
    *
    * Forwarding it is easy to lose and impossible to typecheck — a two-parameter callback is
-   * assignable where three are expected — so `resurface-now-shell.test.ts` asserts the label
+   * assignable where three are expected — so `test/resurface-now-shell.test.ts` asserts the label
    * arrives at the adapter rather than trusting this line.
    */
   const markSeen = useCallback(
@@ -1864,9 +1864,9 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * body. So the selected message's body is fetched, one id, on selection.
    *
    * It lives in the shell rather than in `OhboxView` for the reason `message-chrome.tsx`
-   * gives: the pane is mounted twice while the reader is open, `ohbox-read-state.test.ts`
+   * gives: the pane is mounted twice while the reader is open, `test/ohbox-read-state.test.ts`
    * mounts the view with no `EngineProvider`, and the dwell machinery in that view is not
-   * something this slice may reach into. The reader sheet shows the same message, so opening
+   * something this change may reach into. The reader sheet shows the same message, so opening
    * it needs no second trigger.
    *
    * `urgent`, AND ONLY THE TWO SELECTION EFFECTS PASS IT. This is the one message that IS the
@@ -3625,7 +3625,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
 
   const startFR = useCallback(() => {
     // NO `setFrValues({})`. Keyed by message, what is in that map is a reply somebody wrote
-    // and has not sent — a run that begins by erasing it is the bug this slice exists to end,
+    // and has not sent — a run that begins by erasing it is the bug this change exists to end,
     // one keystroke earlier. A delivered reply is removed by `onSendSettled`, and nothing else
     // has the standing to.
     setFr({ step: 0, items: piles.replyLater });
@@ -5236,7 +5236,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
          * blank body — the server would accept and post one (`drafts-service.ts:167-171`) —
          * and Skip is the affordance for moving on without writing. Letting Done fall through
          * to Skip would put back a second way to leave a step having sent no mail, which is
-         * the shape of the bug this slice removes; the run stays put instead, and the pile
+         * the shape of the bug this change removes; the run stays put instead, and the pile
          * keeps the reminder.
          *
          * An entry with no `messageId` is refused for the same reason twice over: there is no

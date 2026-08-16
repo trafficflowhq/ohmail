@@ -252,7 +252,7 @@ export function SenderMenu({
           sender's rule is promoted by the decide itself, so a switch there would be a control
           that cannot change the outcome.
 
-          It reuses `.sm-scope`'s styling because `sender-sheet.css` is not this slice's to
+          It reuses `.sm-scope`'s styling because `sender-sheet.css` is not this change's to
           restyle, and carries `sm-rule` so a test can name it without depending on order. The
           scope switch's own test now selects it by `role="radiogroup"` rather than by that
           class, which is what this file's tests were supposed to do in the first place. */}

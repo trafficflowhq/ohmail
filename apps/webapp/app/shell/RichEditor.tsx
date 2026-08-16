@@ -204,7 +204,7 @@ export function RichEditor({
    * every reply, and its bare-string branch — the one that keeps a plain draft readable by
    * the bundle that predates this editor — would become unreachable code that no test could
    * distinguish from working; and a plain send would stop being byte-identical to the one
-   * this slice replaced, which is the difference between adding a feature and changing
+   * this change replaced, which is the difference between adding a feature and changing
    * everybody's mail.
    *
    * THE TEST IS THE ROUND TRIP, not a hand-written "does it contain a tag". `richToHtml` is

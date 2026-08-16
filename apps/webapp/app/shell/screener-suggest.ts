@@ -579,7 +579,7 @@ export function useScreenerSuggestions(opts: {
     optInRun: 0,
     /**
      * THE AUTOMATIC BATCH'S OWN COUNTER — deliberately not `run`, for the reason `optInRun` is
-     * not either, and it was the SCR-SUGGEST-FLAKE bug when it was.
+     * not either, and sharing `run` was the self-cancellation bug when it did.
      *
      * The automatic batch fires ASYNCHRONOUSLY, gated on `hydrateSettled`, so the first time it
      * runs is a network round trip after the Screener opens — and an owner who opens the Screener
@@ -712,7 +712,7 @@ export function useScreenerSuggestions(opts: {
    * Everything this path is allowed to do is buy suggestions. It reaches {@link SuggestWire.suggest}
    * and nothing else: there is no branch here that can call `POST /screener/:id`, write a rule or
    * move a message, which is what keeps the opt-in an opt-in to WORK rather than to a decision.
-   * `screener-auto-suggest.test.tsx` asserts that by watching the calls, because "I did not write
+   * `test/screener-auto-suggest.test.tsx` asserts that by watching the calls, because "I did not write
    * that line" is not a property a reader can check later.
    *
    * There is no dry run in front of it, and that is the one place this path differs from the
@@ -866,7 +866,7 @@ export function useScreenerSuggestions(opts: {
         return;
       }
       // Captured ONCE. Never re-bumped inside the loop — a per-chunk bump would make each chunk
-      // invalidate the next one's check (the SCR-SUGGEST-FLAKE shape, inside one price).
+      // invalidate the next one's check (the self-cancellation shape, inside one price).
       const run = ++io.current.run;
       setPhase("pricing");
       setQuote(null);
@@ -972,7 +972,7 @@ export function useScreenerSuggestions(opts: {
        *  - `run` is captured ONCE, here, and every chunk checks it against `io.current.run` on
        *    arrival. A second press (cancel, or a re-price) bumps the counter and the in-flight loop
        *    aborts, painting nothing. It is NEVER re-bumped inside the loop — that would make each
-       *    chunk invalidate the next one's check, which is the SCR-SUGGEST-FLAKE self-cancellation
+       *    chunk invalidate the next one's check, which is the same self-cancellation
        *    moved inside a single purchase.
        *  - Chips land INCREMENTALLY, per chunk, and the notice ticks "X of Y bought". A chunk that
        *    stops (the gate ran out part-way) or throws HALTS the loop: what earlier chunks bought

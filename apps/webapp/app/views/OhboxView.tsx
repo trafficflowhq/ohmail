@@ -237,7 +237,7 @@ export function OhboxView({
    * rendered before the first drain had finished, over a mailbox that was not empty.
    *
    * It arrives as a PROP and not from `useMailState()`, because this view is mounted with no
-   * provider by `ohbox-read-state.test.ts` and that hook throws without one — deliberately.
+   * provider by `test/ohbox-read-state.test.ts` and that hook throws without one — deliberately.
    *
    * REQUIRED, with no default. A default would be `true` (nothing else is renderable), which is
    * exactly the silent-omission mode `sync-scheduler.ts` rejects for the wake signal: a caller
@@ -701,7 +701,7 @@ export function OhboxView({
   /**
    * THE WRITER, held the same way, so the dwell's deps are ONE value.
    *
-   * `onMarkSeen` was a dependency of the dwell until this slice, which made the dwell's
+   * `onMarkSeen` was a dependency of the dwell until this change, which made the dwell's
    * correctness depend on a caller keeping its callback identity stable: `AppShell` does
    * (`markSeen` is a `useCallback`), but a caller that did not would restart the two seconds
    * on every render and the dwell would never fire at all — silently, with no error. That is
@@ -2331,7 +2331,7 @@ function BulkBar({
  * construction: zero text nodes, `aria-hidden`, and a fixed width table that is derived from
  * nothing — so there is nothing in it that could be mistaken for this mailbox, because there is
  * nothing in it at all. It draws where the list is about to be, and the sentence above it stays
- * the only thing on this pane that says anything. `boot-skeleton.test.tsx` holds that boundary
+ * the only thing on this pane that says anything. `test/boot-skeleton.test.tsx` holds that boundary
  * as a structural assertion rather than as this paragraph.
  *
  * The demo and the Desktop never reach the `screenerCandidate` arms — the derivation returns the

@@ -361,7 +361,7 @@ export function ReadsView({
    *
    * The SECOND trigger is `StreamShell`'s `onNear` (wired to `hydrateBody` below): a card that
    * has come within a viewport's lookahead of the fold, so the sanitized html viewer is ready
-   * as it scrolls in rather than the raw text dump the stream showed until this slice. That is
+   * as it scrolls in rather than the raw text dump the stream showed until this change. That is
    * what makes Reads read like mail; without it the cards render `body.text` because the html
    * part is never fetched.
    *

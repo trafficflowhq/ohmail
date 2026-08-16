@@ -192,7 +192,7 @@ function Key({ chord }: { chord: string }) {
  *
  * `u` is already bound, in `OhboxView`, and marking unread there sets a `pinnedUnread` ref
  * that the 2 s dwell checks WHEN ITS TIMER FIRES — the guard
- * `ohbox-read-state.test.ts` calls *"`u` is not undone by a dwell that is already
+ * `test/ohbox-read-state.test.ts` calls *"`u` is not undone by a dwell that is already
  * ticking"*. A button that dispatched `mark_seen` on its own would have no way to set that
  * pin, so a click on it inside the dwell window would be reverted two seconds later by the
  * heuristic: the exact defect that test exists to prevent, reintroduced through a new door.
@@ -278,7 +278,7 @@ function ActionBar({
    * a browser caught (two presses marked read twice). `press` resolves the handler at call time,
    * exactly as the keydown dispatcher does, which is also what keeps `OhboxView`'s dwell pin in
    * force — a button with its own mutation would be reverted two seconds later by that timer (see
-   * `ohbox-read-state.test.ts`). `onAction("unread")` is the fallback where `u` is not bound at all
+   * `test/ohbox-read-state.test.ts`). `onAction("unread")` is the fallback where `u` is not bound at all
    * (the desktop shell, a pane mounted with no keymap provider).
    */
   const markUnread = () => {
@@ -693,7 +693,7 @@ function ActionBar({
            * it moves to `aria-label` and the tooltip.
            */}
           {/*
-           * `aria-expanded` REPORTS THE MENU, and until this slice it was the literal `false`.
+           * `aria-expanded` REPORTS THE MENU, and until this change it was the literal `false`.
            * That was not merely stale — with `aria-haspopup` beside it, it announced "there is a
            * popup and it is closed" every time, including while the disclosure was open. A
            * screen-reader user pressed the control, the row underneath was replaced, and the
@@ -1122,8 +1122,8 @@ export function MessagePane({
   ) : (
     /* A `<div>` rather than the `<p>` this was, because `BodyText` emits the paragraphs
        now and a `<p>` may not contain one. `.msg-body` is unchanged and stays the one element
-       that holds the mail and nothing else, which is what `conversation.test.ts` and
-       `inline-reply.test.ts` select on and what a reader is entitled to assume. */
+       that holds the mail and nothing else, which is what `test/conversation.test.ts` and
+       `test/inline-reply.test.ts` select on and what a reader is entitled to assume. */
     <div className="msg-body">
       {/* The consent path for remote images. `remoteImages` is ABSENT on a client that
           has no proxy (`?demo=1`, the desktop shell, a test with no API), and `MessageBody`
@@ -1208,7 +1208,7 @@ export function MessagePane({
              renderer needs a worker, the window's policy is `worker-src 'none'`, and both desktop
              bundles alias the library away for it. Offering the eye there produced a viewer whose
              only possible outcome was a panel saying to download the file instead — over a
-             Download that, until this slice, could not deliver one. Without the eye, the tile's
+             Download that, until this change, could not deliver one. Without the eye, the tile's
              own press is the whole gesture and it opens the PDF in the program this computer uses
              for PDFs. It answers false everywhere else, including the whole web app. */
           onPreview={(attachmentId) => chrome.openAttachmentPreview(message.id, attachmentId)}
@@ -1372,7 +1372,7 @@ export function MessagePane({
    * NO LARGE `<h2>` AND NO THREAD LEDE ANY MORE: the 24px heading (and the one-time lede the
    * thread wrapper opened with) is deleted with the viewer redesign — the subject is per
    * message, in the header, uniformly, on a single message exactly as on every thread panel.
-   * `conversation.test.ts` holds the absence.
+   * `test/conversation.test.ts` holds the absence.
    */
   const focusedHeader = <MessageHeader message={message} now={now} onEnterReader={onEnterReader} />;
 
@@ -1381,7 +1381,7 @@ export function MessagePane({
   /**
    * THE PILL, BUILT ONCE AND MOUNTED ONCE — the same element in both layouts, so the bar the
    * single message parks in `ReadingPane`'s actions slot and the bar at the foot of the thread
-   * wrapper cannot drift apart. `pill-snapshot.test.ts` pins its rendered markup to the bytes
+   * wrapper cannot drift apart. `test/pill-snapshot.test.ts` pins its rendered markup to the bytes
    * captured before the viewer redesign: the wrapper around the bar changed, the bar did not.
    * It is bound to `message` — the OPENED id — on every surface; opening an older message via
    * search keeps the verbs on that message, never on the newest panel.

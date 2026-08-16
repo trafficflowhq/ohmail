@@ -18,7 +18,7 @@
  * Every panel's body is already LOADED when it renders (`MessagePane` fires one `hydrateThread`
  * for the whole conversation), so this mapper draws mail that is in hand — no fetch per panel,
  * no placeholder for mail the reader cannot reach. The anti-placeholder guard in
- * `conversation.test.ts` holds the stronger line the redesign bought: exactly
+ * `test/conversation.test.ts` holds the stronger line the redesign bought: exactly
  * conversation-length distinct panels, each with its body ON SCREEN, and any peek row,
  * "N earlier" aggregate or count line goes red.
  *

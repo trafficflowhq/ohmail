@@ -10,7 +10,7 @@ import "./mark-all-read.css";
  *
  * It renders NOTHING when the view shows nothing to clear. A control that can be pressed
  * against an already-cleared list is a control that lies about what it does — so the component
- * returns null, and the guard (`mark-all-read.test.tsx`) asserts that null rather than a
+ * returns null, and the guard (`test/mark-all-read.test.tsx`) asserts that null rather than a
  * disabled button.
  *
  * TWO COUNTS FEED IT, because the reading streams make two different statements a press can

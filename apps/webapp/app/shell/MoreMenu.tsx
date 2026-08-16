@@ -130,7 +130,7 @@ export function MoreMenu({
    * It cannot be reproduced under a test DOM, and that is stated rather than left to be
    * discovered: a harness mounts React into a `<div>`, so React's listener is on that div and a
    * plain `stopPropagation` genuinely does stop `document`. The guard therefore watches the CALL
-   * rather than the outcome — see `action-bar.test.ts`.
+   * rather than the outcome — see `test/action-bar.test.ts`.
    */
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
     const buttons = live();

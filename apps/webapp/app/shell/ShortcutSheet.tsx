@@ -7,7 +7,7 @@
  * the property worth protecting: the previous "documentation" was a sentence in the (i)
  * panel that somebody typed once, and by the time this was written it named keys that had
  * moved and omitted the ones that had arrived. A sheet built from the dispatcher's own
- * table cannot do either. `keymap.test.ts` mutates the generation to watch it fail.
+ * table cannot do either. `test/keymap.test.ts` mutates the generation to watch it fail.
  *
  * A peek, not a mode: ANY key dismisses it and then does its normal job, so `?` `j` reads
  * the map and moves the cursor in two keystrokes.

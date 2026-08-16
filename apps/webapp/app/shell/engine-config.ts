@@ -12,7 +12,7 @@ import { createSyncGate, registerSyncGate, type WakeStreamLike } from "./sync-sc
  * THE ENGINE DECISION, extracted so it can be TESTED rather than described.
  *
  * This function used to live inside `engine.tsx`, which is a `"use client"` module that
- * pulls in React and the whole provider. `demo-gate.test.ts` could therefore only assert
+ * pulls in React and the whole provider. `test/demo-gate.test.ts` could therefore only assert
  * the demo promise STRUCTURALLY — by matching source text — which proves the code says the
  * right thing and not that it does it. The promise is "`?demo=1` ⇒ fixtures only, zero
  * network, nothing leaves this tab" — a self-contained surface makes no external request at
@@ -21,7 +21,7 @@ import { createSyncGate, registerSyncGate, type WakeStreamLike } from "./sync-sc
  * network.
  *
  * So the decision moved here, to a plain module with no React in it, and
- * `demo-zero-network.test.ts` drives it: build with `demo: true`, `start()`, mutate, and
+ * `test/demo-zero-network.test.ts` drives it: build with `demo: true`, `start()`, mutate, and
  * assert that `fetch` / `XMLHttpRequest` / `WebSocket` / `EventSource` were touched exactly
  * zero times — with a control that builds the LIVE engine and proves the same assertions
  * would have caught a request. `engine.tsx` imports this and is otherwise unchanged; the
@@ -111,7 +111,7 @@ export function cloudWakeStream(
 ): (() => WakeStreamLike) | null {
   if (syncsWhileHidden(env)) return null;
   // Deliberately NOT spelled the way `createEngine` reads the same variable (a local named
-  // `apiBase`): `api-rewrite.test.ts` pins the ORDER of that exact line against the demo gate
+  // `apiBase`): `test/api-rewrite.test.ts` pins the ORDER of that exact line against the demo gate
   // by `indexOf`, so an identical occurrence above the gate — even in a comment — would
   // satisfy the grep for the wrong function and the guard would stop guarding.
   const base = env.NEXT_PUBLIC_API_BASE;

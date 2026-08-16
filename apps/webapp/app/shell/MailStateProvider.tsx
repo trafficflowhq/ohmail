@@ -253,7 +253,7 @@ export function useMailState(): MailStateBinding {
  * this is allowed to be the non-throwing sibling of {@link useMailState}.
  *
  * `InlineReply` renders inside `MessagePane`, and `MessagePane` is mounted with no provider in
- * more than one harness (`mail-send-states.test.ts` renders the editor alone; `action-bar.
+ * more than one harness (`test/mail-send-states.test.ts` renders the editor alone; `action-bar.
  * test.ts` says so at the assertion). It is also published to the Desktop mirror. A throw there
  * would take an editor down over a decoration.
  *

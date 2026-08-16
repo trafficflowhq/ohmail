@@ -30,7 +30,7 @@
  *
  * NOTHING ABOUT THE PAYLOAD CHANGED. Sending was, and is, `{inReplyTo, body}` with `body`
  * exactly what was typed (`http-adapter.ts` `mailSend`). There has never been a quoted
- * original in outgoing mail and this slice did not add one: the parent's text in the payload
+ * original in outgoing mail and this change did not add one: the parent's text in the payload
  * is how a `no_forward` message's redacted body would leave the account, and sensitive mail is
  * never forwarded.
  * What the editor shows and what it sends are two different questions, and only the first
@@ -318,7 +318,7 @@ export function InlineReply({
    * WHICH ADDRESS IS ANSWERING.
    *
    * A reply goes out from the mailbox the message ARRIVED in — `Engine.enrich` has always
-   * derived that from the parent (`engine.ts:671`) and this slice does not change it. What it
+   * derived that from the parent (`engine.ts:671`) and this change does not touch it. What it
    * changes is that the editor now says so, and that the one case where the default is not
    * available is stated instead of discovered afterwards.
    *
@@ -382,7 +382,7 @@ export function InlineReply({
    * default, not a cage.
    *
    * Untouched (`envelope === null`), NOTHING changed: the head renders as before and the
-   * wire carries the computed envelope byte-for-byte — `inline-reply.test.ts` pins the
+   * wire carries the computed envelope byte-for-byte — `test/inline-reply.test.ts` pins the
    * mutation's exact key set for that case.
    */
   const expand = onEnvelope === undefined
@@ -418,7 +418,7 @@ export function InlineReply({
    * (`reader.css`) and the editor never leaves the screen to begin with.
    *
    * `scrollIntoView` is optional-chained on the METHOD, not only the node: jsdom does not
-   * implement it (see `body-open.test.ts`, which stubs it for the views that call it
+   * implement it (see `test/body-open.test.ts`, which stubs it for the views that call it
    * unguarded), and the suites that drive the whole shell must not have to patch the DOM in
    * order to open a reply editor.
    *

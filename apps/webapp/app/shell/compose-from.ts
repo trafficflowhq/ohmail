@@ -163,7 +163,7 @@ export interface ResolvedFrom {
    * `null` is "we cannot see this account's mailboxes" (Desktop, demo without fixtures, a Cloud
    * tab whose first poll has not landed) — NOT "there are none". The caller falls back to the
    * mirror-derived id for the wire and renders no From line, which is what the surface did
-   * before this slice and is still the honest answer when nothing can be named.
+   * before this change and is still the honest answer when nothing can be named.
    */
   mailboxId: string | null;
   /** The address to render, or `null` when nothing can be named. */

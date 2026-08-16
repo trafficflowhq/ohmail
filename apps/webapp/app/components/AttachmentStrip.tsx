@@ -32,7 +32,7 @@
  * NOTHING HERE TOUCHES THE NETWORK. `objectUrl` is accepted only when it is `blob:` or
  * `data:` — bytes the app already holds from the user's own mailbox. A remote URL in that
  * field renders the type glyph instead, so a tracker can never ride in through this prop
- * (the same posture `no-third-party.test.ts` holds the rest of the app to).
+ * (the same posture `test/no-third-party.test.ts` holds the rest of the app to).
  *
  * COPY IS RENDERED FROM HERE, NOT YET FROM THE TRANSLATION CATALOGUE — with one exit.
  * Every sentence below already has its key in `messages/en.json`, under the `attachments`

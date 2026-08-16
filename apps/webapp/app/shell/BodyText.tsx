@@ -198,8 +198,8 @@ export const MAX_QUOTE_DEPTH = 6;
  * intra-line runs by definition, so a column-shaped block must leave that path entirely.
  * It becomes the same {@link PreNode} a code block arrives as: monospace so the columns
  * actually meet, literal whitespace so the runs survive, and `.msg-pre-wrap`'s own scroll
- * container so a wide receipt scrolls inside the letter (`message-body-code.test.ts` holds
- * that construction; `body-text-columns.test.ts` holds this classification).
+ * container so a wide receipt scrolls inside the letter (`test/message-body-code.test.ts` holds
+ * that construction; `test/body-text-columns.test.ts` holds this classification).
  *
  * A COLUMN GAP IS THREE-PLUS SPACES OR A TAB, INTERIOR. Three and not two, deliberately:
  * two spaces after a period is a typing habit older than email, and reading it as a column
@@ -402,7 +402,7 @@ function splitTrailingHistory(
  * This matches anything shaped like `scheme:rest`, INCLUDING `javascript:` and `data:`. That is
  * on purpose and it is the whole design: if the pattern itself only ever matched `https?://`,
  * the scheme rule would be an invisible property of a regex nobody can watch fail, and
- * `body-text.test.ts` case 1 would pass vacuously. The rejection happens in one named place
+ * `test/body-text.test.ts` case 1 would pass vacuously. The rejection happens in one named place
  * ({@link anchorFor}), where it can be deleted and watched go red.
  *
  * The body charset excludes whitespace and the quote/angle characters. Brackets and parens ARE

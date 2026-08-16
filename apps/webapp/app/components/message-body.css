@@ -82,7 +82,7 @@
    its text. It stays a real `<button>` with `aria-pressed` and this class — the browser
    journeys locate it by class and read that attribute (labels are translated), and the prose
    tests press it — so the treatment may get quieter but the contract may not move.
-   Guarded structurally by history-toggle-pill.test.ts in the webapp suite. */
+   Guarded structurally by test/history-toggle-pill.test.ts in the webapp suite. */
 .mb-flip {
   align-self: flex-end;
   border: 0;
@@ -216,7 +216,7 @@
      keeps the longest token's min-content, so a column can never get narrower than its
      widest value and a number therefore never splits. The width that buys is absorbed by
      the wrapper above — the scrollbar it was built for finally has a job.
-     Guarded by message-body-tables.test.ts. */
+     Guarded by test/message-body-tables.test.ts. */
   overflow-wrap: break-word;
 }
 .msg-table th { background: var(--tint); font-weight: 600; color: var(--ink); }

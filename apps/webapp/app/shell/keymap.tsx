@@ -30,7 +30,7 @@
  *      exactly what the (i) panel's sentence was.
  *
  * A binding declares its own label, so adding one adds its documentation. Deleting the
- * generation step is the mutation `keymap.test.ts` watches fail.
+ * generation step is the mutation `test/keymap.test.ts` watches fail.
  */
 import {
   createContext,
@@ -382,8 +382,8 @@ export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "vi
  *
  * `useKeymap`'s throw is a real guard: a component that DECLARES bindings into no registry
  * is a bug, silently. Reading one is not the same act. `MessagePane` renders in the desktop
- * shell and in tests that mount a view with no provider at all (`ohbox-read-state.test.ts`,
- * `conversation.test.ts`), and a message must stay readable without a keyboard registry
+ * shell and in tests that mount a view with no provider at all (`test/ohbox-read-state.test.ts`,
+ * `test/conversation.test.ts`), and a message must stay readable without a keyboard registry
  * behind it. No provider means NO hint — never a guessed one.
  */
 export function useBinding(chord: string): KeyBinding | null {

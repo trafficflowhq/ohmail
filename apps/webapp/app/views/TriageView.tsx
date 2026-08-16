@@ -39,7 +39,7 @@
  * THE RUN'S WIRING IS UNTOUCHED. `onStartFR` is the same callback the `f` key has always
  * called; the shell fills it from `piles.replyLater` and a completed reply clears `reply_later`
  * through `reply-send.ts`'s settle. This slice moved where the button is, not what it does —
- * see `triage-split.test.ts`, which pins both ends.
+ * see `test/triage-split.test.ts`, which pins both ends.
  */
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";

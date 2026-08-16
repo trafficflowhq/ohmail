@@ -231,7 +231,7 @@ export interface MessageChrome {
    * reader sheet), one of them three components deep inside a view that already takes
    * fifteen props. A FUNCTION rather than a resolved array because the two mounts hold
    * different messages, and because `MessagePane` must not acquire an engine hook of its
-   * own — `useEngine()` throws outside `EngineProvider` and `ohbox-read-state.test.ts`
+   * own — `useEngine()` throws outside `EngineProvider` and `test/ohbox-read-state.test.ts`
    * mounts `OhboxView` without one.
    */
   conversationOf: (messageId: string) => EngineMessage[];
@@ -241,7 +241,7 @@ export interface MessageChrome {
    * It travels with `conversationOf` and for the identical reason: `MessagePane` is mounted
    * TWICE while the reader is open, one of those mounts is three components deep inside a
    * view that already takes fifteen props, and the pane must not acquire an engine hook of
-   * its own — `useEngine()` throws outside `EngineProvider`, and `ohbox-read-state.test.ts`
+   * its own — `useEngine()` throws outside `EngineProvider`, and `test/ohbox-read-state.test.ts`
    * mounts `OhboxView` without one.
    *
    * A FUNCTION, so the two mounts can hold different messages and so the answer is read at
@@ -297,7 +297,7 @@ export interface MessageChrome {
    * button over an archive nothing can build is exactly the shape of control this gap exists
    * to remove, pointed the other way.
    *
-   * It is NOT optional in the sense of "the shell may forget it". `attachments-wired.test.ts`
+   * It is NOT optional in the sense of "the shell may forget it". `test/attachments-wired.test.ts`
    * asserts that `AppShell` supplies it and that the live engine can answer — a capability
    * that silently stays unsupplied on the live path only is this gap's own failure, and it
    * has already happened twice on this seam (`fetchBody`, `searchServer`).
@@ -354,7 +354,7 @@ const MessageChromeContext = createContext<MessageChrome>({
    * a mount with no engine behind it has no way to fetch anything, so a message that carries
    * its own body is `full` (the fixture world, and the desktop shell) and one that does not
    * is a `snippet` — never `full`, which would be this default quietly re-introducing the
-   * exact claim the slice exists to remove.
+   * exact claim this change exists to remove.
    */
   bodyOf: (message) =>
     message.body !== undefined

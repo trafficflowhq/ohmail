@@ -198,7 +198,7 @@ export function SearchView({
    * @deprecated The archive is searched by this view now, so nothing calls this. It is still
    * declared because `app/shell/AppShell.tsx` still passes it and that file belongs to another
    * slice; delete the prop and the call together when the shell is free. It must NOT be given
-   * a job in the meantime — the toast it is bound to is the claim this slice removed.
+   * a job in the meantime — the toast it is bound to is the claim this change removed.
    */
   onServerSearch?: () => void;
   /**
@@ -373,7 +373,7 @@ export function SearchView({
    *
    * The engine's facets describe the local arm alone. Once the archive lands, rendering them
    * beside a longer list would put "From · Anna · 3" above seven visible Anna results — a
-   * smaller, quieter version of exactly the claim this slice exists to remove. Counted from
+   * smaller, quieter version of exactly the claim this change exists to remove. Counted from
    * `merged` (before the facet filter, so clicking one does not zero the others).
    */
   const facetGroups: FacetGroup[] = useMemo(() => {

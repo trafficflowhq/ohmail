@@ -35,7 +35,7 @@
  * renders the form and reports what the state machine says. `AppShell` owns the fields (so a
  * half-written message survives leaving the view) and `compose.ts` owns the address parsing.
  *
- * NO import from `@ohmail/fixtures`, and `demo-zero-network.test.ts` now forbids one anywhere
+ * NO import from `@ohmail/fixtures`, and `test/demo-zero-network.test.ts` now forbids one anywhere
  * under `app/` rather than trusting this comment.
  *
  * The AI-draft card above the editor is unchanged in spirit: it renders when the mirror holds
@@ -467,7 +467,7 @@ export function ComposeView({
 
                   IT MUST STAY INSIDE THIS `.c-field`. Lifted back out, the row's own
                   `:focus-within` hairline stops covering it and the toggle is once again a
-                  control floating between two fields. `compose-composition.test.ts` asserts the
+                  control floating between two fields. `test/compose-composition.test.ts` asserts the
                   CONTAINMENT (`#compose-to`'s `.c-field` holds the button), not merely that a
                   Cc/Bcc button exists somewhere — the weaker assertion passes against the
                   layout this replaces. */}

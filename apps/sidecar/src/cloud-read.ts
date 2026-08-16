@@ -153,7 +153,7 @@ export const READ_ROUTES: ReadRoute[] = [
        * here for the reason this whole file exists: a Cloud-mode install may not import that
        * route table (it drags the IMAP admission port into the engine's graph and the census
        * goes red), so the two doors are held together by shape rather than by shared code.
-       * `cloud-search-sort.test.ts` drives both and asserts they answer alike — an order this
+       * `test/cloud-search-sort.test.ts` drives both and asserts they answer alike — an order this
        * door accepted and ignored would make the desktop quietly disagree with the web client
        * about what the same query means.
        */

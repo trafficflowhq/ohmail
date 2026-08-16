@@ -282,7 +282,7 @@ export const CONSENT_BOOT_SCOPE = "consent";
  * credits the account revoked in another session) and `blockRemoteImages` (a cached "images
  * load" could fetch a sender's content for somebody who opted out elsewhere). Both keep their
  * safe resting values until the live answer — the same values a tab with no cache has always
- * shown for the same interval. `consent-boot-cache.test.tsx` watches this boundary.
+ * shown for the same interval. `test/consent-boot-cache.test.tsx` watches this boundary.
  */
 interface ConsentBootCache {
   v: 1;

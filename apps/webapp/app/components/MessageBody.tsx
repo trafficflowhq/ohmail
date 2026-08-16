@@ -36,7 +36,7 @@
  * different question. The sanitizer cannot contain layout: a `<style>` in the app's own
  * document reaches the app's own chrome, and the one thing a mail must never do is restyle
  * the client around it. And the frame cannot enumerate: it will happily render a `<form>`
- * that asks for a password. Each one is watched failing on its own in `message-body.test.ts`.
+ * that asks for a password. Each one is watched failing on its own in `test/message-body.test.ts`.
  *
  * The frame is also what lets the sender's `<style>` SURVIVE, which is most of why mail
  * looks like mail here at all. A stylesheet that cannot escape its document is not a threat;
@@ -71,7 +71,7 @@
  * yet — a rewriting rule I forgot is a bug; a CSP I forgot is not reachable, because the
  * policy is a deny-list of nothing and an allow-list of `data:`.
  *
- * The last three of those shapes were ADDED on 2026-08-04, and the sentence above was false
+ * The last three of those shapes were ADDED in a later hardening pass, and the sentence above was false
  * until then: `image-set("https://…")`, a scheme written in CSS escapes (`url(htt\70 s://…)`)
  * and `@import"…"` with no whitespace each reached Chromium's network stack and were refused
  * by the CSP alone, while the bar counted zero and said nothing. The CSP held. The claim did
@@ -79,7 +79,7 @@
  *
  * ── AND THE DOCUMENT THE BROWSER BUILDS IS THE ONE THE SANITIZER APPROVED ────────────────
  *
- * That was also untrue until 2026-08-04. The `@import` rewrite ran on a `<style>` element's
+ * That was also untrue until the same hardening pass. The `@import` rewrite ran on a `<style>` element's
  * TEXT after DOMPurify had finished, `<style>` serializes raw, and a DELETION can join the two
  * halves of a close tag that were never adjacent — so `sanitizeMailHtml` returned markup that
  * read as cleared and became a live `<form>` the moment the frame parsed it. The arrangement
@@ -231,7 +231,7 @@ export const COPY: typeof EN = liveCopy("mailBody", EN, { blockedMany: ["count"]
  * refuses everything it does not name. So it was the shape this repo keeps warning about —
  * "two overlapping guards read as belt-and-braces and behave as neither: deleting one
  * leaves the test green, so neither one is ever proven to do anything". One list, one
- * deletion point: `message-body.test.ts` mutates by ADDING `iframe`, `form` and `object`
+ * deletion point: `test/message-body.test.ts` mutates by ADDING `iframe`, `form` and `object`
  * to this array, and that goes red.
  */
 const ALLOWED_TAGS = [
@@ -288,7 +288,7 @@ const ALLOWED_ATTR = [...URL_ATTR, ...PRESENTATION_ATTR];
  * "two overlapping guards read as belt-and-braces and behave as neither — deleting one
  * leaves the test green, so neither one is ever proven to do anything". Here there is one
  * value. Widen it to `/./` and BOTH enforcement points open at once, which is exactly the
- * mutation `message-body.test.ts` performs to prove the gate is load-bearing.
+ * mutation `test/message-body.test.ts` performs to prove the gate is load-bearing.
  *
  * `cid:` is admitted because it names a part of this very message and cannot leave the
  * machine. `data:` is NOT: a `data:text/html` href navigates to attacker markup, and every
@@ -310,7 +310,7 @@ const CID_URL = /^cid:/i;
  * prop, and "the engine is the only caller" is a fact about today's wiring rather than a property
  * of this function. A value that is not this shape — `javascript:`, `data:text/html`,
  * `data:image/svg+xml`, anything with characters outside the base64 alphabet — is treated exactly
- * like an absent entry and the image stays blanked. `message-body.test.ts` proves the gate by
+ * like an absent entry and the image stays blanked. `test/message-body.test.ts` proves the gate by
  * handing this a hostile map and watching the src stay {@link BLANK_GIF}.
  */
 const INLINE_IMAGE_SRC = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
@@ -386,7 +386,7 @@ function declaresPixel(el: Element): boolean {
  * ONE PASS OVER A STYLESHEET HAS TO BE A FIXED POINT, and an empty replacement is what stops
  * it being one. Deleting `@import q;` from `@im@import q;port"https://…";` leaves
  * `@import"https://…";` — a rule that was nowhere in the input and that this pass has already
- * walked past. Measured 2026-08-04: that stylesheet reached the frame and the sheet was
+ * walked past. Measured: that stylesheet reached the frame and the sheet was
  * requested. `;` makes the arithmetic impossible instead of merely unlikely, and it is correct
  * CSS in every position an `@import` may appear — an empty statement at the top of a sheet, an
  * empty declaration inside a block, discarded either way.
@@ -398,7 +398,7 @@ function declaresPixel(el: Element): boolean {
  * repo keeps paying for — two guards that read as belt-and-braces and behave as neither.
  *
  * The watched claim is idempotency: `neutraliseCss(neutraliseCss(x)) === neutraliseCss(x)`,
- * and `message-body-mutation-xss.test.ts` mutates this constant to `""` to prove it.
+ * and `test/message-body-mutation-xss.test.ts` mutates this constant to `""` to prove it.
  */
 const CUT = ";";
 
@@ -519,7 +519,7 @@ function remoteUrlsIn(inner: string): string[] {
  * this scanner does not understand. This exists so the reader is not shown a broken box where
  * a background was, so the bar can COUNT what the mail tried to fetch, and so a CONSENTED
  * background can be pointed at the proxy like any other image. Delete it and nothing leaks;
- * delete the CSP and everything does. `message-body.test.ts` watches the CSP assertion fail
+ * delete the CSP and everything does. `test/message-body.test.ts` watches the CSP assertion fail
  * on its own for that reason.
  *
  * ── THREE SHAPES IT USED TO MISS, AND EACH ONE REACHED THE NETWORK ──────────────────────
@@ -1078,7 +1078,7 @@ function widthAttrPx(v: string | null): number | null {
  * and emits DATA — text runs, bounded ints, gated hrefs — which `BodyText` turns into elements
  * it constructs itself. Sender bytes enter the app document only as React text nodes, and
  * every attribute on the constructed elements is a value this code computed.
- * `message-body-prose.test.ts` holds both halves: the structure renders, and no sender markup,
+ * `test/message-body-prose.test.ts` holds both halves: the structure renders, and no sender markup,
  * class, style, id or handler exists anywhere in the app's tree.
  */
 
@@ -1086,8 +1086,8 @@ function widthAttrPx(v: string | null): number | null {
  * Does this document declare a fixed layout canvas wider than a reading column?
  *
  * Exported so the classification can be watched directly against real mail rather than
- * inferred from a rendered frame — see the reflow guards in `message-body.test.ts` and the
- * prose guards in `message-body-prose.test.ts`. It is the ONLY classifier behind both.
+ * inferred from a rendered frame — see the reflow guards in `test/message-body.test.ts` and the
+ * prose guards in `test/message-body-prose.test.ts`. It is the ONLY classifier behind both.
  */
 export function isRigidLayout(root: Element, styleText: string): boolean {
   if (declaresCanvas(styleText)) return true;
@@ -1572,7 +1572,7 @@ export function sanitizerAvailable(): boolean {
  *              the second half of the same finding: the hook could only reach nodes DOMPurify
  *              walked, so an `<a>` that appeared later carried no `rel`, no `target`, no
  *              `data-ohmail-host` and no mismatch marker — every anti-phishing affordance the
- *              slice was built around, silently absent on the one link that was hostile.
+ *              sanitizer pass was built around, silently absent on the one link that was hostile.
  *              "There are no injected nodes" is exactly the assumption that failed, so this
  *              pass assumes nothing and annotates whatever is there.
  *
@@ -1834,7 +1834,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
    * the block-content and length checks below are what hold the second, worse error down:
    * a cell holding a `div`, `p` or picture is composing a page, not stating a value, and a
    * cell past 120 characters is a sentence whatever it is wearing.
-   * `message-body-tables.test.ts` holds all of it, forged stamps included.
+   * `test/message-body-tables.test.ts` holds all of it, forged stamps included.
    */
   const DATA_CELL_MAX_CHARS = 120;
   const markDataTables = (root: Element): void => {
@@ -1930,7 +1930,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
       // Measured, not assumed: adding `ADD_ATTR: ["data-ohmail-host", "target"]` — the
       // obvious way to break this — leaves the suite GREEN, because the post-pass overwrites
       // both on any http(s) link. Flipping THIS to `true` is what goes red. The mutation in
-      // `message-body.test.ts` is therefore on this flag, and the fixture is a `mailto:`.
+      // `test/message-body.test.ts` is therefore on this flag, and the fixture is a `mailto:`.
       ALLOW_DATA_ATTR: false,
       ALLOW_ARIA_ATTR: true,
       KEEP_CONTENT: true,
@@ -2025,7 +2025,7 @@ export function frameCsp(imagesLoaded: boolean): string {
  *
  * These two values are `.msg-body`'s (`packages/ui/src/composites/message.css`) and they are
  * duplicated here because the frame is a separate document that inherits nothing from the app.
- * A duplicated constant drifts, so it is not left to be noticed: `message-body.test.ts` PARSES
+ * A duplicated constant drifts, so it is not left to be noticed: `test/message-body.test.ts` PARSES
  * `.msg-body` out of that stylesheet and asserts these two strings against it, which makes the
  * drift a red test rather than a mail that is subtly the wrong size.
  *
@@ -2218,7 +2218,7 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
  * All this option does is stamp that attribute on the root element, so the light and dark
  * documents are byte-identical apart from it — which is the property that lets the live flip
  * be a `toggleAttribute` on the frame's own `documentElement` rather than a rebuilt srcdoc.
- * `message-body.test.ts` pins that: strip the attribute from the dark output and it must equal
+ * `test/message-body.test.ts` pins that: strip the attribute from the dark output and it must equal
  * the light output exactly, so a dark path that wrapped or re-sheeted the body would go red.
  */
 export function buildMailDocument(
@@ -2227,7 +2227,7 @@ export function buildMailDocument(
 ): string {
   // The paper rides on the ROOT ELEMENT and is independent of `dark`, so the light and dark
   // builds of the same message still differ by the attribute alone — which is the equality
-  // `message-body.test.ts` pins and the reason the live flip can be a `toggleAttribute`.
+  // `test/message-body.test.ts` pins and the reason the live flip can be a `toggleAttribute`.
   const paper = opts.paper ? ` style="--ohmail-paper:${cssColor(opts.paper)}"` : "";
   /**
    * REFLOW IS THE SAME MECHANISM AS DARK: one attribute, a block of dormant rules. It defaults
@@ -2451,7 +2451,7 @@ export function MessageBody({
    * ── DARK VIEWING — READ THE THEME, LET THE READER OVERRIDE IT PER MESSAGE ────────────────
    *
    * `useOptionalTheme` and not `useTheme`: this component renders bare (the desktop shell,
-   * `message-body.test.ts`), and `null` there means light, the same default the provider
+   * `test/message-body.test.ts`), and `null` there means light, the same default the provider
    * itself starts from. The transform only ever engages in a dark theme.
    *
    * A message can be dropped back to its original light rendering — a dark-mode invert is a
@@ -2614,7 +2614,7 @@ export function MessageBody({
    * `contentDocument` is what `allow-same-origin` is for, and it is safe for the reason in the
    * header — there is no script inside to abuse it.
    *
-   * ── THE RUNAWAY, MEASURED IN A REAL BROWSER (2026-08-04) ────────────────────────────────
+   * ── THE RUNAWAY, MEASURED IN A REAL BROWSER ─────────────────────────────────────────────
    *
    * This was `Math.max(documentElement.scrollHeight, body.scrollHeight)`, re-run from a
    * `ResizeObserver` that observed the IFRAME. Both halves of that are wrong, and together
@@ -2630,10 +2630,10 @@ export function MessageBody({
    * 159 px message occupied 1 617 px of the pane and climbing.
    *
    * **No unit test could have seen this.** jsdom performs no layout: every one of those
-   * numbers is 0 there, and `message-body.test.ts` can only assert that no fixed `height`
+   * numbers is 0 there, and `test/message-body.test.ts` can only assert that no fixed `height`
    * attribute is set. It took driving Chrome at the acceptance fixture.
    *
-   * ── AND `height:auto!important` DID NOT CLOSE IT. MEASURED AGAIN, 2026-08-04 ─────────────
+   * ── AND `height:auto!important` DID NOT CLOSE IT. MEASURED AGAIN ─────────────────────────
    *
    * That rule says nothing about a CHILD. `<div style="height:150vh">` measured
    * `frame.style.height` = **33 554 400 px** — Chrome's own layout ceiling — because inside the
@@ -2852,7 +2852,7 @@ export function MessageBody({
    * element by element from data the walker emitted, so sender bytes exist in the app's tree
    * only as text nodes and every attribute is one this code constructed. The srcdoc sandbox is
    * where the sanitized STRING renders; this flag chooses between two safe renderings and has
-   * no power to relax that. `message-body-prose.test.ts` plants hostile markup in a
+   * no power to relax that. `test/message-body-prose.test.ts` plants hostile markup in a
    * prose-classified message and asserts none of it — no element it named, no class, no
    * handler, no unvetted href — reaches the app's DOM.
    *

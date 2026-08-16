@@ -56,7 +56,7 @@ import {
  *
  * Push is a HINT, never a data path and never a dependency: every wake funnels into the same
  * `tick()` → `engine.syncOnce()` drain the timer fires, and with SSE completely dead the
- * behaviour is byte-identical to the poll-only module this used to be — `sync-wake.test.ts`
+ * behaviour is byte-identical to the poll-only module this used to be — `test/sync-wake.test.ts`
  * holds that equivalence directly.
  *
  * ── WHAT THIS MODULE IS NOT ─────────────────────────────────────────────────────────────
@@ -100,8 +100,8 @@ export interface SyncStatus {
    *
    * The shell must not tell a signed-in user to sign in on this. It is published so the strip can
    * say the weaker true thing ("Sync failed. Retrying.") instead of the stronger unverified one,
-   * and so that it says SOMETHING: a refusal answered with silence is how the 32 minutes of
-   * 2026-08-03 happened. Mutually exclusive with `terminal` by construction — confirmation moves
+   * and so that it says SOMETHING: a refusal answered with silence is how a half-hour silent
+   * outage happened once. Mutually exclusive with `terminal` by construction — confirmation moves
    * the fact from one field to the other. See {@link REFUSAL_CONFIRM_MS}.
    *
    * ── AN INVARIANT THIS FIELD ONCE DEPENDED ON, NOW ENFORCED ──────────────────────────────
@@ -112,7 +112,7 @@ export interface SyncStatus {
    * only ever set in the publish that increments `failures`, and only ever cleared in one that
    * zeroes `failures` or sets `terminal`. The dedup now compares all four fields through
    * {@link sameSyncStatus}, so a `refused`-only transition is no longer dropped and that
-   * coincidence no longer has to hold. `sync-liveness.test.ts` guards both halves — the
+   * coincidence no longer has to hold. `test/sync-liveness.test.ts` guards both halves — the
    * comparator over a `refused`-only pair, and the scheduler's own adjacent published pairs.
    */
   refused: boolean;
@@ -376,7 +376,7 @@ export function createSyncGate(): SyncGate {
       return {
         // Kept reachable so "the live engine talks HTTP, the demo talks fixtures" stays an
         // assertion a test can make about the ENGINE rather than about this wrapper —
-        // `engine-armed.test.ts` and `demo-zero-network.test.ts` both check exactly that, and a
+        // `test/engine-armed.test.ts` and `test/demo-zero-network.test.ts` both check exactly that, and a
         // gate that hid the transport would have quietly turned their control cases into
         // tautologies. See {@link transportOf}.
         transport: adapter,
@@ -420,7 +420,7 @@ export function createSyncGate(): SyncGate {
          * correctly, which is exactly what would make the omission invisible. The demo is never
          * wrapped, so a missing line here is N requests per thread on the LIVE PATH ONLY, with
          * the whole suite green. Sixth capability, same trap, same shape of guard:
-         * `thread-bodies-wired.test.ts` builds the real engine through `createEngine` and counts
+         * `test/thread-bodies-wired.test.ts` builds the real engine through `createEngine` and counts
          * the requests.
          *
          * Unconditionally would be the opposite failure: a `FixturesAdapter` behind this gate
@@ -472,7 +472,7 @@ export function createSyncGate(): SyncGate {
          * never wrapped — so a capability missing from this list is missing on the LIVE PATH
          * ONLY. Every live account would fall back to replaying the log from seq zero, forever,
          * with every test in the repo green because they build engines from bare adapters.
-         * `snapshot-wired.test.ts` builds the real live engine through `createEngine` so that
+         * `test/snapshot-wired.test.ts` builds the real live engine through `createEngine` so that
          * deleting this line goes red.
          */
         ...(adapter.snapshot ? { snapshot: adapter.snapshot.bind(adapter) } : {}),
@@ -523,7 +523,7 @@ export function createSyncGate(): SyncGate {
          * `attachmentsAvailable()` would answer false for every paying account, the strip
          * would render nothing at all, and every unit test in the repo would stay green
          * because they construct engines from bare adapters. That is the exact shape of the
-         * bug `transport` exists to keep visible, and `attachments-wired.test.ts` builds the
+         * bug `transport` exists to keep visible, and `test/attachments-wired.test.ts` builds the
          * real live engine through `createEngine` so that deleting any one of these three
          * lines goes red.
          */
@@ -634,7 +634,7 @@ export interface SyncSchedulerOptions {
  * Anything that is not a typed refusal — a network error, a parse failure, an unknown throw —
  * stays retryable. Terminal is a positive claim, made only when the server made it.
  *
- * ── CORRECTED 2026-08-04: THAT LAST SENTENCE WAS FALSE AS WRITTEN ───────────────────────
+ * ── CORRECTED: THAT LAST SENTENCE WAS FALSE AS WRITTEN ──────────────────────────────────
  *
  * `retryable === false` alone caught far more than a revoked session. `HttpAdapter.rejectionOf`
  * defaults `retryable` to `status >= 500 || status === 429`, so **anything** else non-5xx latched:

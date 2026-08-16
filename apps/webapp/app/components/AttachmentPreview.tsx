@@ -170,7 +170,7 @@ let pdfjsPromise: Promise<PdfjsModule> | null = null;
  * the module graph, where SWC parses the `.mjs` (which uses `import.meta`) as a non-module and the
  * build dies. And never a CDN — `worker-src`/`connect-src 'self'` refuse one, as they should. So
  * the worker is a static asset, vendored beside the app and kept in lockstep with `pdfjs-dist` by
- * `pdf-worker-version.test.ts`.
+ * `test/pdf-worker-version.test.ts`.
  */
 const PDF_WORKER_SRC = "/pdf.worker.min.mjs";
 

@@ -98,7 +98,7 @@
  * without the server packages, so an import would break a build that has no server in it at all.
  *
  * Re-declaring a closed set is how the two drift, and it has produced a failure once already: a fourth `status` value would have rendered the literal key path
- * `status_xxx` in the product. Two things stop that here. `mail-state.test.ts` asserts, FROM
+ * `status_xxx` in the product. Two things stop that here. `test/mail-state.test.ts` asserts, FROM
  * `@trafficflow/db`, that this array and that one are the same array and that `en.json`
  * carries a sentence for every member — so drift is a red test. And at RUNTIME an unrecognised
  * reason still produces the `blocked` state with generic copy (see {@link deriveMailState}),
@@ -131,7 +131,7 @@ export function isSyncBlockReason(v: unknown): v is SyncBlockReason {
  * whatever lands in that field becomes an i18n key. Mapping here keeps a SERVER-OWNED string out
  * of the message namespace entirely, which is a stronger guarantee than "a colon happens to
  * resolve" (it does; that was measured before this map replaced it). {@link standDownToken} is
- * the only place the two vocabularies meet, and `mailbox-stand-down.test.tsx` reconciles this
+ * the only place the two vocabularies meet, and `test/mailbox-stand-down.test.tsx` reconciles this
  * table against `MAILBOX_DISABLED_REASONS` read out of the owning module — the same guard
  * `SYNC_BLOCK_REASONS` already carries, for the same drift.
  */
@@ -315,7 +315,7 @@ export const GROWTH_WINDOW_MS = 30_000;
  * The quiet gap mid-import is ONE SERVER CYCLE. The server kicks that cycle on a poll interval
  * that defaults to 60 s, and the client then needs up to one 8 s `POLL_MS` to see what the cycle
  * wrote — a floor of 68 s. The largest gap actually measured was 45 s. Ninety clears both with
- * room for a cycle that overruns, and `mail-state.test.ts` asserts the relation against the
+ * room for a cycle that overruns, and `test/mail-state.test.ts` asserts the relation against the
  * server's own constant rather than against this sentence.
  *
  * ── AND WHAT IT COSTS, SAID OUT LOUD ────────────────────────────────────────────────────
@@ -473,7 +473,8 @@ export function isGrowing(g: MirrorGrowth, now: number): boolean {
  * latch: it is true for seconds, it covers exactly the cold-start window `seedGrowth` describes,
  * and a run that matters outlives it by qualifying on its own.
  *
- * Not one of them reads a timestamp the server wrote. That is WORKLIST.md:510 verbatim — and it
+ * Not one of them reads a timestamp the server wrote. That rule — client-observed progress
+ * only, never a server clock — is deliberate, and it
  * is why the import FLOOR (`initial_import_completed_at`, the case a partial server state needs)
  * is a separate arm in {@link deriveMailState}, not a third way into this function. See the header.
  */
@@ -796,11 +797,11 @@ const QUIET: MailState = {
  * `mailbox_attach_started → mailbox_attached` has been timed at around six minutes, twice, on
  * a mailbox of a few thousand messages. So SIX minutes with an empty mirror is NORMAL, and
  * escalating at three would dress a healthy large-mailbox import as a fault — the opposite defect to the
- * one this slice fixes, and just as false. Attaches are serial, so a second mailbox waits
+ * one this change fixes, and just as false. Attaches are serial, so a second mailbox waits
  * behind the first; ten leaves room for that.
  *
  * **It must stay under the server's `syncLag` alert threshold (15 minutes), and
- * `mail-state.test.ts` asserts that against the real constant.** This is the
+ * `test/mail-state.test.ts` asserts that against the real constant.** This is the
  * `syncBlockGraceMs < syncLagMs` argument one layer up: if the operators are paged before the
  * screen has escalated, the user is again the last to know — which is exactly the half-hour of
  * silence this whole module exists to end.
@@ -940,7 +941,7 @@ function climb(input: MailStateInputs): MailState {
   // below — `awaiting` ("the first sync has not finished"), `importing` ("Syncing your mail"),
   // `blocked`, and the rest — are calm true sentences in their own right, so a refusal DURING one of
   // them changes nothing a reader needs: a first-sync refusal shows the first-sync sentence, not a
-  // generic "catching up" (`mail-state.test.ts` pins exactly that). What this replaces is only the
+  // generic "catching up" (`test/mail-state.test.ts` pins exactly that). What this replaces is only the
   // SILENT `quiet` fall-throughs — a `null` mailbox probe, no connected mailbox, and above all the
   // settled mirror whose screener pointer is silent by design — which is the exact settled case the
   // ladder used to answer a refusal with nothing at all. Once the refusal is CONFIRMED the scheduler
@@ -1159,7 +1160,7 @@ function climb(input: MailStateInputs): MailState {
    * With two mailboxes where one has synced and one never has, `every` is false and the strip
    * stays quiet about the young one. Deliberate, and the division is: the STRIP makes
    * account-wide statements; a per-mailbox statement belongs on the per-mailbox ROW
-   * (`(product)/mailbox/MailboxSection.tsx`, in this slice, from this same state). `some`
+   * (`(product)/mailbox/MailboxSection.tsx`, in the same change, from this same state). `some`
    * would put "nothing has arrived" over a mirror already full of mail from the other
    * mailbox — a new false claim rather than a missing true one.
    */
