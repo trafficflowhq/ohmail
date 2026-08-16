@@ -152,7 +152,7 @@ export class DraftingService {
         );
       }
       if (!outcome.permitted && outcome.refusal === "inflight") {
-        // ANOTHER CALLER HOLDS THIS DRAFT'S CLAIM (SEC3-MONEY-1). 503 for the same reason a fault
+        // ANOTHER CALLER HOLDS THIS DRAFT'S CLAIM. 503 for the same reason a fault
         // is 503 and emphatically not 402: this account is fully funded and nothing is wrong with
         // it, so a demand for money would be a bill for someone else's concurrency. Retryable,
         // and the retry is free — the holder's charge is what pays for it.

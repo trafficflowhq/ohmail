@@ -263,7 +263,7 @@ export const MAX_SUGGEST_SENDERS = 50;
 
 /**
  * How long ONE `POST /screener/suggest` will wait, in total, for verdicts another caller is
- * already buying (SEC3-MONEY-1).
+ * already buying.
  *
  * The gate refuses a second caller on a source that is being worked on — that refusal is the fix,
  * and this is what the request does with it. Waiting is what makes a correct system look correct:
@@ -351,7 +351,7 @@ export type ScreenerSuggestSkip =
   | "spend_unavailable"   // see below — every "not now, ask again" the gate can produce
   | "model_unavailable";  // charged, the model faulted; the free retry honours it
 /*
- * `spend_unavailable` COVERS ONE MORE THING SINCE SEC3-MONEY-1, and it is deliberately not a new
+ * `spend_unavailable` COVERS ONE MORE THING since the double-buy fix, and it is deliberately not a new
  * wire value: another caller holds the exclusive claim on this sender's message and did not
  * finish inside this request's wait budget. Its cause is different from a subscription state or a
  * gate fault; its INSTRUCTION to the client is identical and is the whole content of the value —
@@ -625,7 +625,7 @@ export class ScreenerReadService {
 
     // ONE extra query for the whole page, not one per row, and none at all for an empty page.
     //
-    // ── BY SENDER, NOT BY REPRESENTATIVE (SEC3-MONEY-3) ────────────────────────────────────
+    // ── BY SENDER, NOT BY REPRESENTATIVE ────────────────────────────────────────────────
     //
     // The row on screen is a SENDER and the advice bought is about that sender, so what this page
     // answers is "does this account hold advice about them" — whichever of their messages the
@@ -873,13 +873,13 @@ export class ScreenerReadService {
        *
        * `heldMail` was read OUTSIDE this transaction, so between that read and this write the
        * row can have been re-routed by somebody else: a second device, `ruleRetroPass`, or —
-       * the case that was measured in production — the client's own follow-up `move`. The
+       * the case that was observed on a live mailbox — the client's own follow-up `move`. The
        * upsert had no `where`, so it stamped `appliedFolder` over whatever had landed, and the
-       * user's stated destination lost to the endpoint's default. That is the whole of
-       * SCR-READ's 97 misfiled bulletins: the `move` to `ohmail/Reads` committed first and this
+       * user's stated destination lost to the endpoint's default. That is the whole of the
+       * misfiled-bulletins defect: the `move` to `ohmail/Reads` committed first and this
        * line put it back to `INBOX`.
        *
-       * Removing the client composition (which this slice also does) does not close it, because
+       * Removing the client composition (which this change also does) does not close it, because
        * a shipped DESKTOP mirror goes on composing `decide` + `move` until it updates. So the
        * guard lives here, where every writer passes: `DO UPDATE … WHERE desired_folder =
        * 'ohmail/Screener'` re-routes only rows that are STILL at the gate. A row that has moved
@@ -1213,8 +1213,8 @@ export class ScreenerReadService {
    *    ordinary address and DISAGREES on `a@b@c.example`, where it answers `b` and the core
    *    matcher answers `b@c.example`. Copying it would have made this file agree with two
    *    backlog passes and disagree with the router that actually files the mail. **That
-   *    divergence is pre-existing and is left alone here — it is those predicates' bug, in
-   *    files this slice may not touch, and reproducing it to look consistent would put it in a
+   *    divergence is pre-existing and is left alone here — it is those predicates' bug, and
+   *    reproducing it to look consistent would put it in a
    *    third place.**
    *
    * The `position(…) > 0` guard is not redundant: Postgres' `substring(x from 1)` returns the
@@ -1245,7 +1245,7 @@ export class ScreenerReadService {
    * doing both jobs, and the per-message answer was wrong for the display: a sender's newest held
    * message is their representative, so one more message from them hid advice the account had
    * already bought, and every unpressed buyer that reads "senders with no answer" bought it again
-   * (SEC3-MONEY-3).
+   * (the double-buy the review measured).
    *
    * The per-message read is still exactly right where it is used — {@link ScreenerService.suggest}'s
    * layers, where a person pressing "Suggest again" is asking about mail the model has not read and
@@ -1401,7 +1401,7 @@ export class ScreenerService extends ScreenerReadService {
    *  3. `classify:screener:<message_id>` — the ledger's own identity, and the backstop for
    *     everything the first two cannot see (two hosts, two keys, one message). It answers
    *     `duplicate`, which is why `charged` can be lower than `quoted` for an honest reason.
-   *  4. **The EXCLUSIVE CLAIM on that source** (SEC3-MONEY-1), and it is here because the three
+   *  4. **The EXCLUSIVE CLAIM on that source**, and it is here because the three
    *     above share a blind spot that cost real money. Every one of them is a statement about
    *     work that is already OVER — a stored row, a claimed key, a committed debit — and a
    *     request that OVERLAPS another passes all three, because at the instant it looks, none of
@@ -1539,7 +1539,7 @@ export class ScreenerService extends ScreenerReadService {
       if (gate) {
         const outcome = await gate.spend(source, { messageId: r.messageId });
 
-        // ── SOMEBODY ELSE IS BUYING THIS ONE RIGHT NOW (SEC3-MONEY-1) ──────────────────────
+        // ── SOMEBODY ELSE IS BUYING THIS ONE RIGHT NOW ─────────────────────────────────────
         //
         // The FOURTH layer, and the only one that can see a caller which has not finished. The
         // three above are all statements about work that is already OVER — a stored suggestion,
@@ -1638,7 +1638,7 @@ export class ScreenerService extends ScreenerReadService {
        * release and the insert there is a window in which the suggestion is not on record and
        * nothing holds the source. A second caller landing in it reads no stored suggestion, takes
        * the freed claim, is told `duplicate` — already paid for, proceed — and calls the model
-       * again. That is SEC3-MONEY-1 restored, narrower and harder to see.
+       * again. That is the concurrent double-buy restored, narrower and harder to see.
        *
        * So: on SUCCESS the claim is released after the verdict is durable, and on FAILURE it is
        * released in the catch. The failure path needs it as much as the success path, because a

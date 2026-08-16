@@ -310,7 +310,7 @@ export interface MailboxDTO {
   //
   //    PROJECTED UNCONDITIONALLY, and the asymmetry with the four fields above IS THE POINT.
   //    Do not "fix" it into consistency: gating these on `status === 'error'` would restore the
-  //    exact invisibility this slice exists to end, because in every scenario they describe the
+  //    exact invisibility these fields exist to end, because in every scenario they describe the
   //    status is `connected`. That is not an oversight of the worker's — it is the design. An
   //    infrastructure fault (an unreadable organizer lease, credentials not yet provisioned, this
   //    deployment's mailbox cap) must never be rendered as "your mailbox is broken", must never

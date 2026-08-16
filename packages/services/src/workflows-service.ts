@@ -369,8 +369,8 @@ export class WorkflowsService {
    *
    * ── WHAT `drafterConfigured` ACTUALLY KNOWS, WHICH IS LESS THAN IT SOUNDS ────────────────
    *
-   * It reflects the **API** deployment's `ANTHROPIC_API_KEY` (Vercel), which is a PROXY for
-   * the **worker's** (Railway) — two separate deployments that each read their own env. The
+   * It reflects the **API** deployment's `ANTHROPIC_API_KEY`, which is a PROXY for
+   * the **worker's** — two separate deployments that each read their own env. The
    * two divergent states both fail safe, but neither is silent:
    *   - API keyed / worker bare  → 202 as before, then a run that fails. Today that failure is
    *     recorded with the generic reason `"error"`, NOT `draft_reply_unconfigured`, because
