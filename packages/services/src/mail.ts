@@ -2,21 +2,25 @@
  * `@trafficflow/services/mail` — THE MAIL SERVICES, without the ones that make a Cloud account.
  *
  * The default barrel is the whole service layer, and it is `export *` over the auth ceremony,
- * Stripe billing, invites, the waitlist and the cross-account admin reads. Importing one mail
+ * the billing seam, invites, the waitlist and the cross-account admin reads. Importing one mail
  * service from it therefore loads all of them, which is free inside a server we deploy whole and
  * is not free when the same package is compiled into something we hand to a stranger.
  *
  * Measured rather than assumed: bundling the local engine against the default barrel put 29
- * private-half modules in the artifact, including the whole auth ceremony and the Stripe client.
- * Tree-shaking does not remove them — a barrel re-exports live bindings, so the bundler keeps
- * them — which is why this is a second entry point and not a build flag.
+ * private-half modules in the artifact, including the whole auth ceremony and (at the time) the
+ * Stripe client — the Stripe machinery has since moved out of this repository entirely, into
+ * its own billing service, but the billing seam and the ceremony still live behind the default
+ * barrel. Tree-shaking does not remove them — a barrel re-exports live bindings, so the bundler
+ * keeps them — which is why this is a second entry point and not a build flag.
  *
  * ── WHAT IS ABSENT, AND WHY EACH ONE ──────────────────────────────────────────────────────
  *
  *  · `auth/index.js` — the CEREMONY: registration, password verification, the lockout, WebAuthn,
  *    TOTP, recovery codes, OAuth, devices. A local engine has no registration and no second
  *    factor; the machine's own login is the boundary. See below for the two pieces that stay.
- *  · `billing/index.js` — Cloud is what you pay for. The desktop tier is free and has no signup.
+ *  · `entitlements/index.js` — the billing seam. Cloud is what you pay for; the desktop tier is
+ *    free and has no signup. (The Stripe machinery itself is not in this repository at all —
+ *    it lives in a separate billing service.)
  *  · `invites.js` / `waitlist-service.js` — there is no funnel to join on your own laptop.
  *  · `admin-dto.js` / `admin-service.js` — the only cross-account reader in the repo. An operator
  *    surface on a single user's machine is nothing but attack surface.
