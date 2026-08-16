@@ -426,6 +426,26 @@ export interface HealthConfig {
    * forwarded here precisely because it does.
    */
   dbProvider?: string | null;
+  /**
+   * **WHICH BILLING COMPOSITION THIS HOST IS SERVING.** One of two fixed strings, on
+   * `dbProvider`'s exact pattern: an injected identity, never a fault, never a 503.
+   *
+   *  · `"plane"`        — this host reaches a billing service over HTTP;
+   *  · `"unconfigured"` — no billing service is configured and `/billing/*` answers 503.
+   *
+   * (`"in-process"` — the Stripe SDK running in this same process — left the vocabulary when
+   * that composition was deleted; billing code lives in its own service now.)
+   *
+   * It exists because the failure mode of a billing-environment change is CAMOUFLAGED: a host
+   * that lost its billing configuration degrades to `billing_unconfigured`, which is also the
+   * legitimate pre-launch answer, so nothing else distinguishes "not configured yet" from
+   * "misconfigured by the last deploy". Two spaced `/health` reads after any deploy catch it
+   * through this field. Published on the unhealthy branches too — a dark host is exactly when
+   * the marker is worth most.
+   *
+   * Safe to publish for `dbProvider`'s reason: fixed strings only, no URL, no secret.
+   */
+  billing?: "plane" | "unconfigured" | null;
 }
 
 export type SessionVia = "cookie" | "bearer";

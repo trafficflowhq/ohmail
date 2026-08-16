@@ -1455,6 +1455,11 @@ export const healthRoutes: Route[] = [
       // `kek` on every branch, including the unhealthy ones, because a host that cannot reach its
       // database is exactly when knowing which family it dialled is worth most.
       const dbProvider = injected?.dbProvider ?? null;
+      // The billing COMPOSITION marker, on dbProvider's exact pattern: a fixed string, injected
+      // by the host, never a fault. It is the tripwire for a billing-environment change, whose
+      // failure mode is camouflaged (a lost billing configuration reads as the legitimate
+      // `billing_unconfigured`). Emitted on every branch, like dbProvider and for its reason.
+      const billing = injected?.billing ?? null;
 
       // WHICH SCHEMA THIS HOST IS SUPPOSED TO HAVE. A desktop install ran the mail journal alone
       // and has no billing ledger to find; probed against both, it would answer
@@ -1489,6 +1494,7 @@ export const healthRoutes: Route[] = [
           errorCode: probe.errorCode,
           kek,
           dbProvider,
+          billing,
           ...staffFaults,
         });
       }
@@ -1496,6 +1502,7 @@ export const healthRoutes: Route[] = [
         return healthResponse(503, {
           ok: false, version, dbLatencyMs: probe.dbLatencyMs, error: "database_probe_empty", kek,
           dbProvider,
+          billing,
           ...staffFaults,
         });
       }
@@ -1517,6 +1524,7 @@ export const healthRoutes: Route[] = [
         cookieAuth: deps.allowCookieAuth !== false,
         kek,
         dbProvider,
+        billing,
         ...staffFaults,
         ...(fault ?? {}),
       });
