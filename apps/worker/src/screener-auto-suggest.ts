@@ -77,7 +77,7 @@ import { askScreeningQuestion, silentLogger, type ClassifierPort, type Logger } 
 
    **This is deliberately NOT what the user-pressed path does, and the difference is the press.**
    `ScreenerService.suggest` asks about every held sender, flagged or not, and redacts at the sink:
-   that is the AI-OPEN ruling of 2026-08-08, and it rests on a person selecting senders, being
+   that is the ruling that opened AI to consented asks, and it rests on a person selecting senders, being
    quoted a price and pressing a button. This pass has none of that. The same ruling said so in as
    many words about the automatic router — *"nobody presses anything there, so there is no consent
    to point at"* — and this pass is automatic in exactly that sense, so it takes the automatic
