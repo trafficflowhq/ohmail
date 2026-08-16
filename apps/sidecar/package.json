@@ -1,7 +1,7 @@
 {
   "name": "@ohmail/sidecar",
   "version": "0.0.0",
-  "license": "GPL-3.0-or-later",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "dependencies": {
     "@electric-sql/pglite": "0.2.17",

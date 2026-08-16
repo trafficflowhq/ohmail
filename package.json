@@ -1,7 +1,7 @@
 {
   "name": "ohmail-desktop",
   "private": true,
-  "license": "GPL-3.0-or-later",
+  "license": "AGPL-3.0-only",
   "workspaces": [
     "apps/sidecar",
     "apps/worker",

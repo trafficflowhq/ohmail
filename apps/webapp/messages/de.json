@@ -1112,6 +1112,7 @@
     "yours": "Sieht nach deinem System aus",
     "firstRun": "Die Builds für macOS und Windows sind noch nicht von Apple oder Microsoft signiert, beim ersten Start musst du das also einmal bestätigen. Nichts in der App telefoniert nach Hause außer einer signierten Update-Prüfung.",
     "cloudLine": "Lieber nichts installieren? Die Web-App ist live und öffnet sich im Browser — sie gehört zur Cloud, zusammen mit Push und dauerhafter Verarbeitung. Die Mobil-Apps folgen.",
+    "latestNotes": "Was in der aktuellen Version steckt",
     "all": "Alle Versionen, Notizen und Prüfsummen"
   },
   "compare": {
