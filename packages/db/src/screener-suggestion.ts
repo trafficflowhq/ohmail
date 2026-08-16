@@ -132,7 +132,7 @@ export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow
    {@link ../src/ledger-source.ts screenerLedgerSource}. In short: a ledger `source` is APPEND-ONLY
    and a normalised address is remote-controlled and guessable, so it would build the confirmation
    oracle `classifyLedgerSource` destroyed its plaintexts to close; and one source shared by the
-   cron and the button is what makes SEC3-MONEY-1's claim serialise them, which two namespaces
+   cron and the button is what makes the exclusive claim serialise them, which two namespaces
    would undo (two credits and two model calls for one sender, seen once).
 
    The entitlement lives here instead: a QUERY over rows we already hold, which cannot leak an

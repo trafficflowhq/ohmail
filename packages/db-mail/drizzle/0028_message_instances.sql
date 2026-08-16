@@ -30,7 +30,7 @@
 --       number is meaningless outside the epoch that issued it: a folder that resets commonly
 --       re-allocates from low numbers, and treating a reused number as already-known means the new
 --       message's body is never fetched and the cursor is then persisted past it — permanently.
---       (That exact bug was finding 2 of `CODEX-X1H.md`, one layer up.)
+--       (That exact bug was found one layer up, by an earlier security review.)
 --
 --   UNIQUE (message_id) WHERE is_primary
 --       Exactly one of a message's instances is the one `messages.native_locator` mirrors and the

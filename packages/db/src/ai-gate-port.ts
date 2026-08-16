@@ -80,7 +80,7 @@ export type AiSpendOutcome =
   | { permitted: false; refusal: "fault"; error: unknown }
   /*
    * NOT A REFUSAL OF THE ACCOUNT — A REFUSAL OF THE DUPLICATE, and the distinction is the whole
-   * of SEC3-MONEY-1's fix.
+   * of the exclusive-claim fix.
    *
    * The gate used to answer a second concurrent caller `permitted: true, charged: false`, which
    * is the right answer to *"is this work paid for?"* and the wrong answer to *"should I call the
