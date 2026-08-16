@@ -4,6 +4,7 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
+    ".": "./src/index.ts",
     "./mail": "./src/mail.ts",
     "./ics": "./src/ics.ts",
     "./adapters/imap": "./src/adapters/imap.ts",

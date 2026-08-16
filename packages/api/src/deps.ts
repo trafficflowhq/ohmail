@@ -369,7 +369,7 @@ export interface HealthConfig {
    */
   adminError?: string | null;
   /**
-   * B1B-P2b — RUN THE CONTENT-BLIND ATTESTATION AND PUBLISH ITS RESULT, non-fatally.
+   * RUN THE CONTENT-BLIND ATTESTATION AND PUBLISH ITS RESULT, non-fatally.
    *
    * A capability, not a value: `/health` calls it and merges a `staffDbFault` string when it
    * returns one. It awaits the memoised staff-handle factory, so it pays the census + bite

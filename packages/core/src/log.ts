@@ -313,7 +313,7 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // ── retry, failure and circuit accounting ──
   "attempt", "attempts", "consecutiveFailures", "maxSyncFailures", "consecutiveFaults",
   "opens", "open", "threshold", "circuit", "cooldownMs", "retryAt", "retryInMs",
-  // ── the worker's shared-DATABASE condition (X1H-6), added WITH its call sites ──
+  // ── the worker's shared-DATABASE condition, added WITH its call sites ──
   //
   // `outageMs` is a `Date.now()` delta and `faults` is a `++` counter, so both are structurally
   // integers naming no mailbox, no address and no statement. They are the whole content of
@@ -697,8 +697,8 @@ const MAX_CAUSE_DEPTH = 4;
  *
  * A wrapper class is often the least informative thing about a failure. `LeaseUnavailableError`
  * exists precisely so callers can exempt an infrastructure fault BY CLASS — which means every one
- * of them logs `errorClass: "LeaseUnavailableError"` and, before this function, nothing else. On
- * 2026-08-03 that was the entire record of a mailbox that did not sync for 32 minutes: the class of
+ * of them logs `errorClass: "LeaseUnavailableError"` and, before this function, nothing else. In
+ * one incident that was the entire record of a mailbox that did not sync for half an hour: the class of
  * our own wrapper, and no trace of the imapflow error underneath it that said what the server
  * refused.
  *
@@ -768,7 +768,7 @@ export function levelFromEnv(env: Record<string, string | undefined> = {}): LogL
 
 /**
  * The default sink. Everything goes to stdout — including `error` — because both hosts
- * (Vercel functions, Railway containers) capture stdout and stderr into the same drain, and
+ * (serverless functions, worker containers) capture stdout and stderr into the same drain, and
  * splitting them only makes a log stream interleave unpredictably.
  *
  * Wrapped: a closed stdout raises `EPIPE`, and a logger that throws is worse than no logger.

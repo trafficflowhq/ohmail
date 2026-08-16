@@ -1,0 +1,53 @@
+-- BINDING A DESKTOP HANDOFF CODE TO THE PROCESS THAT ASKED FOR IT — one nullable column.
+--
+-- ══ WHAT THE COLUMN HOLDS, AND WHY IT IS NOT A SECRET ═════════════════════════════════════
+--
+-- The desktop app can now hand its handoff code back to itself over a registered URL scheme
+-- instead of asking a person to retype it. A scheme is not authenticated by anything: any
+-- program on the machine may claim `ohmail://`, and the one that wins receives whatever the
+-- browser sends. So the value that travels over it must be worth nothing on its own.
+--
+-- That is what this column buys. Before it shows the code, the app invents a random verifier,
+-- keeps it in its own memory, and tells the browser only `sha256(verifier)`. The browser passes
+-- that digest to the mint, which stores it HERE, and the code becomes claimable only by a caller
+-- that can present the verifier the digest was made from. A program that intercepts the scheme
+-- holds a code it cannot spend. This is the PKCE construction, and the column holds a public
+-- commitment rather than a credential — the same thing `oauth_auth_codes.code_challenge` holds,
+-- one table over, for the same reason.
+--
+-- NOT ENCRYPTED, deliberately, and that is the difference from `mailbox_oauth_ceremonies`, whose
+-- verifier IS sealed: a verifier is the secret half and a challenge is the published half. An
+-- encrypted challenge would be a key version to carry and a decrypt to run for a value the client
+-- already sent in the clear.
+--
+-- ══ NULLABLE, AND NULL IS A REAL STATE RATHER THAN AN UNFILLED ONE ════════════════════════
+--
+-- NULL means "this code was minted without a commitment, so it is claimable by whoever holds it"
+-- — which is exactly the retype flow that exists today and continues unchanged. A browser that
+-- was opened by hand has no verifier to commit to and nothing to prove later, so demanding one
+-- would take the flow away from every person who navigates to the page themselves.
+--
+-- The two states are decided AT MINT and never afterwards. Nothing updates this column: a row is
+-- written with a challenge or without one, and the claim reads it. So there is no transition in
+-- which a bound code becomes unbound, which is the direction that would matter.
+--
+-- NO BACKFILL. Every row in this table at the moment this runs is a login token, a mailed
+-- verification token, or a handoff code minted by the retype flow, and all three are correctly
+-- unbound. There is also nothing to backfill FROM: a challenge is a digest of a secret held in a
+-- process on somebody's machine, which this database has never seen.
+--
+-- ══ NO INDEX, AND THAT IS NOT AN OMISSION ═════════════════════════════════════════════════
+--
+-- This column is never a lookup key. The one query that reads it is the claim's single guarded
+-- UPDATE, which is already keyed by `token_hash` (`login_tokens_token_idx`) and narrowed to one
+-- row before the challenge is compared at all. An index here would be maintained on every write
+-- to the table and read by nothing.
+--
+-- ══ THE SEAM ══════════════════════════════════════════════════════════════════════════════
+--
+-- `login_tokens` is a private table: a local install mints a session per launch and has no
+-- password login, no first factor and no handoff to receive. So this DDL belongs in this journal
+-- and nowhere else, and it names no shared object.
+--
+-- `IF NOT EXISTS` so a replay is a no-op rather than a 42701 that stops a journal mid-pass.
+ALTER TABLE "login_tokens" ADD COLUMN IF NOT EXISTS "challenge_hash" text;

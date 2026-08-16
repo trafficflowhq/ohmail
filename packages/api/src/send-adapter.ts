@@ -14,7 +14,7 @@ interface CredMeta extends CredMetaAuth {
 }
 
 /**
- * Build the API's send adapter (Phase 3c, R-P3-5). Unlike `makeOpenAdapter`
+ * Build the API's send adapter. Unlike `makeOpenAdapter`
  * (attachments) which reads ONLY the `imap` cred row — so `ImapConfig.smtp` is
  * unset and `ImapAdapter.send` would throw "SMTP not configured" — this reads BOTH
  * the `imap` AND the `smtp` `mailbox_credentials` rows (envelope-encrypted at
@@ -22,7 +22,7 @@ interface CredMeta extends CredMetaAuth {
  * `ImapAdapter` with `smtp` populated so it can SMTP-send AND IMAP-append to
  * Sent. The returned handle
  * exposes the `SendAdapter` seam (`send` / `messageInSent` / `close`) SendService
- * drives; credentials never leave the server (RC1).
+ * drives; credentials never leave the server.
  *
  * If the mailbox has no dedicated `smtp` row we fall back to the imap host + the
  * imap secret (the single-credential generic-IMAP convention) rather than error —

@@ -1,0 +1,42 @@
+-- BILLING-DRIVEN SUSPENSION — let `suspended_by` be NULL for a suspension no staff member wrote,
+-- and pin the provenance rule that makes the NULL safe.
+--
+-- ══ WHY THE COLUMN LOSES ITS NOT NULL ═══════════════════════════════════════════════════════
+--
+-- 0008 modelled suspension as an act of a staff operator, and `suspended_by NOT NULL` encoded
+-- that: every row names the `staff_users` id that caused it. The billing webhook now suspends on
+-- a revenue reversal (`charge.refunded`, `charge.dispute.funds_withdrawn` — a chargeback winner
+-- must not keep spending an allowance whose revenue went back), and that writer has no staff
+-- identity to record. The honest representations were a sentinel staff row or a nullable actor;
+-- a sentinel would surface a fake operator in every staff roster read, so the actor is nullable
+-- and NULL means "the system, from a billing event". WHICH billing event is in the row's `note`
+-- (`stripe:<event type>:<object id>`) and in the `audit_log` row written in the same
+-- transaction — the provenance 0008 wanted is still recorded, just not as a staff id.
+--
+-- ══ THE CHECK IS THE PROVENANCE RULE, MADE STRUCTURAL ═══════════════════════════════════════
+--
+-- `suspended_by IS NOT NULL OR note IS NOT NULL`: every suspension names its cause — a staff
+-- actor, a recorded source, or both. Without it, "NULL means the system wrote it, see the note"
+-- is a promise kept only by the two writers' code, and a hand-insert (the reason `note` is
+-- nullable at all) could produce a row nobody can attribute. Every existing row satisfies it
+-- (all carry a staff id today), the admin write always sets both, and the billing write always
+-- sets the note.
+--
+-- It is also what makes this migration PROBEABLE. The NOT NULL drop is invisible to every
+-- name-presence probe `/health` has (`information_schema.columns` sees the column either way),
+-- which is the 0011 lesson: a migration no probe can see is a database `/health` certifies as
+-- current when it is not. The constraint is new under a new name, so the definition probe
+-- (`CLOUD_CHECK_DEFINITION_MARKERS`) distinguishes an 0011 database from an 0012 one.
+--
+-- The guarded DROP is the 0037/0011 re-runnability shape: a replay re-adds under the same name
+-- instead of dying with 42710.
+--
+-- The console's content-blind role reads only (`account_id`, `suspended_at`) — see 0008 — so no
+-- read surface changes shape. Resume is unchanged: the same operator DELETE frees the account,
+-- which is also the escape hatch for a goodwill Dashboard refund that lands here.
+
+ALTER TABLE "account_suspensions" ALTER COLUMN "suspended_by" DROP NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "account_suspensions" DROP CONSTRAINT IF EXISTS "account_suspensions_provenance_check";
+--> statement-breakpoint
+ALTER TABLE "account_suspensions" ADD CONSTRAINT "account_suspensions_provenance_check" CHECK ("suspended_by" IS NOT NULL OR "note" IS NOT NULL);

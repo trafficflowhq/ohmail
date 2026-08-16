@@ -1429,7 +1429,7 @@ export const healthRoutes: Route[] = [
       // about hosts whose real problem was the second. Also 200: an observability fault must
       // never darken the product — see `HealthConfig.alertsError`.
       const alertsError = injected?.alertsError ?? null;
-      // B1B-P2b — RUN THE CONTENT-BLIND ATTESTATION, non-fatally. `adminFault` names the static
+      // RUN THE CONTENT-BLIND ATTESTATION, non-fatally. `adminFault` names the static
       // console refusals; this names the one they cannot see — a plausible over-privileged
       // `DATABASE_URL_ADMIN` — which otherwise surfaced only as a per-request 503. Awaited (the
       // memoised factory pays the round trips once per cold instance), never allowed to throw:

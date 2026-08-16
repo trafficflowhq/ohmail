@@ -1,0 +1,36 @@
+-- THE AI OFF SWITCH (migration 0022).
+--
+-- The published copy promises: "you can switch the AI off entirely without losing a single
+-- feature that files your mail." Until now nothing made that true — there was no setting, and
+-- with no live model connected the sentence was accidentally true rather than deliberately so.
+-- This column is what makes it a property of the server rather than of a checkbox.
+--
+-- ══ WHERE IT IS ENFORCED, AND WHY THAT IS ONE PLACE ═══════════════════════════════════════
+--
+-- `spendState()` in `packages/db/src/ai-gate.ts` reads it, before `newestSubscriptionOf` and
+-- before any write. That is deliberate rather than convenient: `billing-boundaries.test.ts`
+-- pins that EVERY AI spend in the product goes through that one seam (five call sites — the
+-- pipeline's classify branch, the drafting route, the workflow executor's `draft_reply`, the
+-- proposal cron, the Screener's pre-suggestion), so a single read there is honoured by all of
+-- them with no per-call-site wiring to forget. A refusal happens BEFORE `debitCredits`, so an
+-- account with AI off:
+--
+--   · makes no model call — `pipeline.ts`'s `&&` chain skips the AI branch entirely,
+--   · writes no `credit_ledger` row — the refusal is decided before any write,
+--   · files every message by the deterministic rules, byte-identical to a deployment with no
+--     classifier at all (the A ≡ B degradation proof covers it), and
+--   · is billed exactly as before. Credits simply go unspent; nothing is refunded and nothing
+--     extra is charged, because switching the AI off is not a plan change.
+--
+-- ══ WHY `NOT NULL DEFAULT true` ═══════════════════════════════════════════════════════════
+--
+-- Purely additive and reversible (rollback = DROP COLUMN). Every existing account reads `true`,
+-- so applying this migration changes no behaviour for anyone — the switch only does something
+-- once somebody turns it off. The opposite default would have silently disabled AI for every
+-- account the moment a live model was wired, which is precisely the deploy-day failure mode
+-- the spend gate's hardening pass exists to warn about.
+--
+-- It is on `accounts` and not on `users` because the ledger, the subscription and every
+-- entitlement in this product are account-scoped; a per-user AI switch would be a different
+-- (and, on a shared mailbox, incoherent) promise.
+ALTER TABLE "accounts" ADD COLUMN IF NOT EXISTS "ai_enabled" boolean NOT NULL DEFAULT true;

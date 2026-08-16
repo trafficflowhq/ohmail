@@ -1,0 +1,63 @@
+-- FUNNEL FOLLOW-UP (migration 0021) — two constraints the funnel turned out to need,
+-- both found by an independent review of it and neither expressible in application code.
+--
+-- ══ 1. THE LOGIN EMAIL IS GLOBALLY UNIQUE ═══════════════════════════════════════════════
+--
+-- `users` carried `UNIQUE (account_id, email)` and a NON-unique index on `email` alone. That
+-- composite can never fire on registration, because `AuthService.register` inserts a BRAND
+-- NEW `accounts` row before the `users` row — so every registration has an `account_id`
+-- nobody else has, and the pair is unique by construction whatever the address is.
+--
+-- What actually stood between two accounts sharing one login address was an unlocked
+-- SELECT-then-INSERT inside the registering transaction:
+--
+--     select id from users where email = $1 limit 1     -- sees nothing
+--     ...                                                -- the other transaction is here too
+--     insert into users (account_id, email) values (...) -- both succeed
+--
+-- Under READ COMMITTED neither transaction sees the other's uncommitted row, so the check is
+-- correct and the outcome is still wrong — the same shape as the mailbox-quota race the
+-- allocation `FOR UPDATE` exists for, except here there is no row to lock, because the contended thing
+-- is the ABSENCE of a row. Only a unique index can serialize that.
+--
+-- Two live invites for one address is all it takes to reach it, and that is a supported
+-- operator action: `pnpm invite mint --force` issues a second code without revoking the
+-- first (see part 2 — it now does revoke). The consequence is worse than a duplicate row:
+-- `AuthService.login` does `where email = $1 limit 1` with no ORDER BY, so which of the two
+-- accounts a password opens is whatever Postgres returns first — stable in practice, not
+-- guaranteed, and impossible to reason about during an incident.
+--
+-- The index is on `email` as stored. Every write path lowercases and trims before it gets
+-- here (`register` does `.trim().toLowerCase()`, `normalizeRecipient` for everything else),
+-- so a functional index on `lower(email)` would encode the same set with more moving parts
+-- and would silently disagree with `login`'s exact-match lookup.
+--
+-- If this fails to apply, the database ALREADY holds two accounts for one address and that
+-- is the finding — resolve the duplicates, do not weaken the index. The query:
+--   select email, count(*) from users group by email having count(*) > 1;
+CREATE UNIQUE INDEX IF NOT EXISTS "users_email_unique_idx" ON "users" ("email");
+--> statement-breakpoint
+-- The old non-unique index is exactly the prefix of the new one, so it can only cost writes.
+DROP INDEX IF EXISTS "users_email_idx";
+--> statement-breakpoint
+
+-- ══ 2. AN INVITE CAN BE REVOKED ═════════════════════════════════════════════════════════
+--
+-- The table had `expires_at`, `consumed_at` and `consumed_by_user_id` — every way an invite
+-- can END except the one an operator needs on the day it matters. A code mailed to the wrong
+-- address, or forwarded, or pasted into a support ticket, could not be taken back: the
+-- documented remedy was `--force`, which issues a SECOND code and leaves the compromised one
+-- working for the rest of its 14 days. Both then open an account.
+--
+-- `revoked_at` joins the consumption predicate (`invites.ts:consumeInvite`), so a revoked
+-- code stops working inside the same single statement that enforces single-use — not in a
+-- second check some later caller can forget. `revoked_by` and `revoked_reason` exist because
+-- "why is this invite dead" is asked exactly once, months later, by someone who was not
+-- there.
+--
+-- Nullable, no default, purely additive: every existing row reads as "not revoked".
+ALTER TABLE "invites" ADD COLUMN IF NOT EXISTS "revoked_at" timestamp with time zone;
+--> statement-breakpoint
+ALTER TABLE "invites" ADD COLUMN IF NOT EXISTS "revoked_by" text;
+--> statement-breakpoint
+ALTER TABLE "invites" ADD COLUMN IF NOT EXISTS "revoked_reason" text;

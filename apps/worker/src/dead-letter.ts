@@ -2,13 +2,13 @@ import { MimeParseError, MimeTooLargeError, type NativeLocator } from "@trafficf
 import { parseRef } from "@trafficflow/core/adapters/imap";
 
 /**
- * A throw that came out of THIS PROCESS'S DATABASE, whatever code it carries (X1H-6).
+ * A throw that came out of THIS PROCESS'S DATABASE, whatever code it carries.
  *
  * ── WHY AN ORIGIN TAG EXISTS AT ALL ───────────────────────────────────────────────────────────
  *
  * {@link isDatabaseFault} below answers "is this the database's" from the error's `code`, and its
  * header records why that answer has to stay narrow. The limit is not fixable by enumerating more
- * codes. Measured against the real Postgres on :5433 while X1H-6 was designed:
+ * codes. Measured against the real Postgres on :5433 while this tag was designed:
  *
  *   | injected fault                        | what postgres.js throws                        |
  *   |---------------------------------------|------------------------------------------------|
@@ -66,7 +66,8 @@ export class DatabaseFaultError extends Error {
  * The next cycle re-selected the same P and threw again, for ever. **B and every message behind it
  * were never processed** — one malformed message stopped organizing a mailbox permanently.
  *
- * THE MISSING PIECE WAS NOT A RETRY. Six of X1H's eight findings already retry; retrying is
+ * THE MISSING PIECE WAS NOT A RETRY. Most of the failure paths a review of this loop examined
+ * already retry; retrying is
  * precisely what turns a one-message defect into an indefinite outage. What was missing is a way
  * to record that something could not be done and MOVE PAST IT.
  *
@@ -153,8 +154,8 @@ export interface MessageFailure {
  * WHOSE FAULT IS THIS THROW — the message's, or the infrastructure's?
  *
  * Getting this wrong in either direction loses something. Call a database outage "message-local"
- * and a shared incident silently writes off everybody's mail (X1H finding 6 is the mailbox-level
- * version of the same mistake). Call a poison message "infrastructure" and it is retried for ever,
+ * and a shared incident silently writes off everybody's mail (blaming one mailbox for a shared
+ * outage is the mailbox-level version of the same mistake). Call a poison message "infrastructure" and it is retried for ever,
  * which is the bug this whole file exists to end.
  */
 export type IngestFault =
@@ -173,7 +174,7 @@ const INFRA_SQLSTATE_CLASSES: readonly string[] = [
   "08",   // connection_exception
   "25",   // invalid_transaction_state
   "40",   // transaction_rollback (serialization failure, deadlock) — retryable, never terminal
-  "53",   // insufficient_resources (disk_full 53100 — the 2026-08-01 outage)
+  "53",   // insufficient_resources (disk_full 53100 — an early production outage)
   "54",   // program_limit_exceeded (kept on the infra side; see `STORAGE_SQLSTATES`, mailboxes.ts)
   "57",   // operator_intervention (query_canceled, admin_shutdown)
   "58",   // system_error
@@ -272,8 +273,8 @@ export function classifyIngestFault(err: unknown): IngestFault {
  * Is this throw UNAMBIGUOUSLY THE DATABASE'S — not one mailbox's provider?
  *
  * `attach()` is the consumer. The credential read now sits inside that function's
- * isolation boundary, so without an exemption one Neon blip would quarantine every mailbox of the
- * shard in turn and write `status='error'` on each — the 2026-08-01 incident's shape.
+ * isolation boundary, so without an exemption one database blip would quarantine every mailbox of the
+ * shard in turn and write `status='error'` on each — a measured incident's shape.
  *
  * It is deliberately NARROWER than {@link classifyIngestFault}'s infrastructure domain, and the
  * narrowness is load-bearing: SQLSTATEs and postgres.js's own code names only, never a raw errno.
@@ -285,7 +286,8 @@ export function classifyIngestFault(err: unknown): IngestFault {
  * self-clearing, and mis-blaming a reachable mailbox for our outage is strictly less harmful than
  * refusing to quarantine an unreachable one.
  *
- * X1H-6 CLOSED THAT RESIDUAL ON THE CYCLE PATH AND DELIBERATELY LEFT IT HERE. The cycle path's
+ * THE ORIGIN-TAGGING FIX CLOSED THAT RESIDUAL ON THE CYCLE PATH AND DELIBERATELY LEFT IT HERE.
+ * The cycle path's
  * database calls all go through a wrapped repo, so their origin is recorded and no code has to be
  * guessed at ({@link isSharedDatabaseFault}, `db-fault.ts`). The one call this seam makes —
  * `loadMailboxCreds` — is not wrapped, because it reads a row AND decrypts the envelope in it, and
@@ -323,12 +325,12 @@ const DATA_SQLSTATE_CLASSES: readonly string[] = [
  * Is this throw about a dependency THE WHOLE SHARD SHARES — and therefore never about the mailbox
  * that happened to be mid-cycle when it landed?
  *
- * This is the cycle loop's question (X1H-6) and it is deliberately not
+ * This is the cycle loop's question and it is deliberately not
  * {@link classifyIngestFault}'s. That one calls the customer's IMAP host "infrastructure" too,
  * which is right where it is used — neither socket is the MESSAGE's fault — and would be wrong
  * here, because a provider that will not answer is exactly what quarantine is for. Widening this
  * predicate to `classifyIngestFault(err).domain === "infrastructure"` is the inverse defect: it
- * dissolves mailbox isolation (X1H-3's ground), and `connection-error.e2e.test.ts` and
+ * dissolves mailbox isolation — the property quarantine exists to protect — and `connection-error.e2e.test.ts` and
  * `mailbox-failure.e2e.test.ts` are the two guards that go red when it is tried.
  *
  * Two arms, and the asymmetry between them is the conservative boundary:

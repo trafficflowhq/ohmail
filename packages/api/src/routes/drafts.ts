@@ -147,11 +147,11 @@ function decodeSendAttachments(
 }
 
 /**
- * §5 /drafts — manual compose drafts (Phase 3a). create/update/delete emit a
+ * §5 /drafts — manual compose drafts. create/update/delete emit a
  * `draft` change (X-Sync-Seq echoed from the emitted seq, §3.4) so drafts flow
- * through /sync; `materializeDraft` (R-P3-4) keeps them from tombstoning. A draft
- * is STORED, never auto-sent (the AI drafter is 3b, the gated send is 3c — not
- * built here). All account-scoped in the service (404 cross-account); an
+ * through /sync; `materializeDraft` keeps them from tombstoning. A draft
+ * is STORED, never auto-sent (the AI drafter and the gated send are their own
+ * routes, not these). All account-scoped in the service (404 cross-account); an
  * invalid/foreign mailboxId → 400.
  */
 export const draftsRoutes: Route[] = [
@@ -194,13 +194,13 @@ export const draftsRoutes: Route[] = [
     },
   },
   {
-    // §5 POST /drafts/:id/send — the GATED IDEMPOTENT send (Phase 3c). Session +
-    // CSRF (default pipeline); deliberately NOT idempotent-marked (R-P3-3) — the
+    // §5 POST /drafts/:id/send — the GATED IDEMPOTENT send. Session +
+    // CSRF (default pipeline); deliberately NOT idempotent-marked — the
     // generic verbatim idempotency cache can't model the `pending` reservation, so
     // SendService owns `outbound_sends` and this handler reads `Idempotency-Key`
     // itself (400 if absent). The reservation is minted + persisted BEFORE the
     // out-of-tx SMTP call and verified-by-Sent on retry, so a crash never yields a
-    // double-send. `makeSendAdapter` reads BOTH imap+smtp creds (R-P3-5).
+    // double-send. `makeSendAdapter` reads BOTH imap+smtp creds.
     method: "POST",
     pattern: "/drafts/:id/send",
     // `connection` rather than `paid`: it opens SMTP (and IMAP, to verify by Sent) on the
@@ -217,7 +217,7 @@ export const draftsRoutes: Route[] = [
       const attachments = decodeSendAttachments(body.attachments);
       const stagedAttachmentIds = readStagedIds(body.stagedAttachmentIds);
       const forwardOf = typeof body.forwardOf === "string" && body.forwardOf.length > 0 ? body.forwardOf : undefined;
-      // Prod: decrypt both imap+smtp creds → connected ImapAdapter (R-P3-5). Tests
+      // Prod: decrypt both imap+smtp creds → connected ImapAdapter. Tests
       // may inject a fake/GreenMail send spy via `deps.services.sendAdapter`.
       const openSendAdapter = deps.services?.sendAdapter ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId));
       // Only ever OPENED on a forward (SendService calls it lazily), so a normal send builds this

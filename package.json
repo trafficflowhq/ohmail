@@ -3,12 +3,18 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "workspaces": [
+    "apps/api-vercel",
     "apps/sidecar",
+    "apps/webapp",
     "apps/worker",
     "packages/api",
+    "packages/client-engine",
     "packages/core",
     "packages/db",
     "packages/db-mail",
-    "packages/services"
+    "packages/fixtures",
+    "packages/services",
+    "packages/tokens",
+    "packages/ui"
   ]
 }

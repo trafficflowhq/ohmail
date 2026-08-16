@@ -5,11 +5,16 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./admin": "./src/admin.ts",
+    "./cloud": "./src/cloud.ts",
     "./journal": "./src/journal.ts",
-    "./mail": "./src/schema-mail.ts"
+    "./mail": "./src/schema-mail.ts",
+    "./testing": "./src/testing.ts"
   },
   "dependencies": {
+    "@electric-sql/pglite": "0.2.17",
     "drizzle-orm": "0.36.4",
+    "postgres": "3.4.9",
     "@ohmail/db-mail": "*"
   }
 }

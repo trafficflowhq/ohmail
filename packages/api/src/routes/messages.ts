@@ -127,11 +127,11 @@ export const messageRoutes: Route[] = [
     },
   },
   {
-    // §5 POST /messages/:id/draft — AI draft-from-history (Phase 3b). Assembles a
+    // §5 POST /messages/:id/draft — AI draft-from-history. Assembles a
     // sensitivity-safe context (KB + this thread, `no_kb`/`no_ai`/sensitive
-    // structurally excluded — R-P3-1/7), calls the INJECTED drafter, and STORES a
+    // structurally excluded), calls the INJECTED drafter, and STORES a
     // `drafts` row (never sent). A `no_ai`/sensitive target is refused 422 before
-    // the drafter is called (R-P3-6). Echoes X-Sync-Seq.
+    // the drafter is called. Echoes X-Sync-Seq.
     //
     // IDEMPOTENT-MARKED, and metering is what made it a prerequisite rather than a
     // nicety: `debit_draft`'s attempt key must be the CLIENT's `Idempotency-Key`,

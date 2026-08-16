@@ -1,0 +1,56 @@
+-- CARRYING THE REAL SECOND-FACTOR TIME THROUGH THE NATIVE AUTHORIZATION CODE — one nullable column.
+--
+-- ══ WHAT THE COLUMN HOLDS ═════════════════════════════════════════════════════════════════
+--
+-- `GET /oauth/authorize` mints this code from a browser session; `POST /oauth/token` exchanges it
+-- for a session on the NATIVE surface — a new family, a new device, four hundred rolling days.
+-- The exchange itself asserts no factor: it presents a code and a PKCE verifier, and neither is a
+-- second factor. So the question "when did this account last prove a second factor?" has an answer
+-- that the exchange cannot know and the authorizing session can. This column carries it across.
+--
+-- Before it, `establish` wrote `last_twofa_at = now()` on that new session, and the comment sitting
+-- on the line claimed a full session is only ever reached through a completed 2FA. The exchange is
+-- the counter-example: no factor was asserted anywhere in it, and the timestamp said one had been,
+-- moments ago. A minted session therefore arrived with a FULL fresh step-up window it had not
+-- earned, which is what let one authorization become a ladder — the new 400-day credential could
+-- immediately mint the next one, and so on, without a factor ever being asserted again.
+--
+-- ══ WHY A COLUMN AND NOT AN INFERENCE ═════════════════════════════════════════════════════
+--
+-- The route is now step-up gated, so at mint time the factor is known to be at most
+-- `stepUpWindowMs` old. That bounds the value; it does not supply it. Reconstructing "now minus
+-- the window" would be a different lie in the same place — an invented timestamp that happens to
+-- be conservative — and it would silently become wrong the day the window is retuned. The
+-- authorizing session already holds the real value; this is the channel that carries it.
+--
+-- ══ NULLABLE, AND NULL IS A REAL STATE ════════════════════════════════════════════════════
+--
+-- NULL means "there is no factor time to inherit", and the session established from such a code
+-- gets a NULL `last_twofa_at` — which fails the step-up gate closed, in both the middleware and
+-- `requireStepUp`. That is the correct reading and it is also the safe one, so the two do not have
+-- to be traded off.
+--
+-- NO BACKFILL, and nothing to backfill from. Every row this table can hold at the moment this runs
+-- is a code with a sixty-second TTL (`oauthCodeTtlMs`), so within a minute of the deploy the table
+-- is entirely post-migration rows. The at-most-one-minute window of in-flight codes lands NULL and
+-- resolves to a session that cannot clear step-up until its holder asserts a factor — the strict
+-- side, and invisible in practice: the shipped desktop app does not use this ceremony at all (it
+-- uses the `ohmail://` handoff, whose own mint is step-up gated), so these codes are minted by
+-- nothing that ships today.
+--
+-- ══ NO INDEX ══════════════════════════════════════════════════════════════════════════════
+--
+-- Never a lookup key. The one read is by the exchange, which has already found its row by
+-- `code_hash` (`oauth_auth_codes_code_idx`) and narrowed to one before this column is touched.
+--
+-- ══ THE SEAM ══════════════════════════════════════════════════════════════════════════════
+--
+-- `oauth_auth_codes` is a PRIVATE (cloud) table: a local install has no accounts, no factors and
+-- no native handoff to authorize. So this DDL belongs in this journal and nowhere else, and it
+-- names no shared object — `sessions`, which is shared, is not touched by this migration. That
+-- last point is the reason the provenance rides on the CODE row rather than on a parent-session
+-- link in `sessions`: the column would have been DDL on a shared table for a concept that has no
+-- meaning on the mail side.
+--
+-- `IF NOT EXISTS` so a replay is a no-op rather than a 42701 that stops a journal mid-pass.
+ALTER TABLE "oauth_auth_codes" ADD COLUMN IF NOT EXISTS "twofa_at" timestamp with time zone;

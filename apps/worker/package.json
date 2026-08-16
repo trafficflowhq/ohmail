@@ -6,6 +6,7 @@
   "exports": {
     "./sync": "./src/sync.ts",
     "./lease": "./src/lease.ts",
+    "./entry": "./src/entry.ts",
     "./classifier-fault": "./src/classifier-fault.ts",
     "./bubble-up": "./src/bubble-up-pass.ts",
     "./screener-auto-suggest": "./src/screener-auto-suggest.ts",
@@ -13,6 +14,7 @@
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",
+    "postgres": "3.4.9",
     "@trafficflow/core": "*",
     "@trafficflow/db": "*"
   }

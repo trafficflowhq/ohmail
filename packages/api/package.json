@@ -4,6 +4,8 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
+    ".": "./src/index.ts",
+    "./health-cloud": "./src/routes/health-cloud.ts",
     "./local": "./src/local.ts"
   },
   "dependencies": {
