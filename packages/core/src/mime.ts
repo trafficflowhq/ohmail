@@ -489,7 +489,7 @@ export async function normalizeMime(raw: Buffer | string): Promise<NormalizedMes
   // the same raw bytes always take the same branch, so a message dedups against itself on every
   // later sync. `textBody` stays honestly empty rather than being filled with an invented
   // rendition — a second text extraction, differing from mailparser's, would show up in the
-  // snippet and the search vector and belongs in a slice that can measure it.
+  // snippet and the search vector and belongs in a change that can measure it.
   const bodyForCanonical = htmlToTextRefused ? (html ?? text) : text;
   return {
     canonical: canonicalId(parsed.messageId ? scrubNul(parsed.messageId) : null, bodyForCanonical),

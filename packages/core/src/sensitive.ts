@@ -16,7 +16,7 @@ import type { NormalizedMessage } from "./types.js";
  * WHY THIS FILE HAS THREE OUTCOMES AND NOT TWO
  * ════════════════════════════════════════════════════════════════════════════════════════════
  *
- * Until 2026-08-03 this function ended:
+ * This function used to end:
  *
  *     const sensitive = category !== null;
  *     flags: { no_ai: sensitive, … }
@@ -923,7 +923,7 @@ const UNFRAMED_CODE = new RegExp(
  *
  * ── THE THIRD ALTERNATIVE USED TO BE `[A-Za-z0-9]{6,10}`, AND IT MATCHED WORDS ─────────────
  *
- * The comment here used to read "Ordinary mail is never shaped like this." Measured 2026-08-03
+ * The comment here used to read "Ordinary mail is never shaped like this." Measured
  * against a corpus of thirty ordinary one-word subjects: **twenty-five matched** — Question,
  * Invoice, Reminder, Welcome, Receipt, Update, Meeting, Payment, Newsletter, Thanks, Urgent,
  * Report, Refund, Contract, Invite, Ticket and more. Ordinary mail is shaped like this constantly,
@@ -1744,8 +1744,9 @@ function redactFramedCodes(text: string): string {
 /**
  * Run `f` over everything that is NOT inside a URL.
  *
- * {@link redactUrlTails} owns URLs and deliberately KEEPS THE HOST — `url7965.thechosen.tv` is the
- * single most useful routing signal in a payload and it is not a secret. `url7965` is also a
+ * {@link redactUrlTails} owns URLs and deliberately KEEPS THE HOST — an ESP host like
+ * `url1234.example.tv` is the
+ * single most useful routing signal in a payload and it is not a secret. `url1234` is also a
  * letter-and-digit run, so without this the host rule and the token rule would contradict each
  * other and the newer one would win.
  */
@@ -2034,7 +2035,7 @@ export interface ModelSafeText {
 /**
  * ── MAKE A PAYLOAD SENDABLE, FOR A CALLER WHOSE USER ASKED ───────────────────────────────────
  *
- * The AI-OPEN half of the sensitivity rule, as amended on 2026-08-08.
+ * The AI-OPEN half of the sensitivity rule.
  * {@link screenOutboundText} answers "does this carry credential material"; this answers "then
  * what do I send", and the answer on a path a person pressed a button on is: the same bytes with
  * the credential VALUE removed. What is withheld from a model is the value, never the subject
@@ -2101,9 +2102,9 @@ export function redactForModel(subject: string, snippet: string): ModelSafeText 
  * ── THE CLICK-TRACKER HOLE, AND WHY THE MODEL PATH REDACTS MORE THAN STORAGE ─────────────────
  *
  * {@link redactAuthUrls} only rewrites a URL whose OWN path or query names an authentication
- * marker. Measured against the live account on 2026-08-08, before this shipped: a password-reset
- * mail from `app@thechosen.tv` carried its reset link as
- * `http://url7965.thechosen.tv/ls/click?upn=<base64 of the real URL>` — an ESP click-tracking
+ * marker. Measured on a live account before this shipped: a password-reset
+ * mail from a subscription service carried its reset link as
+ * `http://url1234.example.tv/ls/click?upn=<base64 of the real URL>` — an ESP click-tracking
  * wrapper. `/ls/click` is not an authentication marker and `upn` is not an authentication
  * parameter, so the marker missed, the token survived, and the magic link would have gone to the
  * model intact. Ten of the previously-withheld senders had a run like this.
@@ -2120,7 +2121,7 @@ export function redactForModel(subject: string, snippet: string): ModelSafeText 
  * to carry a credential, and its only error is blanking a few characters of a URL nobody will
  * read"*.
  *
- * **The HOST is kept**, deliberately. `thechosen.tv` is the single most useful routing signal in
+ * **The HOST is kept**, deliberately. The sender's domain is the single most useful routing signal in
  * the payload and it is not a secret; blanking it would protect nothing and make the suggestion
  * worse. Only what follows the authority is rewritten.
  *

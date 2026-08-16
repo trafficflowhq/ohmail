@@ -838,7 +838,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
      *
      * The `\Seen` state is deliberately NOT consulted. Whether the backlog has been read is a fact
      * about the user's habits, not about whether ohmail should re-file it, and the unread half of
-     * exactly that conflation is the churn the cutline half of this slice removes.
+     * exactly that conflation is the churn the cutline exists to remove.
      *
      * THE SERVER CLOCK ONLY — `?? normalized.date` stood here, and a security review flagged
      * it. The header `Date:` is written by the SENDER, so with the fallback in place any
@@ -1249,7 +1249,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
         headers: p.normalized.headers,
         subject: p.normalized.subject,
         // Sender AND recipients, because the plan HAS them. The backfill can only pass the
-        // sender: `insertMessage` writes `messages.to_addresses` only from this slice onward, so
+        // sender: `insertMessage` has not always written `messages.to_addresses`, so
         // the rows a backfill reaches carry `'[]'`. That asymmetry is documented on
         // `ThreadResolutionInput.participants`.
         participants: [p.normalized.from, ...p.normalized.to],
@@ -1450,7 +1450,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   // correctly because its INSERT branch (a message with no `folder_state` row yet) does use them,
   // and a converged pair there would be a completion nobody witnessed. That branch is not
   // reachable from a withheld move, which always has a pending row already — so this is stated
-  // rather than tested, and mutating these two values leaves every test in this slice green.
+  // rather than tested, and mutating these two values leaves every test of this path green.
   // The pending row that actually matters is written by the `move` arm of the switch above.
   //
   // THE DURABLE RECORD IS THE INSTANCE ROW, NOT THE FLAG — measured, not assumed. A non-primary

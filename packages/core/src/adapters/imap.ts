@@ -287,7 +287,7 @@ export async function verifySmtpLogin(
  * `errorClass="ImapConnectionClosedError" errorCode="EIMAPCLOSED"` is the complete, greppable
  * record — and it is DISTINGUISHABLE from the `errorClass="Error" errorCode="ETIMEOUT"` a genuine
  * socket failure produces, which matters because the two have different root causes and only one of
- * them was ever visible before 2026-08-04.
+ * them was visible before the `close` listener below existed.
  */
 export class ImapConnectionClosedError extends Error {
   readonly code = "EIMAPCLOSED";
@@ -588,12 +588,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   /**
    * THE TWO LISTENERS THAT MAKE AN ASYNCHRONOUS CONNECTION DEATH OBSERVABLE AT ALL.
    *
-   * ── `error`: THE 2026-08-02 OUTAGE ──────────────────────────────────────────────────────
+   * ── `error`: THE OUTAGE THAT KILLED A SHARD ─────────────────────────────────────────────
    *
    * `ImapFlow` is an EventEmitter, and Node throws when `error` is emitted with no listener —
-   * an uncaught exception, which the worker's entrypoint answers with `exit(1)`. On
-   * 2026-08-02 that turned one mailbox's socket timeout into eight minutes with the whole
-   * shard dead and the platform restarting the container every ~26 s. Nothing in the call stack
+   * an uncaught exception, which the worker's entrypoint answers with `exit(1)`. In
+   * production that turned one mailbox's socket timeout into minutes with the whole
+   * shard dead and the platform restarting the container over and over. Nothing in the call stack
    * could have caught it: the emit happens on a timer, not inside an `await`.
    *
    * So this is attached UNCONDITIONALLY — not only when a caller supplies
@@ -602,7 +602,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * remembered to pass. The optional callback is only how the OWNER of the connection gets
    * told, so it can detach and quarantine one mailbox instead of losing all of them.
    *
-   * ── `close`: THE 2026-08-04 OUTAGE, AND WHY `error` ALONE WAS NEVER ENOUGH ───────────────
+   * ── `close`: THE SECOND OUTAGE, AND WHY `error` ALONE WAS NEVER ENOUGH ──────────────────
    *
    * This method listened for `error` only, and the sentence above ("`ImapFlow` reports a dead
    * socket by emitting `error`") is true of a socket that FAILS and false of one that ENDS.
@@ -1052,8 +1052,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * Fetch bodies for at most `budget` worth of UIDs, NEWEST MAIL FIRST, and say what was left.
    *
    * THE MEMORY BOUND OF THE WHOLE WORKER lives here. Every path that pulls `source: true`
-   * goes through this function, because the alternative — one unbounded fetch — is what
-   * killed production on 2026-08-01 (see {@link DEFAULT_SYNC_BATCH_MAX_MESSAGES}).
+   * goes through this function, because the alternative — one unbounded fetch — has
+   * killed production before (see {@link DEFAULT_SYNC_BATCH_MAX_MESSAGES}).
    *
    * ── "NEWEST FIRST" USED TO MEAN "HIGHEST UID FIRST", AND THAT WAS THE BUG ────────────────
    *
@@ -1177,8 +1177,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     //
     // NOT HYPOTHETICAL, and the trigger is a header the sender chose. iCloud cannot serialize an
     // ENVELOPE for a message whose `Message-ID` is a QUOTED STRING — RFC 5322 §3.6.4 allows
-    // `msg-id` to carry one, and `<"2015-01-12T20:15:35.803795+00:00.26974-mail"@hardwax.com>` is a
-    // real one — and rather than failing the command it omits the row. Measured on a live iCloud
+    // `msg-id` to carry one, and `<"2015-01-12T20:15:35.803795+00:00.26974-mail"@example.com>` is
+    // the shape of a real one — and rather than failing the command it omits the row. Measured on a live iCloud
     // mailbox: `UID SEARCH ALL` returns the UID, `FETCH (FLAGS RFC822.SIZE)` returns it,
     // `FETCH (BODY.PEEK[])` returns it, and `FETCH (ENVELOPE)` returns nothing at all for it. One
     // folder held two such messages and therefore imported ZERO of its mail while its cursor read
@@ -1260,7 +1260,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // With RFC 5819 LIST-STATUS the server returns every folder's UIDNEXT / MESSAGES /
     // HIGHESTMODSEQ inside the LIST response, so asking every cycle costs ONE command and buys the
     // `unchangedPassive` skip below — which is what keeps a 110-folder mailbox from paying 110
-    // SELECTs per cycle to learn that nothing happened. Both providers measured on 2026-08-13
+    // SELECTs per cycle to learn that nothing happened. Both production providers, measured,
     // advertise it.
     //
     // WITHOUT it, imapflow issues a STATUS *per listed folder* to satisfy `statusQuery`
@@ -1361,7 +1361,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const budget = {
       messages: this.opts.maxBatchMessages ?? DEFAULT_SYNC_BATCH_MAX_MESSAGES,
       bytes: this.opts.maxBatchBytes ?? DEFAULT_SYNC_BATCH_MAX_BYTES,
-      // …and FLAGS, which had no budget at all until 2026-08-02. See
+      // …and FLAGS, which had no budget at all at first. See
       // `DEFAULT_SYNC_BATCH_MAX_FLAGS`: this one bounds the worker's serial queue, not memory.
       flags: this.opts.maxBatchFlags ?? DEFAULT_SYNC_BATCH_MAX_FLAGS,
     };
@@ -1599,9 +1599,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           // THE RESIDUAL THAT PARAGRAPH LEFT — "a folder starved on EVERY cycle still makes no
           // progress" — WAS NOT HYPOTHETICAL, AND IT IS WHAT THE SCHEDULE ABOVE CLOSES. It was
           // written here as a bound worth stating and not chasing, on the argument that "the
-          // folder ahead cannot eat the budget for ever". A folder ahead with 5 101 owed UIDs eats
+          // folder ahead cannot eat the budget for ever". A folder ahead with five thousand owed
+          // UIDs eats
           // it for sixteen consecutive cycles, which is long enough to look exactly like for ever;
-          // measured on a real mailbox four days after this line was written. Progress is now
+          // measured on a real mailbox days after this line was written. Progress is now
           // guaranteed per cycle by `allowance`, not argued from the folder ahead running out.
           //
           // The seed below is still the thing THIS test file watches, and it is still observable:
@@ -2460,7 +2461,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    *
    * ── `ListResponse.specialUse` IS NOT THE SERVER'S FLAG, AND THAT IS NOT OUR GUARANTEE ───
    *
-   * Measured 2026-08-04 against GreenMail 2.1.3 (`IDLE IMAP4rev1 LITERAL+ MOVE QUOTA SORT
+   * Measured against GreenMail 2.1.3 (`IDLE IMAP4rev1 LITERAL+ MOVE QUOTA SORT
    * UIDPLUS` — no SPECIAL-USE): a folder named `Sent Messages` came back as
    * `{ specialUse: "\Sent", specialUseSource: "name" }`. imapflow resolves the field itself —
    * the server's flag when the connection advertises SPECIAL-USE or XLIST, otherwise a guess

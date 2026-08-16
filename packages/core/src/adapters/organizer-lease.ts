@@ -873,8 +873,8 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
  * ── THE GENERAL RULE THIS EXISTS TO STATE ──────────────────────────────────────────────────
  *
  * **A catch that wraps more than one operation must name which one threw.** `runLeaseGate` used to
- * wrap `ensureMetaFolder()` and `listClaims()` in ONE try and report neither, and on 2026-08-03
- * that cost 32 minutes: "the organizer lease could not be read" is the same sentence whether the
+ * wrap `ensureMetaFolder()` and `listClaims()` in ONE try and report neither, and that once
+ * cost half an hour of diagnosis: "the organizer lease could not be read" is the same sentence whether the
  * folder could not be CREATED (a permissions or namespace problem — our path is wrong) or could not
  * be LISTED (the folder exists and the FETCH was refused — which is what actually happened, a
  * `FETCH 1:*` against an empty mailbox that Dovecot rejects and GreenMail tolerates). One literal
@@ -1110,7 +1110,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   // reasons — CREATE against a namespace we have no rights in, versus a FETCH the server refuses —
   // and telling them apart is the difference between "our folder path is wrong for this provider"
   // and "the folder is there and empty and this server will not FETCH an empty mailbox", which is
-  // the 2026-08-03 bug exactly. Splitting the try is what makes `op` a fact instead of a guess:
+  // that bug exactly. Splitting the try is what makes `op` a fact instead of a guess:
   // there is no arithmetic deciding which literal to use, only two blocks that each know.
   try {
     await io.ensureMetaFolder();

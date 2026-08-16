@@ -52,7 +52,7 @@ export type CostClass =
    * must still be able to revoke a credential and to leave under Art. 17).
    *
    * **Some of these spend.** `POST /auth/register` and `POST /auth/verify-email/resend` send
-   * mail through Resend. They are not exempt from cost control — they are controlled by a
+   * mail through the transactional mail provider. They are not exempt from cost control — they are controlled by a
    * DIFFERENT mechanism, because verification cannot be the control on the route that
    * produces verification: the per-recipient `unsolicited` quota and the per-IP `verify:ip`
    * limiter. A new `ceremony` route that sends mail owes its own quota, and the frozen

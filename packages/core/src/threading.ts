@@ -297,7 +297,8 @@ export async function resolveThread(
 /**
  * The reply and forward subject prefixes the localized mail clients emit — ONE table, because
  * the cost of a per-incident list was measured in production: a thread created from a German
- * Outlook forward was named "WG: Webshop" while the same client's replies ("AW:") were
+ * Outlook forward kept its "WG:" prefix in the thread name while the same client's replies
+ * ("AW:") were
  * stripped, so one conversation's name kept a prefix its siblings lost. The set below is the
  * documented Outlook/Thunderbird localization table, not the languages we have happened to see.
  *

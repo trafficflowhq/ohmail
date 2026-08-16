@@ -151,8 +151,8 @@ export type FingerprintInput = Pick<
  * Every input below is present at ingest, in `change.raw`, and is derived from it and from
  * nothing else. That is the property that makes a BACKFILL impossible and it is why the ruling
  * prohibits one outright: `message_bodies.text` is redacted for sensitive mail, `html` is
- * `prepareHtmlForStorage`'d and capped at 256 KiB, `attachments` had no content digest before
- * this slice, and `messages.to_addresses` — written at ingest only since the recipients slice —
+ * `prepareHtmlForStorage`'d and capped at 256 KiB, `attachments` has not always carried a
+ * content digest, and `messages.to_addresses` — not always written at ingest —
  * holds its `'[]'` default on every row that predates it. A batch job over stored columns would
  * compute a DIFFERENT value than ingest does for the same message, so every row it touched would
  * insert a SECOND `messages` row the first time the mail was re-observed — and no delta removes

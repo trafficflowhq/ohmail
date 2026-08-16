@@ -697,8 +697,8 @@ const MAX_CAUSE_DEPTH = 4;
  *
  * A wrapper class is often the least informative thing about a failure. `LeaseUnavailableError`
  * exists precisely so callers can exempt an infrastructure fault BY CLASS — which means every one
- * of them logs `errorClass: "LeaseUnavailableError"` and, before this function, nothing else. In
- * one incident that was the entire record of a mailbox that did not sync for half an hour: the class of
+ * of them logs `errorClass: "LeaseUnavailableError"` and, before this function, nothing else. On
+ * 2026-08-03 that was the entire record of a mailbox that did not sync for 32 minutes: the class of
  * our own wrapper, and no trace of the imapflow error underneath it that said what the server
  * refused.
  *

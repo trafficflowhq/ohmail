@@ -7,9 +7,9 @@ import type { Route } from "../router.js";
 import { mailbox, readBody, noContent } from "./shared.js";
 
 /**
- * §5.1 — mailboxes READ + RESYNC + the Phase-2a lifecycle mutations. POST/PATCH/
+ * §5.1 — mailboxes READ + RESYNC + the lifecycle mutations. POST/PATCH/
  * DELETE are step-up-gated (recent 2FA) — they carry envelope-encrypted credentials
- * that are encrypted on write and NEVER echoed. DTOs never carry credentials (RC1).
+ * that are encrypted on write and NEVER echoed. DTOs never carry credentials.
  * All queries are account-scoped in the service (404 cross-account).
  */
 export const mailboxRoutes: Route[] = [

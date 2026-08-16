@@ -429,7 +429,7 @@ export interface RepoPort {
   // ── Physical identity: `message_instances` ──
   //
   // ONE logical message can legitimately occupy SEVERAL physical locators at once — the Sent twin
-  // of a self-CC, a mailing list echo, a user's own IMAP copy, and (the case this slice is about)
+  // of a self-CC, a mailing list echo, a user's own IMAP copy, and (the case instances exist for)
   // a second delivery of the same bytes. `messages.native_locator` can only name one of them, so
   // every other one used to be invisible to the known-set and its body was re-fetched on every
   // cycle for ever. `own_copy` escaped that only because the Sent folder has a UID WATERMARK —

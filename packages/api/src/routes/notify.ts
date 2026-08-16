@@ -6,7 +6,7 @@ import { notify, readBody, noContent } from "./shared.js";
 
 /**
  * §5.11 — notify rules (3 endpoints): the opt-INTO-notifications list (push off by
- * default, spec §5.1). Create + list + delete, account-scoped, REST-only (RC4).
+ * default, spec §5.1). Create + list + delete, account-scoped, REST-only.
  * Empty `target` → 400; cross-account id → 404.
  */
 export const notifyRoutes: Route[] = [

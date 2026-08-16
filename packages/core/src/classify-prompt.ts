@@ -100,8 +100,9 @@ export const TAXONOMY_PREFIX = [
  * in `ohmail/Screener`. But `ohmail/Screener` is what the routing taxonomy DEFINES as the correct
  * answer for a first-contact sender, and every row the Screener reasons about is a first-contact
  * sender. So the model was being asked a question whose own rules made one answer correct in
- * advance, and it gave that answer: measured on a live account with no stated bar, 66 of 74 stored
- * suggestions (89%) came back `ohmail/Screener`. The user had paid for advice and been told, at
+ * advance, and it gave that answer: measured before this change, with no stated bar, nearly nine
+ * in ten stored
+ * suggestions came back `ohmail/Screener`. The user had paid for advice and been told, at
  * high confidence, that the mail was where it already was.
  *
  * The fix is not a better prompt for the same question. It is a different question: the user is

@@ -928,8 +928,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   /**
    * Repoint the message: `messages.native_locator` AND its primary instance, together.
    *
-   * `native_locator` is the primary instance's MIRROR (the ruling: "do not touch any read path in
-   * this slice"), so every read path keeps working off the jsonb column while
+   * `native_locator` is the primary instance's MIRROR — the change that introduced instances
+   * deliberately touched no read path — so every read path keeps working off the jsonb column while
    * `listKnownLocators` — the one read that decides what gets re-fetched — works off the table.
    * Two writes, one method, because the three call sites (`commitChange`,
    * `applyReconcileAction`, `reconcileFolders`) already funnel through here and a fourth that
@@ -1415,7 +1415,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * every locator the pipeline declined to make primary was, cycle after cycle, an unknown UID:
    * enumerated, its RFC822 source pulled, parsed, classified, declined, forgotten. For ever.
    *
-   * `own_copy` was the only declined outcome before this slice and it escaped by ACCIDENT: the
+   * `own_copy` was the only declined outcome before this change and it escaped by ACCIDENT: the
    * Sent folder is read behind a UID watermark (`DEFAULT_SENT_HISTORY_MESSAGES`), so a Sent UID is
    * behind the mark whether or not it produced a row. **INBOX has no watermark.** `external_copy`
    * declines in INBOX, so without this change the second delivery of a forged message would have

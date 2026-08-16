@@ -5,7 +5,7 @@ import type { Route } from "../router.js";
 import { snippets, readBody, noContent } from "./shared.js";
 
 /**
- * §5.13 — snippets CRUD (5 endpoints). REST-only (no /sync entity, RC4). PUT is a
+ * §5.13 — snippets CRUD (5 endpoints). REST-only (no /sync entity). PUT is a
  * FULL replace. Empty `title`/`body` → 400; cross-account id → 404.
  */
 export const snippetsRoutes: Route[] = [

@@ -225,7 +225,7 @@ export const withSession: Middleware = (next, route) => async (req, deps, params
  *
  * It used to answer 403 for a missing session too, and on every route that existed at the time
  * the branch was unreachable: `stepUp` implied `!public`, so `withSession` had already returned
- * 401 before this middleware ran. `GET /oauth/authorize` (SEC3-AUTH-6) is the first route that
+ * 401 before this middleware ran. `GET /oauth/authorize` is the first route that
  * is BOTH `public` and `stepUp` — it has to be `public`, because an enrollment-scoped cookie
  * must be DROPPED rather than 403'd on the way in — so the branch became reachable and its
  * answer became wrong.

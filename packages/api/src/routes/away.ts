@@ -7,7 +7,7 @@ import { away, readBody } from "./shared.js";
 /**
  * §5.16 — away / autoresponder (2 endpoints). GET returns the single per-account
  * row or a default disabled shape; PUT upserts it (full replace). `startsAt` must
- * be ≤ `endsAt` when both are set → else 400. REST-only, account-scoped (RC4/BC6).
+ * be ≤ `endsAt` when both are set → else 400. REST-only, account-scoped.
  */
 export const awayRoutes: Route[] = [
   {

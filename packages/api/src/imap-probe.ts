@@ -521,8 +521,8 @@ const HOSTNAME_RE = /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]
 
 /**
  * The canonical-host suggestion for a HOSTNAME MISMATCH — the vanity-CNAME shape, measured
- * live on the first external mailbox this failed for: `mail.aberer.at` is a CNAME to
- * `mail.mymagenta.business`, and the (publicly trusted, chain-valid) certificate it presents
+ * live on the first external mailbox this failed for: a vanity `mail.<own-domain>` host that
+ * is a CNAME to the provider's real server, whose (publicly trusted, chain-valid) certificate
  * names the provider's hosts, that CNAME target among them.
  *
  * ── WHY THIS IS NOT A TRUST DECISION ──────────────────────────────────────────────────────
@@ -864,7 +864,8 @@ const smtpMessageOf = (err: unknown): string =>
 const SMTP_AUTH_RESPONSE_CODES: ReadonlySet<number> = new Set([534, 535]);
 
 /**
- * The certificate names an SMTP failure carried. MEASURED LIVE (smtp.aberer.at, 2026-08-10):
+ * The certificate names an SMTP failure carried. MEASURED LIVE against the same vanity-CNAME
+ * mailbox the suggestion above was written for:
  * on both the 465 handshake and the 587 upgrade, nodemailer routes the identity failure
  * through `_onSocketError` → `_formatError('ESOCKET')`, which OVERWRITES `err.code` but
  * PRESERVES the original message, `cert`, `reason` and `host`. So the cert object is first
@@ -886,7 +887,7 @@ export function smtpCertNamesOf(err: unknown): { certHost: string | null; altNam
  * SENTENCES FIRST, code classes second — the reverse of the IMAP classifier — because
  * nodemailer's `_formatError` stamps its own transport code (`ESOCKET`/`ECONNECTION`/`ETLS`)
  * over whatever OpenSSL said, so the code alone reads "socket problem" about a certificate
- * refusal. Measured live before this ordering existed: smtp.aberer.at's hostname mismatch
+ * refusal. Measured live before this ordering existed: the vanity host's hostname mismatch
  * arrived as `code: "ESOCKET"` with Node's full identity sentence intact, and the
  * code-gated version of this function answered `connect` — a true sentence about the wrong
  * thing, on the exact host this classifier was written against.

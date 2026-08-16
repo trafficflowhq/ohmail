@@ -45,8 +45,8 @@ export { isOrganizedFolder, DESTINATIONS } from "../types.js";
  * `WATCHED_FOLDERS` and `DESTINATIONS` hold the same six strings, and this asserts it at module load
  * — the {@link META_FOLDER_IS_UNWATCHED} idiom.
  *
- * They are two literals rather than one derivation on purpose: `apps/webapp/test/
- * folder-showcase.test.ts` parses the `export const WATCHED_FOLDERS = [ … ] as const` literal out of
+ * They are two literals rather than one derivation on purpose: the web client's
+ * folder-showcase guard parses the `export const WATCHED_FOLDERS = [ … ] as const` literal out of
  * this file's SOURCE to diff the marketing showcase against it, so replacing the literal with an
  * expression makes that guard stop guarding while staying green. The duplication is therefore
  * deliberate and this line is what keeps it honest.
@@ -60,7 +60,7 @@ export const WATCHED_FOLDERS_ARE_THE_DESTINATIONS: boolean =
  *  PASSIVE PRESENCE — the customer's OWN folders, read and never reorganized
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * Mail the customer filed themselves — `Archive`, `Private/Editor`, `_archive/Clients/…`,
+ * Mail the customer filed themselves — `Archive`, `Private/Family`, `_archive/Clients/…`,
  * fifteen years of nested folders made in Apple Mail — was invisible to ohmail entirely: the only
  * folders ever enumerated were {@link WATCHED_FOLDERS} plus the resolved Sent folder, so a message
  * living anywhere else was in no `messages` row, in no thread, and in no search result. Measured on
@@ -188,7 +188,7 @@ export function passiveFolderExclusion(
  * of somebody's filing and leaves the other half. Choosing the conservative number "just in case"
  * is choosing to hide their mail to save round trips their provider does not charge for.
  *
- * Both production providers measured on 2026-08-13 advertise LIST-STATUS.
+ * Both production providers, measured, advertise LIST-STATUS.
  *
  * The residual is stated rather than hidden: past either ceiling the overflow is reported by
  * `ImapAdapter.passiveFolderReport()` and read by nothing. That is a bounded, nameable gap; an
@@ -608,8 +608,8 @@ export const DEFAULT_SYNC_BATCH_MAX_BYTES = 32 * 1024 * 1024;
  * ── WHY THERE IS A CEILING AT ALL, WHEN A BIGGER ONE IS STRICTLY FASTER ────────────────────
  *
  * The destination pre-check is a single `OR HEADER MESSAGE-ID …` command holding one term per
- * member. At 50 that command is roughly 3 KB; at 1 137 — the size of a real screening session
- * measured against a production mailbox — it would be about 70 KB, and a server that caps the
+ * member. At 50 that command is roughly 3 KB; at over a thousand — the size of a real screening
+ * session measured against a production mailbox — it would be about 70 KB, and a server that caps the
  * command line refuses it. That failure would appear ONLY on large backlogs, which is precisely
  * the case the batched path exists for, so the ceiling is the difference between a fast path and
  * a fast path that breaks when it matters. The `UID MOVE` set has the same shape and the same

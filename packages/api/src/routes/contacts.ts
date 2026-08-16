@@ -16,7 +16,7 @@ const qp = (req: Request): { cursor?: string; limit?: number; q?: string } => {
 };
 
 /**
- * §5.12 — contacts & notes (9 endpoints). REST-only (no /sync entity, RC4).
+ * §5.12 — contacts & notes (9 endpoints). REST-only (no /sync entity).
  * All account-scoped in the service (404 cross-account). Note creation
  * verifies the parent contact/thread belongs to the account (IDOR). `PATCH`/
  * `DELETE /notes/:id` resolve an id in EITHER the contact_notes or thread_notes

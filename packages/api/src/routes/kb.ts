@@ -5,10 +5,10 @@ import type { Route } from "../router.js";
 import { kb, readBody, noContent } from "./shared.js";
 
 /**
- * §5 /kb — Knowledge Base CRUD (5 endpoints, Phase 3a). REST-only (no /sync entity,
- * RC4). PUT is a FULL replace of title/content/tags. Empty title/content → 400;
+ * §5 /kb — Knowledge Base CRUD (5 endpoints). REST-only (no /sync
+ * entity). PUT is a FULL replace of title/content/tags. Empty title/content → 400;
  * cross-account id → 404. Retrieval (`KbService.retrieve`) is consumed by the
- * AI drafter in 3b — it has no standalone route here.
+ * AI drafter — it has no standalone route here.
  */
 export const kbRoutes: Route[] = [
   {
