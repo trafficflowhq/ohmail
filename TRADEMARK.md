@@ -8,12 +8,12 @@ claimed. Casing is presentation, not identity: the assertions below cover the
 word however it is capitalised, so "OhMail", "Ohmail" and "OHMAIL" are the same
 mark and are equally not licensed here.
 
-Copyright, patent and trademark are three different things, and the GPL is
-explicit about the difference: section 7(e) of GPL-3.0 permits a licence to
+Copyright, patent and trademark are three different things, and the AGPL is
+explicit about the difference: section 7(e) of AGPL-3.0 permits a licence to
 decline to grant rights under trademark law. This document is that declination,
-and nothing more — it takes away no freedom the GPL gives you over the *code*.
+and nothing more — it takes away no freedom the AGPL gives you over the *code*.
 
-## What is not licensed under the GPL
+## What is not licensed under the AGPL
 
 | Mark | Where it appears in this tree |
 |---|---|
@@ -24,23 +24,23 @@ and nothing more — it takes away no freedom the GPL gives you over the *code*.
 
 These are trademarks of **TrafficFlow GmbH**, Staubstrasse 1, 8038 Zürich,
 Switzerland. They are *included* in this repository because the project builds
-with them — not offered under GPL-3.0.
+with them — not offered under AGPL-3.0.
 
-The image files above are the only binary artwork excluded from the GPL grant.
+The image files above are the only binary artwork excluded from the AGPL grant.
 The other binaries in this tree — the feature recordings under
 `docs/assets/feature-wall/` — are renders of this source tree over its built-in
-fictional mailbox and are GPL-covered along with it; see
+fictional mailbox and are AGPL-covered along with it; see
 [COPYRIGHT](COPYRIGHT). Everything else here is source, and all of that source
-is GPL-3.0-or-later.
+is AGPL-3.0.
 
 ## What you may do — no permission needed
 
-Everything the GPL grants, unreduced:
+Everything the AGPL grants, unreduced:
 
 - **Use** ohmail, privately or commercially, for anything.
 - **Study and modify** every line, for any purpose.
 - **Build** your own binaries from this tree, patched or not, and run them.
-- **Redistribute** the source and your changes under GPL-3.0.
+- **Redistribute** the source and your changes under AGPL-3.0.
 - **Package** ohmail for a distribution and ship it under the ohmail name, *if
   you ship it substantially as we release it* — the ordinary distro-packaging
   case. Patches for build, path and dependency conventions are expected and
@@ -72,6 +72,22 @@ few strings and spares both of us that.
 
 This is the same line Mozilla drew with Firefox/Iceweasel and that Signal draws
 today: the code is free, the identity is not.
+
+## Hosting services
+
+The AGPL allows anyone to run this code as a service for other people — that
+freedom is real, and this policy does not reduce it. What it withholds is the
+name: a hosting service operated by anyone other than TrafficFlow must not
+call itself ohmail, use the "oh." icon or wordmark as its identity, or use a
+name or domain a user would confuse with ohmail.app. "Built on ohmail" or "a
+hosted fork of ohmail", as a statement of fact, is nominative use and needs no
+permission.
+
+The reason is the same as for forks: support and reputation follow the name. A
+hosted service holds people's mail, keeps their accounts, and answers their
+support questions, and the marks are how a user knows which company is
+answering for all of that. The one hosted service the ohmail marks name is the
+one TrafficFlow runs.
 
 ## Distribution packagers
 

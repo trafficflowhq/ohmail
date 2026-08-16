@@ -24,7 +24,7 @@
  * This entry point deliberately does NOT re-export `runMigrations`. `runMigrations` is the
  * postgres-js migrator — it opens a `postgres` connection and takes an advisory lock — and a
  * re-export of it here would drag the `postgres` package, the SOCKS client and the IP-address
- * parser into the engine's import closure, provisioning code inside a public GPL download that
+ * parser into the engine's import closure, provisioning code inside a public AGPL download that
  * migrates with PGlite and never speaks the wire protocol. So the run function lives on `/admin`
  * (its only callers are hosts and tests), and this file exposes the pieces the engine composes
  * for ITS migrator: the journal specs (pure `node:path` data, from `journal-specs.js`), the

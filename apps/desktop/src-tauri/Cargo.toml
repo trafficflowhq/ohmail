@@ -3,7 +3,7 @@ name = "ohmail"
 version = "0.9.8"
 description = "ohmail — consent-first email. Windows/Linux preview shell."
 authors = ["TrafficFlow GmbH <support@ohmail.app>"]
-license = "GPL-3.0-or-later"
+license = "AGPL-3.0-only"
 edition = "2021"
 rust-version = "1.82"
 
@@ -130,9 +130,9 @@ tauri = { version = "2", default-features = false, features = [
 # `plugins.updater.pubkey` before installing. Notify-and-install: the Rust side
 # asks the user first (see `src/updater.rs`) and installs only on consent — never
 # silently. Brings `reqwest` in transitively; that is the only HTTP client in the
-# binary and it is reached from nowhere but the updater. MIT OR Apache-2.0 — no
-# copyleft, and in particular no AGPL, which would force publishing the hosted
-# service alongside this GPL-3.0 client.
+# binary and it is reached from nowhere but the updater. MIT OR Apache-2.0 —
+# permissive, like every dependency of this client: the only copyleft in the
+# shipped binary is meant to be this project's own AGPL-3.0.
 tauri-plugin-updater = "2"
 
 # The native dialog the updater notifies through — "an update is available,
@@ -156,8 +156,8 @@ semver = "1"
 # graph and the `strings` audit are unchanged; only the manifest names it
 # directly. The engine's JSON frame parser (behind `local-engine`) uses it too.
 # MIT OR Apache-2.0. Nothing here is under a copyleft licence, and nothing may
-# be: this binary is conveyed to users under GPL-3.0, and an AGPL dependency
-# anywhere in the shared half would force publishing the hosted service too.
+# be: this binary is conveyed to users under AGPL-3.0, and its own licence is
+# meant to be the only copyleft in it.
 serde_json = "1"
 
 # THE ONE PER-INSTALL KEY, AND WHY IT NEEDS A CRATE AT ALL.
@@ -174,8 +174,8 @@ serde_json = "1"
 # Optional, so the default build's dependency graph is unchanged — the preview
 # stores nothing and therefore needs nowhere to store it. MIT OR Apache-2.0, as
 # is everything it pulls in; nothing here is copyleft and nothing may be, since
-# this binary is conveyed to users under GPL-3.0 and an AGPL dependency in the
-# shared half would force publishing the hosted service with it.
+# this binary is conveyed to users under AGPL-3.0 and its own licence is meant
+# to be the only copyleft in it.
 keyring = { version = "4", optional = true }
 
 # The key's 32 bytes, from the operating system's CSPRNG. `getrandom` and not a
@@ -202,8 +202,8 @@ getrandom = { version = "0.3", optional = true }
 # may drive the notification API".
 #
 # MIT OR Apache-2.0, as is everything it pulls in — nothing here is copyleft and
-# nothing may be, since this binary is conveyed under GPL-3.0 and an AGPL
-# dependency in the shared half would force publishing the hosted service too.
+# nothing may be, since this binary is conveyed under AGPL-3.0 and its own
+# licence is meant to be the only copyleft in it.
 tauri-plugin-notification = { version = "2", optional = true }
 
 # THE `ohmail://` SCHEME, AND THE TWO PLUGINS THAT MAKE IT ONE APP RATHER THAN
@@ -235,8 +235,8 @@ tauri-plugin-notification = { version = "2", optional = true }
 # registers nothing at all.
 #
 # MIT OR Apache-2.0, both of them and everything they pull in — nothing here is
-# copyleft and nothing may be, since this binary is conveyed under GPL-3.0 and an
-# AGPL dependency in the shared half would force publishing the hosted service.
+# copyleft and nothing may be, since this binary is conveyed under AGPL-3.0 and
+# its own licence is meant to be the only copyleft in it.
 tauri-plugin-deep-link = { version = "2", optional = true }
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"], optional = true }
 

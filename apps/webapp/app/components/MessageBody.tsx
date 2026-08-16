@@ -28,8 +28,8 @@
  * kind. It is DOMPurify — cure53's, `(MPL-2.0 OR Apache-2.0)`, zero runtime dependencies —
  * chosen over hand-rolling because it parses with the BROWSER'S OWN parser, which is the
  * only way to have no parser differential between what the sanitizer inspects and what the
- * renderer later builds. (Licence check: Apache-2.0 is GPLv3-compatible, so it is safe
- * beside the GPL-3.0 desktop; it is not AGPL, which this repo forbids outright.)
+ * renderer later builds. (Licence check: Apache-2.0 is permissive and AGPLv3-compatible,
+ * so it is safe beside the AGPL-3.0 desktop.)
  *
  * The frame decides WHAT THE BROWSER MAY DO: a `sandbox`ed `<iframe srcdoc>` carrying its
  * own `Content-Security-Policy` meta. Not belt-and-braces — a second mechanism answering a

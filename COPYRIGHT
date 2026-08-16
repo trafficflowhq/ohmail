@@ -2,27 +2,26 @@ ohmail for the desktop — the free ohmail client for macOS, Windows and Linux
 Copyright (C) 2026 TrafficFlow GmbH, Staubstrasse 1, 8038 Zürich, Switzerland
 
 This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later
-version.
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, version 3 of the License.
 
 This program is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE. See the GNU General Public License for more details.
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
 
-You should have received a copy of the GNU General Public License along with
-this program. If not, see <https://www.gnu.org/licenses/>.
+You should have received a copy of the GNU Affero General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
 
 The full licence text is in ./LICENSE, byte-for-byte the Free Software
-Foundation's published GPL-3.0 (sha256
-3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986). It is a
+Foundation's published AGPL-3.0 (sha256
+0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0). It is a
 verbatim copy on purpose: the licence document itself may not be modified, so
 the applied copyright notice lives in this file rather than being edited into
 the licence's "How to Apply These Terms" appendix.
 
 
-What is under GPL-3.0
----------------------
+What is under AGPL-3.0
+----------------------
 All source in this repository:
 
   apps/desktop/**          the app, on all three platforms (Rust + TS)
@@ -33,12 +32,13 @@ All source in this repository:
 …together with this file, LICENSE, TRADEMARK.md, CONTRIBUTING.md, SECURITY.md
 and README.md.
 
-The four screenshots in docs/ (ohbox-*.png, screener-*.png) are renders of this
-source tree and are covered by the same grant.
+The feature recordings under docs/assets/feature-wall/ are renders of this
+source tree over its built-in fictional mailbox and are covered by the same
+grant.
 
 
-What is NOT under GPL-3.0
--------------------------
+What is NOT under AGPL-3.0
+--------------------------
 The ohmail brand. The name "ohmail", the "oh." wordmark, and the icon artwork:
 
   Resources/ohmail.icns
@@ -50,7 +50,7 @@ These are trademarks of TrafficFlow GmbH, included here because the project
 builds with them, and reserved rather than licensed. You may build, run, modify
 and redistribute the source; a fork you distribute publicly must carry its own
 name and its own icon. This is the ordinary free-software arrangement — the
-same line Mozilla drew with Firefox/Iceweasel — and GPL-3.0 section 7(e)
+same line Mozilla drew with Firefox/Iceweasel — and AGPL-3.0 section 7(e)
 expressly contemplates a licence that declines to grant trademark rights.
 
 TRADEMARK.md is the policy, including the many cases where using the name is
@@ -109,8 +109,8 @@ without it.
 
 Per-file licence headers: deliberately absent
 ---------------------------------------------
-There is no GPL header at the top of each source file. That is a decision, not
-an oversight, and there are two reasons.
+There is no licence header at the top of each source file. That is a decision,
+not an oversight, and there are two reasons.
 
 The ordinary one: a single LICENSE plus this file is the normal and sufficient
 arrangement for an application repository. The FSF recommends per-file notices
@@ -120,32 +120,35 @@ application nobody copies a single file out of.
 
 The one specific to ohmail: this repository is a generated mirror. Several of
 the trees published here — packages/tokens, packages/ui, packages/fixtures,
-packages/client-engine and apps/webapp/app — are the *same files* the
-closed-source ohmail Cloud web client is built from. TrafficFlow GmbH holds the
-copyright on all of it and licenses it both ways: GPL-3.0 in this repository,
-proprietary in the Cloud product. Stamping a GPL header into each of those
-files upstream would assert, inside the Cloud client's own sources, a licence
-that does not describe them. Declaring the licence once, at the root, for the
+packages/client-engine and apps/webapp/app — are the *same files* the hosted
+ohmail Cloud web client is built from. TrafficFlow GmbH holds the copyright on
+all of it and licenses it both ways: AGPL-3.0 in this repository, under its own
+terms in the Cloud product. Stamping an AGPL header into each of those files
+upstream would assert, inside the Cloud client's own sources, a licence that
+does not describe them. Declaring the licence once, at the root, for the
 repository as published, states exactly the thing that is true: *this tree, as
-published here, is GPL-3.0-or-later.*
+published here, is AGPL-3.0.*
 
 If you extract a file from this repository, it came from here and it is
-GPL-3.0-or-later. Please carry that with you.
+AGPL-3.0. Please carry that with you.
 
 
-Why GPL-3.0
------------
-The desktop client is free and is meant to stay free. GPL-3.0 keeps it that
-way: anyone may use, study, change and redistribute it, and any redistributed
-change comes back under the same licence — so a closed-source re-skin of ohmail
-is not possible.
+Why AGPL-3.0
+------------
+This client is free and is meant to stay free. AGPL-3.0 keeps it that way:
+anyone may use, study, change and redistribute it, and any redistributed
+change comes back under the same licence — so a closed-source re-skin of
+ohmail is not possible. The Affero clause closes the hosting loophole as
+well: anyone who modifies this code and runs it as a network service for
+other people must offer those users the modified source, so a closed-source
+hosted copy is not possible either.
 
 TrafficFlow GmbH holds the copyright on this codebase and can therefore also
-license it differently for its own products — the ohmail Cloud tier, which is a
-separate, paid, unpublished product. Contributions are accepted under GPL-3.0
-with a DCO sign-off, with no copyright assignment and no CLA. CONTRIBUTING.md
-explains what that means in practice, including the one part of the tree where
-it genuinely constrains what we can accept.
+license it differently for its own products — the hosted ohmail Cloud tier.
+Contributions are accepted under AGPL-3.0 with a DCO sign-off, with no
+copyright assignment and no CLA. CONTRIBUTING.md explains what that means in
+practice, including the one part of the tree where it genuinely constrains
+what we can accept.
 
 
 Contact

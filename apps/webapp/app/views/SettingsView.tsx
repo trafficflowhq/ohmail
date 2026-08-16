@@ -11,7 +11,7 @@
  * ── AND A FIFTH PANE THIS FILE DELIBERATELY KNOWS NOTHING ABOUT ─────────────────────────
  *
  * `accountSection` is the same seam `AppShell`'s `resolveOwner` is, for the same reason.
- * This file is SHARED with `apps/desktop` and copied into a public GPL mirror that does not
+ * This file is SHARED with `apps/desktop` and copied into a public AGPL mirror that does not
  * contain `app/api-client` at all (`scripts/publish-desktop.mjs` DENYs it), so it cannot
  * import "erase this account from the server". The Cloud client passes a node in
  * (`(product)/mailbox/AccountSection.tsx`). Nothing about account deletion is written down in

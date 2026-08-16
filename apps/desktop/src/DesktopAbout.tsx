@@ -41,7 +41,7 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
       <SettingsRow
         label="Licence"
         description="Free software. The source of this app is published, and you may build it yourself."
-        value="GPL-3.0-or-later"
+        value="AGPL-3.0"
       />
 
       <SettingsSubhead>This install</SettingsSubhead>

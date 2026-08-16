@@ -202,7 +202,7 @@ export async function buildEngine({ root = ROOT, outRoot } = {}) {
   const result = await build({ ...buildOptions, outfile: bundlePath, metafile: true });
   /* BESIDE the layout rather than inside it. `out` is copied WHOLESALE into the app's resources, so
    * anything in it ships; the metafile is a build record — the measured list of sources that became
-   * this artifact, which the publisher expands into the GPL corresponding source — and has no
+   * this artifact, which the publisher expands into the licence's corresponding source — and has no
    * business inside a download. `metafilePath` is returned so no caller has to re-derive it. */
   const metafilePath = `${out}.meta.json`;
   writeFileSync(metafilePath, JSON.stringify(result.metafile));

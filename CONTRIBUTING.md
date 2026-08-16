@@ -122,14 +122,14 @@ you forget, we will just ask.
 
 ### What your contribution is licensed as, and what that means for us
 
-Your contribution is licensed under **GPL-3.0-or-later**, the same as the rest
-of this repository. Nothing more is asked, and nothing more is taken.
+Your contribution is licensed under **AGPL-3.0**, the same as the rest of this
+repository. Nothing more is asked, and nothing more is taken.
 
 The honest consequence, which most projects leave you to work out yourself:
-because you keep your copyright and grant only the GPL, **TrafficFlow cannot
-move your code into ohmail Cloud**, which is closed-source. For almost
-everything here that is a non-issue — `apps/desktop` is the desktop client and
-exists nowhere else.
+because you keep your copyright and grant only the AGPL, **TrafficFlow cannot
+ship your code in any part of ohmail Cloud that is not itself published**. For
+almost everything here that is a non-issue — `apps/desktop` is the desktop
+client and exists nowhere else.
 
 There is one real exception, and you should know about it before you spend a
 weekend on a patch. These trees are **shared with the Cloud web client**:
@@ -138,11 +138,11 @@ weekend on a patch. These trees are **shared with the Cloud web client**:
 - `packages/client-engine`
 - `apps/webapp/app/{shell,views}`
 
-They are published here under GPL-3.0 and used in the proprietary Cloud client,
+They are published here under AGPL-3.0 and used in the hosted Cloud client,
 which TrafficFlow can do because it holds the copyright on all of it
 ([COPYRIGHT](COPYRIGHT)). A contribution from you into one of those files would
-break that arrangement — we would be unable to ship it on the Cloud side without
-your separate permission.
+break that arrangement — we could only ship it on the Cloud side by publishing
+that client's source, or with your separate permission.
 
 So, for a PR touching those paths, one of three things happens, and we will tell
 you which at review time rather than sitting on it:

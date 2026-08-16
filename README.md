@@ -9,7 +9,7 @@
 First-time senders wait at the Screener until you let them in, and everything
 you said yes to is organized in place — real folders on your own IMAP server.
 This repository is the free desktop app for macOS, Windows and Linux: the whole
-program, all of its source, GPL-3.0, no account.
+program, all of its source, AGPL-3.0, no account.
 
 [**Download the latest release**](https://github.com/trafficflowhq/ohmail/releases/latest) ·
 [try the demo in your browser](https://ohmail.app/demo) ·
@@ -18,7 +18,7 @@ program, all of its source, GPL-3.0, no account.
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
 [![GitHub stars](https://img.shields.io/github/stars/trafficflowhq/ohmail?style=flat&label=%E2%98%85&color=a3461c)](https://github.com/trafficflowhq/ohmail/stargazers)
 [![latest release](https://img.shields.io/badge/download-v0.9.8-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
-[![licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-a3461c)](LICENSE)
+[![licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
 [![Linux](https://img.shields.io/badge/Linux-AppImage%20%C2%B7%20deb-111111)](#linux)
@@ -312,8 +312,8 @@ interface sources under `apps/webapp/app/` and `packages/ui` are the same ones
 the web client renders, not a copy. `apps/desktop/README.md` is the long
 version — the aliases, the capability set, and what each directory is.
 
-This tree is a generated mirror of a private monorepo (the Cloud backend lives
-there and stays there). Commits arrive as replays that name the monorepo
+This tree is a generated mirror of a private monorepo. Commits arrive as
+replays that name the monorepo
 revision they came from; pull requests land in the monorepo and come back out
 here. [CHANGELOG.md](CHANGELOG.md) records what has shipped.
 
@@ -333,20 +333,24 @@ Dates are not promised. The order is.
 
 ## Licence
 
-GPL-3.0-or-later. Copyright © 2026 **TrafficFlow GmbH**, Staubstrasse 1, 8038
+AGPL-3.0. Copyright © 2026 **TrafficFlow GmbH**, Staubstrasse 1, 8038
 Zürich, Switzerland.
 
-The desktop client is free and is meant to stay free: GPL-3.0 means anyone can
-use, study, change and share it, and any redistributed change comes back under
-the same terms — so a closed-source re-skin of ohmail is not possible. Full
-text in [LICENSE](LICENSE); the reasoning, the third-party position and the
-per-file-header decision in [COPYRIGHT](COPYRIGHT).
+This client is free and is meant to stay free: AGPL-3.0 means anyone can use,
+study, change and share it, and anyone who redistributes a changed version —
+or runs one as a network service for other people — must publish their changes
+under the same terms. A closed-source re-skin of ohmail is not possible, and
+neither is a closed-source hosted copy. Everything the product needs to run is
+open source and always will be; the only private code is the machinery for
+billing our hosted customers. Full text in [LICENSE](LICENSE); the reasoning,
+the third-party position and the per-file-header decision in
+[COPYRIGHT](COPYRIGHT).
 
 **The code is free; the name and the icon are not.** You may fork, build and
-redistribute this source; a fork you publish needs its own name and its own
-artwork, so nobody is misled about who supports it.
-[TRADEMARK.md](TRADEMARK.md) is the policy — packaging ohmail for a
-distribution under its own name is explicitly fine.
+redistribute this source; a fork you publish — and any hosting service you run
+on this code — needs its own name and its own artwork, so nobody is misled
+about who supports it. [TRADEMARK.md](TRADEMARK.md) is the policy — packaging
+ohmail for a distribution under its own name is explicitly fine.
 
 Contributions need **no CLA and no copyright assignment**, just a DCO sign-off
 (`git commit -s`) — see [CONTRIBUTING.md](CONTRIBUTING.md). Security reports:

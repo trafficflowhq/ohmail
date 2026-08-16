@@ -44,7 +44,7 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2026 TrafficFlow GmbH, Zürich. Licensed under GPL-3.0-or-later.</string>
+	<string>Copyright © 2026 TrafficFlow GmbH, Zürich. Licensed under AGPL-3.0-only.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>

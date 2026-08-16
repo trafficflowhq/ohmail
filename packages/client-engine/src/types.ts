@@ -8,7 +8,7 @@
  * below.
  *
  * ABOUT THE `§` REFERENCES in this package. They cite the Cloud API contract
- * document, which is **not public** — ohmail Desktop is the free, GPL-3.0 half
+ * document, which is **not public** — ohmail Desktop is the free, AGPL-3.0 half
  * of the product and the Cloud service is the other half. The citations are
  * left in rather than stripped because they are load-bearing where the file is
  * authored, and because pretending the other half does not exist would be its
