@@ -533,7 +533,7 @@ export const DEFAULT_NET_TIMEOUTS: NetTimeouts = {
 
 /**
  * The SAME deadlines for a process that is not serverless — the worker's persistent, IDLE-held
- * connections. Split out on 2026-08-02, because the worker had been silently inheriting a
+ * connections. Split out because the worker had been silently inheriting a
  * number chosen against that invocation ceiling and a `socketMs` shorter than the legitimate
  * quiet stretches its own cycle produces.
  *
@@ -550,7 +550,7 @@ export const DEFAULT_NET_TIMEOUTS: NetTimeouts = {
  * whose kickstart has already run `runKickstart` returns before touching IMAP. The thread
  * backfill then ran there for minutes on a large backlog: auto-idle was never
  * armed, nothing reset the socket, and at 25 s the client emitted `ETIMEOUT` with no listener.
- * That is the ~26 s crash cadence of the 2026-08-02 outage, and it is also why the small seeded
+ * That is the crash cadence of the no-error-listener outage, and it is also why the small seeded
  * test world never reproduced it.
  *
  * ── WHY 120 s ──────────────────────────────────────────────────────────────────────────────
@@ -588,7 +588,7 @@ export interface ImapCapabilities {
 /**
  * How many messages ONE `changesSince` call may fetch bodies for.
  *
- * The 2026-08-01 outage: the first sync of a real mailbox fetched `source: true` for every
+ * The unbounded-fetch outage: the first sync of a real mailbox fetched `source: true` for every
  * unknown UID in a single pass, so a mailbox of several thousand messages materialised itself —
  * bodies and all — in one array. The worker container's limit is 1 000 000 000 B; the process reached
  * 0.914 GB and was SIGKILLed, which logs nothing. It then crash-looped, because the folder
@@ -723,7 +723,7 @@ export interface ImapAdapterOpts {
    * `ImapFlow` is an EventEmitter and signals a dead socket, a server `BYE`, or an `ETIMEOUT`
    * by emitting `error`. Node turns an `error` event with NO listener into an uncaught
    * exception, and the worker's entrypoint exits the process on those BY DESIGN. That is
-   * the entire kill mechanism of the 2026-08-02 outage: a `try/catch` around the slow code
+   * the entire kill mechanism of the no-error-listener outage: a `try/catch` around the slow code
    * could never have caught it, because the throw did not come out of the call it wrapped.
    *
    * The adapter therefore ALWAYS attaches a listener (see `ImapAdapter.connect`), whether or

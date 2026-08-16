@@ -1420,7 +1420,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * behind the mark whether or not it produced a row. **INBOX has no watermark.** `external_copy`
    * declines in INBOX, so without this change the second delivery of a forged message would have
    * its body re-fetched on every single poll of that mailbox — turning a consent fix into an
-   * unbounded cost, which is the shape of bug that took production down on 2026-08-01.
+   * unbounded cost, which is the shape of bug that has taken production down before.
    *
    * The epoch is a COLUMN now instead of a parse of the ref's left half. Same value, but a
    * `bigint` the database can index and compare, and no `"0"` sentinel for a ref nobody could

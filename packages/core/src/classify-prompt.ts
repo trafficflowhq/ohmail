@@ -145,7 +145,7 @@ export const SCREEN_DESTINATIONS: Destination[] = [
  *    undefined, "spam" collapses into "automated", and every newsletter becomes spam — or, as
  *    actually happened, nothing does.
  *
- * ── THE OHBOX BAR WAS RAISED, 2026-08-08, AND THIS IS WHY ────────────────────────────────────
+ * ── THE OHBOX BAR WAS RAISED, AND THIS IS WHY ────────────────────────────────────────────────
  *
  * The version before this one defined INBOX as "a real person writing to them, **or service mail
  * they personally have to act on — a delivery, a security alert, something with a consequence if
@@ -178,7 +178,7 @@ export const SCREEN_DESTINATIONS: Destination[] = [
  *
  * ── THE SCREENED/QUARANTINE BOUNDARY IS THE RELATIONSHIP, NOT THE BUSINESS ───────────────────
  *
- * Adopted 2026-08-08, and it OVERTURNS a specific piece of reasoning rather than a folder.
+ * Adopted with the raised Ohbox bar above, and it OVERTURNS a specific piece of reasoning rather than a folder.
  *
  * The two bullets used to contradict each other. `ohmail/Screened` claimed "cold sales
  * approaches, unrequested promotions" by name and imperatively; `ohmail/Quarantine` claimed the
@@ -411,7 +411,7 @@ export interface ClassifyUserPayload {
  *
  * ── AND THERE IS NOW A SECOND CALLER SHAPE: `outbound: "prescreened"` ─────────────────────────
  *
- * Under the AI-OPEN rule adopted on 2026-08-08, a caller acting on a person's explicit press
+ * Under the AI-OPEN rule, a caller acting on a person's explicit press
  * redacts the payload itself, with `redactForModel`, and says so on the input. This sink then does
  * not throw.
  *
