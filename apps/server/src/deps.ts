@@ -1,9 +1,8 @@
-import { users, providerFamily, type Tx } from "@trafficflow/db";
+import { users, providerFamily } from "@trafficflow/db";
 import {
   acquireImapSlot, releaseImapSlot, webhookAlertSink,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
-  makeSupabaseStagingStorage, makeS3StagingStorage,
-  type AlertSink, type AttachmentStagingStorage,
+  type AlertSink,
 } from "@trafficflow/db/cloud";
 import {
   makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter,
@@ -19,21 +18,17 @@ import {
   searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
   attachmentsService, kbService, tagsService, draftsService, draftingService, sendService,
   workflowsService, proposalsService,
-  makeAttachmentStagingPort, MailService, SmtpMailer,
 } from "@trafficflow/services";
 // The policy TYPE lives on the mail entry (the sidecar imports it there too); the full barrel
 // above is still loaded by this app — which is exactly why the explicit allowance below exists.
 import type { MailboxAllowancePolicy } from "@trafficflow/services/mail";
-import type { PairingTokenMinted } from "@trafficflow/services";
 import { makeProbeHostGuard, ALLOW_ANY_PROBE_HOST } from "@trafficflow/api";
 import type { ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { schema } from "@trafficflow/db/cloud";
 import {
-  allowCookieAuthForRequest, SELF_HOST_SEND_MAX_TOTAL_BYTES,
-  type ServerConfig, type StorageConfig,
+  allowCookieAuthForRequest, SELF_HOST_SEND_MAX_TOTAL_BYTES, type ServerConfig,
 } from "./config.js";
-import { ensureSetupTokenInvariant } from "./setup-token.js";
 
 /**
  * The per-request {@link ApiDeps} for the standalone self-host server.
@@ -70,95 +65,6 @@ export const SELF_HOST_MAILBOX_ALLOWANCE: MailboxAllowancePolicy = async () => {
 
 type Db = PostgresJsDatabase<typeof schema>;
 
-/**
- * THE ENV-KIND FACTORY over the two staging-storage implementations (Ruling 3): `supabase`
- * selects the managed host's client verbatim, `s3` the SigV4 client MinIO and AWS both speak.
- * The switch is EXHAUSTIVE over {@link StorageConfig} — an unknown kind cannot reach here at all,
- * because `loadStorageConfig` already refused it at boot (config.test.ts pins that refusal), and
- * a kind added to the union without an arm here is a compile error, not a runtime surprise.
- *
- * `fetchImpl` is the same injection seam both implementations already expose, threaded through
- * so the factory test can PROVE which arm it armed by watching the wire instead of trusting a
- * label. Production passes nothing.
- */
-export function stagingStorageFor(
-  storage: StorageConfig, fetchImpl: typeof fetch = fetch,
-): AttachmentStagingStorage {
-  switch (storage.kind) {
-    case "supabase":
-      return makeSupabaseStagingStorage(
-        { url: storage.url, serviceKey: storage.serviceKey, bucket: storage.bucket }, fetchImpl,
-      );
-    case "s3":
-      return makeS3StagingStorage({
-        endpoint: storage.endpoint,
-        region: storage.region,
-        accessKeyId: storage.accessKeyId,
-        secretAccessKey: storage.secretAccessKey,
-        bucket: storage.bucket,
-      }, fetchImpl);
-  }
-}
-
-/** `"ohmail <no-reply@x>"` → `no-reply@x` — the bare address inside an RFC5322 display form. */
-const bareAddress = (from: string): string => {
-  const m = /<([^<>\s]+@[^<>\s]+)>/.exec(from);
-  return (m ? m[1]! : from).trim();
-};
-
-/**
- * The `MailService` customer mail goes through on this host, or `null` when the operator set no
- * SMTP block — the managed composition's `customerMailerFor`, restated over `SmtpMailer`.
- *
- * `null` is a WORKING configuration, not a degraded one: the pairing invite path never needs
- * mail (verification rides the consumed token's own `confers_verified` record), and the only
- * surface that hard-requires a mailer — open public signup — does not exist on this composition
- * at all, so the 503-on-the-open-gate degradation inside `AuthService.register` is compiled-in
- * caution rather than a reachable state. What a mailer ADDS is the ordinary verification flow
- * for addresses that arrive unverified, `resendVerification`, and the new-device sign-in notice.
- *
- * Unlike the managed host's version this one THROWS on an unusable block, deliberately: there,
- * construction runs on the path of every request and a bad value must cost mail rather than
- * availability; here it runs once at boot, and config.ts's contract is that a misshapen value
- * refuses the start with the variable named. Every message on that path is a fixed sentence —
- * `SmtpMailer`'s own refusals name no value, because `SMTP_URL` embeds a credential.
- *
- * The link bases are all {@link ServerConfig.origin}: one origin is the whole point of this
- * composition, and it was validated at boot, so `MailService`'s own base assertion cannot add a
- * second refusal. `supportEmail` — the address templates tell people to write to — is the
- * operator's `MAIL_REPLY_TO` when set (a mailbox a human reads), else the bare `MAIL_FROM`.
- */
-export function customerMailerFor(cfg: ServerConfig): MailService | null {
-  if (!cfg.smtp) return null;
-  try {
-    return new MailService({
-      mailer: new SmtpMailer({
-        url: cfg.smtp.url,
-        from: cfg.smtp.from,
-        replyTo: cfg.smtp.replyTo ?? undefined,
-      }),
-      config: {
-        appUrl: cfg.origin,
-        siteUrl: cfg.origin,
-        supportEmail: cfg.smtp.replyTo ?? bareAddress(cfg.smtp.from),
-        // The operator origin must be NAMED as a permitted link base — the default list is the
-        // managed product's own origins, and "mail links wherever an env var points" must stay
-        // a property nobody acquires by accident (mail-service.ts states the rule).
-        allowedOrigins: [cfg.origin],
-        // No `operatorEmail`: this instance exists to reach the box's users, and without the
-        // address `sendOperatorAlert` skips — the alert path stays webhook-only for now (see
-        // alertSinksFor).
-      },
-    });
-  } catch (err) {
-    // Boot refusal, config.ts's grammar: the variable, the rule, never the value. The inner
-    // message is one of our own fixed sentences (SmtpMailer/assertUsableFrom echo nothing).
-    throw new Error(
-      `SMTP is configured but not usable — check SMTP_URL and MAIL_FROM: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
 /** Everything with process lifetime, built once by `index.ts` and handed to every request. */
 export interface ServerRuntime {
   cfg: ServerConfig;
@@ -167,8 +73,6 @@ export interface ServerRuntime {
   changeWake: ChangeWakeHub | null;
   /** One long-lived token provider — see {@link oauthProviderFor}. */
   oauth: MicrosoftTokenProvider;
-  /** Where a setup token minted OUTSIDE boot gets printed — see {@link needsSetupFor}. */
-  onSetupTokenMinted: (minted: PairingTokenMinted) => void;
   logger: Logger;
 }
 
@@ -179,21 +83,15 @@ export interface ServerRuntime {
  * note in the managed composition requires).
  *
  * WHAT IS ABSENT, against the managed bag, each on purpose (the bag-parity test freezes this
- * list): `billingPlane`/`entitlements` (nothing to buy), `waitlist` (no funnel), and `aiCredits`
+ * list): `billingPlane`/`entitlements` (nothing to buy), `waitlist` (no funnel), `aiCredits`
  * (the operator supplies the model key and pays the model bill themselves — absent gate means
  * UNMETERED, the sidecar's grammar, never ungated-by-accident: the barrel default this bag
- * overrides is the mailbox allowance, and the credit gate is simply never constructed).
- * `attachmentStaging` is conditional, not absent: armed from `cfg.storage` through the env-kind
- * factory when the operator configured object storage, and absent otherwise (absence ⇒ the mint
- * route answers 503 and sends carry inline bytes — load-bearing, `deps.ts` in packages/api
- * states the semantics).
+ * overrides is the mailbox allowance, and the credit gate is simply never constructed), and
+ * `attachmentStaging` until the storage adapters exist (absence ⇒ the mint route answers 503
+ * and sends carry inline bytes — load-bearing, `deps.ts` in packages/api states the semantics).
  */
 export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
   const { authConfig, keyProvider } = cfg;
-  // Built ONCE for the process — the storage client is stateless config + a signing key, and one
-  // instance serving every request is the long-running host's shape (the managed bag constructs
-  // per cold instance for the same reason).
-  const stagingStorage = cfg.storage ? stagingStorageFor(cfg.storage) : null;
   const bag: Record<string, unknown> = {
     sync: syncService,
     push: pushService,
@@ -208,21 +106,6 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
       : makeProbeHostGuard(nodeHostResolver),
     // The adapter's own body cap expressed in raw attachment bytes — config.ts derives the pair.
     sendSurfaceMaxTotalBytes: SELF_HOST_SEND_MAX_TOTAL_BYTES,
-    // ── AND THIS IS THE WAY ROUND THAT CAP, when the operator armed object storage ──────────
-    // The browser mints a grant, PUTs the bytes straight into the bucket (MinIO on the compose;
-    // any S3 endpoint or a Supabase project via TF_STORAGE_KIND), and the send carries a
-    // reference — the managed transport verbatim, behind the same factory-over-the-request-db
-    // shape. ABSENT when no storage is configured, and the absence is load-bearing: the mint
-    // route answers 503, `/hello` reports `staging: false` (it reads THIS member), and inline
-    // sends keep working under the body cap above.
-    ...(stagingStorage
-      ? {
-        attachmentStaging: (reqDb: Tx) => makeAttachmentStagingPort({
-          db: reqDb,
-          storage: stagingStorage,
-        }),
-      }
-      : {}),
     rules: rulesService,
     message: messageService,
     thread: threadService,
@@ -240,13 +123,11 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     sends: sendService,
     workflows: workflowsService,
     proposals: proposalsService,
-    // Register/verify/factors/OAuth ceremony. `mail` is the SmtpMailer behind MailService when
-    // the operator set the SMTP block, and `null` otherwise — a WORKING state, not a gap: the
-    // pairing invite path never needs mail (routes/self-host.ts obligation 3 — verification
-    // rides the consumed token's own record), and open signup does not exist here. See
-    // customerMailerFor for what a mailer adds and why its failure refuses the boot.
+    // Register/verify/factors/OAuth ceremony. `mail: null` until the SmtpMailer adapter: the pairing
+    // invite path never needs mail (routes/self-host.ts obligation 3 — verification rides the
+    // consumed token's own record), and open signup does not exist on this composition.
     auth: makeAuthService({
-      config: authConfig, keyProvider, passwordHasher: scryptHasher, mail: customerMailerFor(cfg),
+      config: authConfig, keyProvider, passwordHasher: scryptHasher, mail: null,
     }),
     // Envelope-encrypts mailbox credentials with the SAME provider the organizer decrypts with —
     // the KEK identity on the two /health responses is what proves they agree. The explicit
@@ -303,12 +184,9 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
 
 /**
  * The alert sinks this host can reach: the JSON webhook, when the operator configured one. The
- * MAIL sink is still deliberately absent even now that `SmtpMailer` exists, because it needs the
- * one thing this host's config does not yet name: an OPERATOR ADDRESS (`MailService` refuses to
- * take a recipient as an argument — the anti-mail-bomb rule — and `operatorEmail` is unset on
- * the customer instance on purpose). Wiring it is an env-vocabulary decision, not an adapter
- * gap; named follow-up. Cannot throw — an observability feature must never cause the outage it
- * exists to report.
+ * mail sink joins with the SmtpMailer when it lands (a mail sink without a mailer would stamp alerts as
+ * notified that nobody received). Cannot throw — an observability feature must never cause the
+ * outage it exists to report.
  */
 export function alertSinksFor(cfg: ServerConfig, logger: Logger): AlertSink[] {
   const sinks: AlertSink[] = [];
@@ -366,20 +244,9 @@ export function oauthProviderFor(cfg: ServerConfig, db: Db): MicrosoftTokenProvi
  * boot-time boolean because the answer flips the moment the first account registers, and
  * `/hello` must tell the truth per request. It may throw — the route answers 503 rather than
  * guessing in either direction (hello.ts states why both guesses are wrong).
- *
- * It first ENFORCES the setup-token invariant (`ensureSetupTokenInvariant`): `needsSetup: true`
- * must never be advertised while the token that ceremony needs exists nowhere (the last account
- * erased itself; the boot token expired unredeemed), and a live ownerless token must never
- * survive on a server that has users (the restart-races-first-registration residue). A token
- * this path mints is printed through {@link ServerRuntime.onSetupTokenMinted} — stdout, where
- * the boot already told the operator to look.
  */
-export function needsSetupFor(
-  db: Db,
-  onMinted: (minted: PairingTokenMinted) => void,
-): () => Promise<boolean> {
+export function needsSetupFor(db: Db): () => Promise<boolean> {
   return async () => {
-    await ensureSetupTokenInvariant(db, { onMinted });
     const row = await db.select({ id: users.id }).from(users).limit(1);
     return row.length === 0;
   };
@@ -429,7 +296,7 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
     // member the wiring arms from, so the negotiation cannot disagree with what the routes do.
     hello: {
       flavor: "selfhost",
-      needsSetup: needsSetupFor(rt.db, rt.onSetupTokenMinted),
+      needsSetup: needsSetupFor(rt.db),
       auth: {
         password: true,
         totp: true,
@@ -441,9 +308,10 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
       features: {
         // Free on a long-running server; config.ts pins it enabled with no flag to forget.
         sse: cfg.sse.enabled === true,
-        // Reads the BAG, not the parsed config: the descriptor must announce what the routes DO
-        // (the mint route answers 503 while the port is absent), not what the environment hopes.
-        // `cfg.storage` arms the bag member through the env-kind factory; this reads the member.
+        // Reads the BAG, not the parsed config: cfg.storage is parsed now and wired with the
+        // storage adapters, and
+        // the descriptor must announce what the routes DO (the mint route answers 503 while the
+        // port is absent), not what the environment hopes.
         staging: rt.services.attachmentStaging !== undefined,
         ai: cfg.anthropicApiKey !== null,
         // OBLIGATION 2: the pairing routes are mounted on this table and this table only, so
