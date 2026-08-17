@@ -50,6 +50,18 @@ export {
 } from "./client.js";
 
 /**
+ * The `/events` per-instance LISTEN fan-out — one session-mode connection, many streams.
+ *
+ * Extracted from `apps/api-vercel/src/wake-hub.ts` (which re-exports it unchanged) the day a
+ * second long-running host needed the same hub; see `change-wake.ts` for the invariant. Cloud
+ * entry point because it dials a `postgres://` URL, which no shipped local engine has.
+ */
+export {
+  makeChangeWakeHub, IDLE_CLOSE_MS as WAKE_IDLE_CLOSE_MS, RETRY_AFTER_MS as WAKE_RETRY_AFTER_MS,
+  type ChangeWakeFanout,
+} from "./change-wake.js";
+
+/**
  * The cross-process cap on concurrent IMAP connections per mailbox.
  *
  * Not a billing or identity concern, and here anyway: it counts through `auth_throttle`, a table
