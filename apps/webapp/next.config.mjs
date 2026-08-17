@@ -58,6 +58,53 @@ const withNextIntl = createNextIntlPlugin();
 /** The env var that arms the topology. Unset ⇒ the rewrite does not exist. */
 export const API_ORIGIN_VAR = "TF_API_ORIGIN";
 
+/**
+ * THE SELF-HOST BUILD ARM — `OHMAIL_FLAVOR=selfhost`, decided at BUILD time.
+ *
+ * On the managed deployment THIS APP owns the origin split: `rewrites()` proxies `/api/*` and
+ * `/auth/refresh` to the API host, and `TF_API_ORIGIN` is the one variable that arms it. On a
+ * self-hosted install the split belongs to the REVERSE PROXY in front of both containers
+ * (`deploy/selfhost/Caddyfile` routes `/api/*`, `/auth/*`, `/events`, `/health`, `/hello` and
+ * `/pair*` to the API container and everything else here), so this build must emit NO rewrite at
+ * all — two owners of the same split is a request served twice or, worse, served differently.
+ *
+ * What the flavor changes, and the exact posture of each half:
+ *
+ *  · **`rewrites()` returns `[]`.** The proxy owns the split. A rewrite here would need a
+ *    `TF_API_ORIGIN`, and on an operator's box that variable has no allow-listable value.
+ *  · **`NEXT_PUBLIC_API_BASE` is armed to `/api` anyway.** The browser still calls its own
+ *    origin — the proxy routes it — so the client bundle needs the base without the rewrite.
+ *    This is the one composition where the two halves legitimately part ways, which is why the
+ *    flavor is a COMPILED branch and not a second environment variable that could disagree.
+ *  · **`TF_API_ORIGIN` set alongside the flavor FAILS THE BUILD.** It could only mean somebody
+ *    is trying to arm both owners of the split at once.
+ *  · **Anything other than `"selfhost"` or unset FAILS THE BUILD.** An absent value must select
+ *    the managed behavior exactly; a misspelled one must never do so silently.
+ *
+ * What the flavor deliberately does NOT change (recorded so nobody hunts for it): the session
+ * gate in `middleware.ts` still reads `TF_API_ORIGIN` at RUNTIME against the compiled allow-list
+ * (`app/api-origin.ts`), and a self-host container sets no such variable — so the gate resolves
+ * `null` and every request is answered with the marketing surface. That is the fail-closed state
+ * the gate already defines, and wiring a self-host session gate (plus the first-run setup page)
+ * is the first-run slice's work, not a side effect of a build flag.
+ */
+export const FLAVOR_VAR = "OHMAIL_FLAVOR";
+
+/**
+ * Is this a self-host build? Refuses anything but the two meaningful states — see
+ * {@link FLAVOR_VAR}. Exported for the config suite.
+ *
+ * @param {Record<string, string | undefined>} env
+ */
+export function selfHostFlavor(env) {
+  const raw = (env[FLAVOR_VAR] ?? "").trim();
+  if (raw === "") return false;
+  if (raw === "selfhost") return true;
+  throw new Error(
+    `${FLAVOR_VAR} must be "selfhost" or unset — a misspelled flavor must never select the managed build silently`,
+  );
+}
+
 /** The variable Next inlines into the client bundle. DERIVED — never set by hand. */
 export const API_BASE_VAR = "NEXT_PUBLIC_API_BASE";
 
@@ -309,9 +356,12 @@ export function apiOrigin(raw) {
  * @param {string | undefined} supplied
  * @param {string | null} derivedOrigin
  */
-export function assertApiBaseNotOverridden(supplied, derivedOrigin) {
+export function assertApiBaseNotOverridden(supplied, derivedOrigin, selfhost = false) {
   if (supplied === undefined) return;
-  if (derivedOrigin !== null && supplied === API_BASE) return;
+  // Both arming paths accept exactly the value this config derives anyway (Next may evaluate
+  // the config in a child process that already carries it): the managed one when the rewrite
+  // origin exists, the self-host one where the proxy owns the split and no origin ever will.
+  if ((derivedOrigin !== null || selfhost) && supplied === API_BASE) return;
   throw new Error(
     `${API_BASE_VAR} is derived from ${API_ORIGIN_VAR} and must not be set in the build environment`,
   );
@@ -354,6 +404,11 @@ export function assertApiBaseNotOverridden(supplied, derivedOrigin) {
  */
 export function assertApiArmed(origin, env) {
   if (origin !== null) return;
+  // The self-host build is armed WITHOUT an origin by design: the reverse proxy owns the
+  // split, and `NEXT_PUBLIC_API_BASE` is set by the flavor branch below. None of the three
+  // silent failures this assertion exists for can occur — the base is defined and `/api`
+  // resolves through the proxy.
+  if (selfHostFlavor(env)) return;
   const demo = (env.NEXT_PUBLIC_DEMO ?? "").trim().toLowerCase();
   if (demo === "1" || demo === "true") return;
   if ((env.VERCEL_ENV ?? "").trim() !== "production") return;
@@ -503,9 +558,17 @@ export async function githubStars(fetcher = fetch) {
   }
 }
 
-const origin = apiOrigin(process.env[API_ORIGIN_VAR]);
+const selfhost = selfHostFlavor(process.env);
+if (selfhost && (process.env[API_ORIGIN_VAR] ?? "").trim() !== "") {
+  // Two owners of the origin split at once: the flavor hands it to the reverse proxy, the
+  // variable would hand it to this app's rewrite. Refuse rather than pick.
+  throw new Error(
+    `${API_ORIGIN_VAR} must not be set on a ${FLAVOR_VAR}=selfhost build — the reverse proxy owns the /api split there`,
+  );
+}
+const origin = selfhost ? null : apiOrigin(process.env[API_ORIGIN_VAR]);
 assertApiArmed(origin, process.env);
-assertApiBaseNotOverridden(process.env[API_BASE_VAR], origin);
+assertApiBaseNotOverridden(process.env[API_BASE_VAR], origin, selfhost);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -538,7 +601,9 @@ const nextConfig = {
   // `process.env.NEXT_PUBLIC_APP_VERSION` with a fallback — see `appVersion` for why a `?? "dev"`
   // is a wrong number shown to a customer rather than a missing one.
   env: {
-    ...(origin ? { [API_BASE_VAR]: API_BASE } : {}),
+    // Armed by EITHER arming path: the managed rewrite origin, or the self-host flavor whose
+    // proxy serves `/api` without a rewrite here. See `selfHostFlavor`.
+    ...(origin || selfhost ? { [API_BASE_VAR]: API_BASE } : {}),
     [BUILD_VAR]: buildIdentity(process.env),
     [VERSION_VAR]: appVersion(),
   },
@@ -576,6 +641,10 @@ const nextConfig = {
     // Dormant until armed. Emitting a rewrite to a hostname that does not resolve yet would
     // point production at a dead host — worse than having no API at all, because the demo
     // gate stays honest while `NEXT_PUBLIC_API_BASE` is absent.
+    //
+    // On a self-host build `origin` is null BY CONSTRUCTION (the flavor refuses the variable),
+    // so this same branch is the flavor's `rewrites() === []` contract: the reverse proxy in
+    // front of this container owns the split. Asserted in test/selfhost-flavor.test.ts.
     if (!origin) return [];
     return [
       { source: `${API_BASE}/:path*`, destination: `${origin}/:path*` },

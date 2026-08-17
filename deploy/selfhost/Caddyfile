@@ -1,0 +1,34 @@
+# The self-host stack's ONE front door. Caddy owns the origin split that the managed
+# deployment performs with a Next rewrite: the browser only ever talks to this address, and
+# these routes decide which container answers.
+#
+# The site address IS the configuration: `OHMAIL_ORIGIN` (docker-compose.yml passes it in).
+#  · `https://mail.example.com`  — Caddy provisions and renews a certificate automatically
+#    (the domain must resolve to this box and ports 80/443 must be reachable from outside).
+#  · `http://localhost` or `http://localhost:<port>` — the same-box run, plain HTTP on a
+#    loopback origin. One browser caveat, documented rather than worked around: the API's
+#    cookies carry `Secure` unconditionally, and Safari — alone among the major engines —
+#    refuses Secure cookies over http://localhost. Same-box Safari therefore needs the HTTPS
+#    form (or any Chromium/Firefox browser); a real domain is unaffected.
+{$OHMAIL_ORIGIN} {
+	# The API's whole path surface, matched EXACTLY as the API mounts it. NO path
+	# stripping anywhere: the API canonicalizes one leading `/api` off itself, so `/api/sync`
+	# through this proxy and `/sync` from a native client hash identically for idempotency —
+	# a strip here would double-strip `/api/api/…` shapes and desynchronize retries.
+	#
+	#   /api/*         the browser client's calls (NEXT_PUBLIC_API_BASE=/api)
+	#   /auth/*        sign-in ceremonies, and the refresh cookie's own Path (/auth/refresh)
+	#   /events        the SSE stream (long-lived; Caddy streams it unbuffered by default)
+	#   /health        liveness + schema + key identity, for operators and health checks
+	#   /hello         the capability handshake (flavor, needsSetup, features)
+	#   /pair, /pair/* the pairing-token ceremony (first-run setup, invites, device pairing)
+	@api path /api /api/* /auth /auth/* /events /health /hello /pair /pair/*
+	handle @api {
+		reverse_proxy api:8080
+	}
+
+	# Everything else is the web application: the landing, the sign-in pages, the client.
+	handle {
+		reverse_proxy web:3000
+	}
+}
