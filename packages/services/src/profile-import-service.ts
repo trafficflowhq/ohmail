@@ -182,7 +182,7 @@ function applicableRule(r: ProfileRuleEntry): ApplicableRule | null {
 
 /** The natural key a rule is merged under. Terms are never `""` after normalization. */
 const ruleKey = (r: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null }): string =>
-  [r.kind, r.match, r.subjectContains ?? "", r.bodyContains ?? ""].join("");
+  [r.kind, r.match, r.subjectContains ?? "", r.bodyContains ?? ""].join("\u0000");
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -387,11 +387,11 @@ export class ProfileImportService {
         .from(notifyRules).where(eq(notifyRules.accountId, ctx.accountId));
       const notifyHave = new Map<string, number>();
       for (const nr of localNotify) {
-        const k = `${nr.kind}${nr.target}`;
+        const k = `${nr.kind}\u0000${nr.target}`;
         notifyHave.set(k, (notifyHave.get(k) ?? 0) + 1);
       }
       for (const nr of doc.notifyRules) {
-        const k = `${nr.kind}${nr.target}`;
+        const k = `${nr.kind}\u0000${nr.target}`;
         const have = notifyHave.get(k) ?? 0;
         if (have > 0) { notifyHave.set(k, have - 1); continue; }
         await tx.insert(notifyRules).values({
