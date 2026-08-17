@@ -55,6 +55,14 @@ export interface InviteConsumed {
   inviteId: string;
   /** The address the code was bound to — already normalised. */
   email: string;
+  /**
+   * Does this consumption prove the caller controls `email`? Read off the consumed ROW
+   * (`invites.confers_verified`) in the same statement that burned it — register stamps
+   * `email_verified_at` only when this is true. TRUE for mailed invites (receipt is the
+   * proof); FALSE for invites minted by a user's pairing-token redeem, where the redeemer
+   * typed the address and nothing was ever mailed. See the column's doc in the cloud schema.
+   */
+  confersVerified: boolean;
 }
 
 export interface InviteRefused {
@@ -124,9 +132,9 @@ export async function consumeInvite(
       isNull(invites.revokedAt),
       gt(invites.expiresAt, input.now),
     ))
-    .returning({ id: invites.id, email: invites.email });
+    .returning({ id: invites.id, email: invites.email, confersVerified: invites.confersVerified });
 
-  if (row) return { ok: true, inviteId: row.id, email: row.email };
+  if (row) return { ok: true, inviteId: row.id, email: row.email, confersVerified: row.confersVerified };
   return { ok: false, refusal: await classifyInviteFailure(tx, codeHash, email, input.now) };
 }
 
@@ -169,10 +177,21 @@ async function classifyInviteFailure(
  *
  * Also stamps `waitlist.invited_at` when the address is on the list, so "who is still
  * waiting" stays one query and nobody is invited twice by accident.
+ *
+ * `confersVerified` DEFAULTS TRUE, matching the column default and every caller that mails:
+ * an operator-minted code reaches its address as a mail, so redeeming it proves receipt and
+ * register may stamp `email_verified_at`. A caller whose delivery leg does NOT prove address
+ * control — the pairing-token redeem, which mints for whatever address its redeemer typed —
+ * must pass `false`, and must decide that from its OWN record (the consumed token row), never
+ * from anything ITS caller sent: the flag chooses whether an account is born verified, so a
+ * forgeable source here would be the verification forgery this parameter exists to close.
  */
 export async function issueInvite(
   tx: Tx,
-  input: { email: string; expiresAt: Date; now: Date; issuedBy?: string; note?: string | null },
+  input: {
+    email: string; expiresAt: Date; now: Date; issuedBy?: string; note?: string | null;
+    confersVerified?: boolean;
+  },
 ): Promise<{ code: string; inviteId: string; email: string; expiresAt: Date }> {
   const email = normalizeRecipient(input.email);
   if (!email) throw new ServiceError("validation_failed", 400, "a valid email address is required");
@@ -187,6 +206,11 @@ export async function issueInvite(
     issuedBy: input.issuedBy ?? "operator",
     note: input.note ?? null,
     expiresAt: input.expiresAt,
+    // ABSENT means true (every caller that omits it mails, and receipt is the proof), but a
+    // PRESENT value confers only when it is exactly the boolean `true`: this flag decides
+    // whether an account is born verified, so a malformed value from a JavaScript caller must
+    // degrade to "verify by mail later" — the harmless side — never to a conferred mark.
+    confersVerified: input.confersVerified === undefined || input.confersVerified === true,
   }).returning({ id: invites.id });
 
   await tx.update(waitlist)

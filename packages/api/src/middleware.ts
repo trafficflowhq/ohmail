@@ -310,9 +310,23 @@ export const withStepUp: Middleware = (next, route) => async (req, deps, params)
  * here at all: the `SCHEMA_MARKERS` probe answers `503 schema_incomplete` first, which is
  * deliberate — a missing column must be a loud refusal, never a gate that silently reads
  * "verified" for everybody.
+ *
+ * ## Whether to require at all is the COMPOSITION'S policy — and absence is REQUIRE
+ *
+ * `deps.requireVerifiedForProduct` (see its doc on {@link ApiDeps}) lets a composition root
+ * state whether this gate applies on its deployment: the hosted service says `true` out loud,
+ * an operator-run standalone server may say `false` (its mailbox adds present an IMAP
+ * credential, which proves more about mailbox ownership than a verification mail does, and its
+ * accounts legitimately arrive unverified through a pairing invite). The comparison below is
+ * `!== false`, DELIBERATELY, and not `=== true` or a `??` default: only the exact boolean
+ * `false` relaxes, so an absent field, a garbage value and every future container that never
+ * heard of the policy all get the strict gate. A gate whose absence-of-config branch is the
+ * permissive one is a misconfiguration that presents as working, which this repository has
+ * paid for before.
  */
 export const withSpendGate: Middleware = (next, route) => async (req, deps, params) => {
-  if (deps.session && deps.session.emailVerifiedAt == null && !unverifiedMayReach(route.cost)) {
+  if (deps.requireVerifiedForProduct !== false
+    && deps.session && deps.session.emailVerifiedAt == null && !unverifiedMayReach(route.cost)) {
     return errorResponse(
       "email_unverified", 403,
       "Confirm your email address first. We sent a link when you signed up — " +

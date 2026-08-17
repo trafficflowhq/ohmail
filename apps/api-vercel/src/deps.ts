@@ -536,6 +536,12 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
       ? wakeHubFor(cfg)
       : null,
     allowCookieAuth: allowCookieAuthForRequest(req, cfg.cookieHosts),
+    // The verified-address product policy, stated rather than defaulted: this host requires a
+    // proven address before the costly route classes (`withSpendGate`). Absence already means
+    // REQUIRE, so this line changes nothing today — it exists so the hosted composition is
+    // never the one leaning on a fallback, and so a future default change cannot move this
+    // deployment's behaviour without touching this file.
+    requireVerifiedForProduct: true,
     health: {
       version: cfg.version, kek: cfg.kek, kekError: cfg.kekError, buildError: cfg.buildError,
       // Non-fatal by design: `/health` names it and still answers 200, because an unarmed

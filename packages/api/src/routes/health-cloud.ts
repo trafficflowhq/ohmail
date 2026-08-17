@@ -122,6 +122,14 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // the column exists to hold would simply be absent. A 503 at the deploy gate is how that
   // becomes visible before it is deployed rather than never.
   ["oauth_auth_codes", "twofa_at"],
+  // cloud 0018_invites_confers_verified — does redeeming this invite prove address control?
+  // One added column, `NOT NULL DEFAULT true`, and the default is what makes the marker
+  // load-bearing rather than decorative: on a database missing this migration the register
+  // path's SELECT-through-drizzle 42703s loudly, but the PAIRING redeem's insert — the one
+  // writer that must set FALSE — would also 42703, and the tempting "fix" on such a host is to
+  // stop writing the column, which resurrects the exact verification forgery the column exists
+  // to close. A 503 at the deploy gate forecloses the whole path.
+  ["invites", "confers_verified"],
 ] as const;
 
 /**
@@ -280,10 +288,17 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * calls, so the deployment would look entirely healthy while the property the column carries —
  * the real second-factor time inherited across the native handoff — was silently absent.
  *
+ * `0018_invites_confers_verified` is the easy case — one added column on an existing table,
+ * `invites.confers_verified`. Its sentence is about which FAILURE the marker forestalls: the
+ * column's `NOT NULL DEFAULT true` means a database missing it does not corrupt data, it 42703s
+ * the register and pairing-redeem paths — and the cheap repair someone reaches for on a
+ * half-migrated host (drop the column from the writes) is precisely the verification forgery
+ * the column closes. The deploy-gate 503 is what makes that repair never look attractive.
+ *
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0017_oauth_code_twofa_provenance";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0018_invites_confers_verified";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

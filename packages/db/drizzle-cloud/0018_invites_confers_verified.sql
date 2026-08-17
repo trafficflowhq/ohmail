@@ -1,0 +1,51 @@
+-- DOES THIS INVITE PROVE ITS HOLDER CONTROLS THE ADDRESS? — one boolean, defaulted to the
+-- answer every existing row already earned.
+--
+-- ══ WHAT THE COLUMN HOLDS ═════════════════════════════════════════════════════════════════
+--
+-- `POST /auth/register`'s invite path stamps `users.email_verified_at` at creation, and the
+-- justification has always been RECEIPT: an email-bound code that was mailed to the address and
+-- then presented from it is proof the registrant reads that inbox — the same proof a mailed
+-- verification link carries. Every invite this table held satisfied that argument, because the
+-- operator mint path was the only writer and it always mails.
+--
+-- The pairing-token redeem broke the premise without breaking the mechanism. It mints an invite
+-- row for WHATEVER ADDRESS THE REDEEMER TYPES — the pairing token replaced the invite's delivery
+-- leg, so nothing was ever mailed and receipt proves nothing. Registering through such an invite
+-- produced an account marked verified for an address its owner may not control: a verification
+-- forgery reachable by anyone handed a pairing token. The stamp was keying on "a consumed invite
+-- row exists" when the truth it must key on is "this row PROVES address control".
+--
+-- So the row now carries that fact explicitly:
+--
+--  · TRUE  — redeeming this invite is proof of address control. Mailed invites (receipt), and
+--            the invite minted by a server's FIRST-BOOT setup token (whoever redeems the token
+--            printed to the server's own stdout is the operator, and the operator's address on
+--            their own box is a login identifier they answer for — control of the box is the
+--            proof, the same argument that lets a single-user desktop install start verified).
+--  · FALSE — the invite only authorizes REGISTRATION. The account is created unverified and
+--            proves its address later through the ordinary mailed verification flow.
+--
+-- ══ DEFAULT TRUE, AND WHY THAT IS THE SAFE DIRECTION HERE ═════════════════════════════════
+--
+-- Every row present when this runs was minted by a path that mails (or by the first-boot
+-- ceremony), so TRUE preserves each one's earned semantics with zero data churn — a backfill
+-- would have nothing to distinguish rows by that the default does not already encode. New rows
+-- that do NOT prove control must OPT OUT, and the one writer that can create such a row (the
+-- pairing redeem) sets FALSE explicitly, deciding from the consumed token's own record — never
+-- from anything its caller sent. The failure mode of a writer that forgets the flag is an
+-- account marked verified, which is exactly the pre-column behavior, never a new one; the
+-- census marker below is what keeps the column itself from silently not existing.
+--
+-- ══ NO INDEX ══════════════════════════════════════════════════════════════════════════════
+--
+-- Never a lookup key: the one read is by register's invite consumption, which has already found
+-- its row by `code_hash` (unique) before this column is touched.
+--
+-- ══ THE SEAM ══════════════════════════════════════════════════════════════════════════════
+--
+-- `invites` is a cloud-journal table (identity ceremony), so this DDL belongs in this journal
+-- and nowhere else; nothing shared is touched.
+--
+-- `IF NOT EXISTS` so a replay is a no-op rather than a 42701 that stops a journal mid-pass.
+ALTER TABLE "invites" ADD COLUMN IF NOT EXISTS "confers_verified" boolean NOT NULL DEFAULT true;

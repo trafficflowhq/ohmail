@@ -15,10 +15,12 @@ import { ServiceError } from "./errors.js";
  *
  *  · **`invite` grant** — the standalone server's first-account setup token and the family
  *    invite. Redeeming consumes the token and mints an EMAIL-BOUND `invites` row for the
- *    address the redeemer presents; the client then runs the existing `POST /auth/register`,
- *    whose invite path stamps `email_verified_at` — the whole property this bridge buys. No
- *    mailer is ever needed: the pairing token took the invite's delivery leg over the
- *    operator's own channel.
+ *    address the redeemer presents; the client then runs the existing `POST /auth/register`.
+ *    No mailer is ever needed — the pairing token took the invite's delivery leg over the
+ *    operator's own channel — and THAT is the property this bridge buys: registration, not
+ *    verification. Whether the account starts VERIFIED is decided by the consumed token's own
+ *    record (see {@link redeemInviteGrant}): the first-boot OWNERLESS token confers it, a
+ *    user-minted token does not, because its holder typed an address nothing was mailed to.
  *  · **`device-pair` grant** — QR device pairing. Redeeming consumes the token and mints a
  *    device-labelled session + refresh family FOR THE TOKEN'S CREATOR, on the desktop-handoff
  *    claim model (`AuthService.claimDesktopLink`): the token is the credential, the response
@@ -364,12 +366,24 @@ export interface InviteGrantRedeemed {
  * un-burns the token (`consumeInvite`-inside-register's rule, from the other side). The email
  * is validated BEFORE anything is consumed for the same reason.
  *
- * The returned code goes straight into the existing `POST /auth/register`, whose invite path
- * stamps `email_verified_at` at creation — the property this bridge exists to buy. Sworn
- * trade-off, said out loud: the pairing token is NOT email-bound, so its holder can spend it on
- * an address of their choosing and learn from register's invite-path 409 whether that address
- * already has an account here. One bit, costs the whole token, on a server whose operator
- * minted the token — accepted.
+ * The returned code goes straight into the existing `POST /auth/register`. Whether that
+ * registration starts EMAIL-VERIFIED rides on the minted invite's `confers_verified`, and the
+ * answer is read off the CONSUMED TOKEN ROW inside this same transaction — never off anything
+ * the redeemer sent, because this endpoint is anonymous and a caller-writable flag here would
+ * let any token holder mint themselves a verified account for an address they do not control:
+ *
+ *  · `created_by_user_id IS NULL` — the FIRST-BOOT setup token, mintable only by the
+ *    composition root before any session machinery exists (the API mint always has a session
+ *    user). Whoever presents it read it off the server's own stdout, and control of the box IS
+ *    control of the operator's login identifier on that box — so it CONFERS.
+ *  · a user's token — its holder types any address they like, nothing was ever mailed, receipt
+ *    proves nothing. The invite registers the account and confers NOTHING; the address is
+ *    proven later through the ordinary mailed verification flow, exactly like an open signup.
+ *
+ * Sworn trade-off, said out loud: the pairing token is NOT email-bound, so its holder can spend
+ * it on an address of their choosing and learn from register's invite-path 409 whether that
+ * address already has an account here. One bit, costs the whole token, on a server whose
+ * operator minted the token — accepted.
  */
 export async function redeemInviteGrant(
   ctx: ServiceContext, input: { token: string; email: string },
@@ -386,6 +400,10 @@ export async function redeemInviteGrant(
       expiresAt: new Date(now.getTime() + PAIRING_INVITE_TTL_MS),
       now,
       issuedBy: `pairing:${consumed.id}`,
+      // THE DISCRIMINATOR, from the burned row's RETURNING and nowhere else — `input` has no
+      // such field and must never grow one (see the header). Only the ownerless first-boot
+      // token proves address control.
+      confersVerified: consumed.createdByUserId === null,
       // NO `note`. The token's label is the CREATOR's own words, and this invite row is keyed by
       // the REDEEMER's email and outlives the creator's account — account erasure cleans
       // `pairing_tokens` but not an invite bound to someone else's address. Copying the label

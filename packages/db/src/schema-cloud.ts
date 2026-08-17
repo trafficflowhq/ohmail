@@ -839,6 +839,18 @@ export const invites = pgTable("invites", {
   email: text("email").notNull(),
   issuedBy: text("issued_by").notNull().default("operator"),
   note: text("note"),
+  /**
+   * Does redeeming this invite PROVE its holder controls `email`? (migration 0018)
+   *
+   * Register's invite path stamps `users.email_verified_at` only when this is true. TRUE for
+   * mailed invites (receipt is the proof — the same argument a mailed verification link stands
+   * on) and for the invite minted by a server's first-boot setup token (control of the box is
+   * the proof). FALSE for invites minted by a pairing-token redeem, where the redeemer typed
+   * the address and nothing was ever mailed: those accounts register fine and verify later
+   * through the ordinary mailed flow. The writer decides from its own record — the pairing
+   * redeem reads the consumed token row, never a caller-supplied flag.
+   */
+  confersVerified: boolean("confers_verified").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   /** No default: an invite that never expires must not be creatable by forgetting an argument. */
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),

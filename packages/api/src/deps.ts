@@ -583,6 +583,26 @@ export interface ApiDeps {
    */
   changeWake?: ChangeWakeHub | null;
   /**
+   * THE VERIFIED-ADDRESS PRODUCT POLICY — does this composition require a PROVEN address
+   * before the costly route classes (`work`, `connection`, `paid` — everything outside
+   * `UNVERIFIED_MAY_REACH`)? Consumed by exactly one thing: `withSpendGate`.
+   *
+   * A composition-root decision, not a route option, because the honest answer differs by
+   * deployment while the route table is identical everywhere. The hosted service requires it —
+   * an unverified account must not be able to generate meaningful cost against OUR bill — and
+   * states `true` explicitly. An operator-run standalone server may compose it OFF: there the
+   * IMAP credential a mailbox add presents already proves mailbox ownership, the account email
+   * is a login identifier on a box the operator pays for, and accounts arriving through a
+   * pairing invite legitimately start unverified (see `routes/self-host.ts`, obligation 4).
+   *
+   * ABSENT ⇒ REQUIRE, and only the exact boolean `false` relaxes. The default direction is
+   * non-negotiable: a host that never heard of this field must get the strict gate, because an
+   * absent config value that relaxes a gate is a misconfiguration that presents as working. A
+   * garbage value from a JavaScript composition root is treated as absent for the same reason
+   * an unrecognised `CostClass` is refused.
+   */
+  requireVerifiedForProduct?: boolean;
+  /**
    * Whether the `tf_session` COOKIE is an accepted credential on this deployment.
    * Default (absent or true) is the historical behaviour: cookie OR bearer.
    *

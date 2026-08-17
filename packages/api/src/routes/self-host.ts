@@ -93,6 +93,21 @@ import { pairRoutes } from "./pair.js";
  *     `bootCtx.userId === null` — the one legitimate ownerless mint) and prints the raw token
  *     ONCE to stdout; `/hello` reports `needsSetup: true` until the setup page redeems it and
  *     registers. No `TF_INVITE_CODES` bootstrap in this composition, ever.
+ *
+ *  4. **An explicit verified-address product policy: `requireVerifiedForProduct: false`.**
+ *     Accounts on this server legitimately arrive UNVERIFIED — a family invite is a pairing
+ *     token, its redeemer types their own address, nothing is mailed, so the derived invite
+ *     confers no verification (only the first-boot ownerless token's does; see
+ *     `redeemInviteGrant`). Left at the default the spend gate then locks every such account
+ *     out of the entire product — mailbox add first — on a box that may have NO mailer to
+ *     verify with, which is a bricked server presenting as a working gate. Composing `false`
+ *     is honest here for the same reason requiring is honest on the hosted service: the
+ *     mailbox add presents an IMAP credential, which proves more about mailbox ownership than
+ *     a verification mail ever did, and the operator pays for their own box. The default is
+ *     REQUIRE on purpose (an absent value must never relax a gate), so this root must SAY
+ *     `false` — the same posture as the allowance in obligation 1. Verification itself stays
+ *     available: with SMTP configured, the ordinary mailed flow still proves addresses for
+ *     whoever wants the mark.
  */
 export const selfHostRoutes: Route[] = [
   ...localRoutes,

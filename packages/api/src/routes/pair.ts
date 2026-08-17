@@ -113,7 +113,11 @@ export const pairRoutes: Route[] = [
             token, email: typeof b.email === "string" ? b.email : "",
           });
           // The client's next move is `POST /auth/register` with this code — the existing
-          // invite path, which stamps `email_verified_at` because the code is email-bound.
+          // invite path. Whether the account starts email-verified is the minted invite row's
+          // `confers_verified`, decided in the service from the CONSUMED TOKEN's own record
+          // (first-boot ownerless token: yes; a user's token: no — see `redeemInviteGrant`).
+          // This handler forwards `token` and `email` and nothing else, so no wire field can
+          // reach that decision.
           return json({ grant: "invite", invite }, 200);
         }
         if (b.grant === "device-pair") {

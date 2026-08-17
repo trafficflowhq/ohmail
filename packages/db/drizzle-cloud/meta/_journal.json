@@ -127,6 +127,13 @@
       "when": 1790118140527,
       "tag": "0017_oauth_code_twofa_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790290940527,
+      "tag": "0018_invites_confers_verified",
+      "breakpoints": true
     }
   ]
 }

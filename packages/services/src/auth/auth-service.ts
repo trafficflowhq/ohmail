@@ -498,13 +498,19 @@ export class AuthService {
    *     about themselves. Removing it would cost an invited user a true, useful sentence to
    *     protect information they already have.
    *
-   *  9. **The invite path also STAMPS `email_verified_at`, and the bootstrap path does not.**
-   *     An email-bound invite row that was mailed to the address and then redeemed IS proof the
-   *     address receives mail and that the registrant read it — the same argument that lets a
-   *     mailed verification link stamp the column, load-bearing
-   *     here. `cfg.inviteCodes` is unbound, reusable and non-expiring, so it proves nothing
-   *     about an address and those registrations stay unverified. The condition is
-   *     `outcome?.ok` — a consumed ROW — never "a code was offered".
+   *  9. **The invite path STAMPS `email_verified_at` only when the consumed ROW says it may,
+   *     and the bootstrap path never does.** An email-bound invite that was MAILED to the
+   *     address and then redeemed is proof the address receives mail and that the registrant
+   *     read it — the same argument that lets a mailed verification link stamp the column. But
+   *     not every invite row was mailed any more: the pairing-token redeem mints one for
+   *     whatever address its redeemer typed, and receipt of nothing proves nothing. So the row
+   *     itself carries the answer (`invites.confers_verified`, read in the same statement that
+   *     consumed it): mailed invites and the first-boot setup token's invite confer, a user's
+   *     pairing-minted invite does not, and those accounts verify later through the ordinary
+   *     mailed flow. The condition is `outcome?.ok && outcome.confersVerified` — a consumed ROW
+   *     that PROVES control — never "a code was offered", and never anything a caller sent.
+   *     `cfg.inviteCodes` is unbound, reusable and non-expiring, so it proves nothing about an
+   *     address and those registrations stay unverified.
    */
   async register(
     ctx: ServiceContext,
@@ -679,10 +685,13 @@ export class AuthService {
       const [acct] = await tx.insert(accounts).values({ name: b.displayName }).returning();
       const [user] = await tx.insert(users).values({
         accountId: acct!.id, email, displayName: b.displayName,
-        // #9 — the invite row IS the proof, so the account starts verified. Only a consumed
-        // ROW counts (`outcome?.ok`); the unbound `cfg.inviteCodes` bootstrap does not, and an
-        // open-gate signup certainly does not.
-        emailVerifiedAt: outcome?.ok ? ctx.now() : null,
+        // #9 — a consumed ROW that PROVES control is the only thing that stamps: mailed invites
+        // and the first-boot setup invite carry `confers_verified = true`, a user's
+        // pairing-minted invite carries `false` (its holder typed the address; nothing was
+        // mailed), the unbound `cfg.inviteCodes` bootstrap has no row at all, and an open-gate
+        // signup certainly does not. The flag comes from the invite row's own RETURNING —
+        // never from the request.
+        emailVerifiedAt: outcome?.ok && outcome.confersVerified ? ctx.now() : null,
       }).returning().catch((e: unknown) => {
         // The race arrived here. One of the two transactions is rolling back — including
         // its invite consumption, which is exactly why `consumeInvite` runs inside this
