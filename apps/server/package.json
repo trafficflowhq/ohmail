@@ -1,16 +1,11 @@
 {
-  "name": "@trafficflow/api",
+  "name": "@ohmail/server",
   "version": "0.0.0",
   "license": "AGPL-3.0-only",
   "type": "module",
-  "exports": {
-    ".": "./src/index.ts",
-    "./health-cloud": "./src/routes/health-cloud.ts",
-    "./local": "./src/local.ts",
-    "./self-host": "./src/routes/self-host.ts"
-  },
   "dependencies": {
     "drizzle-orm": "0.36.4",
+    "@trafficflow/api": "*",
     "@trafficflow/core": "*",
     "@trafficflow/db": "*",
     "@trafficflow/services": "*"

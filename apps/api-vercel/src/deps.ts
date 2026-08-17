@@ -564,6 +564,33 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
       // "unconfigured" ("in-process" left with the deleted Stripe arm).
       billing: cfg.billingPlane ? "plane" : "unconfigured",
     },
+    // What `GET /hello` answers — this host's capability statement, on `health`'s injection
+    // pattern. Every feature flag reads the SAME config member the wiring arms from, so the
+    // negotiation cannot disagree with what the routes actually do.
+    hello: {
+      flavor: "managed",
+      // The account lifecycle lives on this service permanently: there is no first-account
+      // ceremony to run, whatever the user count says.
+      needsSetup: false,
+      auth: {
+        // The full auth surface is mounted and armed here; open registration is the one
+        // ceremony that is a configuration rather than a constant.
+        password: true,
+        totp: true,
+        webauthn: true,
+        publicSignup: cfg.authConfig.publicSignup,
+      },
+      features: {
+        // The same flag that decides whether `GET /events` streams (503 `sse_disabled` off).
+        sse: cfg.sse.enabled === true,
+        // Armed with the staging bucket: `POST /attachments/staging` answers 503 without it.
+        staging: cfg.attachmentStaging !== null,
+        // Armed with the model key: the draft/suggest surfaces answer 503 without it.
+        ai: cfg.anthropicApiKey !== null,
+        // The pairing-token ceremony is not mounted on this composition.
+        pairing: false,
+      },
+    },
     // `withRequestId` binds `requestId` onto this, so every line downstream carries the
     // id the client also got back in `x-request-id`. Built per request because the binding is
     // per request; the underlying sink is `console.log`, so this costs three closures.

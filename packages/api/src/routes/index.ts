@@ -1,10 +1,7 @@
 import type { Route } from "../router.js";
-import { coreRoutes } from "./core.js";
-import { webauthnRoutes } from "./webauthn.js";
-import { totpRoutes } from "./totp.js";
-import { recoveryRoutes } from "./recovery.js";
-import { oauthRoutes } from "./oauth.js";
-import { deviceRoutes } from "./devices.js";
+/* The auth surface, whole, from its own mail-safe module — see `auth.ts` for why it moved out of
+ * this file. Re-exported below so every consumer of this barrel sees exactly what it did. */
+import { authRoutes } from "./auth.js";
 import { syncRoutes } from "./sync.js";
 import { eventsRoutes } from "./events.js";
 import { pushRoutes } from "./push.js";
@@ -23,10 +20,12 @@ import { snippetsRoutes } from "./snippets.js";
 import { notifyRoutes } from "./notify.js";
 import { awayRoutes } from "./away.js";
 import { attachmentRoutes } from "./attachments.js";
-/* The hosted send's direct-upload transport. HOSTED ONLY, and not by convention: it mints a signed
- * upload grant against object storage this deployment owns, and `routes/local.ts` deliberately does
- * not name it — a standalone install has no request body between its compose form and its own SMTP
- * dial, so it has nothing to stage around and no business writing into Cloud storage. */
+/* The send's direct-upload transport, for SERVER compositions that own object storage — this
+ * hosted table and the standalone server's (`routes/self-host.ts`), each minting signed upload
+ * grants against its own bucket. `routes/local.ts` deliberately does not name it, and not by
+ * convention: a desktop engine runs its send in the same process as its own SMTP dial, so there
+ * is no request body between the compose form and the wire — nothing to stage around, and no
+ * business writing somebody's attachment bytes into a server's storage. */
 import { attachmentStagingRoutes } from "./attachment-staging.js";
 import { kbRoutes } from "./kb.js";
 import { tagsRoutes } from "./tags.js";
@@ -44,6 +43,7 @@ import { healthRoutes } from "./health.js";
 // census that `/health` probes with. The local route table deliberately omits this line — see
 // `health-census.ts` — so the Cloud table names stay out of the shipped desktop engine.
 import "./health-cloud.js";
+import { helloRoutes } from "./hello.js";
 import { internalRoutes } from "./internal.js";
 import { adminRoutes } from "./admin.js";
 import { adminStaffRoutes } from "./admin-staff.js";
@@ -57,24 +57,7 @@ import { adminOAuthRoutes } from "./admin-oauth.js";
  * `SameSite=Strict` session cookie is withheld on a cross-site top-level navigation). */
 import { mailboxOAuthRoutes } from "./mailbox-oauth.js";
 
-/**
- * The 20 auth/2FA/OAuth endpoints (contract §2), each wired to an AuthService
- * method. Route `options` drive the middleware pipeline: `public` (no session),
- * `stepUp` (recent-2FA gate), `raw` (no envelope/CSRF/idempotency).
- *
- * NOTE (rate limit): there is deliberately no throttle middleware here. AuthService's
- * built-in per-key lockout enforces credential rate-limiting; `serviceContext`
- * threads the client `ip`/`userAgent` it keys on. A per-IP *network* rate-limit
- * is deliberately left to the deployment's edge or proxy.
- */
-export const authRoutes: Route[] = [
-  ...coreRoutes,
-  ...webauthnRoutes,
-  ...totpRoutes,
-  ...recoveryRoutes,
-  ...oauthRoutes,
-  ...deviceRoutes,
-];
+export { authRoutes } from "./auth.js";
 
 /** Sync, SSE, push, mailboxes (read), rules. */
 export const syncRoutesGroup: Route[] = syncRoutes;
@@ -233,6 +216,7 @@ export const waitlistRoutesGroup: Route[] = waitlistRoutes;
  */
 export const apiRoutes: Route[] = [
   ...healthRoutes,
+  ...helloRoutes,
   ...internalRoutes,
   ...adminRoutes,
   ...adminStaffRoutes,

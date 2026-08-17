@@ -1,0 +1,68 @@
+# Docker build context for apps/worker/Dockerfile. The context is the REPO ROOT, because the
+# worker is a pnpm-workspace importer that consumes packages/core and packages/db.
+#
+# DENY EVERYTHING, THEN RE-ADMIT THE BUILD'S INPUTS. An allow-list is used deliberately: the
+# deny-list version of this file shipped a 1.37 GB context, because untracked build output
+# nobody thinks about — apps/macos/.build (SwiftPM, 600 MB), apps/desktop/src-tauri/target
+# (Rust, 2.4 GB) — grows faster than anyone maintains exclusions. With an allow-list the
+# context is ~2 MB and a NEW kind of junk cannot silently join it.
+*
+
+# Workspace manifests. Every importer's package.json must be present or `pnpm install
+# --frozen-lockfile` refuses: it validates the lockfile against the importers it finds.
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.json
+!tsconfig.base.json
+!apps/*/package.json
+!packages/*/package.json
+
+# The four projects that are actually compiled and shipped. `packages/db-mail` joined when
+# the engine/cloud split made it a real workspace package: the db package's tsconfig
+# references it, so `tsc -b` inside the image fails with TS5083 without its sources — which is
+# exactly how the first post-split worker image build died. The allow-list
+# admitted its package.json (workspace manifest) but not the package, so the failure only
+# appeared at image build time, never locally.
+#
+# THE STANDING RULE, and read it as a rule rather than as that one deploy's history: ANY new
+# workspace package the worker compiles against needs a line here, and nothing local can tell you
+# it is missing, because a laptop has the whole repository.
+#
+# ITS OTHER EDGE, which cost a second deploy: a line here is also the only thing that CAN admit a
+# package the worker must not have, and adding one is the last step of a violation rather than the
+# fix for one. `packages/services` was admitted for a day for exactly that reason — the worker's
+# maintenance slot ran the `attachment_staging` retention sweep, so `apps/worker/src/index.ts`
+# imported it, the worker's tsconfig referenced it, and the image build died on TS5083
+# (cannot read the services package's tsconfig) until this list let it in. It built
+# after that, and it also put an HTML sanitiser and its parser in the worker's boot graph, which
+# on Node 23 is a hard ERR_REQUIRE_CYCLE_MODULE at import time; only the Dockerfile's pinned
+# Node 22 kept the container starting. The sweep moved down to `@trafficflow/db/cloud` instead and
+# the line came back out. The `!packages/…` lines below are exactly the TRANSITIVE project-
+# reference closure of the worker's tsconfig — core and db because the worker names them,
+# db-mail because db does — and a workspace test computes that closure and fails if
+# this list disagrees with it or with `package.json`'s dependencies. If you are about to add a
+# name none of those three produce, the import that wants it is the thing to move.
+!apps/worker
+!packages/core
+!packages/db
+!packages/db-mail
+
+# …minus anything inside them that must never be copied in. `dist/` and `*.tsbuildinfo` are
+# the important pair: the worker's CLI boots from dist/, dist/ is gitignored, and a laptop
+# holding a stale dist/ plus a matching .tsbuildinfo makes `tsc -b` decide there is nothing
+# to emit — which is exactly how a smoke test once "passed" against an artifact nobody had
+# rebuilt. Keeping both out means the image ALWAYS compiles from source. `test` is out
+# because nothing in the image compiles or runs a suite — a runtime layer carrying test
+# trees is bloat at best and a place for stray fixtures to ship at worst.
+**/node_modules
+**/dist
+**/test
+**/*.tsbuildinfo
+**/.DS_Store
+**/.claude
+
+# Secrets never enter an image layer; every value arrives as a compose/service variable.
+**/.env
+**/.env.*
+**/*.env

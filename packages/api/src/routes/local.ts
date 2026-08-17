@@ -23,6 +23,10 @@ import { tagsRoutes } from "./tags.js";
 import { draftsRoutes } from "./drafts.js";
 import { workflowsRoutes } from "./workflows.js";
 import { healthRoutes } from "./health.js";
+// `GET /hello` — server identity + capability negotiation, mounted in EVERY composition so a
+// client never has to learn what a server is by probing routes that exist on one table and not
+// another. This host answers `flavor: "local"` from the descriptor its composition root injects.
+import { helloRoutes } from "./hello.js";
 
 /**
  * THE MAIL-ONLY ROUTE TABLE — what a single-user engine on the user's own machine serves.
@@ -68,6 +72,7 @@ import { healthRoutes } from "./health.js";
  */
 export const localRoutes: Route[] = [
   ...healthRoutes,
+  ...helloRoutes,
   ...syncRoutes,
   ...eventsRoutes,
   ...pushRoutes,

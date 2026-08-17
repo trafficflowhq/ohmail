@@ -3,6 +3,7 @@ export { API_VERSION } from "./version.js";
 // Per-request container + session identity.
 export type {
   ApiDeps, ApiServices, ResolvedSession, SessionVia, IdempotencyContext, SseConfig, HealthConfig,
+  HelloConfig,
   ChangeWakeHub,
   AiCreditGateFactory,
   AttachmentStagingPort, AttachmentStagingFactory, StagedUploadGrantWire,

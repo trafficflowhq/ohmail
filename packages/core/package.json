@@ -9,6 +9,8 @@
     "./ics": "./src/ics.ts",
     "./adapters/imap": "./src/adapters/imap.ts",
     "./adapters/organizer-lease": "./src/adapters/organizer-lease.ts",
+    "./adapters/organizer-profile": "./src/adapters/organizer-profile.ts",
+    "./adapters/organizer-profile-store": "./src/adapters/organizer-profile-store.ts",
     "./adapters/drizzle-repo": "./src/adapters/drizzle-repo.ts"
   },
   "dependencies": {

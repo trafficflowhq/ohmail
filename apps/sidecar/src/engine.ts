@@ -704,6 +704,33 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // (`db.ts`). Without it `/health` probes for the hosted billing ledger and answers 503
       // `schema_incomplete` for ever — about a database that is complete for what it is.
       health: { version: API_VERSION, kek: kekIdentity, schemaTier: "mail" },
+      /**
+       * What `GET /hello` answers — this install's capability statement, on `health`'s
+       * injection pattern. `flavor: "local"` is what a client's server picker reads to learn it
+       * is talking to a desktop engine rather than a server.
+       *
+       * The auth block is all-false and that is the truth, not a gap: this process mints one
+       * session per launch for the shell that spawned it, so there is no sign-in ceremony to
+       * offer a caller — the machine's own login is the boundary, and `needsSetup` is `false`
+       * for the same reason (the world is created at first boot, not through a setup page).
+       * `ai` is per-request honest because this whole container is rebuilt per request: it says
+       * whether THIS install has a verified model right now, the same fact that decides whether
+       * `services.drafter` exists a few lines above.
+       */
+      hello: {
+        flavor: "local",
+        needsSetup: false,
+        auth: { password: false, totp: false, webauthn: false, publicSignup: false },
+        features: {
+          // SSE is off in this host — see `sse` above; `GET /events` answers a finite 503.
+          sse: false,
+          // No staging: the send runs in the same process as the SMTP dial (see local.ts).
+          staging: false,
+          ai: ai.drafter() !== undefined,
+          // The pairing ceremony belongs to server compositions; nothing mounts it here yet.
+          pairing: false,
+        },
+      },
     });
 
     /* ══════════════════════════════════════════════════════════════════════════════════════

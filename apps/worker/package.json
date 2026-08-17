@@ -6,6 +6,7 @@
   "exports": {
     "./sync": "./src/sync.ts",
     "./lease": "./src/lease.ts",
+    "./profile": "./src/profile.ts",
     "./entry": "./src/entry.ts",
     "./classifier-fault": "./src/classifier-fault.ts",
     "./bubble-up": "./src/bubble-up-pass.ts",

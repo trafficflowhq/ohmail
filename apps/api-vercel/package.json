@@ -3,7 +3,6 @@
   "version": "0.0.0",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "postgres": "3.4.9",
     "@trafficflow/api": "*",
     "@trafficflow/core": "*",
     "@trafficflow/db": "*",

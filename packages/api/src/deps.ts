@@ -448,6 +448,68 @@ export interface HealthConfig {
   billing?: "plane" | "unconfigured" | null;
 }
 
+/**
+ * What `GET /hello` publishes about the host — server identity and capability negotiation.
+ *
+ * The route serves this descriptor VERBATIM (plus the constant `product` and a defaulted
+ * `apiVersion`), so each composition states its own truth at its composition root, exactly as
+ * {@link HealthConfig} is injected: the hosted deployment says `"managed"`, a standalone server
+ * says `"selfhost"`, the desktop engine says `"local"`. There is no environment fallback and no
+ * sniffing — a host that injects nothing gets a 503 from the route rather than a guessed flavor,
+ * because a capability answer that guesses is worse than none: a client's server picker trusts
+ * this endpoint to decide which ceremonies exist here.
+ *
+ * Every field is a CAPABILITY, never a configuration echo: which sign-in ceremonies this server
+ * offers, which optional surfaces answer, whether the first account still has to be created.
+ * Nothing here is per-account and nothing here is a secret — the endpoint is unauthenticated by
+ * design, so the descriptor must hold nothing an anonymous stranger may not learn.
+ */
+export interface HelloConfig {
+  /**
+   * Which composition is serving: the hosted service, an operator-run standalone server, or a
+   * desktop install's own engine. A fixed string per composition root, never derived per request.
+   */
+  flavor: "managed" | "selfhost" | "local";
+  /**
+   * The wire-contract version of the API surface. Defaults to {@link API_VERSION} — every
+   * composition compiles the same route table, so the default is the truth unless a host has a
+   * reason to say otherwise.
+   */
+  apiVersion?: string;
+  /**
+   * Whether this server still has to run its first-account ceremony. A capability form is
+   * allowed because the honest answer on a standalone server is a database fact (zero users)
+   * that can change between requests; a fixed `false` is correct for compositions whose account
+   * lifecycle lives elsewhere. The capability must not throw; if it does anyway, the route
+   * answers 503 rather than guessing in either direction — a fresh box hidden behind
+   * `needsSetup: false` never gets set up, and an established box behind `true` invites a
+   * takeover attempt.
+   */
+  needsSetup: boolean | (() => Promise<boolean>);
+  /** The sign-in ceremonies this server offers. */
+  auth: {
+    /** Password sign-in (`POST /auth/login`) is mounted and answered here. */
+    password: boolean;
+    /** TOTP second-factor enrollment/verification is available. */
+    totp: boolean;
+    /** WebAuthn (passkey) second-factor is available. */
+    webauthn: boolean;
+    /** Registration without an invite code is open. */
+    publicSignup: boolean;
+  };
+  /** The optional surfaces a client may rely on here. */
+  features: {
+    /** `GET /events` streams (SSE enabled server-side); off, clients poll `/sync`. */
+    sse: boolean;
+    /** `POST /attachments/staging` mints upload grants (object storage is armed). */
+    staging: boolean;
+    /** A model is configured, so the AI surfaces can answer. */
+    ai: boolean;
+    /** The pairing-token ceremony (`/pair*`) is mounted here. */
+    pairing: boolean;
+  };
+}
+
 export type SessionVia = "cookie" | "bearer";
 
 /**
@@ -540,6 +602,11 @@ export interface ApiDeps {
   allowCookieAuth?: boolean;
   /** What `GET /health` reports about this host (version + KEK ring identity). */
   health?: HealthConfig;
+  /**
+   * What `GET /hello` reports about this host — see {@link HelloConfig}. Absent, the route
+   * answers 503 `hello_unconfigured` rather than inventing a flavor.
+   */
+  hello?: HelloConfig;
   /**
    * The structured logger for THIS request.
    *

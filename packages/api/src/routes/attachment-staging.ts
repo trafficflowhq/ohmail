@@ -5,7 +5,9 @@ import type { Route } from "../router.js";
 import { mailbox, readBody } from "./shared.js";
 
 /**
- * `POST /attachments/staging` — MINT ONE UPLOAD TICKET. **HOSTED ONLY.**
+ * `POST /attachments/staging` — MINT ONE UPLOAD TICKET. **SERVER COMPOSITIONS ONLY** — the
+ * tables that mount it (`routes/index.ts`, `routes/self-host.ts`) belong to deployments that own
+ * object storage and receive the send as an HTTP request.
  *
  * ## What it is for
  *
@@ -13,14 +15,16 @@ import { mailbox, readBody } from "./shared.js";
  * bound by the platform's ~4.5 MB request limit and the compose surface promised 3 MB whatever the
  * sender's own submission server announced. This mints a signed, single-object upload grant so the
  * browser puts the bytes in storage directly; the send then carries a reference and the form can
- * promise what the mailbox actually accepts.
+ * promise what the mailbox actually accepts. A self-hosted server is in exactly the hosted
+ * deployment's position — a browser on one machine, the SMTP dial on another, a request body
+ * between them — which is why it mounts this route too, minting grants against its own bucket.
  *
  * ## Why it is not on the local route table
  *
  * `routes/local.ts` deliberately does not name this module — the same mechanism `admin-oauth.ts`
- * and `mailbox-oauth.ts` use. A local install has no request body between its compose form and its
- * own SMTP dial, so it has nothing to stage around, and a standalone desktop install that could
- * reach this route would be sending somebody's attachment bytes to the hosted service's storage.
+ * and `mailbox-oauth.ts` use. A desktop engine runs its send in the same process as its own SMTP
+ * dial, so it has nothing to stage around, and a standalone desktop install that could reach this
+ * route would be sending somebody's attachment bytes to a server's storage.
  * Not mounting it is a stronger statement than refusing it, and it is checked from source.
  *
  * ## `cost: "work"` — an unverified account must not create cost, and the frozen census will notice

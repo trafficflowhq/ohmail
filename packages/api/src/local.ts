@@ -15,6 +15,7 @@
 export { API_VERSION } from "./version.js";
 export type {
   ApiDeps, ApiServices, ResolvedSession, SessionVia, IdempotencyContext, SseConfig, HealthConfig,
+  HelloConfig,
 } from "./deps.js";
 export { DEFAULT_SSE } from "./deps.js";
 export { createApp, type App } from "./app.js";
