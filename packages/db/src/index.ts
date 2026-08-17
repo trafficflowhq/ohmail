@@ -132,3 +132,16 @@ export {
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
   type ScreenerSuggestionRow, type StoredSenderSuggestion,
 } from "./screener-suggestion.js";
+
+/**
+ * The portable profile's import markers — the found-document record the organizer writes and
+ * the user-answer record that releases its hold. Same barrel and the same closure rule as the
+ * screener-suggestion block above, for the same straddle: the answer side is called from
+ * `@trafficflow/services`, the organizer side runs in the worker (core + db and nothing else),
+ * and the module reaches `schema-mail.js` alone.
+ */
+export {
+  PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION,
+  latestProfileFoundMarker, profileImportResolutionExists, recordProfileImportResolution,
+  type ProfileFoundMarker, type ProfileImportDecision, type ProfileImportSubject,
+} from "./organizer-profile-import.js";

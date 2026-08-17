@@ -325,6 +325,47 @@ export type MailboxTakeover = {
     outcome: "disconnected";
 };
 
+export interface ProfileImportCountsWire {
+    screener: number;
+    rules: number;
+    notifyRules: number;
+    tags: number;
+    awayResponder: boolean;
+}
+
+export type ProfileImportCandidateWire = {
+    state: "none";
+} | {
+    state: "found";
+    fingerprint: string;
+    updatedAt: string;
+    producer: {
+        kind: string;
+        version: string;
+    };
+    counts: ProfileImportCountsWire;
+} | {
+    state: "newer";
+    v: number;
+};
+
+export interface ProfileImportAppliedWire {
+    imported: ProfileImportCountsWire;
+    skippedRules: number;
+    seq: number | null;
+}
+
+export const profileImport: {
+    candidate: (mailboxId: string) => Promise<ProfileImportCandidateWire>;
+    apply: (mailboxId: string, fingerprint: string) => Promise<ProfileImportAppliedWire>;
+    decline: (mailboxId: string, subject: {
+        fingerprint?: string;
+        v?: number;
+    }) => Promise<{
+        dismissed: boolean;
+    }>;
+} = absent;
+
 export const billing: {
     subscription: () => Promise<SubscriptionStatus>;
     portal: () => Promise<{

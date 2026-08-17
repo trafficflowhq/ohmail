@@ -150,6 +150,11 @@ export {
   type AwayResponderBody,
 } from "./away-responder-service.js";
 export {
+  ProfileImportService, profileImportService,
+  type ProfileImportCandidateDTO, type ProfileImportApplied, type ProfileImportCounts,
+  type ProfileReader,
+} from "./profile-import-service.js";
+export {
   AttachmentsService, attachmentsService, BIG_FILE_DEFAULT_BYTES,
   type AttachmentDTO, type FileDTO, type FetchedBytes, type AttachmentAdapter,
   type OpenAdapter, type FetchDeps, type FilesFilter, type ListFilesOptions,

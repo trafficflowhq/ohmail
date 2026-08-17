@@ -725,6 +725,66 @@ export type MailboxTakeover =
   | { outcome: "already_organizing" }
   | { outcome: "disconnected" };
 
+// ── Saved settings found on a mailbox (the portable organizer profile) ───────────────────
+
+/** What a found settings document holds, in the units the confirm card speaks. */
+export interface ProfileImportCountsWire {
+  screener: number;
+  rules: number;
+  notifyRules: number;
+  tags: number;
+  awayResponder: boolean;
+}
+
+/**
+ * `GET /mailboxes/:id/profile-import` — is there a settings document waiting on this mailbox?
+ *
+ * `none` is the resting answer and the cheap one: the server reads its own durable record and
+ * dials nothing, which is what lets the shell ask once per mailbox per tab. `found` carries the
+ * counts of the document AS IT IS NOW plus its `fingerprint` — the receipt the confirm sends
+ * back, so what gets applied is exactly what was shown. `newer` means a later ohmail wrote it;
+ * nothing is offered, because a partial import would silently drop what this build cannot read.
+ */
+export type ProfileImportCandidateWire =
+  | { state: "none" }
+  | {
+    state: "found";
+    fingerprint: string;
+    updatedAt: string;
+    producer: { kind: string; version: string };
+    counts: ProfileImportCountsWire;
+  }
+  | { state: "newer"; v: number };
+
+export interface ProfileImportAppliedWire {
+  imported: ProfileImportCountsWire;
+  /** Document rules the server's own validation refused — imported minus these arrived. */
+  skippedRules: number;
+  seq: number | null;
+}
+
+export const profileImport = {
+  candidate: (mailboxId: string) =>
+    api<ProfileImportCandidateWire>(`/mailboxes/${mailboxId}/profile-import`),
+  /**
+   * Apply, on explicit confirmation only. The server re-reads the mailbox and refuses
+   * (409 `profile_changed`) if the document no longer matches the fingerprint the user saw.
+   */
+  apply: (mailboxId: string, fingerprint: string) =>
+    api<ProfileImportAppliedWire>(`/mailboxes/${mailboxId}/profile-import`, {
+      method: "POST", body: { fingerprint },
+    }),
+  /**
+   * Keep local. Durable — the same content never asks again, on this or any later visit —
+   * and inert: nothing is applied and nothing in the mailbox is touched. A `newer` notice is
+   * dismissed by the refused version instead, since there is no readable content to name.
+   */
+  decline: (mailboxId: string, subject: { fingerprint?: string; v?: number }) =>
+    api<{ dismissed: boolean }>(`/mailboxes/${mailboxId}/profile-import/decline`, {
+      method: "POST", body: subject,
+    }),
+};
+
 // ── Billing ──────────────────────────────────────────────────────────────────────────────
 
 export const billing = {

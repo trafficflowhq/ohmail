@@ -1,12 +1,12 @@
 import {
-  ServiceError, generateToken, syncService,
+  ServiceError, generateToken, profileImportService, syncService,
   type SyncService, type PushService, type MailboxService, type RulesService,
   type MessageService, type ThreadService,
   type ScreenerService, type ApprovalService, type TriageService, type SearchService,
   type PrivacyService, type UnsubscribeService,
   type ContactsService, type SnippetsService, type NotifyRulesService, type AwayResponderService,
   type AttachmentsService, type KbService, type TagsService, type DraftsService, type DraftingService,
-  type SendService, type WorkflowsService,
+  type ProfileImportService, type SendService, type WorkflowsService,
 } from "@trafficflow/services/mail";
 import type { DraftPort } from "@trafficflow/core/mail";
 import type { ImapAdmissionPort, ApiDeps } from "../deps.js";
@@ -138,6 +138,16 @@ export function away(deps: ApiDeps): AwayResponderService {
   const svc = deps.services?.away;
   if (!svc) throw new ServiceError("internal", 500, "away service not configured");
   return svc;
+}
+
+/**
+ * The profile-import service — the confirm/decline side of the portable organizer profile.
+ * Falls back to the stateless singleton like `sync` does: it holds no construction-time
+ * dependency (the IMAP read arrives per call, from the route), so every host gets the same
+ * instance and a test overrides it through the bag when it needs a spy.
+ */
+export function profileImport(deps: ApiDeps): ProfileImportService {
+  return deps.services?.profileImport ?? profileImportService;
 }
 
 export function attachments(deps: ApiDeps): AttachmentsService {

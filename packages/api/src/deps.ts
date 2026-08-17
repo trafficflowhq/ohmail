@@ -12,7 +12,7 @@ import type {
   UnsubscribeService,
   ContactsService, SnippetsService, NotifyRulesService, AwayResponderService,
   AttachmentsService, KbService, TagsService, DraftsService, DraftingService, SendService,
-  WorkflowsService,
+  WorkflowsService, ProfileImportService,
 } from "@trafficflow/services/mail";
 /* `OAuthTokenProvider` from the MAIL entry, never the root barrel: this file is compiled by every
  * host, including the shipped local engine, and the root barrel's export surface reaches the model
@@ -171,6 +171,13 @@ export interface ApiServices {
   snippets: SnippetsService; // compose-time canned-text library
   notify: NotifyRulesService;// opt-into-notifications list
   away: AwayResponderService;// the single per-account autoresponder
+  /**
+   * The portable profile's confirm-import surface. OPTIONAL with a singleton fallback
+   * (`routes/shared.ts#profileImport`) because the service is stateless — the mailbox read it
+   * needs arrives per call, built by the route from the live adapter — so no host has anything
+   * to construct. Present in the bag only when a test wants a spy in its place.
+   */
+  profileImport?: ProfileImportService;
   attachments: AttachmentsService; // on-demand attachment fetch + download-all (bytes never stored)
   kb: KbService;             // Knowledge Base CRUD + dedicated lexical retrieval (REST-only)
   tags: TagsService;         // the account's own labels, keyed by message (never an IMAP folder)

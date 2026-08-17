@@ -100,6 +100,7 @@ import { RemoteImagesRow } from "./RemoteImagesRow";
 import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
+import { ProfileImportCard, useProfileImport } from "./ProfileImportCard";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
   clearComposeDraft,
@@ -1346,6 +1347,17 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * {@link awayTransport} gives.
    */
   const awayNotice = useAwayNotice(!demo && awaySupported, awayTransport);
+  /**
+   * SETTINGS FOUND ON A MAILBOX — the portable profile's confirm moment, held by the shell.
+   *
+   * One check per mailbox per tab (plus a slow, visibility-gated beat) against a server answer
+   * that is one indexed read in the resting case; the card renders over the stage only when the
+   * server says a document is genuinely waiting on this person's yes or no. Gated on `!demo`
+   * alone — the hook re-checks `apiConfigured()` itself, so the desktop's standalone bundle
+   * (where the Cloud client is a refusing stub) asks nothing until its host wires a transport
+   * of its own, the away notice's exact posture.
+   */
+  const profileImportOffer = useProfileImport(!demo, facts);
 
   /* ── view state ── */
   const [ohboxSel, setOhboxSel] = useState<string | null>(null);
@@ -4544,6 +4556,20 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
           />
 
           <main className="stage" onClickCapture={onStageClickCapture}>
+            {/* SETTINGS FOUND ON A MAILBOX — floated over whichever view (or the seed review)
+                is up, never replacing it: an offer somebody may answer in a week must not gate
+                today's mail. Above the seed deliberately, because the two overlap in subject —
+                imported rules ARE screening decisions, and someone restoring a configured
+                mailbox should meet the restore before the from-scratch consent walk. */}
+            {profileImportOffer.offer ? (
+              <ProfileImportCard
+                offer={profileImportOffer.offer}
+                phase={profileImportOffer.phase}
+                onImport={profileImportOffer.importNow}
+                onNotNow={profileImportOffer.notNow}
+                onAcknowledge={profileImportOffer.acknowledge}
+              />
+            ) : null}
             {/* THE SEED REVIEW TAKES THE STAGE while it is owed. It decides what the Ohbox
                 contains, so answering it before reading the piles is the order that makes the
                 piles mean something — and "Later" leaves immediately, because it is an offer

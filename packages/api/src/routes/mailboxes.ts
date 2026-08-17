@@ -1,10 +1,37 @@
 import type { CreateMailboxBody, UpdateMailboxBody } from "@trafficflow/services/mail";
+import { readOrganizerProfile, type ProfileReadResult } from "@trafficflow/core/adapters/organizer-profile";
+import { openMailboxImap } from "../attachments-adapter.js";
 import { serviceContext } from "../context.js";
 import { makeImapProbe, makeSmtpProbe } from "../imap-probe.js";
 import { makeOrganizerPeek } from "../organizer-peek.js";
 import { jsonResponse } from "../responses.js";
+import type { ApiDeps } from "../deps.js";
 import type { Route } from "../router.js";
-import { mailbox, readBody, noContent } from "./shared.js";
+import { mailbox, profileImport, readBody, noContent } from "./shared.js";
+
+/**
+ * ONE FRESH READ of the mailbox's saved-settings document, for the confirm-import routes below.
+ *
+ * Built HERE, per request, from the same `openMailboxImap` every other API dial goes through —
+ * so it queues behind the same per-mailbox connection cap and inherits the tightened client
+ * timeouts (`attachments-adapter.ts` is emphatic about why a second `new ImapAdapter` anywhere
+ * else would quietly break the cap's arithmetic). The service receives a thunk rather than an
+ * adapter for the probe's reason restated: `packages/services` states what a read must answer
+ * and never learns how to open a socket, so its tests inject documents through this argument.
+ *
+ * Read-only by construction: `readOrganizerProfile` lists the meta folder and writes nothing,
+ * exactly as the organizer peek reads the lease without ever renewing one.
+ */
+const profileReader = (deps: ApiDeps, mailboxId: string) => async (): Promise<ProfileReadResult> => {
+  const opened = await openMailboxImap(deps, mailboxId);
+  try {
+    return await readOrganizerProfile(opened.adapter.profileIo());
+  } finally {
+    // ALWAYS — the peek's rule: a reader that leaked its slot would shrink the mailbox's
+    // connection budget until the admission window rolled.
+    await opened.close().catch(() => { /* the socket is already gone; the slot is released */ });
+  }
+};
 
 /**
  * §5.1 — mailboxes READ + RESYNC + the lifecycle mutations. POST/PATCH/
@@ -95,6 +122,55 @@ export const mailboxRoutes: Route[] = [
       // would be a second organizer deciding things in a serverless function.
       const result = await mailbox(deps).takeover(serviceContext(deps, req), params.id!);
       return jsonResponse(result, { status: result.outcome === "authorized" ? 202 : 200 });
+    },
+  },
+  {
+    method: "GET",
+    pattern: "/mailboxes/:id/profile-import",
+    // `connection`, on the organizer peek's argument verbatim: the interesting branch opens an
+    // IMAP socket to the user's provider, and `read` would put a mail-server dial inside the
+    // set an unproven address may reach. The COMMON branch never dials — the service answers
+    // "none" from the durable found-marker alone — which is what makes this route cheap enough
+    // for the shell to ask once per mailbox per tab.
+    cost: "connection",
+    handler: async (req, deps, params) => {
+      // Ownership is the service's first act, before any marker read and long before the dial —
+      // the peek's connect-oracle rule, kept in the service so every host that mounts these
+      // routes inherits it rather than re-stating it.
+      const dto = await profileImport(deps).candidate(
+        serviceContext(deps, req), params.id!, { read: profileReader(deps, params.id!) },
+      );
+      return jsonResponse(dto);
+    },
+  },
+  {
+    method: "POST",
+    pattern: "/mailboxes/:id/profile-import",
+    // `connection` — it re-reads the document from the mailbox before applying, so the dial is
+    // part of what this handler causes (alongside the store writes `work` alone would name).
+    // NOT step-up gated, deliberately: it writes the same rows the rules/tags/contacts surfaces
+    // write without one, touches no credential, and the confirmation it demands instead is the
+    // fingerprint — the exact content the user was shown, re-verified against the mailbox.
+    cost: "connection",
+    handler: async (req, deps, params) => {
+      const body = await readBody<{ fingerprint?: string }>(req);
+      const result = await profileImport(deps).apply(
+        serviceContext(deps, req), params.id!, body, { read: profileReader(deps, params.id!) },
+      );
+      return jsonResponse(result);
+    },
+  },
+  {
+    method: "POST",
+    pattern: "/mailboxes/:id/profile-import/decline",
+    // `work`: one marker row, no dial — declining must stay possible when the mailbox itself
+    // is unreachable, because "keep what I have" is exactly the answer someone gives a prompt
+    // they cannot re-verify.
+    cost: "work",
+    handler: async (req, deps, params) => {
+      const body = await readBody<{ fingerprint?: string; v?: number }>(req);
+      await profileImport(deps).decline(serviceContext(deps, req), params.id!, body);
+      return jsonResponse({ dismissed: true });
     },
   },
   {

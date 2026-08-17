@@ -1,9 +1,10 @@
 import { and, desc, eq } from "drizzle-orm";
 import {
-  auditLog, awayResponders, contacts, notifyRules as notifyRulesTbl, rules as rulesTbl, tags as tagsTbl,
+  PROFILE_FOUND_AUDIT_ACTION, auditLog, profileImportResolutionExists,
   type Tx,
 } from "@trafficflow/db";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
   PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, profileFingerprint,
   readOrganizerProfile, writeOrganizerProfile,
@@ -43,12 +44,15 @@ export const DEFAULT_PROFILE_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * The `audit_log.action` under which a found FOREIGN profile is recorded — the durable marker
- * the confirm-import flow reads. Written by the organizer at read-on-takeover; consumed (later)
- * by the import surface. `audit_log` because it is the one generic, account-scoped marker table
- * both journals already carry (the `ohbox_tidy_move` precedent), and this slice may not add
- * schema.
+ * the confirm-import flow reads. Written by the organizer at read-on-takeover; consumed by the
+ * import surface. `audit_log` because it is the one generic, account-scoped marker table both
+ * journals already carry (the `ohbox_tidy_move` precedent), and this feature may not add schema.
+ *
+ * The constant itself lives in `@trafficflow/db` now (`organizer-profile-import.ts`), because
+ * the import surface's half runs in `@trafficflow/services` and a package cannot import an app —
+ * re-exported here so this module's callers and tests keep their one name for it.
  */
-export const PROFILE_FOUND_AUDIT_ACTION = "organizer_profile_found";
+export { PROFILE_FOUND_AUDIT_ACTION };
 
 /**
  * An adapter that can hand out the profile's IO — `lease.ts`'s structural probe, for its
@@ -69,63 +73,13 @@ export function hasProfileIo(adapter: MailboxAdapter): adapter is MailboxAdapter
 }
 
 /**
- * THE SERIALIZER — the organizer's store, read into the document's payload.
- *
- * It reads ONLY configuration: the screened-in senders (`contacts` — a row there IS the
- * screener's "yes"; the "no" is durably a rule whose destination is `ohmail/Screened`, so it
- * travels in `rules`), the rules by their natural keys, the notification opt-ins, the single
- * autoresponder row, and the tag names. Deliberately NOT read: anything adaptive (rule hit
- * counts, retro-apply state, learning signals) and anything secret — there is no credential
- * column in any query below, and the suite pins the serialized document's exact key census so a
- * new field is a reviewed decision.
+ * THE SERIALIZER — the organizer's store, read into the document's payload. It moved to
+ * `@trafficflow/core/adapters/organizer-profile-store` when the import surface became its
+ * second caller (the "is this found document already what the local store says" comparison
+ * must be the same serialization as this dirty check, and the service layer may not import an
+ * application). Re-exported so this composition's callers and tests keep their one name for it.
  */
-export async function serializeOrganizerProfile(db: Tx, accountId: string): Promise<OrganizerProfilePayload> {
-  // ONE SNAPSHOT, not five. Under READ COMMITTED each statement sees its own snapshot, so a
-  // screener decide committing between the contacts read and the rules read would serialize a
-  // TORN configuration — the contact without its promoted rule — and the document would say
-  // something no store ever held (self-healing one flush later, but "a burst is one write" is
-  // the contract, and a torn read is how it becomes two). REPEATABLE READ pins all five reads
-  // to one snapshot; PGlite is real Postgres, so the same statement works on both stores.
-  const [contactRows, ruleRows, notifyRows, awayRows, tagRows] = await db.transaction(async (tx) => {
-    return [
-      await tx.select({ address: contacts.address, name: contacts.name })
-        .from(contacts).where(eq(contacts.accountId, accountId)),
-      await tx.select({
-        kind: rulesTbl.kind, match: rulesTbl.match, destination: rulesTbl.destination,
-        priority: rulesTbl.priority, enabled: rulesTbl.enabled, provenance: rulesTbl.provenance,
-        subjectContains: rulesTbl.subjectContains, bodyContains: rulesTbl.bodyContains,
-      }).from(rulesTbl).where(eq(rulesTbl.accountId, accountId)),
-      await tx.select({ kind: notifyRulesTbl.kind, target: notifyRulesTbl.target })
-        .from(notifyRulesTbl).where(eq(notifyRulesTbl.accountId, accountId)),
-      await tx.select({
-        enabled: awayResponders.enabled, subject: awayResponders.subject, body: awayResponders.body,
-        startsAt: awayResponders.startsAt, endsAt: awayResponders.endsAt, audience: awayResponders.audience,
-      }).from(awayResponders).where(eq(awayResponders.accountId, accountId)),
-      await tx.select({ name: tagsTbl.name }).from(tagsTbl).where(eq(tagsTbl.accountId, accountId)),
-    ] as const;
-  }, { isolationLevel: "repeatable read", accessMode: "read only" });
-
-  const away = awayRows[0];
-  return {
-    screener: contactRows.map((c) => (c.name === null ? { address: c.address } : { address: c.address, name: c.name })),
-    rules: ruleRows.map((r) => ({
-      kind: r.kind, match: r.match, destination: r.destination,
-      priority: r.priority, enabled: r.enabled, provenance: r.provenance,
-      ...(r.subjectContains === null ? {} : { subjectContains: r.subjectContains }),
-      ...(r.bodyContains === null ? {} : { bodyContains: r.bodyContains }),
-    })),
-    notifyRules: notifyRows.map((n) => ({ kind: n.kind, target: n.target })),
-    awayResponder: away === undefined ? null : {
-      enabled: away.enabled,
-      subject: away.subject,
-      body: away.body,
-      startsAt: away.startsAt === null ? null : away.startsAt.toISOString(),
-      endsAt: away.endsAt === null ? null : away.endsAt.toISOString(),
-      audience: away.audience,
-    },
-    tagNames: tagRows.map((t) => t.name),
-  };
-}
+export { serializeOrganizerProfile };
 
 export interface OrganizerProfileSyncDeps {
   db: Tx;
@@ -162,9 +116,13 @@ export interface OrganizerProfileSyncDeps {
  *    document is somebody's configuration that this organizer has not been told to adopt, and
  *    the import decision belongs to a human (the confirm flow), never to this module. The fact
  *    is surfaced twice: a log line, and a durable `audit_log` marker the confirm flow reads.
- *    The hold releases by CONVERGENCE only — when local state comes to equal the document
- *    (the import was applied), write-behind resumes; until then this organizer writes nothing,
- *    so the found document survives exactly as long as the decision is open.
+ *    The hold releases only on the user's answer, which reaches this module two ways: by
+ *    CONVERGENCE — local state comes to equal the document, which is what an import applied
+ *    into an empty store produces — or by the durable RESOLUTION marker the confirm flow
+ *    writes (`organizer_profile_import_resolved`), which covers the two answers convergence
+ *    cannot see: an import merged into existing local configuration, and a decline. Until one
+ *    of those, this organizer writes nothing, so the found document survives exactly as long
+ *    as the decision is open.
  *  · `newer` — written by a later format. Never overwritten (the engine refuses too, but this
  *    module does not even try); surfaced the same two ways.
  */
@@ -218,6 +176,13 @@ export class OrganizerProfileSync {
         const pending = this.markerPending;
         this.markerPending = null;
         await this.writeMarker(pending, log);
+        // STILL OWED AFTER THE RETRY ⇒ THIS TICK WRITES NOTHING. The pending fact may be a
+        // foreign document whose fingerprint is already on `seenForeignFingerprint`, and the
+        // write path below would supersede — expunge — that document with its durable record
+        // still unwritten. "Content only ever leaves the folder after the incumbent has
+        // recorded that it saw it" is the engine's guarantee, and a marker the database keeps
+        // refusing must not be the loophole; the read-only work below is equally deferrable.
+        if (this.markerPending !== null) return;
       }
 
       if (!this.seeded) {
@@ -227,11 +192,37 @@ export class OrganizerProfileSync {
 
       if (this.blockedByNewer) return;
       if (this.holdFingerprint !== null) {
-        if (fp !== this.holdFingerprint) return; // the import decision is still open — write nothing
-        // Local state converged onto the found document (the import was applied): the hold is over.
+        if (fp === this.holdFingerprint) {
+          // Local state converged onto the found document (the import was applied, exactly):
+          // the hold is over, and there is nothing to write — the document already says this.
+          this.holdFingerprint = null;
+          this.lastWrittenFingerprint = fp;
+          return;
+        }
+        // ── THE OTHER RELEASE: THE USER ANSWERED, AND THE ANSWER DID NOT EQUAL THE DOCUMENT ──
+        //
+        // Convergence alone cannot end two legitimate outcomes of the confirm flow: an import
+        // MERGED into existing local configuration (local ⊃ document, so the fingerprints never
+        // meet), and a DECLINE (keep local). Both are recorded durably by the import surface —
+        // `organizer_profile_import_resolved`, keyed to the held document's fingerprint — and
+        // either one means the local store is the user-ratified truth for this mailbox. The
+        // hold releases; the held fingerprint moves to `seenForeignFingerprint` so the next
+        // write may supersede the document THROUGH the engine's foreign gate (it was surfaced,
+        // and now answered); the dirty check is already open (nothing was written since seed).
+        // One indexed read per flush interval, only while a decision is open.
+        const resolved = await profileImportResolutionExists(deps.db, {
+          accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: this.holdFingerprint,
+        });
+        if (!resolved) return; // the import decision is still open — write nothing
+        this.seenForeignFingerprint = this.holdFingerprint;
         this.holdFingerprint = null;
-        this.lastWrittenFingerprint = fp;
-        return;
+        log("organizer_profile_detected", {
+          mailboxId: deps.mailboxId, accountId: deps.accountId, state: "resolved",
+        });
+        // Fall through: the ordinary dirty check below decides whether anything is written —
+        // a decline over an EMPTY local store writes nothing (absence still means defaults,
+        // and the declined document stays in the folder untouched, which is what "keep local,
+        // touch nothing" honestly is), while any real local configuration now travels again.
       }
       if (fp === this.lastWrittenFingerprint) {
         // Nothing to write — but LOOK once per interval anyway. This is what heals the residue
