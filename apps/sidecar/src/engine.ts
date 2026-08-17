@@ -42,6 +42,7 @@ import { runSyncCycle, type SyncDeps } from "@trafficflow/worker/sync";
 // table is how a LOCAL install and the CLOUD service come to disagree about who organizes a
 // mailbox, and disagreement here IS the dual-organizer bug.
 import { readMailboxLease, LeaseUnavailableError } from "@trafficflow/worker/lease";
+import { OrganizerProfileSync } from "@trafficflow/worker/profile";
 // The SCHEDULED-RESURFACE FLIP, from the same package and for the third instance of the same
 // argument. "Resurfaces Friday at 9" is a dated promise the product makes to the user, and the
 // only thing that can keep it is a pass that notices the date has arrived. On a hosted account
@@ -164,6 +165,12 @@ export interface SidecarConfig {
    * Production takes the engine's ten minutes.
    */
   leaseStaleAfterMs?: number;
+  /**
+   * TEST SEAM. How often the portable organizer profile is re-serialized and compared against
+   * what `ohmail/_meta` holds, at most (`@trafficflow/worker/profile`). Production takes the
+   * composition's five minutes.
+   */
+  profileFlushIntervalMs?: number;
   /**
    * Told what the boot is about to spend its time on, phase by phase, as it happens.
    *
@@ -1066,6 +1073,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     let takeoverAuthorized = world.takeoverAuthorizedAt !== null;
 
     /**
+     * THE PORTABLE ORGANIZER PROFILE — the LOCAL half, which is the same composition Cloud runs
+     * (`@trafficflow/worker/profile`), handed this install's lease identity and this install's
+     * store. One serialization of one store, or LOCAL and CLOUD would write documents that
+     * disagree about the same configuration.
+     *
+     * Ticked only from `syncUntilQuiet` AFTER `mayOrganize()` said yes — the same single-writer
+     * discipline every organizer-side write here rides. `"0.0.0"` is the version every local
+     * surface reports today (the /hello convention); it is provenance in the document, never a
+     * decision.
+     */
+    const profileSync = new OrganizerProfileSync({
+      db, accountId: world.accountId, mailboxId: world.mailboxId, adapter,
+      self: { installId, kind: "local" },
+      producerVersion: "0.0.0",
+      ...(config.profileFlushIntervalMs !== undefined
+        ? { flushIntervalMs: config.profileFlushIntervalMs } : {}),
+      now,
+      log,
+    });
+
+    /**
      * Read the lease. Returns false when this install must not organize, and makes that durable.
      *
      * The loser stands down on its next cycle and STOPS SYNCING ENTIRELY — it does not keep
@@ -1578,7 +1606,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // honest answer is "this install organizes nothing". `stop()` reaches the same state.
         if (stopped) return 0;
         if (!(await mayOrganize())) return 0;
-        return drain(maxCycles);
+        const cycles = await drain(maxCycles);
+        // ── THE PORTABLE PROFILE'S WRITE-BEHIND TICK, BEHIND THE GATE IT RIDES ────────────
+        //
+        // After the drain and not inside it: the tick reads the store the cycles just wrote, so
+        // a burst of screener verdicts in one drain is one comparison. Reachable only when
+        // `mayOrganize()` said yes — a stood-down install reads and writes nothing here, which
+        // is the single-writer property the lease already enforces. Runs on a zero-cycle drain
+        // too, deliberately: settings change without mail arriving. Never throws.
+        await profileSync.onOrganize();
+        return cycles;
       });
 
     const schedule = (): void => {

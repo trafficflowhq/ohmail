@@ -459,6 +459,12 @@ export interface WorkerConfig {
     installId?: string;
     displayName?: string;
     staleAfterMs?: number;
+    /**
+     * How often the portable organizer profile is re-serialized and compared against what the
+     * mailbox holds, at most (`apps/worker/src/profile.ts`). `TF_PROFILE_FLUSH_MS` exists for
+     * tests, which cannot wait out the five-minute default.
+     */
+    profileFlushIntervalMs?: number;
   };
   /** TEST SEAM: injected logger. Absent ⇒ a real JSON-lines logger on stdout. */
   logger?: Logger;
@@ -748,6 +754,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     organizer: {
       ...(env.TF_ORGANIZER_INSTALL_ID ? { installId: env.TF_ORGANIZER_INSTALL_ID } : {}),
       ...(env.TF_LEASE_STALE_MS ? { staleAfterMs: optInt(env, "TF_LEASE_STALE_MS", 0) } : {}),
+      ...(env.TF_PROFILE_FLUSH_MS ? { profileFlushIntervalMs: optInt(env, "TF_PROFILE_FLUSH_MS", 0) } : {}),
     },
     alertWebhookUrl: env.TF_ALERT_WEBHOOK_URL,
     alertIntervalMs: optInt(env, "TF_ALERT_INTERVAL_MS", DEFAULT_ALERT_INTERVAL_MS),

@@ -76,6 +76,7 @@ import {
   accountsOf, loadServedAccounts,
   type EnabledMailbox, type MailboxErrorPhase, type MailboxSyncBlockReason,
 } from "./mailboxes.js";
+import { OrganizerProfileSync } from "./profile.js";
 import {
   readMailboxLease, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME, LeaseUnavailableError,
   type LeaseSelf,
@@ -267,6 +268,12 @@ interface MailboxRuntime {
    * one cycle of a backfilling mailbox occupying the fast lane, after which it reports for itself.
    */
   owesBacklog: boolean;
+  /**
+   * The portable organizer profile's write-behind state for this attachment
+   * (`apps/worker/src/profile.ts`). Per attachment for the known-set memo's reason: a mailbox
+   * that changes hands starts cold and re-reads what `ohmail/_meta` actually holds.
+   */
+  profile: OrganizerProfileSync;
   /**
    * `Date.now()` of the OLDEST unserved wake for this mailbox — its IDLE fired, or the sync-kick
    * channel named it — or `null` when nothing is owed.
@@ -1684,6 +1691,20 @@ export async function startWorkerWithLock(
           // it owes a backlog and its IDLE has not fired. See the fields for why "unknown" resolves
           // to LIGHT here and not to heavy.
           owesBacklog: false,
+          // The profile's write-behind, beside the lease it rides: same identity, same store,
+          // ticked only from a cycle the gate admitted. `config.buildVersion` is the label the
+          // health endpoint reports — provenance in the document, never a decision.
+          profile: new OrganizerProfileSync({
+            db, accountId: mb.accountId, mailboxId: mb.mailboxId, adapter,
+            self: { installId: organizerInstallId, kind: "cloud" },
+            producerVersion: config.buildVersion ?? "dev",
+            ...(config.organizer?.profileFlushIntervalMs !== undefined
+              ? { flushIntervalMs: config.organizer.profileFlushIntervalMs } : {}),
+            log: (event, detail) => {
+              if (/_failed$/.test(event)) log.warn(event, detail);
+              else log.info(event, detail);
+            },
+          }),
           wokenAt: null,
         };
         runtimes.set(mb.mailboxId, rt);
@@ -2688,6 +2709,15 @@ export async function startWorkerWithLock(
           // the end of `attach()`. A mailbox that completed a cycle is not in a failure backoff;
           // one that merely connected is not yet evidence of anything.
           quarantine.delete(rt.mailboxId);
+          // ── THE PORTABLE PROFILE'S WRITE-BEHIND TICK ─────────────────────────────────────
+          //
+          // HERE and only here, because this line is reachable only after `mayOrganize` said
+          // organize AND `runSyncCycle` completed — the lease gate above is the single-writer
+          // mechanism, and the profile module deliberately re-derives none of it. Never throws;
+          // a settings copy that cannot be written must not count against a mailbox whose
+          // provider did nothing wrong. Debounced inside (`TF_PROFILE_FLUSH_MS`), so a burst of
+          // screener verdicts between two ticks is one append.
+          await rt.profile.onOrganize();
           // ── THE FIRST STAMP DOES NOT WAIT FOR THE REST OF THE ROTATION ──────────────────
           //
           // The batched write below the loop stamps everything that synced this pass, and that is

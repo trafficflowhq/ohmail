@@ -37,6 +37,7 @@ import {
   makeLeaseIo, makeLeasePeekIo,
   type LeaseImapClient, type LeaseIo, type LeasePeekIo,
 } from "./organizer-lease.js";
+import { makeProfileIo, type ProfileImapClient, type ProfileIo } from "./organizer-profile.js";
 
 // Re-export the adapter types + folder constants so consumers can import them from this entrypoint.
 export * from "./imap-types.js";
@@ -908,6 +909,21 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   leaseIo(): LeaseIo {
     return makeLeaseIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
+  }
+
+  /**
+   * The portable organizer profile's IO, bound to THIS adapter's live login — the lease's
+   * arrangement, for the lease's reasons (one connection, additive method, callable only after
+   * {@link connect}).
+   *
+   * A THIRD accessor rather than a widening of {@link leaseIo}, because the two read different
+   * things at different costs: the lease fetches headers only, every cycle, and must stay that
+   * cheap; the profile fetches full sources, rarely (a takeover read, a debounced write), and
+   * folding `source: true` into the lease's fetch would make the gate's per-cycle cost scale
+   * with the profile document's size.
+   */
+  profileIo(): ProfileIo {
+    return makeProfileIo(this.client as unknown as ProfileImapClient, (c) => this.toServerPath(c));
   }
 
   /**

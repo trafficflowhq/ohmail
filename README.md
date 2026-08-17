@@ -207,6 +207,13 @@ ohmail/
 └── _meta                a tiny bookkeeping folder, hidden in your other mail apps
 ```
 
+`_meta` also holds your ohmail settings for this mailbox — the senders you've
+screened in, your rules, notification choices, away reply and tag names — as a
+small versioned-JSON message, so they live in your mailbox rather than in any
+ohmail database. The format is documented in the source
+(`packages/core/src/adapters/organizer-profile.ts`); deleting the message only
+resets ohmail's settings, never your mail.
+
 There is no folder called "Spam" — the pile ohmail sets junk-grade mail aside
 in is `ohmail/Quarantine`; "Spam" is only ever a friendly label the app shows
 over it.
