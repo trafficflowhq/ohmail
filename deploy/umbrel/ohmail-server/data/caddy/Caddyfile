@@ -1,0 +1,29 @@
+# The ohmail app's front door on umbrelOS. Same origin split as
+# deploy/selfhost/Caddyfile — the API's path surface to the api container, everything
+# else to the web container — with two Umbrel-shaped differences:
+#
+#   · Upstreams are Umbrel's container names, not compose service names.
+#   · Only port 443 is published on the device (umbrelOS itself owns port 80), so the
+#     certificate is obtained over the TLS-ALPN challenge — automatic, as long as the
+#     router forwards outside port 443 here and OHMAIL_ORIGIN's domain resolves to it.
+#
+# The path list must stay matched EXACTLY as the API mounts it, with no stripping —
+# the API canonicalizes one leading /api off itself, and a strip here would
+# double-strip /api/api/… shapes. See deploy/selfhost/Caddyfile for the full argument.
+
+{$OHMAIL_ORIGIN} {
+	@api path /api /api/* /auth /auth/* /events /health /hello /pair /pair/* /internal /internal/*
+	handle @api {
+		reverse_proxy ohmail-server_api_1:8080
+	}
+	handle {
+		reverse_proxy ohmail-server_web_1:3000
+	}
+}
+
+# The launcher site, plain HTTP on an internal port. Umbrel's own app proxy points
+# here, so the dashboard's "Open" button lands on the real https origin instead of an
+# address whose cookies cannot work.
+:8099 {
+	redir {$OHMAIL_ORIGIN}{uri}
+}

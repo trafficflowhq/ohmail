@@ -1,0 +1,209 @@
+# ohmail on a VPS, from nothing
+
+One rented box, one compose file, one domain. This guide assumes nothing but
+the ability to open a terminal and paste commands. If you already own a Linux
+machine with Docker, start at step 2.
+
+A note on state before you spend an afternoon: the stack pulls prebuilt
+images from `ghcr.io/trafficflowhq`. If step 5's pull answers "not found",
+those images have not been published yet — everything else here is real, but
+you cannot finish until they are.
+
+## 1. Get a box
+
+Any small VPS from any provider. What matters:
+
+- 2 GB of memory and 20 GB of disk are comfortable. The stack is seven
+  containers, most of them idle most of the time.
+- Ports 80 and 443 reachable from the internet (the default on a VPS).
+- A recent Ubuntu or Debian is the well-trodden path; anything that runs
+  Docker works.
+
+## 2. Point a domain at it
+
+Pick the address your household will type — `mail.example.com` reads well —
+and create a DNS **A record** pointing it at the box's IP address (and an
+AAAA record if the box has IPv6). That is all: the stack obtains and renews
+its TLS certificate itself once the name resolves to the box.
+
+If you don't own a domain, buy a cheap one; a fixed public address is a
+prerequisite, because browsers require an https origin for the features
+ohmail uses (secure cookies, passkeys), and the server refuses to run
+without one.
+
+## 3. Install Docker
+
+On the box, as root:
+
+```sh
+curl -fsSL https://get.docker.com | sh
+```
+
+That is Docker's own convenience installer and includes the compose plugin.
+Check it: `docker compose version` should print a version, not an error.
+
+## 4. Get the stack and configure it
+
+```sh
+git clone https://github.com/trafficflowhq/ohmail
+cd ohmail/deploy/selfhost
+cp .env.example .env
+```
+
+Open `.env` in an editor. Four values are required; the file documents every
+one beside where you type it, and everything not marked required has a
+working default. The four:
+
+- **`OHMAIL_ORIGIN`** — the address from step 2, scheme and host only:
+  `https://mail.example.com`. This value derives the cookie host and the
+  passkey identity; changing it later signs everybody out, so pick the name
+  you mean to keep.
+- **`POSTGRES_PASSWORD`** — the database password. URL-safe characters only.
+- **`TF_KEK_V1`** — the key that encrypts mailbox credentials at rest.
+  Generate it with `openssl rand -hex 32`. **Copy this value somewhere safe
+  now** — a password manager is fine. Losing it means every connected
+  mailbox has to be re-entered. See [BACKUP.md](./BACKUP.md).
+- **`MINIO_ROOT_PASSWORD`** — the attachment-staging store's credential.
+  `openssl rand -hex 24`. It never leaves the box, but pick a real value.
+
+Two optional blocks worth deciding now:
+
+- **Outbound mail.** By default, product mail (address verification,
+  new-device notices) lands in a bundled sink you can read on the box at
+  `http://127.0.0.1:8025` — viewable, delivered nowhere. To deliver for
+  real, set `SMTP_URL` to a relay you have and `MAIL_FROM` to the sender
+  address; the two travel together, and setting one without the other
+  refuses the boot rather than pretending to send.
+- **Mail server on your own LAN?** If the mailbox you'll connect lives at a
+  private address (a NAS, a home mail server), set
+  `TF_PROBE_ALLOW_PRIVATE=1` — the add-mailbox connection check refuses
+  private-network targets by default. If that server also has no TLS, you
+  will additionally confirm the connection-security notice when you add the
+  mailbox; plaintext IMAP is never used without that explicit consent.
+
+## 5. Start it
+
+```sh
+docker compose up -d
+```
+
+The first start pulls the images, creates the database, and applies the
+schema. Watch it settle with `docker compose ps` — everything should reach
+`running (healthy)` within a couple of minutes.
+
+## 6. Create the first account
+
+The server mints a one-time setup token on first boot and prints it once,
+to the API service's log. Reading that log is the proof you control the
+box — that is the whole ceremony, and it is why there is no default password
+anywhere.
+
+```sh
+docker compose logs api
+```
+
+Look for the fenced block:
+
+```
+──────────────────────────────────────────────────────────────────────
+  FIRST-RUN SETUP
+
+  No account exists on this server yet. ...
+      <the token>
+  ...
+──────────────────────────────────────────────────────────────────────
+```
+
+The token works once and expires; restarting the API service
+(`docker compose restart api`) retires it and prints a fresh one, so a lost
+token costs nothing.
+
+Today, one command trades the token for an invite code bound to your email
+address (a setup page that takes the token directly is on its way — this
+command is the interim):
+
+```sh
+curl -sS -X POST https://mail.example.com/pair/redeem \
+  -H 'content-type: application/json' \
+  -d '{"grant":"invite","token":"PASTE-THE-TOKEN-HERE","email":"you@example.com"}'
+```
+
+The answer contains an invite code. Now open
+`https://mail.example.com/join` in a browser and walk the signup: enter the
+invite code with the **same email address**, choose a password, and set up a
+passkey or an authenticator app when asked — every account on the server has
+a second factor, including yours.
+
+## 7. Connect your first mailbox
+
+Sign in and add a mailbox: the address, the IMAP server, and the password.
+Plain facts about providers:
+
+- Most providers work with the address and either your password or an "app
+  password" — Gmail and several others require an app password for IMAP,
+  generated in the provider's own security settings.
+- **Microsoft 365 / Exchange Online** signs in with OAuth instead of a
+  password and needs a one-time app registration on the Microsoft side. The
+  `MS_OAUTH_*` block in `.env.example` documents it, including the exact
+  redirect URI to register. Skip this entirely unless you have such a
+  mailbox.
+- A mail server on your own LAN needs the probe allowance from step 4.
+
+## 8. Your household
+
+The server never opens signup to strangers: the first account came from box
+control, and every later account is meant to arrive by invitation. The
+in-app flow for inviting family members is still arriving — until it lands,
+the server is honestly a one-person install unless you are comfortable
+minting invites against the API yourself.
+
+## 9. Back it up now, not someday
+
+The short version — [BACKUP.md](./BACKUP.md) has the reasoning and the
+restore drill:
+
+```sh
+# /etc/cron.d/ohmail-backup — nightly dump at 03:10, then copy it off the box
+10 3 * * * root cd /root/ohmail/deploy/selfhost && docker compose exec -T db pg_dump -U ohmail -d ohmail | gzip > /var/backups/ohmail-$(date +\%F).sql.gz
+```
+
+Copy the dump **off the box** (scp, rclone, anything) and keep your `.env`
+— above all the `TF_KEK_V1` line — somewhere that is not this machine. A
+backup on the same disk dies with the disk.
+
+## 10. Updates
+
+Pin a version in `.env` (`OHMAIL_IMAGE_TAG=<released tag>`) rather than
+riding `latest`, then updating is:
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+The server applies any schema changes at boot, before it starts listening.
+
+## External database or storage
+
+The one-box shape above is the default. If your Postgres or S3-compatible
+storage lives elsewhere:
+
+- **Postgres:** the API reads `DATABASE_URL` and the organizer reads
+  `DATABASE_URL_SESSION` — two names, deliberately, and the bundled compose
+  file sets both to the bundled database for you. Pointing at an external
+  server means editing both lines in `docker-compose.yml` to the same
+  database (plain connection URLs, no pooler) and removing the bundled `db`
+  service. Set one and not the other and the two processes will quietly use
+  different databases.
+- **Storage:** the `S3_*` block at the bottom of `.env.example` switches
+  the staging store to an existing S3-compatible service. The organizer
+  sweeps the same bucket the API mints into, so both read the identical
+  block — the compose file already wires that.
+
+## When something looks wrong
+
+- `docker compose ps` — is anything not `healthy`?
+- `docker compose logs api` and `docker compose logs organizer` — boot
+  refusals name the exact variable to fix.
+- `https://mail.example.com/health` — answers only after the schema is
+  verified and the key ring loads, so a 200 here means "migrated, keyed,
+  serving".

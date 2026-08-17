@@ -1,0 +1,6 @@
+# The community-app-store descriptor. umbrelOS expects this file at the ROOT of a
+# store repository; deploy/umbrel/ is the source those files are copied from (see
+# README.md beside this file). The store id prefixes every app id in the store,
+# which is why the app directory is named `ohmail-server`.
+id: ohmail
+name: ohmail
