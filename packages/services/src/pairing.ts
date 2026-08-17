@@ -386,7 +386,12 @@ export async function redeemInviteGrant(
       expiresAt: new Date(now.getTime() + PAIRING_INVITE_TTL_MS),
       now,
       issuedBy: `pairing:${consumed.id}`,
-      note: consumed.label.length > 0 ? consumed.label : null,
+      // NO `note`. The token's label is the CREATOR's own words, and this invite row is keyed by
+      // the REDEEMER's email and outlives the creator's account — account erasure cleans
+      // `pairing_tokens` but not an invite bound to someone else's address. Copying the label
+      // here would leave a fragment of the creator's authored text behind after they are gone.
+      // `issued_by = pairing:<id>` already carries every bit of traceability the label provided.
+      note: null,
     });
     return { code: invite.code, email: invite.email, expiresAt: invite.expiresAt };
   });

@@ -3,11 +3,24 @@ import {
   redeemInviteGrant, redeemDevicePair, type PairingGrant,
 } from "@trafficflow/services";
 import { ServiceError } from "@trafficflow/services/mail";
+import { silentLogger } from "@trafficflow/core/mail";
 import { serviceContext } from "../context.js";
 import { errorResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { json, noContent, readBody } from "./shared.js";
 import { auth } from "./shared-cloud.js";
+
+/**
+ * A JSON body read as a plain object. `readBody` returns whatever `JSON.parse` produced, and
+ * `null`, `[]` and a bare primitive are all valid JSON — so a handler that reads `b.grant` off
+ * the raw result throws a `TypeError` on any of them, which surfaces as a 500 for what is a
+ * client sending a well-formed body of the wrong SHAPE. Coercing a non-object to `{}` lets the
+ * field reads yield `undefined` and the ordinary `validation_failed` path answer 400.
+ */
+async function readObjectBody<T extends Record<string, unknown>>(req: Request): Promise<Partial<T>> {
+  const raw = await readBody<unknown>(req);
+  return (raw !== null && typeof raw === "object" && !Array.isArray(raw)) ? (raw as Partial<T>) : {};
+}
 
 /**
  * THE PAIRING CEREMONY (`/pair*`) — mounted by `routes/self-host.ts` and by NOTHING ELSE.
@@ -51,7 +64,7 @@ export const pairRoutes: Route[] = [
     cost: "ceremony",
     options: { stepUp: true },
     handler: async (req, deps) => {
-      const b = await readBody<{ grant?: unknown; label?: unknown; ttlSeconds?: unknown }>(req);
+      const b = await readObjectBody<{ grant?: unknown; label?: unknown; ttlSeconds?: unknown }>(req);
       // The casts carry wire input into the service, whose runtime whitelist and bounds are the
       // actual gate (`mintPairingToken` refuses an unknown grant and a non-integer ttl) — the
       // same division `readBody` already establishes for every other handler.
@@ -92,7 +105,7 @@ export const pairRoutes: Route[] = [
     options: { public: true, anonymous: true },
     handler: async (req, deps) => {
       try {
-        const b = await readBody<{ grant?: unknown; token?: unknown; email?: unknown }>(req);
+        const b = await readObjectBody<{ grant?: unknown; token?: unknown; email?: unknown }>(req);
         const token = typeof b.token === "string" ? b.token : "";
         const ctx = serviceContext(deps, req);
         if (b.grant === "invite") {
@@ -111,12 +124,22 @@ export const pairRoutes: Route[] = [
         }
         return errorResponse("validation_failed", 400, 'grant must be "invite" or "device-pair"');
       } catch (e) {
-        // The ANONYMOUS pipeline has no error envelope above this handler, so the mapping
-        // `withErrorEnvelope` does for every other route happens here — same envelope, same
-        // codes — and anything unexpected is a content-free 500, never a stack.
+        // The ANONYMOUS pipeline has no error envelope above this handler, so the mapping AND the
+        // structured logging `withErrorEnvelope` does for every other route both happen here —
+        // same envelope, same codes, same 5xx trace — and anything unexpected is a content-free
+        // 500, never a stack. Without the log a persistent redeem outage (a driver fault, a
+        // session-mint throw) would leave no request/error-class record anywhere, which is
+        // exactly the observability the envelope middleware exists to guarantee.
+        const log = deps.logger ?? silentLogger;
         if (e instanceof ServiceError) {
+          if (e.httpStatus >= 500) {
+            log.error("request_failed", {
+              method: req.method, route: "/pair/redeem", status: e.httpStatus, code: e.code, err: e,
+            });
+          }
           return errorResponse(e.code, e.httpStatus, e.message, e.details, e.retryable);
         }
+        log.error("request_unhandled", { method: req.method, route: "/pair/redeem", status: 500, err: e });
         return errorResponse("internal", 500, "internal error");
       }
     },
