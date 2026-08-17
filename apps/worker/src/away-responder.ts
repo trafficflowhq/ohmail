@@ -1,4 +1,4 @@
-import { and, asc, eq, gt } from "drizzle-orm";
+import { and, asc, eq, gt, gte, isNull, ne, or } from "drizzle-orm";
 import {
   awayResponderSent, awayResponders, folderState, mailboxes, messageBodies, messages, type Tx,
 } from "@trafficflow/db";
@@ -43,15 +43,13 @@ import { mintMessageId } from "@trafficflow/core/mail";
      audience        `screened_in` (the default) answers only senders already past the Screener.
      already_replied at most one reply per sender per enablement episode — the UNIQUE on
                      `away_responder_sent`, claimed BEFORE the send.
-     external_placement  never to a row whose placement the OWNER authored outside ohmail
-                     (`folder_state.last_set_by = 'external'`): a passively-backfilled folder of
-                     their own, or a move they made in another client. History being re-read is
-                     not mail arriving, and mail its owner has filed themselves is attended.
-     predates_episode never to a message whose OWN stated send time (`messages.date`) is older
-                     than the episode floor, or absent. `created_at` is the ingest clock and the
-                     ingest clock lies about history — a first-time backfill stamps years-old
-                     mail "now" — so the floor is also checked against the one per-row clock a
-                     backfill cannot re-stamp.
+
+   Before any of those, a row must be a CANDIDATE at all, and re-read history is not one. Two
+   per-row facts gate candidacy in the query itself (see the candidate query's note for why the
+   query and not the loop): a placement authored outside ohmail
+   (`folder_state.last_set_by = 'external'` — the passive-backfill and owner-filed shape) is not
+   an arrival, and a stated send time (`messages.date`) older than the episode floor — or absent
+   — is mail written before this away period existed.
      list_mail       never to a mailing list or an ESP campaign. A reply to a list is delivered to
                      every subscriber; it is also public.
      auto_submitted  never to something that announced itself as automatic (RFC 3834). Two
@@ -98,9 +96,9 @@ import { mintMessageId } from "@trafficflow/core/mail";
    `created_at` alone is NOT "newly ingested is newly arrived", and treating it as though it were
    was a real defect: `insertMessage` omits `createdAt`, so the column default stamps a
    first-time backfill's years-old mail with the ingest instant, inside any live episode's window.
-   The `external_placement` and `predates_episode` suppressions below are the correction — the
-   candidate query stays on the ingest clock (it is the only indexed-adjacent bound there is), and
-   the per-row decision then requires the row to be provably a new arrival.
+   The candidacy predicates on the query below are the correction: the ingest-clock bound stays
+   (it is the only indexed-adjacent bound there is), and a row must ALSO carry a placement we
+   authored and a stated send time inside the episode to be a candidate at all.
 
    There is deliberately no resume cursor. `away_responder_sent` IS the idempotency: a sender that
    has been answered is excluded by the claim, so re-running the pass over the same window writes
@@ -150,8 +148,6 @@ export const AWAY_SENDS_PER_CYCLE = 10;
 export type AwaySuppression =
   | "already_replied"
   | "not_screened_in"
-  | "external_placement"
-  | "predates_episode"
   | "list_mail"
   | "auto_submitted"
   | "service_sender"
@@ -277,17 +273,56 @@ export async function awayResponderPass(
     fromAddress: messages.fromAddress,
     subject: messages.subject,
     messageIdHeader: messages.messageIdHeader,
-    date: messages.date,
     noForward: messages.noForward,
     sensitivityCategory: messages.sensitivityCategory,
     headers: messageBodies.headers,
     desiredFolder: folderState.desiredFolder,
-    lastSetBy: folderState.lastSetBy,
   })
     .from(messages)
     .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
     .leftJoin(folderState, eq(folderState.messageId, messages.id))
-    .where(and(eq(messages.accountId, accountId), gt(messages.createdAt, floor)))
+    // ── CANDIDACY: A ROW MUST BE A NEW ARRIVAL, AND THE QUERY IS WHERE THAT IS DECIDED ────
+    //
+    // `created_at > floor` reads the INGEST clock, and the ingest clock lies about history:
+    // `insertMessage` omits `createdAt`, so a first-time backfill stamps years-old mail with
+    // the ingest instant — inside the window of any episode live while the backfill drains. A
+    // responder that trusted it would send real replies to a decade of correspondents in the
+    // account owner's name. Two more per-row facts are therefore required of a candidate:
+    //
+    //   placement   `folder_state.last_set_by` must not be `'external'` — a placement the
+    //               account's owner authored outside ohmail, which is what a passively-adopted
+    //               folder's rows carry (`NewPlan.passive`; `commitChange` writes `'external'`
+    //               for exactly that shape) and what `adopt_external` records for a move made
+    //               in another client. Every retro pass requires `'us'` in ITS candidate query
+    //               for the same reason (`pipeline.ts`'s passive note); the one pass that
+    //               SENDS holds the same line. A row with NO `folder_state` yet stays a
+    //               candidate: placement lands in the same transaction as the message row, so
+    //               an absent row is a mid-cycle fresh ingest, and the audience gate below
+    //               already treats it as un-admitted.
+    //   sent time   `messages.date` — the message's own stated send time, the one per-row
+    //               clock a backfill cannot re-stamp — must be at or after the episode floor
+    //               (inclusive AT the floor, matching the window's inclusive ends). A NULL
+    //               date fails the SQL comparison and is out: not provably new, and absent
+    //               evidence may not select the acting branch — here the branch that sends
+    //               mail. The accepted costs are small and fail toward silence: a sender's
+    //               skewed clock can lose them a reply, and a sender forging a fresh Date buys
+    //               one reply their genuinely new mail would have earned anyway.
+    //
+    // These live in the WHERE clause and not in the loop, and that is a decision with a
+    // reason. `screener-auto.ts`'s rule — a guard in the WHERE clause cannot be watched to
+    // fail — is about CONSENT decisions over rows already in hand. Candidacy is different in
+    // kind, and it has a failure mode the loop cannot fix: a held row writes no claim, so it
+    // stays in the window for ever, and a first-time backfill contributes THOUSANDS of held
+    // rows with post-floor ingest stamps. Held in the loop, they pin the oldest-`batch` page
+    // every cycle and a genuine arrival behind them is never even examined. The starvation
+    // test ("a wall of backfilled rows…") holds that shape red, and each predicate's deletion
+    // is watched red by the backfill tests beside it.
+    .where(and(
+      eq(messages.accountId, accountId),
+      gt(messages.createdAt, floor),
+      gte(messages.date, floor),
+      or(isNull(folderState.lastSetBy), ne(folderState.lastSetBy, "external")),
+    ))
     // Oldest first: if the budget clips this cycle, the people who wrote first are answered first.
     .orderBy(asc(messages.createdAt), asc(messages.id))
     .limit(batch);
@@ -310,40 +345,6 @@ export async function awayResponderPass(
     const sender = norm(m.fromAddress);
     if (sender.length === 0 || sender.indexOf("@") <= 0) continue;   // not an address; nothing to answer
     if (seen.has(sender)) continue;
-
-    // ── IS THIS ROW A NEW ARRIVAL AT ALL? Decided before who may be answered ──────────────
-    //
-    // The candidate query's `created_at > floor` reads the INGEST clock, and the ingest clock
-    // lies about history: `insertMessage` omits `createdAt`, so a first-time backfill stamps
-    // years-old mail with the ingest instant — inside the window of any episode live while the
-    // backfill drains. A responder that trusted it would send real replies to a decade of
-    // correspondents in the account owner's name. Two per-message facts separate arrival from
-    // re-read history, and a row must clear BOTH:
-    //
-    //   placement   `folder_state.last_set_by = 'external'` is a placement the OWNER authored
-    //               outside ohmail — a passively-adopted folder of their own (`NewPlan.passive`;
-    //               `commitChange` writes `'external'` for exactly that shape) or a move made in
-    //               another client that `adopt_external` recorded. Every retro pass in this repo
-    //               requires `'us'` for this reason (see `pipeline.ts`'s passive note), and the
-    //               one pass that SENDS holds the same line. A row with NO `folder_state` is not
-    //               held here: placement lands in the same transaction as the message row, so an
-    //               absent row is a mid-cycle fresh ingest, and the audience gate below already
-    //               treats it as un-admitted.
-    //   sent time   `messages.date` is the message's own stated send time — the one per-row
-    //               clock a backfill cannot re-stamp. Strictly older than the episode floor
-    //               means it was written before this away period existed (the window is
-    //               inclusive at the floor itself, matching `starts_at`/`ends_at` above). A row
-    //               with NO date is not provably new, and absent evidence may not select the
-    //               acting branch — here the branch that sends mail — so it is held too. The
-    //               costs are accepted and small: a sender's skewed clock can lose them a reply
-    //               (silence, the safe direction), and a sender forging a fresh Date buys one
-    //               reply their genuinely new mail would have earned anyway.
-    //
-    // Neither guard marks the sender `seen`: these are facts about the ROW, not the
-    // correspondent, and the same sender's genuinely new message later in this pass is still
-    // answered.
-    if (m.lastSetBy === "external") { hold("external_placement"); continue; }
-    if (!m.date || m.date.getTime() < floor.getTime()) { hold("predates_episode"); continue; }
 
     // ── THE SUPPRESSIONS THAT NEED NO NETWORK AND NO WRITE, CHEAPEST FIRST ────────────────
     //
