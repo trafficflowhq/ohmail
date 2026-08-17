@@ -43,6 +43,15 @@ import { mintMessageId } from "@trafficflow/core/mail";
      audience        `screened_in` (the default) answers only senders already past the Screener.
      already_replied at most one reply per sender per enablement episode — the UNIQUE on
                      `away_responder_sent`, claimed BEFORE the send.
+     external_placement  never to a row whose placement the OWNER authored outside ohmail
+                     (`folder_state.last_set_by = 'external'`): a passively-backfilled folder of
+                     their own, or a move they made in another client. History being re-read is
+                     not mail arriving, and mail its owner has filed themselves is attended.
+     predates_episode never to a message whose OWN stated send time (`messages.date`) is older
+                     than the episode floor, or absent. `created_at` is the ingest clock and the
+                     ingest clock lies about history — a first-time backfill stamps years-old
+                     mail "now" — so the floor is also checked against the one per-row clock a
+                     backfill cannot re-stamp.
      list_mail       never to a mailing list or an ESP campaign. A reply to a list is delivered to
                      every subscriber; it is also public.
      auto_submitted  never to something that announced itself as automatic (RFC 3834). Two
@@ -85,6 +94,13 @@ import { mintMessageId } from "@trafficflow/core/mail";
    owner said the away period begins). So enabling a responder never answers the backlog — mail
    that arrived before the current configuration existed is not a candidate at all, which is also
    why the migration seeds no suppression rows.
+
+   `created_at` alone is NOT "newly ingested is newly arrived", and treating it as though it were
+   was a real defect: `insertMessage` omits `createdAt`, so the column default stamps a
+   first-time backfill's years-old mail with the ingest instant, inside any live episode's window.
+   The `external_placement` and `predates_episode` suppressions below are the correction — the
+   candidate query stays on the ingest clock (it is the only indexed-adjacent bound there is), and
+   the per-row decision then requires the row to be provably a new arrival.
 
    There is deliberately no resume cursor. `away_responder_sent` IS the idempotency: a sender that
    has been answered is excluded by the claim, so re-running the pass over the same window writes
@@ -134,6 +150,8 @@ export const AWAY_SENDS_PER_CYCLE = 10;
 export type AwaySuppression =
   | "already_replied"
   | "not_screened_in"
+  | "external_placement"
+  | "predates_episode"
   | "list_mail"
   | "auto_submitted"
   | "service_sender"
@@ -259,10 +277,12 @@ export async function awayResponderPass(
     fromAddress: messages.fromAddress,
     subject: messages.subject,
     messageIdHeader: messages.messageIdHeader,
+    date: messages.date,
     noForward: messages.noForward,
     sensitivityCategory: messages.sensitivityCategory,
     headers: messageBodies.headers,
     desiredFolder: folderState.desiredFolder,
+    lastSetBy: folderState.lastSetBy,
   })
     .from(messages)
     .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
@@ -290,6 +310,40 @@ export async function awayResponderPass(
     const sender = norm(m.fromAddress);
     if (sender.length === 0 || sender.indexOf("@") <= 0) continue;   // not an address; nothing to answer
     if (seen.has(sender)) continue;
+
+    // ── IS THIS ROW A NEW ARRIVAL AT ALL? Decided before who may be answered ──────────────
+    //
+    // The candidate query's `created_at > floor` reads the INGEST clock, and the ingest clock
+    // lies about history: `insertMessage` omits `createdAt`, so a first-time backfill stamps
+    // years-old mail with the ingest instant — inside the window of any episode live while the
+    // backfill drains. A responder that trusted it would send real replies to a decade of
+    // correspondents in the account owner's name. Two per-message facts separate arrival from
+    // re-read history, and a row must clear BOTH:
+    //
+    //   placement   `folder_state.last_set_by = 'external'` is a placement the OWNER authored
+    //               outside ohmail — a passively-adopted folder of their own (`NewPlan.passive`;
+    //               `commitChange` writes `'external'` for exactly that shape) or a move made in
+    //               another client that `adopt_external` recorded. Every retro pass in this repo
+    //               requires `'us'` for this reason (see `pipeline.ts`'s passive note), and the
+    //               one pass that SENDS holds the same line. A row with NO `folder_state` is not
+    //               held here: placement lands in the same transaction as the message row, so an
+    //               absent row is a mid-cycle fresh ingest, and the audience gate below already
+    //               treats it as un-admitted.
+    //   sent time   `messages.date` is the message's own stated send time — the one per-row
+    //               clock a backfill cannot re-stamp. Strictly older than the episode floor
+    //               means it was written before this away period existed (the window is
+    //               inclusive at the floor itself, matching `starts_at`/`ends_at` above). A row
+    //               with NO date is not provably new, and absent evidence may not select the
+    //               acting branch — here the branch that sends mail — so it is held too. The
+    //               costs are accepted and small: a sender's skewed clock can lose them a reply
+    //               (silence, the safe direction), and a sender forging a fresh Date buys one
+    //               reply their genuinely new mail would have earned anyway.
+    //
+    // Neither guard marks the sender `seen`: these are facts about the ROW, not the
+    // correspondent, and the same sender's genuinely new message later in this pass is still
+    // answered.
+    if (m.lastSetBy === "external") { hold("external_placement"); continue; }
+    if (!m.date || m.date.getTime() < floor.getTime()) { hold("predates_episode"); continue; }
 
     // ── THE SUPPRESSIONS THAT NEED NO NETWORK AND NO WRITE, CHEAPEST FIRST ────────────────
     //
