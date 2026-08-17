@@ -69,11 +69,18 @@ working default. The four:
 Two optional blocks worth deciding now:
 
 - **Outbound mail.** By default, product mail (address verification,
-  new-device notices) lands in a bundled sink you can read on the box at
-  `http://127.0.0.1:8025` — viewable, delivered nowhere. To deliver for
-  real, set `SMTP_URL` to a relay you have and `MAIL_FROM` to the sender
-  address; the two travel together, and setting one without the other
-  refuses the boot rather than pretending to send.
+  new-device notices) lands in a bundled sink — viewable, delivered
+  nowhere. Its little web UI listens only on the box itself, so from your
+  own computer open a tunnel first, then browse `http://localhost:8025`:
+
+  ```sh
+  ssh -L 8025:127.0.0.1:8025 root@mail.example.com
+  ```
+
+  To deliver for real, set `SMTP_URL` to a relay you have and `MAIL_FROM`
+  to the sender address — **both together**: with only one of them set,
+  the other keeps its bundled default, and mail would go out from the
+  placeholder sender `ohmail@selfhost.example`.
 - **Mail server on your own LAN?** If the mailbox you'll connect lives at a
   private address (a NAS, a home mail server), set
   `TF_PROBE_ALLOW_PRIVATE=1` — the add-mailbox connection check refuses
@@ -88,8 +95,13 @@ docker compose up -d
 ```
 
 The first start pulls the images, creates the database, and applies the
-schema. Watch it settle with `docker compose ps` — everything should reach
-`running (healthy)` within a couple of minutes.
+schema. Watch it settle with `docker compose ps`. What a good boot looks
+like, within a couple of minutes:
+
+- `web`, `api`, `organizer`, `db`, `minio` — `running (healthy)`
+- `proxy`, `mailpit` — `running` (they carry no health check)
+- `minio-init` — gone from `ps`, or `Exited (0)` in `docker compose ps -a`:
+  it runs once to create the staging bucket and is supposed to exit.
 
 ## 6. Create the first account
 
@@ -116,7 +128,9 @@ Look for the fenced block:
 
 The token works once and expires; restarting the API service
 (`docker compose restart api`) retires it and prints a fresh one, so a lost
-token costs nothing.
+token costs nothing. After a restart the retired block is still in the log
+above the new one — read the **newest** block, most conveniently with
+`docker compose logs api | tail -40`.
 
 Today, one command trades the token for an invite code bound to your email
 address (a setup page that takes the token directly is on its way — this
@@ -159,12 +173,15 @@ minting invites against the API yourself.
 
 ## 9. Back it up now, not someday
 
-The short version — [BACKUP.md](./BACKUP.md) has the reasoning and the
-restore drill:
+The short version — [BACKUP.md](./BACKUP.md) has the reasoning, the exact
+script, and the restore drill. A five-line script at
+`/usr/local/bin/ohmail-backup` (from BACKUP.md — it keeps the dump private
+and refuses to leave a good-looking file behind when the dump failed), and
+one cron line:
 
 ```sh
 # /etc/cron.d/ohmail-backup — nightly dump at 03:10, then copy it off the box
-10 3 * * * root cd /root/ohmail/deploy/selfhost && docker compose exec -T db pg_dump -U ohmail -d ohmail | gzip > /var/backups/ohmail-$(date +\%F).sql.gz
+10 3 * * * root /usr/local/bin/ohmail-backup
 ```
 
 Copy the dump **off the box** (scp, rclone, anything) and keep your `.env`
@@ -190,10 +207,12 @@ storage lives elsewhere:
 - **Postgres:** the API reads `DATABASE_URL` and the organizer reads
   `DATABASE_URL_SESSION` — two names, deliberately, and the bundled compose
   file sets both to the bundled database for you. Pointing at an external
-  server means editing both lines in `docker-compose.yml` to the same
-  database (plain connection URLs, no pooler) and removing the bundled `db`
-  service. Set one and not the other and the two processes will quietly use
-  different databases.
+  server means three edits in `docker-compose.yml`: both URL lines to the
+  same database (plain connection URLs, no pooler), the bundled `db`
+  service removed, and the `db:` entry under the api service's
+  `depends_on:` removed with it — compose refuses a dependency on a service
+  that no longer exists. Change one URL and not the other and the two
+  processes will quietly use different databases.
 - **Storage:** the `S3_*` block at the bottom of `.env.example` switches
   the staging store to an existing S3-compatible service. The organizer
   sweeps the same bucket the API mints into, so both read the identical

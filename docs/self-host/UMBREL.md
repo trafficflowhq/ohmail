@@ -83,7 +83,9 @@ docker logs ohmail-server_api_1
 
 Look for the fenced `FIRST-RUN SETUP` block; the token is the long value in
 the middle. It works once and expires — restarting the app retires it and
-prints a fresh one, so a lost token costs nothing.
+prints a fresh one, so a lost token costs nothing. After a restart the
+retired block is still in the log above the new one, so read the **newest**
+block (`docker logs --tail 60 ohmail-server_api_1`).
 
 > **[screenshot placeholder: the FIRST-RUN SETUP block in the Umbrel log
 > viewer]**
@@ -128,13 +130,17 @@ matter, in order:
    `~/umbrel/app-data/ohmail-server/env/secrets.env`. It holds the key that
    encrypts your mailbox credentials; copy it into a password manager once,
    the day you install. Lose it and every mailbox has to be re-entered.
-2. **The database** — the nightly dump from
-   [BACKUP.md](./BACKUP.md), with one Umbrel-shaped change to the container
-   name:
+2. **The database** — the nightly backup script from
+   [BACKUP.md](./BACKUP.md), with one Umbrel-shaped change: its
+   `docker compose exec -T db pg_dump …` line (and the `cd` above it)
+   becomes
 
    ```sh
-   docker exec ohmail-server_db_1 pg_dump -U ohmail -d ohmail | gzip > ohmail-backup.sql.gz
+   docker exec ohmail-server_db_1 pg_dump -U ohmail -d ohmail
    ```
+
+   Keep the rest of the script as it is — the private file mode and the
+   rename-only-on-success are what make a failed night look failed.
 
 Copy both off the device. Your mail itself is safe regardless — it lives in
 your providers' mailboxes, and ohmail never becomes the only copy — but the
