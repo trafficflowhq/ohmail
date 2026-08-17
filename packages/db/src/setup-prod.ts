@@ -6,6 +6,9 @@ import { onNotice } from "./notices.js";
 import { runMigrations, JOURNALS } from "./migrate.js";
 import { ensureSearchExtensions } from "./search-setup.js";
 import { transactionPoolerReason, sessionUrlRejection } from "./session-url.js";
+import {
+  applySupabaseLockdown, lockdownCensus, lockdownProblems, supabaseHostRoles,
+} from "./supabase-lockdown-core.js";
 
 /**
  * The ONE idempotent production database setup.
@@ -106,6 +109,22 @@ export interface ProdSetupReport {
   changeLogCompositeIndex: string | null;
   /** A real fuzzy computation on the live server: a typo must match, noise must not. */
   fuzzy: { typoSimilarity: number; noiseSimilarity: number; threshold: number } | null;
+  /**
+   * The Supabase Data API lockdown, when the target is Supabase-shaped; `null` when it is a
+   * plain Postgres (the self-host default), where no `anon`/`authenticated`/`service_role` role
+   * exists and therefore no grant to one CAN exist — see `supabaseHostRoles` for why that skip
+   * is safe by construction rather than by assumption. On a Supabase-shaped target the lockdown
+   * is APPLIED (idempotently) and then verified fail-closed: a non-zero `grants` or
+   * `reachableRules` joins `problems` below and the whole setup refuses to report success.
+   * `residualRules` (an unreachable grantor's — `supabase_admin`'s on real Supabase) is reported
+   * and never failed on; the reasoning is measured in `scripts/supabase-lockdown.sql` §3.
+   */
+  supabaseLockdown: {
+    rolesPresent: string[];
+    grants: number;
+    reachableRules: number;
+    residualRules: number;
+  } | null;
 }
 
 /**
@@ -310,6 +329,45 @@ export async function setupProdDatabase(
     log("ensuring search extensions (pg_trgm + trigram GIN indexes)");
     await ensureSearchExtensions(db);
 
+    // ── THE SUPABASE DATA API LOCKDOWN, WELDED IN FOR THE SAME REASON THE SEARCH SETUP IS ──
+    //
+    // A stock Supabase project grants every table in `public` to `anon`/`authenticated`/
+    // `service_role` at CREATE time and serves them over PostgREST to the anon key — a PUBLIC
+    // key. The lockdown that closes that lived only in a hand-run CLI
+    // (`supabase-lockdown.ts`), so this function could provision a database that every test
+    // called green while the whole schema was world-readable. Same shape as the fuzzy arm:
+    // nothing inside the migrator can see it, so it is welded in HERE and verified rather
+    // than assumed. Runs AFTER the migrations so the census covers every table this very
+    // invocation created.
+    //
+    // Detection is the presence of the host roles, and the skip on a plain Postgres (the
+    // self-host default) is safe BY CONSTRUCTION: the exposure is a privilege granted TO one
+    // of those roles, and Postgres cannot record a grant to a role that does not exist. On a
+    // Supabase-shaped target the apply is idempotent (a REVOKE of a privilege nobody holds is
+    // a no-op — the managed database, locked down by hand at cutover, re-verifies here), and
+    // the census afterwards joins `problems`, so an open grant refuses the whole setup instead
+    // of riding out under an OK report.
+    const hostRoles = await supabaseHostRoles(client);
+    let supabaseLockdown: ProdSetupReport["supabaseLockdown"] = null;
+    let lockdownVerdict: Awaited<ReturnType<typeof lockdownCensus>> | null = null;
+    if (hostRoles.length === 0) {
+      log("supabase lockdown skipped: no anon/authenticated/service_role roles on this host (plain Postgres — no Data API to close)");
+    } else {
+      log(`supabase-shaped host (roles present: ${hostRoles.join(", ")}) — applying the Data API lockdown`);
+      await applySupabaseLockdown(client, hostRoles);
+      lockdownVerdict = await lockdownCensus(client);
+      supabaseLockdown = {
+        rolesPresent: hostRoles,
+        grants: lockdownVerdict.grants,
+        reachableRules: lockdownVerdict.rules,
+        residualRules: lockdownVerdict.residual,
+      };
+      log(
+        `supabase lockdown verified: ${lockdownVerdict.grants} host-role privileges, ` +
+          `${lockdownVerdict.rules} reachable default-privilege rules, ${lockdownVerdict.residual} residual`,
+      );
+    }
+
     const statuses = await journalStatuses(db, before);
     const appliedThisRun = statuses.flatMap((s) => s.appliedThisRun);
 
@@ -373,9 +431,16 @@ export async function setupProdDatabase(
       trigramIndexes: idx.map((r) => r.indexname).sort(),
       changeLogCompositeIndex: composite[0]?.indexname ?? null,
       fuzzy,
+      supabaseLockdown,
     };
 
     const problems: string[] = [...journalProblems(statuses)];
+    if (lockdownVerdict) {
+      // Fail closed on a Supabase-shaped target: an open grant after the lockdown ran is a
+      // world-readable schema, and this function must not say OK over one. The verdict carries
+      // the census's `detail`, so a failure NAMES the exposed tables.
+      problems.push(...lockdownProblems(lockdownVerdict));
+    }
     if (!report.pgTrgm) problems.push("pg_trgm extension is NOT installed (the fuzzy search arm would be dead)");
     for (const want of TRIGRAM_INDEXES) {
       if (!report.trigramIndexes.includes(want)) problems.push(`trigram GIN index missing: ${want}`);

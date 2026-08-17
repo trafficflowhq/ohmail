@@ -34,23 +34,16 @@
  *   SUPABASE_DB_URL=... SUPABASE_ACCESS_TOKEN=... SUPABASE_PROJECT_REF=... \
  *     pnpm --filter @trafficflow/db supabase:lockdown -- --apply --close-api --prove
  */
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { argv, env } from "node:process";
 import postgres from "postgres";
 import { transactionPoolerReason } from "./session-url.js";
-
-// `fileURLToPath`, never `.pathname` — this checkout lives under a directory with a SPACE.
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SQL_PATH = join(HERE, "..", "..", "..", "scripts", "supabase-lockdown.sql");
+import {
+  HOST_ROLES, applySupabaseLockdown, lockdownCensus, supabaseHostRoles,
+} from "./supabase-lockdown-core.js";
 
 const APPLY = argv.includes("--apply");
 const CLOSE_API = argv.includes("--close-api");
 const PROVE = argv.includes("--prove");
-
-/** The roles a stock Supabase project grants `public` away to. PostgREST authenticates as these. */
-const HOST_ROLES = ["anon", "authenticated", "service_role"] as const;
 
 /**
  * Probed by name from outside. Deliberately the worst cases rather than a sample: message
@@ -71,53 +64,12 @@ const PROBE_TABLES = [
 type Sql = ReturnType<typeof postgres>;
 
 /**
- * `rules` counts only REACHABLE default-privilege rules — those whose grantor this session can
- * create objects as, which are the ones that govern tables our migrations create. The rest are
- * counted separately as `residual`: on Supabase, 36 rules belong to `supabase_admin`, which
- * `postgres` has no membership in and therefore cannot revoke. Folding those into `rules` makes
- * the postcondition unsatisfiable; ignoring them entirely hides a real (if inert) fact. The
- * reasoning is in `scripts/supabase-lockdown.sql` §3, and it is checked by measurement in
- * `--prove` rather than trusted.
+ * The census, the statement batch and the role detection all live in
+ * `supabase-lockdown-core.ts` now, shared with `setupProdDatabase` — which runs the grant half
+ * on every provisioning pass and fails closed on this same census. This file keeps what only an
+ * operator ceremony can do: the Management-API `--close-api` half, the external anon-key
+ * re-probe, and `--prove`.
  */
-async function census(
-  sql: Sql,
-): Promise<{ grants: number; rules: number; residual: number; detail: string }> {
-  const g = await sql<Array<{ n: number }>>`
-    SELECT count(*)::int AS n
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace,
-           LATERAL aclexplode(c.relacl) a
-     WHERE n.nspname = 'public'
-       AND a.grantee::regrole::text = ANY(${[...HOST_ROLES]})`;
-  const r = await sql<Array<{ n: number }>>`
-    SELECT count(*)::int AS n
-      FROM pg_default_acl d,
-           LATERAL aclexplode(d.defaclacl) a
-     WHERE d.defaclnamespace = 'public'::regnamespace
-       AND a.grantee::regrole::text = ANY(${[...HOST_ROLES]})
-       AND pg_has_role(current_user, d.defaclrole, 'USAGE')`;
-  const res = await sql<Array<{ n: number }>>`
-    SELECT count(*)::int AS n
-      FROM pg_default_acl d,
-           LATERAL aclexplode(d.defaclacl) a
-     WHERE d.defaclnamespace = 'public'::regnamespace
-       AND a.grantee::regrole::text = ANY(${[...HOST_ROLES]})
-       AND NOT pg_has_role(current_user, d.defaclrole, 'USAGE')`;
-  const d = await sql<Array<{ relname: string }>>`
-    SELECT DISTINCT c.relname
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace,
-           LATERAL aclexplode(c.relacl) a
-     WHERE n.nspname = 'public'
-       AND a.grantee::regrole::text = ANY(${[...HOST_ROLES]})
-     ORDER BY 1 LIMIT 6`;
-  return {
-    grants: g[0]!.n,
-    rules: r[0]!.n,
-    residual: res[0]!.n,
-    detail: d.map((x) => x.relname).join(", "),
-  };
-}
 
 /**
  * What does a table created RIGHT NOW, by this role, actually inherit?
@@ -198,7 +150,21 @@ async function main(): Promise<number> {
       SELECT current_database() AS db, current_user AS usr`)[0]!;
     console.log(`database : ${who.db}\nconnected: ${who.usr}\n`);
 
-    const before = await census(sql);
+    // Detect BEFORE touching anything: a REVOKE naming an absent role is an error, so on a
+    // host with none of the roles (a plain Postgres) there is nothing to close and running the
+    // batch would only die confusingly partway.
+    const roles = await supabaseHostRoles(sql);
+    if (roles.length === 0) {
+      console.error(
+        "REFUSING: no anon/authenticated/service_role roles on this host — not a Supabase-shaped " +
+        "database, so there is no Data API grant to close. (setupProdDatabase reaches the same " +
+        "verdict and skips.)",
+      );
+      return 2;
+    }
+    console.log(`host roles: ${roles.join(", ")}\n`);
+
+    const before = await lockdownCensus(sql);
     console.log(
       `before   : ${before.grants} privileges to anon/authenticated/service_role in public, ` +
       `${before.rules} reachable default-privilege rules, ${before.residual} residual` +
@@ -213,13 +179,12 @@ async function main(): Promise<number> {
       return 0;
     }
 
-    // `.simple()` is LOAD-BEARING, same as the provisioning runner: postgres.js defaults to the
-    // extended protocol, which permits exactly one statement per query, and this file is a batch
-    // carrying its own BEGIN/COMMIT.
-    await sql.unsafe(readFileSync(SQL_PATH, "utf8")).simple();
+    // The shared batch — `.simple()` inside, because it carries its own BEGIN/COMMIT. Scoped to
+    // the roles that exist, which on any real Supabase is all three.
+    await applySupabaseLockdown(sql, roles);
     for (const n of notices) console.log(`  ${n}`);
 
-    const after = await census(sql);
+    const after = await lockdownCensus(sql);
     console.log(
       `after    : ${after.grants} privileges, ${after.rules} reachable rules, ` +
       `${after.residual} residual (unreachable grantor — see the SQL header)`,
@@ -251,7 +216,7 @@ async function main(): Promise<number> {
       await sql.unsafe(`CREATE TABLE public._lockdown_probe (id int)`);
       try {
         await sql.unsafe(`GRANT SELECT ON public._lockdown_probe TO anon`);
-        const red = await census(sql);
+        const red = await lockdownCensus(sql);
         if (red.grants === 0) {
           console.error(
             "FAILED --prove: granted a scratch table to anon and the census still read 0. " +
@@ -264,7 +229,7 @@ async function main(): Promise<number> {
       } finally {
         await sql.unsafe(`DROP TABLE IF EXISTS public._lockdown_probe`);
       }
-      const restored = await census(sql);
+      const restored = await lockdownCensus(sql);
       if (restored.grants !== 0) {
         console.error(`FAILED --prove: census did not return to clean (${restored.grants}).`);
         failed = true;

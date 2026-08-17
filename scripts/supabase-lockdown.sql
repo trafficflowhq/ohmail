@@ -55,8 +55,16 @@
 -- grants is the "absent config selects the dangerous branch" failure shape: one dashboard
 -- click, or one support-driven re-enable, and the schema is public again. Revoking without
 -- closing PostgREST leaves an endpoint answering 401 that need not answer at all. The runner
--- (`packages/db/src/supabase-lockdown.ts`) applies this file for the grants, then does the
--- PostgREST config through the Management API and re-probes from outside afterwards.
+-- (`packages/db/src/supabase-lockdown.ts`) applies the grant half, then does the PostgREST
+-- config through the Management API and re-probes from outside afterwards.
+--
+-- THE EXECUTABLE COPY OF THIS BATCH LIVES IN `packages/db/src/supabase-lockdown-core.ts`
+-- (`lockdownSqlFor`), embedded rather than read off disk because `setupProdDatabase` — which now
+-- runs the grant half on EVERY provisioning pass and refuses success while the census is red —
+-- is bundled into artifacts that do not carry this repository's `scripts/` directory. This file
+-- remains the annotated operator reference for a hand psql run, and a sync test compares the two
+-- statement-for-statement (comments and whitespace aside) on every run of the database package's
+-- suite, so neither copy can rot alone.
 --
 -- IDEMPOTENT. Safe to re-run, and it must be re-run after anything that creates tables in
 -- `public` until the default-privilege rules below are confirmed dropped.
@@ -82,17 +90,24 @@ REVOKE ALL ON SCHEMA public FROM anon, authenticated, service_role;
 
 -- ── 2. Future objects ──────────────────────────────────────────────────────────────────────
 --
--- The census showed default-privilege rules registered under TWO grantors, `postgres` and
--- `supabase_admin`. `ALTER DEFAULT PRIVILEGES` is per-(grantor, schema, objtype): a rule only
--- fires for objects created BY that role, and revoking one leaves the other armed. Migrations
--- run as `postgres`; `supabase_admin` is the host's own. Both are dropped.
+-- The census on the stock project showed default-privilege rules registered under TWO grantors,
+-- `postgres` and `supabase_admin`. `ALTER DEFAULT PRIVILEGES` is per-(grantor, schema, objtype):
+-- a rule only fires for objects created BY that role, and revoking one leaves the other armed.
 --
--- `FOR ROLE supabase_admin` requires membership in it. On a stock project `postgres` has that
--- membership, but it is not guaranteed, and a hosting-side change could remove it. Rather than
--- let the script die half-applied, each is attempted and a failure is reported as a WARNING —
--- then §3's postcondition decides whether the result is acceptable. A warning that leaves a
--- live rule WILL abort the transaction below; a warning on a rule that no longer exists will
--- not. The check is on the end state, never on whether a statement was skipped.
+-- The grantor list is MEASURED, not hardcoded: every grantor whose rules currently grant to the
+-- host roles, plus the two Supabase names when they exist. A hardcoded pair was the original
+-- form, and it made the script permanently unrunnable anywhere the migration role has a
+-- different name — an offending rule under grantor `tf` (the pg test cluster) or under any
+-- self-hoster's own role was invisible to §2 and then fatal to §3, a postcondition that could
+-- never hold. Measuring the grantors keeps §3 satisfiable exactly where the session can act.
+--
+-- `FOR ROLE <grantor>` requires membership in it. On a stock project `postgres` has membership
+-- in what matters, but it is not guaranteed, and a hosting-side change could remove it. Rather
+-- than let the script die half-applied, each is attempted and a failure is reported as a
+-- WARNING — then §3's postcondition decides whether the result is acceptable. A warning that
+-- leaves a REACHABLE live rule WILL abort the transaction below; a warning on an unreachable
+-- grantor's rule lands in the residual report. The check is on the end state, never on whether
+-- a statement was skipped.
 
 DO $$
 DECLARE
@@ -100,7 +115,15 @@ DECLARE
   objtype  text;
   stmt     text;
 BEGIN
-  FOREACH grantor IN ARRAY ARRAY['postgres', 'supabase_admin'] LOOP
+  FOR grantor IN
+    SELECT DISTINCT d.defaclrole::regrole::text
+      FROM pg_default_acl d,
+           LATERAL aclexplode(d.defaclacl) a
+     WHERE d.defaclnamespace = 'public'::regnamespace
+       AND a.grantee::regrole::text IN ('anon', 'authenticated', 'service_role')
+    UNION
+    SELECT rolname FROM pg_roles WHERE rolname IN ('postgres', 'supabase_admin')
+  LOOP
     FOREACH objtype IN ARRAY ARRAY['TABLES', 'SEQUENCES', 'FUNCTIONS', 'ROUTINES', 'TYPES'] LOOP
       stmt := format(
         'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL ON %s FROM anon, authenticated, service_role',
