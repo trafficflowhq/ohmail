@@ -615,7 +615,15 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
  *                  write: a corrupt copy of our own bookkeeping carries nothing recoverable.
  */
 export type ProfileReadResult =
-  | { state: "found"; doc: OrganizerProfileDoc; installId: string | null; ref: unknown }
+  | {
+    state: "found"; doc: OrganizerProfileDoc; installId: string | null; ref: unknown;
+    /**
+     * Profile records in the folder BESIDE the chosen one — crash residue, or the loser of a
+     * transient organizer overlap. Zero in the steady state; a caller that owns the mailbox
+     * heals a non-zero residue by rewriting, which expunges everything but its own document.
+     */
+    residue: number;
+  }
   | { state: "none" }
   | { state: "newer"; v: number }
   | { state: "unreadable"; reason: string };
@@ -665,7 +673,10 @@ export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadRe
     return JSON.stringify(b.doc).localeCompare(JSON.stringify(a.doc));
   })[0]!;
 
-  return { state: "found", doc: newest.doc!, installId: newest.installId, ref: newest.ref };
+  return {
+    state: "found", doc: newest.doc!, installId: newest.installId, ref: newest.ref,
+    residue: records.length - 1,
+  };
 }
 
 // ── WRITE ───────────────────────────────────────────────────────────────────────────────────
@@ -675,13 +686,30 @@ export interface WriteProfileInput {
   doc: OrganizerProfileDoc;
   /** Who is writing — recorded in the message header so the writer recognises its own copy. */
   installId: string;
+  /**
+   * Payload fingerprints of FOREIGN documents the caller has already accounted for — its own
+   * last-written/seeded fingerprint, and any foreign document it has surfaced. A readable
+   * foreign document whose fingerprint is on this list is replaceable; one that is NOT is new
+   * information, and the write is refused as `foreign` so the caller can surface it first.
+   * A caller that passed nothing can never silently expunge foreign content.
+   */
+  replaceable?: readonly string[];
   log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
 export type WriteProfileResult =
   | { written: true; removed: number }
   /** The folder holds a document from a NEWER format. Refused — see the versioning rules. */
-  | { written: false; reason: "newer"; v: number };
+  | { written: false; reason: "newer"; v: number }
+  /**
+   * The folder holds a readable FOREIGN document the caller has not seen (its fingerprint is on
+   * neither the `replaceable` list nor equal to the document being written). Refused, and the
+   * document is handed back so the caller can surface it — log + durable marker — before
+   * deciding to supersede it on a later write. This is what makes a transient organizer overlap
+   * unable to DESTROY the other side's configuration silently: content only ever leaves the
+   * folder after the incumbent has recorded that it saw it.
+   */
+  | { written: false; reason: "foreign"; doc: OrganizerProfileDoc; installId: string | null };
 
 /**
  * WRITE THE CURRENT PROFILE — append the new copy, then expunge the old ones.
@@ -729,6 +757,22 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
 
   const newer = records.find((r): r is ParsedProfileMessage => !isMalformedProfile(r) && r.status === "newer");
   if (newer) return { written: false, reason: "newer", v: newer.v };
+
+  // ── AN UNSEEN FOREIGN DOCUMENT REFUSES THE WRITE — see the result member's doc-comment ────
+  //
+  // Ours-by-install-id and malformed records are always replaceable (our own older copies are
+  // the dance's residue; a corrupt record carries nothing recoverable). A readable FOREIGN
+  // record is replaceable only when the caller has seen it: its payload fingerprint is on the
+  // `replaceable` list, or it says exactly what the document being written says.
+  const known = new Set(input.replaceable ?? []);
+  const docFingerprint = profileFingerprint(doc);
+  const unseen = records.find((r): r is ParsedProfileMessage => {
+    if (isMalformedProfile(r) || r.status !== "ok") return false;
+    if (r.installId === installId) return false;
+    const fp = profileFingerprint(r.doc!);
+    return fp !== docFingerprint && !known.has(fp);
+  });
+  if (unseen) return { written: false, reason: "foreign", doc: unseen.doc!, installId: unseen.installId };
 
   // Captured BEFORE the append, so the copy we are about to write can never be in its own
   // removal set — the crash-safety of append-then-expunge depends on that.

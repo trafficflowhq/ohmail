@@ -174,6 +174,17 @@ export class OrganizerProfileSync {
   /** The found FOREIGN document's fingerprint — the hold. Null when no import decision is open. */
   private holdFingerprint: string | null = null;
   private lastWrittenFingerprint: string | null = null;
+  /**
+   * A foreign document discovered MID-FLIGHT (after the seed), surfaced and recorded — the next
+   * write may supersede it. The asymmetry with {@link holdFingerprint} is principled: at SEED we
+   * may be a NEW organizer meeting configuration that travelled here (an open import decision,
+   * so we hold); mid-flight we are the ESTABLISHED organizer and a document that appears under
+   * us is the loser of a transient overlap — last-incumbent-wins says our store is the mailbox's
+   * truth, and the engine's `foreign` refusal guarantees we surfaced it before superseding it.
+   */
+  private seenForeignFingerprint: string | null = null;
+  /** A detection marker that could not be written durably yet — owed, and retried next tick. */
+  private markerPending: MarkerFact | null = null;
   private lastAttemptAt = 0;
   private inFlight = false;
 
@@ -198,6 +209,17 @@ export class OrganizerProfileSync {
       const payload = await serializeOrganizerProfile(deps.db, deps.accountId);
       const fp = profileFingerprint(payload);
 
+      // A detection marker that failed durably is owed, not forgotten: the hold or the newer
+      // block it belongs to stays in force, so the fact it records must eventually be readable
+      // by the confirm flow — a transient database blip must not orphan a detection.
+      // BEFORE the seed, so a marker that failed inside this very tick's seed waits for the
+      // NEXT tick rather than being re-attempted milliseconds after the database refused it.
+      if (this.markerPending !== null) {
+        const pending = this.markerPending;
+        this.markerPending = null;
+        await this.writeMarker(pending, log);
+      }
+
       if (!this.seeded) {
         await this.seed(io, fp, log);
         this.seeded = true;
@@ -211,7 +233,14 @@ export class OrganizerProfileSync {
         this.lastWrittenFingerprint = fp;
         return;
       }
-      if (fp === this.lastWrittenFingerprint) return;
+      if (fp === this.lastWrittenFingerprint) {
+        // Nothing to write — but LOOK once per interval anyway. This is what heals the residue
+        // of a transient organizer overlap (two documents from two writers, neither of which
+        // will ever change its store again) and what notices a document appearing
+        // under an established organizer without any local change.
+        await this.verifyFolder(io, fp, log);
+        return;
+      }
       // A mailbox that has said nothing gets no document: writing an empty payload into a fresh
       // mailbox would be litter, and its absence already means defaults. An empty payload IS
       // written when a document exists (lastWrittenFingerprint non-null) — clearing your last
@@ -224,19 +253,41 @@ export class OrganizerProfileSync {
       });
       const result = await writeOrganizerProfile({
         io, doc, installId: deps.self.installId,
+        // What this writer may replace: its own last write, and any foreign document it has
+        // already SURFACED. Anything else refuses as `foreign` below — the engine's guarantee
+        // that no foreign configuration is ever expunged before it was recorded.
+        replaceable: [this.lastWrittenFingerprint, this.seenForeignFingerprint]
+          .filter((f): f is string => f !== null),
         log: (event, detail) => { log(event, { ...detail, mailboxId: deps.mailboxId, accountId: deps.accountId }); },
       });
       if (result.written) {
         this.lastWrittenFingerprint = fp;
+        this.seenForeignFingerprint = null;
         log("organizer_profile_written", {
           mailboxId: deps.mailboxId, accountId: deps.accountId, pruned: result.removed,
         });
-      } else {
-        // A newer document arrived between the seed and this write. Same posture as at seed.
+      } else if (result.reason === "newer") {
+        // A newer document arrived between the seed and this write. Same posture as at seed —
+        // including the durable marker, which the log line alone is not: the confirm flow
+        // reads the database, never the process's stderr.
         this.blockedByNewer = true;
         log("organizer_profile_detected", {
           mailboxId: deps.mailboxId, accountId: deps.accountId, state: "newer",
         });
+        await this.writeMarker({ state: "newer", v: result.v }, log);
+      } else {
+        // A foreign document appeared under an established organizer (the transient overlap's
+        // loser, or a hand-back mid-race). Surface it — log + durable marker, never
+        // held for import: last-incumbent-wins says our store is this mailbox's truth — and
+        // record its fingerprint so the NEXT write may supersede it. If the lease changes hands
+        // before then, we never write again and the document stands: convergent both ways.
+        this.seenForeignFingerprint = profileFingerprint(result.doc);
+        log("organizer_profile_detected", {
+          mailboxId: deps.mailboxId, accountId: deps.accountId, state: "found_midflight",
+        });
+        await this.writeMarker({
+          state: "found", doc: result.doc, fingerprint: this.seenForeignFingerprint, heldForImport: false,
+        }, log);
       }
     } catch (err) {
       // One failure arm for the whole tick, and the event names the feature rather than the
@@ -278,22 +329,21 @@ export class OrganizerProfileSync {
         await this.writeMarker({ state: "newer", v: read.v }, log);
         return;
       case "found": {
-        const docPayload: OrganizerProfilePayload = {
-          screener: read.doc.screener, rules: read.doc.rules, notifyRules: read.doc.notifyRules,
-          awayResponder: read.doc.awayResponder, tagNames: read.doc.tagNames,
-        };
-        const docFingerprint = profileFingerprint(docPayload);
+        const docFingerprint = profileFingerprint(read.doc);
         const ours = read.installId === deps.self.installId;
         if (ours || docFingerprint === localFingerprint) {
           // Our own previous write (stale or not), or a foreign one that says exactly what we
           // would say: seed the dirty check from it and let write-behind do its ordinary work.
+          // A foreign-but-identical document is ours to replace on the next change — record it,
+          // or the engine's foreign refusal would deadlock the first post-convergence write.
           this.lastWrittenFingerprint = docFingerprint;
+          if (!ours) this.seenForeignFingerprint = docFingerprint;
           detected(ours ? "found_own" : "found_in_sync");
           return;
         }
         this.holdFingerprint = docFingerprint;
         detected("found");
-        await this.writeMarker({ state: "found", doc: read.doc, fingerprint: docFingerprint }, log);
+        await this.writeMarker({ state: "found", doc: read.doc, fingerprint: docFingerprint, heldForImport: true }, log);
         return;
       }
     }
@@ -304,44 +354,107 @@ export class OrganizerProfileSync {
    * is what the confirm-import flow reads. Deduplicated on the document's fingerprint so a
    * worker that re-attaches every deploy does not accumulate one marker per restart.
    */
+  /**
+   * ONCE PER INTERVAL, WHEN THERE IS NOTHING TO WRITE: read what the folder actually holds.
+   *
+   * The fingerprint comparison alone cannot see two failure shapes, both from the same transient
+   * overlap the lease permits for one cycle: (a) TWO documents left by two writers, neither of
+   * whose stores will ever change again — nothing dirty, so nothing ever expunges the loser's
+   * copy, and a later reader may coalesce onto it; (b) a foreign document that OVERWROTE ours
+   * with no local change to trigger a write. Both heal here: force the dirty check open
+   * (`lastWrittenFingerprint = null`) after recording what was seen, and the next tick's write
+   * supersedes — through the engine's foreign gate, so nothing is expunged unsurfaced.
+   */
+  private async verifyFolder(
+    io: ProfileIo,
+    localFingerprint: string,
+    log: (event: string, detail: Record<string, unknown>) => void,
+  ): Promise<void> {
+    const { deps } = this;
+    const read: ProfileReadResult = await readOrganizerProfile(io);
+    switch (read.state) {
+      case "none":
+        // Deleted by hand. The message's own preamble promises a fresh copy when settings next
+        // CHANGE — so the dirty check stays closed and nothing is rewritten now.
+        return;
+      case "unreadable":
+        // A corrupt copy of bookkeeping carries nothing recoverable; replace it on the next tick.
+        this.lastWrittenFingerprint = null;
+        return;
+      case "newer":
+        this.blockedByNewer = true;
+        log("organizer_profile_detected", { mailboxId: deps.mailboxId, accountId: deps.accountId, state: "newer" });
+        await this.writeMarker({ state: "newer", v: read.v }, log);
+        return;
+      case "found": {
+        const docFingerprint = profileFingerprint(read.doc);
+        const ours = read.installId === deps.self.installId;
+        if (docFingerprint === localFingerprint) {
+          // The current document says what we say. A residue copy beside it is the overlap's
+          // leftover — reopen the dirty check so the next tick rewrites and expunges it.
+          if (read.residue > 0) this.lastWrittenFingerprint = null;
+          return;
+        }
+        if (ours) {
+          // Our own write that our memory does not match (another process sharing our install
+          // id, or memory lost to a code path we did not foresee): trust the store, rewrite.
+          this.lastWrittenFingerprint = docFingerprint;
+          return;
+        }
+        // A differing foreign document under an established organizer — surface, record, and
+        // let the next write supersede it. The same posture as the write path's `foreign` arm.
+        this.seenForeignFingerprint = docFingerprint;
+        this.lastWrittenFingerprint = null;
+        log("organizer_profile_detected", { mailboxId: deps.mailboxId, accountId: deps.accountId, state: "found_midflight" });
+        await this.writeMarker({ state: "found", doc: read.doc, fingerprint: docFingerprint, heldForImport: false }, log);
+        return;
+      }
+    }
+  }
+
   private async writeMarker(
-    found: { state: "found"; doc: OrganizerProfileDoc; fingerprint: string } | { state: "newer"; v: number },
+    fact: MarkerFact,
     log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<void> {
     const { deps } = this;
     try {
-      const fingerprint = found.state === "found" ? found.fingerprint : null;
+      const fingerprint = fact.state === "found" ? fact.fingerprint : null;
+      const heldForImport = fact.state === "found" ? fact.heldForImport : false;
       const [latest] = await deps.db.select({ payload: auditLog.payload })
         .from(auditLog)
         .where(and(eq(auditLog.accountId, deps.accountId), eq(auditLog.action, PROFILE_FOUND_AUDIT_ACTION)))
         .orderBy(desc(auditLog.createdAt))
         .limit(1);
-      const prior = latest?.payload as { mailboxId?: string; fingerprint?: string | null; state?: string } | null | undefined;
-      if (prior && prior.mailboxId === deps.mailboxId && prior.state === found.state
-        && (prior.fingerprint ?? null) === fingerprint) {
+      const prior = latest?.payload as {
+        mailboxId?: string; fingerprint?: string | null; state?: string; heldForImport?: boolean;
+      } | null | undefined;
+      if (prior && prior.mailboxId === deps.mailboxId && prior.state === fact.state
+        && (prior.fingerprint ?? null) === fingerprint && (prior.heldForImport ?? false) === heldForImport) {
         return;
       }
       await deps.db.insert(auditLog).values({
         accountId: deps.accountId,
         action: PROFILE_FOUND_AUDIT_ACTION,
-        payload: found.state === "found"
+        payload: fact.state === "found"
           ? {
-            mailboxId: deps.mailboxId, state: found.state, fingerprint,
-            updatedAt: found.doc.updatedAt, producer: found.doc.producer,
+            mailboxId: deps.mailboxId, state: fact.state, fingerprint, heldForImport,
+            updatedAt: fact.doc.updatedAt, producer: fact.doc.producer,
             counts: {
-              screener: found.doc.screener.length,
-              rules: found.doc.rules.length,
-              notifyRules: found.doc.notifyRules.length,
-              tagNames: found.doc.tagNames.length,
-              awayResponder: found.doc.awayResponder === null ? 0 : 1,
+              screener: fact.doc.screener.length,
+              rules: fact.doc.rules.length,
+              notifyRules: fact.doc.notifyRules.length,
+              tagNames: fact.doc.tagNames.length,
+              awayResponder: fact.doc.awayResponder === null ? 0 : 1,
             },
           }
-          : { mailboxId: deps.mailboxId, state: found.state, fingerprint, v: found.v },
+          : { mailboxId: deps.mailboxId, state: fact.state, fingerprint, heldForImport, v: fact.v },
         inverse: null,
       });
     } catch (err) {
-      // The log line above already carries the fact; a marker that could abort the seed would
-      // turn bookkeeping into a sync fault.
+      // The log line beside the detection already carries the fact for an operator; the DURABLE
+      // record is owed to the confirm flow, so it is kept pending and retried next tick rather
+      // than forgotten — and it must never abort a sync to get itself written.
+      this.markerPending = fact;
       log("organizer_profile_marker_failed", {
         mailboxId: deps.mailboxId, accountId: deps.accountId,
         err: err instanceof Error ? err.message : String(err),
@@ -349,6 +462,11 @@ export class OrganizerProfileSync {
     }
   }
 }
+
+/** A detection the confirm flow must be able to read durably. See {@link OrganizerProfileSync.writeMarker}. */
+type MarkerFact =
+  | { state: "found"; doc: OrganizerProfileDoc; fingerprint: string; heldForImport: boolean }
+  | { state: "newer"; v: number };
 
 export { PROFILE_VERSION };
 export type { OrganizerProfileDoc, OrganizerProfilePayload };
