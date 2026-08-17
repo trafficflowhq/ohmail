@@ -5,8 +5,8 @@
 # WHY A DOCKERFILE AND NOT AN AUTO-DETECTED BUILDER
 # -------------------------------------------------
 # 1. The worker's runtime dependency set is a load-bearing invariant, not a detail:
-#    core + db + drizzle-orm + imapflow + postgres and nothing else (enforced by
-#    `test/deps.test.ts`). A `pnpm install --filter "@trafficflow/worker..."`
+#    core + db + drizzle-orm + imapflow + postgres and nothing else (enforced by a
+#    workspace test). A `pnpm install --filter "@trafficflow/worker..."`
 #    installs exactly that closure, so an accidental `@trafficflow/services` import fails
 #    HERE, at build time, instead of resolving through the vitest alias in tests and dying
 #    in production. An auto-detected builder installs the whole workspace — Next, React

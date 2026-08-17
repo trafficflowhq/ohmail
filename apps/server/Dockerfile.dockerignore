@@ -1,27 +1,23 @@
 # Build context for apps/server/Dockerfile ONLY. BuildKit prefers `<Dockerfile>.dockerignore`
 # over the root `/.dockerignore`, and that root file is NOT shareable here on purpose: its
-# `!packages/…` lines are pinned by a workspace test to be EXACTLY the organizer's compile
+# `!packages/…` lines are pinned by a workspace test to be EXACTLY the worker's compile
 # closure, so admitting `packages/services`/`packages/api` there would either break that
-# guard or, worse, quietly widen the organizer's boundary. Two images, two closures, two
-# allow-lists.
+# guard or, worse, quietly widen the worker's boundary — the exact three-edit dissolution the
+# guard exists to refuse. Two images, two closures, two allow-lists.
 #
-# Same discipline as the root file: DENY EVERYTHING, RE-ADMIT THE BUILD'S INPUTS. This host's
-# closure is core, db, db-mail (via db), services and api — an import reaching outside it
-# resolves to a workspace link whose target holds only a manifest, and the bundle FAILS to
-# build.
+# Same discipline as the root file: DENY EVERYTHING, RE-ADMIT THE BUILD'S INPUTS. This app's
+# transitive project-reference closure is core, db, db-mail (via db), services, api — the list
+# this app's tsconfig references imply — plus every workspace manifest, because
+# `pnpm install --frozen-lockfile` validates the lockfile against ALL importers it finds.
 *
 
-# Workspace manifests and the pinned resolution — `npm ci` validates the lockfile against
-# every workspace manifest it finds.
 !package.json
-!package-lock.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.json
+!tsconfig.base.json
 !apps/*/package.json
 !packages/*/package.json
-
-# The build steps the image runs: the host bundler and the esbuild loader it shares with the
-# engine build (the version pin lives there).
-!scripts/bundle-host.mjs
-!scripts/engine-bundle.mjs
 
 !apps/server
 !packages/core
@@ -30,11 +26,11 @@
 !packages/services
 !packages/api
 
-# …minus anything inside them that must never be copied in: no test trees, no stale local
-# compile output, no previous bundle run.
+# …minus anything inside them that must never be copied in. `dist/` + `*.tsbuildinfo` are the
+# load-bearing pair: a stale laptop dist/ plus its buildinfo makes `tsc -b` emit nothing, and
+# the image must ALWAYS compile from source.
 **/node_modules
 **/dist
-**/build
 **/*.tsbuildinfo
 **/.DS_Store
 **/.claude

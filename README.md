@@ -255,14 +255,48 @@ organizer. The only code that is not here is the machinery for billing our
 hosted customers — a separate private service this server talks to over a
 documented API; `packages/services/src/entitlements/plane-client.ts` is
 the open client of that API. The billing integration is optional — absent,
-there is no payment machinery — but the server as composed here still asks
-for a mailbox allowance before it will organize a mailbox. A supported way
-to run this server yourself, using the same unmetered allowance the
-desktop's engine already uses, is being built on this code and is not
-documented yet; until it is, what this repository builds is the desktop
-app below. The server source is here to read and audit.
+there is no payment machinery — and a self-host install runs unmetered,
+on the same allowance the desktop's engine already uses. "Run the server
+yourself" below is the supported way to do that.
 
-## Build it yourself
+## Run the server yourself
+
+The hosted service at [ohmail.app](https://ohmail.app) is built from the
+server source in this repository, and the same server runs on your own box:
+one compose file, prebuilt images, no account, no billing — mailboxes are
+unmetered on a self-host install.
+
+```bash
+git clone https://github.com/trafficflowhq/ohmail.git
+cd ohmail/deploy/selfhost
+cp .env.example .env      # four required values; the file explains each
+docker compose up -d
+docker compose logs api   # the first-run setup token is printed here, once
+```
+
+Open your `OHMAIL_ORIGIN` in a browser and register with that setup token —
+there is no public signup on a self-host server. The stack is Caddy as the
+one origin (automatic TLS on a real domain), the web app, the API server,
+the sync organizer, Postgres, MinIO for attachment staging, and a local
+mail sink for verification mail until you point `SMTP_URL` at a real relay.
+`deploy/selfhost/docker-compose.yml` documents every service and
+`deploy/selfhost/.env.example` every setting.
+
+The images are prebuilt for amd64 and arm64 —
+`ghcr.io/trafficflowhq/ohmail-server`, `ohmail-worker`, `ohmail-web` — and
+each release builds them with the Dockerfiles published in this tree
+(`apps/server/Dockerfile`, `apps/worker/Dockerfile`,
+`apps/webapp/Dockerfile`), from the same sources published here, so what an
+image contains is checkable against the recipe beside it. One honest limit:
+building the images yourself needs the development workspace's package
+manager layout, which this generated mirror does not carry — the pinned
+lockfile behind the images lives there. Pulling is the supported path.
+
+This is the first supported cut: it boots cold, migrates, does the
+first-run ceremony, organizes real IMAP mailboxes and sends. Guides for
+home-server platforms (Umbrel and friends) are the next step.
+
+## Build the desktop app yourself
 
 **Requirements:** [Rust](https://rustup.rs) (stable) and Node 22. On macOS also
 the Xcode command line tools. On Linux also the Tauri prerequisites — on Ubuntu

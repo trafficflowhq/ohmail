@@ -1,19 +1,22 @@
 # Build context for apps/webapp/Dockerfile ONLY. BuildKit prefers `<Dockerfile>.dockerignore`
-# over the root `/.dockerignore`, and the root file is pinned to the organizer's compile
-# closure — two images, two closures, two allow-lists (apps/server/Dockerfile.dockerignore
-# states the same rule).
+# over the root `/.dockerignore`, and the root file is pinned to the worker's compile closure —
+# two images, two closures, two allow-lists (apps/server/Dockerfile.dockerignore states the
+# same rule).
 #
 # Same discipline: DENY EVERYTHING, RE-ADMIT THE BUILD'S INPUTS. This app's closure is the
 # packages `next.config.mjs` transpiles from source — ui, tokens, fixtures, client-engine and
 # @trafficflow/core (imported only through its dependency-free /ics entry) — plus every
-# workspace manifest and the lockfile, because `npm ci` validates the lock against ALL
-# workspace manifests it finds. packages/db and packages/db-mail contribute manifests only:
-# core declares db as a dependency so npm must be able to LINK it, but nothing in this bundle
+# workspace manifest, because `pnpm install --frozen-lockfile` validates the lockfile against
+# ALL importers it finds. packages/db and packages/db-mail contribute manifests only: core
+# declares db as a dependency so pnpm must be able to LINK it, but nothing in this bundle
 # imports it, so its sources stay out.
 *
 
 !package.json
-!package-lock.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.json
+!tsconfig.base.json
 !apps/*/package.json
 !packages/*/package.json
 
@@ -24,15 +27,14 @@
 !packages/ui
 !packages/core
 
-# …minus anything inside them that must never be copied in. `.next`/`dist`/`*.tsbuildinfo`
+# …minus anything inside them that must never be copied in. `dist`/`.next`/`*.tsbuildinfo`
 # keep the image compiling from source; `test` is excluded because `next build` type-checks
-# every .ts it can see and this app's suite imports siblings that are deliberately NOT in
-# this context.
+# every .ts it can see and this app's suite imports siblings that are deliberately NOT in this
+# context (the managed API host among them).
 **/node_modules
 **/dist
 **/.next
 **/out
-**/build
 **/test
 **/*.tsbuildinfo
 **/.DS_Store

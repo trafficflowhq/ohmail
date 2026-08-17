@@ -43,7 +43,7 @@ RUN test -d apps/webapp/.next
 # The workspace is copied whole (node_modules included): this app has no `output: standalone`,
 # so `next start` needs the real module tree, and `next.config.mjs` is re-evaluated at start —
 # which is why the flavor is stated again for the runtime environment. Trimming this image is
-# the packaged-image slice's work, not this one's.
+# deliberate follow-up work, not this file's.
 FROM base AS runtime
 ENV NODE_ENV=production \
     OHMAIL_FLAVOR=selfhost \
