@@ -578,7 +578,12 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         password: true,
         totp: true,
         webauthn: true,
-        publicSignup: cfg.authConfig.publicSignup,
+        // BOTH halves of the ceremony, not just the flag: with the open gate on and no
+        // customer mailer, `AuthService.register` refuses 503 `signup_unavailable` (the
+        // verification mail is the only continuation of its constant 202), so a descriptor
+        // reading the flag alone would announce a ceremony this host cannot complete. The
+        // SAME memoised mailer `makeAuthService` is handed decides the answer here.
+        publicSignup: cfg.authConfig.publicSignup && customerMailerFor(cfg) !== null,
       },
       features: {
         // The same flag that decides whether `GET /events` streams (503 `sse_disabled` off).

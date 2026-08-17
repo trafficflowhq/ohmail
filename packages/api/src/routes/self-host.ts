@@ -63,6 +63,17 @@ import { internalRoutes } from "./internal.js";
  * storage), account erasure, consent, the per-account AI switch, the AI-proposal reads, and the
  * alert driver. `GET /hello` answers `flavor: "selfhost"` from the descriptor this server's
  * composition root injects, and computes `needsSetup` from whether any user exists yet.
+ *
+ * ── ONE OBLIGATION THIS TABLE PUTS ON ITS COMPOSITION ROOT ────────────────────────────────
+ *
+ * The auth and erasure modules here import the full `@trafficflow/services` barrel, and loading
+ * that barrel registers the PAID mailbox allowance as the process-wide default
+ * (`packages/services/src/index.ts` — loading it is what makes a process a hosted one). A server
+ * mounting this table therefore MUST construct its mailbox service with an explicit unmetered
+ * `allowance:` argument, or `POST /mailboxes` refuses every mailbox with a subscription error on
+ * a server that has no subscriptions. The absence rule above is about ROUTE surfaces — nothing
+ * can route to billing here — and this note is the other half: a registry default is not a
+ * route, and only the composition root can override it.
  */
 export const selfHostRoutes: Route[] = [
   ...localRoutes,
