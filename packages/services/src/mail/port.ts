@@ -91,6 +91,38 @@ export interface OutboundEmail extends RenderedEmail {
 }
 
 /**
+ * Reject a `from` that could break the wire format — shared by every transport
+ * implementation, because the risk is the port's, not one provider's. The value is
+ * deployment config, but a header-injection newline in it would let the deployment (or
+ * anything that can set an env var) add `Bcc:` to every mail we send. `who` names the
+ * refusing constructor in the error; the VALUE is never echoed (a From line is an
+ * address, and these messages reach boot logs).
+ */
+export function assertUsableFrom(who: string, from: string): void {
+  if (typeof from !== "string" || from.trim().length === 0) {
+    throw new Error(`${who}: \`from\` is required`);
+  }
+  if (/[\r\n\0]/.test(from)) {
+    throw new Error(`${who}: \`from\` contains a control character (header injection)`);
+  }
+  if (!/^[^<>@]*<?[^\s<>@]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}>?$/.test(from.trim())) {
+    throw new Error(`${who}: \`from\` is not an RFC5322 address or display-name form`);
+  }
+}
+
+/**
+ * `true` inside vitest (or any `NODE_ENV=test` runner) — the predicate behind the
+ * standing rule that the suite performs zero external requests. Transport constructors
+ * consult it to REFUSE a configuration that could reach a real network from a test:
+ * `ResendMailer` refuses its default HTTP transport; `SmtpMailer` refuses any
+ * non-loopback SMTP host.
+ */
+export function underTestRunner(): boolean {
+  const env = globalThis.process?.env ?? {};
+  return Boolean(env.VITEST ?? env.VITEST_WORKER_ID) || env.NODE_ENV === "test";
+}
+
+/**
  * Normalise + sanity-check a recipient. Returns null when the value cannot be a
  * recipient at all — the mailer answers `skipped: "invalid_recipient"` rather than
  * handing a provider something that will bounce and cost reputation.

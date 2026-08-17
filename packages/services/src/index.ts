@@ -196,6 +196,12 @@ export * from "./auth/index.js";
 // the waitlist confirmation, the invite, the sign-in notice, verification and the
 // account-exists mail. See `./mail/index.ts` for the sender identity and the rules.
 export * from "./mail/index.js";
+// The SMTP transport for the SAME port — the self-host composition's mailer. On THIS barrel and
+// deliberately NOT on `./mail/index.ts` beside ResendMailer, and never on the `/mail` entry: the
+// desktop engine bundles `@trafficflow/services/mail`, and this is the one module in the package
+// that imports `nodemailer`. `mail-entry-census.test.ts` pins both directions — the `/mail`
+// module graph carries no nodemailer, and nothing but this barrel imports the file.
+export { SmtpMailer, type SmtpMailerConfig } from "./mail/smtp-mailer.js";
 // Billing, post-extraction: `entitlements/` is the open half — all state, all
 // transactions, the `EntitlementEvent` v1 wire contract and the `BillingPlanePort` the private
 // Stripe plane is reached through (plus its HTTP client). The Stripe machinery itself lives in

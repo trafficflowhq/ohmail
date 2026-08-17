@@ -1,5 +1,5 @@
 import {
-  normalizeRecipient,
+  assertUsableFrom, normalizeRecipient, underTestRunner,
   type MailerPort, type MailSendResult, type OutboundEmail, type SendOptions,
 } from "./port.js";
 import { renderTemplate, type TemplateDataMap, type TemplateName } from "./templates.js";
@@ -57,29 +57,6 @@ export interface ResendMailerConfig {
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-/** `true` inside vitest (or any `NODE_ENV=test` runner). See the constructor. */
-function underTestRunner(): boolean {
-  const env = globalThis.process?.env ?? {};
-  return Boolean(env.VITEST ?? env.VITEST_WORKER_ID) || env.NODE_ENV === "test";
-}
-
-/**
- * Reject a `from` that could break the wire format. The value is deployment config, but
- * a header-injection newline in it would let the deployment (or anything that can set
- * an env var) add `Bcc:` to every mail we send.
- */
-function assertUsableFrom(from: string): void {
-  if (typeof from !== "string" || from.trim().length === 0) {
-    throw new Error("ResendMailer: `from` is required");
-  }
-  if (/[\r\n\0]/.test(from)) {
-    throw new Error("ResendMailer: `from` contains a control character (header injection)");
-  }
-  if (!/^[^<>@]*<?[^\s<>@]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}>?$/.test(from.trim())) {
-    throw new Error("ResendMailer: `from` is not an RFC5322 address or display-name form");
-  }
-}
-
 /**
  * `MailerPort` over Resend's REST API.
  *
@@ -124,7 +101,7 @@ export class ResendMailer implements MailerPort {
   private readonly timeoutMs: number;
 
   constructor(private readonly cfg: ResendMailerConfig) {
-    assertUsableFrom(cfg.from);
+    assertUsableFrom("ResendMailer", cfg.from);
     if (!cfg.http && underTestRunner()) {
       throw new Error(
         "ResendMailer: refusing to construct with the real network transport under a test " +

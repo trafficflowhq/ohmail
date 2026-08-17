@@ -119,7 +119,9 @@ export const SERVER_REQUEST_TIMEOUT_MS = 300_000;
 
 export const DEFAULT_PORT = 8080;
 
-/** The SMTP block, PARSED here and WIRED the day the `SmtpMailer` adapter lands — see {@link loadSmtpConfig}. */
+/** The SMTP block — parsed by {@link loadSmtpConfig}, wired as `SmtpMailer` behind the auth
+ *  ceremony's `MailService` in `deps.ts` (`customerMailerFor`). Absent ⇒ mailer null, and the
+ *  composition works: invites verify through the consumed token, not through mail. */
 export interface SmtpConfig {
   /** `smtp://user:pass@host:port` or `smtps://…` — nodemailer's URL form. Never logged. */
   url: string;
@@ -128,11 +130,11 @@ export interface SmtpConfig {
 }
 
 /**
- * Object storage, PARSED here and WIRED when the storage adapters' env-kind factory lands.
- * Until then the staging port
- * stays ABSENT from the service bag, `POST /attachments/staging` answers 503, `/hello` reports
- * `staging: false`, and inline sends carry the bytes — the load-bearing-absence semantics the
- * compositions already have.
+ * Object storage — parsed by {@link loadStorageConfig}, wired through the env-kind factory
+ * (`stagingStorageFor` in `deps.ts`) into the bag's `attachmentStaging` member. When this is
+ * null the staging port stays ABSENT from the service bag, `POST /attachments/staging` answers
+ * 503, `/hello` reports `staging: false`, and inline sends carry the bytes — the load-bearing-
+ * absence semantics the compositions already have.
  */
 export type StorageConfig =
   | { kind: "supabase"; url: string; serviceKey: string; bucket: string }

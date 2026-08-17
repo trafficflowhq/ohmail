@@ -80,6 +80,7 @@
  * quota is a statement about what an account may hold. They are allowed to be temporarily out of
  * step, and the sweep is what closes the gap.
  */
+import { AwsClient } from "aws4fetch";
 import { and, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import { attachmentStaging } from "./schema-cloud.js";
 import { assertLedgerTx, type LedgerTx, type Tx } from "./change-log.js";
@@ -575,6 +576,164 @@ export function makeSupabaseStagingStorage(
       // written satisfy it. Anything else is a real failure and keeps the row for the next pass.
       if (!res.ok && res.status !== 404) {
         throw new AttachmentStagingStorageError("remove", res.status, await res.text().catch(() => ""));
+      }
+    },
+  };
+}
+
+/** Where an S3-compatible staging bucket lives and what may talk to it. Parsed from the frozen
+ *  `S3_*` variable set by the self-host server's config loader; the names here match those. */
+export interface S3StagingStorageConfig {
+  /** `https://s3.<region>.amazonaws.com`, or the operator's own endpoint (`http://minio:9000`,
+   *  a reverse-proxied path). Scheme, host, port and any base path are all honoured. */
+  endpoint: string;
+  /** The SigV4 signing region. MinIO accepts whatever it was started with (`us-east-1` default). */
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  /** The dedicated staging bucket. Never a bucket anything else writes to. */
+  bucket: string;
+}
+
+/**
+ * How long a presigned PUT grant is honoured, in seconds — 1 hour.
+ *
+ * Deliberately much shorter than {@link ATTACHMENT_STAGING_TTL_MS}: the TTL is a promise about
+ * the BYTES ("staged transiently, held 24 hours"), while this is the window in which the grant's
+ * holder may still write them. A compose uploads the moment the grant is minted, so an hour is
+ * generous for a slow link and small enough that a leaked grant URL goes stale the same
+ * afternoon. It also bounds the overwrite window stated on {@link makeS3StagingStorage}.
+ */
+export const S3_UPLOAD_GRANT_TTL_SECONDS = 3600;
+
+/**
+ * The object URL for one staged file — and the ADDRESSING DECISION, which is the part that can
+ * silently break: SigV4 signs the `Host` header, so path-style vs virtual-host is baked into
+ * every signature this module mints, and the wrong choice is a 403 on every request rather than
+ * anything self-describing.
+ *
+ * The rule is ENDPOINT-DRIVEN, because the frozen `S3_*` variable set has no style flag and must
+ * not grow one for a property the endpoint already determines:
+ *
+ *  · a real AWS endpoint (`…amazonaws.com`) takes VIRTUAL-HOST style — the bucket as a host
+ *    label — which is the only style AWS still promises for new buckets;
+ *  · everything else (MinIO on an IP, an operator hostname, a reverse-proxied base path) takes
+ *    PATH-STYLE, which every S3-compatible speaks and which is the only style that works at all
+ *    for an endpoint whose TLS certificate does not cover `<bucket>.<host>`;
+ *  · a DOTTED bucket name falls back to path-style even on AWS: `staging.ohmail.s3.….com` is not
+ *    covered by AWS's `*.s3.<region>.amazonaws.com` wildcard, so virtual-host would fail TLS
+ *    before S3 ever saw the request.
+ *
+ * Key segments are individually percent-encoded, exactly like the Supabase impl's `enc` — keys
+ * here are ids by construction ({@link stagingObjectPath}), but a URL builder must not trust that.
+ */
+export function s3StagingObjectUrl(
+  cfg: Pick<S3StagingStorageConfig, "endpoint" | "bucket">, objectPath: string,
+): string {
+  const u = new URL(cfg.endpoint);
+  const basePath = u.pathname.replace(/\/+$/, "");
+  const key = objectPath.split("/").map(encodeURIComponent).join("/");
+  const awsHosted = /(^|\.)amazonaws\.com$/.test(u.hostname.toLowerCase());
+  const dnsSafeBucket = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(cfg.bucket);
+  if (awsHosted && dnsSafeBucket && basePath === "") {
+    return `${u.protocol}//${cfg.bucket}.${u.host}/${key}`;
+  }
+  return `${u.protocol}//${u.host}${basePath}/${encodeURIComponent(cfg.bucket)}/${key}`;
+}
+
+/**
+ * The S3-compatible implementation of the SAME three-method port — MinIO on the self-host
+ * compose, or any endpoint speaking the S3 API. SigV4 via `aws4fetch` (MIT, zero dependencies),
+ * chosen over an AWS SDK for the Supabase impl's exact reason: this needs three HTTP shapes, and
+ * a client library would be a dependency tree in two server processes for `PUT`, `GET`, `DELETE`.
+ *
+ * ## The grant is minted LOCALLY, and the error asymmetry that buys
+ *
+ * Unlike the Supabase impl — whose `signUpload` asks the storage service for a token and can
+ * therefore fail at mint time — a presigned S3 PUT is pure key derivation: `signUpload` cannot
+ * detect a wrong credential, a missing bucket or an unreachable endpoint. Every misconfiguration
+ * surfaces at UPLOAD time as the client's 403, one step later than the Supabase deployment sees
+ * it. The mint's ordering already makes that the harmless direction (a row whose object never
+ * arrives is swept as a 404), but it moves the "VERIFY THE ROUND TRIP ON FIRST DEPLOY" note from
+ * advisable to mandatory — which is exactly what the live MinIO suite and the compose boot-smoke
+ * do on every push.
+ *
+ * The grant BINDS the content type: it is signed into `X-Amz-SignedHeaders`, so the PUT must
+ * present it verbatim or the signature fails — parity with the Supabase grant. What it does NOT
+ * have is an `x-upsert: false` equivalent: a plain S3 PUT overwrites. Stated honestly rather
+ * than papered over with `If-None-Match: *` (real AWS and current MinIO accept that conditional
+ * write; enough S3-compatibles still in service do not, and a grant that 501s on the operator's
+ * store is a broken product, not a hardening): the exposure is one account re-PUTting its OWN
+ * ticket's path inside the grant hour — the path is `<accountId>/<ticketId>` with a fresh ticket
+ * per grant, no other account is ever granted it, and the send re-measures whatever bytes are
+ * there against the ticket's declared size.
+ *
+ * ## Deletes are per-object, not the multi-object POST
+ *
+ * S3's batch delete (`POST /?delete`) wants an XML body and a `Content-MD5` header — two wire
+ * formats this module otherwise never speaks — and MinIO and AWS both answer per-object DELETEs
+ * cheaply. The sweep hands pages of up to 200 paths; they go out in bounded parallel batches. A
+ * DELETE of a key that is already gone answers 204 on S3 proper, and 404 from some compatibles —
+ * BOTH are success here, for the Supabase impl's reason (the abandoned upload must clear) and
+ * because deletes must stay idempotent: a page that half-failed keeps its rows, and next hour's
+ * drain re-deletes objects that already went.
+ */
+export function makeS3StagingStorage(
+  cfg: S3StagingStorageConfig,
+  fetchImpl: typeof fetch = fetch,
+): AttachmentStagingStorage {
+  const client = new AwsClient({
+    accessKeyId: cfg.accessKeyId,
+    secretAccessKey: cfg.secretAccessKey,
+    service: "s3",
+    region: cfg.region,
+    // Retries belong to callers (the sweep retries by keeping rows; the send by failing the
+    // request) — a transport that retried on its own would hold locksteps nobody asked for.
+    retries: 0,
+  });
+  const urlFor = (objectPath: string): string => s3StagingObjectUrl(cfg, objectPath);
+  const DELETE_BATCH = 16;
+
+  return {
+    async signUpload(objectPath, contentType) {
+      const url = new URL(urlFor(objectPath));
+      url.searchParams.set("X-Amz-Expires", String(S3_UPLOAD_GRANT_TTL_SECONDS));
+      // `allHeaders: true` is what signs `content-type` (aws4fetch skips it by default), which
+      // is what makes the grant refuse a PUT that lies about its type.
+      const signed = await client.sign(url.toString(), {
+        method: "PUT",
+        headers: { "content-type": contentType },
+        aws: { signQuery: true, allHeaders: true },
+      });
+      return {
+        uploadUrl: signed.url,
+        uploadMethod: "PUT",
+        uploadHeaders: { "content-type": contentType },
+      };
+    },
+
+    async download(objectPath) {
+      const req = await client.sign(urlFor(objectPath), { method: "GET" });
+      const res = await fetchImpl(req);
+      if (!res.ok) {
+        throw new AttachmentStagingStorageError("download", res.status, await res.text().catch(() => ""));
+      }
+      return new Uint8Array(await res.arrayBuffer());
+    },
+
+    async remove(objectPaths) {
+      for (let i = 0; i < objectPaths.length; i += DELETE_BATCH) {
+        await Promise.all(objectPaths.slice(i, i + DELETE_BATCH).map(async (p) => {
+          const req = await client.sign(urlFor(p), { method: "DELETE" });
+          const res = await fetchImpl(req);
+          // 204 is S3's answer for present AND absent keys; 404 is some compatibles' answer for
+          // absent ones. Both mean what the sweep needs: these bytes are gone.
+          if (!res.ok && res.status !== 404) {
+            throw new AttachmentStagingStorageError("remove", res.status, await res.text().catch(() => ""));
+          }
+          // Drain so keep-alive sockets are reusable across a 200-path page.
+          await res.arrayBuffer().catch(() => {});
+        }));
       }
     },
   };
