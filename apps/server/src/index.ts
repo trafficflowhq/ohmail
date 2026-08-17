@@ -72,6 +72,12 @@ async function main(): Promise<void> {
     services: buildServerServices(cfg, owned.db),
     changeWake: hub,
     oauth: oauthProviderFor(cfg, owned.db),
+    // A token the INVARIANT mints mid-life (the last account erased itself; the boot token
+    // expired unredeemed) prints exactly where the boot one did.
+    onSetupTokenMinted: (t) => {
+      logger.info("first_run_setup_token_minted", { expiresAt: t.expiresAt.toISOString() });
+      printSetupToken(t, (line) => { console.log(line); });
+    },
     logger,
   };
 

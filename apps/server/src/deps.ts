@@ -22,6 +22,7 @@ import {
 // The policy TYPE lives on the mail entry (the sidecar imports it there too); the full barrel
 // above is still loaded by this app — which is exactly why the explicit allowance below exists.
 import type { MailboxAllowancePolicy } from "@trafficflow/services/mail";
+import type { PairingTokenMinted } from "@trafficflow/services";
 import { makeProbeHostGuard, ALLOW_ANY_PROBE_HOST } from "@trafficflow/api";
 import type { ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -29,6 +30,7 @@ import type { schema } from "@trafficflow/db/cloud";
 import {
   allowCookieAuthForRequest, SELF_HOST_SEND_MAX_TOTAL_BYTES, type ServerConfig,
 } from "./config.js";
+import { ensureSetupTokenInvariant } from "./setup-token.js";
 
 /**
  * The per-request {@link ApiDeps} for the standalone self-host server.
@@ -73,6 +75,8 @@ export interface ServerRuntime {
   changeWake: ChangeWakeHub | null;
   /** One long-lived token provider — see {@link oauthProviderFor}. */
   oauth: MicrosoftTokenProvider;
+  /** Where a setup token minted OUTSIDE boot gets printed — see {@link needsSetupFor}. */
+  onSetupTokenMinted: (minted: PairingTokenMinted) => void;
   logger: Logger;
 }
 
@@ -244,9 +248,20 @@ export function oauthProviderFor(cfg: ServerConfig, db: Db): MicrosoftTokenProvi
  * boot-time boolean because the answer flips the moment the first account registers, and
  * `/hello` must tell the truth per request. It may throw — the route answers 503 rather than
  * guessing in either direction (hello.ts states why both guesses are wrong).
+ *
+ * It first ENFORCES the setup-token invariant (`ensureSetupTokenInvariant`): `needsSetup: true`
+ * must never be advertised while the token that ceremony needs exists nowhere (the last account
+ * erased itself; the boot token expired unredeemed), and a live ownerless token must never
+ * survive on a server that has users (the restart-races-first-registration residue). A token
+ * this path mints is printed through {@link ServerRuntime.onSetupTokenMinted} — stdout, where
+ * the boot already told the operator to look.
  */
-export function needsSetupFor(db: Db): () => Promise<boolean> {
+export function needsSetupFor(
+  db: Db,
+  onMinted: (minted: PairingTokenMinted) => void,
+): () => Promise<boolean> {
   return async () => {
+    await ensureSetupTokenInvariant(db, { onMinted });
     const row = await db.select({ id: users.id }).from(users).limit(1);
     return row.length === 0;
   };
@@ -296,7 +311,7 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
     // member the wiring arms from, so the negotiation cannot disagree with what the routes do.
     hello: {
       flavor: "selfhost",
-      needsSetup: needsSetupFor(rt.db),
+      needsSetup: needsSetupFor(rt.db, rt.onSetupTokenMinted),
       auth: {
         password: true,
         totp: true,

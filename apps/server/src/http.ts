@@ -60,6 +60,11 @@ const TOO_LARGE_BODY = JSON.stringify({
   error: { code: "payload_too_large", message: "request body too large" },
 });
 
+/** GET/HEAD with a body indicator — see {@link serve}. Same envelope, its own code. */
+const BODY_NOT_ALLOWED = JSON.stringify({
+  error: { code: "body_not_allowed", message: "GET and HEAD requests must not carry a body" },
+});
+
 /**
  * Does this request CARRY a body at all? RFC 9112 §6: a request has a body iff it declares
  * Content-Length or Transfer-Encoding. Reading node's always-present stream instead would turn
@@ -89,14 +94,36 @@ export function toWebRequest(
     // undici refuses to construct a Request carrying forbidden/invalid header names rather than
     // ignoring them; connection-level headers are the socket's business, not the route table's.
     if (/^(connection|keep-alive|transfer-encoding|upgrade|proxy-connection)$/i.test(name)) continue;
+    // PLATFORM-RESERVED IP HEADERS ARE DROPPED, because the reservation does not hold here.
+    // `clientIp()` (packages/api/src/context.ts) trusts `x-vercel-forwarded-for` FIRST, on the
+    // documented ground that Vercel's edge overwrites every inbound `x-vercel-*` header — so
+    // its value cannot be caller-chosen THERE. This host sits behind the operator's own proxy
+    // or none, nothing overwrites anything, and an inbound `x-vercel-*` is by definition typed
+    // by the caller: keeping it would hand every anonymous client a fresh-rate-limit-bucket
+    // switch (`curl -H 'x-vercel-forwarded-for: …'`) on the registration throttle and a forged
+    // line in the auth audit. Dropped wholesale — no legitimate traffic to this host carries
+    // the platform's namespace.
+    if (/^x-vercel-/i.test(name)) continue;
     try {
       headers.append(name, req.rawHeaders[i + 1]!);
     } catch {
       /* an unrepresentable header name/value never reaches a handler */
     }
   }
+  // …and this adapter APPENDS the socket's own peer address as the last `x-forwarded-for` hop,
+  // because it IS the nearest trusted proxy in `clientIp()`'s model (that function reads the
+  // LAST hop — the one entry a client cannot append after). Direct exposure: the last hop is
+  // the real peer, and a hand-typed `x-forwarded-for` buys nothing. Behind the operator's
+  // proxy: the last hop is the proxy's address, so per-IP limits key to the proxy — the
+  // over-restrictive, visible direction, which is the safe one; a trusted-proxy knob is the
+  // packaging layer's decision, not a default.
+  const peer = req.socket?.remoteAddress ?? "";
+  if (peer) headers.append("x-forwarded-for", peer);
 
   const method = req.method ?? "GET";
+  // GET/HEAD are ALWAYS body-less here — undici refuses to construct them with one, and
+  // `serve()` has already answered 400 + destroyed the connection for the body-carrying form,
+  // so this branch only decides the Request shape for a caller that bypassed serve (a test).
   if (method === "GET" || method === "HEAD" || !hasBody(req)) {
     return new Request(url, { method, headers });
   }
@@ -188,6 +215,20 @@ async function serve(
   handle: (r: Request) => Promise<Response>,
   opts: AdapterOptions,
 ): Promise<void> {
+  // A GET/HEAD that DECLARES a body is refused outright, connection destroyed. Nothing on this
+  // API reads one, and the alternative was a measured bypass of the byte cap: the old adapter
+  // built body-less Requests for GET/HEAD without consuming the wire body, and node's own
+  // keep-alive dump then read-and-discarded a chunked body UNCOUNTED — an anonymous client
+  // could stream to /hello until requestTimeout, past every limit this file owns. Refusing is
+  // strictly better than counting here: a capped GET body would still be work nobody asked for.
+  const method = (req.method ?? "GET").toUpperCase();
+  if ((method === "GET" || method === "HEAD") && hasBody(req)) {
+    res.writeHead(400, { "content-type": "application/json", "cache-control": "no-store" });
+    res.end(BODY_NOT_ALLOWED);
+    res.destroy();
+    return;
+  }
+
   // Point 4's first half: a DECLARED length over the cap is refused before a byte is read.
   const declared = Number(req.headers["content-length"] ?? 0);
   if (Number.isFinite(declared) && declared > opts.bodyMaxBytes) {
