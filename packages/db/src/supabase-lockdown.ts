@@ -167,7 +167,8 @@ async function main(): Promise<number> {
     const before = await lockdownCensus(sql);
     console.log(
       `before   : ${before.grants} privileges to anon/authenticated/service_role in public, ` +
-      `${before.rules} reachable default-privilege rules, ${before.residual} residual` +
+      `${before.rules} reachable default-privilege rules, ${before.residual} residual, ` +
+      `${before.effective} effectively reachable table privileges` +
       `${before.detail ? ` (e.g. ${before.detail})` : ""}`,
     );
     // The red half of the mutation, recorded on the way in rather than asserted after the fact.
@@ -187,10 +188,22 @@ async function main(): Promise<number> {
     const after = await lockdownCensus(sql);
     console.log(
       `after    : ${after.grants} privileges, ${after.rules} reachable rules, ` +
-      `${after.residual} residual (unreachable grantor — see the SQL header)`,
+      `${after.residual} residual (unreachable grantor — see the SQL header), ` +
+      `${after.effective} effectively reachable`,
     );
     if (after.grants !== 0 || after.rules !== 0) {
       console.error("FAILED: the lockdown did not reach zero.");
+      failed = true;
+    }
+    // Capability, not bookkeeping: a host role that still reaches a table THROUGH a role it is
+    // a member of (or via PUBLIC) has zero grants in its own name and full read access. The
+    // lockdown deliberately does not revoke the intermediate role's grants — they are somebody's
+    // deliberate configuration — so this is a refusal for the operator to resolve by hand.
+    if (after.effective !== 0) {
+      console.error(
+        `FAILED: ${after.effective} table privileges remain EFFECTIVELY reachable by the host ` +
+        `roles (membership or PUBLIC)${after.effectiveDetail ? ` — e.g. ${after.effectiveDetail}` : ""}.`,
+      );
       failed = true;
     }
 

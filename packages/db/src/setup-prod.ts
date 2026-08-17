@@ -124,6 +124,8 @@ export interface ProdSetupReport {
     grants: number;
     reachableRules: number;
     residualRules: number;
+    /** Table privileges a host role can EXERCISE, however derived — see `LockdownCensus.effective`. */
+    effective: number;
   } | null;
 }
 
@@ -294,6 +296,7 @@ export async function setupProdDatabase(
   const pre = postgres(url, { max: 1, onnotice: onNotice });
   const preDb = drizzle(pre);
   let before: AppliedWhens;
+  let hostRoles: string[];
   try {
     // IDENTITY FIRST, then mutate. The report used to name the server it had reached only
     // AFTER migrating it, which is the wrong order for a command that runs DDL: an operator
@@ -312,6 +315,31 @@ export async function setupProdDatabase(
         `tables=${id?.tables ?? "?"} server=${(id?.version ?? "?").split(" ").slice(0, 2).join(" ")}`,
     );
     before = await readAppliedWhens(preDb);
+
+    // ── THE FIRST LOCKDOWN PASS RUNS BEFORE THE FIRST MIGRATION STATEMENT ──────────────────
+    //
+    // Migrations commit PER JOURNAL: the mail journal can land and the cloud pass throw, and a
+    // lockdown that only ran after both would then never run — this invocation would exit with
+    // committed public tables granted to anon behind the host's independently-running
+    // PostgREST, exposed until the operator's retry. So on a Supabase-shaped host the batch is
+    // applied HERE first (it revokes what exists and drops the default-privilege rules, so
+    // nothing this run creates is granted away at CREATE time), and applied again after the
+    // migrations, where the census is taken and the fail-closed verdict is made.
+    //
+    // The skip on a plain Postgres is safe BY CONSTRUCTION, not by assumption: the exposure is
+    // a privilege granted TO one of the host roles, and Postgres cannot record a grant to a
+    // role that does not exist. See `supabaseHostRoles`.
+    hostRoles = await supabaseHostRoles(pre);
+    if (hostRoles.length === 0) {
+      log("supabase lockdown skipped: no anon/authenticated/service_role roles on this host (plain Postgres — no Data API to close)");
+    } else {
+      log(
+        `supabase-shaped host (roles present: ${hostRoles.join(", ")}) — applying the Data API ` +
+          "lockdown (pre-migration: existing objects and default-privilege rules, so nothing " +
+          "this run creates is granted away)",
+      );
+      await applySupabaseLockdown(pre, hostRoles);
+    }
   } finally {
     await pre.end({ timeout: 5 });
   }
@@ -329,31 +357,24 @@ export async function setupProdDatabase(
     log("ensuring search extensions (pg_trgm + trigram GIN indexes)");
     await ensureSearchExtensions(db);
 
-    // ── THE SUPABASE DATA API LOCKDOWN, WELDED IN FOR THE SAME REASON THE SEARCH SETUP IS ──
+    // ── THE SUPABASE DATA API LOCKDOWN'S SECOND PASS, AND THE CENSUS THAT IS THE VERDICT ──
     //
     // A stock Supabase project grants every table in `public` to `anon`/`authenticated`/
     // `service_role` at CREATE time and serves them over PostgREST to the anon key — a PUBLIC
     // key. The lockdown that closes that lived only in a hand-run CLI
     // (`supabase-lockdown.ts`), so this function could provision a database that every test
     // called green while the whole schema was world-readable. Same shape as the fuzzy arm:
-    // nothing inside the migrator can see it, so it is welded in HERE and verified rather
-    // than assumed. Runs AFTER the migrations so the census covers every table this very
-    // invocation created.
-    //
-    // Detection is the presence of the host roles, and the skip on a plain Postgres (the
-    // self-host default) is safe BY CONSTRUCTION: the exposure is a privilege granted TO one
-    // of those roles, and Postgres cannot record a grant to a role that does not exist. On a
-    // Supabase-shaped target the apply is idempotent (a REVOKE of a privilege nobody holds is
-    // a no-op — the managed database, locked down by hand at cutover, re-verifies here), and
-    // the census afterwards joins `problems`, so an open grant refuses the whole setup instead
-    // of riding out under an OK report.
-    const hostRoles = await supabaseHostRoles(client);
+    // nothing inside the migrator can see it, so it is welded in and VERIFIED rather than
+    // assumed — the first pass ran BEFORE the migrations (see the pre block for the failure
+    // window that ordering closes); this one runs after them, so the census covers every
+    // table this very invocation created. Both passes are idempotent (a REVOKE of a privilege
+    // nobody holds is a no-op — the managed database, locked down by hand at cutover,
+    // re-verifies here), and the census joins `problems`, so an open grant refuses the whole
+    // setup instead of riding out under an OK report.
     let supabaseLockdown: ProdSetupReport["supabaseLockdown"] = null;
     let lockdownVerdict: Awaited<ReturnType<typeof lockdownCensus>> | null = null;
-    if (hostRoles.length === 0) {
-      log("supabase lockdown skipped: no anon/authenticated/service_role roles on this host (plain Postgres — no Data API to close)");
-    } else {
-      log(`supabase-shaped host (roles present: ${hostRoles.join(", ")}) — applying the Data API lockdown`);
+    if (hostRoles.length > 0) {
+      log("re-applying the Data API lockdown (post-migration) and taking the census");
       await applySupabaseLockdown(client, hostRoles);
       lockdownVerdict = await lockdownCensus(client);
       supabaseLockdown = {
@@ -361,10 +382,12 @@ export async function setupProdDatabase(
         grants: lockdownVerdict.grants,
         reachableRules: lockdownVerdict.rules,
         residualRules: lockdownVerdict.residual,
+        effective: lockdownVerdict.effective,
       };
       log(
         `supabase lockdown verified: ${lockdownVerdict.grants} host-role privileges, ` +
-          `${lockdownVerdict.rules} reachable default-privilege rules, ${lockdownVerdict.residual} residual`,
+          `${lockdownVerdict.rules} reachable default-privilege rules, ` +
+          `${lockdownVerdict.residual} residual, ${lockdownVerdict.effective} effectively reachable`,
       );
     }
 

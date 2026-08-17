@@ -212,8 +212,23 @@ export interface LockdownCensus {
    * §3 and the CLI's `--prove`.
    */
   residual: number;
+  /**
+   * Table privileges a host role can EXERCISE on a `public` relation, however it comes by them
+   * — directly, through a role it is a member of, or via a grant to PUBLIC. Must be 0.
+   *
+   * This is the arm the other three cannot cover: `grants` matches the ACL's GRANTEE, so a
+   * `GRANT api_reader TO anon` plus a grant to `api_reader` never shows a host role in any ACL
+   * while PostgREST running as `anon` reads the table through inheritance. Not a shape stock
+   * Supabase produces — it takes an operator-made membership — but the census exists to be the
+   * fail-closed verdict, and a verdict that is blind to what the role can DO is not one.
+   * `has_table_privilege` answers capability, not bookkeeping. Probed only for roles that
+   * exist, over ordinary/partitioned tables, views and matviews in `public`.
+   */
+  effective: number;
   /** Up to six object names still carrying a host-role grant — the exposure, named. */
   detail: string;
+  /** Up to six relation names a host role can still EFFECTIVELY reach — the exposure, named. */
+  effectiveDetail: string;
 }
 
 /**
@@ -252,11 +267,34 @@ export async function lockdownCensus(sql: Sql): Promise<LockdownCensus> {
      WHERE n.nspname = 'public'
        AND a.grantee::regrole::text = ANY(${[...HOST_ROLES]})
      ORDER BY 1 LIMIT 6`;
+  // Capability, not bookkeeping — see {@link LockdownCensus.effective}. The role list comes
+  // from pg_roles so an absent role is never probed (has_table_privilege throws on one), and
+  // the privilege list is the table-privilege set PostgREST could exercise.
+  const eff = await sql<Array<{ n: number }>>`
+    SELECT count(*)::int AS n
+      FROM pg_class c
+      JOIN pg_namespace ns ON ns.oid = c.relnamespace
+      CROSS JOIN (SELECT rolname FROM pg_roles WHERE rolname = ANY(${[...HOST_ROLES]})) r
+      CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p(priv)
+     WHERE ns.nspname = 'public'
+       AND c.relkind IN ('r', 'p', 'v', 'm')
+       AND has_table_privilege(r.rolname, c.oid, p.priv)`;
+  const effD = await sql<Array<{ relname: string }>>`
+    SELECT DISTINCT c.relname
+      FROM pg_class c
+      JOIN pg_namespace ns ON ns.oid = c.relnamespace
+      CROSS JOIN (SELECT rolname FROM pg_roles WHERE rolname = ANY(${[...HOST_ROLES]})) r
+     WHERE ns.nspname = 'public'
+       AND c.relkind IN ('r', 'p', 'v', 'm')
+       AND has_table_privilege(r.rolname, c.oid, 'SELECT')
+     ORDER BY 1 LIMIT 6`;
   return {
     grants: g[0]!.n,
     rules: r[0]!.n,
     residual: res[0]!.n,
+    effective: eff[0]!.n,
     detail: d.map((x) => x.relname).join(", "),
+    effectiveDetail: effD.map((x) => x.relname).join(", "),
   };
 }
 
@@ -279,6 +317,15 @@ export function lockdownProblems(census: LockdownCensus): string[] {
       `supabase lockdown: ${census.rules} reachable default-privilege rules still grant to ` +
         "anon/authenticated/service_role — every future table this role creates would be " +
         "re-exposed at CREATE time",
+    );
+  }
+  if (census.effective > 0) {
+    problems.push(
+      `supabase lockdown: ${census.effective} table privileges are EFFECTIVELY reachable by ` +
+        "anon/authenticated/service_role — directly, through a role membership, or via PUBLIC" +
+        `${census.effectiveDetail ? ` (e.g. ${census.effectiveDetail})` : ""}. The lockdown ` +
+        "revokes only the host roles' own grants; a membership that hands them another role's " +
+        "privileges is deliberate operator configuration and must be removed by hand",
     );
   }
   return problems;
