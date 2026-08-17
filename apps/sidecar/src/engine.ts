@@ -727,7 +727,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // No staging: the send runs in the same process as the SMTP dial (see local.ts).
           staging: false,
           ai: ai.drafter() !== undefined,
-          // The pairing ceremony belongs to server compositions; nothing mounts it here yet.
+          // FALSE FOR GOOD, not "yet": the pairing ceremony (`/pair*`) is the standalone
+          // server's and mounts in `selfHostRoutes` only. This engine mints one session per
+          // launch for the shell that spawned it and has nobody to invite — the composition
+          // census in `hello.test.ts` goes red if anyone mounts it on the local table.
           pairing: false,
         },
       },

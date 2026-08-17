@@ -33,6 +33,9 @@ import { proposalsRoutes } from "./proposals.js";
 // The alert driver. Both routes are shared-secret guarded and answer 404 on a host that
 // injects no `deps.alerts`, which is every install until its operator arms one.
 import { internalRoutes } from "./internal.js";
+// The pairing ceremony — mint/list/revoke (session + step-up) and the anonymous redeem. This
+// table is its ONLY mount; see `pair.ts` for why the hosted and local tables must not carry it.
+import { pairRoutes } from "./pair.js";
 
 /**
  * THE SELF-HOST ROUTE TABLE — what a standalone, operator-run server serves.
@@ -60,20 +63,36 @@ import { internalRoutes } from "./internal.js";
  * The whole of `localRoutes` (the mail product plus `/health` and `/hello`), and on top of it
  * everything a multi-user server with real sign-in needs: the full auth surface including the
  * device list, Microsoft 365 onboarding, attachment staging (this deployment owns object
- * storage), account erasure, consent, the per-account AI switch, the AI-proposal reads, and the
- * alert driver. `GET /hello` answers `flavor: "selfhost"` from the descriptor this server's
- * composition root injects, and computes `needsSetup` from whether any user exists yet.
+ * storage), account erasure, consent, the per-account AI switch, the AI-proposal reads, the
+ * alert driver, and the pairing ceremony (`/pair*` — its ONLY mount; see `pair.ts` for why the
+ * hosted and local tables must not carry it). `GET /hello` answers `flavor: "selfhost"` from
+ * the descriptor this server's composition root injects, and computes `needsSetup` from whether
+ * any user exists yet.
  *
- * ── ONE OBLIGATION THIS TABLE PUTS ON ITS COMPOSITION ROOT ────────────────────────────────
+ * ── THE OBLIGATIONS THIS TABLE PUTS ON ITS COMPOSITION ROOT (apps/server) ─────────────────
  *
- * The auth and erasure modules here import the full `@trafficflow/services` barrel, and loading
- * that barrel registers the PAID mailbox allowance as the process-wide default
- * (`packages/services/src/index.ts` — loading it is what makes a process a hosted one). A server
- * mounting this table therefore MUST construct its mailbox service with an explicit unmetered
- * `allowance:` argument, or `POST /mailboxes` refuses every mailbox with a subscription error on
- * a server that has no subscriptions. The absence rule above is about ROUTE surfaces — nothing
- * can route to billing here — and this note is the other half: a registry default is not a
- * route, and only the composition root can override it.
+ *  1. **An explicit unmetered mailbox allowance.** The auth and erasure modules here import the
+ *     full `@trafficflow/services` barrel, and loading that barrel registers the PAID mailbox
+ *     allowance as the process-wide default (`packages/services/src/index.ts` — loading it is
+ *     what makes a process a hosted one). A server mounting this table therefore MUST construct
+ *     its mailbox service with an explicit unmetered `allowance:` argument, or `POST /mailboxes`
+ *     refuses every mailbox with a subscription error on a server that has no subscriptions.
+ *     The absence rule above is about ROUTE surfaces — nothing can route to billing here — and
+ *     this note is the other half: a registry default is not a route, and only the composition
+ *     root can override it.
+ *
+ *  2. **`deps.hello.features.pairing: true`.** The pairing routes are mounted, so the
+ *     descriptor this server injects must announce them — a descriptor still saying `false`
+ *     makes a client's server picker hide a ceremony that answers, which is the inverse of the
+ *     honest-404 contract `/hello` exists to keep. The managed and local descriptors keep
+ *     `pairing: false`, truthfully: their tables do not carry these routes.
+ *
+ *  3. **The first-account ceremony is a BOOT MINT into the pairing service, not open signup.**
+ *     At boot with zero users, the composition root calls
+ *     `mintPairingToken(bootCtx, { grant: "invite", label: "first-run setup" })` (with
+ *     `bootCtx.userId === null` — the one legitimate ownerless mint) and prints the raw token
+ *     ONCE to stdout; `/hello` reports `needsSetup: true` until the setup page redeems it and
+ *     registers. No `TF_INVITE_CODES` bootstrap in this composition, ever.
  */
 export const selfHostRoutes: Route[] = [
   ...localRoutes,
@@ -85,10 +104,8 @@ export const selfHostRoutes: Route[] = [
   ...aiSettingsRoutes,
   ...proposalsRoutes,
   ...internalRoutes,
-  // Pairing tokens (`POST /pair`, `GET /pair`, `DELETE /pair/:id`, `POST /pair/redeem`) mount
-  // HERE and only here when the pairing module lands. The seam is this typed empty list rather
-  // than a stub handler: a stub would answer something today and change its answer later, while
-  // an unmounted path is an honest 404 that `/hello`'s `features.pairing: false` already
-  // announces. When the module exists, this constant is replaced by its import.
-  ...([] as Route[]),
+  // Pairing tokens (`POST /pair`, `GET /pair`, `DELETE /pair/:id`, `POST /pair/redeem`) — HERE
+  // and only here, replacing the typed empty seam that held this position while the module was
+  // unbuilt. The hello census flipped to the positive assertion in the same edit.
+  ...pairRoutes,
 ];

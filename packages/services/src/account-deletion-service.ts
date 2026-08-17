@@ -29,6 +29,7 @@ import {
   messages,
   notifyRules,
   outboundSends,
+  pairingTokens,
   routingDecisions,
   rules,
   sessions,
@@ -330,6 +331,12 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     await drop("sessions", tx.delete(sessions).where(eq(sessions.accountId, accountId)));
     await drop("devices", tx.delete(devices).where(eq(devices.accountId, accountId)));
     if (userIds.length) {
+      // Pairing tokens are CREDENTIALS THE USER MINTED (mail 0059): a live device-pair token
+      // still opens this account, a live invite token still opens this server, and the label is
+      // the user's own words. All of it goes — and it must go BEFORE the `users` delete below,
+      // whose FK (`created_by_user_id`) would otherwise refuse the erasure outright. First-boot
+      // tokens (creator NULL) belong to no user and are untouched.
+      await drop("pairing_tokens", tx.delete(pairingTokens).where(inArray(pairingTokens.createdByUserId, userIds)));
       await drop("login_tokens", tx.delete(loginTokens).where(inArray(loginTokens.userId, userIds)));
       await drop("oauth_auth_codes", tx.delete(oauthAuthCodes).where(inArray(oauthAuthCodes.userId, userIds)));
       await drop("recovery_codes", tx.delete(recoveryCodes).where(inArray(recoveryCodes.userId, userIds)));
@@ -346,8 +353,9 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
         [...userIds.map((id) => `user:${id}`), ...emails.map((e) => `email:${e}`)],
       )));
     } else {
-      for (const t of ["login_tokens", "oauth_auth_codes", "recovery_codes", "totp_secrets",
-        "webauthn_credentials", "webauthn_challenges", "credentials", "auth_throttle"]) deleted[t] = 0;
+      for (const t of ["pairing_tokens", "login_tokens", "oauth_auth_codes", "recovery_codes",
+        "totp_secrets", "webauthn_credentials", "webauthn_challenges", "credentials",
+        "auth_throttle"]) deleted[t] = 0;
     }
     // auth_events carries ip + device per login. Account-scoped rows go with the
     // account; user-scoped rows that predate the account (unknown-email attempts)

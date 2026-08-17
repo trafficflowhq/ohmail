@@ -1405,6 +1405,52 @@ export class AuthService {
     return { tokens: established.tokens! };
   }
 
+  /**
+   * Mint the session a PAIRING-TOKEN redeem establishes (`pairing.ts`, `device-pair` grant) —
+   * the {@link claimDesktopLink} tail as a seam, so the pairing module reuses this class's
+   * session machinery (`establish`: device row, session row, refresh family, audit trail,
+   * surface TTLs) instead of hand-rolling any of it. The BURN is not here: single-use, TTL and
+   * revocation are decided by the pairing table's one atomic UPDATE before this is called, and
+   * this method must stay free of authority decisions of its own — its caller has already
+   * consumed the credential that authorizes it.
+   *
+   * Two deliberate differences from the desktop-link tail, each argued rather than inherited:
+   *
+   *  · **The device row carries the TOKEN's label, not a kind-derived default.** The minter
+   *    named the device at mint time ("kitchen iPad"), and that name is what makes
+   *    `GET /devices` legible and `DELETE /devices/:id` aimable — the revocation path being the
+   *    reason pairing is safe to offer at all. `kind: "macos"` is kept as the NATIVE-surface
+   *    marker it already is for the desktop claim: the response is a bearer pair, which only a
+   *    native client can hold, and `establish` reads the kind for exactly that TTL decision.
+   *
+   *  · **`twofaAt: null` — the paired session starts with NO step-up standing.** The desktop
+   *    claim stamps `ctx.now()` and its header earns it: a step-up-gated mint plus a TWO-MINUTE
+   *    code means a factor really was asserted within that window. A pairing token lives up to
+   *    fifteen minutes (`PAIRING_TTL_BOUNDS`), which stretches that argument past what it
+   *    proves — and unlike the desktop link, nothing a freshly paired device does on day one
+   *    needs step-up: mail is not step-up-gated, and what IS (revoking devices, removing a
+   *    factor, minting MORE pairing tokens) is exactly what a just-paired device should not
+   *    inherit from a credential that may have crossed a room on paper. NULL fails step-up
+   *    closed ({@link requireStepUp}), which that column's own doc calls the correct reading
+   *    and the safe one. It also breaks the chain where pairing begets pairing: this session
+   *    cannot reach `POST /pair` until its holder asserts a factor of their own.
+   */
+  async establishPairedDevice(
+    ctx: ServiceContext, b: { userId: string; label: string },
+  ): Promise<{ tokens: OAuthTokens }> {
+    const db = asTx(ctx);
+    const user = await this.loadUser(db, b.userId);
+    const [dev] = await db.insert(devices).values({
+      accountId: user.accountId, userId: user.id, kind: "macos",
+      label: b.label, ip: ctx.ip ?? "",
+    }).returning();
+    const established = await this.establish(ctx, user, {
+      kind: "macos", deviceId: dev!.id, twofaAt: null,
+    });
+    // The bearer pair and nothing else — `claimDesktopLink`'s shape, for its reasons.
+    return { tokens: established.tokens! };
+  }
+
   // ── WebAuthn (primary 2FA) ──────────────────────────────────────────────────
 
   async webauthnRegisterOptions(ctx: ServiceContext): Promise<{ options: unknown }> {

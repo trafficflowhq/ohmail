@@ -1119,6 +1119,40 @@ export const sessions = pgTable("sessions", {
   ixFamily: index("sessions_family_idx").on(t.familyId),
 }));
 
+/**
+ * PAIRING TOKENS (mail 0059) — the consumable credential behind every pairing ceremony: the
+ * standalone server's first-account setup token, a family invite, and QR device pairing.
+ *
+ * MAIL-half and not by analogy: a pairing token is redeemed against the server that will serve
+ * the resulting session, and the desktop-as-host arm runs the mail journal only — the same
+ * argument that put `users`/`devices`/`sessions` here. It is NOT part of the identity ceremony
+ * (that stays Cloud): its whole authority is its own entropy, single-use + TTL, exactly like an
+ * invite.
+ *
+ * The discipline is `login_tokens`': `tokenHash` is sha256 of a ≥128-bit random value that is
+ * returned ONCE at mint and never stored; redeem is one atomic
+ * `UPDATE … SET consumed_at = now() WHERE token_hash = $1 AND "grant" = $2 AND consumed_at IS
+ * NULL AND revoked_at IS NULL AND expires_at > now() RETURNING`, so the row lock decides a race
+ * and a token can only be spent as the grant it was minted with. `createdByUserId` is NULL for
+ * exactly one mint — the first-boot setup token, made by the composition root before any user
+ * exists — and REQUIRED for `device-pair`, whose redeem mints a session for the creator. The
+ * grant CHECK ('invite' | 'device-pair') lives in the migration. See
+ * `packages/services/src/pairing.ts` for the lifecycle and its bounds.
+ */
+export const pairingTokens = pgTable("pairing_tokens", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  grant: text("grant").notNull(),                  // 'invite' | 'device-pair' (CHECK in 0059)
+  tokenHash: text("token_hash").notNull(),         // sha256(raw); the raw value is never at rest
+  label: text("label").notNull().default(""),      // device-pair: becomes the device row's label
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  uqToken: unique().on(t.tokenHash),
+}));
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Migration 0006 — HTTP API foundation (additive).
 //
@@ -1869,5 +1903,5 @@ export const accountSettings = pgTable("account_settings", {
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const mailSchema = {
-  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, accountSettings,
+  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, accountSettings,
 };

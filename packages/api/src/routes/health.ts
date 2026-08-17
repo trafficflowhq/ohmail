@@ -687,9 +687,27 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   //
   // No CHECK marker (any instant is a legal next attempt, and `attempts` closes no set — it is a
   // count). No INDEX marker: the migration deliberately adds none, because the predicate joins a
-  // scan that is already bounded by one mailbox's pending set. It is the NEWEST entry in the mail
-  // journal.
+  // scan that is already bounded by one mailbox's pending set.
   ["folder_state", "next_attempt_at"],
+  // mail 0059_pairing_tokens — the pairing-token lifecycle's table, one marker for a whole new
+  // table on 0035's rule (42P01, not 42703: the relation itself is missing ahead of the
+  // migration). `token_hash` is the column because it is the one the redeem's single atomic
+  // UPDATE names in its WHERE — the statement the ceremony's single-use guarantee lives in —
+  // and the mint writes it in the same breath. A database carrying the table without it is one
+  // where redemption cannot be judged at all, which is the exact state this probe exists to
+  // name. The surface a stale deployment loses is `/pair*` on the self-host composition only;
+  // the marker turns that into a 503 naming this file. No worker half: nothing in the sync
+  // loop touches this table. Deploy order: migration → API, no third step.
+  //
+  // No CHECK marker for `pairing_tokens_grant_check`, on 0032's rule inverted-and-repeated: the
+  // migration DOES close a set, but every writer of `grant` is a literal in `pairing.ts` behind
+  // a closed TS union, the redeem names the grant as a conjunct of its own WHERE (so an absent
+  // CHECK cannot let a token be spent as the other kind), and an unconstrained hand-planted
+  // value can only produce a row no reader matches. No INDEX marker: the UNIQUE on `token_hash`
+  // is the redeem's own lookup, and its absence is loud at the first duplicate-free mint —
+  // `mailboxes_active_address_uq`'s counter-rule does not apply because nothing here does
+  // `ON CONFLICT`. It is the NEWEST entry in the mail journal.
+  ["pairing_tokens", "token_hash"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1202,10 +1220,19 @@ export const MAIL_EXPECTED_MARKERS =
  * read and the bootstrap snapshot, so an API ahead of the migration 42703s the mail surface; the
  * worker half is equally loud, because the reconcile pass both filters and writes the pair. Deploy
  * order: migration → API → worker. No CHECK marker (an instant closes no set and `attempts` is a
- * count), no INDEX marker (the migration adds none, by design). It is the NEWEST entry in the mail
- * journal.
+ * count), no INDEX marker (the migration adds none, by design).
+ *
+ * `0059_pairing_tokens` is probed ONCE, by `pairing_tokens.token_hash` — a whole new table, so
+ * the failure ahead of the migration is 42P01 on the pairing surface (self-host composition
+ * only; no other table mounts `/pair*`). The probed column is the one the redeem's single
+ * atomic UPDATE names in its WHERE, which is where the ceremony's single-use guarantee lives.
+ * No worker half: nothing in the sync loop reads or writes it. Deploy order: migration → API,
+ * no third step. No CHECK marker for the grant CHECK (every writer is a literal behind a closed
+ * TS union, and the redeem names the grant in its own WHERE, so an absent CHECK cannot mis-spend
+ * a token), no INDEX marker (the UNIQUE on `token_hash` is the redeem's lookup and its absence
+ * is loud, not silent). It is the NEWEST entry in the mail journal.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0058_reconcile_backoff";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0059_pairing_tokens";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
