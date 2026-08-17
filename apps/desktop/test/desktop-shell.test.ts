@@ -1324,13 +1324,13 @@ describe("the UI bundle's build config", () => {
   /**
    * THE ALIAS THAT MAKES THIS DIRECTORY BUILD WHAT THE INSTALLER SHIPS.
    *
-   * The published tree writes `src/no-api-client.ts` over `apps/webapp/app/api-client.ts`
-   * (`DEST_ALIASES` in `scripts/publish-desktop.mjs`), so every released binary has always been
-   * built against the stub. Only the monorepo compiled the real module, and the two stopped
-   * agreeing the moment the real one reached for something the published tree does not contain:
-   * `app/session-refresh.ts`, whose `POST /auth/refresh` put an `X-CSRF-Token` into a preview
-   * that nobody can install. `scan-artifact.mjs` read that header correctly and failed on bytes
-   * that ship nowhere.
+   * Every released binary is built against the stub: this alias replaces the Cloud API client
+   * in BOTH artifacts, so no installer carries a way to reach a server it has no account on.
+   * (The real module publishes beside this repository's web application — what the alias
+   * decides is what the BINARIES contain, not what the source tree shows.) The two modules
+   * stopped agreeing once, the moment the real one reached for `app/session-refresh.ts`, whose
+   * `POST /auth/refresh` put an `X-CSRF-Token` into a preview that nobody can install.
+   * `scan-artifact.mjs` read that header correctly and failed on bytes that ship nowhere.
    *
    * TWO THINGS ARE ASSERTED AND THE SECOND IS THE ONE THAT WILL BE GOT WRONG. The alias has to
    * exist, and it has to be UNCONDITIONAL — copying the shape of the http-adapter entry directly

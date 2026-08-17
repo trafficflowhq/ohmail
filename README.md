@@ -8,8 +8,9 @@
 
 First-time senders wait at the Screener until you let them in, and everything
 you said yes to is organized in place — real folders on your own IMAP server.
-This repository is the free desktop app for macOS, Windows and Linux: the whole
-program, all of its source, AGPL-3.0, no account.
+This repository is the free desktop app for macOS, Windows and Linux — and the
+server source behind ohmail.app beside it: the whole program, all of its
+source, AGPL-3.0, no account.
 
 [**Download the latest release**](https://github.com/trafficflowhq/ohmail/releases/latest) ·
 [try the demo in your browser](https://ohmail.app/demo) ·
@@ -214,9 +215,11 @@ over it.
 [ohmail Cloud](https://ohmail.app), the hosted service, and act as a viewer of
 a mailbox Cloud organizes on a machine that does not sleep — which is what
 push, mobile and screening-while-your-laptop-is-shut require. It is a
-commercial service with a codebase of its own; the desktop app neither asks for
-it nor needs it, and the choice is made in the app, not by a different
-download. Prices and the full comparison are at [ohmail.app](https://ohmail.app).
+commercial service built from the server source in this repository (see
+"What's in this repository" below — only the billing machinery is separate);
+the desktop app neither asks for it nor needs it, and the choice is made in
+the app, not by a different download. Prices and the full comparison are at
+[ohmail.app](https://ohmail.app).
 
 ## Verify it yourself
 
@@ -238,6 +241,18 @@ and **fails the run** on anything outside it: the pinned update feed,
 `ohmail.app` pages the app may hand to your own browser. Your mail server never
 appears in that list and cannot: it is not compiled in, it is whatever you
 typed, held in your own configuration file.
+
+**What's in this repository.** Everything ohmail runs on: the desktop app,
+the mail engine, the web interface, the sync API, and the background
+organizer. The only code that is not here is the machinery for billing our
+hosted customers — a separate private service this server talks to over a
+documented API; `packages/services/src/entitlements/plane-client.ts` is
+the open client of that API, and without the plane the server runs
+complete and unmetered.
+A supported way to run this server yourself is being built on this code
+and is not ready yet; until it is documented here, what this repository
+builds is the desktop app below. The server source is here to read and
+audit.
 
 ## Build it yourself
 

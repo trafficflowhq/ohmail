@@ -1,11 +1,15 @@
 /**
  * The ohmail Cloud API client, absent.
  *
- * GENERATED from the real module's emitted declarations — never edited by hand, so it cannot
- * drift from what it stands in for. The whole TYPE surface is carried over, signatures and
- * generics and class shapes included, because a signature is a shape and not a secret: the
- * endpoint paths, the header and token handling and the call construction all live in the
- * bodies, and every body here is a refusal.
+ * This module mirrors `apps/webapp/app/api-client.ts`'s exported TYPE surface — signatures,
+ * generics and class shapes included, because a signature is a shape and not a secret — and
+ * every value export is a refusal: the endpoint paths, the header and token handling and the
+ * call construction all live in the bodies, and no body is here. `vite.config.ts` aliases the
+ * real module to this one in BOTH desktop artifacts, so no released binary carries a Cloud
+ * client. It was generated from the real module's emitted declarations while that module was
+ * not published; it is an ordinary hand-kept source now, and the desktop suite pins the alias
+ * and the exports that must answer instead of refuse. When the real module's surface changes,
+ * change this one in the same commit — the desktop typecheck is what notices a drift.
  *
  * The desktop tier has no Cloud account and no server: it talks to a local engine over a pipe.
  * Reaching for anything here throws rather than quietly opening a socket.
