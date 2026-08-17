@@ -24,12 +24,12 @@
 # Required values fail `docker compose config` loudly rather than booting half a stack.
 #
 # The three ohmail services run PREBUILT images from ghcr.io/trafficflowhq — `docker compose
-# up -d` pulls them; OHMAIL_IMAGE_TAG in .env pins a version (default: latest). The recipe
-# each image is built from is in this tree (apps/server/Dockerfile, apps/worker/Dockerfile,
-# apps/webapp/Dockerfile), so what an image contains is checkable against the source beside
-# it. Building those recipes needs the development workspace's package-manager layout; a
-# development checkout does it through an overlay that adds `build:` stanzas to these three
-# services — never part of an operator install, which pulls and runs.
+# up -d` pulls them; OHMAIL_IMAGE_TAG in .env pins a version (default: latest). Each image is
+# built BY THIS REPOSITORY'S OWN RELEASE WORKFLOW from the recipe in this tree —
+# apps/server/Dockerfile, apps/worker/Dockerfile.selfhost, apps/webapp/Dockerfile — against
+# the committed npm lockfile, so what an image contains is checkable against the source and
+# the recipe beside it, and any of the three can be rebuilt from a clone:
+# `docker build -f apps/server/Dockerfile .` from the repository root.
 #
 # Start order is dependency-checked, not hoped for: `api` waits for a HEALTHY database and
 # a created bucket; `organizer` waits for a HEALTHY `api`, whose /health only answers after

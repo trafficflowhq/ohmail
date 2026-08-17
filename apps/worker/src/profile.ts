@@ -49,8 +49,10 @@ export const DEFAULT_PROFILE_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
  * journals already carry (the `ohbox_tidy_move` precedent), and this feature may not add schema.
  *
  * The constant itself lives in `@trafficflow/db` now (`organizer-profile-import.ts`), because
- * the import surface's half runs in `@trafficflow/services` and a package cannot import an app —
- * re-exported here so this module's callers and tests keep their one name for it.
+ * the import surface's half runs in the services package and a package cannot import an app —
+ * re-exported here so this module's callers and tests keep their one name for it. (The package
+ * is deliberately not written out: the worker's dependency-boundary test refuses its name
+ * anywhere under src/, comments included, and that bluntness is the guard's value.)
  */
 export { PROFILE_FOUND_AUDIT_ACTION };
 

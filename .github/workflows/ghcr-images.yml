@@ -1,0 +1,271 @@
+# The self-host images: build the three Dockerfiles in THIS repository and push them to GHCR.
+#
+#   ghcr.io/trafficflowhq/ohmail-server   apps/server/Dockerfile    (the API host)
+#   ghcr.io/trafficflowhq/ohmail-worker   apps/worker/Dockerfile    (the organizer)
+#   ghcr.io/trafficflowhq/ohmail-web      apps/webapp/Dockerfile    (the web app, selfhost flavor)
+#
+# BUILT HERE, FROM THIS TREE, BY THIS REPOSITORY'S OWN ACTIONS. The recipes build from the
+# published source with the committed npm lockfile (`npm ci` inside each Dockerfile), so the
+# images are provably produced from the code in front of you, by CI whose logs are public.
+# Anyone can rebuild any of them from a clone: `docker build -f apps/server/Dockerfile .`
+#
+# RELEASE TAGS ONLY (plus a manual dispatch), deliberately: publishing images is a release
+# act, so it runs on the release cadence and costs nothing between. The repository guard on
+# every job keeps this inert on forks — a fork's run would try to push to this project's
+# GHCR namespace and fail on permissions; refusing to start is clearer.
+#
+# STAGE, CHECK, THEN PROMOTE. Nothing writes the `<version>`/`latest` tags directly: each
+# matrix job pushes a per-architecture `stage-<version>-<arch>` tag, the prune check runs
+# against THAT, and a fan-in job merges the staged pair into the real tags only after every
+# build and every check is green. A red anywhere therefore leaves the public tags exactly as
+# they were — a failed release must not be able to overwrite `latest` with a half-set or an
+# unchecked layer.
+#
+# Multi-arch: linux/amd64 + linux/arm64, each built NATIVELY — GitHub's hosted arm64 runners
+# (`ubuntu-24.04-arm`) are free for public repositories, which is both faster and less flaky
+# than emulating a Node toolchain under QEMU. The promote step composes the two
+# single-arch images into one manifest list per tag.
+
+name: ghcr-images
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag for the images (e.g. 0.9.8). 'latest' is always also promoted."
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # One place decides the version, and it is DATA, never shell source: a dispatch input (or a
+  # tag name — git allows `$` and parentheses in one) interpolated into a run: block would
+  # execute with this workflow's packages:write token. Read through the environment, validate
+  # against docker's own tag grammar, and refuse anything else.
+  version:
+    if: github.repository == 'trafficflowhq/ohmail'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - name: Decide and validate the version tag
+        id: decide
+        env:
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="$DISPATCH_VERSION"
+          else
+            V="${REF_NAME#v}"
+          fi
+          case "$V" in
+            ("" | .* | -* | *[!A-Za-z0-9._-]* ) echo "refusing version tag: $V"; exit 1 ;;
+          esac
+          if [ "${#V}" -gt 100 ] || [ "$V" = "latest" ]; then echo "refusing version tag: $V"; exit 1; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+  build-push:
+    if: github.repository == 'trafficflowhq/ohmail'
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ohmail-server, ohmail-worker, ohmail-web]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - image: ohmail-server
+            dockerfile: apps/server/Dockerfile
+          # The organizer's SELF-HOST recipe — the sibling plain `Dockerfile` is the managed
+          # deployment's and builds only in the development workspace.
+          - image: ohmail-worker
+            dockerfile: apps/worker/Dockerfile.selfhost
+          - image: ohmail-web
+            dockerfile: apps/webapp/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the STAGING tag (native ${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ghcr.io/trafficflowhq/${{ matrix.image }}:stage-${{ needs.version.outputs.version }}-${{ matrix.arch }}
+          # The source label points at this repository — the tree these images are built from.
+          labels: |
+            org.opencontainers.image.source=https://github.com/trafficflowhq/ohmail
+            org.opencontainers.image.licenses=AGPL-3.0
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }},mode=max
+
+      # The image-prune check, against the staged image and BEFORE any real tag exists: a
+      # runtime layer must not carry what its recipe promises to exclude. The server and the
+      # organizer are single-file bundles — no src/, no test/, no node_modules at all. The web
+      # image still carries src (its runtime shape copies the built workspace — stated in its
+      # Dockerfile) but must never carry a test tree. Findings are captured into a variable
+      # and asserted with `test -z` — never `! producer | grep -q .`, where the producer dying
+      # reads as a pass.
+      - name: Prune check — no test trees in any runtime, no source or modules in the bundles
+        env:
+          IMG: ghcr.io/trafficflowhq/${{ matrix.image }}:stage-${{ needs.version.outputs.version }}-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          HITS=$(docker run --rm --entrypoint sh "$IMG" -c \
+            'find /app -type d \( -name test -o -name tests \) -not -path "*/node_modules/*"')
+          test -z "$HITS" || { echo "test trees in $IMG:"; echo "$HITS"; exit 1; }
+          if [ "${{ matrix.image }}" != "ohmail-web" ]; then
+            SRC=$(docker run --rm --entrypoint sh "$IMG" -c \
+              'find /app -type d \( -name src -o -name node_modules \)')
+            test -z "$SRC" || { echo "src/module trees in $IMG:"; echo "$SRC"; exit 1; }
+          fi
+
+  # The fan-in: only when all six builds passed their checks do the real tags move, and they
+  # move as manifest-list compositions of the staged single-arch images — no rebuild, so what
+  # was checked is what ships.
+  promote:
+    if: github.repository == 'trafficflowhq/ohmail'
+    needs: [version, build-push]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote stage-… to the version tag and latest
+        env:
+          V: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for IMG in ohmail-server ohmail-worker ohmail-web; do
+            docker buildx imagetools create \
+              -t "ghcr.io/trafficflowhq/$IMG:$V" \
+              -t "ghcr.io/trafficflowhq/$IMG:latest" \
+              "ghcr.io/trafficflowhq/$IMG:stage-$V-amd64" \
+              "ghcr.io/trafficflowhq/$IMG:stage-$V-arm64"
+          done
+
+      # The compose an operator runs pulls ANONYMOUSLY, and a GHCR package is born private —
+      # nothing in any workflow can flip that (it is a one-time change in each package's own
+      # settings, made by a person with admin rights on it). So the promotion is only green
+      # when an unauthenticated client can actually pull what the README advertises; on a
+      # first release this step is EXPECTED to fail until the three packages are made public,
+      # and its message says exactly that.
+      - name: Anonymous-pull gate — the packages must be publicly pullable
+        env:
+          V: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for IMG in ohmail-server ohmail-worker ohmail-web; do
+            TOKEN=$(curl -fsS "https://ghcr.io/token?scope=repository:trafficflowhq/$IMG:pull" | jq -r .token)
+            if ! curl -fsS -o /dev/null \
+                 -H "Authorization: Bearer $TOKEN" \
+                 -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+                 "https://ghcr.io/v2/trafficflowhq/$IMG/manifests/$V"; then
+              echo "ghcr.io/trafficflowhq/$IMG is not anonymously pullable."
+              echo "One-time owner action: package settings -> Danger Zone -> Change visibility -> Public,"
+              echo "for ohmail-server, ohmail-worker and ohmail-web. Then re-run this workflow."
+              exit 1
+            fi
+          done
+
+  # The fresh-clone gate: what the README tells a stranger must work from the PUBLIC tree
+  # with the images just promoted — clone, copy the env template, fill the four required
+  # values, `docker compose up -d`, and the stack answers. This is the claim's own test, on
+  # the artifacts of this run, on a machine that has never seen this workspace.
+  fresh-clone-gate:
+    if: github.repository == 'trafficflowhq/ohmail'
+    needs: [version, promote]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Clone the public repository
+        run: git clone --depth 1 https://github.com/trafficflowhq/ohmail.git mirror
+
+      - name: The clone must carry the deployment this gate is about
+        run: |
+          set -euo pipefail
+          if [ ! -f mirror/deploy/selfhost/docker-compose.yml ]; then
+            echo "The public repository does not carry deploy/selfhost yet. The source publish"
+            echo "and the image release are separate acts; publish the source, then re-run."
+            exit 1
+          fi
+
+      - name: Configure from the template, exactly as the README says
+        working-directory: mirror/deploy/selfhost
+        env:
+          V: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          {
+            echo "OHMAIL_ORIGIN=http://localhost"
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "TF_KEK_V1=$(openssl rand -hex 32)"
+            echo "MINIO_ROOT_PASSWORD=$(openssl rand -hex 16)"
+            echo "OHMAIL_IMAGE_TAG=$V"
+          } >> .env
+          docker compose config -q
+
+      - name: Pull anonymously and boot cold
+        working-directory: mirror/deploy/selfhost
+        run: |
+          set -euo pipefail
+          docker compose pull -q
+          docker compose up -d
+          # /hello through the proxy is the stranger's first request; the api healthcheck
+          # already gates the organizer's start. Poll rather than sleep.
+          BODY=""
+          for i in $(seq 1 60); do
+            if BODY=$(curl -fsS http://localhost/hello 2>/dev/null); then break; fi
+            sleep 5
+          done
+          echo "$BODY"
+          echo "$BODY" | grep -q '"needsSetup":true'
+          # The web application must answer too — the proxy serving /hello proves only the
+          # API path, and a stack whose web container died still passes that.
+          curl -fsS -o /dev/null http://localhost/
+          # And the organizer must reach HEALTHY: a mail product whose sync process is in a
+          # crash loop is not "up". Poll its healthcheck through compose.
+          for i in $(seq 1 36); do
+            H=$(docker compose ps organizer --format '{{.Health}}' || true)
+            [ "$H" = "healthy" ] && break
+            sleep 5
+          done
+          [ "$H" = "healthy" ] || { echo "organizer never became healthy:"; docker compose ps; exit 1; }
+
+      - name: Service logs on failure
+        if: failure()
+        working-directory: mirror/deploy/selfhost
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        working-directory: mirror/deploy/selfhost
+        run: docker compose down -v

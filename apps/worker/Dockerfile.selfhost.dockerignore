@@ -1,0 +1,44 @@
+# Build context for apps/worker/Dockerfile.selfhost ONLY. BuildKit prefers
+# `<Dockerfile>.dockerignore` over the root `/.dockerignore`, and the root file is the
+# MANAGED recipe's context — pnpm manifests, pinned by a workspace test to the organizer's
+# compile closure. This is the same closure in the published tree's npm shape.
+#
+# Same discipline: DENY EVERYTHING, RE-ADMIT THE BUILD'S INPUTS. An import reaching outside
+# the packages below resolves to a workspace link whose target holds only a manifest, and
+# the bundle FAILS to build — the organizer's dependency boundary, enforced by the context.
+*
+
+# Workspace manifests and the pinned resolution — `npm ci` validates the lockfile against
+# every workspace manifest it finds.
+!package.json
+!package-lock.json
+!apps/*/package.json
+!packages/*/package.json
+
+# The build steps the image runs: the host bundler and the esbuild loader it shares with the
+# engine build (the version pin lives there).
+!scripts/bundle-host.mjs
+!scripts/engine-bundle.mjs
+
+# The organizer's compile closure — core and db because the organizer names them, db-mail
+# because db does. The workspace test that pins the managed context's package lines is the
+# same authority for these.
+!apps/worker
+!packages/core
+!packages/db
+!packages/db-mail
+
+# …minus anything inside them that must never be copied in: no test trees, no stale local
+# compile output, no previous bundle run.
+**/node_modules
+**/dist
+**/build
+**/test
+**/*.tsbuildinfo
+**/.DS_Store
+**/.claude
+
+# Secrets never enter an image layer; every value arrives as a compose/service variable.
+**/.env
+**/.env.*
+**/*.env

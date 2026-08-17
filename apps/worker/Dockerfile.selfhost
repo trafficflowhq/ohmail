@@ -1,0 +1,60 @@
+# syntax=docker/dockerfile:1
+#
+# ohmail sync organizer — the SELF-HOST image (`ghcr.io/trafficflowhq/ohmail-worker`).
+#
+# TWO RECIPES, ONE PROCESS, and the split is deliberate. The sibling `Dockerfile` is the
+# managed deployment's recipe: it builds in the development workspace, whose pnpm layout and
+# lockfile the public repository does not carry. THIS file is the recipe the public
+# repository's own release workflow builds and publishes — from the published tree, with its
+# own toolchain: `npm ci` against the committed package-lock.json, then a single-file
+# esbuild bundle with the same pinned bundler the desktop mail engine is built with
+# (`scripts/bundle-host.mjs` carries the reasoning and the entry-stub story).
+#
+# THE ORGANIZER'S DEPENDENCY BOUNDARY IS ENFORCED BY THE BUILD CONTEXT. This process's
+# runtime closure is core + db (+ db-mail's journal constants) and nothing else — notably
+# never `@trafficflow/services`, whose HTML sanitiser and parser have no business in the
+# boot graph of the process that holds every mailbox credential. The sibling
+# `Dockerfile.selfhost.dockerignore` is the allow-list that admits exactly that closure; an
+# import reaching outside it resolves to a workspace link whose target holds only a
+# manifest, and the BUNDLE fails to build. Same fail-at-build-time property the managed
+# recipe's filtered install buys, enforced by what the context contains.
+#
+# The runtime stage carries the bundle and the two journals — no src/, no test/, no
+# node_modules. The release pipeline's image-prune check proves the absences with
+# `docker run … find` rather than trusting this comment.
+#
+# The build context is the REPO ROOT (this app imports its sibling workspace packages).
+
+# ── Base: pinned runtime ─────────────────────────────────────────────────────────────────
+FROM node:22-bookworm-slim AS base
+ENV CI=true
+WORKDIR /app
+
+# ── Build: the locked tree, then one file ────────────────────────────────────────────────
+FROM base AS build
+COPY . .
+RUN npm ci --no-audit --no-fund
+RUN mkdir -p /tmp/esbuild && cd /tmp/esbuild && npm install --no-save esbuild@0.24.0
+RUN OHMAIL_ESBUILD_FROM=/tmp/esbuild node scripts/bundle-host.mjs worker
+RUN test -f build/host-worker/bin/ohmail-worker.mjs \
+ && test -d build/host-worker/drizzle \
+ && test -d build/host-worker/drizzle-cloud
+
+# ── Runtime ──────────────────────────────────────────────────────────────────────────────
+FROM base AS runtime
+ENV NODE_ENV=production
+# A JS heap ceiling below the container cap means the engine aborts with a heap trace on
+# stderr instead of the kernel SIGKILLing the process — a SIGKILL is unloggable, and in one
+# early outage that is why the whole deployment log read "Starting Container" and nothing
+# else.
+#
+# BE HONEST ABOUT WHAT THIS DOES NOT DO: RFC822 bodies are Buffers, which live in the
+# engine's EXTERNAL memory, not the JS heap — this flag does not bound them. The actual
+# memory bound is the per-cycle batch budget in `packages/core/src/adapters/imap-types.ts`.
+# This is a visibility aid and headroom, only.
+ENV NODE_OPTIONS="--max-old-space-size=512"
+COPY --from=build --chown=node:node /app/build/host-worker /app
+USER node
+# The health server binds PORT (defaulting to 8080), which the compose healthcheck polls.
+EXPOSE 8080
+CMD ["node", "/app/bin/ohmail-worker.mjs"]

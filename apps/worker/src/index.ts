@@ -4277,11 +4277,20 @@ function sample(mbs: readonly EnabledMailbox[], n = 3): string {
   return mbs.length > n ? `${head} (+${mbs.length - n} more)` : head;
 }
 
-// CLI bootstrap. It runs SUPERVISED: a lock-held start stands by with backoff and
-// serves health 200 instead of exiting, so a rolling deploy cannot crash-loop the
-// new instance. The dynamic import keeps supervisor.ts → index.ts a one-way dependency.
-if (isCliEntry(import.meta.url)) {
-  void (async () => {
+/**
+ * The CLI bootstrap, as a NAMED export — because "was this module run directly?" stops being
+ * answerable inside a single-file bundle. The self-host organizer image bundles this package
+ * into one file, and that file holds FIVE `isCliEntry(import.meta.url)` main guards (this
+ * one and the four cron CLIs), all reading the SAME `import.meta.url`. Run directly, all
+ * five fire: the crons finish their pass and `flushExit(0)` — a clean exit that kills the
+ * supervisor mid-boot, measured as a restart loop on the bundled organizer's first compose
+ * boot. So the bundle's entry stub neutralizes `argv[1]` (no guard can match) and starts
+ * THIS function explicitly; `scripts/bundle-host.mjs` carries the other half of the story.
+ * Under `node dist/index.js` and `tsx src/index.ts` nothing changes: the guard below calls
+ * the same function.
+ */
+export async function runWorkerCli(): Promise<void> {
+  await (async () => {
     // THE composition root for logging. `startWorkerWithLock` defaults to `silentLogger` so
     // no test or embedder inherits stdout noise; the process that a human actually deploys
     // is the one that turns the logger on, and it does it exactly once, here.
@@ -4356,4 +4365,12 @@ if (isCliEntry(import.meta.url)) {
       flushExit(1);
     }
   })();
+}
+
+// CLI bootstrap. It runs SUPERVISED: a lock-held start stands by with backoff and
+// serves health 200 instead of exiting, so a rolling deploy cannot crash-loop the
+// new instance. The dynamic import inside keeps supervisor.ts → index.ts a one-way
+// dependency.
+if (isCliEntry(import.meta.url)) {
+  void runWorkerCli();
 }

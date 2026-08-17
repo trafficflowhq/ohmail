@@ -284,13 +284,17 @@ mail sink for verification mail until you point `SMTP_URL` at a real relay.
 
 The images are prebuilt for amd64 and arm64 —
 `ghcr.io/trafficflowhq/ohmail-server`, `ohmail-worker`, `ohmail-web` — and
-each release builds them with the Dockerfiles published in this tree
-(`apps/server/Dockerfile`, `apps/worker/Dockerfile`,
-`apps/webapp/Dockerfile`), from the same sources published here, so what an
-image contains is checkable against the recipe beside it. One honest limit:
-building the images yourself needs the development workspace's package
-manager layout, which this generated mirror does not carry — the pinned
-lockfile behind the images lives there. Pulling is the supported path.
+they are built by this repository's own release workflow
+(`.github/workflows/ghcr-images.yml`), on public runners whose logs anyone
+can read, from the recipes published in this tree
+(`apps/server/Dockerfile`, `apps/worker/Dockerfile.selfhost`,
+`apps/webapp/Dockerfile`) against the committed lockfile — so what an image
+contains is checkable against the recipe and the source beside it. You can
+also build any of them yourself from a clone:
+`docker build -f apps/server/Dockerfile .` at the repository root. If a
+pull is ever refused, the current release's image build has not finished
+(or its packages are not public yet) — build from source, or take the
+previous tag.
 
 This is the first supported cut: it boots cold, migrates, does the
 first-run ceremony, organizes real IMAP mailboxes and sends. Guides for
