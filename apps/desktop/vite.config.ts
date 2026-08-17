@@ -127,6 +127,12 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // warns about. The overlay renders on every message opened under 900px, so without this the
   // binary shows `reader.back` on the one control that leaves it.
   "reader",
+  // `profileImport` is the "we found your ohmail settings on this mailbox" card
+  // (`app/shell/ProfileImportCard.tsx`), read through an ordinary `useTranslations`. Unreachable
+  // in today's binary — the card's hook asks nothing where the Cloud client is the refusing stub
+  // and no host transport is wired — and listed for the reason `body` and `history` are: the
+  // guard compares this array against what the sources READ, not against what they can display.
+  "profileImport",
   "reply", "ribbon", "screener", "screening", "search", "session", "settings",
   // `sync` is the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares
