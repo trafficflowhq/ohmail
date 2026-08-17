@@ -3,6 +3,7 @@ import { users, type Tx } from "@trafficflow/db";
 import { authThrottle, loginTokens } from "@trafficflow/db/cloud";
 import type { Db } from "../context.js";
 import { generateToken, hashToken } from "../auth/crypto.js";
+import { isLoopbackHostname } from "../auth/origins.js";
 import { normalizeRecipient, type MailerPort, type MailSendResult } from "./port.js";
 import type { WaitlistTier } from "./templates.js";
 
@@ -254,14 +255,18 @@ function assertLinkBase(name: string, raw: string, allowed: readonly string[]): 
   if (url.search || url.hash) {
     throw new Error(`MailService: ${name} must not carry a query string or fragment`);
   }
-  const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  // THE AUTH VALIDATOR'S loopback predicate, imported rather than restated: the self-host server
+  // passes its ONE origin as both auth origin and link base, so any daylight between the two
+  // predicates is an origin that boots sign-in and then refuses the mailer. `http://[::1]:8080`
+  // and `http://app.localhost:3000` were exactly that daylight (review finding).
+  const loopback = isLoopbackHostname(url.hostname);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
     throw new Error(`MailService: ${name} must be https (http is allowed only on loopback)`);
   }
   const ok = allowed.some((entry) => {
     let a: URL;
     try { a = new URL(entry); } catch { return false; }
-    if (a.hostname === "localhost" || a.hostname === "127.0.0.1") {
+    if (isLoopbackHostname(a.hostname)) {
       // Loopback: host must match, port is free (3000, 5173, whatever the harness uses).
       return a.protocol === url.protocol && a.hostname === url.hostname;
     }

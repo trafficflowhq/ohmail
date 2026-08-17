@@ -16,7 +16,7 @@ import {
    * mints them, so that running it here costs this process no dependency it does not already
    * have — the worker's deliberately small runtime dependency set, and `test/deps.test.ts` is
    * what keeps that true. */
-  makeSupabaseStagingStorage, sweepExpiredStagingFor,
+  makeSupabaseStagingStorage, makeS3StagingStorage, sweepExpiredStagingFor,
   /* The abandoned-claim sweep — the janitor half of the exclusive AI-attempt claim. Cloud, for
    * the same reason the staging sweep is:
    * `ai_attempt_claims` exists only where there is a ledger to coordinate. */
@@ -583,8 +583,15 @@ export async function startWorkerWithLock(
      * deployment has no staging environment, which the maintenance pass reports rather than
      * passes over: a bucket the API writes to and nothing sweeps grows forever.
      */
-    const stagingStorage: AttachmentStagingStorage | null =
-      config.attachmentStaging ? makeSupabaseStagingStorage(config.attachmentStaging) : null;
+    // KIND FOR KIND with the API host's mint: the worker is the only process that ever deletes,
+    // so every kind the API can stage into must have its sweep arm here — the type narrows on
+    // the union, so a kind added to the config without an arm is a compile error, not a bucket
+    // that grows forever.
+    const stagingStorage: AttachmentStagingStorage | null = config.attachmentStaging
+      ? (config.attachmentStaging.kind === "s3"
+        ? makeS3StagingStorage(config.attachmentStaging)
+        : makeSupabaseStagingStorage(config.attachmentStaging))
+      : null;
     /**
      * Time-gate for the bubble-up pass. Starts "due" for the same reason
      * `lastMaintenanceAt` does, and here it matters more: a message whose `bubble_up_at` fell

@@ -1,3 +1,4 @@
+import { isIPv4 } from "node:net";
 import { createTransport, type Transporter } from "nodemailer";
 import {
   assertUsableFrom, normalizeRecipient, underTestRunner,
@@ -76,9 +77,18 @@ export interface SmtpMailerConfig {
 const DEFAULT_CONNECTION_TIMEOUT_MS = 10_000;
 const DEFAULT_SOCKET_TIMEOUT_MS = 30_000;
 
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
-const isLoopback = (hostname: string): boolean =>
-  LOOPBACK.has(hostname.toLowerCase()) || hostname.startsWith("127.");
+/**
+ * Loopback is an ADDRESS, never a name shape. The first version also accepted any hostname
+ * `startsWith("127.")`, and the independent review named what that admits: `127.smtp.vendor.com`
+ * is a perfectly resolvable DNS name that would have bypassed BOTH the test-runner egress
+ * refusal AND the requireTLS arming below — credentials to a remote host, in clear, from a
+ * predicate that thought it was talking to itself. The 127/8 block is honoured only for a
+ * literal IPv4 address; names get exactly one spelling, `localhost`.
+ */
+const isLoopback = (hostname: string): boolean => {
+  const h = hostname.toLowerCase();
+  return h === "localhost" || h === "::1" || (isIPv4(h) && h.startsWith("127."));
+};
 
 export class SmtpMailer implements MailerPort {
   private readonly transporter: Transporter;
@@ -97,7 +107,16 @@ export class SmtpMailer implements MailerPort {
     if (url.protocol !== "smtp:" && url.protocol !== "smtps:") {
       throw new Error("SmtpMailer: `url` must use the smtp: or smtps: scheme");
     }
-    if (underTestRunner() && !isLoopback(url.hostname)) {
+    // WHATWG parses `smtp:///` happily with an EMPTY host, and nodemailer defaults an empty
+    // host to localhost — which would turn a malformed block into transactional mail handed to
+    // whatever relay answers on the box, instead of the boot refusal this constructor owes.
+    // The brackets come off an IPv6 literal here too: `[::1]` is URL syntax, and node's dialer
+    // wants the bare `::1` (the bracketed form goes to DNS and fails every send).
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    if (host === "") {
+      throw new Error("SmtpMailer: `url` must name a host");
+    }
+    if (underTestRunner() && !isLoopback(host)) {
       throw new Error(
         "SmtpMailer: refusing a non-loopback SMTP host under a test runner — the suite performs " +
         "zero external requests. Point the URL at a loopback sink; see smtp-mailer.test.ts.",
@@ -108,7 +127,7 @@ export class SmtpMailer implements MailerPort {
     const user = decodeURIComponent(url.username);
     this.password = decodeURIComponent(url.password);
     this.transporter = createTransport({
-      host: url.hostname,
+      host,
       port: url.port !== "" ? Number(url.port) : secure ? 465 : 587,
       secure,
       ...(user !== "" ? { auth: { user, pass: this.password } } : {}),
@@ -120,7 +139,7 @@ export class SmtpMailer implements MailerPort {
        * enforces for user credentials, applied to the operator's. A loopback sink (mailpit, the
        * test suite) authenticates nothing and may stay cleartext.
        */
-      requireTLS: !secure && user !== "" && !isLoopback(url.hostname),
+      requireTLS: !secure && user !== "" && !isLoopback(host),
       connectionTimeout: cfg.connectionTimeoutMs ?? DEFAULT_CONNECTION_TIMEOUT_MS,
       greetingTimeout: cfg.connectionTimeoutMs ?? DEFAULT_CONNECTION_TIMEOUT_MS,
       socketTimeout: cfg.socketTimeoutMs ?? DEFAULT_SOCKET_TIMEOUT_MS,

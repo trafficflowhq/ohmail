@@ -98,11 +98,20 @@ import type { AuthConfig } from "./config-types.js";
  */
 const NEVER_AUTH_HOSTS: readonly string[] = ["www.ohmail.app", "app.ohmail.app"];
 
-/** `http:` is a secure context only for loopback — WebAuthn refuses it elsewhere. */
+/**
+ * `http:` is a secure context only for loopback — WebAuthn refuses it elsewhere.
+ *
+ * EXPORTED (as {@link isLoopbackHostname}) because this predicate is a CONTRACT other validators
+ * must agree with, not restate: `MailService.assertLinkBase` accepts http link bases exactly
+ * where this accepts http origins, so an operator origin that boots auth can never be refused as
+ * a mail link base. Two hand-kept copies of "what counts as loopback" is how
+ * `http://[::1]:8080` booted sign-in and then refused the mailer for the same origin.
+ */
 function isLoopback(hostname: string): boolean {
   return hostname === "localhost" || hostname.endsWith(".localhost")
     || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
 }
+export { isLoopback as isLoopbackHostname };
 
 /**
  * Canonicalize one configured/observed origin to `scheme://host[:port]`.

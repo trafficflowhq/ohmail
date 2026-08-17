@@ -301,9 +301,25 @@ function loadStorageConfig(env: NodeJS.ProcessEnv): StorageConfig | null {
   }
   if (kind === "s3") {
     requireAll(S3_STORAGE_VARS);
+    // The endpoint is validated AT BOOT because a presign is local key derivation: a malformed
+    // endpoint would otherwise arm the bag, `/hello` would advertise staging, and the FIRST MINT
+    // would commit its ticket row (consuming quota) before URL construction finally rejected the
+    // value — an error one step later than this process's contract allows, on every mint.
+    const endpoint = trimmed(env, "S3_ENDPOINT");
+    let endpointUrl: URL | null = null;
+    try {
+      endpointUrl = new URL(endpoint);
+    } catch { /* refused below */ }
+    if (!endpointUrl || (endpointUrl.protocol !== "http:" && endpointUrl.protocol !== "https:")
+      || endpointUrl.hostname === "") {
+      throw new Error("S3_ENDPOINT must be an absolute http(s) URL, e.g. http://minio:9000");
+    }
+    if (endpointUrl.username || endpointUrl.password) {
+      throw new Error("S3_ENDPOINT must not embed credentials — they belong in S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY");
+    }
     return {
       kind: "s3",
-      endpoint: trimmed(env, "S3_ENDPOINT"),
+      endpoint,
       region: trimmed(env, "S3_REGION"),
       accessKeyId: trimmed(env, "S3_ACCESS_KEY_ID"),
       secretAccessKey: trimmed(env, "S3_SECRET_ACCESS_KEY"),

@@ -347,11 +347,17 @@ export interface WorkerConfig {
    * one: a deployment that stages and does not sweep grows a bucket forever, so the worker logs
    * the skip once per maintenance pass rather than passing over it.
    *
-   * The three variables are the API host's exactly (`SUPABASE_URL`,
-   * `SUPABASE_SERVICE_ROLE_KEY`, `TF_ATTACHMENT_STAGING_BUCKET`) and are read all-or-nothing for
-   * the same reason: half a configuration is a sweep that cannot delete.
+   * The variables are the API host's exactly, KIND FOR KIND — `TF_STORAGE_KIND` selects
+   * `supabase` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TF_ATTACHMENT_STAGING_BUCKET`) or
+   * `s3` (the `S3_*` block) — and each kind's block is read all-or-nothing for the same reason:
+   * half a configuration is a sweep that cannot delete. The worker MUST speak every kind the API
+   * can mint into, because the worker is the only process that ever deletes: a kind the API
+   * stages into and this process cannot sweep is a bucket that grows forever behind a quota that
+   * deliberately counts unexpired rows only (an independent review caught exactly that gap when
+   * the second kind landed API-side first). The kind-less legacy shape — the SUPABASE trio with
+   * no `TF_STORAGE_KIND` at all — stays valid because it is the DEPLOYED managed contract.
    */
-  attachmentStaging?: { url: string; serviceKey: string; bucket: string };
+  attachmentStaging?: WorkerStagingStorage;
   /** Base per-mailbox retry delay after a quarantine (exponential, capped at 16×). */
   mailboxRetryMs?: number;
   /** Consecutive runtime sync failures before a mailbox is detached + quarantined. */
@@ -763,21 +769,99 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   };
 }
 
+/** The staging store this worker sweeps — the API host's `StorageConfig`, kind for kind. */
+export type WorkerStagingStorage =
+  | { kind: "supabase"; url: string; serviceKey: string; bucket: string }
+  | { kind: "s3"; endpoint: string; region: string; accessKeyId: string; secretAccessKey: string; bucket: string };
+
 /**
- * The staging bucket's three variables, all-or-nothing, spelled exactly as the API host spells
- * them — the same rule `msOAuthEnv` exists to enforce for the OAuth registration. Two hosts that
- * accepted different names for one bucket is a split-brain reached through spelling: the API would
- * mint grants into a bucket the worker never sweeps.
+ * The staging store's variables, spelled exactly as the API host spells them — the same rule
+ * `msOAuthEnv` exists to enforce for the OAuth registration. Two hosts that accepted different
+ * names for one bucket is a split-brain reached through spelling: the API would mint grants into
+ * a bucket the worker never sweeps.
+ *
+ * Three shapes, and the asymmetry between them is deliberate:
+ *
+ *  · **Kind-less legacy** — the SUPABASE trio with no `TF_STORAGE_KIND` — keeps its DEPLOYED
+ *    semantics untouched: all-or-nothing detection, a malformed URL degrades to "no staging"
+ *    (the maintenance pass reports the skip). This is the managed environment as it runs today.
+ *  · **An explicit kind** refuses a partial or malformed block instead of degrading, exactly as
+ *    the API host does — under an explicit kind, "somebody configured this and got it wrong" is
+ *    the only reading, and a worker that silently swept nothing while the API minted happily
+ *    would be the unbounded-bucket failure this loader exists to prevent.
+ *  · **`S3_*` variables with NO kind refuse** rather than being ignored: there is no legacy s3
+ *    shape, so that state is always a configuration error naming the fix.
  */
 function loadAttachmentStagingConfig(
   env: NodeJS.ProcessEnv,
 ): Pick<WorkerConfig, "attachmentStaging"> {
-  const url = (env.SUPABASE_URL ?? "").trim().replace(/\/+$/, "");
-  const serviceKey = (env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
-  const bucket = (env.TF_ATTACHMENT_STAGING_BUCKET ?? "").trim();
-  if (!url || !serviceKey || !bucket) return {};
-  if (!/^https:\/\/[^/?#]+$/.test(url)) return {};
-  return { attachmentStaging: { url, serviceKey, bucket } };
+  const t = (k: string): string => (env[k] ?? "").trim();
+  const kind = t("TF_STORAGE_KIND");
+
+  const S3_VARS = ["S3_ENDPOINT", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"] as const;
+
+  if (kind === "") {
+    const strayS3 = S3_VARS.filter((v) => t(v) !== "");
+    if (strayS3.length > 0) {
+      throw new Error(
+        `storage variables are set but TF_STORAGE_KIND is not (set it to "supabase" or "s3"): ${strayS3.join(", ")}`,
+      );
+    }
+    // The legacy managed shape, byte for byte: silent degradation, never a refusal.
+    const url = t("SUPABASE_URL").replace(/\/+$/, "");
+    const serviceKey = t("SUPABASE_SERVICE_ROLE_KEY");
+    const bucket = t("TF_ATTACHMENT_STAGING_BUCKET");
+    if (!url || !serviceKey || !bucket) return {};
+    if (!/^https:\/\/[^/?#]+$/.test(url)) return {};
+    return { attachmentStaging: { kind: "supabase", url, serviceKey, bucket } };
+  }
+
+  const requireAll = (vars: readonly string[]): void => {
+    const missing = vars.filter((v) => t(v) === "");
+    if (missing.length > 0) {
+      throw new Error(`TF_STORAGE_KIND=${kind} needs all of ${vars.join(", ")} — missing: ${missing.join(", ")}`);
+    }
+  };
+
+  if (kind === "supabase") {
+    requireAll(["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "TF_ATTACHMENT_STAGING_BUCKET"]);
+    const url = t("SUPABASE_URL").replace(/\/+$/, "");
+    if (!/^https:\/\/[^/?#]+$/.test(url)) throw new Error("SUPABASE_URL must be a bare https origin");
+    return {
+      attachmentStaging: {
+        kind: "supabase", url,
+        serviceKey: t("SUPABASE_SERVICE_ROLE_KEY"),
+        bucket: t("TF_ATTACHMENT_STAGING_BUCKET"),
+      },
+    };
+  }
+
+  if (kind === "s3") {
+    requireAll(S3_VARS);
+    // Same boot-time endpoint validation as the API host, same reason restated for the sweep:
+    // the client is a local signer, so a malformed endpoint would construct fine and then fail
+    // every DELETE — a sweep that runs hourly and removes nothing.
+    const endpoint = t("S3_ENDPOINT");
+    let endpointUrl: URL | null = null;
+    try {
+      endpointUrl = new URL(endpoint);
+    } catch { /* refused below */ }
+    if (!endpointUrl || (endpointUrl.protocol !== "http:" && endpointUrl.protocol !== "https:")
+      || endpointUrl.hostname === "") {
+      throw new Error("S3_ENDPOINT must be an absolute http(s) URL, e.g. http://minio:9000");
+    }
+    return {
+      attachmentStaging: {
+        kind: "s3", endpoint,
+        region: t("S3_REGION"),
+        accessKeyId: t("S3_ACCESS_KEY_ID"),
+        secretAccessKey: t("S3_SECRET_ACCESS_KEY"),
+        bucket: t("S3_BUCKET"),
+      },
+    };
+  }
+
+  throw new Error('TF_STORAGE_KIND must be "supabase" or "s3" (or unset for no object storage)');
 }
 
 /**
