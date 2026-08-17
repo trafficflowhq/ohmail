@@ -1,0 +1,46 @@
+# Build context for apps/server/Dockerfile ONLY. BuildKit prefers `<Dockerfile>.dockerignore`
+# over the root `/.dockerignore`, and that root file is NOT shareable here on purpose: its
+# `!packages/…` lines are pinned by a workspace test to be EXACTLY the organizer's compile
+# closure, so admitting `packages/services`/`packages/api` there would either break that
+# guard or, worse, quietly widen the organizer's boundary. Two images, two closures, two
+# allow-lists.
+#
+# Same discipline as the root file: DENY EVERYTHING, RE-ADMIT THE BUILD'S INPUTS. This host's
+# closure is core, db, db-mail (via db), services and api — an import reaching outside it
+# resolves to a workspace link whose target holds only a manifest, and the bundle FAILS to
+# build.
+*
+
+# Workspace manifests and the pinned resolution — `npm ci` validates the lockfile against
+# every workspace manifest it finds.
+!package.json
+!package-lock.json
+!apps/*/package.json
+!packages/*/package.json
+
+# The build steps the image runs: the host bundler and the esbuild loader it shares with the
+# engine build (the version pin lives there).
+!scripts/bundle-host.mjs
+!scripts/engine-bundle.mjs
+
+!apps/server
+!packages/core
+!packages/db
+!packages/db-mail
+!packages/services
+!packages/api
+
+# …minus anything inside them that must never be copied in: no test trees, no stale local
+# compile output, no previous bundle run.
+**/node_modules
+**/dist
+**/build
+**/*.tsbuildinfo
+**/.DS_Store
+**/.claude
+**/test
+
+# Secrets never enter an image layer; every value arrives as a compose/service variable.
+**/.env
+**/.env.*
+**/*.env
