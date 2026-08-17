@@ -22,7 +22,10 @@
 	#   /health        liveness + schema + key identity, for operators and health checks
 	#   /hello         the capability handshake (flavor, needsSetup, features)
 	#   /pair, /pair/* the pairing-token ceremony (first-run setup, invites, device pairing)
-	@api path /api /api/* /auth /auth/* /events /health /hello /pair /pair/*
+	#   /internal/*    the shared-secret alert intake (404 until TF_ALERT_SECRET arms it) —
+	#                  an operator's monitor calls it at the documented path, so the proxy
+	#                  must carry it even though nothing in the product's own UI ever does
+	@api path /api /api/* /auth /auth/* /events /health /hello /pair /pair/* /internal /internal/*
 	handle @api {
 		reverse_proxy api:8080
 	}

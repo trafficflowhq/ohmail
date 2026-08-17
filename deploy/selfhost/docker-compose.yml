@@ -23,13 +23,18 @@
 # Configuration lives in `.env` beside this file — copy `.env.example` and fill it in.
 # Required values fail `docker compose config` loudly rather than booting half a stack.
 #
+# The three ohmail services run PREBUILT images from ghcr.io/trafficflowhq — `docker compose
+# up -d` pulls them; OHMAIL_IMAGE_TAG in .env pins a version (default: latest). Each image is
+# built BY THIS REPOSITORY'S OWN RELEASE WORKFLOW from the recipe in this tree —
+# apps/server/Dockerfile, apps/worker/Dockerfile.selfhost, apps/webapp/Dockerfile — against
+# the committed npm lockfile, so what an image contains is checkable against the source and
+# the recipe beside it, and any of the three can be rebuilt from a clone:
+# `docker build -f apps/server/Dockerfile .` from the repository root.
+#
 # Start order is dependency-checked, not hoped for: `api` waits for a HEALTHY database and
 # a created bucket; `organizer` waits for a HEALTHY `api`, whose /health only answers after
 # its boot migrations verified the schema — so the organizer can never race a cold
 # database's migration.
-#
-# The CI/dev overlay (docker-compose.ci.yml) adds a disposable IMAP/SMTP server and fast
-# sync cadence for the boot smoke test; it is never part of an operator install.
 
 name: ohmail
 
@@ -53,9 +58,7 @@ services:
       - caddy_config:/config
 
   web:
-    build:
-      context: ../..
-      dockerfile: apps/webapp/Dockerfile
+    image: ghcr.io/trafficflowhq/ohmail-web:${OHMAIL_IMAGE_TAG:-latest}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -65,9 +68,7 @@ services:
       start_period: 30s
 
   api:
-    build:
-      context: ../..
-      dockerfile: apps/server/Dockerfile
+    image: ghcr.io/trafficflowhq/ohmail-server:${OHMAIL_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       db:
@@ -79,9 +80,19 @@ services:
     environment:
       OHMAIL_ORIGIN: ${OHMAIL_ORIGIN:?set OHMAIL_ORIGIN in .env}
       DATABASE_URL: postgres://ohmail:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (URL-safe characters only)}@db:5432/ohmail
+      # The key ring: TF_KEK_V1 required, higher versions optional so a ROTATION (add
+      # TF_KEK_V2, keep TF_KEK_V1) is a .env edit rather than a compose edit. An empty value
+      # reads as absent; the ring parser refuses gaps, and both processes read the same
+      # variables so they cannot disagree about which version is active.
       TF_KEK_V1: ${TF_KEK_V1:?set TF_KEK_V1 in .env — 64 hex chars, e.g. `openssl rand -hex 32`; it encrypts mailbox credentials at rest}
+      TF_KEK_V2: ${TF_KEK_V2:-}
+      TF_KEK_V3: ${TF_KEK_V3:-}
       # Object storage for attachment staging — the bundled MinIO by default. The organizer
       # below MUST carry the identical block: it is the only process that deletes objects.
+      # KNOWN LIMIT of this default: upload grants are presigned against the in-network
+      # endpoint, which a browser outside this compose cannot reach — staged browser uploads
+      # arrive with the first-run web slice (a public signing endpoint through the proxy).
+      # Sends still work: below the staging threshold the bytes ride the send request.
       TF_STORAGE_KIND: s3
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_REGION: ${S3_REGION:-us-east-1}
@@ -103,6 +114,9 @@ services:
       MS_OAUTH_CLIENT_ID: ${MS_OAUTH_CLIENT_ID:-}
       MS_OAUTH_CLIENT_SECRET: ${MS_OAUTH_CLIENT_SECRET:-}
       MS_OAUTH_TENANT: ${MS_OAUTH_TENANT:-}
+      # Derived from the origin unless overridden: the exact URL the app registration must
+      # list as a redirect URI. Read only when a Microsoft client is configured at all.
+      MS_OAUTH_REDIRECT_URI: ${MS_OAUTH_REDIRECT_URI:-${OHMAIL_ORIGIN}/api/mailboxes/oauth/microsoft/callback}
     healthcheck:
       # /health is schema-complete or failing: the server migrates BEFORE it listens, and the
       # route 503s on a broken key ring — so "healthy" here really means "migrated, keyed,
@@ -114,16 +128,18 @@ services:
       start_period: 30s
 
   organizer:
-    build:
-      context: ../..
-      dockerfile: apps/worker/Dockerfile
+    image: ghcr.io/trafficflowhq/ohmail-worker:${OHMAIL_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy
     environment:
       DATABASE_URL_SESSION: postgres://ohmail:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/ohmail
+      # The SAME key ring as the api — the /health responses of the two carry a ring
+      # fingerprint precisely so an operator can prove they agree.
       TF_KEK_V1: ${TF_KEK_V1:?set TF_KEK_V1 in .env}
+      TF_KEK_V2: ${TF_KEK_V2:-}
+      TF_KEK_V3: ${TF_KEK_V3:-}
       # THE SAME storage block as `api`, deliberately duplicated rather than shared through
       # indirection: the api MINTS staged attachment objects, the organizer is the only
       # process that ever DELETES them. Give the organizer a different (or no) block and the
@@ -139,6 +155,7 @@ services:
       MS_OAUTH_CLIENT_ID: ${MS_OAUTH_CLIENT_ID:-}
       MS_OAUTH_CLIENT_SECRET: ${MS_OAUTH_CLIENT_SECRET:-}
       MS_OAUTH_TENANT: ${MS_OAUTH_TENANT:-}
+      MS_OAUTH_REDIRECT_URI: ${MS_OAUTH_REDIRECT_URI:-${OHMAIL_ORIGIN}/api/mailboxes/oauth/microsoft/callback}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/').then((r)=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
