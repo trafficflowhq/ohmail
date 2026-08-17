@@ -4,12 +4,12 @@
  * The star count is fetched ONCE, AT BUILD TIME, in `next.config.mjs` (`githubStars()` there)
  * and inlined as `NEXT_PUBLIC_GITHUB_STARS`. It cannot be fetched from the page: the landing
  * loads nothing off-origin — no badge script, no client fetch to api.github.com — and
- * `test/no-third-party.test.ts` enforces that. A build-time constant is the one shape that
+ * a no-third-party guard enforces that. A build-time constant is the one shape that
  * renders natively under that policy, at the cost every badge has anyway: the number is as
  * fresh as the last deploy.
  */
 
-/** The public repository. Allow-listed as an outbound LINK in `test/no-third-party.test.ts`. */
+/** The public repository. Allow-listed as an outbound LINK in the no-third-party guard. */
 export const GITHUB_REPO_URL = "https://github.com/trafficflowhq/ohmail";
 
 /**

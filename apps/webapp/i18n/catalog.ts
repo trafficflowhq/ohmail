@@ -12,7 +12,7 @@
  *
  * Two things stop it, in this order:
  *
- *  1. `test/locale-catalog.test.ts` asserts the two files have IDENTICAL key sets and LISTS the
+ *  1. a catalogue guard asserts the two files have IDENTICAL key sets and LISTS the
  *     offenders. That is the loud half, and it is the one that keeps the translation honest.
  *  2. this merge is the quiet half — the runtime guarantee that even a catalogue which somehow got
  *     past (1) degrades to English rather than to a key name. Both are wanted: a guard can be

@@ -40,7 +40,7 @@
  *
  * The AI-draft card above the editor is unchanged in spirit: it renders when the mirror holds
  * a `draft` entity with a body to review, which is the demo world today and the AI drafter
- * (Phase 3b) on a Cloud account later. Its label is app copy now, not a fixture string.
+ * on a Cloud account later. Its label is app copy now, not a fixture string.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -597,7 +597,7 @@ export function ComposeView({
                     sources." — no request, no new draft, the same text on screen afterwards.
                     A button that reports work it did not do is the inert-affordance class this
                     slice exists to close, and there is no drafting endpoint behind it to wire
-                    instead. It comes back with Phase 3b's re-draft call, not before. */}
+                    instead. It comes back when a re-draft endpoint exists, not before. */}
                 <Button
                   variant="ghost"
                   onClick={() => {

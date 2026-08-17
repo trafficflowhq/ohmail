@@ -682,7 +682,7 @@ export function MailboxSection() {
        *
        * The sentence is the SERVER'S. `api-client.ts`'s header is explicit that re-deriving
        * it here is how somebody is told they are out of mailbox slots when the real problem
-       * is an unpaid subscription, and `test/onboarding.test.ts` forbids those strings in webapp
+       * is an unpaid subscription, and an onboarding guard forbids those strings in webapp
        * source outright.
        */
       if (alive.current) { setListFailed(true); setError(messageOf(err)); }
@@ -940,7 +940,7 @@ export function MailboxSection() {
    * opt-in, a `hostname_mismatch` with a suggestion arms the one-press host correction.
    *
    * ABOVE the fail() handler, not below it, and the position is load-bearing:
-   * `test/mailbox-reachable.test.ts` reads the source window from fail()'s declaration to
+   * a reachability guard reads the source window from fail()'s declaration to
    * connect()'s and asserts nothing in it resets the typed state — a failure path must never
    * discard what the user typed. applySuggestion's reset is a user-initiated press, not a
    * failure path, so it lives outside that window rather than being granted an exemption.

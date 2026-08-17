@@ -48,7 +48,7 @@
  *
  * `signOut()` is deliberately NOT reused: the logout call inside it would 401 (the session row
  * is gone and `resolveSession` INNER JOINs `users`), and its `try/finally` rethrows past the
- * mirror wipe. (Written without the parentheses `test/sign-out.test.ts` greps for, on purpose — its
+ * mirror wipe. (Written without the parentheses the sign-out guard greps for, on purpose — its
  * "only one caller" rule reads raw source and a mention in prose would trip it.) The API clears
  * the three cookies on the 200 instead. What is left is the IndexedDB mirror — every message
  * that ever came down `/sync`, still readable on this machine — so it is wiped for the same
@@ -61,7 +61,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { clearAllMirrors } from "@ohmail/client-engine";
 import { Button, SettingsNote, SettingsSection } from "@ohmail/ui";
-// The ONE correct way out — revokes server-side and wipes the local mirror. `test/sign-out.test.ts`
+// The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
 import { signOut } from "../../sign-out";
 import { forgetOwner } from "../../shell/owner-cookie";

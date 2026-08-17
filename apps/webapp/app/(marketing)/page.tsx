@@ -39,7 +39,7 @@ import { publicSignupEnabled } from "../signup-mode";
  *  7. DarkMode — polish, last.
  *
  * The feat-shaped sections sit in `.l-features` blocks (the shared grid rhythm); the
- * wide sections stand between them. `test/landing-story.test.ts` holds this order.
+ * wide sections stand between them. A story-order guard holds this sequence.
  */
 export default function Page() {
   const publicSignup = publicSignupEnabled();

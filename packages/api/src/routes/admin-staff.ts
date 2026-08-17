@@ -346,7 +346,7 @@ export interface StaffIdentity { staffId: string; email: string }
  * cookie's `Max-Age`, which is an attribute the client controls and can strip. `revoked_at`
  * likewise: a sign-out has to take effect on the next request, not at the next expiry.
  *
- * Exported because the write routes (Phase 4) are required to call it, and requiring them to
+ * Exported because the write routes are required to call it, and requiring them to
  * call THIS one is what keeps "the URL-key cookie alone authorises no write" a property of one
  * function rather than of five handlers' discipline.
  */

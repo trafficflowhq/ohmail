@@ -37,10 +37,12 @@ const read = (rel: string) => fs.readFileSync(path.join(REPO, rel), "utf8");
  * outside every check in this file. Same shape as the list behind the v0.7.2 blank screen:
  * correct when written, silently stale afterwards, and nothing in between says so.
  *
- * So the roots come from `PAYLOAD` itself. Every entry whose extension filter admits `.tsx`
- * is a directory of React sources the desktop bundle compiles, and that is exactly the set
- * that can read a translation; a directory added to the payload joins this scan on the same
- * commit rather than whenever somebody notices.
+ * The roots are the bundle's own directories, written out once below — and where the payload
+ * config is present, every root is proven to be PUBLISHED (equal to a `.tsx`-admitting payload
+ * entry or inside one). Deriving the roots from `PAYLOAD` itself was this file's original
+ * design, and it stopped being right when the payload grew past the bundle: the mirror
+ * publishes the whole web application, while the desktop compiles three of its directories.
+ * The proof that survives is coverage, not equality.
  *
  * The walk still takes `.ts` as well as `.tsx`, so a root published as `.tsx`-only is
  * over-scanned by its `.ts` siblings. That is the safe direction: over-scanning can only put
@@ -66,10 +68,10 @@ const read = (rel: string) => fs.readFileSync(path.join(REPO, rel), "utf8");
  * This file is itself published, and this repository's own README says to run it. The publisher
  * is workspace machinery and is not published, so in a public checkout the extraction has
  * nothing to read — which is a different state from "the extraction broke", and must not be
- * reported as one. There the roots come from {@link MIRROR_SOURCE_DIRS} below, which is the
- * same set written out; the case that compares the two runs wherever the publisher IS present,
- * so the written-out copy cannot drift from the payload it stands in for. A file is missing is
- * an answer, a file is missing and the guard shrugged is not.
+ * reported as one. The roots in {@link MIRROR_SOURCE_DIRS} below work in both checkouts; the
+ * coverage case runs only where the publisher IS present, so a root the payload stops
+ * publishing is caught in the checkout that can fix it. A file is missing is an answer, a
+ * file is missing and the guard shrugged is not.
  */
 const PUBLISHER = "scripts/publish-desktop.mjs";
 const HAVE_PUBLISHER = fs.existsSync(path.join(REPO, PUBLISHER));
@@ -106,27 +108,35 @@ function payloadTsxDirs(): string[] {
   const dirs = payload
     .filter((e) => e.ext?.includes(".tsx") && !e.from.endsWith("/test"))
     .map((e) => e.from);
-  if (dirs.length < 4) {
-    throw new Error(
-      `the .tsx extension filter matched ${dirs.length} PAYLOAD entr${dirs.length === 1 ? "y" : "ies"} — ` +
-        "the desktop bundle is built from more directories than that, so the filter has stopped matching",
-    );
+  /* This used to be a count floor (`< 4` threw). The payload widening consolidated the shared
+   * shell/views/components entries into the one whole-directory `apps/webapp/app` entry, so the
+   * count legitimately FELL while coverage grew — a floor cannot tell that apart from the filter
+   * breaking. The bundle's source roots are pinned by name instead: losing any of them from the
+   * .tsx-admitting set means the scan below silently skips shipped interface sources, which is
+   * the regression this guard exists to catch, whatever the entry count does. */
+  for (const root of ["apps/desktop/src", "apps/webapp/app", "packages/ui/src"]) {
+    if (!dirs.includes(root)) {
+      throw new Error(
+        `the .tsx extension filter no longer matches ${root} — the desktop bundle is built from ` +
+          "it, so the key scan would silently skip shipped interface sources",
+      );
+    }
   }
   return dirs;
 }
 
 /**
- * `apps/desktop/src` is already in that derived set — it is a PAYLOAD entry of its own, and it
- * admits `.tsx` — and it is named again because it is in the bundle for a different reason
- * from the other four. Those are the SHARED webapp and design-system sources the mirror
- * publishes so the bundle can be built from them; this one is the desktop's own entry point,
- * in the bundle because it IS the bundle's root. Naming it keeps it in the scan if that
- * entry's extension filter ever narrows to `.ts`, which would otherwise drop the shell's root
- * out of the scan without a word. Deduped, so today it changes nothing.
+ * The scan roots are the BUNDLE'S OWN, not the payload's, and the two stopped being the same
+ * set when the payload widened: the mirror publishes the whole web application (marketing and
+ * account pages included, under the one `apps/webapp/app` entry), while the desktop bundle is
+ * built from three of its subdirectories plus its own entry point and the design system. A
+ * scan over the payload's roots would read pages the bundle never ships and mint their
+ * namespaces into a comparison about the DESKTOP interface. So the written-out roots are the
+ * primary everywhere, and the payload case below holds the anti-drift property in the form
+ * that is still true: every root this scan reads is published — equal to a payload entry or
+ * inside one — so the mirror's copy of this test can always find its sources.
  */
-const SOURCE_DIRS = HAVE_PUBLISHER
-  ? [...new Set([...payloadTsxDirs(), "apps/desktop/src"])].sort()
-  : MIRROR_SOURCE_DIRS;
+const SOURCE_DIRS = MIRROR_SOURCE_DIRS;
 
 function sourceFiles(): string[] {
   const out: string[] = [];
@@ -209,14 +219,20 @@ describe("desktop message filter", () => {
   });
 
   /**
-   * The written-out roots still say what the payload says. This is the case that keeps the
-   * derivation and its stand-in from becoming two lists — the failure the derivation was
-   * introduced to end, reintroduced by the fallback that lets a public checkout run at all.
-   * It runs wherever the publisher is present, which is every checkout where the payload can
-   * be edited in the first place.
+   * Every scan root is still published. Equality with the payload's .tsx directories was the
+   * original form of this case, and it was right while the two sets coincided; the payload
+   * widening broke the coincidence in the harmless direction (the mirror now publishes MORE of
+   * the web application than the bundle reads, under one whole-directory entry). What must
+   * never break is coverage: a scan root the payload stops carrying means the published copy
+   * of this very test reads directories the mirror does not have. It runs wherever the
+   * publisher is present, which is every checkout where the payload can be edited.
    */
-  it.runIf(HAVE_PUBLISHER)("the written-out roots match the ones derived from the payload", () => {
-    expect([...MIRROR_SOURCE_DIRS].sort()).toEqual([...new Set([...payloadTsxDirs(), "apps/desktop/src"])].sort());
+  it.runIf(HAVE_PUBLISHER)("every written-out root is covered by a payload .tsx entry", () => {
+    const payloadDirs = payloadTsxDirs();
+    for (const root of MIRROR_SOURCE_DIRS) {
+      const covered = payloadDirs.some((d) => root === d || root.startsWith(`${d}/`));
+      expect(covered, `${root} is read by this scan but no payload .tsx entry publishes it`).toBe(true);
+    }
   });
 
   it("SHELL_MESSAGE_NAMESPACES is exactly what the sources read", () => {

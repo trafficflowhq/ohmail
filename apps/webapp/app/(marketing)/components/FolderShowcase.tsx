@@ -10,7 +10,7 @@ import { SHOWCASE_FOLDERS, OHMAIL_PARENT_LABEL } from "./folders.data";
  * whole point of the "organize in place" promise, made concrete.
  *
  * The tree is data (`folders.data.ts`), diffed against the frozen `WATCHED_FOLDERS`
- * set by `test/folder-showcase.test.ts` so a wrong or invented folder name goes red.
+ * set by a guard so a wrong or invented folder name goes red.
  * Typographic, no fake chrome — the same restraint as the Providers strip.
  */
 export function FolderShowcase() {

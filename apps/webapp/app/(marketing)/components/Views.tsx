@@ -23,8 +23,8 @@ const PILES = [
 
 /* The captures' intrinsic size: list-pane crops at 2× device pixels (760×1120),
    displayed at roughly a third of the 1010px row — ~2.3× density, so the pane
-   text stays crisp on retina. All three share one geometry; the files exist or
-   test/landing-story.test.ts fails. */
+   text stays crisp on retina. All three share one geometry; a guard fails if any
+   of the capture files is missing. */
 const PILE_STILL = { width: 760, height: 1120 } as const;
 
 export function Views() {

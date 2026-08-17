@@ -13,7 +13,8 @@
 --   * PostgREST bound to `db_schema = public`, reachable at `https://<ref>.supabase.co/rest/v1/`
 --     by anyone holding the anon key, which is a PUBLIC key that ships in client bundles.
 --
--- MEASURED ON THIS PROJECT before cutover, with the full migration chain applied:
+-- What that pair of defaults exposes is not hypothetical. A stock project with this
+-- repository's full migration chain applied and nothing else configured measures as:
 --
 --   public tables .................. 55        (relrowsecurity = true on 0 of them)
 --   anon ........................... 443 privileges across 56 relations
@@ -29,10 +30,10 @@
 --   GET /rest/v1/mailbox_credentials?select=* -> 200
 --   GET /rest/v1/users?select=*               -> 200
 --
--- They returned `[]` only because the database has no rows yet. A refused read returns 401, not
--- an empty array — the 200 IS the finding. Cut over first and every mailbox, every message body
--- and every envelope-encrypted credential row in the product would have been world-readable,
--- and world-DELETABLE, from a key we publish on purpose.
+-- They return `[]` only while the database has no rows. A refused read returns 401, not an
+-- empty array — the 200 IS the finding. Put production data behind those defaults and every
+-- mailbox, every message body and every envelope-encrypted credential row in the product would
+-- be world-readable, and world-DELETABLE, from a key that ships in client bundles on purpose.
 --
 -- This is the product's core privacy rule — an account's mail reachable by that account's own
 -- users and by nobody else — broken by the host's defaults, and it is invisible to every

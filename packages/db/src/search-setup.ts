@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 
 /**
- * Phase 2c-1 (RC8) — search EXTENSION setup, kept DELIBERATELY OUT of the shared
+ * Search EXTENSION setup, kept DELIBERATELY OUT of the shared
  * Drizzle migrator. `makeTestDb()` replays `packages/db/drizzle/*` into PGlite for
  * every unit test, and PGlite has no `pg_trgm`, so a `CREATE EXTENSION` there would
  * throw and take the whole suite red. This runs ONLY against a real Postgres

@@ -124,7 +124,7 @@ export const SESSION_TIMEOUT_MS = 1_500;
  * The bounds are deliberately LOOSE around today's 43 characters (32 bytes). This check
  * fails a signed-in user onto the marketing page if it is ever wrong, which is the failure
  * the whole gate exists to prevent — so it is written to survive `generateToken` being
- * called with a different size, and `test/session-gate.test.ts` derives the alphabet and a live
+ * called with a different size, and the gate's guard derives the alphabet and a live
  * sample length from `crypto.ts` rather than trusting this comment.
  *
  * What this is NOT: a rate limit. An attacker who sends 43 random base64url characters
@@ -176,8 +176,8 @@ export interface GateInput {
  * source of truth, and the first cut of this file guessed `id`. Every unit test passed,
  * because the tests fed the shape the code expected; production then answered the real
  * shape, `user.id` was `undefined`, and a live full session rendered the marketing page.
- * `test/session-gate.test.ts` now derives the field name FROM `types.ts` so the two cannot
- * drift again — the same discipline `test/api-rewrite.test.ts` uses for `REFRESH_PATH`.
+ * The gate's guard now derives the field name FROM `types.ts` so the two cannot
+ * drift again — the same discipline the rewrite guard uses for `REFRESH_PATH`.
  */
 interface SessionBody {
   scope?: unknown;
@@ -247,7 +247,7 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
     // had just warmed) landed in the app. Observed live as exactly that pattern.
     //
     // The splash can prove what this gate cannot: its `POST /auth/refresh` runs with the
-    // browser's own budget, not this 1.5s clamp (`test/session-resume.test.ts` pins the absence
+    // browser's own budget, not this 1.5s clamp (a resume guard pins the absence
     // of an artificial timeout there), so a cold-but-alive API succeeds and `reload()`
     // re-runs a now-warm gate. And it cannot loop — the earlier version of this comment
     // refused "resume" fearing "a retry loop dressed as a page", but a failed resume exits

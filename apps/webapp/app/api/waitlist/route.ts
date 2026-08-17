@@ -25,7 +25,7 @@ import { apiOrigin } from "./origin";
  * That it is ALSO a same-origin request answered locally rather than proxied is not
  * incidental: a `rewrites()` array is `afterFiles`, so this filesystem route shadows
  * `/api/:path*` by construction. `apps/webapp/next.config.mjs` (`OWN_PATHS`) enumerates
- * that as the single deliberate shadow and `test/proxy.e2e.test.ts` asserts the ordering
+ * that as the single deliberate shadow and a proxy guard asserts the ordering
  * over a real socket rather than trusting it.
  *
  * ## What is NOT forwarded, and why

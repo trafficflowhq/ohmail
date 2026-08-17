@@ -12,9 +12,9 @@ import { cronEvent, runCronCli } from "./cron-log.js";
 /**
  * The workflow DRAIN pass. It runs in TWO phases.
  *
- * Phase 0 REAPS: it requeues runs stranded in `running` by a worker that died holding them
- * (below). Phase 1 scans `pending` workflow_runs — which now includes anything phase 0
- * just requeued — and, for each, performs a GUARDED status transition `pending → running` that
+ * The REAP phase requeues runs stranded in `running` by a worker that died holding them
+ * (below). The SCAN phase then reads `pending` workflow_runs — which now includes anything the
+ * reap just requeued — and, for each, performs a GUARDED status transition `pending → running` that
  * RE-ASSERTS `status='pending'` in the UPDATE WHERE, exactly like `bubbleUpPass`. A concurrent
  * drain (the worker cycle + this cron backstop) that loses the race matches 0 rows and
  * skips, so a run can NEVER be double-claimed. The claimed run is then handed to the

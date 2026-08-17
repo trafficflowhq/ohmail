@@ -17,7 +17,7 @@ import { getTranslations } from "next-intl/server";
  * the half a pretty page alone would get wrong: a branded page served with a 200 teaches
  * every crawler and every link checker that garbage paths exist.
  *
- * Guarded structurally by `test/not-found-route.test.ts`; that the built app serves it with
+ * A structural guard pins the route's shape; that the built app serves it with
  * the status is a `next build` + browser question.
  */
 

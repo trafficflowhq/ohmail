@@ -56,8 +56,8 @@ import { APP_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, resolveSurface 
  * because setting it here does not work and pretending otherwise would be worse than
  * omitting it: Next owns `Vary` on an App Router response (it writes
  * `RSC, Next-Router-State-Tree, Next-Router-Prefetch, Accept-Encoding` for its own
- * router protocol) and replaces whatever middleware put there. Measured, in
- * `test/proxy.e2e.test.ts`, against a real `next start`. `no-store` is the load-bearing half
+ * router protocol) and replaces whatever middleware put there. Measured, by
+ * the proxy guard, against a real `next start`. `no-store` is the load-bearing half
  * anyway — a response no cache may store needs no key to vary on.
  */
 
@@ -287,7 +287,7 @@ function withPathname(request: NextRequest, pathname: string): URL {
 /**
  * The matcher is STATICALLY ANALYSED by `next build` — it is read out of the source,
  * not evaluated — so `APP_ROUTE` cannot appear here and the paths have to be spelled
- * again as literals. `test/session-gate.test.ts` asserts they never drift from
+ * again as literals. A drift guard asserts they never drift from
  * `OWN_PATHS` in `next.config.mjs`, because a silent divergence would leave the rewrite
  * target publicly reachable or a legacy host serving the product.
  */

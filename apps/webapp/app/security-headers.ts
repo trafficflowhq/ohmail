@@ -19,7 +19,7 @@
  * `WebSocket`, no `EventSource`, no `sendBeacon` to any host but this one. `form-action`
  * and `base-uri` close the two classic non-`connect` exfiltration channels, `img-src`
  * refuses the pixel, and `default-src 'self'` means a script tag pointing off-origin does
- * not load at all — the same rule `test/no-third-party.test.ts` asserts over the source,
+ * not load at all — the same rule the no-third-party guard asserts over the source,
  * now enforced at runtime over whatever actually shipped.
  *
  * `frame-ancestors 'none'` replaces an accident with a control. Framing `ohmail.app` was
@@ -60,8 +60,8 @@
  *
  * `next.config.mjs` cannot import TypeScript, so the baseline policy is spelled there too,
  * for the paths middleware does not match (static assets, `/demo/*`, the icons).
- * `test/security-headers.test.ts` reads that file's source and fails if the two disagree —
- * the same drift discipline `test/api-rewrite.test.ts` uses for `REFRESH_PATH`.
+ * A drift guard reads that file's source and fails if the two disagree —
+ * the same discipline the rewrite guard uses for `REFRESH_PATH`.
  */
 
 /**

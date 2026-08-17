@@ -247,12 +247,13 @@ the mail engine, the web interface, the sync API, and the background
 organizer. The only code that is not here is the machinery for billing our
 hosted customers — a separate private service this server talks to over a
 documented API; `packages/services/src/entitlements/plane-client.ts` is
-the open client of that API, and without the plane the server runs
-complete and unmetered.
-A supported way to run this server yourself is being built on this code
-and is not ready yet; until it is documented here, what this repository
-builds is the desktop app below. The server source is here to read and
-audit.
+the open client of that API. The billing integration is optional — absent,
+there is no payment machinery — but the server as composed here still asks
+for a mailbox allowance before it will organize a mailbox. A supported way
+to run this server yourself, using the same unmetered allowance the
+desktop's engine already uses, is being built on this code and is not
+documented yet; until it is, what this repository builds is the desktop
+app below. The server source is here to read and audit.
 
 ## Build it yourself
 

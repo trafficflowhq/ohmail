@@ -100,7 +100,7 @@ export function SecuritySection() {
        *
        * A pane whose entire content is assertions about `enrolled` has nothing honest to
        * render when `enrolled` was never read. So it renders the reason and stops — which is
-       * what the old comment claimed and what `test/read-failure-is-not-zero.test.tsx` now holds
+       * what the old comment claimed and what a read-failure guard now holds
        * it to.
        */
       if (alive.current) { setReadFailed(true); setError(messageOf(err)); }

@@ -129,7 +129,7 @@ export const DOWNLOADS: readonly PlatformDownload[] = [
  * This constant is the single place that fact is written down. It drives BOTH:
  *
  *  · the caption the download section prints under each button (`Downloads.tsx`), and
- *  · `test/published-desktop-claims.test.ts`, which fails the build when any string in
+ *  · a published-claims guard, which fails the build when any string in
  *    `messages/en.json` makes a working-local-client claim, names a platform listed here,
  *    and does not carry the "interface preview" disclosure alongside it.
  *
@@ -137,7 +137,7 @@ export const DOWNLOADS: readonly PlatformDownload[] = [
  *
  * Empty this array — `= []` — and nothing else here. That one edit removes the captions
  * from the page and, in the same motion, flips the guard: with no preview platforms left,
- * `test/published-desktop-claims.test.ts` asserts the site carries NO preview disclosure
+ * that same guard asserts the site carries NO preview disclosure
  * anywhere, so every hedged sentence has to be written back to the full three-platform
  * claim before the suite is green again. The oracle cannot be flipped quietly and the copy
  * cannot be un-hedged early; each half forces the other.

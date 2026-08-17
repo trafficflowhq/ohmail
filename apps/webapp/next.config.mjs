@@ -188,7 +188,7 @@ export const REFRESH_PATH = "/auth/refresh";
  * **`/api/waitlist` is the one deliberate shadow, and it is a real decision.** A `rewrites()`
  * ARRAY is `afterFiles`, so the filesystem route wins over `/api/:path*` and the marketing
  * form is served by `app/api/waitlist/route.ts` rather than proxied to the API's own
- * `/waitlist`. That ordering is asserted by `test/proxy.e2e.test.ts` rather than assumed.
+ * `/waitlist`. That ordering is asserted by a proxy guard over a real socket rather than assumed.
  *
  * The REASON for the local handler changed with the merge and the old one no longer
  * applies: it used to exist because `ohmail.app` could never be an auth origin, so a
@@ -347,7 +347,7 @@ export function assertApiBaseNotOverridden(supplied, derivedOrigin) {
  *
  * The `NEXT_PUBLIC_DEMO` test is duplicated from `app/demo-mode.ts`'s `isDemoBuild` because
  * this config cannot import TypeScript — the same constraint that makes the CSP live in two
- * files. `test/engine-armed.test.ts` reads both and fails if they ever disagree.
+ * files. A drift guard reads both and fails if they ever disagree.
  *
  * @param {string | null} origin  the validated {@link API_ORIGIN_VAR}, or null when unset
  * @param {Record<string, string | undefined>} env
@@ -378,7 +378,7 @@ export function assertApiArmed(origin, env) {
  * The policy itself, the reasoning for every directive, and the honest account of why
  * `script-src` keeps `'unsafe-inline'` on the STATIC surfaces all live in
  * `app/security-headers.ts`. It is spelled again here because `next.config.mjs` cannot
- * import TypeScript; `test/security-headers.test.ts` reads both files and fails on drift.
+ * import TypeScript; a drift guard reads both files and fails on any disagreement.
  *
  * ── TWO RULES, AND THE ORDER IS NOT THE POINT — THE EXCLUSION IS ────────────────────────
  *
@@ -387,7 +387,7 @@ export function assertApiArmed(origin, env) {
  * override would therefore give that route BOTH `frame-ancestors 'none'` and
  * `frame-ancestors 'self'` — intersection `'none'` — and the landing's centrepiece would
  * render as a blank frame. So the general rule EXCLUDES `/demo` by negative lookahead
- * rather than being overridden, and `test/proxy.e2e.test.ts` asserts each path carries exactly
+ * rather than being overridden, and the proxy guard asserts each path carries exactly
  * one CSP header.
  *
  * The demo is the REAL mail client in demo mode (`app/(product)/demo/page.tsx`) — the same
@@ -458,7 +458,7 @@ const STATIC_SECURITY_HEADERS = [
  *
  * The landing's nav renders a link to the public repository with its star count. That
  * number cannot come from the page: the marketing surface loads nothing off-origin — no
- * badge script, no client fetch — and `test/no-third-party.test.ts` enforces it. So the
+ * badge script, no client fetch — and the no-third-party guard enforces it. So the
  * count is read HERE, at config time, from GitHub's public repos endpoint (no auth for a
  * public repo), and inlined as {@link GITHUB_STARS_VAR}. As fresh as the last deploy,
  * which is what every README badge is anyway.

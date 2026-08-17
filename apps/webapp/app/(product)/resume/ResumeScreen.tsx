@@ -139,5 +139,5 @@ export function ResumeScreen() {
   );
 }
 
-/** Re-exported so `test/api-rewrite.test.ts` can assert the splash posts the bare path. */
+/** Re-exported so the rewrite guard can assert the splash posts the bare path. */
 export { REFRESH_ENDPOINT };

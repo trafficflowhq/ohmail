@@ -554,14 +554,14 @@ body.reading .shell {
   background: var(--accent-soft);
 }
 /* ── BOTH HALVES OF THE SENTENCE WRAP. NEITHER IS EVER ELLIPSIZED. ──────────────────────
-   This is the ONLY copy of the sync sentence at desktop width (test/sync-notice-one-copy.test.ts
-   pins that), and it used to clip: "Filing 1 message on your m…" with no title attribute and
+   This is the ONLY copy of the sync sentence at desktop width (a one-copy guard in the
+   suite pins that), and it used to clip: "Filing 1 message on your m…" with no title attribute and
    no expansion anywhere — a status whose words cannot be read only says "something", which
    trains a reader to ignore the one that matters. The stack's own header already argued that
    ellipsising hides "the one part of the sentence that MOVES"; the declarations now agree
    with it. A wrapped line costs vertical space in a column that has it; a clipped one costs
    the sentence. `overflow-wrap: anywhere` because an address is one unbreakable token and
-   must break rather than widen the rail. Guarded by test/rail-sync-readable.test.ts. */
+   must break rather than widen the rail. A readability guard holds these declarations. */
 .rail-sync .rs-line {
   display: flex;
   /* Top-aligned, not centred: the title may wrap to two lines now, and the mark belongs
@@ -2137,10 +2137,10 @@ textarea.c-input:read-only {
    `auto` minimum of a grid item is its MIN-CONTENT size — so one nowrap line anywhere inside
    a pane (a rule row's address, a meta line) widened the content track past the viewport,
    stretched the nav sitting in the other track's row, and panned the whole settings sheet
-   sideways at 390 (SET-H1; measured at 604px against a three-rule account). `min-width: 0`
+   sideways at 390 (measured at 604px against a three-rule settings sheet). `min-width: 0`
    INSIDE the pane cannot fix this — the minimum being honoured is the grid item's own — so it
    is released here, on the items, at every width. The panes' innards already ellipsize and
-   wrap once the track stops obeying them. Pinned by test/settings-390-reflow.test.ts. */
+   wrap once the track stops obeying them. A 390px-reflow guard pins this release. */
 .set-layout > * {
   min-width: 0;
 }
@@ -3768,7 +3768,7 @@ textarea.c-input:read-only {
    stream.css) — the one stacked-lift-1 rhythm already shipped — and on the built page the
    junction reads as canvas with depth in both themes. The LAST panel drops the margin so the
    column can rest flush on the bottom line (the pill's flow box follows it — see
-   `.msg-actions` in packages/ui message.css). Guarded by test/thread-column-shadow.test.ts. */
+   `.msg-actions` in packages/ui message.css). A shadow-junction guard holds this rhythm. */
 .pm {
   background: var(--panel);
   border-radius: 20px;
@@ -3784,7 +3784,7 @@ textarea.c-input:read-only {
   padding: 26px 30px 30px;
 }
 /* A sibling panel's mail, at the same scale the focused prose gets — one thread, one type.
-   (The focused panel's body keeps `.msg-body`, which `test/conversation.test.ts` holds to exactly
+   (The focused panel's body keeps `.msg-body`, which the conversation suite holds to exactly
    one per surface; this class is the sibling's slot for the same viewer.) */
 .pm-body {
   font-size: 14.5px;
@@ -3798,7 +3798,7 @@ textarea.c-input:read-only {
 }
 /* The focused message is one panel among equals — `aria-current` marks it for machines and
    its position in the column for people; it carries no side rule, no border and no
-   colour-only cue (guarded by `test/conversation.test.ts`). */
+   colour-only cue (the conversation suite guards this). */
 .conv > .conv-focus {
   margin: 0 0 20px;
 }
@@ -4458,7 +4458,7 @@ textarea.c-input:read-only {
      NO `min-height` HERE, and that is a correction rather than an omission. This rule first
      carried `min-height: 0` — harmless-looking, since every surface declares its own floor in a
      more specific rule and specificity would win in a browser. It does not win in jsdom, whose
-     computed style takes the LAST declaration: `test/reply-ergonomics.test.ts` reads the reply floor
+     computed style takes the LAST declaration: the reply-ergonomics guard reads the reply floor
      through `getComputedStyle` and went red with `expected '0' to be '240px'` the moment this
      rule was added below it. The floor was never needed here anyway — `flex-grow` is what makes
      the surface fill, and `min-height: auto` on a flex item is its content height, which for an

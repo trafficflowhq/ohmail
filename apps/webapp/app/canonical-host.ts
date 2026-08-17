@@ -25,7 +25,7 @@
  * a rollback is verified), `localhost:3001`, and the platform's own probes. A default-deny
  * host rule would break every one of them, and the failure would be a 308 loop on the
  * production apex the first time an alias moved. The list is therefore exactly the hosts
- * that are DECLARED to redirect, and `test/canonical-host.test.ts` proves it stays in step
+ * that are DECLARED to redirect, and a drift guard proves it stays in step
  * with `legacy-domains.mjs` and with `NEVER_AUTH_HOSTS`.
  */
 

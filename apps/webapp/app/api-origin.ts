@@ -22,7 +22,7 @@
  *
  * So the runtime re-reads the allow-list too. This module is that allow-list, and it is
  * deliberately a plain, dependency-free, edge-safe module: `middleware.ts` can import it,
- * a unit test can drive it, and `test/api-origin.test.ts` asserts it has not drifted from
+ * a unit test can drive it, and a drift guard asserts it has not drifted from
  * the compiled list in `next.config.mjs` (which cannot import TypeScript, which is the only
  * reason there are two copies at all).
  *
@@ -39,7 +39,7 @@
 /**
  * The only hosts a live session token may be presented to.
  *
- * MUST equal `ALLOWED_API_ORIGINS` in `next.config.mjs`. `test/api-origin.test.ts` reads
+ * MUST equal `ALLOWED_API_ORIGINS` in `next.config.mjs`. A drift guard reads
  * that file's source and fails if the two lists differ.
  */
 export const ALLOWED_API_ORIGINS: readonly string[] = ["https://api.ohmail.app"];

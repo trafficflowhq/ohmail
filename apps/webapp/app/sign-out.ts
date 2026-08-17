@@ -41,7 +41,7 @@ import { forgetOwner } from "./shell/owner-cookie";
  * pairing does, and it is why both live on this one line rather than at two call sites.
  *
  * There is no sign-out control in the UI yet. This exists so that when there is one, it is
- * wired to something that is already correct — `test/sign-out.test.ts` asserts that any
+ * wired to something that is already correct — the sign-out guard asserts that any
  * call to `auth.logout` in this app goes through here.
  */
 export async function signOut(owner?: string): Promise<void> {

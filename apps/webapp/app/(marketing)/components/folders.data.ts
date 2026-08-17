@@ -6,7 +6,8 @@
  * Claims-are-contracts. Every `organizer` row here is a real member of
  * `WATCHED_FOLDERS`; the one `meta` row is `META_FOLDER`; and no row is ever a folder
  * named "Spam" — spam is `ohmail/Quarantine`, and "Spam" is only ever a view label.
- * `test/folder-showcase.test.ts` fails red if any of that stops being true.
+ * A showcase guard diffs this data against those constants and fails red if any of that
+ * stops being true.
  */
 
 /**

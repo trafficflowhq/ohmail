@@ -65,9 +65,10 @@
 -- ## THIS SCRIPT CANNOT BREAK THE RUNNING DEPLOYMENT, AND IS NOT COUPLED TO
 -- ## `harden-billing-roles.sql`
 --
--- That script has NEVER BEEN RUN — verified against the live deployment: `ohmail_migrator` and
--- `ohmail_runtime` do not exist, and production connects as the role that owns the schema. The
--- ownership flip stays a separate, riskier, owed step.
+-- Nothing here depends on `harden-billing-roles.sql` having run. A deployment where
+-- `ohmail_migrator` and `ohmail_runtime` do not exist — one that connects as the role that owns
+-- the schema — is fully supported by this script. The ownership flip is a separate step with its
+-- own review, never a precondition of provisioning the staff role.
 --
 -- Every statement below either touches `ohmail_admin` alone or reads the catalog. Precisely
 -- stated, because the pre-flight pass changed two of these and the old sentence ("purely

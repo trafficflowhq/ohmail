@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase 2d — the spy-pixel / tracker blocker (core, PURE, no network).
+// The spy-pixel / tracker blocker (core, PURE, no network).
 //
 // Two responsibilities, both pure string→data functions so they are trivially
 // unit-testable and safe to run on any host:
