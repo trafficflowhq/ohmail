@@ -4,7 +4,7 @@ import { waitlist } from "@trafficflow/db/cloud";
 import type { Db } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { reserveIpSlot } from "./ip-throttle.js";
-import { issueInvite, liveInvitesFor, revokeInvitesFor } from "./invites.js";
+import { issueInvite, liveInvitesFor, markInviteDelivered, revokeInvitesFor } from "./invites.js";
 import { normalizeRecipient } from "./mail/port.js";
 import type { MailSendResult } from "./mail/port.js";
 import type { MailContext, MailService } from "./mail/mail-service.js";
@@ -261,6 +261,17 @@ export class WaitlistService {
    * fails the invite still exists and the operator sees the failed `MailSendResult` in
    * their terminal, which is the right outcome: the code is on screen and can be
    * delivered by hand.
+   *
+   * **DELIVERY IS WHAT MAKES THE INVITE CONFER VERIFICATION.** The row is issued
+   * NON-conferring and upgraded (`markInviteDelivered`) only when the transport answers
+   * `sent`: register stamps `email_verified_at` on the receipt argument — a mailed code
+   * presented back from its bound address proves the inbox — and until the mail is out that
+   * argument has not happened. So a `send: false` mint, a failed send and a skipped send all
+   * leave the code fully REDEEMABLE but non-conferring: the account registers, starts
+   * unverified, and proves its address through the ordinary mailed verification flow. The
+   * order (issue false, upgrade on proof) is deliberate — a crash between the two steps
+   * strands a mailed invite on the harmless side, never a conferring row for a code no inbox
+   * received.
    */
   async mintInvite(ctx: MailContext, input: MintInviteInput): Promise<MintInviteResult> {
     const email = normalizeRecipient(input.email ?? "");
@@ -292,11 +303,17 @@ export class WaitlistService {
     const expiresAt = new Date(now.getTime() + ttlMs);
     const issued = await issueInvite(asTx(ctx.db), {
       email, expiresAt, now, issuedBy: input.issuedBy, note: input.note ?? null,
+      // Non-conferring until the mail is actually out — see the header. The upgrade below is
+      // the only thing that makes this row prove address control.
+      confersVerified: false,
     });
 
     const mail = input.send === false || !this.deps.mail
       ? null
       : await this.deps.mail.sendInvite(ctx, { to: email, code: issued.code, expiresAt });
+    if (mail?.status === "sent") {
+      await markInviteDelivered(asTx(ctx.db), issued.inviteId);
+    }
 
     return { code: issued.code, email, expiresAt, mail, revoked };
   }

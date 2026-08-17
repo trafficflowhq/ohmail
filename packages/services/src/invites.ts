@@ -178,12 +178,14 @@ async function classifyInviteFailure(
  * Also stamps `waitlist.invited_at` when the address is on the list, so "who is still
  * waiting" stays one query and nobody is invited twice by accident.
  *
- * `confersVerified` DEFAULTS TRUE, matching the column default and every caller that mails:
- * an operator-minted code reaches its address as a mail, so redeeming it proves receipt and
- * register may stamp `email_verified_at`. A caller whose delivery leg does NOT prove address
- * control — the pairing-token redeem, which mints for whatever address its redeemer typed —
- * must pass `false`, and must decide that from its OWN record (the consumed token row), never
- * from anything ITS caller sent: the flag chooses whether an account is born verified, so a
+ * `confersVerified` DEFAULTS TRUE, matching the column default: an omitted flag asserts the
+ * mailed-invite semantic — redeeming proves receipt, so register may stamp
+ * `email_verified_at`. Every production caller now states its answer rather than leaning on
+ * the default: the pairing-token redeem passes the consumed token row's own discriminator,
+ * and the operator mint passes FALSE and upgrades through {@link markInviteDelivered} only
+ * after the transport reports `sent` — because until the mail is out, the receipt argument
+ * has not happened yet. Whatever the source, it must be the caller's OWN record, never
+ * anything ITS caller sent: the flag chooses whether an account is born verified, so a
  * forgeable source here would be the verification forgery this parameter exists to close.
  */
 export async function issueInvite(
@@ -218,6 +220,30 @@ export async function issueInvite(
     .where(eq(waitlist.email, email));
 
   return { code, inviteId: row!.id, email, expiresAt: input.expiresAt };
+}
+
+/**
+ * Record that this invite's mail actually went out — the PROOF upgrade.
+ *
+ * The operator mint issues its row NON-conferring and calls this only on a `sent` result,
+ * so `confers_verified` claims receipt-proof exactly when a mail carried the code to the
+ * bound address and never before: a `send: false` mint (hand delivery), a failed transport
+ * and a skipped send all leave the row non-conferring, and the account that registers
+ * through such a code starts unverified and proves its address through the ordinary mailed
+ * flow. Issue-then-upgrade rather than issue-true-then-demote, deliberately: a crash between
+ * the two steps must land on the harmless side (a mailed code that happens not to confer),
+ * never on a conferring row for a code no inbox received.
+ *
+ * The `consumed_at IS NULL` conjunct keeps the record honest under any interleaving: a row
+ * consumed before the upgrade landed was non-conferring AT THE MOMENT register read it, and
+ * rewriting the flag afterwards would claim a proof that arrived after the account was born.
+ */
+export async function markInviteDelivered(tx: Tx, inviteId: string): Promise<boolean> {
+  const rows = await tx.update(invites)
+    .set({ confersVerified: true })
+    .where(and(eq(invites.id, inviteId), isNull(invites.consumedAt)))
+    .returning({ id: invites.id });
+  return rows.length === 1;
 }
 
 /**

@@ -208,7 +208,7 @@ export * from "./entitlements/index.js";
 // `AuthService.register` consumes an invite inside its own transaction; `WaitlistService`
 // is the only holder of a MailService outside the alert path.
 export {
-  consumeInvite, issueInvite, liveInvitesFor, revokeInvitesFor, pruneExpiredInvites,
+  consumeInvite, issueInvite, liveInvitesFor, markInviteDelivered, revokeInvitesFor, pruneExpiredInvites,
   generateInviteCode, normalizeInviteCode, inviteError,
   type InviteRefusal, type InviteOutcome, type InviteConsumed, type InviteRefused,
 } from "./invites.js";
