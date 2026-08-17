@@ -62,7 +62,7 @@
 **/.DS_Store
 **/.claude
 
-# Secrets never enter an image layer; every value arrives as a Railway service variable.
+# Secrets never enter an image layer; every value arrives as a compose/service variable.
 **/.env
 **/.env.*
 **/*.env
