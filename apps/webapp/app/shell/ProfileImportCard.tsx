@@ -134,6 +134,8 @@ export function useProfileImport(
   active: boolean,
   mailboxes: ReadonlyArray<{ id: string; address: string }> | null,
   transport?: ProfileImportTransport,
+  /** The beat, injectable so a test does not wait five minutes for the second look. */
+  recheckMs: number = PROFILE_IMPORT_RECHECK_MS,
 ): ProfileImportState {
   const [offers, setOffers] = useState<ProfileImportOffer[]>([]);
   const [phase, setPhase] = useState<ProfileImportPhase>({ kind: "offer" });
@@ -149,6 +151,8 @@ export function useProfileImport(
   const inFlight = useRef(new Set<string>());
   const mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; }, []);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
 
   const idsKey = (mailboxes ?? []).map((m) => m.id).sort().join(",");
 
@@ -162,7 +166,7 @@ export function useProfileImport(
     for (const m of list.current ?? []) {
       const last = lastChecked.current.get(m.id);
       if (inFlight.current.has(m.id)) continue;
-      if (last !== undefined && now - last < PROFILE_IMPORT_RECHECK_MS) continue;
+      if (last !== undefined && now - last < recheckMs) continue;
       inFlight.current.add(m.id);
       lastChecked.current.set(m.id, now);
       void (async () => {
@@ -170,7 +174,18 @@ export function useProfileImport(
           const dto = await via.candidate(m.id);
           if (!mounted.current) return;
           const candidate = asOffer(dto); // unrecognised answers — including `none` — are no offer
-          if (candidate === null) return;
+          if (candidate === null) {
+            // An authoritative non-offer RETIRES a standing card for this mailbox: another
+            // device answered, and a card left up would offer an Import button for a question
+            // that is already settled. Never mid-answer, though — the person pressing a button
+            // right now keeps their card until their own request resolves.
+            setOffers((prev) => {
+              const current = prev[0];
+              if (current && current.mailboxId === m.id && phaseRef.current.kind !== "offer") return prev;
+              return prev.filter((o) => o.mailboxId !== m.id);
+            });
+            return;
+          }
           setOffers((prev) => [
             ...prev.filter((o) => o.mailboxId !== m.id),
             { mailboxId: m.id, address: m.address, candidate },
@@ -183,7 +198,7 @@ export function useProfileImport(
         }
       })();
     }
-  }, [active, idsKey, beat]);
+  }, [active, idsKey, beat, recheckMs]);
 
   // The slow beat. Visibility-gated like every other poll: nobody looking, nothing asked.
   useEffect(() => {
@@ -191,9 +206,9 @@ export function useProfileImport(
     const id = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       setBeat(Date.now());
-    }, PROFILE_IMPORT_RECHECK_MS);
+    }, recheckMs);
     return () => clearInterval(id);
-  }, [active]);
+  }, [active, recheckMs]);
 
   const offer = offers[0] ?? null;
 

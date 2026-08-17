@@ -37,8 +37,11 @@ export type TagHue = (typeof RENDERABLE_HUES)[number];
 
 /** Longest tag name we store. Tags are labels, not notes — a rail entry that does not fit is
  *  a worse product than a refusal, and an unbounded text column keyed by a user is an easy
- *  way to bloat a row nobody can see. */
-const MAX_NAME = 40;
+ *  way to bloat a row nobody can see. Exported for the profile import, whose tag names arrive
+ *  from a public document rather than this service's own validated body and must meet the same
+ *  ceiling or be skipped. */
+export const MAX_TAG_NAME_CHARS = 40;
+const MAX_NAME = MAX_TAG_NAME_CHARS;
 
 export interface TagBody {
   name: string;

@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
 import {
-  PROFILE_FOUND_AUDIT_ACTION, auditLog, profileImportResolutionExists,
+  PROFILE_FOUND_AUDIT_ACTION, auditLog, profileImportResolutionExists, profileImportResolutionSince,
   type Tx,
 } from "@trafficflow/db";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -131,16 +131,21 @@ export class OrganizerProfileSync {
   private blockedByNewer = false;
   /** The found FOREIGN document's fingerprint — the hold. Null when no import decision is open. */
   private holdFingerprint: string | null = null;
+  /** When the hold began — the floor for "was the mailbox's import question answered since". */
+  private holdSince: Date | null = null;
   private lastWrittenFingerprint: string | null = null;
   /**
-   * A foreign document discovered MID-FLIGHT (after the seed), surfaced and recorded — the next
-   * write may supersede it. The asymmetry with {@link holdFingerprint} is principled: at SEED we
+   * Foreign documents discovered and SURFACED (recorded durably) — the next write may supersede
+   * them. A SET, not a slot: the folder can hold two distinct foreign documents at once (crash
+   * residue from another install's own append-then-expunge dance), and a single slot would let
+   * each refusal evict the other document's fingerprint — the write oscillating between two
+   * surfacings and never landing. The asymmetry with {@link holdFingerprint} is principled: at SEED we
    * may be a NEW organizer meeting configuration that travelled here (an open import decision,
    * so we hold); mid-flight we are the ESTABLISHED organizer and a document that appears under
    * us is the loser of a transient overlap — last-incumbent-wins says our store is the mailbox's
    * truth, and the engine's `foreign` refusal guarantees we surfaced it before superseding it.
    */
-  private seenForeignFingerprint: string | null = null;
+  private seenForeignFingerprints = new Set<string>();
   /** A detection marker that could not be written durably yet — owed, and retried next tick. */
   private markerPending: MarkerFact | null = null;
   private lastAttemptAt = 0;
@@ -209,20 +214,29 @@ export class OrganizerProfileSync {
         // hold releases; the held fingerprint moves to `seenForeignFingerprint` so the next
         // write may supersede the document THROUGH the engine's foreign gate (it was surfaced,
         // and now answered); the dirty check is already open (nothing was written since seed).
-        // One indexed read per flush interval, only while a decision is open.
+        // One indexed read per flush interval, only while a decision is open. TWO shapes of
+        // answer count, because the folder can change while the question is open: the exact
+        // held fingerprint was answered, or ANY answer for this mailbox landed after the hold
+        // began — the confirm surface reads the folder, not this hold, so it answers the
+        // CURRENT document, and a hold keyed to the older one must not stay frozen until a
+        // process restart when the person has already decided.
         const resolved = await profileImportResolutionExists(deps.db, {
           accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: this.holdFingerprint,
-        });
+        }) || (this.holdSince !== null && await profileImportResolutionSince(deps.db, {
+          accountId: deps.accountId, mailboxId: deps.mailboxId, since: this.holdSince,
+        }));
         if (!resolved) return; // the import decision is still open — write nothing
-        this.seenForeignFingerprint = this.holdFingerprint;
+        this.seenForeignFingerprints.add(this.holdFingerprint);
         this.holdFingerprint = null;
+        this.holdSince = null;
         log("organizer_profile_detected", {
           mailboxId: deps.mailboxId, accountId: deps.accountId, state: "resolved",
         });
-        // Fall through: the ordinary dirty check below decides whether anything is written —
-        // a decline over an EMPTY local store writes nothing (absence still means defaults,
-        // and the declined document stays in the folder untouched, which is what "keep local,
-        // touch nothing" honestly is), while any real local configuration now travels again.
+        // …and RETURN, writing nothing on this tick. The payload above was serialized BEFORE
+        // the answer was read, so a write here could ship a snapshot from before an import that
+        // committed in between — superseding the confirmed document with pre-import state. The
+        // NEXT tick serializes the store as the answer left it and resumes write-behind on that.
+        return;
       }
       if (fp === this.lastWrittenFingerprint) {
         // Nothing to write — but LOOK once per interval anyway. This is what heals the residue
@@ -247,13 +261,15 @@ export class OrganizerProfileSync {
         // What this writer may replace: its own last write, and any foreign document it has
         // already SURFACED. Anything else refuses as `foreign` below — the engine's guarantee
         // that no foreign configuration is ever expunged before it was recorded.
-        replaceable: [this.lastWrittenFingerprint, this.seenForeignFingerprint]
-          .filter((f): f is string => f !== null),
+        replaceable: [
+          ...(this.lastWrittenFingerprint === null ? [] : [this.lastWrittenFingerprint]),
+          ...this.seenForeignFingerprints,
+        ],
         log: (event, detail) => { log(event, { ...detail, mailboxId: deps.mailboxId, accountId: deps.accountId }); },
       });
       if (result.written) {
         this.lastWrittenFingerprint = fp;
-        this.seenForeignFingerprint = null;
+        this.seenForeignFingerprints.clear();
         log("organizer_profile_written", {
           mailboxId: deps.mailboxId, accountId: deps.accountId, pruned: result.removed,
         });
@@ -272,12 +288,13 @@ export class OrganizerProfileSync {
         // held for import: last-incumbent-wins says our store is this mailbox's truth — and
         // record its fingerprint so the NEXT write may supersede it. If the lease changes hands
         // before then, we never write again and the document stands: convergent both ways.
-        this.seenForeignFingerprint = profileFingerprint(result.doc);
+        const foreignFp = profileFingerprint(result.doc);
+        this.seenForeignFingerprints.add(foreignFp);
         log("organizer_profile_detected", {
           mailboxId: deps.mailboxId, accountId: deps.accountId, state: "found_midflight",
         });
         await this.writeMarker({
-          state: "found", doc: result.doc, fingerprint: this.seenForeignFingerprint, heldForImport: false,
+          state: "found", doc: result.doc, fingerprint: foreignFp, heldForImport: false,
         }, log);
       }
     } catch (err) {
@@ -328,11 +345,12 @@ export class OrganizerProfileSync {
           // A foreign-but-identical document is ours to replace on the next change — record it,
           // or the engine's foreign refusal would deadlock the first post-convergence write.
           this.lastWrittenFingerprint = docFingerprint;
-          if (!ours) this.seenForeignFingerprint = docFingerprint;
+          if (!ours) this.seenForeignFingerprints.add(docFingerprint);
           detected(ours ? "found_own" : "found_in_sync");
           return;
         }
         this.holdFingerprint = docFingerprint;
+        this.holdSince = (this.deps.now ?? ((): Date => new Date()))();
         detected("found");
         await this.writeMarker({ state: "found", doc: read.doc, fingerprint: docFingerprint, heldForImport: true }, log);
         return;
@@ -394,7 +412,7 @@ export class OrganizerProfileSync {
         }
         // A differing foreign document under an established organizer — surface, record, and
         // let the next write supersede it. The same posture as the write path's `foreign` arm.
-        this.seenForeignFingerprint = docFingerprint;
+        this.seenForeignFingerprints.add(docFingerprint);
         this.lastWrittenFingerprint = null;
         log("organizer_profile_detected", { mailboxId: deps.mailboxId, accountId: deps.accountId, state: "found_midflight" });
         await this.writeMarker({ state: "found", doc: read.doc, fingerprint: docFingerprint, heldForImport: false }, log);
@@ -418,9 +436,15 @@ export class OrganizerProfileSync {
         .limit(1);
       const prior = latest?.payload as {
         mailboxId?: string; fingerprint?: string | null; state?: string; heldForImport?: boolean;
+        v?: number;
       } | null | undefined;
+      // The version is part of a `newer` fact's identity: a dismissed v2 marker must not
+      // swallow the detection of a v3 — each later format is a NEW fact the confirm surface
+      // has not answered.
+      const v = fact.state === "newer" ? fact.v : null;
       if (prior && prior.mailboxId === deps.mailboxId && prior.state === fact.state
-        && (prior.fingerprint ?? null) === fingerprint && (prior.heldForImport ?? false) === heldForImport) {
+        && (prior.fingerprint ?? null) === fingerprint && (prior.heldForImport ?? false) === heldForImport
+        && (prior.v ?? null) === v) {
         return;
       }
       await deps.db.insert(auditLog).values({

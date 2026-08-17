@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { auditLog } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
@@ -113,12 +113,38 @@ export type ProfileImportSubject =
  * that CHANGES after a decline legitimately re-asks (new content is new information), while the
  * same content never nags twice.
  */
+/**
+ * Has the user answered ANY import question for this mailbox since `since`? The release valve
+ * for a hold whose exact fingerprint was never answered: the folder's document can change while
+ * the decision is open (the previous organizer writes again), the confirm surface answers the
+ * CURRENT content, and a hold keyed to the older fingerprint would otherwise stay frozen until
+ * the process re-attaches. Any answer after the hold began means the mailbox's import question
+ * is settled — the local store is the ratified truth either way.
+ */
+export async function profileImportResolutionSince(
+  db: Tx, o: { accountId: string; mailboxId: string; since: Date },
+): Promise<boolean> {
+  const rows = await db.select({ id: auditLog.id })
+    .from(auditLog)
+    .where(and(
+      eq(auditLog.accountId, o.accountId),
+      eq(auditLog.action, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION),
+      sql`${auditLog.payload}->>'mailboxId' = ${o.mailboxId}`,
+      gte(auditLog.createdAt, o.since),
+    ))
+    .limit(1);
+  return rows.length > 0;
+}
+
 export async function profileImportResolutionExists(
   db: Tx, o: { accountId: string; mailboxId: string } & ProfileImportSubject,
 ): Promise<boolean> {
   const subject = "fingerprint" in o
     ? sql`${auditLog.payload}->>'fingerprint' = ${o.fingerprint}`
-    : sql`${auditLog.payload}->>'fingerprint' is null and (${auditLog.payload}->>'v')::int = ${o.newerV}`;
+    // TEXT equality on `v`, deliberately: the version is read off a PUBLIC document, so any
+    // JavaScript integer can arrive here, and an `::int` cast overflows PostgreSQL's integer at
+    // 2^31 — turning a hostile version number into a 500 on every later candidate or dismissal.
+    : sql`${auditLog.payload}->>'fingerprint' is null and ${auditLog.payload}->>'v' = ${String(o.newerV)}`;
   const rows = await db.select({ id: auditLog.id })
     .from(auditLog)
     .where(and(
@@ -147,7 +173,10 @@ export async function recordProfileImportResolution(
   const decisionMatch = sql`${auditLog.payload}->>'decision' = ${o.decision}`;
   const subject = "fingerprint" in o
     ? sql`${auditLog.payload}->>'fingerprint' = ${o.fingerprint}`
-    : sql`${auditLog.payload}->>'fingerprint' is null and (${auditLog.payload}->>'v')::int = ${o.newerV}`;
+    // TEXT equality on `v`, deliberately: the version is read off a PUBLIC document, so any
+    // JavaScript integer can arrive here, and an `::int` cast overflows PostgreSQL's integer at
+    // 2^31 — turning a hostile version number into a 500 on every later candidate or dismissal.
+    : sql`${auditLog.payload}->>'fingerprint' is null and ${auditLog.payload}->>'v' = ${String(o.newerV)}`;
   const dupes = await db.select({ id: auditLog.id })
     .from(auditLog)
     .where(and(

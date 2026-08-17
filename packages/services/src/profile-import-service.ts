@@ -15,6 +15,7 @@ import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS } from "./rules-service.js";
 import { AWAY_AUDIENCES } from "./away-responder-service.js";
+import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
 
 /**
  * THE PROFILE IMPORT — the answer side of the portable organizer profile.
@@ -155,34 +156,57 @@ const INVALID_TERM = Symbol("invalid-term");
 function normTerm(v: string | undefined, max: number): string | null | typeof INVALID_TERM {
   if (v === undefined || v === null) return null;
   const term = v.trim();
-  if (term.length === 0 || term.length > max) return INVALID_TERM;
+  if (term.length === 0 || term.length > max || hasNul(term)) return INVALID_TERM;
   return term;
 }
+
+/**
+ * PostgreSQL text cannot hold a NUL, so a public document's string carrying one would turn the
+ * merge into a mid-transaction database error — a 500 where "this entry was skipped" is the
+ * honest answer. Checked wherever a document string becomes a stored value.
+ */
+const hasNul = (v: string): boolean => v.includes("\u0000");
+
+/** The store's integer bounds — a document may claim any JavaScript number. */
+const INT4_MAX = 2_147_483_647;
 
 /** The document rule, admitted under the product's own create rules — or null (skip + count). */
 function applicableRule(r: ProfileRuleEntry): ApplicableRule | null {
   if (!KINDS.has(r.kind)) return null;
-  if (typeof r.match !== "string" || r.match.length === 0) return null;
+  if (typeof r.match !== "string" || r.match.length === 0 || hasNul(r.match)) return null;
   if (!FOLDER_SET.has(r.destination)) return null;
+  // Bounded to what the store's integer column can hold: an overflowing priority would abort
+  // the whole transaction as a database error, which is a 500 dressed as an import.
+  if (!Number.isInteger(r.priority) || Math.abs(r.priority) > INT4_MAX) return null;
   const subjectContains = normTerm(r.subjectContains, MAX_SUBJECT_CONTAINS_CHARS);
   const bodyContains = normTerm(r.bodyContains, MAX_BODY_CONTAINS_CHARS);
   if (subjectContains === INVALID_TERM || bodyContains === INVALID_TERM) return null;
   if ((subjectContains !== null || bodyContains !== null) && r.kind !== "sender") return null;
+  const provenance = typeof r.provenance === "string" && r.provenance.length > 0 ? r.provenance : "manual";
+  if (hasNul(provenance)) return null;
   return {
     kind: r.kind,
     match: r.match,
     destination: r.destination,
-    priority: Number.isInteger(r.priority) ? r.priority : 0,
+    priority: r.priority,
     enabled: r.enabled === true,
-    provenance: typeof r.provenance === "string" && r.provenance.length > 0 ? r.provenance : "manual",
+    provenance,
     subjectContains,
     bodyContains,
   };
 }
 
-/** The natural key a rule is merged under. Terms are never `""` after normalization. */
+/**
+ * The natural key a rule is merged under, CASE-FOLDED the way the routing engine folds at match
+ * time: `Alice@Example.com` and `alice@example.com` are one rule to the thing that files mail,
+ * so they must be one key to the thing that merges rules — keyed apart, an import would insert
+ * a duplicate whose winner is the priority/id tie-break. The stored row keeps its own casing
+ * (a retarget replaces the VALUE fields only); the comparison alone folds. Terms are never `""`
+ * after normalization, so the empty slot is unambiguous.
+ */
 const ruleKey = (r: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null }): string =>
-  [r.kind, r.match, r.subjectContains ?? "", r.bodyContains ?? ""].join("\u0000");
+  [r.kind, r.match.toLowerCase(), (r.subjectContains ?? "").toLowerCase(), (r.bodyContains ?? "").toLowerCase()]
+    .join("\u0000");
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -308,8 +332,9 @@ export class ProfileImportService {
       const byAddress = new Map<string, string | null>();
       for (const s of doc.screener) {
         const address = s.address.trim().toLowerCase();
-        if (address.length === 0) continue;
-        byAddress.set(address, s.name ?? null);
+        if (address.length === 0 || hasNul(address)) continue;
+        const name = s.name !== undefined && !hasNul(s.name) ? s.name : null;
+        byAddress.set(address, name);
       }
       for (const [address, name] of byAddress) {
         await tx.insert(contacts)
@@ -386,12 +411,16 @@ export class ProfileImportService {
       const localNotify = await tx.select({ kind: notifyRules.kind, target: notifyRules.target })
         .from(notifyRules).where(eq(notifyRules.accountId, ctx.accountId));
       const notifyHave = new Map<string, number>();
+      const notifyKey = (kind: string, target: string): string => `${kind}\u0000${target.toLowerCase()}`;
       for (const nr of localNotify) {
-        const k = `${nr.kind}\u0000${nr.target}`;
+        const k = notifyKey(nr.kind, nr.target);
         notifyHave.set(k, (notifyHave.get(k) ?? 0) + 1);
       }
+      let notifyApplied = 0;
       for (const nr of doc.notifyRules) {
-        const k = `${nr.kind}\u0000${nr.target}`;
+        if (hasNul(nr.kind) || hasNul(nr.target)) continue;
+        notifyApplied += 1;
+        const k = notifyKey(nr.kind, nr.target);
         const have = notifyHave.get(k) ?? 0;
         if (have > 0) { notifyHave.set(k, have - 1); continue; }
         await tx.insert(notifyRules).values({
@@ -403,34 +432,53 @@ export class ProfileImportService {
       //    carries one. The audience is narrowed, never widened, when unrecognised: a reply to
       //    a stranger cannot be recalled, and `screened_in` is the value the column's own
       //    default writes.
+      let awayApplied = false;
       if (doc.awayResponder !== null) {
         const a = doc.awayResponder;
         const audience = (AWAY_AUDIENCES as readonly string[]).includes(a.audience) ? a.audience : "screened_in";
-        const date = (v: string | null): Date | null => {
+        const date = (v: string | null): Date | null | typeof INVALID_TERM => {
           if (v === null) return null;
           const d = new Date(v);
-          return Number.isNaN(d.getTime()) ? null : d;
+          return Number.isNaN(d.getTime()) ? INVALID_TERM : d;
         };
-        await tx.insert(awayResponders).values({
-          accountId: ctx.accountId, enabled: a.enabled === true,
-          subject: a.subject, body: a.body,
-          startsAt: date(a.startsAt), endsAt: date(a.endsAt),
-          audience, updatedAt: now,
-        }).onConflictDoUpdate({
-          target: awayResponders.accountId,
-          set: {
-            enabled: a.enabled === true, subject: a.subject, body: a.body,
-            startsAt: date(a.startsAt), endsAt: date(a.endsAt), audience, updatedAt: now,
-          },
-        });
+        const startsAt = date(a.startsAt);
+        const endsAt = date(a.endsAt);
+        // The section is applied WHOLE or not at all, under the away service's own rules: an
+        // unparseable date silently becoming NULL would turn "away for a week" into an
+        // unbounded responder — a widening this import must never be the door for — and a
+        // reversed range is the same refusal the PUT gives. NUL-carrying text cannot be stored.
+        const valid = startsAt !== INVALID_TERM && endsAt !== INVALID_TERM
+          && !(startsAt !== null && endsAt !== null && startsAt.getTime() > endsAt.getTime())
+          && !(a.subject !== null && hasNul(a.subject)) && !(a.body !== null && hasNul(a.body));
+        if (valid) {
+          awayApplied = true;
+          await tx.insert(awayResponders).values({
+            accountId: ctx.accountId, enabled: a.enabled === true,
+            subject: a.subject, body: a.body,
+            startsAt, endsAt,
+            audience, updatedAt: now,
+          }).onConflictDoUpdate({
+            target: awayResponders.accountId,
+            set: {
+              enabled: a.enabled === true, subject: a.subject, body: a.body,
+              startsAt, endsAt, audience, updatedAt: now,
+            },
+          });
+        }
       }
 
       // ── tagNames, keyed case-insensitively like the store's own uniqueness ─────────────
       const localTags = await tx.select({ name: tags.name }).from(tags)
         .where(eq(tags.accountId, ctx.accountId));
       const haveTag = new Set(localTags.map((t) => t.name.toLowerCase()));
-      for (const name of doc.tagNames) {
-        if (name.length === 0 || haveTag.has(name.toLowerCase())) continue;
+      let tagsApplied = 0;
+      for (const rawName of doc.tagNames) {
+        // The tag store's own hygiene, applied to a public document's names: trimmed, bounded
+        // by the same ceiling the create refuses over, never a control byte.
+        const name = rawName.trim();
+        if (name.length === 0 || name.length > MAX_TAG_NAME_CHARS || hasNul(name)) continue;
+        tagsApplied += 1;
+        if (haveTag.has(name.toLowerCase())) continue;
         haveTag.add(name.toLowerCase());
         const [row] = await tx.insert(tags).values({
           accountId: ctx.accountId, name, createdAt: now, updatedAt: now,
@@ -448,7 +496,15 @@ export class ProfileImportService {
       });
 
       return {
-        imported: countsOf(doc),
+        // What ARRIVED, never what the document claimed: the difference is the skipped entries,
+        // and a confirmation that repeated the claim would overstate the restore.
+        imported: {
+          screener: byAddress.size,
+          rules: applicable.length,
+          notifyRules: notifyApplied,
+          tags: tagsApplied,
+          awayResponder: awayApplied,
+        },
         skippedRules,
         seq: seqs.length > 0 ? Number(seqs[seqs.length - 1]) : null,
       };
@@ -466,22 +522,24 @@ export class ProfileImportService {
     ctx: ServiceContext, mailboxId: string, body: { fingerprint?: unknown; v?: unknown },
   ): Promise<void> {
     await this.assertMailbox(ctx, mailboxId);
-    const db = asTx(ctx);
-    if (typeof body.fingerprint === "string" && body.fingerprint.length > 0) {
-      await recordProfileImportResolution(db, {
-        accountId: ctx.accountId, mailboxId, decision: "declined", fingerprint: body.fingerprint,
-      });
-      return;
+    const fingerprint = typeof body.fingerprint === "string" && body.fingerprint.length > 0
+      ? body.fingerprint : null;
+    const newerV = typeof body.v === "number" && Number.isSafeInteger(body.v) && body.v > 1
+      ? body.v : null;
+    if (fingerprint === null && newerV === null) {
+      throw new ServiceError("validation_failed", 400, "fingerprint (or v for a newer document) is required");
     }
-    if (typeof body.v === "number" && Number.isInteger(body.v) && body.v > 1) {
-      // Dismissing the "written by a newer ohmail" notice. There is no payload to fingerprint
-      // at this version, so the answer is keyed to the refused version number instead.
-      await recordProfileImportResolution(db, {
-        accountId: ctx.accountId, mailboxId, decision: "declined", newerV: body.v,
-      });
-      return;
-    }
-    throw new ServiceError("validation_failed", 400, "fingerprint (or v for a newer document) is required");
+    // Under the same per-account lock the apply takes, in a transaction, so the write-once
+    // check and its insert are one serialized step: two tabs declining together write one row,
+    // and a decline racing an apply cannot interleave inside either's bookkeeping.
+    await asTx(ctx).transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${PROFILE_IMPORT_LOCK_CLASS}, hashtext(${ctx.accountId}))`);
+      await recordProfileImportResolution(tx, fingerprint !== null
+        ? { accountId: ctx.accountId, mailboxId, decision: "declined", fingerprint }
+        // Dismissing the "written by a newer ohmail" notice. There is no payload to fingerprint
+        // at this version, so the answer is keyed to the refused version number instead.
+        : { accountId: ctx.accountId, mailboxId, decision: "declined", newerV: newerV! });
+    });
   }
 
   /** Ownership first, before any dial: a cross-account mailbox id is indistinguishable from a missing one. */

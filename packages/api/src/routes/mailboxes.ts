@@ -1,5 +1,7 @@
 import type { CreateMailboxBody, UpdateMailboxBody } from "@trafficflow/services/mail";
-import { readOrganizerProfile, type ProfileReadResult } from "@trafficflow/core/adapters/organizer-profile";
+import {
+  ProfileUnavailableError, readOrganizerProfile, type ProfileReadResult,
+} from "@trafficflow/core/adapters/organizer-profile";
 import { openMailboxImap } from "../attachments-adapter.js";
 import { serviceContext } from "../context.js";
 import { makeImapProbe, makeSmtpProbe } from "../imap-probe.js";
@@ -23,7 +25,22 @@ import { mailbox, profileImport, readBody, noContent } from "./shared.js";
  * exactly as the organizer peek reads the lease without ever renewing one.
  */
 const profileReader = (deps: ApiDeps, mailboxId: string) => async (): Promise<ProfileReadResult> => {
-  const opened = await openMailboxImap(deps, mailboxId);
+  let opened: Awaited<ReturnType<typeof openMailboxImap>>;
+  try {
+    opened = await openMailboxImap(deps, mailboxId);
+  } catch (err) {
+    // A `ServiceError` already carries its own honest answer (the connection cap's 429, the
+    // missing-credential 502) and passes through. Everything else — a decrypt fault, a refused
+    // LOGIN, a dead host — is "could not look", and it must reach the caller as the same 502
+    // the read path's own failures do, never as a raw 500 whose text says nothing anyone can
+    // act on. `ServiceError` is matched by NAME rather than by class for the middleware's
+    // reason: two copies of the services package must not make the same error unrecognisable.
+    if (err instanceof Error && err.name === "ServiceError") throw err;
+    throw new ProfileUnavailableError(
+      "the mailbox could not be dialled to read its saved settings",
+      { op: "list_profiles", cause: err },
+    );
+  }
   try {
     return await readOrganizerProfile(opened.adapter.profileIo());
   } finally {

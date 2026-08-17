@@ -142,6 +142,7 @@ export {
  */
 export {
   PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION,
-  latestProfileFoundMarker, profileImportResolutionExists, recordProfileImportResolution,
+  latestProfileFoundMarker, profileImportResolutionExists, profileImportResolutionSince,
+  recordProfileImportResolution,
   type ProfileFoundMarker, type ProfileImportDecision, type ProfileImportSubject,
 } from "./organizer-profile-import.js";
