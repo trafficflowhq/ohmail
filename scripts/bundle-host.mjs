@@ -49,7 +49,7 @@
  * so nothing is vendored — if either ever grows the import, the missing module fails the
  * container LOUDLY at boot rather than silently shipping a broken storage layer.
  */
-import { chmodSync, cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEsbuild } from "./engine-bundle.mjs";
@@ -139,6 +139,19 @@ chmodSync(bundlePath, 0o755);
 // The journals, at the paths the bundle's own `import.meta.url` composes — see the header.
 cpSync(join(ROOT, "packages", "db-mail", "drizzle"), join(out, "drizzle"), { recursive: true });
 cpSync(join(ROOT, "packages", "db", "drizzle-cloud"), join(out, "drizzle-cloud"), { recursive: true });
+
+/* The build label, one directory above the bundle — exactly the file
+ * `apps/worker/src/build-version.ts` reads (`../BUILD_VERSION` from the module, which is the
+ * bundle after folding): an input to the image, never a committed file. The organizer's
+ * durable-failure retry is woken by a CHANGE of build and by nothing else, so a container
+ * that always answers "dev" is a container whose failed messages are never retried across
+ * releases. The tree's own version is what a from-source image is a build of. */
+const version = String(JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version ?? "").trim();
+if (!version) {
+  console.error("the workspace root declares no version — the image's build label cannot be written");
+  process.exit(1);
+}
+writeFileSync(join(out, "BUILD_VERSION"), `${version}\n`);
 
 const inputs = Object.keys(result.metafile.inputs).length;
 console.log(`\nhost ${name}: ${inputs} bundled inputs → ${bundlePath}`);

@@ -30,14 +30,17 @@ FROM base AS build
 COPY . .
 RUN npm ci --no-audit --no-fund
 # Next type-checks the app as it builds. typescript and the @types the app compiles against
-# are build-stage tools, installed --no-save so they can never join the published manifests —
-# the same arrangement the repository's own CI uses for the engine typecheck. The React
-# types are pinned to the major the manifests resolve (react 18).
+# are build-stage tools, installed --no-save so they can never join the published manifests.
+# EXACT versions, not ranges: the committed lockfile cannot pin what the manifests do not
+# declare, so a caret here would let two otherwise-identical builds of one release resolve
+# different declaration files — the image must be reproducible from the tree alone. The React
+# types match the major the manifests resolve (react 18), and all four are REMOVED again
+# after the build (below), so the runtime copy ships nothing the type pass pulled in.
 RUN npm install --no-save \
-      typescript@5.6 \
-      @types/node@^22.10.0 \
-      @types/react@^18.3.12 \
-      @types/react-dom@^18.3.1
+      typescript@5.6.3 \
+      @types/node@22.10.2 \
+      @types/react@18.3.12 \
+      @types/react-dom@18.3.1
 # The flavor is a BUILD fact (see next.config.mjs — the proxy owns the split, so this bundle
 # rewrites nothing and calls /api on its own origin). The star count is pinned so the config's
 # build-time badge fetch never reaches the network from inside a build container.
@@ -46,6 +49,9 @@ ENV OHMAIL_FLAVOR=selfhost \
 RUN cd apps/webapp && ../../node_modules/.bin/next build
 # Fail the BUILD, not the container, if Next emitted nothing.
 RUN test -d apps/webapp/.next
+# The type pass's tools leave before the runtime stage copies the workspace: `next start`
+# executes JavaScript only, and declaration files are dead weight in a serving container.
+RUN rm -rf node_modules/typescript node_modules/@types node_modules/.bin/tsc node_modules/.bin/tsserver
 
 # ── Runtime: `next start` over the built app ────────────────────────────────────────────
 # The workspace is copied whole (node_modules included): this app has no `output: standalone`,

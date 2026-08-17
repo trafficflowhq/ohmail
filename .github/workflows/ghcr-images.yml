@@ -1,8 +1,8 @@
-# The self-host images: build the three Dockerfiles in THIS repository and push them to GHCR.
+# The self-host images: build the three recipes in THIS repository and push them to GHCR.
 #
-#   ghcr.io/trafficflowhq/ohmail-server   apps/server/Dockerfile    (the API host)
-#   ghcr.io/trafficflowhq/ohmail-worker   apps/worker/Dockerfile    (the organizer)
-#   ghcr.io/trafficflowhq/ohmail-web      apps/webapp/Dockerfile    (the web app, selfhost flavor)
+#   ghcr.io/trafficflowhq/ohmail-server   apps/server/Dockerfile             (the API host)
+#   ghcr.io/trafficflowhq/ohmail-worker   apps/worker/Dockerfile.selfhost    (the organizer)
+#   ghcr.io/trafficflowhq/ohmail-web      apps/webapp/Dockerfile             (the web app, selfhost flavor)
 #
 # BUILT HERE, FROM THIS TREE, BY THIS REPOSITORY'S OWN ACTIONS. The recipes build from the
 # published source with the committed npm lockfile (`npm ci` inside each Dockerfile), so the
@@ -14,17 +14,34 @@
 # every job keeps this inert on forks — a fork's run would try to push to this project's
 # GHCR namespace and fail on permissions; refusing to start is clearer.
 #
-# STAGE, CHECK, THEN PROMOTE. Nothing writes the `<version>`/`latest` tags directly: each
-# matrix job pushes a per-architecture `stage-<version>-<arch>` tag, the prune check runs
-# against THAT, and a fan-in job merges the staged pair into the real tags only after every
-# build and every check is green. A red anywhere therefore leaves the public tags exactly as
-# they were — a failed release must not be able to overwrite `latest` with a half-set or an
-# unchecked layer.
+# NOTHING MOVES A PUBLIC TAG UNTIL EVERY GATE IS GREEN. The order is the design:
+#
+#   1. build-push    — each image × architecture builds NATIVELY and pushes a RUN-SCOPED
+#                      staging tag (`stage-<version>-<run id>-<arch>`), then the prune check
+#                      runs against exactly that tag. Run-scoped so no concurrent or later
+#                      run can swap a checked layer for an unchecked one under the same name;
+#                      the `concurrency` group below serializes runs besides.
+#   2. gate-boot     — a FRESH CLONE of this repository boots the staged amd64 images through
+#                      deploy/selfhost, exactly as the README tells a stranger to, and the
+#                      stack must answer: /hello through the proxy, the web app, a healthy
+#                      organizer. This is the claim's own test, before any public tag exists.
+#   3. gate-visibility — the packages must be ANONYMOUSLY pullable, checked against a staged
+#                      manifest. GHCR packages are born private and no workflow can flip
+#                      that; on a first release this gate is EXPECTED to fail, its message
+#                      names the one-time fix, and — because promotion has not run — the
+#                      public tags have not moved at all.
+#   4. promote       — only after 1–3 are green do the real `<version>`/`latest` tags move,
+#                      as manifest-list compositions of the staged pair (no rebuild, so what
+#                      was checked is what ships), and the promoted tags are then asserted
+#                      anonymously pullable themselves.
+#
+# Promotion itself is three registry writes; each is retried once, and a failure prints
+# exactly which images moved — re-running the job heals forward, because the run's staging
+# tags persist (they are the release's audit trail; prune them by hand if they bother you).
 #
 # Multi-arch: linux/amd64 + linux/arm64, each built NATIVELY — GitHub's hosted arm64 runners
 # (`ubuntu-24.04-arm`) are free for public repositories, which is both faster and less flaky
-# than emulating a Node toolchain under QEMU. The promote step composes the two
-# single-arch images into one manifest list per tag.
+# than emulating a Node toolchain under QEMU.
 
 name: ghcr-images
 
@@ -34,18 +51,26 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version tag for the images (e.g. 0.9.8). 'latest' is always also promoted."
+        description: "Version tag for the images (e.g. 0.9.8). Must match the tree's own version; 'latest' is always also promoted."
         required: true
 
 permissions:
   contents: read
   packages: write
 
+# One release at a time. Staging tags are run-scoped so an overlap could not cross-promote
+# anyway; serializing keeps `latest` from being decided by a race between two green runs.
+concurrency:
+  group: ghcr-images
+  cancel-in-progress: false
+
 jobs:
   # One place decides the version, and it is DATA, never shell source: a dispatch input (or a
   # tag name — git allows `$` and parentheses in one) interpolated into a run: block would
   # execute with this workflow's packages:write token. Read through the environment, validate
-  # against docker's own tag grammar, and refuse anything else.
+  # against docker's own tag grammar, and refuse anything else. The version must also BE the
+  # version of the tree being built: an image labeled 0.9.7 built from a 0.9.8 tree is a lie
+  # the compose's tag pinning would then serve to operators.
   version:
     if: github.repository == 'trafficflowhq/ohmail'
     runs-on: ubuntu-latest
@@ -53,6 +78,8 @@ jobs:
     outputs:
       version: ${{ steps.decide.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Decide and validate the version tag
         id: decide
         env:
@@ -69,6 +96,12 @@ jobs:
             ("" | .* | -* | *[!A-Za-z0-9._-]* ) echo "refusing version tag: $V"; exit 1 ;;
           esac
           if [ "${#V}" -gt 100 ] || [ "$V" = "latest" ]; then echo "refusing version tag: $V"; exit 1; fi
+          TREE_V="$(node -p 'require("./package.json").version')"
+          if [ "$V" != "$TREE_V" ]; then
+            echo "refusing: the requested image version ($V) is not this tree's version ($TREE_V)."
+            echo "Images are built from the checked-out source and must be labeled as what they are."
+            exit 1
+          fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
   build-push:
@@ -106,14 +139,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push the STAGING tag (native ${{ matrix.arch }})
+      - name: Build and push the run-scoped STAGING tag (native ${{ matrix.arch }})
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/${{ matrix.arch }}
           push: true
-          tags: ghcr.io/trafficflowhq/${{ matrix.image }}:stage-${{ needs.version.outputs.version }}-${{ matrix.arch }}
+          tags: ghcr.io/trafficflowhq/${{ matrix.image }}:stage-${{ needs.version.outputs.version }}-${{ github.run_id }}-${{ matrix.arch }}
           # The source label points at this repository — the tree these images are built from.
           labels: |
             org.opencontainers.image.source=https://github.com/trafficflowhq/ohmail
@@ -130,7 +163,7 @@ jobs:
       # reads as a pass.
       - name: Prune check — no test trees in any runtime, no source or modules in the bundles
         env:
-          IMG: ghcr.io/trafficflowhq/${{ matrix.image }}:stage-${{ needs.version.outputs.version }}-${{ matrix.arch }}
+          IMG: ghcr.io/trafficflowhq/${{ matrix.image }}:stage-${{ needs.version.outputs.version }}-${{ github.run_id }}-${{ matrix.arch }}
         run: |
           set -euo pipefail
           HITS=$(docker run --rm --entrypoint sh "$IMG" -c \
@@ -142,14 +175,16 @@ jobs:
             test -z "$SRC" || { echo "src/module trees in $IMG:"; echo "$SRC"; exit 1; }
           fi
 
-  # The fan-in: only when all six builds passed their checks do the real tags move, and they
-  # move as manifest-list compositions of the staged single-arch images — no rebuild, so what
-  # was checked is what ships.
-  promote:
+  # The boot gate: what the README tells a stranger must work from the PUBLIC tree with the
+  # images this run just staged — clone, copy the env template, fill the four required
+  # values, `docker compose up -d`, and the stack answers. Runs BEFORE promotion, so a
+  # release that cannot boot never moves a public tag. Pulls authenticate: whether a stranger
+  # can pull is gate-visibility's question, not this one's.
+  gate-boot:
     if: github.repository == 'trafficflowhq/ohmail'
     needs: [version, build-push]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -158,53 +193,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Promote stage-… to the version tag and latest
-        env:
-          V: ${{ needs.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          for IMG in ohmail-server ohmail-worker ohmail-web; do
-            docker buildx imagetools create \
-              -t "ghcr.io/trafficflowhq/$IMG:$V" \
-              -t "ghcr.io/trafficflowhq/$IMG:latest" \
-              "ghcr.io/trafficflowhq/$IMG:stage-$V-amd64" \
-              "ghcr.io/trafficflowhq/$IMG:stage-$V-arm64"
-          done
-
-      # The compose an operator runs pulls ANONYMOUSLY, and a GHCR package is born private —
-      # nothing in any workflow can flip that (it is a one-time change in each package's own
-      # settings, made by a person with admin rights on it). So the promotion is only green
-      # when an unauthenticated client can actually pull what the README advertises; on a
-      # first release this step is EXPECTED to fail until the three packages are made public,
-      # and its message says exactly that.
-      - name: Anonymous-pull gate — the packages must be publicly pullable
-        env:
-          V: ${{ needs.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          for IMG in ohmail-server ohmail-worker ohmail-web; do
-            TOKEN=$(curl -fsS "https://ghcr.io/token?scope=repository:trafficflowhq/$IMG:pull" | jq -r .token)
-            if ! curl -fsS -o /dev/null \
-                 -H "Authorization: Bearer $TOKEN" \
-                 -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
-                 "https://ghcr.io/v2/trafficflowhq/$IMG/manifests/$V"; then
-              echo "ghcr.io/trafficflowhq/$IMG is not anonymously pullable."
-              echo "One-time owner action: package settings -> Danger Zone -> Change visibility -> Public,"
-              echo "for ohmail-server, ohmail-worker and ohmail-web. Then re-run this workflow."
-              exit 1
-            fi
-          done
-
-  # The fresh-clone gate: what the README tells a stranger must work from the PUBLIC tree
-  # with the images just promoted — clone, copy the env template, fill the four required
-  # values, `docker compose up -d`, and the stack answers. This is the claim's own test, on
-  # the artifacts of this run, on a machine that has never seen this workspace.
-  fresh-clone-gate:
-    if: github.repository == 'trafficflowhq/ohmail'
-    needs: [version, promote]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
       - name: Clone the public repository
         run: git clone --depth 1 https://github.com/trafficflowhq/ohmail.git mirror
 
@@ -220,7 +208,7 @@ jobs:
       - name: Configure from the template, exactly as the README says
         working-directory: mirror/deploy/selfhost
         env:
-          V: ${{ needs.version.outputs.version }}
+          STAGE_TAG: stage-${{ needs.version.outputs.version }}-${{ github.run_id }}-amd64
         run: |
           set -euo pipefail
           cp .env.example .env
@@ -229,11 +217,11 @@ jobs:
             echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
             echo "TF_KEK_V1=$(openssl rand -hex 32)"
             echo "MINIO_ROOT_PASSWORD=$(openssl rand -hex 16)"
-            echo "OHMAIL_IMAGE_TAG=$V"
+            echo "OHMAIL_IMAGE_TAG=$STAGE_TAG"
           } >> .env
           docker compose config -q
 
-      - name: Pull anonymously and boot cold
+      - name: Boot cold from the staged images
         working-directory: mirror/deploy/selfhost
         run: |
           set -euo pipefail
@@ -269,3 +257,92 @@ jobs:
         if: always()
         working-directory: mirror/deploy/selfhost
         run: docker compose down -v
+
+  # The compose an operator runs pulls ANONYMOUSLY, and a GHCR package is born private —
+  # nothing in any workflow can flip that (it is a one-time change in each package's own
+  # settings, made by a person with admin rights on it). Checked against a STAGED manifest,
+  # BEFORE promotion: on a first release this gate is EXPECTED to fail, its message says
+  # exactly what to do, and the public tags have not moved.
+  gate-visibility:
+    if: github.repository == 'trafficflowhq/ohmail'
+    needs: [version, build-push]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Anonymous-pull gate — the packages must be publicly pullable
+        env:
+          TAG: stage-${{ needs.version.outputs.version }}-${{ github.run_id }}-amd64
+        run: |
+          set -euo pipefail
+          for IMG in ohmail-server ohmail-worker ohmail-web; do
+            TOKEN=$(curl -fsS "https://ghcr.io/token?scope=repository:trafficflowhq/$IMG:pull" | jq -r .token)
+            if ! curl -fsS -o /dev/null \
+                 -H "Authorization: Bearer $TOKEN" \
+                 -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+                 "https://ghcr.io/v2/trafficflowhq/$IMG/manifests/$TAG"; then
+              echo "ghcr.io/trafficflowhq/$IMG is not anonymously pullable."
+              echo "One-time fix: package settings -> Danger Zone -> Change visibility -> Public,"
+              echo "for ohmail-server, ohmail-worker and ohmail-web. Then re-run this workflow."
+              exit 1
+            fi
+          done
+
+  # The fan-in, LAST: only when every build, the prune checks, the boot and the visibility
+  # gates are green do the real tags move, as manifest-list compositions of the staged pair —
+  # no rebuild, so what was checked is what ships. Each composition is retried once; a
+  # failure prints exactly which images moved, and re-running the workflow heals forward.
+  promote:
+    if: github.repository == 'trafficflowhq/ohmail'
+    needs: [version, build-push, gate-boot, gate-visibility]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote the staged pair to the version tag and latest
+        env:
+          V: ${{ needs.version.outputs.version }}
+          RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          MOVED=""
+          for IMG in ohmail-server ohmail-worker ohmail-web; do
+            ok=0
+            for attempt in 1 2; do
+              if docker buildx imagetools create \
+                   -t "ghcr.io/trafficflowhq/$IMG:$V" \
+                   -t "ghcr.io/trafficflowhq/$IMG:latest" \
+                   "ghcr.io/trafficflowhq/$IMG:stage-$V-$RUN-amd64" \
+                   "ghcr.io/trafficflowhq/$IMG:stage-$V-$RUN-arm64"; then
+                ok=1; break
+              fi
+              echo "imagetools create failed for $IMG (attempt $attempt)"
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "PROMOTION INCOMPLETE. Tags already moved this run: ${MOVED:-none}."
+              echo "The run's staging tags persist — re-run this workflow to finish the set."
+              exit 1
+            fi
+            MOVED="$MOVED $IMG"
+          done
+
+      # The promoted tags themselves must be anonymously pullable — same check as the gate,
+      # now against what the README actually names. It can only fail if visibility changed
+      # mid-run or the registry misbehaved after an identical pre-check passed.
+      - name: The promoted tags answer an anonymous pull
+        env:
+          V: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for IMG in ohmail-server ohmail-worker ohmail-web; do
+            TOKEN=$(curl -fsS "https://ghcr.io/token?scope=repository:trafficflowhq/$IMG:pull" | jq -r .token)
+            curl -fsS -o /dev/null \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+              "https://ghcr.io/v2/trafficflowhq/$IMG/manifests/$V"
+          done
