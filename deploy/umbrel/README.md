@@ -93,5 +93,3 @@ In the order they would bite:
 - An icon and gallery screenshots (designer work, at submission).
 - Replace the settings-file step with a first-open form — the guide calls the SSH
   edit the roughest edge, and it is.
-- The family-invite flow in the app, so a second household member does not need
-  the command line.

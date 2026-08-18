@@ -6,7 +6,7 @@ your mailbox stays the source of truth, and you can stop using ohmail at any
 time without moving anything. Running it yourself means the organizing happens
 on a machine you own, and your mail credentials sit on hardware you control.
 
-Self-hosting is built for one household: you, your partner, your family.
+Self-hosting is built for one household: you, your partner, the people you live with.
 It is not a multi-tenant hosting kit, and nothing in it meters or bills.
 
 ## What you need

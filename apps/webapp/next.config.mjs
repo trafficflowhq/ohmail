@@ -269,6 +269,12 @@ export const OWN_PATHS = Object.freeze([
   // the setup token in a form, so middleware serves it as a credential page (strict CSP,
   // no-referrer, no-store), exactly like `/login`.
   "/setup",
+  // `/join/invite` is the invite landing (`app/(product)/join/invite`) — the page the link
+  // from Settings → Invites opens, self-host only (the page compiles to a 404 on the
+  // managed flavor). The pairing token rides the URL FRAGMENT, which never reaches a server,
+  // a log or a Referer; middleware serves the path as a credential page because the nonce CSP
+  // is what stops injected inline script from reading `location.hash`.
+  "/join/invite",
   // `/demo` is the real mail client in demo mode (`app/(product)/demo/page.tsx`), framed by
   // the landing. It is a path this deployment answers, so it belongs here — but it is served
   // with its own static CSP header (`frame-ancestors 'self'`) and runs no edge function, so

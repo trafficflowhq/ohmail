@@ -222,7 +222,12 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       pathname === "/link-desktop" ||
       // `/setup` takes the self-host first-run token in a FORM — a credential page exactly as
       // `/login` is, so it gets the strict nonce policy plus no-referrer/no-store.
-      pathname === "/setup"
+      pathname === "/setup" ||
+      // `/join/invite` carries an invite's pairing token in its FRAGMENT. A fragment
+      // never reaches this middleware, a log or a `Referer` on its own — the nonce CSP is the
+      // header that matters here, because injected inline script reading `location.hash` is
+      // the exposure that remains; the other two cost nothing and keep the class uniform.
+      pathname === "/join/invite"
     ) {
       return credentialPage(request);
     }
@@ -359,7 +364,7 @@ function withPathname(request: NextRequest, pathname: string): URL {
  */
 export const config = {
   matcher: [
-    "/", "/mailbox", "/resume", "/login", "/join", "/setup", "/verify-email", "/link-desktop",
-    "/privacy", "/imprint", "/subprocessors",
+    "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
+    "/link-desktop", "/privacy", "/imprint", "/subprocessors",
   ],
 };

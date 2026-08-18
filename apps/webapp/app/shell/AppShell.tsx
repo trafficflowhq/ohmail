@@ -573,6 +573,7 @@ export function AppShell({
   accountSection,
   mailboxSection,
   billingSection,
+  invitesSection,
   securitySection,
   aboutSection,
   desktopSection,
@@ -645,6 +646,13 @@ export function AppShell({
    * ordinary forwarded calls and only checkout and the portal are a door out.
    */
   billingSection?: ReactNode;
+  /**
+   * The host's Settings → Invites pane — who else may join a self-host server. Same seam as
+   * {@link securitySection}; only the self-host Cloud client supplies one (the mint routes
+   * exist on that composition alone), so managed tabs and every desktop door pass nothing
+   * and the nav entry does not exist there. See `views/SettingsView.tsx`.
+   */
+  invitesSection?: ReactNode;
   securitySection?: ReactNode;
   /**
    * The BODY of the (i) panel for a live account. Same seam again, and it has to be: the
@@ -866,6 +874,7 @@ export function AppShell({
             accountSection={accountSection}
             mailboxSection={mailboxSection}
             billingSection={billingSection}
+            invitesSection={invitesSection}
             securitySection={securitySection}
             aboutSection={aboutSection}
             desktopSection={desktopSection}
@@ -920,12 +929,13 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, suggestWire, aiCredits, onUnread }: {
+function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, suggestWire, aiCredits, onUnread }: {
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
   billingSection?: ReactNode;
+  invitesSection?: ReactNode;
   securitySection?: ReactNode;
   aboutSection?: ReactNode;
   desktopSection?: { label: string; node: ReactNode };
@@ -4999,6 +5009,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 /* Same demo rule again: Security is nothing but step-up ceremonies against a
                    session `?demo=1` does not have. */
                 securitySection={demo ? undefined : securitySection}
+                /* Same demo rule: every verb in the Invites pane is a step-up ceremony against a
+                   session `?demo=1` does not have, and the pane exists only where the self-host
+                   Cloud client wired it. */
+                invitesSection={demo ? undefined : invitesSection}
                 accountSection={demo ? undefined : accountSection}
                 /* NOT demo-gated, and that is deliberate — see `AppShell`'s prop. The desktop
                    shell runs this client in demo mode, so gating this the way the four panes

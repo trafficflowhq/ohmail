@@ -110,15 +110,19 @@ the Umbrel sits next to, say — add `TF_PROBE_ALLOW_PRIVATE=1` to
 `settings.env` and restart the app, then confirm the connection-security
 notice when adding the mailbox if that server has no TLS.
 
-> **[screenshot placeholder: the add-mailbox screen with a family Gmail
-> account filled in]**
+> **[screenshot placeholder: the add-mailbox screen with a household member's
+> Gmail account filled in]**
 
-## Your family
+## Your household
 
 Accounts on your server only ever arrive by invitation — there is no open
 signup, and the setup token above only exists while the server has zero
-users. The in-app flow for inviting the rest of the household is still
-arriving; until it lands, treat the install as yours alone.
+users. To bring in the rest of the household: **Settings → Invites → Make an
+invite link**, then let them scan the QR with their phone or send them the
+link. It works once, expires after seven days, and can be revoked from the
+same page if it goes astray. Whoever opens it sets their own password and
+gets their own account — their sign-in, their mail. Send invite links over
+a channel you trust: opening one is all it takes to claim the account.
 
 ## Backups on Umbrel
 

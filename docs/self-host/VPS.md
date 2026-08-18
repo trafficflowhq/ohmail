@@ -160,10 +160,23 @@ Plain facts about providers:
 ## 8. Your household
 
 The server never opens signup to strangers: the first account came from box
-control, and every later account is meant to arrive by invitation. The
-in-app flow for inviting family members is still arriving — until it lands,
-the server is honestly a one-person install unless you are comfortable
-minting invites against the API yourself.
+control, and every later account arrives by invitation. Inviting someone
+takes a minute and no command line:
+
+1. Open **Settings → Invites** and make an invite link — name who it is for
+   if you like.
+2. Hand the link over: let them scan the QR with their phone camera, or
+   copy the link and send it however you normally reach them. It works
+   once and expires after seven days.
+3. They open it, choose their email address, name and password, and the
+   same guided setup you went through carries them on — second factor,
+   recovery codes, their own mailbox.
+
+Each person gets their own account: their own sign-in, their own mail.
+The Invites page lists the invites still open and lets you revoke one that
+went astray — a revoked or expired link simply stops working, and you make
+a new one. Treat an invite link like a key to the house: send it over a
+channel you trust, because opening it is all it takes to claim the account.
 
 ## 9. Back it up now, not someday
 

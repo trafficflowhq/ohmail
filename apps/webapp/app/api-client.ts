@@ -549,7 +549,45 @@ export const auth = {
 
 // ── Pairing tokens (self-host servers only — `/hello` announces `features.pairing`) ───────
 
+/**
+ * One row of `GET /pair` — the caller's own mints, never the token itself (raw tokens exist
+ * exactly once, in the mint response; only their hash is at rest). `status` is the server's
+ * derivation, consumed > revoked > expired > live.
+ */
+export interface PairingTokenDTO {
+  id: string;
+  grant: "invite" | "device-pair";
+  label: string;
+  createdAt: string;
+  expiresAt: string;
+  consumedAt: string | null;
+  revokedAt: string | null;
+  status: "live" | "consumed" | "revoked" | "expired";
+}
+
 export const pair = {
+  /**
+   * `POST /pair` with the `invite` grant — the invite mint. Step-up gated (handing out a
+   * credential that opens the server is a ceremony), and the answer's `token` is the raw
+   * token's ONE appearance: the list below never carries it and nothing stores it. No
+   * `ttlSeconds` is sent, so the server's own invite default (seven days) applies — the pane's
+   * copy states that lifetime, and deriving both from one place is what keeps the sentence true.
+   */
+  mint: (b: { label?: string }) =>
+    api<{ id: string; token: string; grant: "invite"; label: string; expiresAt: string }>(
+      "/pair", { method: "POST", body: { grant: "invite", ...(b.label ? { label: b.label } : {}) } },
+    ),
+
+  /** The caller's own pairing tokens, newest first — metadata only, see {@link PairingTokenDTO}. */
+  list: () => api<{ items: PairingTokenDTO[] }>("/pair"),
+
+  /**
+   * Take back one live token. Step-up gated like the mint — but 404 for every miss (spent,
+   * expired, someone else's), which the pane treats as "already gone" rather than an error:
+   * the row it names is leaving the list either way.
+   */
+  revoke: (id: string) => api<void>(`/pair/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
   /**
    * `POST /pair/redeem` with the `invite` grant: a pairing token in, an email-bound invite code
    * out — the client's next move is `auth.register` with that code, which is the existing invite

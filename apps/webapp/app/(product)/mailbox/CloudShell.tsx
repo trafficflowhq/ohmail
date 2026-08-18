@@ -8,6 +8,7 @@ import { AboutSection } from "./AboutSection";
 import { AccountLocale } from "./AccountLocale";
 import { AiCreditNotice } from "./AiCreditNotice";
 import { BillingSection } from "./BillingSection";
+import { InvitesSection, useUserInvites } from "./InvitesSection";
 import { SecuritySection } from "./SecuritySection";
 import { AccountSection } from "./AccountSection";
 import { MailboxSection } from "./MailboxSection";
@@ -54,6 +55,14 @@ beginOAuthReturn();
  * explanation instead of a shell.
  */
 export function CloudShell({ demo }: { demo: boolean }) {
+  /**
+   * Does this deployment invite users? Two gates in one hook: the COMPILED flavor (the
+   * managed bundle's branch is a constant `false` — no `/hello` round trip is even paid) and
+   * the server's own `features.pairing` word. The pane node is built only when both hold, so
+   * on managed the Settings nav structurally cannot grow an Invites entry.
+   */
+  const userInvites = useUserInvites();
+
   const resolveOwner = useCallback(async (): Promise<string | null> => {
     try {
       const { user, scope } = await auth.session();
@@ -184,6 +193,9 @@ export function CloudShell({ demo }: { demo: boolean }) {
         securitySection={<SecuritySection />}
         mailboxSection={<MailboxSection />}
         billingSection={<BillingSection />}
+        /* SELF-HOST ONLY — see `userInvites` above. `undefined` (managed, an old server, the
+           answer still pending) means no nav entry, never an empty pane. */
+        invitesSection={userInvites ? <InvitesSection /> : undefined}
         aboutSection={<AboutSection />}
         /* The Screener's AI-allowance line. The same seam again — it reads
            `GET /billing/subscription`, which `app/shell` may not call — and a FUNCTION because

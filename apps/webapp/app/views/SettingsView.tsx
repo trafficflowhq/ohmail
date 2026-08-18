@@ -53,7 +53,7 @@ import { RulesView, type RuleOutcome } from "./RulesView";
 /* Exported so a caller that LINKS to a pane can name one — `AppShell`'s `openSettingsPane`, and
  * through it the Screener's "start a plan" offer. A string union rather than a free `string`:
  * `pane` selects a render branch, so a name nothing matches is an empty settings screen. */
-export type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "away" | "billing" | "tags" | "rules" | "about" | "security" | "account" | "desktop";
+export type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "away" | "billing" | "invites" | "tags" | "rules" | "about" | "security" | "account" | "desktop";
 
 /**
  * The notification channels, and why this list is here rather than in the fixtures.
@@ -362,7 +362,7 @@ function TagCreateRow({
  * branch, and a value from a URL that matched none of them would render an empty settings screen.
  */
 export const PANE_IDS: readonly PaneId[] = [
-  "general", "notifications", "mailboxes", "screener", "away", "billing", "tags", "rules",
+  "general", "notifications", "mailboxes", "screener", "away", "billing", "invites", "tags", "rules",
   "about", "security", "account", "desktop",
 ];
 
@@ -382,6 +382,7 @@ export function SettingsView({
   mailboxSection,
   seedSection,
   billingSection,
+  invitesSection,
   securitySection,
   aboutSection,
   autoSuggestSection,
@@ -481,6 +482,16 @@ export function SettingsView({
   seedSection?: { label: string; node: ReactNode };
   /** The Cloud client's Subscription pane — plan, the AI switch, and Stripe's portal. */
   billingSection?: ReactNode;
+  /**
+   * THE INVITES PANE — invite a user onto the server, list the open invites, revoke one.
+   * Self-host only, and the gate lives in the HOST, not here: the mint routes (`/pair*`) are
+   * mounted on the self-host composition alone, so `CloudShell` injects this node only on the
+   * self-host BUILD with `/hello` announcing `features.pairing`
+   * (`InvitesSection.useUserInvites`). The managed deployment and the desktop's doors pass
+   * nothing and get no nav entry — absent ⇒ withheld structurally, the same seam as
+   * {@link securitySection}.
+   */
+  invitesSection?: ReactNode;
   /**
    * The Cloud client's Security pane — recovery codes and the authenticator.
    *
@@ -697,6 +708,10 @@ export function SettingsView({
     // Account administration. Only where there is something to bill: Desktop is free and standalone,
     // and a Subscription pane there would offer to sell what the tier already gives away.
     ...(billingSection ? [["billing", t("billing")] as [PaneId, string]] : []),
+    // INVITES — who else may join this server. Opens the account-administration group there,
+    // exactly where Subscription sits on managed: both answer "who else is on this server /
+    // this plan". Present IFF the host wired it, which only the self-host Cloud client does.
+    ...(invitesSection ? [["invites", t("invites")] as [PaneId, string]] : []),
     // Only where there is an account to act on. Security before Account, and both after the panes
     // that organise mail: a destructive control belongs near the bottom, where a mis-click is not
     // one row away from a mail setting.
@@ -876,6 +891,9 @@ export function SettingsView({
           {pane === "mailboxes" ? mailboxSection : null}
 
           {pane === "billing" ? billingSection : null}
+
+          {/* INVITES — the node brings its own `SettingsSection`, like Security below. */}
+          {pane === "invites" ? invitesSection : null}
 
           {pane === "rules" && rules ? (
             <RulesView rules={rules.items} onRevoke={rules.onRevoke} onRetarget={rules.onRetarget} />
