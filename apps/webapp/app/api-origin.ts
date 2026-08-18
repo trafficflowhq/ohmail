@@ -76,3 +76,41 @@ export function resolveApiOrigin(raw: string | undefined | null): string | null 
   if (!ALLOWED_API_ORIGINS.includes(url.origin)) return null;
   return url.origin;
 }
+
+/**
+ * The SELF-HOST session gate's API origin (`OHMAIL_INTERNAL_API_ORIGIN`) — the api container by
+ * its in-network name, `http://api:8080` on the reference compose.
+ *
+ * A DIFFERENT resolver, on purpose, and reachable only from the self-host build: the middleware
+ * selects it behind the COMPILED flavor (`NEXT_PUBLIC_OHMAIL_FLAVOR`, inlined at build), so a
+ * managed deployment cannot read this variable at all — the dashboard-repoint attack the
+ * allow-list above exists for needs a variable the managed bundle looks at, and this is not one.
+ *
+ * Why no allow-list here: on an operator's box there is no list to compile — the value names a
+ * container on the operator's own compose network, chosen by the same person who sets
+ * `DATABASE_URL` one stanza up, with the same authority over the whole install. And why `http`
+ * on a non-loopback host is allowed: `api` is not loopback, the hop never leaves the compose
+ * network, and demanding TLS between two containers on one bridge would make every install
+ * carry an internal CA for a wire nobody else can see.
+ *
+ * The SHAPE checks stay exactly `resolveApiOrigin`'s, because they guard against the same
+ * mistakes regardless of trust: a path would be concatenated in front of `/auth/session`,
+ * credentials in the URL would ride on every request, and a value that does not parse is a
+ * config error to fail closed on. Failure is `null` — the gate then answers the landing, the
+ * page that owes nobody anything.
+ */
+export function resolveInternalApiOrigin(raw: string | undefined | null): string | null {
+  const value = (raw ?? "").trim();
+  if (value === "") return null;
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") return null;
+  if (url.username !== "" || url.password !== "") return null;
+  return url.origin;
+}

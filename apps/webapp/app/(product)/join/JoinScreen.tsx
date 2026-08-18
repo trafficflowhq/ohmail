@@ -70,6 +70,7 @@ import {
 import { providerById, type ProviderPreset } from "../../shell/providers";
 import { displayAddress } from "../../shell/idn";
 import { ProviderPicker } from "../../shell/ProviderPicker";
+import { SELF_HOST_BUILD } from "../../hello";
 
 type Step = "invite" | "account" | "sent" | "factor" | "codes" | "verify" | "plan" | "mailbox" | "done";
 
@@ -100,7 +101,28 @@ type Plan = (typeof PLANS)[number];
  * and an account opened with an operator bootstrap code.
  */
 const RAIL: Step[] = ["invite", "account", "factor", "codes", "verify", "plan", "mailbox"];
-const RAIL_OPEN: Step[] = RAIL.filter((s) => s !== "invite");
+
+/**
+ * The SELF-HOST journey has neither `verify` nor `plan`, because the server it runs against has
+ * neither surface — and both absences are the composition's, not this file's guess:
+ *
+ *  · no `plan` — the self-host route table carries no billing at all ("not refused: not built",
+ *    `routes/self-host.ts`), and the mailbox allowance is composed unmetered, so a plan step
+ *    would poll `GET /billing/subscription` into a 404 forever — the exact
+ *    discovered-absent-by-404-mid-ceremony failure `/hello` negotiation exists to prevent.
+ *  · no `verify` — the operator's account arrives VERIFIED (the ownerless setup token confers
+ *    it; box control proved the address's owner), and family accounts legitimately arrive
+ *    unverified on a box that may have no mailer, which is why the composition switches the
+ *    verified-address product gate OFF (`requireVerifiedForProduct: false`, obligation 4).
+ *    A step whose copy is "we need to know this address reaches you before you connect a
+ *    mailbox" would be false there: nothing on the server refuses either next step.
+ *
+ * `SELF_HOST_BUILD` is compile-time (see `app/hello.ts`), so the managed bundle carries the
+ * managed rail untouched.
+ */
+const RAIL_SELF_HOST: Step[] = RAIL.filter((s) => s !== "verify" && s !== "plan");
+const RAIL_BASE: Step[] = SELF_HOST_BUILD ? RAIL_SELF_HOST : RAIL;
+const RAIL_OPEN: Step[] = RAIL_BASE.filter((s) => s !== "invite");
 
 /**
  * How long to wait for Stripe's `checkout.session.completed` webhook after Checkout returns.
@@ -223,6 +245,17 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       // because `POST /auth/2fa/recovery-codes` deletes the previous set on every call and
       // would silently invalidate what they wrote down.
       if (!s.user.twofaEnrolled.recoveryCodes) { setStep("codes"); return; }
+
+      // THE SELF-HOST JOURNEY SKIPS VERIFY AND PLAN — see RAIL_SELF_HOST for why both absences
+      // are the server composition's own. From codes the next question is the mailbox, asked of
+      // the server exactly like the managed path below asks it.
+      if (SELF_HOST_BUILD) {
+        const { items } = await mailboxes.list();
+        if (items.length === 0) { setStep("mailbox"); return; }
+        setConnected(items[0]!);
+        setStep("done");
+        return;
+      }
 
       // VERIFY BEFORE PLAN, derived from the server exactly like every other step.
       // `withVerifiedEmail` answers 403 `email_unverified` on both `POST /billing/checkout`
@@ -504,7 +537,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   }
 
   return (
-    <Shell title={t(`step_${step}_title`)} step={step} rail={needsInvite ? RAIL : RAIL_OPEN}>
+    <Shell title={t(`step_${step}_title`)} step={step} rail={needsInvite ? RAIL_BASE : RAIL_OPEN}>
       {error && <p className="join-error" role="alert">{error}</p>}
 
       {step === "invite" && (
@@ -687,7 +720,11 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
                 <span>{t("codesConfirm")}</span>
               </label>
               <div className="join-actions">
-                <Button variant="primary" disabled={!codesSaved} onClick={() => setStep("plan")}>
+                {/* Self-host has no plan to choose — the mailbox is the next real question. */}
+                <Button
+                  variant="primary" disabled={!codesSaved}
+                  onClick={() => setStep(SELF_HOST_BUILD ? "mailbox" : "plan")}
+                >
                   {t("continue")}
                 </Button>
               </div>
@@ -846,7 +883,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   );
 }
 
-function Shell({ title, step, rail = RAIL, children }: {
+function Shell({ title, step, rail = RAIL_BASE, children }: {
   title: string; step?: Step; rail?: Step[]; children: React.ReactNode;
 }) {
   const t = useTranslations("join");

@@ -108,6 +108,16 @@ export function selfHostFlavor(env) {
 /** The variable Next inlines into the client bundle. DERIVED — never set by hand. */
 export const API_BASE_VAR = "NEXT_PUBLIC_API_BASE";
 
+/**
+ * The flavor's INLINED companion — set to `"selfhost"` by the flavor branch, absent otherwise,
+ * and never set by hand: it is derived from {@link FLAVOR_VAR} in exactly one place (the `env`
+ * block below) so the compiled flavor and the build arm cannot disagree. `app/hello.ts` and
+ * `middleware.ts` read it as `process.env.NEXT_PUBLIC_OHMAIL_FLAVOR`, which Next replaces at
+ * build time — a compiled branch, not a runtime lookup (the distinction the TF_API_ORIGIN
+ * incident in `app/api-origin.ts` is about).
+ */
+export const PUBLIC_FLAVOR_VAR = "NEXT_PUBLIC_OHMAIL_FLAVOR";
+
 /** The path the browser sees. Must match the `API_PREFIX` `apps/api-vercel` strips. */
 export const API_BASE = "/api";
 
@@ -253,6 +263,12 @@ export const OWN_PATHS = Object.freeze([
   // to `/`, so it never appears in the address bar — but it is a path this deployment
   // answers, so it belongs here or the matcher/OWN_PATHS drift test fails (correctly).
   "/mailbox", "/resume", "/login", "/join", "/verify-email", "/link-desktop",
+  // `/setup` is the self-host FIRST-RUN ceremony (`app/(product)/setup`). Mounted on every
+  // deployment — one route tree, one bundle — and gated by the SERVER: the form renders only
+  // while `GET /hello` answers `needsSetup: true`, which the managed API never does. It takes
+  // the setup token in a form, so middleware serves it as a credential page (strict CSP,
+  // no-referrer, no-store), exactly like `/login`.
+  "/setup",
   // `/demo` is the real mail client in demo mode (`app/(product)/demo/page.tsx`), framed by
   // the landing. It is a path this deployment answers, so it belongs here — but it is served
   // with its own static CSP header (`frame-ancestors 'self'`) and runs no edge function, so
@@ -604,6 +620,13 @@ const nextConfig = {
     // Armed by EITHER arming path: the managed rewrite origin, or the self-host flavor whose
     // proxy serves `/api` without a rewrite here. See `selfHostFlavor`.
     ...(origin || selfhost ? { [API_BASE_VAR]: API_BASE } : {}),
+    // The flavor, inlined for the two consumers that must branch on it at COMPILE time: the
+    // middleware's session gate (which variable may name the API, and whether an anonymous `/`
+    // asks the server about first-run) and `app/hello.ts` (whether product screens consult
+    // `/hello` at all). Inlining is the security property, not a convenience — on the managed
+    // build the constant is absent and every self-host branch is unreachable regardless of the
+    // runtime environment, which is the same reasoning as the compiled rewrite allow-list.
+    ...(selfhost ? { [PUBLIC_FLAVOR_VAR]: "selfhost" } : {}),
     [BUILD_VAR]: buildIdentity(process.env),
     [VERSION_VAR]: appVersion(),
   },

@@ -42,6 +42,7 @@ import {
   ApiError, apiConfigured, assertPasskey, auth, messageOf, webauthnAvailable,
   type TwofaChallenge,
 } from "../../api-client";
+import { SELF_HOST_BUILD, serverHello } from "../../hello";
 
 type Stage = "password" | "twofa";
 
@@ -106,6 +107,25 @@ export function LoginScreen() {
       } catch {
         /* no session, or unreachable — the form below is the right answer */
       }
+    })();
+    return () => { cancelled = true; };
+  }, [configured, router]);
+
+  /**
+   * A FRESH SELF-HOST SERVER HAS NOBODY TO SIGN IN. Self-host builds only (compile-time —
+   * `SELF_HOST_BUILD` is false on the managed bundle, so this effect costs it nothing): when
+   * `/hello` reports `needsSetup: true` there are zero accounts and every credential this form
+   * could take would be refused, so the honest screen is the first-run ceremony at `/setup`.
+   * The answer is the server's, asked fresh on every mount — `needsSetup` flips false the
+   * moment the first account exists, after which this form is the front door it always was.
+   * Any failure to learn the state falls through to the form, which is never wrong.
+   */
+  useEffect(() => {
+    if (!SELF_HOST_BUILD || !configured) return;
+    let cancelled = false;
+    void (async () => {
+      const hello = await serverHello();
+      if (!cancelled && hello?.needsSetup === true) router.replace("/setup");
     })();
     return () => { cancelled = true; };
   }, [configured, router]);
@@ -233,8 +253,12 @@ export function LoginScreen() {
                 before the account's methods are known, and for a TOTP account it was a promise
                 the very next step broke. It renders in the webauthn branch below, where the
                 ceremony it describes is the one on screen. */}
+            {/* Claims-are-contracts: "you can sign up — an invite code is not required" is the
+                MANAGED deployment's truth. A self-host server never opens signup — accounts
+                arrive by invitation from whoever runs the box — so that build says so. */}
             <p className="login-invite-note">
-              {t("inviteOnly")} <Link href="/join">{t("haveInvite")}</Link>
+              {SELF_HOST_BUILD ? t("inviteOnlySelfhost") : t("inviteOnly")}{" "}
+              <Link href="/join">{t("haveInvite")}</Link>
             </p>
           </form>
         ) : (

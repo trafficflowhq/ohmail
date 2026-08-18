@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { resolveApiOrigin } from "./app/api-origin";
+import { resolveApiOrigin, resolveInternalApiOrigin } from "./app/api-origin";
 import { canonicalRedirect } from "./app/canonical-host";
 import { newNonce, nonceCsp } from "./app/security-headers";
 import { APP_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, resolveSurface } from "./app/session-gate";
@@ -83,7 +83,51 @@ import { APP_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, resolveSurface 
  * fails CLOSED: an unrecognised value is `null`, which `resolveSurface` already treats as
  * "nothing here can validate a token" and answers with the landing.
  */
-const API_ORIGIN = resolveApiOrigin(process.env.TF_API_ORIGIN);
+
+/**
+ * IS THIS THE SELF-HOST BUILD? Compiled, not read: `NEXT_PUBLIC_OHMAIL_FLAVOR` is inlined by the
+ * build's flavor arm (`next.config.mjs`), so on the managed deployment this constant is `false`
+ * in the emitted middleware and everything behind it — the internal-origin variable, the
+ * first-run redirect — is unreachable no matter what the runtime environment says. That is the
+ * property the TF_API_ORIGIN incident above demands: no ENVIRONMENT EDIT may repoint the gate's
+ * fetch on the managed deployment. On an operator's own install the runtime variable
+ * (`OHMAIL_INTERNAL_API_ORIGIN`, the api container's in-network name) is set by the operator in
+ * the same compose file as the database credential, which is the self-host trust model exactly.
+ */
+const SELF_HOST_BUILD = process.env.NEXT_PUBLIC_OHMAIL_FLAVOR === "selfhost";
+
+const API_ORIGIN = SELF_HOST_BUILD
+  ? resolveInternalApiOrigin(process.env.OHMAIL_INTERNAL_API_ORIGIN)
+  : resolveApiOrigin(process.env.TF_API_ORIGIN);
+
+/**
+ * How long the FIRST-RUN probe may hold up an anonymous `/`. Shorter than the session gate's
+ * budget: the probe is one same-network hop on a self-host box, and a slow answer means "serve
+ * the landing", which is never wrong.
+ */
+const NEEDS_SETUP_TIMEOUT_MS = 1_000;
+
+/**
+ * Does the self-host server still need its first account? Asked of the server, never guessed:
+ * `needsSetup` is a database fact (users == 0) behind `/hello`, `Cache-Control: no-store`.
+ * Every failure — timeout, refusal, a body that is not the contract — answers `false`, because
+ * the redirect this feeds must only ever fire on a server that SAID it is fresh.
+ */
+async function serverNeedsSetup(apiOrigin: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${apiOrigin}/hello`, {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+      redirect: "manual",
+      signal: AbortSignal.timeout(NEEDS_SETUP_TIMEOUT_MS),
+    });
+    if (res.status !== 200) return false;
+    const body = (await res.json()) as { product?: unknown; needsSetup?: unknown };
+    return body?.product === "ohmail" && body?.needsSetup === true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * A PER-INSTANCE BURST CAP on the one thing an anonymous request can make this origin
@@ -175,7 +219,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       // API), no cache may hold a document with a live handoff code rendered into it, and the
       // strict nonce policy is what stops an injected inline script from reading the code out
       // of the DOM the moment it appears.
-      pathname === "/link-desktop"
+      pathname === "/link-desktop" ||
+      // `/setup` takes the self-host first-run token in a FORM — a credential page exactly as
+      // `/login` is, so it gets the strict nonce policy plus no-referrer/no-store.
+      pathname === "/setup"
     ) {
       return credentialPage(request);
     }
@@ -183,6 +230,25 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   }
 
   const token = request.cookies.get(SESSION_COOKIE)?.value ?? null;
+
+  // THE FIRST-RUN DOOR, self-host builds only (SELF_HOST_BUILD is compiled; this branch does
+  // not exist in the managed middleware). "After `docker compose up`, the operator hits the
+  // server once and gets a guided ceremony": an anonymous visit to `/` on a server that still
+  // needs its first account is that moment, and the landing would be the wrong greeting. Only
+  // ANONYMOUS requests ask — a browser holding any cookie has standing the fresh-server state
+  // cannot explain, and the ordinary gate below sorts it out. The probe is one same-network
+  // hop; on failure the landing stands, and once the first account exists `needsSetup` is
+  // false forever and this costs exactly that one probe per anonymous visit.
+  if (SELF_HOST_BUILD && API_ORIGIN !== null && token === null && !request.cookies.has(RESUME_COOKIE)) {
+    if (await serverNeedsSetup(API_ORIGIN)) {
+      const setup = request.nextUrl.clone();
+      setup.pathname = "/setup";
+      // 307, never 308: the answer is temporary by definition — it flips with the first account.
+      const response = NextResponse.redirect(setup, 307);
+      response.headers.set("Cache-Control", "no-store");
+      return response;
+    }
+  }
 
   // A cookie-bearing request is the only one that can cost anything, so it is the only one
   // the burst cap looks at — an anonymous flood already costs a static page and no fetch.
@@ -293,7 +359,7 @@ function withPathname(request: NextRequest, pathname: string): URL {
  */
 export const config = {
   matcher: [
-    "/", "/mailbox", "/resume", "/login", "/join", "/verify-email", "/link-desktop",
+    "/", "/mailbox", "/resume", "/login", "/join", "/setup", "/verify-email", "/link-desktop",
     "/privacy", "/imprint", "/subprocessors",
   ],
 };

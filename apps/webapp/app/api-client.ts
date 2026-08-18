@@ -547,6 +547,27 @@ export const auth = {
     }),
 };
 
+// ── Pairing tokens (self-host servers only — `/hello` announces `features.pairing`) ───────
+
+export const pair = {
+  /**
+   * `POST /pair/redeem` with the `invite` grant: a pairing token in, an email-bound invite code
+   * out — the client's next move is `auth.register` with that code, which is the existing invite
+   * path unchanged. Anonymous by design (the redeemer has no session yet; the token IS the
+   * credential), so there is no cookie and no CSRF pair on this call — `api()` sends the CSRF
+   * header only when the cookie exists, which it does not at first-run.
+   *
+   * The one caller today is the self-host FIRST-RUN page, redeeming the setup token the server
+   * printed at boot. Whether the resulting account starts email-verified is decided by the
+   * SERVER from the consumed token's own record (ownerless first-boot token: yes), never by
+   * anything sent here — see `redeemInviteGrant` in packages/services.
+   */
+  redeemInvite: (b: { token: string; email: string }) =>
+    api<{ grant: "invite"; invite: { code: string; email: string; expiresAt: string } }>(
+      "/pair/redeem", { method: "POST", body: { grant: "invite", token: b.token, email: b.email } },
+    ),
+};
+
 // ── Mailboxes ────────────────────────────────────────────────────────────────────────────
 
 export interface CreateMailboxBody {

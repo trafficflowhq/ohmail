@@ -53,14 +53,12 @@ Plainly, so you can decide with open eyes:
   arriving.
 - **Start9 packaging is planned.** [`deploy/start9/`](../../deploy/start9/)
   records the intended shape; there is no installable package yet.
-- **The first account takes one copy-paste command.** The server prints a
-  one-time setup token to its log on first boot; today you trade it for an
-  invite code with a single `curl`, then finish in the browser. A setup page
-  that takes the token directly — no terminal — is on its way.
-- **Large attachment uploads from the browser are not wired up yet** on
-  self-host. Attachments below the staging threshold ride along with the
-  send and work; the browser upload path for large ones is being routed
-  through the stack's own origin and arrives with the first-run polish.
+- **The first account is a guided page.** The server prints a one-time setup
+  token to its log on first boot; open the install in a browser and it
+  greets you with the setup page — paste the token, choose your sign-in, and
+  it walks you through the second factor, recovery codes and the first
+  mailbox. The one terminal command left is reading the token out of the
+  log.
 
 ## The shape of the install
 

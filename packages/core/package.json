@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./mail": "./src/mail.ts",
     "./ics": "./src/ics.ts",
+    "./adapters/http-host": "./src/adapters/http-host.ts",
     "./adapters/imap": "./src/adapters/imap.ts",
     "./adapters/organizer-lease": "./src/adapters/organizer-lease.ts",
     "./adapters/organizer-profile": "./src/adapters/organizer-profile.ts",

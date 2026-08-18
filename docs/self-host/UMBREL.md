@@ -90,12 +90,12 @@ block (`docker logs --tail 60 ohmail-server_api_1`).
 > **[screenshot placeholder: the FIRST-RUN SETUP block in the Umbrel log
 > viewer]**
 
-Then trade the token for an invite code and create your account exactly as
-the VPS guide describes — the ceremony is identical from here:
-[VPS.md, step 6](./VPS.md#6-create-the-first-account). In short: one `curl`
-to `/pair/redeem` with the token and your email address, then finish at
-`https://mail.yourfamily.example/join` in a browser. A setup page that takes
-the token directly — no terminal — is on its way.
+Then open `https://mail.yourfamily.example` in a browser. A fresh server
+greets you with its setup page (also directly at `/setup`): paste the token,
+choose your email address, name and password, and the page creates the first
+account and walks straight on — second factor, recovery codes, first
+mailbox. The ceremony is identical to the VPS guide's:
+[VPS.md, step 6](./VPS.md#6-create-the-first-account).
 
 ## Connecting your first mailbox
 

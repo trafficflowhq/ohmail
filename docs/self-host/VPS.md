@@ -132,21 +132,15 @@ token costs nothing. After a restart the retired block is still in the log
 above the new one — read the **newest** block, most conveniently with
 `docker compose logs api | tail -40`.
 
-Today, one command trades the token for an invite code bound to your email
-address (a setup page that takes the token directly is on its way — this
-command is the interim):
+Now open `https://mail.example.com` in a browser. A fresh server greets you
+with its setup page ("Set up your ohmail server" — it is also directly at
+`/setup`): paste the token, choose your email address, name and password,
+and the page creates the first account and walks straight on — a passkey or
+an authenticator app, your recovery codes, then your first mailbox. Every
+account on the server has a second factor, including yours.
 
-```sh
-curl -sS -X POST https://mail.example.com/pair/redeem \
-  -H 'content-type: application/json' \
-  -d '{"grant":"invite","token":"PASTE-THE-TOKEN-HERE","email":"you@example.com"}'
-```
-
-The answer contains an invite code. Now open
-`https://mail.example.com/join` in a browser and walk the signup: enter the
-invite code with the **same email address**, choose a password, and set up a
-passkey or an authenticator app when asked — every account on the server has
-a second factor, including yours.
+The setup page only exists while the server has no accounts; once yours is
+created, the address serves the ordinary sign-in.
 
 ## 7. Connect your first mailbox
 
