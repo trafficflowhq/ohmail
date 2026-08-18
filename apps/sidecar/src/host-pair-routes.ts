@@ -1,10 +1,11 @@
-import { errorResponse, jsonResponse, serviceContext, type Route } from "@trafficflow/api/local";
+import { errorResponse, jsonResponse, serviceContext, type ApiDeps, type Route } from "@trafficflow/api/local";
 import {
-  mintPairingToken, listPairingTokens, revokePairingToken, ServiceError,
+  mintPairingToken, listPairingTokens, revokePairingToken, ServiceError, type SessionLifecycle,
 } from "@trafficflow/services/auth";
 
 /**
- * THE WINDOW'S OWN PAIRING SURFACE — mint/list/revoke on the STDIO door, and nowhere else.
+ * THE WINDOW'S OWN PAIRING SURFACE — token mint/list/revoke AND the device list/take-back, on
+ * the STDIO door, and nowhere else.
  *
  * Defined here, in the engine, rather than in the shared route tables — the same structural
  * argument as `ai-routes.ts`: mounting is what makes "this door only" a property of the module
@@ -37,7 +38,28 @@ import {
  * The wire shapes match the shared ceremony exactly (`POST /pair` → the minted token's one
  * appearance; `GET /pair` → the caller's own rows; `DELETE /pair/:id` → 204 or one 404 for
  * every kind of miss), so the window's Devices pane speaks one vocabulary on either door.
+ *
+ * ── AND THE TAKE-BACK LIVES HERE TOO, BECAUSE THE MINT DOES ─────────────────────────────────
+ *
+ * `GET /devices` / `DELETE /devices/:id`, same paths as the shared surface, mounted with the
+ * mint and under the same arm. They cannot be the shared `deviceRoutes` objects: those carry
+ * the step-up gate, which is right on every surface where a second factor exists and is the
+ * boot-stamp decay defect here — the window would lose the ability to revoke a pairing five
+ * minutes after launch, leaving a paired credential with NO take-back path. That is the one
+ * composition that makes offering a pairing unsafe (the revocation path is the reason pairing
+ * is safe to offer at all), so the revoke passes the service's explicit step-up opt-out with
+ * the machine-login argument, and the HOST door's revoke keeps the real gate — a paired phone
+ * still cannot sign out other devices.
  */
+
+/** The session lifecycle from the bag; a misconfigured bag is a clean 500, never a TypeError. */
+function lifecycle(deps: ApiDeps): SessionLifecycle {
+  const svc = deps.services?.auth;
+  if (!svc || typeof svc.listDevices !== "function") {
+    throw new ServiceError("internal", 500, "auth service not configured");
+  }
+  return svc;
+}
 
 /** A JSON body as a plain object — `pair.ts`'s coercion, for the same validation_failed reason. */
 async function readObjectBody(req: Request): Promise<Record<string, unknown>> {
@@ -94,6 +116,26 @@ export const hostPairRoutes: Route[] = [
       const revoked = await revokePairingToken(serviceContext(deps, req), params.id!);
       // One answer for every miss (spent, expired, unknown) — the shared revoke's rule.
       if (!revoked) throw new ServiceError("not_found", 404, "no live pairing token of yours has this id");
+      return new Response(null, { status: 204 });
+    },
+  },
+  {
+    method: "GET",
+    pattern: "/devices",
+    cost: "read",
+    handler: async (req, deps) =>
+      jsonResponse(await lifecycle(deps).listDevices(serviceContext(deps, req)), { status: 200 }),
+  },
+  {
+    // The take-back — see the header. `stepUp: false` on the route AND the explicit opt-out in
+    // the service call, both carrying the same machine-login argument; the shared surface keeps
+    // both gates on every other door.
+    method: "DELETE",
+    pattern: "/devices/:id",
+    cost: "ceremony",
+    options: { stepUp: false },
+    handler: async (req, deps, params) => {
+      await lifecycle(deps).revokeDevice(serviceContext(deps, req), params.id!, { requireStepUp: false });
       return new Response(null, { status: 204 });
     },
   },

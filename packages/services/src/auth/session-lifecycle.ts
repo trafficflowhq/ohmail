@@ -85,6 +85,14 @@ export class SessionLifecycle {
     const db = asTx(ctx);
     const now = ctx.now();
     if (b.allDevices) {
+      // MASS LOGOUT IS DEVICE REVOCATION IN EFFECT, so it takes device revocation's gate.
+      // Without this, any full session could sign out EVERY session and refresh family of the
+      // user — and on the desktop-host door that meant a paired bearer, whose NULL factor stamp
+      // exists precisely so it cannot revoke devices, could kill the launch session and every
+      // other paired device in one request. The caller's OWN sign-out (the arm below) stays
+      // ungated: taking back your own credential must never be hard, and it can only reduce
+      // risk. `allDevices` reduces EVERYBODY's — which is the same act `revokeDevice` gates.
+      await this.requireStepUp(ctx);
       await db.update(sessions).set({ revokedAt: now })
         .where(and(eq(sessions.userId, ctx.userId), isNull(sessions.revokedAt)));
       await db.update(refreshTokens).set({ revokedAt: now })
@@ -245,9 +253,20 @@ export class SessionLifecycle {
     return { items: [], nextCursor: null };
   }
 
-  async revokeDevice(ctx: ServiceContext, deviceId: string): Promise<void> {
+  /**
+   * `opts.requireStepUp` — only the exact boolean `false` skips the gate (an absent value must
+   * never relax it), and exactly one caller passes it: the desktop's own stdio door, where the
+   * machine's login IS the step-up (the per-launch bearer never leaves the shell) and where the
+   * launch session's boot-time factor stamp would otherwise refuse every revocation from five
+   * minutes after launch — leaving a paired credential with NO take-back path, which is the one
+   * thing that makes offering a pairing unsafe. The hosted route (`DELETE /devices/:id`) passes
+   * nothing and keeps the real gate.
+   */
+  async revokeDevice(
+    ctx: ServiceContext, deviceId: string, opts: { requireStepUp?: boolean } = {},
+  ): Promise<void> {
     const userId = this.requireUser(ctx);
-    await this.requireStepUp(ctx);
+    if (opts.requireStepUp !== false) await this.requireStepUp(ctx);
     const db = asTx(ctx);
     const rows = await db.select().from(sessions)
       .where(and(eq(sessions.userId, userId), eq(sessions.deviceId, deviceId), isNull(sessions.revokedAt)));

@@ -54,7 +54,9 @@ import { pairRedeemRoutes } from "./pair.js";
  *    so it answers `validation_failed` — a refusal the redeemer can act on, not a 500 about a
  *    table this store does not have.
  *  · `POST /auth/refresh` + `POST /auth/logout` — the paired session's own lifecycle: the
- *    bearer pair rotates (with reuse detection) and signs itself out.
+ *    bearer pair rotates (with reuse detection) and signs ITSELF out. The `allDevices` arm is
+ *    step-up-gated in the service — mass logout is device revocation in effect — so a paired
+ *    session cannot sign the window or its sibling devices out either.
  *  · `GET /devices` / `DELETE /devices/:id` / `GET /auth/audit` — what is paired, and the
  *    take-back. The revoke keeps its step-up gate, which a just-paired session's NULL factor
  *    stamp fails closed: a credential that may have crossed a room on paper cannot sign other

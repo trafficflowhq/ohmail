@@ -824,6 +824,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * install has a verified model, same as the stdio door. `allowCookieAuth: false` rides in
      * from `depsFor` — the door NEVER mints, reads or clears a cookie, and the API package's
      * zero-Set-Cookie census sweeps the whole table on exactly that flag.
+     *
+     * A CLAIM FOR THE LISTENER SLICE: `authConfig` also rides in from `depsFor`, and its origin
+     * is `http://localhost` — so an Origin-carrying mutation from a real phone browser (whose
+     * origin will be the machine's tailnet name) would be refused by `withRequestGuard` as
+     * cross-site. Correct today (no socket exists and nothing browser-shaped can reach this),
+     * and the listener slice MUST thread the served origin into this config when it binds the
+     * door, or every pairing redemption from a phone dies at the guard.
      */
     const depsForHost = (): ApiDeps => ({
       ...depsFor(),
