@@ -186,6 +186,14 @@ export const ALLOWED_FIELDS: readonly string[] = [
   "dropped", "unexplained", "examined", "resolved", "rerouted", "pruned", "count", "more",
   "sample", "claims", "threadsCreated", "contactsImported", "sentRecipients", "truncated",
   "maxPages", "healthPort", "signal",
+  // ── The desktop host door's loopback listener (`host_listening`), added WITH the call site ──
+  //
+  // The port the engine bound on 127.0.0.1 — an integer the shell itself configured and passes
+  // at spawn, so the line tells it nothing it does not already know; it exists to correlate a
+  // bind with the `tailscale serve` target. Never an address, never an origin: the served
+  // MagicDNS name carries the machine and tailnet names, which is exactly the identifying
+  // signal this census keeps off a log line.
+  "port",
   // ── The local engine's per-drain timing (`sync_drain`), added WITH the call site ──
   //
   // `cycles` is the inner-cycle count of one drain; `totalMs` and `slowestMs` are wall-clock

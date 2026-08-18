@@ -40,6 +40,10 @@ import {
 // for the exact in/out list and the obligations it puts on this composition root.
 import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
 import { hostPairRoutes } from "./host-pair-routes.js";
+// The host door's knobs, resolved ONCE (`resolveHostConfig` — pure, never throws, degrades with
+// a surfaced reason), and the door's own send-surface ceiling. See `host-listener.ts`'s header
+// for the whole arrangement; the listener itself is `main.ts`'s to start.
+import { HOST_SEND_MAX_TOTAL_BYTES, resolveHostConfig, type HostState } from "./host-listener.js";
 // ── THE ONE PIPELINE ────────────────────────────────────────────────────────────────────────
 // `runSyncCycle` is imported, never reimplemented. There is ONE pipeline implementation and both
 // the desktop engine and the hosted service run it: two engines diverge, and divergence here means
@@ -201,15 +205,37 @@ export interface SidecarConfig {
    * pairing mint (`hostPairRoutes` — how the window hands a phone its credential), `/hello` on
    * the stdio door says `pairing: true` so the window can offer the ceremony, and
    * {@link Sidecar.handleHost} exists — the desktop-host door's `Request → Response`, which
-   * the loopback listener (the next slice) binds and `tailscale serve` publishes.
+   * the loopback listener (`host-listener.ts`, started by `main.ts`) binds and
+   * `tailscale serve` publishes.
    *
    * ONLY the exact boolean `true` arms it. Absent — every install that has never heard of host
    * mode, which is every install today — is byte-identical to the pre-host build: no extra
    * routes, no second door, `pairing: false`. An absent config value must never select the
    * dangerous branch; the disarmed composition is pinned by test in both directions. The shell
-   * wires this from its host-mode ceremony in a later slice; nothing sets it yet.
+   * wires this from its host-mode ceremony (a following change); nothing sets it yet.
    */
   hostMode?: boolean;
+  /**
+   * THE SERVED ORIGIN — `https://<machine>.<tailnet>.ts.net`, the thing `tailscale serve`
+   * publishes and a phone's browser therefore SENDS as `Origin` on every mutation. Threaded into
+   * the host door's request-guard allow-list, and nowhere else: the stdio door's own auth config
+   * is untouched. Without it, armed, the door still exists for the window and for tests driving
+   * `handleHost` directly, but the LISTENER refuses to start — a socket whose guard allow-lists
+   * only `http://localhost` would refuse every real browser mutation as cross-site.
+   *
+   * Validated at construction by the same `makeAuthConfig`/`assertOriginConfig` every other door
+   * boots through (https, or http on loopback only; one bare absolute origin; a DNS-named host —
+   * the MagicDNS name, never the tailnet IP). A value that fails turns host mode OFF for the
+   * launch with a surfaced reason (`host_config_invalid`); it can never kill the stdio door.
+   */
+  hostOrigin?: string;
+  /**
+   * The loopback port the host door's listener binds — `127.0.0.1:<port>`, the target of the
+   * shell's `tailscale serve` invocation. An integer in 1..65535; anything else (port 0
+   * included — the serve target must not move between launches) turns host mode OFF for the
+   * launch with the same surfaced reason as a bad origin. Absent ⇒ no listener.
+   */
+  hostPort?: number;
 }
 
 /**
@@ -243,12 +269,21 @@ export interface Sidecar {
    * THE DESKTOP-HOST DOOR — `Request → Response` over `desktopHostRoutes`, the surface a paired
    * phone reaches. Present IFF host mode is armed; a disarmed install has no second door at all,
    * not a refusing one. It serves the same engine, the same store and the same fresh-deps
-   * discipline as {@link handle}, with two composition differences that ARE the door: `/hello`
-   * answers `flavor: "desktop-host"`, and the window-only surfaces (`/local/*`, the pairing
-   * mint) are structurally absent. No socket exists in this slice — the loopback listener that
-   * binds this is the next one.
+   * discipline as {@link handle}, with three composition differences that ARE the door:
+   * `/hello` answers `flavor: "desktop-host"`, the window-only surfaces (`/local/*`, the
+   * pairing mint) are structurally absent, and the request guard allow-lists the SERVED origin
+   * (`SidecarConfig.hostOrigin`) instead of the stdio door's loopback one — a phone's browser
+   * sends the MagicDNS origin on every mutation. The loopback listener that binds this is
+   * `host-listener.ts`'s, started by `main.ts` from {@link hostState}.
    */
   handleHost?(req: Request): Promise<Response>;
+  /**
+   * What the host knobs resolved to — armed or not, the served origin and port the listener
+   * needs, and the surfaced reason when host mode was asked for and refused. One reading
+   * (`resolveHostConfig`), exposed so `main.ts` mounts the listener from the same answer the
+   * composition was built from, and so the shell can render a degraded arm as a sentence.
+   */
+  readonly hostState: HostState;
   /**
    * Run cycles until the mailbox reports no backlog, then return how many ran.
    *
@@ -715,8 +750,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        account still arms its opt-in on the account — where the ledger and the worker that spends
        against it actually are. See `auto-suggest-routes.ts`. */
     // ONLY the exact boolean arms host mode — an absent config value must never select the
-    // branch that opens a second door. See `SidecarConfig.hostMode`.
-    const hostMode = config.hostMode === true;
+    // branch that opens a second door — and the OTHER two knobs can only ever DISARM: a garbage
+    // origin or port turns host mode off for the launch with a surfaced reason, because the
+    // stdio door must never die over host config. One reading, in `resolveHostConfig`; the
+    // listener itself is `main.ts`'s to start from the state this exposes.
+    const hostConfig = resolveHostConfig(config);
+    if (hostConfig.state.reason !== null) {
+      log("host_config_invalid", { reason: hostConfig.state.reason });
+    }
+    const hostMode = hostConfig.state.armed;
     const app = createApp([
       ...localRoutes,
       ...localAiRoutes(ai),
@@ -817,23 +859,47 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       },
     });
     /**
-     * The HOST DOOR's per-request container — {@link depsFor} with the one difference that IS
-     * the door: the descriptor. `flavor: "desktop-host"` is what a server picker switches on;
-     * `pairing: true` is this table's truth (the redeem is mounted; the mint is the window's);
-     * `sse: false` is honest until the follow-up the ruling names; `ai` states whether THIS
-     * install has a verified model, same as the stdio door. `allowCookieAuth: false` rides in
-     * from `depsFor` — the door NEVER mints, reads or clears a cookie, and the API package's
-     * zero-Set-Cookie census sweeps the whole table on exactly that flag.
+     * THE HOST DOOR'S AUTH CONFIG — the served MagicDNS origin, threaded into the request
+     * guard's allow-list. This discharges the obligation recorded here when the door first
+     * landed: with `depsFor`'s
+     * loopback config, an Origin-carrying mutation from a real phone browser (whose origin IS
+     * the machine's tailnet name — that is what `tailscale serve` publishes) was refused by
+     * `withRequestGuard` as cross-site, and the listener suite captured exactly that red before
+     * this line existed. Built through the same `makeAuthConfig`/`assertOriginConfig` every
+     * other door boots through (`resolveHostConfig`); when no origin is configured the door
+     * keeps the stdio config — nothing browser-shaped can reach it, because the LISTENER
+     * refuses to start without the origin (`maybeStartHostListener`).
+     */
+    const hostAuthConfig = hostConfig.authConfig ?? authConfig;
+    /**
+     * The HOST DOOR's per-request container — {@link depsFor} with the three differences that
+     * ARE the door:
      *
-     * A CLAIM FOR THE LISTENER SLICE: `authConfig` also rides in from `depsFor`, and its origin
-     * is `http://localhost` — so an Origin-carrying mutation from a real phone browser (whose
-     * origin will be the machine's tailnet name) would be refused by `withRequestGuard` as
-     * cross-site. Correct today (no socket exists and nothing browser-shaped can reach this),
-     * and the listener slice MUST thread the served origin into this config when it binds the
-     * door, or every pairing redemption from a phone dies at the guard.
+     *  · the DESCRIPTOR. `flavor: "desktop-host"` is what a server picker switches on;
+     *    `pairing: true` is this table's truth (the redeem is mounted; the mint is the
+     *    window's); `sse: false` is honest until the follow-up the ruling names; `ai` states
+     *    whether THIS install has a verified model, same as the stdio door.
+     *  · the AUTH CONFIG — {@link hostAuthConfig}, above. The service bag is rebuilt with it so
+     *    the session lifecycle and the guard read ONE config, not two.
+     *  · the SEND SURFACE. The stdio bag declares `sendSurfaceMaxTotalBytes: null` — compose,
+     *    handler and SMTP dial are one process, no request body between them — and on THIS door
+     *    that fact is false: a phone's send rides an HTTP body through the loopback adapter, so
+     *    the door declares the ceiling its transport actually has
+     *    ({@link HOST_SEND_MAX_TOTAL_BYTES}, sized under the adapter's byte cap — the
+     *    derivation is `host-listener.ts`'s header). `effectiveAttachmentCap` still takes the
+     *    smaller of this and the mailbox's own announced SIZE.
+     *
+     * `allowCookieAuth: false` rides in from `depsFor` — the door NEVER mints, reads or clears
+     * a cookie, and the API package's zero-Set-Cookie census sweeps the whole table on exactly
+     * that flag.
      */
     const depsForHost = (): ApiDeps => ({
       ...depsFor(),
+      authConfig: hostAuthConfig,
+      services: {
+        ...localServices(hostAuthConfig, keyProvider, openLocalSend, ai),
+        sendSurfaceMaxTotalBytes: HOST_SEND_MAX_TOTAL_BYTES,
+      },
       hello: {
         flavor: "desktop-host",
         // No setup ceremony exists on this door: the world was created at first boot, and a
@@ -1799,6 +1865,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       ...(hostApp
         ? { handleHost: async (req: Request): Promise<Response> => hostApp.handle(req, depsForHost()) }
         : {}),
+      hostState: hostConfig.state,
       syncUntilQuiet,
       organizerState: () => organizer,
       credentialState: async () => (await resolveLogin()).state,

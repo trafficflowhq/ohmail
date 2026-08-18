@@ -3,6 +3,7 @@ import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createSidecar, type Sidecar, type SidecarConfig } from "./engine.js";
 import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
+import { maybeStartHostListener, type HostListener } from "./host-listener.js";
 import { encodeFrame, PROTOCOL_VERSION } from "./frame.js";
 import { serveOverStdio, type StdioHost } from "./host.js";
 import { createSidecarLog } from "./log.js";
@@ -225,6 +226,18 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
     ...(env.OHMAIL_MAILBOX_ADDRESS ? { address: env.OHMAIL_MAILBOX_ADDRESS } : {}),
     ...(env.OHMAIL_POLL_MS ? { pollIntervalMs: Number(env.OHMAIL_POLL_MS) } : {}),
     ...(Object.keys(keks).length > 0 ? { keks } : {}),
+    // ── HOST MODE (Phase 3) — three knobs, all of them the shell's, none of them required ────
+    //
+    // `OHMAIL_HOST_MODE` arms on the EXACT string "1" and nothing else: the same
+    // absent-must-not-select-the-dangerous-branch rule as `SidecarConfig.hostMode`, spelled for
+    // an environment where every value is a string. `OHMAIL_HOST_ORIGIN` is the served MagicDNS
+    // origin and `OHMAIL_HOST_PORT` the loopback port `tailscale serve` targets. Deliberately NO
+    // validation here beyond "present": a garbage value must degrade host mode with a surfaced
+    // reason, never kill the stdio door, and `resolveHostConfig` (engine-side) is the one place
+    // that rules on the values — `Number("garbage")` is NaN, which it refuses by name.
+    ...(env.OHMAIL_HOST_MODE === "1" ? { hostMode: true } : {}),
+    ...(env.OHMAIL_HOST_ORIGIN?.trim() ? { hostOrigin: env.OHMAIL_HOST_ORIGIN.trim() } : {}),
+    ...(env.OHMAIL_HOST_PORT?.trim() ? { hostPort: Number(env.OHMAIL_HOST_PORT) } : {}),
   };
 }
 
@@ -289,6 +302,7 @@ export async function runSidecar(): Promise<void> {
   });
 
   let host: StdioHost | null = null;
+  let hostListener: HostListener | null = null;
   let shuttingDown: Promise<void> | null = null;
   /**
    * ORDER MATTERS, and getting it wrong corrupts the local mirror.
@@ -297,11 +311,17 @@ export async function runSidecar(): Promise<void> {
    * database. `sidecar.stop()` closes PGlite; a handler still reading it at that moment gets a
    * dead connection at best, and at worst the mirror is closed mid-write. The stdin path already
    * waited (it goes through `host.finished()`); SIGTERM did not, which was the hole.
+   *
+   * The HOST-DOOR LISTENER goes first, for the same sentence one door over: a paired phone's
+   * request is a reader of the same store, so the socket stops admitting and drains before
+   * anything it could be mid-read of closes. Its `close()` never throws and is bounded by its
+   * own grace, so it cannot hang the quit.
    */
   const shutdown = (reason: string, code: number): Promise<void> => {
     shuttingDown ??= (async () => {
       log("shutdown", { reason, inFlight: host?.inFlight ?? 0 });
       try {
+        await hostListener?.close();
         if (host) {
           host.stop();
           await host.finished();
@@ -353,6 +373,12 @@ export async function runSidecar(): Promise<void> {
   // volume — and the shell that set `OHMAIL_DATA_DIR` already knows it. `mailboxId` is what
   // correlates this line with everything after it.
   log("serving", { mailboxId: sidecar.world.mailboxId });
+
+  // THE HOST DOOR's loopback listener — bound iff host mode is armed AND the shell configured
+  // both the port and the served origin, and a refusal to bind degrades to the stdio door with a
+  // named line rather than a failed launch. After the bridge is serving, deliberately: the window
+  // is the primary consumer and must not wait on a bind; a phone reconnects on its own schedule.
+  hostListener = await maybeStartHostListener(sidecar, log);
 
   // The mailbox comes up AFTER the bridge is serving. A first sync of a real mailbox takes
   // minutes, and a UI that cannot ask anything until it finishes is a UI that looks broken.

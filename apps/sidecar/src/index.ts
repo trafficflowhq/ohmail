@@ -7,14 +7,28 @@
  * worker's sync/reconcile loop; the UI keeps `HttpAdapter` and is given a `fetch` that marshals
  * `Request`/`Response` over this process's stdin and stdout.
  *
- * **There is no TCP listener**, which is the whole security argument for stdio over a localhost
- * HTTP server: no port to authenticate, nothing else on the machine can reach it, and the only
- * party holding the pipe is the parent process.
+ * **There is no TCP listener unless host mode is armed** — and "unless" is three explicit knobs
+ * deep, never a default. The stdio pipe stays the window's whole transport and its security
+ * argument is unchanged: no port to authenticate, nothing else on the machine can reach it, and
+ * the only party holding the pipe is the parent process. Host mode (Phase 3) adds a SECOND door
+ * beside it — `handleHost` over `desktopHostRoutes`, bound by `host-listener.ts` to
+ * `127.0.0.1:<port>` and nothing else, published to its owner's tailnet by `tailscale serve` —
+ * and a disarmed install still constructs no listener object at all, which its suite pins by
+ * connecting and being refused.
  */
 export {
   createSidecar, refusingKeyProvider, DEFAULT_POLL_INTERVAL_MS,
   type CredentialState, type Sidecar, type SidecarConfig, type SidecarImapConfig,
 } from "./engine.js";
+// The host door's listener and the one reading of its knobs. `resolveHostConfig` degrades—never
+// throws—because the stdio door must not die over host config; the loopback literal is pinned by
+// census, runtime assertion and suite together.
+export {
+  HOST_BODY_MAX_BYTES, HOST_HEADERS_TIMEOUT_MS, HOST_LOOPBACK_ADDRESS, HOST_REQUEST_TIMEOUT_MS,
+  HOST_SEND_MAX_TOTAL_BYTES, HOST_SHUTDOWN_GRACE_MS,
+  maybeStartHostListener, resolveHostConfig, startHostListener,
+  type HostDoor, type HostListener, type HostState, type ResolvedHostConfig,
+} from "./host-listener.js";
 export { openLocalDb, DataDirLockedError, LOCK_FILE, PGDATA_SUBDIR, type LocalDb, type OpenLocalDb } from "./db.js";
 export { ensureLocalWorld, mintLaunchSession, type LaunchSession, type LocalWorld } from "./identity.js";
 // The exit from a stand-down. Exactly one active organizer per mailbox is the invariant, and this
