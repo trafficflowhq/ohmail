@@ -314,8 +314,10 @@ export async function runSidecar(): Promise<void> {
    *
    * The HOST-DOOR LISTENER goes first, for the same sentence one door over: a paired phone's
    * request is a reader of the same store, so the socket stops admitting and drains before
-   * anything it could be mid-read of closes. Its `close()` never throws and is bounded by its
-   * own grace, so it cannot hang the quit.
+   * anything it could be mid-read of closes. Its `close()` never throws; the SOCKETS are bounded
+   * by its grace, and it then waits for every in-flight handler to settle — destroyed sockets
+   * feed a handler nothing, so that wait is short in practice, and the shell's own process grace
+   * is the backstop for a genuinely hung one.
    */
   const shutdown = (reason: string, code: number): Promise<void> => {
     shuttingDown ??= (async () => {

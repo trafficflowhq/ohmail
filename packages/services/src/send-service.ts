@@ -315,18 +315,23 @@ export const SEND_ATTACHMENT_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
  * would have carried 3 — and without the `min` the product would accept the send, spend the user's
  * wait on it, and let their own server bounce it. That is the acceptance check for this rule.
  *
- * ── AN UNKNOWN CEILING IS THE STRICT ONE ─────────────────────────────────────────────────────
+ * ── AN UNKNOWN CEILING IS THE STRICT ONE — ON EITHER SIDE ────────────────────────────────────
  *
  * `undefined` for `surfaceMax` means the host did not declare itself, and it resolves to
  * {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES} rather than to "unbounded" — a caller that forgets must
- * not acquire a bigger allowance by forgetting. When BOTH are unknown (`null` surface, `null`
- * mailbox — a local install whose server has never been probed) there is no measured ceiling
- * anywhere, and the answer is again the product constant, for the reason mail 0055's own header
- * gives: an unknown limit read as no limit costs the user a message they composed and waited for.
+ * not acquire a bigger allowance by forgetting. A `null` MAILBOX ceiling means the submission
+ * server has never been probed, and it resolves to the same product constant rather than
+ * dropping out of the `min` — this used to contribute NOTHING, which was invisible while every
+ * declared surface was the 3 MB constant itself, and became a real widening the day a
+ * long-running host declared a 32 MB transport surface: every never-probed mailbox silently
+ * acquired 32 MB and learned its provider's real limit from an SMTP bounce after the wait. The
+ * reason is mail 0055's own header, applied to both sides: an unknown limit read as no limit
+ * costs the user a message they composed and waited for.
  *
- * Non-positive and non-finite values are ignored on both sides. A `0` from either — a server
- * announcing `SIZE 0`, which RFC 1870 §6 defines as "no fixed maximum", or a host declaring a cap
- * of nothing — must never become a ceiling no message can clear.
+ * Non-positive and non-finite values are ignored (never strict-substituted) on both sides. A `0`
+ * from the mailbox — a server announcing `SIZE 0`, which RFC 1870 §6 defines as "no fixed
+ * maximum" — is a MEASUREMENT saying the server takes anything, so the surface alone binds; a
+ * host declaring a cap of nothing must never become a ceiling no message can clear.
  */
 export function effectiveAttachmentCap(
   surfaceMax: number | null | undefined,
@@ -335,7 +340,12 @@ export function effectiveAttachmentCap(
   const usable = (n: number | null | undefined): n is number =>
     typeof n === "number" && Number.isFinite(n) && n > 0;
   const surface = surfaceMax === undefined ? SEND_ATTACHMENT_MAX_TOTAL_BYTES : surfaceMax;
-  const bounds = [surface, mailboxMax].filter(usable);
+  // `null`/`undefined` is UNPROBED and contributes the strict constant; a present-but-unusable
+  // number (`SIZE 0`, NaN) is a measurement or garbage and is ignored, exactly as before.
+  const mailbox = mailboxMax === null || mailboxMax === undefined
+    ? SEND_ATTACHMENT_MAX_TOTAL_BYTES
+    : mailboxMax;
+  const bounds = [surface, mailbox].filter(usable);
   return bounds.length > 0 ? Math.min(...bounds) : SEND_ATTACHMENT_MAX_TOTAL_BYTES;
 }
 

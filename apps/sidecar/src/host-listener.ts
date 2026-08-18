@@ -15,9 +15,11 @@ import type { Diagnostic } from "./log.js";
  *    hostname — and deliberately NOT configurable: there is no host/interface option on
  *    {@link startHostListener}, the literal below is the only address that ever reaches
  *    `listen()`, and the bind is re-checked at runtime against what the kernel actually gave us.
- *    "No open ports" stays literally true; only a process on this machine (in practice, the
- *    tailscaled proxy) can reach the socket. `tailscale funnel` is FORBIDDEN — that is pinned on
- *    the shell side, where the invocation lives.
+ *    "No open ports" stays literally true OF THIS DOOR; only a process on this machine (in
+ *    practice, the tailscaled proxy) can reach the socket. `tailscale funnel` is FORBIDDEN —
+ *    that is pinned on the shell side, where the invocation lives. (The LAN fallback is a
+ *    DIFFERENT door in a different module — `host-lan.ts`, one operator-chosen interface,
+ *    opt-in on top of host mode, its own census — and nothing about it loosens this one.)
  *  · **Host mode absent ⇒ no listener object is even constructed.** {@link resolveHostConfig} is
  *    the one reading of the host knobs, and only the exact boolean `true` arms anything — the
  *    dangerous branch requires configuration, three times over (mode, port, origin).
@@ -64,6 +66,24 @@ export const HOST_SEND_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
 /** Slowloris ceilings — ruled point 4, the self-host server's values. */
 export const HOST_HEADERS_TIMEOUT_MS = 30_000;
 export const HOST_REQUEST_TIMEOUT_MS = 300_000;
+
+/**
+ * THE CONCURRENT-ADMISSION BOUND — how many requests may be IN A HANDLER at once; the next one
+ * answers `503 host_busy` with `Retry-After` instead of entering.
+ *
+ * The per-request byte cap bounds one request; nothing else bounded how many of them a client
+ * could hold open at once, and the redeem route buffers its body — so a burst of concurrent
+ * near-cap POSTs from one misbehaving (or compromised) paired device could exhaust the one
+ * engine process's heap and take the WINDOW's door down with the phone's. Sixteen is generous
+ * for the legitimate audience — a handful of a person's own devices, each issuing a few
+ * requests in parallel — and it bounds the worst-case in-flight buffering at
+ * 16 × {@link HOST_BODY_MAX_BYTES}.
+ *
+ * Stated honestly: this bounds CONCURRENCY, not aggregate bytes — a byte-metered admission
+ * budget would need hooks inside the adapter's body stream and belongs to its own change if the
+ * threat model ever widens past this machine's own tailnet (funnel is forbidden, so it has not).
+ */
+export const HOST_MAX_CONCURRENT_REQUESTS = 16;
 
 /**
  * How long in-flight requests get after `close()` before their sockets are destroyed. SSE is off
@@ -206,16 +226,94 @@ export interface HostListener {
  * the census over this file pins the literal at the call site, and this assertion is the runtime
  * half of the same invariant (a resolver or a patched `listen` cannot silently widen the bind).
  */
+/** The admission refusal, in the API's own error envelope so clients parse one shape everywhere. */
+const HOST_BUSY_BODY = JSON.stringify({
+  error: { code: "host_busy", message: "too many concurrent requests on this door; retry shortly" },
+});
+
+/**
+ * ONE admission budget, however many doors wrap handlers in it. `wrap` refuses entry past
+ * {@link HOST_MAX_CONCURRENT_REQUESTS} with `503 host_busy`; `drained` resolves only when every
+ * admitted handler has SETTLED — the store-safety half of `close()` on any door.
+ */
+export interface Admission {
+  wrap(handle: (req: Request) => Promise<Response>): (req: Request) => Promise<Response>;
+  drained(): Promise<void>;
+}
+
+/**
+ * The admission bound and the drain — the tracking documented at length inside
+ * {@link startHostListener}, factored so every network door carries the SAME two review
+ * findings instead of a divergent copy. The `pending` set lives on the ADMISSION object, not on
+ * a listener: {@link HOST_MAX_CONCURRENT_REQUESTS} bounds what the one engine PROCESS holds in
+ * flight, and a per-listener copy would double the heap bound the moment a second door (the LAN
+ * fallback) opened — `main.ts` therefore builds one of these and hands it to both mounts, and a
+ * listener started without one gets a private budget (the single-door tests, and any composition
+ * that genuinely has one door).
+ */
+export function createAdmission(): Admission {
+  const pending = new Set<Promise<unknown>>();
+  return {
+    wrap(handle) {
+      return (req: Request): Promise<Response> => {
+        if (pending.size >= HOST_MAX_CONCURRENT_REQUESTS) {
+          return Promise.resolve(new Response(HOST_BUSY_BODY, {
+            status: 503,
+            headers: {
+              "content-type": "application/json",
+              "cache-control": "no-store",
+              "retry-after": "1",
+            },
+          }));
+        }
+        const p = handle(req);
+        const settled = p.then(() => undefined, () => undefined);
+        pending.add(settled);
+        void settled.then(() => pending.delete(settled));
+        return p;
+      };
+    },
+    drained: () => Promise.allSettled([...pending]).then(() => undefined),
+  };
+}
+
 export function startHostListener(opts: {
   handle: (req: Request) => Promise<Response>;
   port: number;
   log?: Diagnostic;
+  /** The process-wide admission budget — see {@link createAdmission}. Absent, a private one. */
+  admission?: Admission;
   /** TEST SEAM — production takes {@link HOST_SHUTDOWN_GRACE_MS}. */
   graceMs?: number;
   /** TEST SEAM — see `AdapterOptions.connectionsCheckingIntervalMs`. */
   connectionsCheckingIntervalMs?: number;
 }): Promise<HostListener> {
-  const server = makeHttpServer(opts.handle, {
+  /**
+   * EVERY handler invocation is TRACKED, and the tracking carries both review findings:
+   *
+   *  · ADMISSION — a request arriving while {@link HOST_MAX_CONCURRENT_REQUESTS} handlers are
+   *    already running answers `503 host_busy` without entering one, so a burst of concurrent
+   *    near-cap bodies is bounded instead of buffering until the shared heap dies.
+   *  · DRAIN — `close()` resolves only after every tracked handler has SETTLED, not merely
+   *    after the sockets are gone. `closeAllConnections()` destroys a straggler's SOCKET, which
+   *    makes node fire the close callback while the handler promise is still running against
+   *    the database; resolving there lets `main.ts` close PGlite underneath a live send. The
+   *    settled-set wait is deliberately unbounded — a destroyed socket cannot feed a handler
+   *    more bytes, its awaited work is local (the store, one SMTP dial), and the shell's own
+   *    process grace is the backstop for a genuinely hung one.
+   *
+   * The tracked window is the HANDLER promise — `Request → Response` head. Response-body
+   * streaming past that point is socket work, not store work: this door's large responses are
+   * buffered JSON (SSE is off), so nothing reads the store after the head resolves.
+   *
+   * The mechanism itself is {@link createAdmission}; the BUDGET is process-wide when the caller
+   * hands the shared one in (`main.ts` does — the LAN door draws on the same sixteen).
+   */
+  const admission = opts.admission ?? createAdmission();
+  const tracked = admission.wrap(opts.handle);
+  const drained = (): Promise<void> => admission.drained();
+
+  const server = makeHttpServer(tracked, {
     bodyMaxBytes: HOST_BODY_MAX_BYTES,
     headersTimeoutMs: HOST_HEADERS_TIMEOUT_MS,
     requestTimeoutMs: HOST_REQUEST_TIMEOUT_MS,
@@ -250,7 +348,8 @@ export function startHostListener(opts: {
             grace.unref?.();
             server.close(() => {
               clearTimeout(grace);
-              closed();
+              // The sockets are gone; the STORE is not safe yet — see the tracking note above.
+              void drained().then(() => closed());
             });
             // Keep-alive sockets with no request in flight would otherwise hold `close()` open
             // for the whole grace on every ordinary quit.
@@ -285,6 +384,7 @@ export interface HostDoor {
 export async function maybeStartHostListener(
   door: HostDoor,
   log: Diagnostic,
+  admission?: Admission,
 ): Promise<HostListener | null> {
   const { armed, origin, port } = door.hostState;
   if (!armed || door.handleHost === undefined) return null;
@@ -309,6 +409,7 @@ export async function maybeStartHostListener(
       handle: (req) => door.handleHost!(req),
       port,
       log,
+      ...(admission !== undefined ? { admission } : {}),
     });
     log("host_listening", { port: listener.port });
     return listener;
