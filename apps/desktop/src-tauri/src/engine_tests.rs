@@ -56,6 +56,15 @@ if (process.env.FAKE_REPORT_ENV) {
 // the engine's own diagnostics to the log file rather than only its own account of them.
 process.stderr.write(JSON.stringify({ level: "info", msg: "fake engine up", mode }) + "\n");
 
+// The host door's own announcement, in the exact line shape the engine's logger emits. Only in
+// the mode that asks for it, so every other test's diagnostic stream is unchanged.
+if (mode === "serve-host") {
+  process.stderr.write(JSON.stringify({
+    ts: "2026-01-01T00:00:00.000Z", level: "info", service: "sidecar",
+    event: "host_listening", port: 3311,
+  }) + "\n");
+}
+
 function frame(header, body) {
   const h = Buffer.from(JSON.stringify(header), "utf8");
   const b = body ?? Buffer.alloc(0);
@@ -661,6 +670,65 @@ fn a_process_that_never_says_ready_is_never_reported_as_serving() {
 }
 
 // ── Quitting: the defect this slice exists to prevent ───────────────────────────────────────
+
+/// HOST MODE'S TWO PROCESS-LEVEL CLAIMS, against a real child.
+///
+/// What is proven here, stated exactly: the lifecycle DECISIONS (the same
+/// `host::lifecycle_action` calls `main.rs` maps window events into) leave a serving engine
+/// untouched on an armed close, and the quit decision's `stop()` reaps it — a real process,
+/// observed via the kernel. What is NOT proven here: that tauri delivers `CloseRequested` and
+/// `Exit` to the fifteen mapping lines in `main.rs` on each platform — that is the live
+/// rehearsal's row, because it needs a windowing system.
+#[cfg(unix)]
+#[test]
+fn with_host_mode_armed_a_closed_window_leaves_the_engine_serving_and_quit_reaps_it() {
+    use crate::host::{lifecycle_action, LifecycleAction, WindowSignal};
+    let fixture = Fixture::new("armed-close");
+    let engine = Engine::spawn_with(fixture.launch("serve"), quick());
+    wait_for(
+        || matches!(engine.state(), EngineState::Serving { .. }),
+        Duration::from_secs(10),
+        "the engine to serve",
+    );
+    let pid = engine.pid().expect("a serving engine has a pid");
+    assert!(alive(pid));
+
+    // The armed close: HIDE, and the engine is never told anything — there is no call to make.
+    assert_eq!(
+        lifecycle_action(true, WindowSignal::MainCloseRequested),
+        LifecycleAction::HideInsteadOfClose
+    );
+    assert_eq!(lifecycle_action(true, WindowSignal::MainDestroyed), LifecycleAction::Nothing);
+    thread::sleep(Duration::from_millis(150));
+    assert!(alive(pid), "the engine died over a close it was never supposed to hear about");
+    assert_eq!(fixture.exits(), 0);
+
+    // Quit — the tray's, or the platform's — is StopEngine in EVERY column, and stop reaps.
+    assert_eq!(lifecycle_action(true, WindowSignal::Exit), LifecycleAction::StopEngine);
+    engine.stop();
+    wait_for(|| !alive(pid), Duration::from_secs(5), "the engine to be reaped");
+    assert_eq!(fixture.exits(), 1);
+}
+
+/// The listener's announcement crosses from the engine's diagnostic stream into the state the
+/// window can read — and an engine that says nothing leaves the slot honestly empty.
+#[test]
+fn the_host_listener_signal_is_read_off_the_diagnostic_stream() {
+    let fixture = Fixture::new("host-signal");
+    let engine = Engine::spawn_with(fixture.launch("serve-host"), quick());
+    wait_for(|| engine.host_signal().is_some(), Duration::from_secs(10), "the host signal");
+    assert_eq!(engine.host_signal(), Some(crate::host::HostSignal::Listening { port: 3311 }));
+    engine.stop();
+
+    let plain = Engine::spawn_with(fixture.launch("serve"), quick());
+    wait_for(
+        || matches!(plain.state(), EngineState::Serving { .. }),
+        Duration::from_secs(10),
+        "the plain engine to serve",
+    );
+    assert_eq!(plain.host_signal(), None, "a signal appeared out of nothing");
+    plain.stop();
+}
 
 #[test]
 fn quitting_leaves_no_engine_behind() {

@@ -416,6 +416,77 @@ pub fn remove(path: &Path) -> Result<(), String> {
     }
 }
 
+// ── HOST MODE: the second setting this module keeps, in its own file ───────────────────────────
+//
+// Host mode publishes this install's mail engine to the user's own tailnet, so a phone can read
+// mail through this process. Whether it is on — and which loopback port the engine's host door
+// binds — has to survive a quit, exactly like the door choice above. It is a SECOND file rather
+// than a field of `config.json` because the two are written by different hands: the window's
+// door-configure command writes `config.json` whole from what it sent, and a host-mode setting
+// stored inside it would be silently dropped by every reconfigure that did not know to carry it.
+//
+// The same refusal discipline as the door file: nothing secret is ever in it (it is one boolean
+// and one port number), and a file that does not parse is DISABLED rather than an error — the
+// dangerous branch (a network-published engine) must never be selected by a corrupt byte, only
+// by a well-formed `true` somebody asked for.
+
+/// What the host-mode file is called inside the app's data directory.
+pub const HOST_FILE_NAME: &str = "host.json";
+
+/// The persisted host-mode setting: whether it is armed, and the loopback port the engine's
+/// host door binds (which is also the target `tailscale serve` proxies to).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HostSettings {
+    pub enabled: bool,
+    pub port: u16,
+}
+
+/// Read the host-mode setting. Absent, unreadable, malformed, or carrying port 0 all read as
+/// DISABLED — the safe branch by construction, never by a value happening to be missing.
+///
+/// Port 0 is refused by name rather than passed along: it would mean "any free port", and the
+/// port here is the fixed target a `tailscale serve` registration points at — a port the kernel
+/// picks is a registration pointing at nothing.
+pub fn read_host(path: &Path) -> Option<HostSettings> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    let map = value.as_object()?;
+    // A BOOLEAN, not anything truthy-looking: a hand-edited `"true"` is somebody who meant ON,
+    // and reading it as off-with-a-port would look like a setting quietly ignored. The whole
+    // file is refused instead, which reads as "never configured" — same recovery, honest state.
+    let enabled = match map.get("enabled") {
+        Some(serde_json::Value::Bool(b)) => *b,
+        _ => return None,
+    };
+    let port = map.get("port").and_then(serde_json::Value::as_u64)?;
+    if port == 0 || port > u16::MAX as u64 {
+        return None;
+    }
+    Some(HostSettings { enabled, port: port as u16 })
+}
+
+/// Write the host-mode setting. Same discipline as {@link write}: the directory is created if it
+/// is not there, and the file is `0600` on Unix — it is nobody's business on a shared machine
+/// whether this install publishes to a tailnet, or on which port.
+pub fn write_host(path: &Path, settings: &HostSettings) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("{} could not be created ({err})", parent.display()))?;
+    }
+    let body = serde_json::to_vec_pretty(&serde_json::json!({
+        "enabled": settings.enabled,
+        "port": settings.port,
+    }))
+    .map_err(|err| format!("the host-mode setting could not be encoded ({err})"))?;
+    fs::write(path, &body).map_err(|err| format!("{} could not be written ({err})", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
 /// What the cloud engine seals its hosted session into, under this install's key.
 ///
 /// Named here rather than in `engine.rs` because this module is the one that knows where each door

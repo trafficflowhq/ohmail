@@ -699,6 +699,11 @@ struct Shared {
     last_exit: Option<Exit>,
     /// Set by the frame reader when the stream stops being readable as frames. Unrecoverable.
     fault: Option<String>,
+    /// The engine's own account of its host-mode listener, read off its diagnostic stream —
+    /// `host_listening`, `host_listener_skipped`, `host_listen_failed`, `host_config_invalid`.
+    /// Per RUN, like `ready`: cleared when a new child starts, because a signal belongs to the
+    /// launch that produced it. `None` on every disarmed launch, and until an armed one speaks.
+    host_signal: Option<crate::host::HostSignal>,
     stop: bool,
     /// When the current child must be killed if it has not left by itself.
     deadline: Option<Instant>,
@@ -736,6 +741,7 @@ fn new_shared(state: EngineState, finished: bool) -> Shared {
         boot_phase: None,
         last_exit: None,
         fault: None,
+        host_signal: None,
         stop: false,
         deadline: None,
         finished,
@@ -813,6 +819,12 @@ impl Engine {
     #[allow(dead_code)]
     pub fn last_exit(&self) -> Option<Exit> {
         self.inner.shared.lock().expect("engine state").last_exit
+    }
+
+    /// What this run's engine said about its host-mode listener, if anything yet. Read by the
+    /// host module's tri-state; see `Shared::host_signal` for the per-run reset.
+    pub fn host_signal(&self) -> Option<crate::host::HostSignal> {
+        self.inner.shared.lock().expect("engine state").host_signal
     }
 
     /// Ask the engine to leave, wait for it, and kill it if it will not. Idempotent, and safe to
@@ -1005,6 +1017,12 @@ pub struct Shell {
     /// Replaced whole on a reconfigure. `Arc` because a command may be answering out of it while
     /// another is swapping it, and the answer must come from the engine it started against.
     engine: Mutex<Arc<Engine>>,
+    /// The host-mode variables the NEXT spawn composes — `None` disarmed, which is every install
+    /// that never turned host mode on. Held HERE because the shell owns every respawn: a
+    /// reconfigure that replaced the engine without knowing about host mode would silently drop
+    /// the host door on the relaunch, which is a phone losing its mail mid-read over a settings
+    /// edit. `crate::host` decides the value; this struct only carries it into each plan.
+    host_spawn: Mutex<Option<crate::host::HostSpawn>>,
 }
 
 impl Shell {
@@ -1020,6 +1038,13 @@ impl Shell {
     /// has turned a diagnostic into an outage.
     pub fn open_log(app: &tauri::App) {
         use tauri::Manager;
+        // Idempotent, because the host-mode boot probe wants the log open BEFORE `start` runs
+        // and `start` still opens it for every install that has no host mode. A second open
+        // would re-seed the rotation size from the same file — harmless — but saying "once" here
+        // is simpler than reasoning about it being harmless.
+        if LOG.lock().map(|slot| slot.is_some()).unwrap_or(false) {
+            return;
+        }
         match app.path().app_log_dir() {
             Ok(dir) => {
                 if let Err(reason) = install_log_file(dir.join(LOG_FILE_NAME)) {
@@ -1041,14 +1066,62 @@ impl Shell {
     }
 
     /// Open the log, work out the plan, and start whatever it says.
-    pub fn start(app: &tauri::App) -> Shell {
+    ///
+    /// `host` is the host-mode spawn the launch decided on (`crate::host::HostBoot`), or `None`
+    /// for every install that has not armed it — and `None` composes the launch BYTE-IDENTICALLY
+    /// to the builds that predate host mode, which `extend_plan`'s tests hold by equality.
+    pub fn start(app: &tauri::App, host: Option<crate::host::HostSpawn>) -> Shell {
         Shell::open_log(app);
         let paths = Shell::paths(app);
-        let engine = match paths.plan_now(None) {
+        let stored = paths.config();
+        let plan = crate::host::extend_plan(
+            paths.plan_now(stored.as_ref()),
+            stored.as_ref().map(Config::mode),
+            host.as_ref(),
+        );
+        let engine = match plan {
             Plan::Spawn(launch) => Engine::spawn(launch),
             Plan::Inert(state) => Engine::inert(state),
         };
-        Shell { paths, engine: Mutex::new(Arc::new(engine)) }
+        Shell { paths, engine: Mutex::new(Arc::new(engine)), host_spawn: Mutex::new(host) }
+    }
+
+    /// The plan, with the host-mode variables added when — and only when — they apply. Every
+    /// spawn the shell makes goes through here, so a reconfigure keeps the host door and a
+    /// disarm loses it, on the same launch shape either way.
+    fn planned(&self, config: Option<&Config>) -> Plan {
+        let stored;
+        let config = match config {
+            Some(c) => Some(c),
+            None => {
+                stored = self.paths.config();
+                stored.as_ref()
+            }
+        };
+        crate::host::extend_plan(
+            self.paths.plan_now(config),
+            config.map(Config::mode),
+            self.host_spawn.lock().expect("host spawn").as_ref(),
+        )
+    }
+
+    /// Which door this install is configured for right now, if any. The host module refuses to
+    /// arm on anything but the local door, and this is what it asks.
+    pub fn config_mode(&self) -> Option<Mode> {
+        self.paths.config().map(|c| c.mode())
+    }
+
+    /// Set the host-mode variables the NEXT spawn composes. Takes effect on [`Shell::replan`] or
+    /// on any later reconfigure — never retroactively, because an engine's environment is fixed
+    /// at its spawn.
+    pub fn set_host_spawn(&self, next: Option<crate::host::HostSpawn>) {
+        *self.host_spawn.lock().expect("host spawn") = next;
+    }
+
+    /// Restart the engine from the stored configuration and the current host-mode decision —
+    /// what arming and disarming do once the setting is written.
+    pub fn replan(&self) {
+        self.replace(self.planned(None));
     }
 
     /// For tests and for the commands: the engine as it is right now.
@@ -1092,7 +1165,9 @@ impl Shell {
             config.mode().as_str(),
             config.mode().dir_name()
         ));
-        self.replace(self.paths.plan_now(Some(&config)));
+        // Through `planned`, so an armed host door survives a reconfigure of the SAME door and
+        // is correctly absent when the door is not the local one.
+        self.replace(self.planned(Some(&config)));
         Ok(self.status())
     }
 
@@ -1302,6 +1377,9 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             s.ready = None;
             s.boot_phase = None;
             s.fault = None;
+            // A host signal belongs to one run — a restart must not report the last child's
+            // listener as this one's.
+            s.host_signal = None;
             // THE DEADLINE BELONGS TO ONE RUN, AND CARRYING IT INTO THE NEXT KILLS THE NEXT.
             //
             // Found by the crash-loop tests rather than reasoned about: a run torn down for a
@@ -1322,7 +1400,8 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
 
         let reader_inner = Arc::clone(&inner);
         let reader = thread::spawn(move || read_frames(stdout, &reader_inner));
-        let forwarder = thread::spawn(move || forward_diagnostics(stderr));
+        let forwarder_inner = Arc::clone(&inner);
+        let forwarder = thread::spawn(move || forward_diagnostics(stderr, &forwarder_inner));
 
         let started = Instant::now();
         let status = wait_for_exit(&inner, &mut child);
@@ -1925,14 +2004,35 @@ impl Engine {
 /// A read can land mid-line, and this deliberately does not reassemble: the file is a copy of the
 /// stream, so a chunk boundary inside a JSON object is written exactly where it fell and the next
 /// chunk completes it. Reordering cannot happen — one reader, one writer, in order.
-fn forward_diagnostics(mut stderr: ChildStderr) {
+fn forward_diagnostics(mut stderr: ChildStderr, inner: &Arc<Inner>) {
     let mut buf = [0u8; 8 * 1024];
+    // The engine's diagnostics are one JSON object per line, and FOUR of those lines are also
+    // state this shell acts on: the host-mode listener saying it bound, was skipped, failed, or
+    // refused its configuration. The bytes are forwarded and logged EXACTLY as before — this
+    // buffer only reassembles lines on the side, because a read boundary can land mid-line. It is
+    // bounded: a line that outgrows it is not a diagnostic this shell recognises, so the carry is
+    // dropped rather than grown without limit on a stream another process writes.
+    const LINE_CARRY_MAX: usize = 64 * 1024;
+    let mut carry: Vec<u8> = Vec::new();
     loop {
         match stderr.read(&mut buf) {
             Ok(0) => return,
             Ok(n) => {
                 let _ = io::stderr().write_all(&buf[..n]);
                 tee_to_log(&buf[..n]);
+                for byte in &buf[..n] {
+                    if *byte == b'\n' {
+                        if let Ok(line) = std::str::from_utf8(&carry) {
+                            if let Some(signal) = crate::host::signal_of_line(line) {
+                                inner.shared.lock().expect("engine state").host_signal =
+                                    Some(signal);
+                            }
+                        }
+                        carry.clear();
+                    } else if carry.len() < LINE_CARRY_MAX {
+                        carry.push(*byte);
+                    }
+                }
             }
             Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
             Err(_) => return,
@@ -2062,7 +2162,7 @@ fn tee_to_log(bytes: &[u8]) {
     }
 }
 
-fn log_line(args: fmt::Arguments<'_>) {
+pub(crate) fn log_line(args: fmt::Arguments<'_>) {
     let line = format!("ohmail engine: {args}\n");
     // `write!` and not `eprintln!`: a windowed build may have no stderr at all, and `eprintln!`
     // panics when the write fails. A lost log line must never take the app down.
@@ -2998,7 +3098,7 @@ fn opener_command(target: &std::ffi::OsStr) -> Command {
 }
 
 #[cfg(feature = "local-engine")]
-fn spawn_opener(url: &str) -> Result<(), String> {
+pub(crate) fn spawn_opener(url: &str) -> Result<(), String> {
     opener_command(url.as_ref())
         .spawn()
         .map(|_| ())
@@ -3655,9 +3755,9 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-open-link", "allow-open-external", "allow-open-attachment", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "core:event:allow-listen"]
 }"#;
 
 /// The commands `build.rs` declared to the ACL manifest, baked in at compile time.
@@ -3766,6 +3866,14 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         // has no mail and therefore nothing to announce. The webview is granted the `notify`
         // command above and none of this plugin's own permissions.
         .plugin(tauri_plugin_notification::init())
+        // Start-at-login, for host mode's always-on role. The same grant shape as the
+        // notification centre: the window gets this shell's own `autostart_get`/`autostart_set`
+        // commands (and arming/disarming host mode drives it), never the plugin's permissions.
+        // No launch arguments — the app decides everything from its own settings files.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .invoke_handler(tauri::generate_handler![
             engine_status,
             engine_request,
@@ -3775,7 +3883,16 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             set_badge,
             open_link,
             open_external,
-            open_attachment
+            open_attachment,
+            // Host mode — the module carries the reasoning; every one of these is granted to the
+            // window by LOCAL_ENGINE_CAPABILITY above and declared in build.rs like the rest.
+            crate::host::host_state,
+            crate::host::tailscale_status,
+            crate::host::tailscale_serve_arm,
+            crate::host::tailscale_serve_disarm,
+            crate::host::autostart_get,
+            crate::host::autostart_set,
+            crate::host::open_tailscale_download
         ])
 }
 

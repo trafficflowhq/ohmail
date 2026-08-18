@@ -335,7 +335,7 @@ describe("the Rust side", () => {
     expect(main).not.toMatch(/reqwest|hyper|tokio::net/);
   });
 
-  it("depends on tauri plus exactly five plugins, only two of which ship, defaults minus compression", () => {
+  it("depends on tauri plus exactly six plugins, only two of which ship, defaults minus compression", () => {
     expect(cargo).toMatch(/^tauri = \{ version = "2", default-features = false, features = \[$/m);
     // Uncompressed embedding is what makes `strings <installer> | grep http`
     // a real audit rather than a look at a brotli blob.
@@ -348,6 +348,9 @@ describe("the Rust side", () => {
     const runtime = cargo.slice(depsStart, devStart >= 0 ? devStart : undefined);
     const plugins = [...runtime.matchAll(/^(tauri-plugin-[a-z-]+)\b/gm)].map((m) => m[1]).sort();
     expect(plugins).toEqual([
+      // Start-at-login, for host mode's always-on role — reached only through the shell's own
+      // autostart commands, and enabled only by `local-engine`, like the keystore.
+      "tauri-plugin-autostart",
       // `ohmail://`, and the two halves it needs: one registers the scheme and delivers an
       // activation, the other makes that activation reach the copy of the app that is already
       // running instead of launching a second one holding the link.
@@ -357,14 +360,17 @@ describe("the Rust side", () => {
       "tauri-plugin-single-instance",
       "tauri-plugin-updater",
     ]);
-    /* AND THREE OF THEM ARE NOT IN THE PUBLISHED PREVIEW. The notification centre is reached only
-       from the engine build's `notify` command, and the two scheme plugins only from a sign-in the
-       preview does not have — all three are optional and enabled by `local-engine`. Asserting the
-       plugin list alone would have let an unconditional dependency in under a name that looks the
-       same in a diff, which for the scheme plugins would mean the preview REGISTERING `ohmail://`
-       on a machine and then answering nothing on it. */
+    /* AND FOUR OF THEM ARE NOT IN THE PUBLISHED PREVIEW. The notification centre is reached only
+       from the engine build's `notify` command, the two scheme plugins only from a sign-in the
+       preview does not have, and the autostart registration only from host mode — all four are
+       optional and enabled by `local-engine`. Asserting the plugin list alone would have let an
+       unconditional dependency in under a name that looks the same in a diff, which for the
+       scheme plugins would mean the preview REGISTERING `ohmail://` on a machine and then
+       answering nothing on it — and for autostart, the preview being able to register itself to
+       start with somebody's computer. */
     expect(cargo).toMatch(/^tauri-plugin-notification = \{ version = "2", optional = true \}$/m);
     expect(cargo).toMatch(/^tauri-plugin-deep-link = \{ version = "2", optional = true \}$/m);
+    expect(cargo).toMatch(/^tauri-plugin-autostart = \{ version = "2", optional = true \}$/m);
     expect(cargo).toMatch(
       /^tauri-plugin-single-instance = \{ version = "2", features = \["deep-link"\], optional = true \}$/m,
     );
@@ -387,7 +393,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these nine files and no others", () => {
+  it("is these eleven files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // Which door this install came in by, and the environment each one composes. Compiled only
@@ -397,6 +403,13 @@ describe("the Rust side", () => {
       "config_tests.rs",
       "engine.rs",
       "engine_tests.rs",
+      // Host mode: publishing the engine's loopback door to the user's own tailnet — the
+      // setting, the tailscale invocations (serve, never funnel — mutation-pinned in its own
+      // tests), the tray and close-to-hide lifecycle, start-at-login. Compiled only under
+      // `local-engine`, asserted below; its own boundary rules are the "host mode's reach"
+      // test in this file.
+      "host.rs",
+      "host_tests.rs",
       "main.rs",
       // The menu bar — the one piece of interface this process draws, and the ONLY file that may
       // install one: a menu goes in through `Builder::setup`, and a second `setup` on the same
@@ -447,6 +460,10 @@ describe("the Rust side", () => {
     // `config.rs` is behind the same gate and for the same reason: the preview configures nothing,
     // so it must carry no way to compose an engine's environment or write a settings file.
     expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod config;/);
+    // `host.rs` too: the preview has no engine to publish, so it must carry no tailscale
+    // invocation, no tray, and no start-at-login registration — a capability compiled out, not
+    // a branch not taken.
+    expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod host;/);
     // `default` exists and is empty. A missing `[features]` block would also match "not
     // enabled", and would be a different fact.
     expect(cargo).toMatch(/^default = \[\]$/m);
@@ -464,6 +481,10 @@ describe("the Rust side", () => {
     expect(enabled, "the local-engine feature list has stopped matching this reader").toEqual([
       "dep:getrandom",
       "dep:keyring",
+      // Start-at-login, driven only from host mode's arming ceremony and the shell's own
+      // autostart commands. Optional for the reason the keystore is: the preview must carry no
+      // way to register itself to start with anybody's computer.
+      "dep:tauri-plugin-autostart",
       // The `ohmail://` scheme handler, and the "one copy of this app" rule that makes an
       // activation reach the copy already running rather than launching a second one. Optional for
       // the reason the keystore is: the preview has no account to sign in to, so a build that
@@ -471,6 +492,10 @@ describe("the Rust side", () => {
       "dep:tauri-plugin-deep-link",
       "dep:tauri-plugin-notification",
       "dep:tauri-plugin-single-instance",
+      // The tray icon — host mode's window into an app whose window is closed. A TAURI feature
+      // rather than a dependency, listed here so the preview neither draws a tray nor carries
+      // the capability to.
+      "tauri/tray-icon",
     ]);
     expect(cargo).toMatch(/^serde_json = "1"$/m);
     // The keystore dependencies stay optional: the preview has no business being
@@ -499,9 +524,12 @@ describe("the Rust side", () => {
    * naming its `allow-…` permission cannot be resolved — so neither `cargo check` nor `cargo test`
    * can see it. The set equality below is the only thing that does.
    */
-  it("declares and registers its nine commands only in the local build", () => {
+  it("declares and registers its sixteen commands only in the local build", () => {
     const build = read("src-tauri/build.rs");
     const engine = read("src-tauri/src/engine.rs");
+    // Host mode's commands are DEFINED in host.rs; registration and the grant stay in engine.rs
+    // (the one invoke_handler, the one capability), so the per-command sweep below reads both.
+    const hostModule = read("src-tauri/src/host.rs");
     const COMMANDS = [
       "engine_status",
       "engine_request",
@@ -526,6 +554,18 @@ describe("the Rust side", () => {
       // The bytes of one attachment and a display name, written under the shell's own directory
       // and opened in the platform's usual viewer.
       "open_attachment",
+      // HOST MODE — all of it through the shell's own commands, none of it through a plugin's
+      // permissions. The window reads a typed state, probes the tailnet, arms and disarms (the
+      // serve invocation is composed from constants in host.rs and pinned by its tests to
+      // serve-never-funnel), toggles start-at-login, and opens Tailscale's download page — one
+      // more CONSTANT address the shell owns, still no URL argument anywhere.
+      "host_state",
+      "tailscale_status",
+      "tailscale_serve_arm",
+      "tailscale_serve_disarm",
+      "autostart_get",
+      "autostart_set",
+      "open_tailscale_download",
     ];
 
     expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
@@ -555,10 +595,13 @@ describe("the Rust side", () => {
 
     for (const command of COMMANDS) {
       // Defined, registered, and granted — the three places a name has to appear, and the ones a
-      // half-added command is missing from.
-      // `[<(]` because two of them are generic over the runtime: a command taking an `AppHandle`
+      // half-added command is missing from. Definitions live in engine.rs or host.rs; the
+      // registration and the grant are engine.rs's alone (one invoke_handler, one capability).
+      // `[<(]` because several are generic over the runtime: a command taking an `AppHandle`
       // has to name the runtime it belongs to, or the handler cannot be built for one.
-      expect(engine, `${command} is not defined`).toMatch(new RegExp(`fn ${command}[<(]`));
+      expect(engine + hostModule, `${command} is not defined`).toMatch(
+        new RegExp(`fn ${command}[<(]`),
+      );
       expect(engine, `${command} is not registered`).toMatch(
         new RegExp(`generate_handler!\\[[^\\]]*${command}`, "s"),
       );
@@ -950,6 +993,34 @@ describe("the Rust side", () => {
     }
     // The mirror is frozen on a door switch, never deleted — no recursive removal exists to do it.
     expect(config).not.toMatch(/remove_dir/);
+  });
+
+  /**
+   * HOST MODE'S REACH IS THE TAILSCALE CLI AND NOTHING ELSE.
+   *
+   * `host.rs` is the second file in this shell that starts a foreign process, so its boundary is
+   * written down the way the filesystem ones are. What it may do: run ONE binary — the Tailscale
+   * CLI it discovered — with arguments composed from constants (`serve_arm_args` and friends,
+   * whose serve-never-funnel and loopback-literal pins are cargo tests, shown red by mutation).
+   * What it may not do: touch the filesystem (its one setting goes through `config.rs`, the
+   * settings module, which keeps that guard meaningful), open a socket, or compose a URL from
+   * anything the window sent — its one opener call is a constant this test pins.
+   */
+  it("keeps host mode's reach to one spawned CLI and one constant download page", () => {
+    const hostModule = read("src-tauri/src/host.rs");
+    // One spawn site. The tests' fake runner is injected, so it does not appear here.
+    expect(hostModule.match(/Command::new/g)).toHaveLength(1);
+    // No disk and no sockets of its own.
+    expect(hostModule).not.toMatch(/\bfs::/);
+    expect(hostModule).not.toMatch(/std::net|TcpStream|TcpListener|reqwest|hyper/);
+    // The one address it can open is the vendor's download page, spelled once as a constant and
+    // passed to the same opener every external link goes through.
+    expect(hostModule).toContain(
+      'pub const TAILSCALE_DOWNLOAD_URL: &str = "https://tailscale.com/download";',
+    );
+    expect(hostModule).toMatch(/spawn_opener\(TAILSCALE_DOWNLOAD_URL\)/);
+    // And the module is compiled only where the engine is — asserted with the other cfg gates —
+    // so none of this exists in the artifact the preview README describes.
   });
 
   /**

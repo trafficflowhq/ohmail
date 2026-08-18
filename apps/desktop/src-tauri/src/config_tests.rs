@@ -223,3 +223,51 @@ fn what_is_written_is_what_comes_back() {
     remove(&path).expect("removing an absent file is not an error");
     let _ = fs::remove_dir_all(&dir);
 }
+
+// ── The host-mode file ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn the_host_setting_round_trips_and_everything_broken_reads_as_disabled() {
+    let dir = std::env::temp_dir().join(format!("ohmail-host-config-test-{}", std::process::id()));
+    let path = dir.join(HOST_FILE_NAME);
+    let _ = fs::remove_dir_all(&dir);
+
+    // Absent is None: the safe branch, which is every install that never turned host mode on.
+    assert_eq!(read_host(&path), None);
+
+    for settings in [
+        HostSettings { enabled: true, port: 3311 },
+        // Disabled keeps its port, so re-arming can offer the same one back.
+        HostSettings { enabled: false, port: 3311 },
+        HostSettings { enabled: true, port: 65535 },
+    ] {
+        write_host(&path, &settings).expect("write");
+        assert_eq!(read_host(&path), Some(settings));
+    }
+
+    // THE DANGEROUS BRANCH NEEDS A WELL-FORMED `true`. A corrupt byte, a wrong type, a missing
+    // field — none of them may select a network-published engine.
+    for broken in [
+        "{ not json",
+        r#"{ "enabled": "true", "port": 3311 }"#, // a string is not the boolean true
+        r#"{ "enabled": true }"#,                 // no port: nothing to bind, nothing to serve
+        r#"{ "enabled": true, "port": 0 }"#,      // port 0 is "any", and the registration needs ONE
+        r#"{ "enabled": true, "port": 70000 }"#,  // not a port
+        r#"{ "enabled": true, "port": "3311" }"#, // hand-edited as a string: refused, not repaired
+        "[]",
+    ] {
+        fs::write(&path, broken).expect("write");
+        assert_eq!(read_host(&path), None, "{broken} was read as a setting");
+    }
+
+    // Private at rest, like the door file: which port an install publishes on is nobody else's
+    // business on a shared machine.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        write_host(&path, &HostSettings { enabled: true, port: 3311 }).expect("write");
+        let mode = fs::metadata(&path).expect("stat").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}

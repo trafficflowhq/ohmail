@@ -54,11 +54,23 @@
 // process running — and an engine outliving the window it belonged to is
 // exactly the stray process this exists to prevent. `Shell::stop` is idempotent,
 // so a platform that fires both pays nothing for it.
+//
+// HOST MODE bends exactly one of those rules, on the user's explicit say-so.
+// With host mode armed — this install publishing its mail engine to the user's
+// own tailnet, so a phone reads mail through this process — closing the window
+// must not cut the phone off: the close becomes a hide, a tray icon is the way
+// back, and the engine's lifetime belongs to the APP (the tray's Quit, or the
+// platform's) rather than to the window. Disarmed is the behaviour above,
+// unchanged. The whole policy is `host::lifecycle_action`, one function whose
+// disarmed column is held to today's behaviour by test; the closure at the
+// bottom of this file only maps events into it and performs what it says.
 
 #[cfg(feature = "local-engine")]
 mod config;
 #[cfg(feature = "local-engine")]
 mod engine;
+#[cfg(feature = "local-engine")]
+mod host;
 mod menu;
 mod updater;
 
@@ -83,24 +95,65 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("ohmail: failed to start the Tauri runtime");
 
+    // HOST MODE IS DECIDED BEFORE THE ENGINE STARTS, because the decision is part of the spawn:
+    // an armed install's engine gets three extra environment variables (`host.rs` carries the
+    // whole design), and an engine's environment is fixed at its spawn. The log is opened first
+    // — `open_log` is idempotent and `Shell::start` still opens it for the default path — so the
+    // probe's outcome lands somewhere a person can read it.
     #[cfg(feature = "local-engine")]
-    let shell = std::sync::Arc::new(engine::Shell::start(&app));
+    let host_boot = {
+        engine::Shell::open_log(&app);
+        host::HostBoot::detect(&engine::Shell::paths(&app))
+    };
+    #[cfg(feature = "local-engine")]
+    let shell = std::sync::Arc::new(engine::Shell::start(&app, host_boot.spawn.clone()));
     #[cfg(feature = "local-engine")]
     engine::manage(&app, std::sync::Arc::clone(&shell));
+    // The tray, the serve re-assertion, and the state the window reads — armed installs only;
+    // a disarmed one gets a dormant struct and none of the machinery.
+    #[cfg(feature = "local-engine")]
+    let host_runtime = host::manage(&app, std::sync::Arc::clone(&shell), host_boot);
 
     // The one unrequested request this binary makes. Spawned, so nothing here waits on a feed.
     updater::on_launch(app.handle());
 
     app.run(move |_app, _event| {
+        // The close/quit policy is `host::lifecycle_action` — ONE function, tested against the
+        // contract that disarmed is exactly the behaviour above this feature existed: Destroyed
+        // stops the engine, a close request passes through, Exit stops. Armed swaps the close
+        // request for a hide (the tray is the way back) and leaves the engine's lifetime to the
+        // app rather than to the window. This closure only maps events to that function and
+        // performs what it says.
         #[cfg(feature = "local-engine")]
-        match &_event {
-            tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. }
-                if label == "main" =>
-            {
-                shell.stop()
+        {
+            let signal = match &_event {
+                tauri::RunEvent::WindowEvent {
+                    label,
+                    event: tauri::WindowEvent::CloseRequested { .. },
+                    ..
+                } if label == "main" => Some(host::WindowSignal::MainCloseRequested),
+                tauri::RunEvent::WindowEvent {
+                    label, event: tauri::WindowEvent::Destroyed, ..
+                } if label == "main" => Some(host::WindowSignal::MainDestroyed),
+                tauri::RunEvent::Exit => Some(host::WindowSignal::Exit),
+                _ => None,
+            };
+            if let Some(signal) = signal {
+                match host::lifecycle_action(host_runtime.armed(), signal) {
+                    host::LifecycleAction::StopEngine => shell.stop(),
+                    host::LifecycleAction::HideInsteadOfClose => {
+                        if let tauri::RunEvent::WindowEvent {
+                            event: tauri::WindowEvent::CloseRequested { api, .. },
+                            ..
+                        } = &_event
+                        {
+                            api.prevent_close();
+                        }
+                        host::hide_main_window(_app);
+                    }
+                    host::LifecycleAction::Nothing => {}
+                }
             }
-            tauri::RunEvent::Exit => shell.stop(),
-            _ => {}
         }
     });
 }

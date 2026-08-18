@@ -45,9 +45,17 @@ default = []
 local-engine = [
     "dep:keyring",
     "dep:getrandom",
+    "dep:tauri-plugin-autostart",
     "dep:tauri-plugin-notification",
     "dep:tauri-plugin-deep-link",
     "dep:tauri-plugin-single-instance",
+    # The tray icon is host mode's window into an app whose window is closed: when this
+    # install publishes its mail to the user's own tailnet, closing the window hides it
+    # instead of quitting, and the tray is then the only visible handle on the running
+    # process. It is a TAURI feature rather than a dependency line, so it is listed here —
+    # the preview neither hides on close nor draws a tray, and compiling the capability out
+    # of that artifact is the same audit argument as every optional dependency above.
+    "tauri/tray-icon",
 ]
 
 [build-dependencies]
@@ -205,6 +213,27 @@ getrandom = { version = "0.3", optional = true }
 # nothing may be, since this binary is conveyed under AGPL-3.0 and its own
 # licence is meant to be the only copyleft in it.
 tauri-plugin-notification = { version = "2", optional = true }
+
+# START-AT-LOGIN, for the one mode that is a commitment rather than a session.
+#
+# Host mode publishes this install's mail to the user's OWN tailnet — their phone
+# reads mail through this process while the laptop is awake — and an always-on
+# role the user has to remember to start is a role that silently is not being
+# performed. So enabling host mode also registers the app to start at login
+# (a LaunchAgent on macOS, a Run registry key on Windows, an autostart .desktop
+# entry on Linux — all of it this crate's), shown as a pre-checked line of the
+# enable ceremony the user can uncheck, and REMOVED when host mode is turned
+# off. The registration is reached only from the shell's own commands in
+# `src/host.rs`; the webview is granted those commands and none of this
+# plugin's own permissions.
+#
+# Optional and enabled only by `local-engine`, for the reason every optional
+# dependency here is: the preview has no engine, no host mode, and no business
+# registering itself to start with anybody's computer. MIT OR Apache-2.0, as is
+# everything it pulls in — nothing here is copyleft and nothing may be, since
+# this binary is conveyed under AGPL-3.0 and its own licence is meant to be the
+# only copyleft in it.
+tauri-plugin-autostart = { version = "2", optional = true }
 
 # THE `ohmail://` SCHEME, AND THE TWO PLUGINS THAT MAKE IT ONE APP RATHER THAN
 # SEVERAL.

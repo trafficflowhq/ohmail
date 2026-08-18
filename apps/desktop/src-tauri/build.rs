@@ -42,6 +42,19 @@ const WINDOW_COMMANDS: &[&str] = &[
     // directory and opened in the platform's usual viewer. Same shape: `engine.rs` owns the
     // path discipline, this line makes the command exist at all.
     "open_attachment",
+    // HOST MODE — publishing the engine's loopback door to the user's OWN tailnet, driven
+    // entirely through this shell's commands (`src/host.rs` carries the reasoning). The window
+    // reads a typed state, probes the tailnet, arms and disarms (the serve invocation is
+    // composed from constants and pinned by test to serve-never-funnel), toggles start-at-login
+    // through the shell rather than the autostart plugin's own permissions, and can open
+    // Tailscale's download page — one more CONSTANT address the shell owns, no URL argument.
+    "host_state",
+    "tailscale_status",
+    "tailscale_serve_arm",
+    "tailscale_serve_disarm",
+    "autostart_get",
+    "autostart_set",
+    "open_tailscale_download",
 ];
 
 fn main() {
