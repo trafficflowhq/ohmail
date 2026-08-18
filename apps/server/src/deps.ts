@@ -96,6 +96,9 @@ export function stagingStorageFor(
         accessKeyId: storage.accessKeyId,
         secretAccessKey: storage.secretAccessKey,
         bucket: storage.bucket,
+        // The browser-facing half of the split (S3_PUBLIC_ENDPOINT, default OHMAIL_ORIGIN):
+        // upload grants alone are addressed — and therefore SigV4-signed — against it.
+        publicEndpoint: storage.publicEndpoint,
       }, fetchImpl);
   }
 }

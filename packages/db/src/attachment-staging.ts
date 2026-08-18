@@ -593,6 +593,26 @@ export interface S3StagingStorageConfig {
   secretAccessKey: string;
   /** The dedicated staging bucket. Never a bucket anything else writes to. */
   bucket: string;
+  /**
+   * The endpoint a BROWSER can reach, used ONLY to build `signUpload`'s URL — `S3_PUBLIC_ENDPOINT`
+   * on the self-host server, defaulted there to `OHMAIL_ORIGIN`. Absent ⇒ {@link endpoint}.
+   *
+   * It exists because the two audiences of this port live on different networks: `download` and
+   * `remove` run in the server processes, which reach the store by its in-network name
+   * (`http://minio:9000`), while the presigned PUT is performed by a browser, which cannot
+   * resolve that name and whose CSP (`connect-src 'self'`) refuses any off-origin request
+   * anyway. So the upload grant is addressed — and therefore SIGNED, since SigV4 covers the
+   * `Host` header — against the browser-facing origin, and the reverse proxy carries the PUT to
+   * the store with the Host PRESERVED, which is what keeps the signature valid end to end.
+   * The store's own view of the request is path-style (`/<bucket>/<key>` under a host that is
+   * not the store's), which every S3-compatible accepts and MinIO validates against the exact
+   * Host the proxy handed it.
+   *
+   * SECURITY INVARIANT, stated where the surface is minted: routing `/<bucket>/*` through the
+   * public origin is safe ONLY while the bucket stays PRIVATE — an unsigned request must 403.
+   * No anonymous bucket policy, ever; the boot smoke probes exactly that.
+   */
+  publicEndpoint?: string;
 }
 
 /**
@@ -692,11 +712,16 @@ export function makeS3StagingStorage(
     retries: 0,
   });
   const urlFor = (objectPath: string): string => s3StagingObjectUrl(cfg, objectPath);
+  // The upload grant alone is addressed at the BROWSER-facing endpoint (see the config field's
+  // header): the URL is built against it BEFORE signing, so the SigV4 `Host` in the signature is
+  // the host the browser will actually present through the proxy.
+  const uploadUrlFor = (objectPath: string): string =>
+    s3StagingObjectUrl({ endpoint: cfg.publicEndpoint ?? cfg.endpoint, bucket: cfg.bucket }, objectPath);
   const DELETE_BATCH = 16;
 
   return {
     async signUpload(objectPath, contentType) {
-      const url = new URL(urlFor(objectPath));
+      const url = new URL(uploadUrlFor(objectPath));
       url.searchParams.set("X-Amz-Expires", String(S3_UPLOAD_GRANT_TTL_SECONDS));
       // `allHeaders: true` is what signs `content-type` (aws4fetch skips it by default), which
       // is what makes the grant refuse a PUT that lies about its type.

@@ -138,7 +138,17 @@ export interface SmtpConfig {
  */
 export type StorageConfig =
   | { kind: "supabase"; url: string; serviceKey: string; bucket: string }
-  | { kind: "s3"; endpoint: string; region: string; accessKeyId: string; secretAccessKey: string; bucket: string };
+  | {
+    kind: "s3"; endpoint: string; region: string; accessKeyId: string; secretAccessKey: string;
+    bucket: string;
+    /** The endpoint a BROWSER can reach — `S3_PUBLIC_ENDPOINT`, defaulted to `OHMAIL_ORIGIN`.
+     *  Used ONLY when the upload grant's URL is built (`makeS3StagingStorage.signUpload`); the
+     *  service wire (download, delete) stays on {@link endpoint}. The default is the compose's
+     *  whole point: the bundled MinIO is in-network only, so the grant rides the reverse
+     *  proxy's `/<bucket>/*` route — same-origin for the browser's CSP, Host preserved for the
+     *  signature. An operator on an EXTERNAL store sets this to that store's own address. */
+    publicEndpoint: string;
+  };
 
 export interface ServerConfig {
   /** The ONE absolute browser origin this install serves (`OHMAIL_ORIGIN`), canonicalized. */
@@ -269,12 +279,20 @@ const S3_STORAGE_VARS = ["S3_ENDPOINT", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SEC
  * `supabase` | `s3`, an UNKNOWN kind refuses at boot, and the selected kind's variables are
  * all-or-nothing. Storage variables present with NO kind refuse too — silently ignoring them
  * would be a deployment that looks configured and stages nothing.
+ *
+ * `origin` is `OHMAIL_ORIGIN`, already canonicalized: it is the s3 arm's default
+ * `publicEndpoint`, because on the reference compose the store is reachable from a browser only
+ * through the proxy's own origin. The variable itself is validated exactly as `S3_ENDPOINT` is
+ * — an upload grant is LOCAL key derivation, so a malformed public endpoint would otherwise
+ * surface one step late, as every browser upload failing.
  */
-function loadStorageConfig(env: NodeJS.ProcessEnv): StorageConfig | null {
+function loadStorageConfig(env: NodeJS.ProcessEnv, origin: string): StorageConfig | null {
   const kind = trimmed(env, "TF_STORAGE_KIND");
   const anySet = (vars: readonly string[]): string[] => vars.filter((v) => trimmed(env, v) !== "");
   if (kind === "") {
-    const stray = [...anySet(SUPABASE_STORAGE_VARS), ...anySet(S3_STORAGE_VARS)];
+    // `S3_PUBLIC_ENDPOINT` is optional under the s3 kind but still a storage variable: set with
+    // no kind it means the operator configured storage and the factory would ignore it.
+    const stray = [...anySet(SUPABASE_STORAGE_VARS), ...anySet(S3_STORAGE_VARS), ...anySet(["S3_PUBLIC_ENDPOINT"])];
     if (stray.length > 0) {
       throw new Error(
         `storage variables are set but TF_STORAGE_KIND is not (set it to "supabase" or "s3"): ${stray.join(", ")}`,
@@ -317,6 +335,25 @@ function loadStorageConfig(env: NodeJS.ProcessEnv): StorageConfig | null {
     if (endpointUrl.username || endpointUrl.password) {
       throw new Error("S3_ENDPOINT must not embed credentials — they belong in S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY");
     }
+    // OPTIONAL, defaulted to the one origin browsers already talk to — the reverse proxy's
+    // `/<bucket>/*` route makes the bundled store reachable there. Set it to the store's own
+    // address when the store is browser-reachable itself (an external object store).
+    const publicRaw = trimmed(env, "S3_PUBLIC_ENDPOINT");
+    let publicEndpoint = origin;
+    if (publicRaw !== "") {
+      let publicUrl: URL | null = null;
+      try {
+        publicUrl = new URL(publicRaw);
+      } catch { /* refused below */ }
+      if (!publicUrl || (publicUrl.protocol !== "http:" && publicUrl.protocol !== "https:")
+        || publicUrl.hostname === "") {
+        throw new Error("S3_PUBLIC_ENDPOINT must be an absolute http(s) URL a browser can reach, e.g. https://mail.example.com");
+      }
+      if (publicUrl.username || publicUrl.password) {
+        throw new Error("S3_PUBLIC_ENDPOINT must not embed credentials — it is handed to browsers verbatim");
+      }
+      publicEndpoint = publicRaw;
+    }
     return {
       kind: "s3",
       endpoint,
@@ -324,6 +361,7 @@ function loadStorageConfig(env: NodeJS.ProcessEnv): StorageConfig | null {
       accessKeyId: trimmed(env, "S3_ACCESS_KEY_ID"),
       secretAccessKey: trimmed(env, "S3_SECRET_ACCESS_KEY"),
       bucket: trimmed(env, "S3_BUCKET"),
+      publicEndpoint,
     };
   }
   throw new Error('TF_STORAGE_KIND must be "supabase" or "s3" (or unset for no object storage)');
@@ -381,7 +419,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
     version: trimmed(env, "TF_BUILD_VERSION") || "dev",
     sse: SELF_HOST_SSE,
     smtp: loadSmtpConfig(env),
-    storage: loadStorageConfig(env),
+    storage: loadStorageConfig(env, origin),
     // Present ⇒ shaped like an Anthropic key or the boot refuses (the mistyped key would
     // otherwise present as a healthy host whose every draft says "try again later").
     anthropicApiKey: anthropicRaw === "" ? null : assertAnthropicKey(anthropicRaw),

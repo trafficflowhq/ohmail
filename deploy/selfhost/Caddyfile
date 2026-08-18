@@ -30,6 +30,25 @@
 		reverse_proxy api:8080
 	}
 
+	# THE STAGING BUCKET'S BROWSER DOOR. Attachment uploads are presigned against THIS origin
+	# (`S3_PUBLIC_ENDPOINT`, defaulted to it), because the bundled MinIO has no browser-reachable
+	# address and the app's CSP allows same-origin requests only. Two properties here are
+	# load-bearing, one visible and one not:
+	#   · the path is `/<bucket>/*` — path-style object addressing, the bucket name spelled in
+	#     the URL, so the matcher must track S3_BUCKET (docker-compose.yml passes it in);
+	#   · the Host header is PRESERVED — Caddy's reverse_proxy default, relied on rather than
+	#     configured — because SigV4 signs the Host: the grant was signed for THIS origin's host,
+	#     and MinIO recomputes the signature over the Host it receives. Rewrite the Host upstream
+	#     and every upload 403s.
+	# SECURITY: this exposes the bucket's path surface, and that is safe ONLY because the bucket
+	# is PRIVATE — an unsigned request 403s, and the only grants ever minted are single-object
+	# PUTs that expire within the hour. Never attach an anonymous policy to the bucket; the boot
+	# smoke probes an unsigned GET and PUT and fails the push that breaks this.
+	@staging path /{$S3_BUCKET:ohmail-staging}/*
+	handle @staging {
+		reverse_proxy minio:9000
+	}
+
 	# Everything else is the web application: the landing, the sign-in pages, the client.
 	handle {
 		reverse_proxy web:3000
