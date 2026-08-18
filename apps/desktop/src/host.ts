@@ -152,9 +152,12 @@ export async function tailscaleStatus(): Promise<TailscaleStatus | null> {
 }
 
 /**
- * Arm host mode on `port`, with the enable ceremony's start-at-login choice. The shell persists
- * nothing unless both the tailnet probe and the serve registration succeed — a refusal comes
- * back as a state whose `enabled` is false and whose `problem` names what to fix.
+ * Arm host mode on `port`, with the enable ceremony's start-at-login choice. The shell probes
+ * the tailnet first — a probe refusal changes nothing and answers with the CURRENT state plus
+ * this attempt's `problem` — and then arms in the safe order: setting persisted, engine
+ * respawned with its host door, and the tailnet route published LAST, only once the engine's
+ * own listener holds the loopback port. A failure past the probe therefore comes back as
+ * `enabled: true` with `state: "degraded"` and a typed problem, and no route exists.
  *
  * The port is checked HERE as well as in the shell, because 1–65535 is the contract and a caller
  * passing 0 is a bug worth an exception rather than a guided state.
@@ -184,7 +187,13 @@ export async function getAutostart(): Promise<boolean | null> {
   return typeof answer === "boolean" ? answer : null;
 }
 
-/** Set start-at-login. Returns the state as the platform then reports it. */
+/**
+ * Set start-at-login. Returns the state as the platform then reports it.
+ *
+ * Enabling REQUIRES host mode armed — the shell rejects it otherwise, because start-at-login
+ * exists only in service of the always-on role and a disarmed install must never gain a login
+ * registration. Disabling is unconditional.
+ */
 export async function setAutostart(enabled: boolean): Promise<boolean | null> {
   const shell = internals();
   if (!shell) return null;

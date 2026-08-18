@@ -42,7 +42,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::config;
@@ -424,6 +424,116 @@ pub fn disarm_serve_with(run: &dyn Fn(&[String]) -> CliResult) -> Result<(), Pro
     }
 }
 
+// ── The publication order: the engine holds the port FIRST, the tailnet route comes LAST ─────
+//
+// `tailscale serve` proxies the tailnet onto `127.0.0.1:<port>` for WHATEVER is listening there.
+// Run before the engine's own listener holds that port, the route would briefly — or, after a
+// bind failure, indefinitely — expose some unrelated loopback service to every tailnet device.
+// So no publication happens until the engine has SAID `host_listening` on the exact port, and
+// every publication carries the arming generation it was started under, so a disarm that
+// happened in between wins.
+
+/// What one look at the engine tells a waiting publication.
+pub enum ListenerPoll {
+    /// The engine is down for good this run — stopped, failed, never configured. Nothing to wait
+    /// for.
+    EngineGone,
+    /// Still alive; the engine's host signal so far, if any. `None` while it boots.
+    Waiting(Option<HostSignal>),
+}
+
+/// How long a publication waits for the engine's listener: 150 × 200ms = 30 seconds, which is a
+/// cold local-store boot with room to spare. Expiring reads as listener-pending — armed,
+/// unpublished, and safe — never as a route.
+const LISTENER_WAIT_TRIES: u32 = 150;
+const LISTENER_WAIT_STEP: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Wait until the engine's host listener holds a port, or say why it never will. Injectable so
+/// every branch is a test, with `wait` at zero.
+pub fn await_listening_with(
+    tries: u32,
+    wait: std::time::Duration,
+    poll: &dyn Fn() -> ListenerPoll,
+) -> Result<u16, Problem> {
+    for attempt in 0..tries {
+        match poll() {
+            ListenerPoll::EngineGone => return Err(Problem::EngineNotServing),
+            ListenerPoll::Waiting(Some(HostSignal::Listening { port })) => return Ok(port),
+            ListenerPoll::Waiting(Some(HostSignal::Skipped)) => {
+                return Err(Problem::ListenerSkipped)
+            }
+            ListenerPoll::Waiting(Some(HostSignal::Failed)) => return Err(Problem::ListenerFailed),
+            ListenerPoll::Waiting(Some(HostSignal::ConfigInvalid)) => {
+                return Err(Problem::HostConfigInvalid)
+            }
+            ListenerPoll::Waiting(None) => {
+                if attempt + 1 < tries {
+                    std::thread::sleep(wait);
+                }
+            }
+        }
+    }
+    Err(Problem::ListenerPending)
+}
+
+impl<R: tauri::Runtime> HostRuntime<R> {
+    /// Publish the tailnet route — after the listener, under the serve lock, gated on the
+    /// generation. `Ok(true)` published; `Ok(false)` the world moved (a disarm or a re-arm won)
+    /// and NOTHING ran; `Err` names why the listener never held the port or why serve refused.
+    ///
+    /// Injectable poll and runner, because the order in here IS the security property: the test
+    /// that drives a failed listener through this function asserts the runner was never called,
+    /// and was watched go red against the reversed order.
+    fn publish_when_listening_with(
+        &self,
+        port: u16,
+        generation: u64,
+        tries: u32,
+        wait: std::time::Duration,
+        poll: &dyn Fn() -> ListenerPoll,
+        run: &dyn Fn(&[String]) -> CliResult,
+    ) -> Result<bool, Problem> {
+        let bound = await_listening_with(tries, wait, poll)?;
+        if bound != port {
+            // The engine bound a different port than this arming asked for — configuration
+            // drift, and a route onto it would proxy the wrong thing.
+            return Err(Problem::HostConfigInvalid);
+        }
+        let _serialized = self.serve_ops.lock().expect("serve ops");
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Ok(false);
+        }
+        arm_serve_with(run, port)?;
+        self.published.store(true, Ordering::SeqCst);
+        Ok(true)
+    }
+
+    /// The shipped publication: the real engine as the poll, the real CLI as the runner.
+    fn publish_when_listening(&self, port: u16, generation: u64) -> Result<bool, Problem> {
+        let poll = || {
+            let engine = self.shell.engine();
+            match engine.state() {
+                // Terminal for this run's listener. Starting/Restarting keep waiting — the
+                // signal is per-run and a healthy restart will announce again.
+                EngineState::Stopped
+                | EngineState::Failed { .. }
+                | EngineState::Absent { .. }
+                | EngineState::NotConfigured { .. }
+                | EngineState::NoKey { .. } => ListenerPoll::EngineGone,
+                _ => ListenerPoll::Waiting(engine.host_signal()),
+            }
+        };
+        self.publish_when_listening_with(
+            port,
+            generation,
+            LISTENER_WAIT_TRIES,
+            LISTENER_WAIT_STEP,
+            &poll,
+            &|args| run_tailscale(args),
+        )
+    }
+}
+
 // ── What the engine says about its host door, read off its diagnostics ──────────────────────
 
 /// The engine's own account of its host listener, read from the diagnostic lines it already
@@ -616,9 +726,23 @@ pub struct HostRuntime<R: tauri::Runtime> {
     /// Where `host.json` lives, resolved once — `None` on a machine that named no data dir.
     settings_path: Option<PathBuf>,
     armed: AtomicBool,
+    /// Bumped on every arm and every stand-down. A publication carries the generation it was
+    /// started under and publishes NOTHING if the world moved — otherwise a launch-time
+    /// publication scheduled behind a slow daemon could re-publish a port the user had just
+    /// disarmed, leaving the shell reporting off while the tailnet still proxies.
+    generation: AtomicU64,
+    /// Whether the CURRENT arming has actually completed its `tailscale serve` registration.
+    /// "Serving" is claimed only when this is true AND the engine's listener holds the port —
+    /// an armed install whose publication has not happened yet is degraded, not serving.
+    published: AtomicBool,
+    /// Serializes every `tailscale serve` mutation, so an in-flight publication and a disarm's
+    /// off-switch cannot interleave; whichever runs second under this lock decides the end state,
+    /// and the generation check under the same lock makes that the disarm.
+    serve_ops: Mutex<()>,
     port: Mutex<Option<u16>>,
     origin: Mutex<Option<String>>,
-    /// The launch- or arm-time problem. `None` when the last probe-and-serve succeeded.
+    /// The launch- or arm-time problem. `None` when nothing stands between this install and
+    /// serving (the tri-state still derives listener-pending from the engine's own signals).
     problem: Mutex<Option<Problem>>,
     tray: Mutex<Option<TrayHandles<R>>>,
 }
@@ -643,7 +767,14 @@ impl<R: tauri::Runtime> HostRuntime<R> {
             return ("degraded", Some(Problem::EngineNotServing));
         }
         match engine.host_signal() {
-            Some(HostSignal::Listening { .. }) => ("serving", None),
+            // "Serving" needs BOTH halves true: the engine holds the loopback port AND the
+            // tailnet registration has actually been made under the current arming. A listener
+            // without the route is not reachable from anybody's phone, and saying "serving"
+            // about it would be the tray lying in the exact state somebody is debugging.
+            Some(HostSignal::Listening { .. }) if self.published.load(Ordering::SeqCst) => {
+                ("serving", None)
+            }
+            Some(HostSignal::Listening { .. }) => ("degraded", Some(Problem::ListenerPending)),
             Some(HostSignal::Skipped) => ("degraded", Some(Problem::ListenerSkipped)),
             Some(HostSignal::Failed) => ("degraded", Some(Problem::ListenerFailed)),
             Some(HostSignal::ConfigInvalid) => ("degraded", Some(Problem::HostConfigInvalid)),
@@ -666,6 +797,16 @@ impl<R: tauri::Runtime> HostRuntime<R> {
 
     fn set_problem(&self, problem: Option<Problem>) {
         *self.problem.lock().expect("host problem") = problem;
+    }
+
+    /// The answer to a REFUSED attempt: the runtime's real state — an already-armed install
+    /// stays armed, a disarmed one stays off — with `problem` naming what THIS attempt hit.
+    /// Fabricating a bare "off" here would have the refusal and the very next `host_state`
+    /// disagreeing about `enabled`.
+    fn refusal_json(&self, problem: Problem, autostart: Option<bool>) -> serde_json::Value {
+        let mut out = self.state_json(autostart);
+        out["problem"] = serde_json::Value::String(problem.as_str().to_string());
+        out
     }
 
     /// Refresh the tray's state line from the tri-state. Called from the refresher thread and
@@ -699,6 +840,9 @@ pub fn manage<R: tauri::Runtime>(
             .ok()
             .map(|dir| dir.join(config::HOST_FILE_NAME)),
         armed: AtomicBool::new(boot.armed),
+        generation: AtomicU64::new(0),
+        published: AtomicBool::new(false),
+        serve_ops: Mutex::new(()),
         port: Mutex::new(boot.port),
         origin: Mutex::new(boot.spawn.as_ref().map(|s| s.origin.clone())),
         problem: Mutex::new(boot.problem),
@@ -708,21 +852,27 @@ pub fn manage<R: tauri::Runtime>(
 
     if boot.armed {
         stand_up_tray(app.handle(), &runtime);
-        // Re-assert the serve registration in the background when the probe found an identity:
-        // `--bg` is persistent in the daemon, so this is normally a no-op, and it is what heals a
-        // registration lost to a `tailscale serve reset` without asking the user to disarm and
-        // re-arm. Off the startup path — a slow daemon must not delay the window.
+        // The launch publication, when the probe found an identity: wait for the engine's own
+        // listener to hold the port, THEN `serve --bg` (normally a no-op — the registration is
+        // persistent in the daemon — but it heals one lost to a reset). Off the startup path,
+        // and generation-gated: a disarm clicked before this runs wins, and this publishes
+        // nothing.
         if let Some(spawn) = boot.spawn {
             let runtime = Arc::clone(&runtime);
+            let generation = runtime.generation.load(Ordering::SeqCst);
             std::thread::spawn(move || {
-                if let Err(problem) = arm_serve_with(&|args| run_tailscale(args), spawn.port) {
-                    engine::log_line(format_args!(
-                        "host mode: re-asserting the tailnet registration failed ({})",
-                        problem.as_str()
-                    ));
-                    runtime.set_problem(Some(problem));
-                    runtime.refresh_tray_line();
+                match runtime.publish_when_listening(spawn.port, generation) {
+                    Ok(true) => {}
+                    Ok(false) => return, // stood down while waiting; the stand-down spoke
+                    Err(problem) => {
+                        engine::log_line(format_args!(
+                            "host mode: the launch publication did not happen ({})",
+                            problem.as_str()
+                        ));
+                        runtime.set_problem(Some(problem));
+                    }
                 }
+                runtime.refresh_tray_line();
             });
         }
     }
@@ -778,14 +928,86 @@ fn stand_up_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>, runtime: &Arc<Hos
             runtime.refresh_tray_line();
             // The refresher: the line must go stale-proof without the window asking — the tray
             // is exactly the surface somebody looks at when the window is closed. It ends itself
-            // when the tray comes down.
+            // when the tray comes down. Beyond re-reading the line it does two slower jobs:
+            //
+            //  · every minute it re-probes the tailnet, because "serving" claimed off an
+            //    arm-time probe would otherwise outlive a daemon somebody stopped or signed
+            //    out of — the recoverable tailnet states are set and cleared here, and states
+            //    this probe cannot judge (a serve refusal, the engine's own listener) are
+            //    left alone;
+            //  · when the arming is not yet published (the engine's listener was slow, or a
+            //    restart re-announced), it completes the publication under the same
+            //    generation gate the arm and the launch use.
             let runtime = Arc::clone(runtime);
-            std::thread::spawn(move || loop {
-                std::thread::sleep(std::time::Duration::from_secs(4));
-                if runtime.tray.lock().expect("host tray").is_none() {
-                    return;
+            std::thread::spawn(move || {
+                const RECHECK_EVERY: u32 = 15; // × 4s ≈ every minute
+                let recoverable = |p: Problem| {
+                    matches!(
+                        p,
+                        Problem::NoCli
+                            | Problem::NotRunning
+                            | Problem::NotLoggedIn
+                            | Problem::NoDnsName
+                    )
+                };
+                let mut tick: u32 = 0;
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(4));
+                    if runtime.tray.lock().expect("host tray").is_none() {
+                        return;
+                    }
+                    tick = tick.wrapping_add(1);
+                    if runtime.armed() {
+                        if !runtime.published.load(Ordering::SeqCst) {
+                            let port = *runtime.port.lock().expect("host port");
+                            let blocked = runtime
+                                .problem
+                                .lock()
+                                .expect("host problem")
+                                .map(|p| p != Problem::ListenerPending)
+                                .unwrap_or(false);
+                            if let (Some(port), false) = (port, blocked) {
+                                let generation = runtime.generation.load(Ordering::SeqCst);
+                                // One try, no wait: this tick only publishes when the signal
+                                // is already there; failures become the typed problem, which
+                                // also stops this from hammering a refusing CLI every 4s.
+                                match runtime.publish_when_listening_with(
+                                    port,
+                                    generation,
+                                    1,
+                                    std::time::Duration::ZERO,
+                                    &|| {
+                                        ListenerPoll::Waiting(
+                                            runtime.shell.engine().host_signal(),
+                                        )
+                                    },
+                                    &|args| run_tailscale(args),
+                                ) {
+                                    Ok(true) => runtime.set_problem(None),
+                                    Ok(false) => {}
+                                    Err(Problem::ListenerPending) => {}
+                                    Err(problem) => runtime.set_problem(Some(problem)),
+                                }
+                            }
+                        }
+                        if tick % RECHECK_EVERY == 0 {
+                            let current = *runtime.problem.lock().expect("host problem");
+                            match probe_with(&|args| run_tailscale(args)) {
+                                Ok(_) => {
+                                    if current.map(recoverable).unwrap_or(false) {
+                                        runtime.set_problem(None);
+                                    }
+                                }
+                                Err(problem) => {
+                                    if current.map(recoverable).unwrap_or(true) {
+                                        runtime.set_problem(Some(problem));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    runtime.refresh_tray_line();
                 }
-                runtime.refresh_tray_line();
             });
         }
         Err(err) => {
@@ -865,10 +1087,18 @@ pub fn tailscale_status() -> serde_json::Value {
     }
 }
 
-/// Arm host mode: probe, publish, persist, register start-at-login, respawn the engine with its
-/// host door. Atomic in the only sense that matters — nothing is persisted and nothing respawns
-/// unless the tailnet probe AND the serve registration both succeeded, so a refusal leaves the
-/// install exactly as it was.
+/// Arm host mode: probe, persist, register start-at-login, respawn the engine with its host
+/// door, and — LAST, and only once the engine's own listener holds the loopback port — publish
+/// the tailnet route.
+///
+/// The order is the security property, not a preference. `tailscale serve` proxies onto
+/// `127.0.0.1:<port>` for whatever is listening there, so a route installed before the engine
+/// binds would expose some unrelated loopback service to every tailnet device — and keep
+/// exposing it if the engine's bind then failed. So: a refusal BEFORE anything persists (a
+/// failed probe, the wrong door) changes nothing and answers with the current state plus this
+/// attempt's problem; a failure AFTER the respawn leaves an armed, DEGRADED, UNPUBLISHED
+/// install — safe in the only direction that matters, because no route exists until the port
+/// is provably the engine's.
 ///
 /// `autostart` is the enable ceremony's pre-checked line, passed explicitly so unchecking it is
 /// part of the same arming rather than a race against it.
@@ -885,33 +1115,19 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
         return Err("host mode needs a fixed port between 1 and 65535".to_string());
     }
     if host.shell.config_mode() != Some(config::Mode::Local) {
-        return Ok(serde_json::json!({
-            "enabled": false, "port": null, "origin": null,
-            "state": "off", "problem": Problem::LocalDoorRequired.as_str(),
-            "autostart": autostart_enabled(&app),
-        }));
+        return Ok(host.refusal_json(Problem::LocalDoorRequired, autostart_enabled(&app)));
     }
     let run = |args: &[String]| run_tailscale(args);
     let identity = match probe_with(&run) {
         Ok(identity) => identity,
-        Err(problem) => {
-            return Ok(serde_json::json!({
-                "enabled": false, "port": null, "origin": null,
-                "state": "off", "problem": problem.as_str(),
-                "autostart": autostart_enabled(&app),
-            }))
-        }
+        // The refusal changes nothing — an install that was already armed keeps its state, and
+        // the answer says so while naming what THIS attempt hit.
+        Err(problem) => return Ok(host.refusal_json(problem, autostart_enabled(&app))),
     };
-    if let Err(problem) = arm_serve_with(&run, port) {
-        return Ok(serde_json::json!({
-            "enabled": false, "port": null, "origin": null,
-            "state": "off", "problem": problem.as_str(),
-            "autostart": autostart_enabled(&app),
-        }));
-    }
 
-    // Published. Everything from here is this install's own bookkeeping, and each piece reports
-    // its own failure without unwinding the registration.
+    // The setting first: the file and the runtime agree host mode is ON before any route can
+    // exist, so a crash anywhere past this line leaves an armed, unpublished install — never a
+    // route the settings deny.
     let path = host
         .settings_path
         .clone()
@@ -930,32 +1146,63 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
         }
     }
 
+    let generation = host.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    host.published.store(false, Ordering::SeqCst);
     host.armed.store(true, Ordering::SeqCst);
     *host.port.lock().expect("host port") = Some(port);
     *host.origin.lock().expect("host origin") = Some(identity.origin.clone());
     host.set_problem(None);
-    engine::log_line(format_args!(
-        "host mode armed: the engine's host door binds 127.0.0.1:{port} and the tailnet serves {}",
-        identity.origin
-    ));
     // The engine respawns with the three host variables; the mirror and the stdio door pay one
     // ordinary restart for it, which is the same cost as choosing a door.
-    host.shell.set_host_spawn(Some(HostSpawn { port, origin: identity.origin }));
+    host.shell.set_host_spawn(Some(HostSpawn { port, origin: identity.origin.clone() }));
     host.shell.replan();
     stand_up_tray(&app, host.inner());
+
+    // The publication, last. This waits for the fresh engine's `host_listening` — seconds, on
+    // the door the person is already using — so the ceremony's answer states the finished truth.
+    match host.publish_when_listening(port, generation) {
+        Ok(true) => {
+            host.set_problem(None);
+            engine::log_line(format_args!(
+                "host mode armed: the engine's host door binds 127.0.0.1:{port} and the \
+                 tailnet serves {}",
+                identity.origin
+            ));
+        }
+        Ok(false) => { /* a stand-down won the race and already said so */ }
+        Err(problem) => {
+            engine::log_line(format_args!(
+                "host mode armed and NOT published ({}); no route exists until the engine \
+                 holds the port",
+                problem.as_str()
+            ));
+            host.set_problem(Some(problem));
+        }
+    }
+    host.refresh_tray_line();
     Ok(host.state_json(autostart_enabled(&app)))
 }
 
-/// Disarm host mode: withdraw the tailnet registration, unregister start-at-login, persist OFF,
-/// respawn the engine without its host door, take the tray down. Local disarm proceeds even when
-/// the CLI refuses or is gone — the setting is the user's to turn off on a machine Tailscale has
-/// already left — and the refusal is reported as the typed problem on the answer.
-#[tauri::command(async)]
-pub fn tailscale_serve_disarm<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    host: tauri::State<'_, Arc<HostRuntime<R>>>,
-) -> Result<serde_json::Value, String> {
-    let withdraw = disarm_serve_with(&|args| run_tailscale(args));
+/// Everything a disarm does short of restarting the engine: bump the generation (any in-flight
+/// publication that has not yet run its serve sees the move and does nothing), withdraw the
+/// tailnet registration under the serve lock (one that already published is undone HERE, because
+/// the lock orders this off-switch after it), unregister start-at-login, persist OFF, take the
+/// tray down, give macOS its dock icon back. Proceeds even when the CLI refuses or is gone — the
+/// setting is the user's to turn off on a machine Tailscale has already left — and returns the
+/// withdraw refusal, typed, for the caller to report.
+///
+/// A settings-write failure is returned as `Err` and does NOT undo the stand-down: the runtime
+/// is already off, and a stale `enabled: true` on disk is caught at the next launch by the door
+/// and probe checks, which publish nothing on their own.
+fn stand_down<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    host: &Arc<HostRuntime<R>>,
+) -> Result<Option<Problem>, String> {
+    host.generation.fetch_add(1, Ordering::SeqCst);
+    let withdraw = {
+        let _serialized = host.serve_ops.lock().expect("serve ops");
+        disarm_serve_with(&|args| run_tailscale(args))
+    };
     if let Err(problem) = &withdraw {
         engine::log_line(format_args!(
             "host mode: withdrawing the tailnet registration failed ({}); host mode turns off \
@@ -963,6 +1210,7 @@ pub fn tailscale_serve_disarm<R: tauri::Runtime>(
             problem.as_str()
         ));
     }
+    host.published.store(false, Ordering::SeqCst);
 
     {
         use tauri_plugin_autostart::ManagerExt;
@@ -973,22 +1221,54 @@ pub fn tailscale_serve_disarm<R: tauri::Runtime>(
         }
     }
 
+    host.armed.store(false, Ordering::SeqCst);
+    *host.origin.lock().expect("host origin") = None;
+    host.set_problem(withdraw.as_ref().err().copied());
+    host.shell.set_host_spawn(None);
+    host.take_down_tray();
+    // The dock icon returns on macOS: Accessory policy outliving the tray would strand the app.
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+
     if let Some(path) = host.settings_path.as_deref() {
         let port = host.port.lock().expect("host port").unwrap_or(1);
         // The port survives a disarm so re-arming offers the same one back.
         config::write_host(path, &config::HostSettings { enabled: false, port })?;
     }
+    Ok(withdraw.err())
+}
 
-    host.armed.store(false, Ordering::SeqCst);
-    *host.origin.lock().expect("host origin") = None;
-    host.set_problem(withdraw.err());
-    host.shell.set_host_spawn(None);
+/// Stand host mode down because the SHELL is moving under it — a door switch away from the
+/// local organizer, or a sign-out. Both take the engine's host listener away, and a tailnet
+/// registration outliving the listener it pointed at would proxy whatever binds that loopback
+/// port next. Best-effort by design: the transition itself must not be blocked by a settings
+/// write, so a failure is logged and the next launch's own checks (door, probe) publish nothing.
+pub fn stand_down_on_shell_transition<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    host: &Arc<HostRuntime<R>>,
+    why: &str,
+) {
+    if !host.armed() {
+        return;
+    }
+    engine::log_line(format_args!("host mode stands down: {why}"));
+    if let Err(reason) = stand_down(app, host) {
+        engine::log_line(format_args!(
+            "host mode: the setting could not be written while standing down ({reason}); the \
+             next launch republishes nothing without a door and a probe"
+        ));
+    }
+}
+
+/// Disarm host mode: the stand-down above, then the engine restarts without its host door.
+#[tauri::command(async)]
+pub fn tailscale_serve_disarm<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    host: tauri::State<'_, Arc<HostRuntime<R>>>,
+) -> Result<serde_json::Value, String> {
+    // `stand_down` already records the withdraw refusal, if any, as the runtime problem.
+    let _withdraw = stand_down(&app, host.inner())?;
     host.shell.replan();
-    host.take_down_tray();
-    // The window is where the disarm was asked for, so it is visible; the dock icon returns on
-    // macOS all the same, because Accessory policy outliving the tray would strand the app.
-    #[cfg(target_os = "macos")]
-    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
     engine::log_line(format_args!("host mode disarmed; the engine restarts without its host door"));
     Ok(host.state_json(autostart_enabled(&app)))
 }
@@ -1002,12 +1282,24 @@ pub fn autostart_get<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<bool
 
 /// Set the start-at-login registration — the enable ceremony's checkbox, honoured after the
 /// ceremony too. Returns the state as the platform then reports it.
+///
+/// ENABLING requires host mode armed: start-at-login exists here only in service of the
+/// always-on role, and a disarmed install registering itself to start with somebody's computer
+/// would be new disarmed behaviour — the thing this feature must never add. Disabling is
+/// unconditional, because turning a registration OFF is safe from any state.
 #[tauri::command(async)]
 pub fn autostart_set<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    host: tauri::State<'_, Arc<HostRuntime<R>>>,
     enabled: bool,
 ) -> Result<bool, String> {
     use tauri_plugin_autostart::ManagerExt;
+    if enabled && !host.armed() {
+        return Err(
+            "start-at-login belongs to host mode; turn host mode on to start ohmail at login"
+                .to_string(),
+        );
+    }
     let manager = app.autolaunch();
     let outcome = if enabled { manager.enable() } else { manager.disable() };
     outcome.map_err(|err| err.to_string())?;

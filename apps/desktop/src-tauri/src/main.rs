@@ -126,6 +126,13 @@ fn main() {
         // performs what it says.
         #[cfg(feature = "local-engine")]
         {
+            // macOS reopen — the dock or app icon of an already-running app. After an armed
+            // close hid the window (and withdrew the dock icon), this activation is the OTHER
+            // way back in beside the tray, and the only one left if the tray failed to build.
+            // Showing an already-visible window is a no-op, so this needs no armed check.
+            if matches!(&_event, tauri::RunEvent::Reopen { .. }) {
+                host::show_main_window(_app);
+            }
             let signal = match &_event {
                 tauri::RunEvent::WindowEvent {
                     label,

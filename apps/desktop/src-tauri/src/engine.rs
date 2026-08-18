@@ -1025,6 +1025,20 @@ pub struct Shell {
     host_spawn: Mutex<Option<crate::host::HostSpawn>>,
 }
 
+#[cfg(test)]
+impl Shell {
+    /// An inert shell for tests one module over — no app, no keystore, nothing running. What the
+    /// host module's publication tests need is only the TYPE: their engine answers come through
+    /// an injected poll, never through this.
+    pub(crate) fn inert_for_tests() -> Shell {
+        Shell {
+            paths: ShellPaths { app_data: None, resources: None },
+            engine: Mutex::new(Arc::new(Engine::inert(EngineState::Stopped))),
+            host_spawn: Mutex::new(None),
+        }
+    }
+}
+
 impl Shell {
     /// THE LOG IS OPENED FIRST, because the states worth reading about are the ones the shell can
     /// reach before it has started anything: a keystore that would not answer, an engine that is
@@ -2812,20 +2826,47 @@ fn engine_status(shell: tauri::State<'_, Arc<Shell>>) -> serde_json::Value {
 /// Takes settings and no secret — see the section header. The engine is restarted behind it, so
 /// this returns the status AFTER the change: a caller that immediately re-read `engine_status`
 /// would race the swap and could see the engine it was replacing.
+///
+/// A door change AWAY from the local organizer stands host mode down FIRST: the new door has no
+/// host listener, and a tailnet registration outliving the listener it pointed at would proxy
+/// whatever binds that loopback port next. The check is on the door being CHOSEN — a local-door
+/// reconfigure keeps an armed host mode, whose variables `Shell::planned` carries into the
+/// replacement engine.
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
-fn engine_configure(
+fn engine_configure<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     shell: tauri::State<'_, Arc<Shell>>,
+    host: tauri::State<'_, Arc<crate::host::HostRuntime<R>>>,
     config: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    if config::parse(&config)?.mode() != Mode::Local {
+        crate::host::stand_down_on_shell_transition(
+            &app,
+            host.inner(),
+            "the install is switching to a door with no host listener",
+        );
+    }
     shell.configure(&config)
 }
 
 /// Forget the account on this install: clear the sealed credential, stop the engine, forget the
 /// door. The mirror and this install's key stay. See [`Shell::logout`].
+///
+/// Host mode stands down first, for `engine_configure`'s reason: a sign-out stops the engine and
+/// its host listener, and the tailnet registration must not outlive them.
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
-fn engine_logout(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_json::Value, String> {
+fn engine_logout<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    shell: tauri::State<'_, Arc<Shell>>,
+    host: tauri::State<'_, Arc<crate::host::HostRuntime<R>>>,
+) -> Result<serde_json::Value, String> {
+    crate::host::stand_down_on_shell_transition(
+        &app,
+        host.inner(),
+        "signing out stops the engine the tailnet was served from",
+    );
     shell.logout()
 }
 

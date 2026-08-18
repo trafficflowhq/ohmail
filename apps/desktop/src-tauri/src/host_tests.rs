@@ -506,3 +506,171 @@ fn the_download_page_is_the_vendors_and_the_wire_names_are_a_closed_vocabulary()
         ]
     );
 }
+
+// ── The publication order: no route until the engine holds the port ──────────────────────────
+
+use std::cell::Cell;
+use std::sync::atomic::AtomicU64;
+use std::time::Duration;
+
+/// An armed runtime with no app behind it. The publication path under test reads the ENGINE
+/// through an injected poll and the CLI through an injected runner, so the shell here is inert
+/// scaffolding — only the generation, the lock and the flags are real.
+fn armed_runtime() -> HostRuntime<tauri::Wry> {
+    HostRuntime {
+        shell: Arc::new(engine::Shell::inert_for_tests()),
+        settings_path: None,
+        armed: AtomicBool::new(true),
+        generation: AtomicU64::new(0),
+        published: AtomicBool::new(false),
+        serve_ops: Mutex::new(()),
+        port: Mutex::new(Some(3311)),
+        origin: Mutex::new(None),
+        problem: Mutex::new(None),
+        tray: Mutex::new(None),
+    }
+}
+
+fn listening(port: u16) -> ListenerPoll {
+    ListenerPoll::Waiting(Some(HostSignal::Listening { port }))
+}
+
+#[test]
+fn no_route_is_published_until_the_engine_holds_the_port() {
+    // THE ORDER IS THE SECURITY PROPERTY. `tailscale serve` proxies onto the loopback port for
+    // WHATEVER is listening there; published before the engine's bind, a route would expose an
+    // unrelated loopback service to the whole tailnet — and keep exposing it after the engine's
+    // bind then failed. So a failed listener must mean the runner was NEVER CALLED.
+    //
+    // Watched failing: reorder `publish_when_listening_with` to run serve before the await and
+    // this test names the invocation that ran.
+    let runtime = armed_runtime();
+    let cli = FakeCli::answering(|_| ran(0, ""));
+    let outcome = runtime.publish_when_listening_with(
+        3311,
+        0,
+        3,
+        Duration::ZERO,
+        &|| ListenerPoll::Waiting(Some(HostSignal::Failed)),
+        &|args| cli.run(args),
+    );
+    assert_eq!(outcome, Err(Problem::ListenerFailed));
+    assert!(cli.calls.borrow().is_empty(), "a route was published for a listener that failed");
+    assert!(!runtime.published.load(Ordering::SeqCst));
+}
+
+#[test]
+fn a_publication_whose_generation_moved_publishes_nothing() {
+    // The disarm race: a publication scheduled at launch (or by a slow arm) must lose to a
+    // stand-down that happened while it waited — otherwise the shell reports host mode off
+    // while Tailscale still proxies the port. The stand-down bumps the generation; a
+    // publication carrying the old one runs NOTHING.
+    let runtime = armed_runtime();
+    runtime.generation.fetch_add(1, Ordering::SeqCst); // the stand-down happened
+    let cli = FakeCli::answering(|_| ran(0, ""));
+    let outcome = runtime.publish_when_listening_with(
+        3311,
+        0, // started under the old generation
+        1,
+        Duration::ZERO,
+        &|| listening(3311),
+        &|args| cli.run(args),
+    );
+    assert_eq!(outcome, Ok(false));
+    assert!(cli.calls.borrow().is_empty(), "a stale publication ran the CLI");
+    assert!(!runtime.published.load(Ordering::SeqCst));
+}
+
+#[test]
+fn a_current_publication_runs_the_pinned_invocation_once_and_marks_published() {
+    let runtime = armed_runtime();
+    let cli = FakeCli::answering(|_| ran(0, ""));
+    let outcome = runtime.publish_when_listening_with(
+        3311,
+        0,
+        1,
+        Duration::ZERO,
+        &|| listening(3311),
+        &|args| cli.run(args),
+    );
+    assert_eq!(outcome, Ok(true));
+    assert_eq!(cli.calls.borrow().as_slice(), [serve_arm_args(3311).to_vec()]);
+    assert!(runtime.published.load(Ordering::SeqCst));
+}
+
+#[test]
+fn a_listener_on_a_different_port_never_publishes() {
+    // Configuration drift: the engine announced a bind, on a port this arming did not ask for.
+    // A route onto the asked-for port would proxy whatever else sits there.
+    let runtime = armed_runtime();
+    let cli = FakeCli::answering(|_| ran(0, ""));
+    let outcome = runtime.publish_when_listening_with(
+        3311,
+        0,
+        1,
+        Duration::ZERO,
+        &|| listening(4400),
+        &|args| cli.run(args),
+    );
+    assert_eq!(outcome, Err(Problem::HostConfigInvalid));
+    assert!(cli.calls.borrow().is_empty());
+}
+
+#[test]
+fn a_serve_refusal_after_a_good_listener_is_typed_and_unpublished() {
+    let runtime = armed_runtime();
+    let cli = FakeCli::answering(|_| ran(1, ""));
+    let outcome = runtime.publish_when_listening_with(
+        3311,
+        0,
+        1,
+        Duration::ZERO,
+        &|| listening(3311),
+        &|args| cli.run(args),
+    );
+    assert_eq!(outcome, Err(Problem::ServeRefused));
+    assert!(!runtime.published.load(Ordering::SeqCst));
+}
+
+// ── Waiting on the listener ──────────────────────────────────────────────────────────────────
+
+#[test]
+fn the_wait_reads_every_signal_and_expiry_is_pending() {
+    assert_eq!(await_listening_with(1, Duration::ZERO, &|| listening(3311)), Ok(3311));
+    assert_eq!(
+        await_listening_with(1, Duration::ZERO, &|| ListenerPoll::Waiting(Some(
+            HostSignal::Skipped
+        ))),
+        Err(Problem::ListenerSkipped)
+    );
+    assert_eq!(
+        await_listening_with(1, Duration::ZERO, &|| ListenerPoll::Waiting(Some(
+            HostSignal::ConfigInvalid
+        ))),
+        Err(Problem::HostConfigInvalid)
+    );
+    assert_eq!(
+        await_listening_with(1, Duration::ZERO, &|| ListenerPoll::EngineGone),
+        Err(Problem::EngineNotServing)
+    );
+    // Nothing said within the budget is PENDING — armed, unpublished, safe — never a route.
+    assert_eq!(
+        await_listening_with(3, Duration::ZERO, &|| ListenerPoll::Waiting(None)),
+        Err(Problem::ListenerPending)
+    );
+}
+
+#[test]
+fn a_listener_that_takes_a_few_polls_is_still_found() {
+    let polls = Cell::new(0u32);
+    let outcome = await_listening_with(5, Duration::ZERO, &|| {
+        polls.set(polls.get() + 1);
+        if polls.get() < 3 {
+            ListenerPoll::Waiting(None)
+        } else {
+            listening(3311)
+        }
+    });
+    assert_eq!(outcome, Ok(3311));
+    assert_eq!(polls.get(), 3);
+}
