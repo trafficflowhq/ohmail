@@ -377,17 +377,20 @@ export interface PairedDeviceSessionMinter {
  * The response is the bearer pair and nothing else — `claimDesktopLink`'s shape exactly, and
  * for its reasons: a Set-Cookie would turn a token shown on a screen into a browser session.
  *
- * ── `kind` — WHAT the redeemer is, declared by the redeemer, defaulted to the strict side ──
+ * ── `kind` — WHAT the redeemer is, declared by the redeemer, for the DEVICE ROW only ────────
  *
  * The device row used to be stamped `macos` unconditionally — a wire wart from the desktop-link
- * tail this redeem was modelled on, and a lie twice over once a phone BROWSER became the
- * ordinary redeemer (Phase 3's QR flow): the device list said a Mac was paired when a browser
- * was, and `establish` read the false kind for its TTL surface, handing a browser the long
- * native window. The redeemer now declares itself; ABSENT means `"web"`, because a caller that
- * says nothing gets the browser reading and the STRICT (cookie-window) lifetime — the same
- * default-direction rule `sendSurfaceMaxTotalBytes` states. A PRESENT value outside the closed
- * set refuses `validation_failed` rather than clamping, and it refuses BEFORE the burn: a
- * malformed declaration is the caller's bug, and it must not cost them the single-use token.
+ * tail this redeem was modelled on, and a lie once a phone BROWSER became the ordinary redeemer
+ * (Phase 3's QR flow): the device list said a Mac was paired when a browser was. The redeemer
+ * now declares itself; ABSENT means `"web"`, the QR flow's ordinary case. A PRESENT value
+ * outside the closed set refuses `validation_failed` rather than clamping, and it refuses
+ * BEFORE the burn: a malformed declaration is the caller's bug, and it must not cost them the
+ * single-use token.
+ *
+ * What the declaration deliberately does NOT reach is the session's LIFETIME: it is anonymous
+ * wire input, so the paired mint pins the bearer surface itself (`establishPairedDevice` —
+ * its header carries the whole argument, including why a "stricter" web window would be a
+ * pretence one rotation deep).
  */
 export async function redeemDevicePair(
   ctx: ServiceContext, auth: PairedDeviceSessionMinter, input: { token: string; kind?: "web" | "macos" },

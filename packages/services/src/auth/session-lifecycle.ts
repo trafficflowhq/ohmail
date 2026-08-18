@@ -150,15 +150,20 @@ export class SessionLifecycle {
    *    `GET /devices` legible and `DELETE /devices/:id` aimable — the revocation path being the
    *    reason pairing is safe to offer at all.
    *
-   *  · **`kind` is the REDEEMER's declaration, not a hardcoded "macos".** The desktop claim's
-   *    tail could hardcode its kind because its caller IS the desktop app; a pairing token is
-   *    redeemed by whatever scanned the QR — a phone browser today (Phase 3), the native app
-   *    later (Phase 5) — and stamping "macos" on a browser was the wire wart this slice removed: the
-   *    device list lied about what was paired, and `establish` read the lie for its TTL surface
-   *    (a browser holding the 400-day native window). The set is closed here — an unlisted kind
-   *    refuses rather than defaulting, because a clamp ships a device row nobody chose — and the
-   *    DEFAULT for a caller that says nothing is decided at the redeem (`redeemDevicePair`:
-   *    "web", the strict TTL side), never here.
+   *  · **`kind` is the REDEEMER's declaration, and it names the DEVICE ROW — never a lifetime.**
+   *    The desktop claim's tail could hardcode its kind because its caller IS the desktop app; a
+   *    pairing token is redeemed by whatever scanned the QR — a phone browser today (Phase 3),
+   *    the native app later (Phase 5) — and stamping "macos" on a browser was the wire wart this
+   *    slice removed: the device list lied about what was paired. The set is closed here — an
+   *    unlisted kind refuses rather than defaulting, because a clamp ships a device row nobody
+   *    chose — and the DEFAULT for a caller that says nothing is decided at the redeem
+   *    (`redeemDevicePair`: "web"), never here. What the declaration must NOT reach is the TTL
+   *    surface: it is anonymous wire input, so letting it pick `native` would hand any token
+   *    holder the choice of their credential's idle window — and letting it pick `cookie` would
+   *    only pretend to be stricter, because a bearer pair rotates through the body branch, which
+   *    re-issues the NATIVE window on the first rotation whatever the mint chose. So the mint
+   *    pins `surface: "native"` — the bearer reality, one policy at mint and at rotation — and
+   *    the kind is display truth only.
    *
    *  · **`twofaAt: null` — the paired session starts with NO step-up standing.** The desktop
    *    claim stamps `ctx.now()` and its header earns it: a step-up-gated mint plus a TWO-MINUTE
@@ -187,7 +192,9 @@ export class SessionLifecycle {
       label: b.label, ip: ctx.ip ?? "",
     }).returning();
     const established = await this.establish(ctx, user, {
-      kind: b.kind, deviceId: dev!.id, twofaAt: null,
+      // The declared kind rides on the DEVICE ROW above; the lifetime surface is pinned to the
+      // bearer transport this redeem answers with — see the kind bullet in the header.
+      kind: b.kind, deviceId: dev!.id, twofaAt: null, surface: "native",
     });
     // The bearer pair and nothing else — `claimDesktopLink`'s shape, for its reasons.
     return { tokens: established.tokens! };
@@ -286,6 +293,14 @@ export class SessionLifecycle {
       method?: AuthAuditEvent["method"]; kind: "web" | "macos"; ip?: string;
       familyId?: string; deviceId?: string;
       twofaAt: Date | null;
+      /**
+       * The lifetime surface, when the CALLER's transport decides it rather than the kind.
+       * Every ceremony call site omits it and keeps the kind-derived reading below; the one
+       * caller that sets it is {@link establishPairedDevice}, whose `kind` is the REDEEMER's
+       * anonymous declaration and therefore must not be allowed to choose a window — see its
+       * header for the whole argument.
+       */
+      surface?: SessionSurface;
     },
   ): Promise<SessionEstablished> {
     const db = asTx(ctx);
@@ -306,7 +321,11 @@ export class SessionLifecycle {
     // what stops a session whose device says "Web" from holding a 400-day credential: there is one
     // value, and both the row and the lifetime read it. Anything that is not `macos` is a browser
     // as far as this decision goes — the strict side, per `surfaceTtls`.
-    const ttls = surfaceTtls(this.cfg, o.kind === "macos" ? "native" : "cookie");
+    //
+    // `o.surface` is the ONE exception, for the caller whose `kind` is not its own to derive
+    // from: a pairing redeem's kind arrives from the anonymous redeemer, so the paired mint pins
+    // the surface its TRANSPORT dictates instead — see the option's doc above.
+    const ttls = surfaceTtls(this.cfg, o.surface ?? (o.kind === "macos" ? "native" : "cookie"));
     let deviceId = o.deviceId;
     if (!deviceId) {
       const [dev] = await db.insert(devices).values({
