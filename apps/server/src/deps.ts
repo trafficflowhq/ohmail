@@ -18,7 +18,7 @@ import {
   syncService, pushService, rulesService, messageService, threadService, triageService,
   searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
   attachmentsService, kbService, tagsService, draftsService, draftingService, sendService,
-  workflowsService, proposalsService,
+  workflowsService, proposalsService, redeemInviteGrant,
   makeAttachmentStagingPort, MailService, SmtpMailer,
 } from "@trafficflow/services";
 // The policy TYPE lives on the mail entry (the sidecar imports it there too); the full barrel
@@ -251,6 +251,10 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     auth: makeAuthService({
       config: authConfig, keyProvider, passwordHasher: scryptHasher, mail: customerMailerFor(cfg),
     }),
+    // The `/pair/redeem` invite arm's bridge to the Cloud-half `invites` table — present HERE
+    // because this composition's database holds that table (obligation 3, routes/self-host.ts);
+    // absent on any deployment that lacks it, where the route answers `validation_failed`.
+    inviteRedeem: redeemInviteGrant,
     // Envelope-encrypts mailbox credentials with the SAME provider the organizer decrypts with —
     // the KEK identity on the two /health responses is what proves they agree. The explicit
     // allowance is obligation 1; see SELF_HOST_MAILBOX_ALLOWANCE above.
