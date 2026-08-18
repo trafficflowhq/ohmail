@@ -63,16 +63,15 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
 });
 
-async function mount(props: { revoked?: boolean; onPaired?: () => void } = {}): Promise<BearerManager> {
+async function mount(props: { revoked?: boolean; onPaired?: () => void; strict?: boolean } = {}): Promise<BearerManager> {
   const bearer = new BearerManager({ storage: window.localStorage });
   hostEl = document.createElement("div");
   document.body.append(hostEl);
   root = createRoot(hostEl);
+  const screen = h(NextIntlClientProvider, { locale: "en", messages: messages as never },
+    h(PairScreen, { bearer, revoked: props.revoked ?? false, onPaired: props.onPaired ?? (() => undefined) }));
   await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, { locale: "en", messages: messages as never },
-        h(PairScreen, { bearer, revoked: props.revoked ?? false, onPaired: props.onPaired ?? (() => undefined) })),
-    );
+    root.render(props.strict ? h(React.StrictMode, null, screen) : screen);
   });
   // Let the mount effect's redeem settle.
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
@@ -115,6 +114,19 @@ describe("the fragment discipline", () => {
     await mount();
     expect(sent).toHaveLength(0);
     expect(hostEl.textContent).toContain("Scan the code on your computer");
+  });
+
+  it("STRICT MODE's effect replay redeems ONCE — the token is single-use and the entry mounts under StrictMode", async () => {
+    // The review finding: the replayed mount effect started a SECOND redeem with the same
+    // single-use token — the first request consumed it and had its answer discarded as
+    // "cancelled", the second answered pairing_invalid, and a valid scan failed. The redeem
+    // promise has to survive the replay the way the fragment ref does.
+    window.history.replaceState(null, "", `/pair#${TOKEN}`);
+    let pairedCalls = 0;
+    const bearer = await mount({ strict: true, onPaired: () => pairedCalls++ });
+    expect(sent).toHaveLength(1);
+    expect(bearer.paired()).toBe(true);
+    expect(pairedCalls).toBe(1);
   });
 
   it("a dead session lands here with the pairing-ended sentence", async () => {

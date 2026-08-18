@@ -25,12 +25,34 @@
  *
  * `/auth/refresh` on this door takes the body token (the native branch: strict reuse detection,
  * no concurrent grace) — so this manager rotates SERIALLY, single-flighted, because presenting
- * one refresh token twice IS the theft signal the server revokes families over. A 401 from the
- * refresh itself is therefore definitive in both directions: the family is revoked, reused-past,
- * or expired, and the only honest next state is signed-out — the pair is cleared and the
- * subscriber (the gate) lands the UI on `/pair` with a plain sentence. A NETWORK failure is
- * neither: the token was never presented, so nothing is cleared and the original 401 stands for
- * the caller's retry machinery to handle.
+ * one refresh token twice IS the theft signal the server revokes families over. Three findings
+ * from the review sharpened what that means in practice:
+ *
+ *  · **Only a 401/403 from the refresh is an authentication judgment.** A `503 host_busy` is
+ *    the LISTENER's admission bound refusing before the handler ever read the token; clearing
+ *    the pair over it signed a working phone out because the laptop was busy. Anything that is
+ *    not an explicit refusal keeps the pair and returns the caller its original 401.
+ *  · **Storage is the family's shared head.** Tabs on this origin share the refresh token, so a
+ *    manager whose in-memory copy has gone stale (another tab rotated) must re-read storage and
+ *    present the FRESHEST token, never its own consumed copy — and the whole rotation runs
+ *    under `navigator.locks` where the browser has it, so two tabs' simultaneous expiries
+ *    serialize instead of double-presenting. (Without the Locks API the re-read narrows the
+ *    window; it cannot close it.)
+ *  · **Recovery is bound to the token GENERATION.** A 401 judged against a stamp an earlier
+ *    rotation already replaced must restamp and replay, not rotate again — rotating on stale
+ *    refusals burned the fresh refresh token for nothing and invalidated the fresh access token
+ *    under the requests already carrying it.
+ *
+ * ── THE RESIDUAL THIS CLIENT CANNOT CLOSE, STATED RATHER THAN IMPLIED ────────────────────────
+ *
+ * A rotation whose RESPONSE is lost (the request reached the engine, the connection died before
+ * the answer) leaves the server holding a committed rotation this client never learned about.
+ * The next recovery re-presents the old token — which is now, correctly, the reuse signal — and
+ * the family is revoked. The wire cannot distinguish that from theft without a grace this
+ * door's native branch deliberately refuses (the shared lifecycle machinery is frozen; the
+ * cookie surface's `concurrentGrace` exists for exactly this and is a different trust model).
+ * The recovery is the product's own: the phone lands on `/pair` and one fresh QR scan re-pairs
+ * it. Bounded, visible, and honest — never a silently wrong session.
  */
 
 /** The wire pair the redeem and the refresh both answer. */
@@ -68,6 +90,12 @@ export class BearerManager {
   private readonly fetchImpl: FetchLike;
   /** The single flight — one rotation at a time, because a duplicate presentation reads as theft. */
   private rotating: Promise<boolean> | null = null;
+  /**
+   * Which token era a stamp belongs to — bumped on every adoption. A 401 carrying a stamp from
+   * an era a rotation already replaced is STALE: the right recovery is a restamp, never another
+   * rotation (see the header's third finding).
+   */
+  private generation = 0;
   private readonly deadListeners = new Set<() => void>();
 
   constructor(opts: { storage?: Storage | null; fetchImpl?: FetchLike } = {}) {
@@ -91,6 +119,7 @@ export class BearerManager {
   adopt(tokens: BearerTokens): void {
     this.access = tokens.accessToken;
     this.refresh = tokens.refreshToken;
+    this.generation++;
     try {
       this.storage?.setItem(REFRESH_STORAGE_KEY, tokens.refreshToken);
     } catch {
@@ -122,11 +151,23 @@ export class BearerManager {
   }
 
   /**
-   * Rotate the pair once, single-flighted. Resolves `true` when a fresh pair is held. A refusal
-   * clears the session (see the header); a network failure clears nothing and resolves `false`.
+   * Rotate the pair once, single-flighted, under the origin-wide lock where the browser has one.
+   * Resolves `true` when a fresh pair is held. A REFUSAL (401/403) clears the session (see the
+   * header); everything else — a network failure, the admission bound's 503, any answer that is
+   * not an authentication judgment — clears nothing and resolves `false`.
    */
   private rotate(): Promise<boolean> {
-    return (this.rotating ??= (async (): Promise<boolean> => {
+    return (this.rotating ??= this.underLock(async (): Promise<boolean> => {
+      // THE FRESHEST TOKEN WINS — see the header's second finding. Another tab may have rotated
+      // while this manager sat idle (or while this call waited for the lock); its rotation wrote
+      // storage, and presenting this manager's stale copy would be the reuse signal. Re-read
+      // under the lock, adopt the head, present that.
+      try {
+        const stored = this.storage?.getItem(REFRESH_STORAGE_KEY) ?? null;
+        if (stored !== null && stored !== this.refresh) this.refresh = stored;
+      } catch {
+        /* storage refused — the in-memory copy is all there is */
+      }
       const presented = this.refresh;
       if (presented === null) return false;
       let res: Response;
@@ -137,7 +178,9 @@ export class BearerManager {
           body: JSON.stringify({ refreshToken: presented }),
         });
       } catch {
-        return false; // never presented — nothing to conclude, nothing to clear
+        // Never CONFIRMED presented. Usually never sent at all; the lost-response case is the
+        // documented residual in the header — nothing this side can conclude, nothing cleared.
+        return false;
       }
       if (res.ok) {
         try {
@@ -147,15 +190,39 @@ export class BearerManager {
             return true;
           }
         } catch {
-          /* an OK answer this build cannot read — fall through to the refusal branch */
+          /* an OK answer this build cannot read — the old token is consumed and the new pair is
+             lost, so the stranded session falls through to the sign-out below, honestly */
         }
+        this.die();
+        return false;
       }
-      // The server judged the presented token and said no. Definitive: sign out.
-      this.die();
+      if (res.status === 401 || res.status === 403) {
+        // The server judged the presented token and said no. Definitive: sign out.
+        this.die();
+        return false;
+      }
+      // 503 host_busy, a 5xx, a proxy hiccup — the handler never judged the token. Keep the
+      // pair; the caller gets its original 401 and the next episode tries again.
       return false;
-    })().finally(() => {
+    }).finally(() => {
       this.rotating = null;
     }));
+  }
+
+  /**
+   * The origin-wide rotation lock, where the platform has one. `navigator.locks` serializes the
+   * critical section across TABS — two simultaneous expiries then present one token once each in
+   * sequence, the second finding the first's result in storage. Browsers without the API (and
+   * the test environment) run the section bare: the storage re-read above still collapses the
+   * common stale-copy case, and the residual double-present window is stated in the header.
+   */
+  private underLock(section: () => Promise<boolean>): Promise<boolean> {
+    const locks = (globalThis as { navigator?: { locks?: { request?: unknown } } }).navigator?.locks;
+    if (locks && typeof locks.request === "function") {
+      return (locks as { request: (name: string, cb: () => Promise<boolean>) => Promise<boolean> })
+        .request("ohmail.host.rotate", section);
+    }
+    return section();
   }
 
   /**
@@ -164,6 +231,12 @@ export class BearerManager {
    * rotates the pair and replays the request once with the fresh token. One, not a loop: a
    * second 401 with a token minted milliseconds ago is a revocation, and the rotation path has
    * already decided what that means.
+   *
+   * The recovery is bound to the GENERATION the refused attempt was stamped in. A 401 whose
+   * stamp an earlier rotation already replaced is stale evidence — it judged the old token, not
+   * the current one — so it restamps and replays WITHOUT rotating: rotating on stale refusals is
+   * the cascade the review named (each stale 401 burning the fresh refresh token and pulling the
+   * rug from under the requests already carrying the fresh access token).
    *
    * The manager's header is merged LAST, so it wins over a caller's copy — the adapter's
    * extra-headers seam supplies the same value, except in the one moment that matters: a
@@ -180,9 +253,12 @@ export class BearerManager {
       ...options,
       headers: { ...(options.headers ?? {}), ...this.headers() },
     });
+    const stampedIn = this.generation;
     const first = await this.fetchImpl(url, stamped());
     if (first.status !== 401 || this.refresh === null) return first;
-    if (!(await this.rotate())) return first;
+    if (this.generation === stampedIn && !(await this.rotate())) return first;
+    // Either the rotation minted a fresh pair, or one had ALREADY happened since this request
+    // was stamped — both mean the same thing: replay once under the current generation.
     return this.fetchImpl(url, stamped());
   };
 

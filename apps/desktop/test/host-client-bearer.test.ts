@@ -147,6 +147,88 @@ describe("the 401 recovery", () => {
   });
 });
 
+describe("the review's three rotation races", () => {
+  it("a 503 from /auth/refresh clears NOTHING — host_busy is admission, not an authentication judgment", async () => {
+    // The listener answers 503 host_busy BEFORE the handler reads the token, so the token was
+    // never consumed and the pairing is still valid. Clearing it here signed a working phone out
+    // over a burst of load on the laptop.
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const wire = scripted([
+      () => json(401, {}),
+      () => json(503, { error: { code: "host_busy", message: "retry shortly" } }),
+    ]);
+    const bearer = new BearerManager({ storage, fetchImpl: wire.fetch });
+    let died = 0;
+    bearer.onSessionDead(() => died++);
+    const res = await bearer.fetch("/sync");
+    expect(res.status).toBe(401);
+    expect(died).toBe(0);
+    expect(bearer.paired()).toBe(true);
+    expect(storage.getItem(REFRESH_STORAGE_KEY)).toBe("refresh-1");
+  });
+
+  it("another tab already rotated: the manager presents the STORED token, never its consumed copy", async () => {
+    // Tabs share the refresh token through storage. A manager whose in-memory copy is stale —
+    // another tab rotated while this one sat idle — must re-read storage before presenting, or
+    // its consumed copy trips strict reuse detection and revokes the whole family.
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const bearer = new BearerManager({ storage, fetchImpl: scripted([]).fetch });
+    // …the other tab rotates: storage moves on while this manager's memory holds refresh-1.
+    storage.setItem(REFRESH_STORAGE_KEY, "refresh-2");
+    const wire = scripted([
+      () => json(401, {}),
+      (s) => {
+        expect(JSON.parse(s.body!)).toEqual({ refreshToken: "refresh-2" });
+        return json(200, { tokens: { accessToken: "access-3", refreshToken: "refresh-3" } });
+      },
+      (s) => { expect(s.headers.authorization).toBe("Bearer access-3"); return json(200, {}); },
+    ]);
+    (bearer as unknown as { fetchImpl: unknown }).fetchImpl = wire.fetch;
+    const res = await bearer.fetch("/sync");
+    expect(res.status).toBe(200);
+    expect(storage.getItem(REFRESH_STORAGE_KEY)).toBe("refresh-3");
+  });
+
+  it("a STALE 401 — judged against a token a rotation already replaced — retries without rotating again", async () => {
+    // Two requests leave stamped with access-1. The first 401 rotates to access-2/refresh-2 and
+    // its replay succeeds. The second request's 401 arrives AFTER that rotation settled; rotating
+    // again on it would burn refresh-2 for nothing and invalidate access-2 under the first
+    // request's feet — the cascade the review named. Bound to the generation, the stale 401 just
+    // restamps and replays.
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    let refreshCalls = 0;
+    let releaseB!: () => void;
+    const bHeld = new Promise<void>((r) => { releaseB = r; });
+    const wire = {
+      fetch: async (url: string, init?: unknown) => {
+        const i = (init ?? {}) as { headers?: Record<string, string> };
+        const auth = Object.entries(i.headers ?? {}).find(([k]) => k.toLowerCase() === "authorization")?.[1];
+        if (url === "/auth/refresh") {
+          refreshCalls++;
+          return json(200, { tokens: { accessToken: "access-2", refreshToken: "refresh-2" } });
+        }
+        if (url === "/b" && auth === undefined) {
+          // B's FIRST answer is held until A's whole recovery is done, then says 401 — the
+          // stale refusal, judged against the pre-rotation stamp.
+          await bHeld;
+          return json(401, {});
+        }
+        return auth === "Bearer access-2" ? json(200, {}) : json(401, {});
+      },
+    };
+    const bearer = new BearerManager({ storage, fetchImpl: wire.fetch });
+    const b = bearer.fetch("/b");
+    const a = await bearer.fetch("/a");
+    expect(a.status).toBe(200);
+    expect(refreshCalls).toBe(1);
+    releaseB();
+    expect((await b).status).toBe(200);
+    // ONE rotation for the whole episode — the stale 401 restamped instead of presenting
+    // refresh-2 a second time.
+    expect(refreshCalls).toBe(1);
+  });
+});
+
 describe("what a refresh refusal means", () => {
   it("a 401 from /auth/refresh clears the pair, fires the dead signal, and answers the original 401", async () => {
     const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });

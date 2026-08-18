@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { Diagnostic } from "./log.js";
 
@@ -15,13 +15,19 @@ import type { Diagnostic } from "./log.js";
  *
  * ── WHAT IS DEFENDED, AND HOW ────────────────────────────────────────────────────────────────
  *
- *  · **Traversal: the resolve-and-prefix check.** The decoded path is resolved UNDER the assets
- *    root and the result must still be inside it — `resolve` collapses every `..` first, so an
- *    escape of any spelling (plain, percent-encoded, mixed) lands outside the prefix and is
- *    refused as `not_found`. Backslashes and control bytes are refused outright before the
- *    resolve: on Windows `\` IS a separator, so a path carrying one must not reach `resolve`
- *    with POSIX assumptions, and no shipped asset name contains either.
- *  · **The CSP on every HTML answer** ({@link HOST_CLIENT_CSP}). `/pair` reads a device-pair
+ *  · **Traversal: the resolve-and-prefix check, held on the CANONICAL path.** The decoded path
+ *    is resolved UNDER the assets root and the result must still be inside it — `resolve`
+ *    collapses every `..` first, so an escape of any spelling (plain, percent-encoded, mixed)
+ *    lands outside the prefix and is refused as `not_found`. The check runs TWICE, and the
+ *    second is the one a review earned: the lexical resolve proves nothing about SYMLINKS —
+ *    `readFile` follows them, so a link planted at `assets/leak.txt → ../../secret` passed the
+ *    lexical check and served bytes from outside the root. Before anything is read, the
+ *    candidate is `realpath`ed and prefix-checked against the `realpath`ed ROOT (the root too,
+ *    or macOS's `/tmp → /private/tmp` indirection would 404 every legitimate file). Backslashes
+ *    and control bytes are refused outright before either check: on Windows `\` IS a separator,
+ *    so a path carrying one must not reach `resolve` with POSIX assumptions, and no shipped
+ *    asset name contains either.
+ *  · **The CSP on EVERY answer** ({@link HOST_CLIENT_CSP}). `/pair` reads a device-pair
  *    token out of `location.hash` — the flow-3 fragment idiom, chosen so the credential never
  *    reaches a request line or a log — which leaves injected inline script reading the hash as
  *    THE exposure. The flow-1/3 pages mitigate that with a per-request nonce because Next
@@ -32,7 +38,11 @@ import type { Diagnostic } from "./log.js";
  *    web client's own product set (`apps/webapp/app/security-headers.ts`), minus
  *    `upgrade-insecure-requests` — TLS is Tailscale's termination, and the door itself serves
  *    plain HTTP on the loopback, where an upgrade directive would break the only transport the
- *    door has.
+ *    door has. EVERY answer, not every HTML answer — the second review finding: the generic
+ *    branch served `.svg` (and any planted `.html`) with a renderable content-type and no
+ *    policy, and an SVG navigated to directly executes its script elements on this origin. The
+ *    header is inert on a script or a stylesheet, and a branch that decides "renderable or not"
+ *    is a branch that can be wrong, so there is no branch.
  *  · **Caching follows the artifact's shape.** Vite emits content-hashed filenames under
  *    `assets/`, so those are immutable for a year; the shell HTML is `no-store`, because an
  *    index cached across a desktop update would reference assets the new dist no longer holds.
@@ -157,8 +167,11 @@ export function createHostStatic(opts: { assetsDir: string | null; log?: Diagnos
       // nothing was asked for, so nothing is said.
       return;
     }
-    const dir = resolve(opts.assetsDir);
     try {
+      // CANONICAL from the start: the per-request symlink check below compares realpaths, and a
+      // root that is itself behind a link (macOS's `/tmp → /private/tmp`, a Nix store, a mounted
+      // image) must not make every legitimate file read as an escape.
+      const dir = await realpath(resolve(opts.assetsDir));
       const index = await stat(resolve(dir, "index.html"));
       if (!index.isFile()) throw new Error("index.html is not a file");
       root = dir;
@@ -224,7 +237,17 @@ export function createHostStatic(opts: { assetsDir: string | null; log?: Diagnos
     const answer = async (file: string, headers: Record<string, string>): Promise<Response | null> => {
       let bytes: Buffer;
       try {
-        bytes = await readFile(file);
+        /**
+         * THE CANONICAL HALF OF THE BOUNDARY. The lexical check above cannot see a symlink —
+         * `readFile` follows them — so the file is canonicalized and the prefix re-checked
+         * against the canonical root before a byte is read. A link that leaves the root reads
+         * as absent, exactly like a traversal: as far as this door is concerned, it is.
+         * (The realpath-then-read pair is not atomic; the residual is a same-machine writer
+         * racing the two calls, who already owns every byte this process can read.)
+         */
+        const real = await realpath(file);
+        if (real !== root && !real.startsWith(root! + sep)) return null;
+        bytes = await readFile(real);
       } catch {
         return null;
       }
@@ -241,6 +264,10 @@ export function createHostStatic(opts: { assetsDir: string | null; log?: Diagnos
       const served = await answer(resolved, {
         "content-type": CONTENT_TYPES[ext] ?? "application/octet-stream",
         "x-content-type-options": "nosniff",
+        // ON EVERY FILE, not only the documents — see the header. Inert on a script or a
+        // stylesheet; the guard on a planted `.svg`/`.html`, which browsers render with this
+        // origin's authority when navigated to directly.
+        "content-security-policy": HOST_CLIENT_CSP,
         // Immutable ONLY for vite's content-hashed emissions: their name IS their version.
         // Everything else (the icons, a manifest) revalidates, same rule as the shell HTML.
         "cache-control": HASHED_ASSET_RE.test(relative)

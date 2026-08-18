@@ -59,8 +59,17 @@ export function PairScreen({
    * React 18 Strict Mode replays the mount effect: a replay that re-read `location.hash` would
    * find the emptiness the first pass created and land every valid link on the missing screen.
    * The InviteScreen's exact discipline, kept for the exact reason it records.
+   *
+   * The REDEEM rides the same ref discipline, and a review earned it: the request itself is as
+   * destructive as the hash read — the token is single-use — and the first version started it
+   * inside the effect body with a `cancelled` flag as the cleanup. Under the replay that flag
+   * only DISCARDED the first request's answer; the request had already consumed the token, so
+   * the second pass's redeem answered `pairing_invalid` and a valid scan failed. So the effect
+   * starts the redeem at most once ({@link redeem}), both passes await the SAME promise, and
+   * `cancelled` gates nothing but this pass's setState.
    */
   const fragment = useRef<string | null>(null);
+  const redeem = useRef<Promise<{ ok: boolean; answer: RedeemAnswer } | null> | null>(null);
   useEffect(() => {
     if (fragment.current === null) {
       const hash = window.location.hash;
@@ -76,26 +85,29 @@ export function PairScreen({
       return;
     }
     setPhase({ kind: "redeeming" });
-    let cancelled = false;
-    void (async () => {
-      let answer: RedeemAnswer;
-      let ok: boolean;
+    // A BARE fetch, deliberately not the manager's: there is no session yet, and the manager's
+    // 401 recovery has nothing to recover here. `kind: "web"` is this redeemer's own honest
+    // declaration — a browser, not an app. `null` resolution = network failure.
+    redeem.current ??= (async () => {
       try {
-        // A BARE fetch, deliberately not the manager's: there is no session yet, and the
-        // manager's 401 recovery has nothing to recover here. `kind: "web"` is this redeemer's
-        // own honest declaration — a browser, not an app.
         const res = await fetch("/pair/redeem", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ grant: "device-pair", token, kind: "web" }),
         });
-        ok = res.ok;
-        answer = (await res.json()) as RedeemAnswer;
+        return { ok: res.ok, answer: (await res.json()) as RedeemAnswer };
       } catch {
-        if (!cancelled) setPhase({ kind: "failed", message: null });
+        return null;
+      }
+    })();
+    let cancelled = false;
+    void redeem.current.then((outcome) => {
+      if (cancelled) return;
+      if (outcome === null) {
+        setPhase({ kind: "failed", message: null });
         return;
       }
-      if (cancelled) return;
+      const { ok, answer } = outcome;
       if (ok && answer.tokens?.accessToken && answer.tokens.refreshToken) {
         bearer.adopt(answer.tokens);
         onPaired();
@@ -108,7 +120,7 @@ export function PairScreen({
         kind: "failed",
         message: answer.error?.code === "pairing_invalid" ? null : (answer.error?.message ?? null),
       });
-    })();
+    });
     return () => {
       cancelled = true;
     };
