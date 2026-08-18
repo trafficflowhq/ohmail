@@ -146,8 +146,8 @@ function penalty(m: boolean[][]): number {
     }
   }
   // N3: the finder-like pattern 1011101 with four light modules on either side.
-  const P1 = [true, false, true, true, true, false, true, false, false, false, false];
-  const P2 = [...P1].reverse();
+  const FINDER_SEQ = [true, false, true, true, true, false, true, false, false, false, false];
+  const FINDER_SEQ_REV = [...FINDER_SEQ].reverse();
   for (let axis = 0; axis < 2; axis++) {
     for (let i = 0; i < size; i++) {
       for (let j = 0; j <= size - 11; j++) {
@@ -155,8 +155,8 @@ function penalty(m: boolean[][]): number {
         let hit2 = true;
         for (let k = 0; k < 11; k++) {
           const v = axis === 0 ? m[i]![j + k]! : m[j + k]![i]!;
-          if (v !== P1[k]) hit1 = false;
-          if (v !== P2[k]) hit2 = false;
+          if (v !== FINDER_SEQ[k]) hit1 = false;
+          if (v !== FINDER_SEQ_REV[k]) hit2 = false;
         }
         if (hit1) score += 40;
         if (hit2) score += 40;
