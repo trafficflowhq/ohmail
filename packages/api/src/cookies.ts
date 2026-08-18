@@ -7,11 +7,15 @@ import type { OAuthTokens } from "@trafficflow/services";
 /* ── THIS FILE IS THE MINTING HALF OF THE COOKIE SEAM, AND `csrf.ts` IS THE VERIFYING HALF ──
  *
  * Everything here MINTS the browser session for a completed sign-in ceremony, which is the one
- * thing a single-user local install never does. The desktop engine bundle must not carry it for
- * that reason: `csrfTokenFor` used to live here and was imported by `middleware.ts`, which the
- * engine bundle conveys — the server's minting module reached directly from a local artifact.
- * The derivation moved to `csrf.ts` (VERIFY, conveyed by the engine) and the cookie set stayed
- * here (MINT, server-only). The seam is that split, not a rule about which file is nicer.
+ * thing a single-user local install never does. For a long time the boundary was module
+ * ABSENCE — the engine bundle did not carry this file, and `csrfTokenFor` moved to `csrf.ts`
+ * precisely to keep `middleware.ts` from dragging it in. Phase 3 changed which mechanism holds
+ * the line: the desktop-host door mounts `POST /auth/refresh` (`routes/session-lifecycle.ts`),
+ * whose COOKIE branch names this module, so the engine artifact now carries it as dead code
+ * behind `cookieSurface` — every desktop door composes `allowCookieAuth: false`, which gates
+ * cookie ingress and egress alike, and the zero-Set-Cookie census in `desktop-host.test.ts`
+ * sweeps the whole door on it. The boundary is the composed gate, not the module graph; what
+ * this file must still never gain is a caller that mints outside that gate.
  *
  * Written without a literal `Set-Cookie` string in prose, deliberately: the web client's
  * rewrite suite greps THIS FILE for every backticked cookie assignment

@@ -27,7 +27,7 @@ import type { Route } from "../router.js";
  * **The wire shape is FROZEN.** Exactly these keys, exactly this nesting:
  *
  *   { product: "ohmail",
- *     flavor: "managed" | "selfhost" | "local",
+ *     flavor: "managed" | "selfhost" | "local" | "desktop-host",
  *     apiVersion: string,
  *     needsSetup: boolean,
  *     auth:     { password, totp, webauthn, publicSignup },

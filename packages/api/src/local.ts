@@ -31,3 +31,7 @@ export {
   type CostClass, type Route, type RouteOptions, type RouteParams, type Handler, type MatchResult,
 } from "./router.js";
 export { jsonResponse, errorResponse, type JsonResponseInit } from "./responses.js";
+// The per-request ServiceContext builder, for engine-side route modules (the sidecar's own
+// tables — AI settings, the stdio pairing mint) that call services exactly as the shared
+// handlers do. Mail-safe: it reads `deps.session` and the platform IP headers, nothing hosted.
+export { serviceContext } from "./context.js";

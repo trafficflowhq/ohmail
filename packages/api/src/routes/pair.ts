@@ -1,9 +1,10 @@
 /* THE `/auth` ENTRY, not the barrel — the Phase 3 retarget. The full barrel would drag
  * `nodemailer` (its `SmtpMailer` re-export) and the paid-gate registration (its one import-time
  * side effect) into every bundle that mounts a pairing route, which the desktop-host door
- * (the desktop-host door, next slice) is about to be. The invite-grant redeem — the one arm that queries the
- * Cloud-half `invites` table — arrives through the dependency bag instead (`inviteRedeem`
- * below), so this module's import graph is shippable from the mail half alone. */
+ * (`routes/desktop-host.ts` — it mounts the redeem below) now is. The invite-grant redeem — the
+ * one arm that queries the Cloud-half `invites` table — arrives through the dependency bag
+ * instead (`inviteRedeem` below), so this module's import graph is shippable from the mail half
+ * alone. */
 import {
   mintPairingToken, listPairingTokens, revokePairingToken,
   redeemDevicePair, type PairingGrant, type PairedDeviceSessionMinter,
@@ -44,14 +45,17 @@ function sessionMinter(deps: ApiDeps): PairedDeviceSessionMinter {
 }
 
 /**
- * THE PAIRING CEREMONY (`/pair*`) — mounted by `routes/self-host.ts` and by NOTHING ELSE.
+ * THE PAIRING CEREMONY (`/pair*`) — the MINT/LIST/REVOKE are mounted by `routes/self-host.ts`
+ * and by NOTHING ELSE; the anonymous REDEEM is carved into its own export below, because the
+ * desktop-host door (`routes/desktop-host.ts`) mounts the redeem and only the redeem — its mint
+ * lives on the desktop's stdio door, where the machine's own login is the step-up.
  *
- * Not on the hosted table: an invite redeem there would mint a registration that bypasses the
- * billing funnel. Not on the local table: the single-user engine mints one session per launch
- * and has nobody to invite. `/hello`'s `features.pairing` is what makes the not-mounting safe —
- * a client learns the ceremony's absence from the descriptor, never from a 404 mid-flow — and
- * the composition census in `hello.test.ts` proves all three tables hold exactly what this
- * paragraph claims.
+ * Not on the hosted table, any of it: an invite redeem there would mint a registration that
+ * bypasses the billing funnel. Not on the local table: the single-user engine mints one session
+ * per launch and has nobody to invite. `/hello`'s `features.pairing` is what makes the
+ * not-mounting safe — a client learns the ceremony's absence from the descriptor, never from a
+ * 404 mid-flow — and the composition censuses in `hello.test.ts` and `desktop-host.test.ts`
+ * prove the four tables hold exactly what this paragraph claims.
  *
  * The lifecycle, the bounds and the redeem semantics live in `packages/services/src/pairing.ts`;
  * this module is transport. Authority:
@@ -78,7 +82,7 @@ function sessionMinter(deps: ApiDeps): PairedDeviceSessionMinter {
  * burn statement); there is deliberately no lockout table and no per-IP slot claim — see the
  * service header for the argument.
  */
-export const pairRoutes: Route[] = [
+const pairCeremonyRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/pair",
@@ -119,6 +123,18 @@ export const pairRoutes: Route[] = [
       return noContent();
     },
   },
+];
+
+/**
+ * THE ANONYMOUS REDEEM, as its own export — the one member of the ceremony that mounts on TWO
+ * tables: `routes/self-host.ts` (via {@link pairRoutes}, whole) and `routes/desktop-host.ts`
+ * (this array alone). It is the same route OBJECT on both, so the burn semantics, the error
+ * envelope and the no-cookie answer cannot fork between the standalone server and the desktop
+ * host. What keeps the desktop mount honest is the dependency bag, not a variant handler: the
+ * host door wires no `inviteRedeem`, so the invite arm refuses `validation_failed` there, and
+ * its `services.auth` is the bare `SessionLifecycle`, which is all the device-pair arm needs.
+ */
+export const pairRedeemRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/pair/redeem",
@@ -131,8 +147,8 @@ export const pairRoutes: Route[] = [
         const ctx = serviceContext(deps, req);
         if (b.grant === "invite") {
           // Absent port ⇒ this composition's database has no `invites` table to bridge to (the
-          // desktop-host door's exact position, the next slice — the desktop-host door) — a 400 the redeemer can act on,
-          // never a 42P01 dressed as a 500. The self-host composition wires the real function.
+          // desktop-host door's exact position) — a 400 the redeemer can act on, never a 42P01
+          // dressed as a 500. The self-host composition wires the real function.
           const redeemInvite = deps.services?.inviteRedeem;
           if (!redeemInvite) {
             return errorResponse(
@@ -184,3 +200,10 @@ export const pairRoutes: Route[] = [
     },
   },
 ];
+
+/**
+ * The whole ceremony — mint, list, revoke AND the redeem — for `routes/self-host.ts`, whose
+ * table is this array's only mount. The members are the two arrays above, spread, so the
+ * self-host mounts and the desktop-host redeem are the same objects and cannot drift.
+ */
+export const pairRoutes: Route[] = [...pairCeremonyRoutes, ...pairRedeemRoutes];

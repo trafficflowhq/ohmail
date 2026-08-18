@@ -34,6 +34,12 @@ import {
   API_VERSION, ALLOW_ANY_PROBE_HOST, createApp, DEFAULT_SSE, localRoutes,
   type ApiDeps, type ApiServices, type App,
 } from "@trafficflow/api/local";
+// THE DESKTOP-HOST DOOR's route table (Phase 3): the single-user product set plus the carved
+// session-lifecycle pair, the device list and the anonymous device-pair redeem — and structurally
+// nothing else. Mounted below ONLY when host mode is armed; see `desktopHostRoutes`' own header
+// for the exact in/out list and the obligations it puts on this composition root.
+import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
+import { hostPairRoutes } from "./host-pair-routes.js";
 // ── THE ONE PIPELINE ────────────────────────────────────────────────────────────────────────
 // `runSyncCycle` is imported, never reimplemented. There is ONE pipeline implementation and both
 // the desktop engine and the hosted service run it: two engines diverge, and divergence here means
@@ -188,6 +194,22 @@ export interface SidecarConfig {
    * watching it.
    */
   onPhase?: (phase: BootPhase) => void;
+  /**
+   * HOST MODE — this install serves its owner's other devices (Phase 3).
+   *
+   * Armed, three things exist that otherwise do not: the stdio door gains the window-only
+   * pairing mint (`hostPairRoutes` — how the window hands a phone its credential), `/hello` on
+   * the stdio door says `pairing: true` so the window can offer the ceremony, and
+   * {@link Sidecar.handleHost} exists — the desktop-host door's `Request → Response`, which
+   * the loopback listener (the next slice) binds and `tailscale serve` publishes.
+   *
+   * ONLY the exact boolean `true` arms it. Absent — every install that has never heard of host
+   * mode, which is every install today — is byte-identical to the pre-host build: no extra
+   * routes, no second door, `pairing: false`. An absent config value must never select the
+   * dangerous branch; the disarmed composition is pinned by test in both directions. The shell
+   * wires this from its host-mode ceremony in a later slice; nothing sets it yet.
+   */
+  hostMode?: boolean;
 }
 
 /**
@@ -217,6 +239,16 @@ export interface Sidecar {
   readonly sessionToken: string;
   /** `Request → Response`, with a fresh `ApiDeps` per call. This is what the stdio host serves. */
   handle(req: Request): Promise<Response>;
+  /**
+   * THE DESKTOP-HOST DOOR — `Request → Response` over `desktopHostRoutes`, the surface a paired
+   * phone reaches. Present IFF host mode is armed; a disarmed install has no second door at all,
+   * not a refusing one. It serves the same engine, the same store and the same fresh-deps
+   * discipline as {@link handle}, with two composition differences that ARE the door: `/hello`
+   * answers `flavor: "desktop-host"`, and the window-only surfaces (`/local/*`, the pairing
+   * mint) are structurally absent. No socket exists in this slice — the loopback listener that
+   * binds this is the next one.
+   */
+  handleHost?(req: Request): Promise<Response>;
   /**
    * Run cycles until the mailbox reports no backlog, then return how many ran.
    *
@@ -682,11 +714,25 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        table (the read mirror plus a write-through proxy) and never this array, so a mirrored hosted
        account still arms its opt-in on the account — where the ledger and the worker that spends
        against it actually are. See `auto-suggest-routes.ts`. */
+    // ONLY the exact boolean arms host mode — an absent config value must never select the
+    // branch that opens a second door. See `SidecarConfig.hostMode`.
+    const hostMode = config.hostMode === true;
     const app = createApp([
       ...localRoutes,
       ...localAiRoutes(ai),
       ...localAutoSuggestRoutes({ db, accountId: world.accountId, ai, now }),
+      // The window-only pairing mint (mint/list/revoke), on this door alone and only when host
+      // mode is armed. The machine's own login is the step-up; see `host-pair-routes.ts`.
+      ...(hostMode ? hostPairRoutes : []),
     ]);
+    /**
+     * THE DESKTOP-HOST DOOR's app — the composition a paired phone reaches, built ONLY when host
+     * mode is armed so a disarmed install holds no second door, not a refusing one. Same engine,
+     * same store, same `app.handle` pipeline: a remote device is a VIEWER of the one pipeline,
+     * never a second write path. The window-only tables above (`/local/ai`, auto-suggest, the
+     * pairing mint) are structurally absent from it.
+     */
+    const hostApp: App | null = hostMode ? createApp(desktopHostRoutes) : null;
 
     /**
      * A FRESH `ApiDeps` PER REQUEST. `ApiDeps` is mutable by design — `withRequestId` writes
@@ -755,12 +801,39 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // No staging: the send runs in the same process as the SMTP dial (see local.ts).
           staging: false,
           ai: ai.drafter() !== undefined,
-          // FALSE FOR GOOD, not "yet": the pairing ceremony (`/pair*`) is the standalone
-          // server's and mounts in `selfHostRoutes` only. This engine mints one session per
-          // launch for the shell that spawned it and has nobody to invite — the composition
-          // census in `hello.test.ts` goes red if anyone mounts it on the local table.
-          pairing: false,
+          // THE HOST-MODE ARM, truthfully. This stood as "FALSE FOR GOOD" while the pairing
+          // ceremony was the standalone server's alone; Phase 3 falsified that sentence, and it
+          // is rewritten in the same commit that mounts anything. Armed, this door carries the
+          // window-only MINT (`host-pair-routes.ts` — the window hands a phone a credential;
+          // there is still no INVITE arm here and nobody to register), so the descriptor says
+          // so and the window can offer the ceremony. Disarmed — the default, and every install
+          // that has never heard of host mode — nothing is mounted and this stays `false`:
+          // `localRoutes` itself never carries `/pair*` (the census in the API package's
+          // `hello.test.ts` still pins that), the mount is this composition's own, and both
+          // readings of this line are pinned — disarmed in the sidecar's hello suite, armed in
+          // its host-mode suite — so neither composition can lie about the ceremony.
+          pairing: hostMode,
         },
+      },
+    });
+    /**
+     * The HOST DOOR's per-request container — {@link depsFor} with the one difference that IS
+     * the door: the descriptor. `flavor: "desktop-host"` is what a server picker switches on;
+     * `pairing: true` is this table's truth (the redeem is mounted; the mint is the window's);
+     * `sse: false` is honest until the follow-up the ruling names; `ai` states whether THIS
+     * install has a verified model, same as the stdio door. `allowCookieAuth: false` rides in
+     * from `depsFor` — the door NEVER mints, reads or clears a cookie, and the API package's
+     * zero-Set-Cookie census sweeps the whole table on exactly that flag.
+     */
+    const depsForHost = (): ApiDeps => ({
+      ...depsFor(),
+      hello: {
+        flavor: "desktop-host",
+        // No setup ceremony exists on this door: the world was created at first boot, and a
+        // device becomes a session through the pairing redeem, never through a setup page.
+        needsSetup: false,
+        auth: { password: false, totp: false, webauthn: false, publicSignup: false },
+        features: { sse: false, staging: false, ai: ai.drafter() !== undefined, pairing: true },
       },
     });
 
@@ -1714,6 +1787,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
         return app.handle(req, depsFor());
       },
+      // The desktop-host door, present IFF armed — see {@link Sidecar.handleHost}. Spread so a
+      // disarmed sidecar genuinely lacks the member rather than carrying one that refuses.
+      ...(hostApp
+        ? { handleHost: async (req: Request): Promise<Response> => hostApp.handle(req, depsForHost()) }
+        : {}),
       syncUntilQuiet,
       organizerState: () => organizer,
       credentialState: async () => (await resolveLogin()).state,

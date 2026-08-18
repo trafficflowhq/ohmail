@@ -155,8 +155,8 @@ export interface ApiServices {
    * The INVITE-grant redeem (`redeemInviteGrant`), as a port. OPTIONAL, and its absence is the
    * honest state of any composition whose database lacks the Cloud-half `invites` table: the
    * `/pair/redeem` invite arm answers `validation_failed` instead of a 42P01 dressed as a 500.
-   * The self-host composition — the only one that mounts `/pair*` today — wires the real
-   * function from the full barrel; the desktop-host door (the desktop-host door, next slice) deliberately never does.
+   * The self-host composition wires the real function from the full barrel; the desktop-host
+   * door (`routes/desktop-host.ts`, which mounts the redeem) deliberately never does.
    * A port rather than an import so `routes/pair.ts` stays compilable and shippable from the
    * mail half alone — the same reason the session mint above arrives through the bag.
    */
@@ -508,10 +508,14 @@ export interface HealthConfig {
  */
 export interface HelloConfig {
   /**
-   * Which composition is serving: the hosted service, an operator-run standalone server, or a
-   * desktop install's own engine. A fixed string per composition root, never derived per request.
+   * Which composition is serving: the hosted service, an operator-run standalone server, a
+   * desktop install's own engine (its window's private door), or that same engine's
+   * desktop-host door — the surface a paired phone reaches (Phase 3). A fixed string per
+   * composition root, never derived per request. Widening this union is an additive contract
+   * change: every client that switches on it must be told, and the contract tests that pin the
+   * wire shape move in the same commit.
    */
-  flavor: "managed" | "selfhost" | "local";
+  flavor: "managed" | "selfhost" | "local" | "desktop-host";
   /**
    * The wire-contract version of the API surface. Defaults to {@link API_VERSION} — every
    * composition compiles the same route table, so the default is the truth unless a host has a

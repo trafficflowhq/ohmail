@@ -1,11 +1,11 @@
-import { generateToken } from "@trafficflow/services";
 import { silentLogger } from "@trafficflow/core";
 import { serviceContext } from "../context.js";
-import { clearSessionCookies, ownerCookieValue, sessionCookies, OWNER_COOKIE } from "../cookies.js";
-import { csrfTokenFor } from "../csrf.js";
 import type { Route } from "../router.js";
-import { cookieSurface, json, noContent, parseCookies, readBody } from "./shared.js";
+import { json, readBody } from "./shared.js";
 import { auth, enrollmentSession } from "./shared-cloud.js";
+// The carved lifecycle pair — `/auth/logout` + `/auth/refresh` — spread back in below at their
+// old positions, as the same objects. See `session-lifecycle.ts` for the carve.
+import { sessionLifecycleRoutes } from "./session-lifecycle.js";
 
 /** §2.2 — register, login, session, logout, refresh. */
 export const coreRoutes: Route[] = [
@@ -141,100 +141,12 @@ export const coreRoutes: Route[] = [
       return json(result, 200);
     },
   },
-  {
-    // enrollmentOk: abandoning a half-finished enrollment must always be possible.
-    method: "POST",
-    pattern: "/auth/logout",
-    cost: "ceremony",
-    options: { enrollmentOk: true },
-    handler: async (req, deps) => {
-      const body = await readBody<{ allDevices?: boolean }>(req);
-      await auth(deps).logout(serviceContext(deps, req), body);
-      return noContent(cookieSurface(deps) ? clearSessionCookies() : []);
-    },
-  },
-  {
-    // Web reads the refresh token from the `tf_refresh` cookie → rotate → set new
-    // cookies (204). Native sends `{ refreshToken }` in the body → 200 { tokens }.
-    //
-    // The cookie branch is reachable ONLY on a cookie surface. This route is
-    // `public`, so `withSession` never runs on it and `deps.allowCookieAuth` had no effect
-    // here at all: on `api.ohmail.app` a `tf_session` cookie was correctly ignored while a
-    // `tf_refresh` cookie still rotated the family and answered with a full set of session
-    // cookies. "Bearer-only" has to mean the host REFUSES cookies, not that browsers happen
-    // not to point at it — so on such a host the body token is the only accepted input.
-    method: "POST",
-    pattern: "/auth/refresh",
-    cost: "ceremony",
-    options: { public: true },
-    handler: async (req, deps) => {
-      const jar = parseCookies(req.headers.get("cookie"));
-      const cookieRefresh = cookieSurface(deps) ? jar["tf_refresh"] : undefined;
-      if (cookieRefresh) {
-        // A FAILED COOKIE REFRESH MUST CLEAR THE JAR, not just refuse.
-        //
-        // The browser is told to resume by `tf_resume` (see `cookies.ts`), and that marker
-        // outlives a refresh token that has been revoked, rotated past, or reused. Without
-        // this, such a browser loops: the gate sees the marker, sends it to the resume splash,
-        // the splash's refresh is refused, and the next visit does it all again — for the whole
-        // ninety-day marker lifetime, on every page load. Answering the refusal with
-        // `clearSessionCookies()` makes the failure self-healing: the marker goes with the rest
-        // and the visitor lands on the marketing page, signed out, which is the truth.
-        //
-        // Rethrown as 401 rather than swallowed: the caller must still be told it failed.
-        try {
-          // `concurrentGrace`: this is the COOKIE surface, where a shared browser jar lets several
-          // tabs present one `tf_refresh` at once and the client single-flights refresh only per
-          // tab — so a duplicate presentation within the grace window is a benign concurrent
-          // rotation, not theft, and must not revoke the family. The native body branch below does
-          // NOT pass it: a bearer client holds its token privately and rotates it serially, so it
-          // keeps strict reuse detection. See `AuthService.refresh`.
-          //
-          // `surface` rides the same branch and chooses the ROLLING WINDOW this rotation issues:
-          // the browser's, which is the shorter one. It is stated rather than left to the default
-          // — the default is this same value, and saying it here is what makes the pair below
-          // (`"native"`) read as a decision instead of an omission.
-          const { tokens } = await auth(deps).refresh(
-            serviceContext(deps, req), { refreshToken: cookieRefresh },
-            { concurrentGrace: true, surface: "cookie" },
-          );
-          // THE OWNER MARKER IS RE-STAMPED HERE, NOT MINTED. `refresh` rotates a token family and
-          // answers tokens; it resolves no user, so this handler has no account id of its own to
-          // write. What it does have is the marker the browser already holds, and extending its
-          // life is the whole job: without this, a session that keeps renewing for its full
-          // ninety days outlives the cookie that makes its next cold start fast, and warm open
-          // degrades to the old blocking path with nothing failing anywhere.
-          //
-          // Echoing a client value into a `Set-Cookie` is safe here for two reasons together, and
-          // it would not be for one alone: `ownerCookieValue` refuses anything outside an
-          // id-shaped character set, so nothing the browser sends can become an ATTRIBUTE; and the
-          // value has no authority to re-stamp — it names a local database, is read by no handler,
-          // and the client still confirms it against `GET /auth/session` before trusting a row of
-          // what it opens. An absent or malformed marker answers `null`, which sets no cookie and
-          // clears none.
-          return noContent(sessionCookies(
-            tokens!, csrfTokenFor(tokens!.accessToken), deps.authConfig, ownerCookieValue(jar[OWNER_COOKIE]),
-          ));
-        } catch {
-          return json(
-            { error: { code: "unauthorized", message: "this session cannot be resumed" } },
-            401,
-            clearSessionCookies(),
-          );
-        }
-      }
-      // THE NATIVE BRANCH: a bearer client (the desktop app's sidecar, or the OAuth grant's
-      // sibling in `/oauth/token`) presenting its own token in the body. No grace — it rotates
-      // serially and a re-presentation is theft — and the LONG rolling window, because this is an
-      // installed app that renews on launch rather than a browser sharing a jar. Both arguments
-      // are explicit; neither is the default.
-      const body = await readBody<{ refreshToken?: string }>(req);
-      const { tokens } = await auth(deps).refresh(
-        serviceContext(deps, req), { refreshToken: body.refreshToken }, { surface: "native" },
-      );
-      return json({ tokens }, 200);
-    },
-  },
+  // `/auth/logout` and `/auth/refresh` — CARVED into `session-lifecycle.ts` (Phase 3), spread
+  // back in at their old positions as the SAME route objects. What a session is once it exists
+  // is machinery every composition shares, and the desktop-host door mounts exactly these two
+  // without the ceremony around them; the handlers, the cookie branches and the surfaces are
+  // unchanged line for line — see that module's header for the carve's argument.
+  ...sessionLifecycleRoutes,
   {
     // ── HANDING A SESSION TO THE DESKTOP APP, HALF ONE: THE MINT ───────────────────────────
     //

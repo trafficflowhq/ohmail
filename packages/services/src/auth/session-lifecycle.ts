@@ -19,7 +19,9 @@ import type { SessionScope } from "./resolve-session.js";
  * list and its revoke, step-up introspection, and the paired-device mint the QR redeem calls.
  *
  * What it deliberately is NOT is the identity CEREMONY — registration, passwords, invites,
- * factors, WebAuthn, PKCE, throttles, the audit trail. That stays on `AuthService`, which
+ * factors, WebAuthn, PKCE, throttles, the audit trail (the base records nothing and its
+ * {@link listAudit} read answers empty; the hosted service overrides both halves with the real
+ * table). That stays on `AuthService`, which
  * `extends` this class, overrides the three hosted hooks at the bottom, and behaves byte-for-
  * byte as it did when all of this was one file: same methods, same order, same statements.
  *
@@ -225,6 +227,22 @@ export class SessionLifecycle {
       });
     }
     return { items };
+  }
+
+  /**
+   * The auth-event trail, READ — the query half of the {@link audit} hook below, and it answers
+   * the same truth: the lifecycle half records no auth events (no `auth_events` table exists on
+   * a mail-only store), so the trail it can honestly report is empty. `AuthService` overrides
+   * this with the real read, exactly as it overrides the write. A refusal here would be wrong in
+   * both spellings: a 500 says the host is broken, a 404 says the route is absent — and the
+   * desktop-host door mounts `GET /auth/audit` whole, where "nothing has been recorded" is a
+   * fact about the tier, not a fault.
+   */
+  async listAudit(
+    ctx: ServiceContext, _opts: { cursor?: string; limit?: number } = {},
+  ): Promise<{ items: AuthAuditEvent[]; nextCursor: string | null }> {
+    this.requireUser(ctx);
+    return { items: [], nextCursor: null };
   }
 
   async revokeDevice(ctx: ServiceContext, deviceId: string): Promise<void> {
