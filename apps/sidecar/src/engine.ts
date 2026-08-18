@@ -23,6 +23,13 @@ import {
   triageService, workflowsService, ServiceError,
   type AuthConfig, type HostResolver, type MailboxAllowancePolicy, type PushService, type RemoteFetch,
 } from "@trafficflow/services/mail";
+/* The session LIFECYCLE — the machinery half of the hosted auth service (establish, refresh
+ * rotation with reuse detection, family revocation, devices, the paired-device mint), from the
+ * `/auth` entry that carries none of the ceremony, none of the Cloud schema and none of the
+ * barrel's side effects. This import is what Phase 3's pairing rides on, and its closure is
+ * census-pinned by the auth entry's own module-graph test in the services package — the engine
+ * bundle's artifact census is the second line. */
+import { makeSessionLifecycle } from "@trafficflow/services/auth";
 import {
   API_VERSION, ALLOW_ANY_PROBE_HOST, createApp, DEFAULT_SSE, localRoutes,
   type ApiDeps, type ApiServices, type App,
@@ -445,6 +452,20 @@ function localServices(
   const drafter = ai?.drafter();
   return {
     sync: syncService,
+    /**
+     * THE SESSION LIFECYCLE OVER THE LOCAL STORE (Phase 3) — the same establish/rotate/
+     * revoke machinery Cloud runs, instantiated bare: no ceremony, because this tier has no
+     * registration and no factors (the machine's own login is the boundary, exactly the
+     * `mintLaunchSession` argument in `identity.ts`), and the base class's hosted hooks answer
+     * the local truth — no event table, no throttle, no enrolled factors.
+     *
+     * WIRED BUT NOT YET CONSUMED: no route in `localRoutes` reads it today. It is what the
+     * desktop-as-host door (the next slice) mints paired-device sessions through (`establishPairedDevice`
+     * via the device-pair redeem), rotates their bearer pairs with (`/auth/refresh`), and
+     * revokes them by (`GET/DELETE /devices`). The launch session itself never touches it —
+     * that mint stays `identity.ts`'s, one per launch, deviceId NULL.
+     */
+    auth: makeSessionLifecycle({ config: authConfig }),
     // THE GATED IDEMPOTENT SEND, and the SAME `SendService` Cloud runs — the `outbound_sends`
     // reservation, the pre-minted Message-ID, the verify-by-Sent recovery and `SEND_STALE_AFTER_MS`
     // are all the shared implementation. Only the transport differs, and that difference is

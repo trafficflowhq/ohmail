@@ -168,17 +168,31 @@ export interface LaunchSession {
   /** The bearer token. In memory only — the database holds its hash. */
   token: string;
   sessionId: string;
-  /** How many stale sessions this launch revoked. Nonzero on every launch after the first. */
+  /** How many stale LAUNCH sessions this launch revoked. Nonzero on every launch after the first. */
   revoked: number;
 }
 
 /**
- * Revoke every session the database still holds, then mint one for this launch.
+ * Revoke every stale LAUNCH session the database still holds, then mint one for this launch.
  *
  * `accessExpiresAt` is a day out rather than the Cloud default's 15 minutes: there is no refresh
  * ceremony on this transport and no user to re-authenticate, so a short expiry would only mean the
  * app stops working while it is open. The real lifetime bound is the process — the token is never
  * written down and the next launch revokes whatever it finds.
+ *
+ * ── THE REVOKE IS NARROWED TO `deviceId IS NULL`, AND THE NARROWING IS LOAD-BEARING ────────
+ *
+ * This swept EVERY unrevoked session of the account, and while launch sessions were the only
+ * kind this database held, that was the same statement. Device pairing (Phase 3) ends that:
+ * `establishPairedDevice` mints a REMOTE device's session into this same `sessions` table, and
+ * under the blanket sweep every desktop restart silently unpaired every phone — each half
+ * locally correct, the composition a landmine only the pair-then-relaunch scenario test sees
+ * (`test/pairing-local.e2e.test.ts`, watched red against the blanket form before this WHERE
+ * narrowed it). The discriminator is structural, not a flag: a launch session never carries a
+ * device row — there is nothing to list or revoke about the process's own pipe — while
+ * `establishPairedDevice` always sets one, because the device row IS the visibility that makes
+ * pairing safe to offer. Paired sessions die by their own lifecycle instead: revocation from
+ * the device list, refresh-reuse detection, or expiry.
  */
 export async function mintLaunchSession(
   db: LocalDb,
@@ -189,7 +203,12 @@ export async function mintLaunchSession(
   const stale = await db
     .update(sessions)
     .set({ revokedAt: now })
-    .where(and(eq(sessions.accountId, world.accountId), isNull(sessions.revokedAt)))
+    .where(and(
+      eq(sessions.accountId, world.accountId),
+      isNull(sessions.revokedAt),
+      // Launch sessions only — a paired device's session (deviceId set) must survive a relaunch.
+      isNull(sessions.deviceId),
+    ))
     .returning({ id: sessions.id });
 
   const token = generateToken();
