@@ -86,10 +86,17 @@ export function InvitesSection() {
   const [minted, setMinted] = useState<{ link: string; label: string } | null>(null);
   const [labelDraft, setLabelDraft] = useState("");
 
-  /** The pane can be navigated away from mid-ceremony; nothing may set state after that. */
+  /** The pane can be navigated away from mid-ceremony; nothing may set state after that.
+   *  ARMED IN THE SETUP, not only at declaration: Strict Mode runs cleanup and then setup
+   *  again on the same instance, and a ref that only cleanup ever writes stays false for the
+   *  whole second life — every list answer discarded, `busy` never cleared. Review finding,
+   *  watched red under a Strict Mode mount before this line existed. */
   const alive = useRef(true);
-  useEffect(() => () => {
-    alive.current = false;
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
   }, []);
 
   const refresh = useCallback(async () => {
@@ -165,10 +172,20 @@ export function InvitesSection() {
 
   const copy = () => {
     if (!minted) return;
-    // Fire-and-forget, `ContactPopover`'s posture: a refused clipboard leaves the QR as the
-    // path that still works, and a thrown error here would take the whole pane down for it.
-    void navigator.clipboard?.writeText(minted.link);
-    toast(t("copied"));
+    const link = minted.link;
+    // NOT fire-and-forget, unlike `ContactPopover`'s copy: there the address is on the screen
+    // and the clipboard is a convenience, here the link is deliberately NOT printed anywhere,
+    // so "Link copied." over a rejected write (no permission, no focus, no clipboard at all)
+    // would strand the operator with nothing to send. The toast speaks only after the write
+    // fulfilled; a refusal names the path that still works — the QR.
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(link);
+        if (alive.current) toast(t("copied"));
+      } catch {
+        if (alive.current) setError(t("copyFailed"));
+      }
+    })();
   };
 
   const day = (iso: string): string => format.dateTime(new Date(iso), { dateStyle: "medium" });
@@ -209,7 +226,7 @@ export function InvitesSection() {
           {/* The mint row, `TagCreateRow`'s shape: the (optional) name is the one input, the
               button is the verb, Enter submits. The name is the minter's own word for the row
               in the list below — without one, two open invites read as "Invite / Invite". */}
-          <div className="set-row set-tag-edit fam-mint">
+          <div className="set-row set-tag-edit invites-mint">
             <input
               className="join-input set-tag-input"
               value={labelDraft}

@@ -213,6 +213,7 @@
     "qrAria": "Dein Einladungslink als QR-Code. Scanne ihn mit einer Handykamera.",
     "copyLink": "Link kopieren",
     "copied": "Link kopiert.",
+    "copyFailed": "Der Link ließ sich hier nicht kopieren — lass stattdessen den Code scannen oder erstelle eine neue Einladung.",
     "mintedDone": "Fertig",
     "mintedOnce": "Der Link wird nur dieses eine Mal angezeigt. Geht er verloren, widerrufe ihn unten und erstelle einen neuen.",
     "liveTitle": "Offene Einladungen",

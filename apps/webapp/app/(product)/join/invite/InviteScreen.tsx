@@ -46,7 +46,7 @@
  * an invite link knows exactly one human to ask, so the form says that.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
@@ -71,6 +71,16 @@ export function InviteScreen() {
   /** A redeem that succeeded while register did not — kept so a retry never re-burns the token. */
   const [minted, setMinted] = useState<{ code: string; email: string } | null>(null);
 
+  /**
+   * The fragment, read ONCE and kept in a ref — because the read is destructive. This effect
+   * scrubs the hash the moment the token is held, and React 18's Strict Mode replays the
+   * mount effect: a replay that re-read `location.hash` would find the emptiness the first
+   * pass created and overwrite the phase with the incomplete-link screen — every valid link
+   * broken under `pnpm dev`. Review finding, watched red under a Strict Mode mount. The ref
+   * survives the replay (Strict Mode remounts effects, not the instance), so both passes
+   * agree on what the address bar originally said.
+   */
+  const fragment = useRef<string | null>(null);
   useEffect(() => {
     if (!apiConfigured()) {
       setPhase("unconfigured");
@@ -80,17 +90,22 @@ export function InviteScreen() {
     // rather than accepted-with-a-shrug: accepting it would put the credential in access logs
     // and referrers on every open, and the incomplete-link screen tells the holder to ask for
     // a fresh link — which the minting pane produces in one click.
-    const hash = window.location.hash;
-    const fromFragment = hash.startsWith("#") ? hash.slice(1).trim() : "";
-    if (fromFragment === "") {
+    if (fragment.current === null) {
+      const hash = window.location.hash;
+      fragment.current = hash.startsWith("#") ? hash.slice(1).trim() : "";
+      if (fragment.current !== "") {
+        // Scrub: out of the visible URL, out of history, out of the bar of an abandoned tab.
+        // The token lives on in the ref and component state for exactly as long as this
+        // mount does.
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      }
+    }
+    if (fragment.current === "") {
       setPhase("missing");
       return;
     }
-    setToken(fromFragment);
+    setToken(fragment.current);
     setPhase("form");
-    // Scrub: out of the visible URL, out of history, out of the bar of an abandoned tab. The
-    // token lives on in component state for exactly as long as this mount does.
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
   }, []);
 
   const submit = (e: React.FormEvent) => {
@@ -100,7 +115,13 @@ export function InviteScreen() {
       setError(null);
       try {
         const address = email.trim();
-        let code = minted !== null && minted.email === address ? minted.code : null;
+        // The redeem answers the server's NORMALIZED recipient (trimmed, lowercased — the
+        // mail port's rule), and `minted.email` stores that answer verbatim. So the "same
+        // address?" question is asked normalized on both sides: a retry that only changes
+        // the casing is the same address and must re-use the kept code, not be refused as
+        // spent-for-somebody-else. Review finding, watched red.
+        const norm = (s: string): string => s.trim().toLowerCase();
+        let code = minted !== null && norm(minted.email) === norm(address) ? minted.code : null;
         if (code === null && minted !== null) {
           // The token was already spent for a DIFFERENT address. Re-redeeming cannot work and
           // the register below would refuse the mismatched code — say the real remedy instead.
@@ -111,7 +132,9 @@ export function InviteScreen() {
           try {
             const out = await pair.redeemInvite({ token, email: address });
             code = out.invite.code;
-            setMinted({ code, email: address });
+            // The SERVER's copy of the address, not this form's: it is the one the invite is
+            // actually bound to, and the one the spent-token refusal should name.
+            setMinted({ code, email: out.invite.email });
           } catch (err) {
             // The one wire refusal that needs this form's own sentence — see the header.
             setError(codeOf(err) === "pairing_invalid" ? t("badToken") : messageOf(err));

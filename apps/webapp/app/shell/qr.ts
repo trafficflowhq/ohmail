@@ -83,8 +83,8 @@ const EC_M: Array<{ ec: number; blocks: Array<[number, number]> }> = [
 /** Alignment-pattern centre coordinates, indexed by version (index 0 = version 1). */
 const ALIGN: number[][] = [
   [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34],
-  [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 52],
-  [6, 30, 56], [6, 32, 60], [6, 34, 64],
+  [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50],
+  [6, 30, 54], [6, 32, 58], [6, 34, 62],
 ];
 
 const dataCodewords = (version: number): number => {

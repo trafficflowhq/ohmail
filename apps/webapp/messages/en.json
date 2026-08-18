@@ -213,6 +213,7 @@
     "qrAria": "Your invite link as a QR code. Scan it with a phone camera.",
     "copyLink": "Copy the link",
     "copied": "Link copied.",
+    "copyFailed": "The link couldn't be copied here — let them scan the code instead, or make a new invite.",
     "mintedDone": "Done",
     "mintedOnce": "The link is shown only this once. If it goes astray, revoke it below and make a new one.",
     "liveTitle": "Open invites",
