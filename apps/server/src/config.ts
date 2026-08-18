@@ -141,12 +141,14 @@ export type StorageConfig =
   | {
     kind: "s3"; endpoint: string; region: string; accessKeyId: string; secretAccessKey: string;
     bucket: string;
-    /** The endpoint a BROWSER can reach — `S3_PUBLIC_ENDPOINT`, defaulted to `OHMAIL_ORIGIN`.
-     *  Used ONLY when the upload grant's URL is built (`makeS3StagingStorage.signUpload`); the
-     *  service wire (download, delete) stays on {@link endpoint}. The default is the compose's
-     *  whole point: the bundled MinIO is in-network only, so the grant rides the reverse
-     *  proxy's `/<bucket>/*` route — same-origin for the browser's CSP, Host preserved for the
-     *  signature. An operator on an EXTERNAL store sets this to that store's own address. */
+    /** The endpoint upload GRANTS are addressed to — `S3_PUBLIC_ENDPOINT`, defaulted to
+     *  `OHMAIL_ORIGIN`. Used ONLY when the grant's URL is built
+     *  (`makeS3StagingStorage.signUpload`); the service wire (download, delete) stays on
+     *  {@link endpoint}. The default is the whole point: the web app may only talk to its own
+     *  origin (CSP `connect-src 'self'`), so browser uploads ride the reverse proxy's
+     *  `/<bucket>/*` route — same-origin for the browser, Host preserved for the signature.
+     *  An off-origin value here therefore serves NON-BROWSER clients only; the browser refuses
+     *  it before the store ever sees the request (.env.example states this to the operator). */
     publicEndpoint: string;
   };
 
@@ -275,6 +277,16 @@ const SUPABASE_STORAGE_VARS = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "TF_
 const S3_STORAGE_VARS = ["S3_ENDPOINT", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"] as const;
 
 /**
+ * Bucket names the staging bucket may NOT take: the reverse proxy's API prefixes
+ * (`deploy/selfhost/Caddyfile`'s `@api` matcher, exactly). Browser uploads ride
+ * `/<bucket>/*` on the ONE origin, and the proxy matches these segments FIRST — a bucket
+ * named `api` would send every presigned PUT to the API server instead of the store: the
+ * grant mints fine (presigning is local), and the upload fails one hop later with a status
+ * nothing can explain. Refused at boot, where the message can name the rename that fixes it.
+ */
+const RESERVED_BUCKET_NAMES = new Set(["api", "auth", "events", "health", "hello", "pair", "internal"]);
+
+/**
  * The storage block behind the env-KIND factory (Ruling 3): `TF_STORAGE_KIND` selects
  * `supabase` | `s3`, an UNKNOWN kind refuses at boot, and the selected kind's variables are
  * all-or-nothing. Storage variables present with NO kind refuse too — silently ignoring them
@@ -336,8 +348,8 @@ function loadStorageConfig(env: NodeJS.ProcessEnv, origin: string): StorageConfi
       throw new Error("S3_ENDPOINT must not embed credentials — they belong in S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY");
     }
     // OPTIONAL, defaulted to the one origin browsers already talk to — the reverse proxy's
-    // `/<bucket>/*` route makes the bundled store reachable there. Set it to the store's own
-    // address when the store is browser-reachable itself (an external object store).
+    // `/<bucket>/*` route makes the bundled store reachable there, and the web app's CSP
+    // allows nothing off-origin anyway. An explicit value serves non-browser clients only.
     const publicRaw = trimmed(env, "S3_PUBLIC_ENDPOINT");
     let publicEndpoint = origin;
     if (publicRaw !== "") {
@@ -354,13 +366,21 @@ function loadStorageConfig(env: NodeJS.ProcessEnv, origin: string): StorageConfi
       }
       publicEndpoint = publicRaw;
     }
+    const bucket = trimmed(env, "S3_BUCKET");
+    if (RESERVED_BUCKET_NAMES.has(bucket.toLowerCase())) {
+      throw new Error(
+        `S3_BUCKET must not be named "${bucket}" — browser uploads travel /<bucket>/* on this ` +
+          "install's own origin, and that path prefix belongs to the API. Pick another bucket " +
+          'name (the default is "ohmail-staging").',
+      );
+    }
     return {
       kind: "s3",
       endpoint,
       region: trimmed(env, "S3_REGION"),
       accessKeyId: trimmed(env, "S3_ACCESS_KEY_ID"),
       secretAccessKey: trimmed(env, "S3_SECRET_ACCESS_KEY"),
-      bucket: trimmed(env, "S3_BUCKET"),
+      bucket,
       publicEndpoint,
     };
   }

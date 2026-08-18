@@ -29,6 +29,16 @@ import { api, apiConfigured } from "./api-client";
 /** Is this bundle the self-host flavor? Compile-time; see the module header. */
 export const SELF_HOST_BUILD = process.env.NEXT_PUBLIC_OHMAIL_FLAVOR === "selfhost";
 
+/**
+ * How long {@link serverHello} waits before answering `null`. The browser's `fetch` has NO
+ * application timeout of its own, so without this a server that ACCEPTS the connection and
+ * never answers — a wedged API process behind a live proxy — parks the setup page on
+ * "checking" forever, with its retry unreachable. Generous against a cold container, small
+ * against a person deciding the page is broken; the middleware's own probe budget is tighter
+ * because a slow answer there merely serves the landing.
+ */
+export const HELLO_TIMEOUT_MS = 5_000;
+
 /** The frozen `/hello` wire shape — the fields this app acts on (the contract carries more). */
 export interface ServerHello {
   product: string;
@@ -45,7 +55,7 @@ export interface ServerHello {
 export async function serverHello(): Promise<ServerHello | null> {
   if (!apiConfigured()) return null;
   try {
-    const h = await api<Partial<ServerHello>>("/hello");
+    const h = await api<Partial<ServerHello>>("/hello", { signal: AbortSignal.timeout(HELLO_TIMEOUT_MS) });
     if (h?.product !== "ohmail" || typeof h.needsSetup !== "boolean") return null;
     return h as ServerHello;
   } catch {

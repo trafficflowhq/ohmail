@@ -53,6 +53,13 @@ services:
   web:
     image: ghcr.io/trafficflowhq/ohmail-web:latest
     restart: on-failure
+    environment:
+      # Where the web container's session gate asks "is this cookie a live session?" — the api
+      # by its Umbrel CONTAINER name (the same upstream the Caddyfile names), because
+      # OHMAIL_ORIGIN resolves to this box's proxy from outside the app's network. Without it
+      # the gate stays unarmed: signed-in visitors get the marketing page and a fresh box is
+      # never steered to /setup. Mirrors deploy/selfhost/docker-compose.yml's web block.
+      OHMAIL_INTERNAL_API_ORIGIN: http://ohmail-server_api_1:8080
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s

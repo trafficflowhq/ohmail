@@ -384,6 +384,33 @@ export function assertApiBaseNotOverridden(supplied, derivedOrigin, selfhost = f
 }
 
 /**
+ * THE FLAVOR'S PUBLIC TWIN MUST NOT BE SUPPLIABLE — the same rule as {@link
+ * assertApiBaseNotOverridden}, and here it is SECURITY rather than topology hygiene.
+ *
+ * Next inlines every `NEXT_PUBLIC_*` variable present in the build environment whether or not
+ * the `env` block below names it. So omitting {@link PUBLIC_FLAVOR_VAR} from a managed build's
+ * env block does not stop a managed build whose ENVIRONMENT carries
+ * `NEXT_PUBLIC_OHMAIL_FLAVOR=selfhost` from compiling the self-host branch of the session gate
+ * — after which a second dashboard variable (`OHMAIL_INTERNAL_API_ORIGIN`) would point the
+ * gate's bearer-carrying fetch at an arbitrary host on the next routine deploy. That is the
+ * TF_API_ORIGIN incident (`app/api-origin.ts`), re-armed through the flavor, and it dies here:
+ * the variable is DERIVED from {@link FLAVOR_VAR} and a build environment that supplies it
+ * refuses to build — except for exactly the value a self-host build derives anyway, because
+ * Next may evaluate this config in a child process that already carries the emitted env.
+ *
+ * @param {string | undefined} supplied
+ * @param {boolean} selfhost
+ */
+export function assertPublicFlavorNotOverridden(supplied, selfhost) {
+  if (supplied === undefined) return;
+  if (selfhost && supplied === "selfhost") return;
+  throw new Error(
+    `${PUBLIC_FLAVOR_VAR} is derived from ${FLAVOR_VAR} and must not be set in the build ` +
+      `environment — a supplied flavor could compile the self-host session gate into a managed build`,
+  );
+}
+
+/**
  * A PRODUCTION BUILD WITH NO API IS A BUILD FAILURE, NOT A QUIET DEMO.
  *
  * `apiOrigin` already fails the build on a MALFORMED value. Absent was the hole: it returned
@@ -585,6 +612,7 @@ if (selfhost && (process.env[API_ORIGIN_VAR] ?? "").trim() !== "") {
 const origin = selfhost ? null : apiOrigin(process.env[API_ORIGIN_VAR]);
 assertApiArmed(origin, process.env);
 assertApiBaseNotOverridden(process.env[API_BASE_VAR], origin, selfhost);
+assertPublicFlavorNotOverridden(process.env[PUBLIC_FLAVOR_VAR], selfhost);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {

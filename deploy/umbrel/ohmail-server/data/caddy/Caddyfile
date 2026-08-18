@@ -16,6 +16,17 @@
 	handle @api {
 		reverse_proxy ohmail-server_api_1:8080
 	}
+
+	# The staging bucket's browser door — deploy/selfhost/Caddyfile's staging route with the
+	# Umbrel container name. Browser attachment uploads are presigned against THIS origin and
+	# the Host is PRESERVED on the hop (Caddy's default; SigV4 signs the Host), and exposing
+	# the path is safe only because the bucket is PRIVATE: unsigned requests 403. Never attach
+	# an anonymous policy to the bucket.
+	@staging path /{$S3_BUCKET:ohmail-staging}/*
+	handle @staging {
+		reverse_proxy ohmail-server_minio_1:9000
+	}
+
 	handle {
 		reverse_proxy ohmail-server_web_1:3000
 	}
