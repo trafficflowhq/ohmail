@@ -52,9 +52,11 @@ import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopBilling } from "./DesktopBilling.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
-  accountDoorFor, awayDoorFor, gateFor, mailMount, readShell, suggestDoorFor, type Shell,
+  accountDoorFor, awayDoorFor, gateFor, mailMount, profileImportDoorFor, readShell, suggestDoorFor,
+  type Shell,
 } from "./doors.js";
 import { awayOverBridge } from "./local-away.js";
+import { profileImportOverBridge } from "./local-profile-import.js";
 import { consentOverBridge } from "./local-consent.js";
 import { cloudSuggestWire } from "./cloud-suggest.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
@@ -364,6 +366,15 @@ export function DesktopGate() {
            enablement episode begins — the key the worker files its at-most-once record under.
            `awayDoorFor` is where the rule lives, as a pure function a test can drive. */
         {...(awayDoorFor(status) === "cloud" ? { awayTransport: awayOverBridge } : {})}
+        /* SETTINGS FOUND ON A MAILBOX — the profile-import card, on BOTH doors, and this is the
+           desktop-standalone tier gaining the flow's flagship case: a mailbox that arrives
+           carrying another ohmail's settings (leave Cloud, install the app) is asked before
+           anything is applied. The same transport-not-a-section rule as the away responder — the
+           card, the counts and the fingerprint-as-consent have ONE implementation and only the
+           wire is injected — but a different door rule, because the engine on this machine
+           serves the three routes ITSELF on the standalone door and forwards them to the account
+           on the hosted one. `profileImportDoorFor` is the rule, a pure function a test drives. */
+        {...(profileImportDoorFor(status) !== null ? { profileImportTransport: profileImportOverBridge } : {})}
         /* SETTINGS → SCREENER AND GENERAL, THE ACCOUNT'S OWN ROW — the dormancy dial, the
            auto-suggest opt-in and auto-unsubscribe, all of which the shared shell already builds
            and all of which it withheld here because its `GET /consent` could not run. Two wires

@@ -100,7 +100,7 @@ import { RemoteImagesRow } from "./RemoteImagesRow";
 import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
-import { ProfileImportCard, useProfileImport } from "./ProfileImportCard";
+import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from "./ProfileImportCard";
 import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
   clearComposeDraft,
@@ -579,6 +579,7 @@ export function AppShell({
   screeningSection,
   screenerSuggest,
   awayTransport,
+  profileImportTransport,
   consentTransport,
   suggestWire,
   aiCredits,
@@ -754,6 +755,30 @@ export function AppShell({
    */
   awayTransport?: AwayTransport;
   /**
+   * THE PROFILE IMPORT'S THREE CALLS, WHEN THE HOST HAS ITS OWN WIRE — the desktop, on BOTH of
+   * its doors, and nobody else.
+   *
+   * The same seam as {@link awayTransport}, injected for the same reason — `apiConfigured()` is
+   * false in every desktop build, so the shell's own check never ran there — and with the
+   * sharper irony: the STANDALONE desktop is the tier whose whole story is "connect the mailbox
+   * and the settings it travelled with are waiting", and it was the one tier that never asked.
+   *
+   * Unlike the responder, this wire is live on the standalone door too, and the difference is a
+   * fact about where the routes are served rather than a policy choice: the confirm flow's three
+   * verbs are mounted on the LOCAL engine's own table and answered out of the store on this
+   * machine (the mailbox dial rides the sealed credential), so a standalone install asking is an
+   * install asking ITSELF. On the HOSTED door the engine forwards the three routes to the
+   * account with the bearer, exactly as it forwards the responder's two. `profileImportDoorFor`
+   * in the desktop's `doors.ts` is where the door rule lives, as a pure function a test drives.
+   *
+   * A TRANSPORT and not a section, for {@link awayTransport}'s reason: the card, the counts, the
+   * fingerprint-as-consent and the durable dismissal must have ONE implementation — a second
+   * copy would be a second definition of what "answered" means, and the failure (the same
+   * document asking twice, or applying content nobody was shown) lands in somebody's settings
+   * rather than in a suite. Absent ⇒ the hosted client, which is what a browser tab has.
+   */
+  profileImportTransport?: ProfileImportTransport;
+  /**
    * `GET /consent` AND ITS FOUR WRITES, WHEN THE HOST HAS ITS OWN WIRE — the desktop on its
    * HOSTED door, and nobody else.
    *
@@ -847,6 +872,7 @@ export function AppShell({
             screeningSection={screeningSection}
             screenerSuggest={screenerSuggest}
             awayTransport={awayTransport}
+            profileImportTransport={profileImportTransport}
             consentTransport={consentTransport}
             suggestWire={suggestWire}
             aiCredits={aiCredits}
@@ -894,7 +920,7 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, consentTransport, suggestWire, aiCredits, onUnread }: {
+function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, suggestWire, aiCredits, onUnread }: {
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
@@ -910,6 +936,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   }) => ReactNode;
   awayTransport?: AwayTransport;
+  profileImportTransport?: ProfileImportTransport;
   consentTransport?: ConsentTransport;
   suggestWire?: SuggestWire;
   aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
@@ -1353,11 +1380,12 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * One check per mailbox per tab (plus a slow, visibility-gated beat) against a server answer
    * that is one indexed read in the resting case; the card renders over the stage only when the
    * server says a document is genuinely waiting on this person's yes or no. Gated on `!demo`
-   * alone — the hook re-checks `apiConfigured()` itself, so the desktop's standalone bundle
-   * (where the Cloud client is a refusing stub) asks nothing until its host wires a transport
-   * of its own, the away notice's exact posture.
+   * alone — the hook re-checks `apiConfigured()` itself, so a build where the Cloud client is a
+   * refusing stub asks nothing UNLESS its host wired a transport of its own, which the desktop
+   * now does on both doors ({@link profileImportTransport}): the standalone engine answers the
+   * three verbs out of the store on this machine, the hosted door forwards them to the account.
    */
-  const profileImportOffer = useProfileImport(!demo, facts);
+  const profileImportOffer = useProfileImport(!demo, facts, profileImportTransport);
 
   /* ── view state ── */
   const [ohboxSel, setOhboxSel] = useState<string | null>(null);

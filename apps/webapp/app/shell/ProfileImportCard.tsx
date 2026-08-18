@@ -70,6 +70,12 @@ export type ProfileImportPhase =
  * The same seam the away notice takes ({@link AwayTransport}'s shape, this feature's verbs), and
  * for the same install: the desktop, whose window is forbidden the Cloud client but whose engine
  * serves these routes locally. Absent ⇒ the hosted client, which is what a browser tab has.
+ *
+ * THE REJECTION CONTRACT, which {@link failureSentence} relies on: an injected transport that
+ * rejects with an `Error` is promising that error's `message` is the SERVER's own sentence, fit
+ * to put on the card verbatim (`apps/desktop/src/local-profile-import.ts` keeps it by reading
+ * the engine's error body, the same shape every desktop wire uses). A transport that cannot
+ * say anything true should reject with an empty message and take the generic line.
  */
 export interface ProfileImportTransport {
   candidate(mailboxId: string): Promise<ProfileImportCandidateWire>;
@@ -92,6 +98,21 @@ const HOSTED: ProfileImportTransport = {
   apply: (id, fingerprint) => profileImportApi.apply(id, fingerprint),
   decline: (id, subject) => profileImportApi.decline(id, subject),
 };
+
+/**
+ * The sentence a refused request may put on the card, or null for the generic line.
+ *
+ * Two ways a failure carries the SERVER's own words, and only two: the hosted client's
+ * {@link ApiError}, and a HOST-INJECTED transport's rejection — whose message is the engine's
+ * sentence by the contract on {@link ProfileImportTransport}. A browser tab never takes the
+ * second branch: its transport is {@link HOSTED}, so a network-level `TypeError` still reads as
+ * the generic sentence rather than "Failed to fetch" dressed up as advice.
+ */
+function failureSentence(err: unknown, injected: boolean): string | null {
+  if (err instanceof ApiError) return err.message;
+  if (injected && err instanceof Error && err.message.length > 0) return err.message;
+  return null;
+}
 
 /**
  * THE TOLERANT READER over the candidate wire — an answer this build does not RECOGNISE is not
@@ -231,7 +252,7 @@ export function useProfileImport(
         if (mounted.current) setPhase({ kind: "done", applied });
       } catch (err) {
         // The offer and both buttons survive — the SERVER's sentence, verbatim, above them.
-        if (mounted.current) setPhase({ kind: "failed", message: err instanceof ApiError ? err.message : null });
+        if (mounted.current) setPhase({ kind: "failed", message: failureSentence(err, held.current !== undefined) });
       }
     })();
   }, [offer]);
@@ -250,7 +271,7 @@ export function useProfileImport(
         await via.decline(mailboxId, subject);
         if (mounted.current) retire(mailboxId);
       } catch (err) {
-        if (mounted.current) setPhase({ kind: "failed", message: err instanceof ApiError ? err.message : null });
+        if (mounted.current) setPhase({ kind: "failed", message: failureSentence(err, held.current !== undefined) });
       }
     })();
   }, [offer, retire]);

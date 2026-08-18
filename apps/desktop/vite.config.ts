@@ -128,10 +128,11 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // binary shows `reader.back` on the one control that leaves it.
   "reader",
   // `profileImport` is the "we found your ohmail settings on this mailbox" card
-  // (`app/shell/ProfileImportCard.tsx`), read through an ordinary `useTranslations`. Unreachable
-  // in today's binary — the card's hook asks nothing where the Cloud client is the refusing stub
-  // and no host transport is wired — and listed for the reason `body` and `history` are: the
-  // guard compares this array against what the sources READ, not against what they can display.
+  // (`app/shell/ProfileImportCard.tsx`), read through an ordinary `useTranslations`. GENUINELY
+  // REACHABLE in the engine-bearing binary since the desktop door wired its transport
+  // (`local-profile-import.ts`, both doors): a mailbox that arrives carrying another install's
+  // settings puts this card on the stage, so without the namespace the restore moment renders
+  // `profileImport.title` where the one sentence that must land as words belongs.
   "profileImport",
   "reply", "ribbon", "screener", "screening", "search", "session", "settings",
   // `sync` is the shell's failing-sync strip. The desktop compiles it and

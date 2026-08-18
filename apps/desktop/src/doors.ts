@@ -234,6 +234,31 @@ export function awayDoorFor(status: EngineStatus | null): "cloud" | null {
 }
 
 /**
+ * WHETHER THIS INSTALL MAY ASK ABOUT SETTINGS FOUND ON A MAILBOX — the profile-import card's
+ * door rule, a pure function here for the reason `gateFor` and `awayDoorFor` are.
+ *
+ * It is NOT `awayDoorFor` under another name, and the difference is the standalone arm. The
+ * responder is withheld there because nothing on that door SENDS the reply; the confirm-import
+ * flow has no such absent half — the engine on this machine mounts the three routes itself and
+ * answers them out of its own store, and the standalone door is the flow's flagship case: a
+ * mailbox that arrives carrying another ohmail's settings (leave Cloud, install the app) is
+ * asked before anything is applied.
+ *
+ *  · STANDALONE — always, even without the mailbox password. The card's resting question is a
+ *    marker read the engine answers without dialling, and a held question it cannot re-verify
+ *    is a 502 the shared hook already treats as "no card, ask again later". Gating on the
+ *    credential here would silence the ask on exactly the launch where the person is mid-setup.
+ *  · HOSTED, SIGNED IN — the engine forwards the three routes to the account with the bearer,
+ *    so the question and the durable answer are the account's own, shared with every browser
+ *    tab. Signed out, every call could only be refused: `null`, `suggestDoorFor`'s rule.
+ */
+export function profileImportDoorFor(status: EngineStatus | null): "local" | "cloud" | null {
+  if (status?.mode === "local") return "local";
+  if (status?.mode === "cloud" && status.credentialState === "ready") return "cloud";
+  return null;
+}
+
+/**
  * WHETHER THIS INSTALL MAY ADMINISTER A HOSTED ACCOUNT FROM ITS SETTINGS — the gate on everything
  * that belongs to an ACCOUNT rather than to this machine.
  *
