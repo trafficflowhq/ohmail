@@ -181,6 +181,30 @@ export function useProfileImport(
     /* `active` FIRST — the away notice's load-bearing order: an inactive shell must not so much
        as name the Cloud client, whose stub throws on the read in a standalone bundle. */
     if (!active) return;
+    /* ── THE MAILBOX SET IS THE SCOPE OF EVERY OFFER ─────────────────────────────────────────
+       A card for a mailbox this window no longer shows is a question nobody can answer: the
+       loop below walks the CURRENT list, so a vanished mailbox's offer was never re-checked and
+       never retired — it stayed first in the queue, its buttons addressed the old id (a 404,
+       through a SWITCHED desktop engine or after a browser-side removal), and the real offer
+       behind it was unreachable until a reload. So offers are pruned to the set, here, before
+       the asks — on a real LIST only, never on `null`, which means "cannot see the account's
+       mailboxes right now" and must not retract a true claim on a guess. The one exception is
+       the away-notice-shaped one the authoritative-`none` branch already keeps: an offer whose
+       answer is IN FLIGHT holds its card until that request settles; the next beat prunes it. */
+    const boxes = list.current;
+    if (boxes !== null) {
+      const known = new Set(boxes.map((m) => m.id));
+      setOffers((prev) => {
+        const current = prev[0];
+        const keep = prev.filter((o) =>
+          known.has(o.mailboxId) || (o === current && phaseRef.current.kind === "applying"));
+        if (keep.length === prev.length) return prev;
+        // The card's lifecycle state belongs to the offer ON SCREEN: pruning it must not leave
+        // a stale `failed`/`done` phase to dress the NEXT offer's card.
+        if (current !== undefined && !keep.includes(current)) setPhase({ kind: "offer" });
+        return keep;
+      });
+    }
     const via = held.current ?? (apiConfigured() ? HOSTED : null);
     if (!via) return;
     const now = Date.now();
