@@ -52,7 +52,7 @@ use crate::engine::{self, EngineState, Found, Plan, Shell};
 #[path = "host_tests.rs"]
 mod tests;
 
-// ── The frozen spawn contract: three variables, exactly ─────────────────────────────────────
+// ── The frozen spawn contract: three variables always, the assets path when packaged ────────
 
 /// Arms the engine's host door. The engine reads the EXACT string "1" and nothing else — the
 /// same absent-must-not-select-the-dangerous-branch rule the engine applies, spelled for an
@@ -70,21 +70,45 @@ pub const HOST_PORT_VAR: &str = "OHMAIL_HOST_PORT";
 /// second-guessed here.
 pub const HOST_ORIGIN_VAR: &str = "OHMAIL_HOST_ORIGIN";
 
-/// The three values one armed spawn composes. Derived fresh each launch, never stored whole —
-/// the PORT is the persisted setting, the ORIGIN is whatever the tailnet says today.
+/// The built browser client the engine's host door serves to a phone — the host-client dist,
+/// packaged into the app bundle as the `host-client` resource (`tauri.engine.conf.json`) and
+/// resolved from the bundle's own resource directory at each launch, the `OHMAIL_DATA_DIR`
+/// idiom: a path the shell knows and the engine merely receives. Passed only when the packaged
+/// directory actually holds an `index.html`; absent, the engine degrades the door to API-only
+/// with a logged reason (`host_assets_missing`) — its rule, not re-implemented here.
+pub const HOST_ASSETS_VAR: &str = "OHMAIL_HOST_ASSETS";
+
+/// The values one armed spawn composes. Derived fresh each launch, never stored whole —
+/// the PORT is the persisted setting, the ORIGIN is whatever the tailnet says today, and the
+/// ASSETS path is wherever this launch's bundle keeps its packaged host-client (None on a build
+/// that packages none — the engine then serves its API alone).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostSpawn {
     pub port: u16,
     pub origin: String,
+    pub assets: Option<PathBuf>,
 }
 
-/// The three environment pairs, exactly — the whole of what an armed spawn adds.
-pub fn env_for(spawn: &HostSpawn) -> [(OsString, OsString); 3] {
-    [
+/// The environment pairs, exactly — the whole of what an armed spawn adds. Three always; the
+/// assets pair joins iff this bundle packages a host client.
+pub fn env_for(spawn: &HostSpawn) -> Vec<(OsString, OsString)> {
+    let mut pairs = vec![
         (OsString::from(HOST_MODE_VAR), OsString::from("1")),
         (OsString::from(HOST_PORT_VAR), OsString::from(spawn.port.to_string())),
         (OsString::from(HOST_ORIGIN_VAR), OsString::from(spawn.origin.clone())),
-    ]
+    ];
+    if let Some(assets) = &spawn.assets {
+        pairs.push((OsString::from(HOST_ASSETS_VAR), OsString::from(assets.as_os_str())));
+    }
+    pairs
+}
+
+/// The packaged host-client, or `None` when this bundle carries none (the preview, a dev run).
+/// `index.html` is the probe because it is the one file the engine's static handler cannot serve
+/// without — the same test it applies on its own side before serving anything.
+pub fn packaged_host_client(resources: Option<&Path>) -> Option<PathBuf> {
+    let dir = resources?.join("host-client");
+    dir.join("index.html").is_file().then_some(dir)
 }
 
 /// Add the host variables to a plan that is about to spawn — or leave it BYTE-IDENTICAL.
@@ -634,11 +658,14 @@ impl HostBoot {
         HostBoot { armed: false, port: None, spawn: None, problem: None }
     }
 
-    /// Decide from the stored setting, the stored door, and an injected probe.
+    /// Decide from the stored setting, the stored door, an injected probe, and the packaged
+    /// host-client (resolved by the caller — a filesystem fact, injected so every branch is a
+    /// test without a bundle).
     pub fn detect_with(
         settings: Option<config::HostSettings>,
         mode: Option<config::Mode>,
         probe: &dyn Fn() -> Result<TailnetIdentity, Problem>,
+        assets: Option<PathBuf>,
     ) -> HostBoot {
         let Some(settings) = settings.filter(|s| s.enabled) else {
             return HostBoot::disarmed();
@@ -657,7 +684,7 @@ impl HostBoot {
             Ok(identity) => HostBoot {
                 armed: true,
                 port: Some(settings.port),
-                spawn: Some(HostSpawn { port: settings.port, origin: identity.origin }),
+                spawn: Some(HostSpawn { port: settings.port, origin: identity.origin, assets }),
                 problem: None,
             },
             // Armed and degraded: the user chose an always-on role, so the tray and the hide
@@ -672,7 +699,8 @@ impl HostBoot {
         }
     }
 
-    /// The shipped detection: the real settings file, the real door, the real CLI.
+    /// The shipped detection: the real settings file, the real door, the real CLI, the real
+    /// bundle resources.
     pub fn detect(paths: &engine::ShellPaths) -> HostBoot {
         let settings = paths
             .app_data
@@ -680,8 +708,12 @@ impl HostBoot {
             .map(|dir| dir.join(config::HOST_FILE_NAME))
             .and_then(|path| config::read_host(&path));
         let mode = paths.config().map(|c| c.mode());
-        let boot =
-            HostBoot::detect_with(settings, mode, &|| probe_with(&|args| run_tailscale(args)));
+        let boot = HostBoot::detect_with(
+            settings,
+            mode,
+            &|| probe_with(&|args| run_tailscale(args)),
+            packaged_host_client(paths.resources.as_deref()),
+        );
         match (&boot.spawn, &boot.problem) {
             (Some(spawn), _) => engine::log_line(format_args!(
                 "host mode armed: the engine's host door binds 127.0.0.1:{} and the tailnet \
@@ -1152,9 +1184,15 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
     *host.port.lock().expect("host port") = Some(port);
     *host.origin.lock().expect("host origin") = Some(identity.origin.clone());
     host.set_problem(None);
-    // The engine respawns with the three host variables; the mirror and the stdio door pay one
-    // ordinary restart for it, which is the same cost as choosing a door.
-    host.shell.set_host_spawn(Some(HostSpawn { port, origin: identity.origin.clone() }));
+    // The engine respawns with the host variables; the mirror and the stdio door pay one
+    // ordinary restart for it, which is the same cost as choosing a door. The assets path is the
+    // same resolution the launch detection performs — this bundle's packaged host-client, or
+    // None on a build that carries none (the engine then serves API-only and says why).
+    let assets = {
+        use tauri::Manager;
+        packaged_host_client(app.path().resource_dir().ok().as_deref())
+    };
+    host.shell.set_host_spawn(Some(HostSpawn { port, origin: identity.origin.clone(), assets }));
     host.shell.replan();
     stand_up_tray(&app, host.inner());
 

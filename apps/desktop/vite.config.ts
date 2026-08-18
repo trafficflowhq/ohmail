@@ -32,6 +32,35 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const LOCAL_ENGINE = process.env.OHMAIL_LOCAL_ENGINE === "1";
 
 /**
+ * THE THIRD ARTIFACT — the HOST CLIENT: the browser bundle the desktop's host door serves to a
+ * phone on the user's own tailnet (Phase 3; the QR sends the phone's browser to
+ * `https://<magicdns>/pair#<token>`, and the engine's static handler serves this dist).
+ *
+ * A third arm of THIS config rather than a config of its own, because the whole point is that it
+ * is the SAME shared shell over the same aliases — the message filter, the react/tiptap/dompurify
+ * pins, the ics seam — with exactly the deltas a real browser tab needs:
+ *
+ *  · entry `host.html` → `src/host-client/main.tsx`, outDir `dist-host` (the window's dist must
+ *    stay byte-identical — the two artifacts never share an output directory);
+ *  · `base: "/"` instead of `"./"` — the door serves `/pair` and every app route by INDEX
+ *    FALLBACK, and a relative asset URL resolved against `/pair/` addresses nothing; this bundle
+ *    has exactly one origin by construction, so absolute is both safe and required;
+ *  · the REAL `http-adapter`, like the engine build — its transport is `fetch` in bearer mode
+ *    over the served origin (the offline guard is NOT installed; that is the window entry's,
+ *    and the reason the WINDOW dist can never be served);
+ *  · `NEXT_PUBLIC_DESKTOP` stays UNDEFINED — this is a browser tab, and a hidden tab dropping to
+ *    the slow sync cadence is the battery-correct behaviour the desktop define exists to disable;
+ *  · no updater page — there is no updater window in a phone browser.
+ *
+ * Mutually exclusive with `OHMAIL_LOCAL_ENGINE` (`build-ui.mjs` refuses both), because an
+ * artifact cannot be both the window bundle and the served one.
+ */
+const HOST_CLIENT = process.env.OHMAIL_HOST_CLIENT === "1";
+if (HOST_CLIENT && LOCAL_ENGINE) {
+  throw new Error("OHMAIL_HOST_CLIENT and OHMAIL_LOCAL_ENGINE select different artifacts — set one");
+}
+
+/**
  * The message namespaces the SHELL actually reads — and therefore the only ones
  * that belong in a desktop binary.
  *
@@ -134,6 +163,12 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // settings puts this card on the stage, so without the namespace the restore moment renders
   // `profileImport.title` where the one sentence that must land as words belongs.
   "profileImport",
+  // `pairLanding` is the host client's /pair fragment landing (`src/host-client/PairScreen.tsx`)
+  // — the page the desktop's pairing QR sends a phone to, read through an ordinary
+  // `useTranslations("pairLanding")`. Reachable only in the HOST-CLIENT artifact (the window
+  // never routes to it), and listed for the reason `body` and `sync` are: the guard compares
+  // this array against what the sources READ, not against what each artifact can display.
+  "pairLanding",
   "reply", "ribbon", "screener", "screening", "search", "session", "settings",
   // `sync` is the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares
@@ -268,6 +303,30 @@ function updaterProgressPage(): Plugin {
 }
 
 /**
+ * Emit the host client's document as `index.html`, whatever the INPUT file is called.
+ *
+ * The input has to be a second html file (`host.html` — two artifacts cannot share `index.html`
+ * in one directory), and vite emits an html input under its own name. The static handler serves
+ * `index.html` as the SPA fallback for `/`, `/pair` and every app route, so the rename happens
+ * here, in the build, rather than as a special case in the server.
+ */
+function hostIndexName(): Plugin {
+  return {
+    name: "ohmail:host-index-name",
+    enforce: "post",
+    generateBundle(_opts, bundle) {
+      const html = bundle["host.html"];
+      if (html === undefined) {
+        this.error("host.html was not emitted — the host-client build has no document to serve");
+      }
+      html.fileName = "index.html";
+      bundle["index.html"] = html;
+      delete bundle["host.html"];
+    },
+  };
+}
+
+/**
  * The desktop UI bundle: the SAME client shell app.ohmail.app renders, compiled to a
  * self-contained folder of files that Tauri embeds. No dev server, no CDN, no
  * remote origin, no Next.js.
@@ -328,10 +387,13 @@ function updaterProgressPage(): Plugin {
  * alike, and there is no absolute path for anything to escape through.
  */
 export default defineConfig({
-  base: "./",
+  /* The host client is served under real paths (`/pair`, deep links) by index fallback, so its
+     asset URLs must be absolute; the two window artifacts stay origin-agnostic relative — see
+     the HOST_CLIENT header above. */
+  base: HOST_CLIENT ? "/" : "./",
   plugins: [
     shellMessagesOnly(),
-    updaterProgressPage(),
+    ...(HOST_CLIENT ? [hostIndexName()] : [updaterProgressPage()]),
     react(),
     {
       /* The webview loads the bundle as an ES module, where `import.meta` is valid; the smoke test
@@ -357,11 +419,13 @@ export default defineConfig({
        sync scheduler is told to keep polling while the window is occluded or unfocused. A desktop
        window is not a browser tab: `document.visibilityState` reads `hidden` when the OS composites
        it out of view, which would stop the sync loop on a mail client that is supposed to keep the
-       mailbox current in the background. Set for BOTH desktop artifacts. The Next web build never
-       defines this var, so `syncsWhileHidden()` is false there and browser tabs keep their
-       hidden-tab-zero-syncs behaviour unchanged — a web-side guard fails if the flag ever leaks on
-       (grep `syncsWhileHidden` in the web app's test suite). */
-    "process.env.NEXT_PUBLIC_DESKTOP": JSON.stringify("1"),
+       mailbox current in the background. Set for BOTH desktop WINDOW artifacts — and deliberately
+       NOT for the host client, which IS a browser tab: a phone page in the background dropping to
+       the slow cadence is the battery-correct behaviour this define exists to disable in a window.
+       The Next web build never defines this var, so `syncsWhileHidden()` is false there and browser
+       tabs keep their hidden-tab-zero-syncs behaviour unchanged — a web-side guard fails if the
+       flag ever leaks on (grep `syncsWhileHidden` in the web app's test suite). */
+    "process.env.NEXT_PUBLIC_DESKTOP": HOST_CLIENT ? "undefined" : JSON.stringify("1"),
     /* Which artifact this is, as a literal. `main.tsx` branches on it, and the
        bundler removes the branch it did not take — so the preview does not carry
        a dormant bridge and the engine build does not carry a dead stub. See
@@ -404,12 +468,13 @@ export default defineConfig({
 
          PRESENT IN THE PREVIEW ONLY. The local-engine build needs the real
          adapter — it is the client that runs against the engine, over the bridge
-         in `src/bridge-fetch.ts` rather than over a socket — so the stub is not
-         aliased in there. Everything the stub's header says about the preview
-         stays exactly as true: that build still has no request builder, no CSRF
-         header and no cursor protocol in it, because that build still has the
-         alias. */
-      ...(LOCAL_ENGINE
+         in `src/bridge-fetch.ts` rather than over a socket — and the HOST CLIENT
+         needs it for the plainer reason: it IS the socket client, in bearer mode
+         against the origin that served it. So the stub is aliased in neither.
+         Everything the stub's header says about the preview stays exactly as
+         true: that build still has no request builder, no CSRF header and no
+         cursor protocol in it, because that build still has the alias. */
+      ...(LOCAL_ENGINE || HOST_CLIENT
         ? []
         : [{ find: /^(?:.*\/)?adapters\/http-adapter\.js$/, replacement: r("./src/no-http-adapter.ts") }]),
 
@@ -458,7 +523,11 @@ export default defineConfig({
   },
 
   build: {
-    outDir: "dist",
+    /* Two output directories, never shared: the WINDOW dist is what Tauri embeds and what the
+       publish pins, and a host build writing into it would hand the artifact censuses a bundle
+       they were not written for. `dist-host` is what `tauri.engine.conf.json` packages as the
+       `host-client` resource and the engine's static handler serves. */
+    outDir: HOST_CLIENT ? "dist-host" : "dist",
     emptyOutDir: true,
     /* Vite's modulepreload polyfill is the one line of the output that calls
        `fetch()` — it re-requests preload hrefs on browsers without native
@@ -480,7 +549,12 @@ export default defineConfig({
        run module scripts), where `import.meta` is a syntax error that aborts the whole boot and
        renders nothing. Inlining removes the split and the `import.meta`, so the bundle boots as one
        file. The stub is tiny, so nothing is deferred that mattered. */
-    rollupOptions: { output: { inlineDynamicImports: true } },
+    rollupOptions: {
+      /* The host client enters through its own document; the window artifacts keep the implicit
+         root `index.html`. `hostIndexName()` renames the emission — see the plugin. */
+      ...(HOST_CLIENT ? { input: r("./host.html") } : {}),
+      output: { inlineDynamicImports: true },
+    },
   },
 
   server: { port: 5174, strictPort: true },

@@ -201,6 +201,17 @@
     "unavailableBody": "Diese Seite ist mit keinem Server verbunden.",
     "footer": "ohmail · läuft auf deinem eigenen Server"
   },
+  "pairLanding": {
+    "title": "Dieses Gerät wird gekoppelt",
+    "reading": "Der Kopplungscode wird gelesen …",
+    "redeeming": "Kopplung mit deinem Computer …",
+    "missingTitle": "Scanne den Code auf deinem Computer",
+    "missingBody": "Deine Post liegt auf deinem eigenen Computer, und diese Seite liest sie von dort. Öffne ohmail auf diesem Computer und scanne den Kopplungs-QR-Code, den es dir zeigt — der geheime Teil des Codes reist auf keinem anderen Weg.",
+    "revokedBody": "Die Kopplung dieses Geräts ist beendet — sie wurde auf deinem Computer abgemeldet oder ist abgelaufen. Scanne einen frischen QR-Code aus ohmail auf diesem Computer, um neu zu koppeln.",
+    "failedTitle": "Dieser Kopplungscode hat nicht funktioniert",
+    "badToken": "Kopplungscodes funktionieren einmal und laufen ab. Zeig in ohmail auf deinem Computer einen frischen QR-Code an und scanne ihn erneut.",
+    "footer": "ohmail · deine Post, auf deinem eigenen Computer"
+  },
   "invites": {
     "title": "Einladungen",
     "intro": "Lade jemanden auf diesen Server ein. Alle Eingeladenen bekommen ihr eigenes Konto — eigene Anmeldung, eigene Post.",

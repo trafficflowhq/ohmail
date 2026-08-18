@@ -5,7 +5,8 @@
     "longDescription": "ohmail is consent-first email on the mailboxes you already have. It connects to your own IMAP mail server over TLS, mirrors your mailbox to a database on this computer, and organises new mail into ohmail/ folders on the server itself, where every other mail app you own can see it. First-time senders wait in the Screener until you say where they belong. The app carries its own mail engine and its own Node runtime; nothing but your mail server and the signed update check is contacted.",
     "resources": {
       "../../../build/desktop-resources/engine": "engine",
-      "../../../build/desktop-resources/runtime": "runtime"
+      "../../../build/desktop-resources/runtime": "runtime",
+      "../dist-host": "host-client"
     },
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper" }

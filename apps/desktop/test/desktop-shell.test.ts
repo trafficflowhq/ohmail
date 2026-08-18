@@ -1442,8 +1442,11 @@ describe("the UI bundle's build config", () => {
    */
   it("builds its two artifacts from one flag", () => {
     expect(vite).toMatch(/const LOCAL_ENGINE = process\.env\.OHMAIL_LOCAL_ENGINE === "1"/);
-    // The stub is aliased in when the flag is OFF, and only then.
-    expect(vite).toMatch(/\.\.\.\(LOCAL_ENGINE\s*\n?\s*\?\s*\[\]/);
+    // The stub is aliased in when BOTH engine-bearing flags are off, and only then. The host
+    // client (the third artifact, the served phone bundle) needs the real adapter for the
+    // plainest reason of the three: it IS the socket client. The two flags are mutually
+    // exclusive (the config throws on both), so "off and off" is still exactly the preview.
+    expect(vite).toMatch(/\.\.\.\(LOCAL_ENGINE \|\| HOST_CLIENT\s*\n?\s*\?\s*\[\]/);
     // The same constant reaches the frontend as a compile-time literal, so the branch the build
     // did not take is removed rather than skipped.
     expect(vite).toMatch(/__OHMAIL_LOCAL_ENGINE__: JSON\.stringify\(LOCAL_ENGINE\)/);
@@ -1597,11 +1600,13 @@ describe("the UI bundle's build config", () => {
    * web app's own test suite (grep `syncsWhileHidden`), and this is its desktop half.
    */
   it("declares itself a desktop build, so the shared shell syncs while occluded", () => {
-    // The literal define, set to "1" (a string, because `process.env.*` values are strings).
-    expect(vite).toMatch(/"process\.env\.NEXT_PUBLIC_DESKTOP": JSON\.stringify\("1"\)/);
+    // The literal define, "1" for both WINDOW artifacts and `undefined` for the HOST CLIENT —
+    // which IS a browser tab (a phone page in the background dropping to the slow cadence is
+    // the battery-correct behaviour this define exists to disable in a window).
+    expect(vite).toMatch(/"process\.env\.NEXT_PUBLIC_DESKTOP": HOST_CLIENT \? "undefined" : JSON\.stringify\("1"\)/);
     // It sits in the `define` block, before `resolve:` — i.e. a build-time constant folded into
-    // every module, both artifacts. It is NOT gated on the LOCAL_ENGINE flag: the preview is a
-    // desktop app too, and only the WEB build (which sets this var nowhere) must miss it.
+    // every module, both window artifacts. It is NOT gated on the LOCAL_ENGINE flag: the preview
+    // is a desktop app too, and only the WEB build (which sets this var nowhere) must miss it.
     const defineStart = vite.indexOf("define: {");
     const resolveStart = vite.indexOf("resolve: {");
     expect(defineStart).toBeGreaterThan(0);
@@ -1698,9 +1703,13 @@ describe("the UI bundle's build config", () => {
     expect(gate).toMatch(/mailboxFacts: readMailboxFacts/);
 
     // The mailbox list is read from the ENGINE, over the pipe — never from the mirror, which has
-    // no such entity and is what made the shared fallback empty.
+    // no such entity and is what made the shared fallback empty. The read is a factory over the
+    // transport now (`readMailboxFactsVia`), because the served host-client asks the identical
+    // question over its bearer socket; the WINDOW's instance still rides the bridge, asserted
+    // in both halves so neither can drift.
     const mailboxes = read("src/DesktopMailboxes.tsx");
-    expect(mailboxes).toMatch(/bridgeFetch\("\/mailboxes"\)/);
+    expect(mailboxes).toMatch(/readMailboxFactsVia\(bridgeFetch\)/);
+    expect(mailboxes).toMatch(/fetchImpl\("\/mailboxes"\)/);
     // A FAILED read is not an empty account. The ladder renders "No mailbox connected" for the
     // second, so collapsing the first into it would say that to somebody whose mailbox works.
     expect(mailboxes).toMatch(/throw new Error/);

@@ -201,6 +201,17 @@
     "unavailableBody": "This page is not connected to a server.",
     "footer": "ohmail · running on your own server"
   },
+  "pairLanding": {
+    "title": "Pairing this device",
+    "reading": "Reading the pairing code…",
+    "redeeming": "Pairing with your computer…",
+    "missingTitle": "Scan the code on your computer",
+    "missingBody": "Your mail lives on your own computer, and this page reads it from there. Open ohmail on that computer and scan the pairing QR code it shows you — the code's secret part never travels any other way.",
+    "revokedBody": "This device's pairing has ended — it was signed out from your computer, or it expired. Scan a fresh QR code from ohmail on that computer to pair again.",
+    "failedTitle": "That pairing code didn't work",
+    "badToken": "Pairing codes work once and expire. Show a fresh QR code in ohmail on your computer and scan it again.",
+    "footer": "ohmail · your mail, on your own computer"
+  },
   "invites": {
     "title": "Invites",
     "intro": "Invite someone onto this server. Everyone you invite gets their own account — their own sign-in, their own mail.",

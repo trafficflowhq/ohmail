@@ -27,10 +27,18 @@
  * that reintroduces exactly the quoting problem this file exists to remove. `build()` with no
  * arguments loads `vite.config.ts` from the working directory, which is what the command line does.
  *
- *   node scripts/build-ui.mjs            → the interface preview (fixtures, no engine)
- *   node scripts/build-ui.mjs --engine   → the bundle that belongs in a `--features local-engine` binary
+ *   node scripts/build-ui.mjs                → the interface preview (fixtures, no engine)
+ *   node scripts/build-ui.mjs --engine       → the bundle that belongs in a `--features local-engine` binary
+ *   node scripts/build-ui.mjs --host-client  → the SERVED bundle the host door hands to a phone (dist-host)
  */
-if (process.argv.includes("--engine")) process.env.OHMAIL_LOCAL_ENGINE = "1";
+const engine = process.argv.includes("--engine");
+const hostClient = process.argv.includes("--host-client");
+if (engine && hostClient) {
+  process.stderr.write("build-ui: --engine and --host-client select different artifacts — pass one\n");
+  process.exit(1);
+}
+if (engine) process.env.OHMAIL_LOCAL_ENGINE = "1";
+if (hostClient) process.env.OHMAIL_HOST_CLIENT = "1";
 
 const { build } = await import("vite");
 await build();

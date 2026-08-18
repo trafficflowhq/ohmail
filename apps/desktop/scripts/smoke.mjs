@@ -425,6 +425,18 @@ function installShellStub(window) {
         if (url === "/consent" && (payload?.method ?? "GET") === "GET") {
           return Promise.resolve(frame(200, "OK", consentState()));
         }
+        /* The profile-import PROBE — the "we found your ohmail settings on this mailbox" card
+           asks once per mailbox at mount (`useProfileImport`), on both doors, since the desktop
+           wired its transport. `state: "none"` is the honest resting answer — this stub's
+           mailbox carries no travelling settings document — and it is what keeps the card
+           absent, which is the surface's own resting state. GET only, exact shape: the apply
+           and decline POSTs are user actions this boot never takes, and the `unmodelled` list
+           below is where they would rightly land. This entry was added AFTER the check named it
+           red — the wiring landed without the stub following, which is exactly the drift the
+           list exists to say out loud. */
+        if (url === `/mailboxes/${MAILBOX_ID}/profile-import` && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(frame(200, "OK", { state: "none" }));
+        }
         /* RECORDED, not silently 404'd into a console error the checks would then
            report as a product defect. A surface that starts calling a second route
            at boot has to be modelled here; until it is, this says so by name. */

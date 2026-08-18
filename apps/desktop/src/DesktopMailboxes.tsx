@@ -111,7 +111,18 @@ interface MailboxWire {
  * "Syncing your mail" over a mailbox that finished months ago.
  */
 export async function readMailboxFacts(): Promise<MailboxFacts[]> {
-  const res = await bridgeFetch("/mailboxes");
+  return readMailboxFactsVia(bridgeFetch);
+}
+
+/**
+ * The same read over an INJECTED transport — the served host-client asks the identical question
+ * over its bearer socket (`host-client/transports.ts`), and the absent-versus-null discipline
+ * below must not be duplicated to be reused.
+ */
+export async function readMailboxFactsVia(
+  fetchImpl: (url: string, init?: unknown) => Promise<Response>,
+): Promise<MailboxFacts[]> {
+  const res = await fetchImpl("/mailboxes");
   if (!res.ok) throw new Error(`the mail engine answered ${res.status} for the mailbox list`);
   const body = (await res.json()) as { items?: MailboxWire[] };
   return (body.items ?? []).map((m) => ({

@@ -82,10 +82,10 @@ if (!existsSync(join(ROOT, "build", "vendor"))) {
       "    node scripts/vendor-node.mjs");
 }
 
-say("1/3 · stage the engine and its runtime");
+say("1/4 · stage the engine and its runtime");
 run(process.execPath, [join(ROOT, "scripts", "stage-desktop-resources.mjs")], ROOT);
 
-say("2/3 · build the engine-bearing UI bundle");
+say("2/4 · build the engine-bearing UI bundle");
 run(process.execPath, [join(APP, "scripts", "build-ui.mjs"), "--engine"], APP);
 /* …and read what came out. The engine bundle carries a surface the preview must not have at all —
  * the pane that points this install at a model of its own, and the Screener control that uses it —
@@ -107,7 +107,20 @@ run(process.execPath, [join(APP, "scripts", "scan-artifact.mjs"), "--expect", "e
  * status, which is how a died check reports success. */
 run(process.execPath, [join(APP, "scripts", "smoke.mjs"), "--expect", "engine"], APP);
 
-say("3/3 · build the app");
+/* THE SERVED CLIENT — the third artifact, packaged as the `host-client` resource so the engine's
+ * host door has a browser client to hand the phone that scans the pairing QR. Built HERE, in the
+ * same script that selects the other halves, for the same reason those live here: a bundle staged
+ * from last week's dist-host would serve last week's client under this week's engine, and nothing
+ * about the artifact would say so. The window dist is untouched (separate outDir); the engine's
+ * static handler degrades to API-only if this resource is ever absent, but a build we are
+ * assembling on purpose must not rely on the degradation. */
+say("3/4 · build the served host-client bundle");
+run(process.execPath, [join(APP, "scripts", "build-ui.mjs"), "--host-client"], APP);
+if (!existsSync(join(APP, "dist-host", "index.html"))) {
+  die("the host-client build produced no dist-host/index.html — nothing for the host door to serve");
+}
+
+say("4/4 · build the app");
 /* `tauri` from this package's own `node_modules/.bin`, resolved through node rather than named as a
  * shell command: the launcher is `tauri` on Unix and `tauri.cmd` on Windows, and reaching for it
  * through a shell to paper over that is the quoting problem `build-ui.mjs` exists to avoid. */

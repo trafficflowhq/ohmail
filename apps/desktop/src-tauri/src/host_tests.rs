@@ -5,9 +5,10 @@
 //!  · **serve, never funnel** — every `tailscale` invocation this shell can compose is checked
 //!    for the word that would publish somebody's mail to the public internet. Shown red by
 //!    editing `serve_arm_args` to spell `funnel`, then restored.
-//!  · **the spawn contract is three variables, exactly** — names, values, and the rule that a
-//!    disarmed launch is BYTE-IDENTICAL to one from a build that predates host mode. Shown red
-//!    by changing the armed value to "true" (the engine arms on "1" exactly), then restored.
+//!  · **the spawn contract is three variables always, plus the assets path when the bundle
+//!    packages a host client** — names, values, and the rule that a disarmed launch is
+//!    BYTE-IDENTICAL to one from a build that predates host mode. Shown red by changing the
+//!    armed value to "true" (the engine arms on "1" exactly), then restored.
 //!  · **disarmed is today's lifecycle** — the decision table's disarmed column stops the engine
 //!    on a destroyed window and touches nothing on a close request, which is the behaviour every
 //!    install without the setting keeps. Shown red by making the disarmed Destroyed cell do
@@ -28,7 +29,10 @@ fn env_map(pairs: &[(OsString, OsString)]) -> HashMap<String, String> {
 
 #[test]
 fn the_armed_spawn_composes_exactly_three_variables_with_the_frozen_spellings() {
-    let spawn = HostSpawn { port: 3311, origin: "https://mac.tail1234.ts.net".to_string() };
+    // …when the bundle packages no host client. The assets pair is the ONE optional member of
+    // the contract; the frozen three never move.
+    let spawn =
+        HostSpawn { port: 3311, origin: "https://mac.tail1234.ts.net".to_string(), assets: None };
     let pairs = env_for(&spawn);
     assert_eq!(pairs.len(), 3);
     let env = env_map(&pairs);
@@ -40,13 +44,48 @@ fn the_armed_spawn_composes_exactly_three_variables_with_the_frozen_spellings() 
         env.get("OHMAIL_HOST_ORIGIN").map(String::as_str),
         Some("https://mac.tail1234.ts.net")
     );
+    assert!(env.get("OHMAIL_HOST_ASSETS").is_none());
+}
+
+#[test]
+fn a_packaged_host_client_adds_the_assets_variable_and_only_that() {
+    let spawn = HostSpawn {
+        port: 3311,
+        origin: "https://mac.tail1234.ts.net".to_string(),
+        assets: Some(PathBuf::from("/bundle/resources/host-client")),
+    };
+    let pairs = env_for(&spawn);
+    assert_eq!(pairs.len(), 4);
+    let env = env_map(&pairs);
+    assert_eq!(
+        env.get("OHMAIL_HOST_ASSETS").map(String::as_str),
+        Some("/bundle/resources/host-client")
+    );
+    // The frozen three ride unchanged beside it.
+    assert_eq!(env.get("OHMAIL_HOST_MODE").map(String::as_str), Some("1"));
+    assert_eq!(env.get("OHMAIL_HOST_PORT").map(String::as_str), Some("3311"));
+}
+
+#[test]
+fn the_packaged_host_client_is_found_by_its_index_and_absent_otherwise() {
+    // A real directory, because the probe is a filesystem fact: resources with a host-client
+    // holding index.html answer the dir; an empty host-client, or no resources, answer None —
+    // the engine then serves API-only, which is the safe branch by construction.
+    let resources = std::env::temp_dir().join(format!("ohmail-host-assets-{}", std::process::id()));
+    let dir = resources.join("host-client");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    assert_eq!(packaged_host_client(Some(&resources)), None, "no index.html yet");
+    std::fs::write(dir.join("index.html"), "<!doctype html>").expect("write");
+    assert_eq!(packaged_host_client(Some(&resources)), Some(dir.clone()));
+    assert_eq!(packaged_host_client(None), None);
+    let _ = std::fs::remove_dir_all(&resources);
 }
 
 #[test]
 fn the_origin_is_passed_through_verbatim_and_never_validated_here() {
     // The engine owns validation and degrades host mode over garbage with a logged reason; a
     // shell-side check would be a second copy of the engine's rules. So garbage crosses AS IS.
-    let spawn = HostSpawn { port: 1, origin: "not a url at all".to_string() };
+    let spawn = HostSpawn { port: 1, origin: "not a url at all".to_string(), assets: None };
     let env = env_map(&env_for(&spawn));
     assert_eq!(env.get("OHMAIL_HOST_ORIGIN").map(String::as_str), Some("not a url at all"));
 }
@@ -61,7 +100,7 @@ fn a_launch() -> engine::Launch {
 }
 
 fn a_spawn() -> HostSpawn {
-    HostSpawn { port: 3311, origin: "https://mac.tail1234.ts.net".to_string() }
+    HostSpawn { port: 3311, origin: "https://mac.tail1234.ts.net".to_string(), assets: None }
 }
 
 #[test]
@@ -419,11 +458,11 @@ fn probe_ok() -> Result<TailnetIdentity, Problem> {
 
 #[test]
 fn no_setting_and_a_disabled_setting_both_boot_disarmed() {
-    let boot = HostBoot::detect_with(None, Some(config::Mode::Local), &probe_ok);
+    let boot = HostBoot::detect_with(None, Some(config::Mode::Local), &probe_ok, None);
     assert!(!boot.armed);
     assert!(boot.spawn.is_none() && boot.problem.is_none());
     let off = config::HostSettings { enabled: false, port: 3311 };
-    let boot = HostBoot::detect_with(Some(off), Some(config::Mode::Local), &probe_ok);
+    let boot = HostBoot::detect_with(Some(off), Some(config::Mode::Local), &probe_ok, None);
     assert!(!boot.armed && boot.spawn.is_none());
 }
 
@@ -434,7 +473,7 @@ fn enabled_on_the_wrong_door_is_off_with_its_reason_and_probes_nothing() {
         panic!("the probe ran for a door that has no host mode")
     };
     for mode in [Some(config::Mode::Cloud), None] {
-        let boot = HostBoot::detect_with(Some(on), mode, &probe_must_not_run);
+        let boot = HostBoot::detect_with(Some(on), mode, &probe_must_not_run, None);
         assert!(!boot.armed);
         assert_eq!(boot.problem, Some(Problem::LocalDoorRequired));
         assert!(boot.spawn.is_none());
@@ -444,13 +483,22 @@ fn enabled_on_the_wrong_door_is_off_with_its_reason_and_probes_nothing() {
 #[test]
 fn enabled_on_the_local_door_arms_with_the_probed_origin() {
     let on = config::HostSettings { enabled: true, port: 3311 };
-    let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &probe_ok);
+    let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &probe_ok, None);
     assert!(boot.armed);
     assert_eq!(
         boot.spawn,
-        Some(HostSpawn { port: 3311, origin: "https://mac.tail1234.ts.net".to_string() })
+        Some(HostSpawn { port: 3311, origin: "https://mac.tail1234.ts.net".to_string(), assets: None })
     );
     assert_eq!(boot.problem, None);
+}
+
+#[test]
+fn the_packaged_assets_ride_the_armed_spawn() {
+    let on = config::HostSettings { enabled: true, port: 3311 };
+    let assets = Some(PathBuf::from("/bundle/resources/host-client"));
+    let boot =
+        HostBoot::detect_with(Some(on), Some(config::Mode::Local), &probe_ok, assets.clone());
+    assert_eq!(boot.spawn.expect("armed").assets, assets);
 }
 
 #[test]
@@ -460,8 +508,9 @@ fn a_failed_probe_arms_degraded_and_spawns_the_safe_branch() {
     // to guard against is a door the engine would refuse anyway. The problem is what the tray
     // and the window report.
     let on = config::HostSettings { enabled: true, port: 3311 };
-    let boot =
-        HostBoot::detect_with(Some(on), Some(config::Mode::Local), &|| Err(Problem::NotLoggedIn));
+    let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &|| {
+        Err(Problem::NotLoggedIn)
+    }, None);
     assert!(boot.armed);
     assert!(boot.spawn.is_none());
     assert_eq!(boot.problem, Some(Problem::NotLoggedIn));

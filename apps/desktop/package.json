@@ -10,6 +10,7 @@
     "ui:dev": "vite",
     "ui:build": "node scripts/build-ui.mjs",
     "ui:build:engine": "node scripts/build-ui.mjs --engine",
+    "ui:build:host": "node scripts/build-ui.mjs --host-client",
     "app:build:engine": "node scripts/build-engine-app.mjs",
     "ui:typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",

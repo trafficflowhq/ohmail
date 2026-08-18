@@ -238,6 +238,11 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
     ...(env.OHMAIL_HOST_MODE === "1" ? { hostMode: true } : {}),
     ...(env.OHMAIL_HOST_ORIGIN?.trim() ? { hostOrigin: env.OHMAIL_HOST_ORIGIN.trim() } : {}),
     ...(env.OHMAIL_HOST_PORT?.trim() ? { hostPort: Number(env.OHMAIL_HOST_PORT) } : {}),
+    // The packaged host-client build this door serves to a phone — the fourth knob, resolved by
+    // the shell from its own bundle resources (`OHMAIL_DATA_DIR`'s idiom: a path the shell
+    // knows, handed at spawn). Same no-validation rule as the three above: `host-static.ts`
+    // probes it once and a missing build degrades to API-only with a logged reason.
+    ...(env.OHMAIL_HOST_ASSETS?.trim() ? { hostAssetsDir: env.OHMAIL_HOST_ASSETS.trim() } : {}),
   };
 }
 

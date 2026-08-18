@@ -31,7 +31,7 @@ import {
  * bundle's artifact census is the second line. */
 import { makeSessionLifecycle } from "@trafficflow/services/auth";
 import {
-  API_VERSION, ALLOW_ANY_PROBE_HOST, createApp, DEFAULT_SSE, localRoutes,
+  API_VERSION, ALLOW_ANY_PROBE_HOST, createApp, DEFAULT_SSE, localRoutes, matchRoute,
   type ApiDeps, type ApiServices, type App,
 } from "@trafficflow/api/local";
 // THE DESKTOP-HOST DOOR's route table (Phase 3): the single-user product set plus the carved
@@ -40,6 +40,10 @@ import {
 // for the exact in/out list and the obligations it puts on this composition root.
 import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
 import { hostPairRoutes } from "./host-pair-routes.js";
+// The static half of the host door — the built browser client the QR sends a phone to, served
+// beside the API out of one `handleHost`. The route table wins; this covers everything else.
+// See `host-static.ts` for the traversal defense, the caching rule and the credential-page CSP.
+import { createHostStatic } from "./host-static.js";
 // The host door's knobs, resolved ONCE (`resolveHostConfig` — pure, never throws, degrades with
 // a surfaced reason), and the door's own send-surface ceiling. See `host-listener.ts`'s header
 // for the whole arrangement; the listener itself is `main.ts`'s to start.
@@ -236,6 +240,15 @@ export interface SidecarConfig {
    * launch with the same surfaced reason as a bad origin. Absent ⇒ no listener.
    */
   hostPort?: number;
+  /**
+   * THE BUILT BROWSER CLIENT this door serves to a phone — a directory holding the host-client
+   * vite arm's dist (`index.html` + hashed `assets/`), handed at spawn exactly as the data
+   * directory is (`OHMAIL_HOST_ASSETS`). The shell resolves it from the packaged app's own
+   * resources; nothing here trusts the value beyond probing it once (`host-static.ts`). Absent,
+   * or naming no readable build, the armed door serves its API only and app routes answer one
+   * plain sentence — a degradation with a logged reason (`host_assets_missing`), never a crash.
+   */
+  hostAssetsDir?: string;
 }
 
 /**
@@ -775,6 +788,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * pairing mint) are structurally absent from it.
      */
     const hostApp: App | null = hostMode ? createApp(desktopHostRoutes) : null;
+    /**
+     * The static half of the same door — the browser client the QR sends a phone to. Probed NOW,
+     * awaited, so `host_assets_missing` lands in the boot log where somebody debugging an
+     * API-only answer will look, rather than on the first request. Absent config is the ordinary
+     * install and says nothing.
+     */
+    const hostStatic = hostMode
+      ? createHostStatic({ assetsDir: config.hostAssetsDir?.trim() || null, log })
+      : null;
+    if (hostStatic) await hostStatic.ready();
 
     /**
      * A FRESH `ApiDeps` PER REQUEST. `ApiDeps` is mutable by design — `withRequestId` writes
@@ -1862,8 +1885,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       },
       // The desktop-host door, present IFF armed — see {@link Sidecar.handleHost}. Spread so a
       // disarmed sidecar genuinely lacks the member rather than carrying one that refuses.
+      //
+      // ── ONE DOOR, TWO HALVES, AND THE API'S PRECEDENCE IS STRUCTURAL ────────────────────
+      // The decision is `matchRoute` over the SAME table the app routes with, so it cannot
+      // drift from the app's own routing: a path any route matches — including a matched path
+      // with the wrong method, whose 405 is the app's to answer — goes to the API, and only a
+      // path the table has never heard of reaches the static handler. A file can therefore
+      // never shadow a JSON route, and the index fallback can never swallow a redeem.
       ...(hostApp
-        ? { handleHost: async (req: Request): Promise<Response> => hostApp.handle(req, depsForHost()) }
+        ? {
+            handleHost: async (req: Request): Promise<Response> => {
+              const match = matchRoute(desktopHostRoutes, req.method, new URL(req.url).pathname);
+              if (match.matched || match.methodNotAllowed) return hostApp.handle(req, depsForHost());
+              return hostStatic!.serve(req, new URL(req.url));
+            },
+          }
         : {}),
       hostState: hostConfig.state,
       syncUntilQuiet,

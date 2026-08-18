@@ -35,7 +35,7 @@
  * of its own, the same shape every transport in this directory keeps.
  */
 
-import { bridgeFetch } from "./bridge-fetch.js";
+import { bridgeFetch, type BridgeFetch } from "./bridge-fetch.js";
 import type { ProfileImportTransport } from "../../webapp/app/shell/ProfileImportCard";
 import type { ProfileImportAppliedWire, ProfileImportCandidateWire } from "../../webapp/app/api-client";
 
@@ -67,28 +67,40 @@ async function wireOf<T>(res: Response): Promise<T> {
 }
 
 /**
- * The three calls the shared card makes, over the bridge.
+ * The three calls the shared card makes, over an injected transport function.
  *
- * A constant rather than a factory: it holds no state, and one object per module means the
- * shell's `useProfileImport` sees a stable identity across renders.
+ * A factory over the FETCH rather than over anything else, because the desktop now has two
+ * consumers of the same three routes and the same refusal contract: the window (the bridge down
+ * the pipe) and the served host-client (the loopback socket, bearer-authenticated — see
+ * `host-client/transports.ts`). The wire narrowing and the engine's-own-sentence rule live once,
+ * here, whichever transport carries the bytes.
  */
-export const profileImportOverBridge: ProfileImportTransport = {
-  candidate: async (mailboxId) =>
-    wireOf<ProfileImportCandidateWire>(await bridgeFetch(profileImportPath(mailboxId))),
-  apply: async (mailboxId, fingerprint) =>
-    wireOf<ProfileImportAppliedWire>(
-      await bridgeFetch(profileImportPath(mailboxId), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ fingerprint }),
-      }),
-    ),
-  decline: async (mailboxId, subject) =>
-    wireOf<{ dismissed: boolean }>(
-      await bridgeFetch(`${profileImportPath(mailboxId)}/decline`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(subject),
-      }),
-    ),
-};
+export function profileImportVia(fetchImpl: BridgeFetch): ProfileImportTransport {
+  return {
+    candidate: async (mailboxId) =>
+      wireOf<ProfileImportCandidateWire>(await fetchImpl(profileImportPath(mailboxId))),
+    apply: async (mailboxId, fingerprint) =>
+      wireOf<ProfileImportAppliedWire>(
+        await fetchImpl(profileImportPath(mailboxId), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ fingerprint }),
+        }),
+      ),
+    decline: async (mailboxId, subject) =>
+      wireOf<{ dismissed: boolean }>(
+        await fetchImpl(`${profileImportPath(mailboxId)}/decline`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(subject),
+        }),
+      ),
+  };
+}
+
+/**
+ * The WINDOW's instance, over the bridge. A module constant rather than a per-render factory
+ * call: it holds no state, and one object per module means the shell's `useProfileImport` sees a
+ * stable identity across renders.
+ */
+export const profileImportOverBridge: ProfileImportTransport = profileImportVia(bridgeFetch);
