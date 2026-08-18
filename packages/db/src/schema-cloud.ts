@@ -1,8 +1,9 @@
 /**
  * THE CLOUD-ONLY SCHEMA — the 26 tables the hosted service adds, and the half that never ships.
  *
- * The identity ceremony (password hashes, WebAuthn, TOTP, recovery codes, refresh-token
- * families), the money (Stripe customers, subscriptions, the credit ledger), the ops tables,
+ * The identity ceremony (password hashes, WebAuthn, TOTP, recovery codes; the refresh-token
+ * store itself moved to the mail half in 0060 — paired devices rotate against the store that
+ * serves them), the money (Stripe customers, subscriptions, the credit ledger), the ops tables,
  * the funnel and the admin console's own staff identity. A local install has none of it: it
  * mints a session per launch, it is free, it has no operator and nobody to sign in.
  *
@@ -84,24 +85,11 @@ export const recoveryCodes = pgTable("recovery_codes", {
 
 
 
-// The rotating-refresh history per session family. A presented refresh token that
-// is already `consumedAt` ⇒ reuse ⇒ the whole family is revoked.
-export const refreshTokens = pgTable("refresh_tokens", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  accountId: uuid("account_id").notNull(),
-  userId: uuid("user_id").notNull().references(() => users.id),
-  sessionId: uuid("session_id").notNull().references(() => sessions.id),
-  familyId: uuid("family_id").notNull(),
-  tokenHash: text("token_hash").notNull(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  consumedAt: timestamp("consumed_at", { withTimezone: true }),
-  revokedAt: timestamp("revoked_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({
-  uqToken: unique().on(t.tokenHash),
-  ixFamily: index("refresh_tokens_family_idx").on(t.familyId),
-  ixSession: index("refresh_tokens_session_idx").on(t.sessionId),
-}));
+// `refresh_tokens` MOVED to `schema-mail.ts` (mail 0060, Phase 3): QR device pairing gives
+// the desktop-as-host tier bearer pairs whose refresh families rotate against the local store,
+// so the table now lives beside `sessions`/`devices`/`pairing_tokens`. The cloud journal's
+// historical CREATE stays byte-frozen in `drizzle-cloud/0000`; `journal-split.test.ts` pins the
+// arbitration.
 
 export const loginTokens = pgTable("login_tokens", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -885,6 +873,6 @@ export const invites = pgTable("invites", {
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const cloudSchema = {
-  credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, refreshTokens, loginTokens, oauthAuthCodes, authEvents, authThrottle, pushSubscriptions, billingCustomers, billingSubscriptions, creditBalances, creditLedger, billingEvents, workerHeartbeats, alertState, waitlist, staffUsers, staffSessions, accountSuspensions,
+  credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens, oauthAuthCodes, authEvents, authThrottle, pushSubscriptions, billingCustomers, billingSubscriptions, creditBalances, creditLedger, billingEvents, workerHeartbeats, alertState, waitlist, staffUsers, staffSessions, accountSuspensions,
   mailboxOauthCeremonies, oauthProviderConfig, attachmentStaging, invites, aiAttemptClaims,
 };

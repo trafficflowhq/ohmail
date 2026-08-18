@@ -1,14 +1,20 @@
+/* THE `/auth` ENTRY, not the barrel — the Phase 3 retarget. The full barrel would drag
+ * `nodemailer` (its `SmtpMailer` re-export) and the paid-gate registration (its one import-time
+ * side effect) into every bundle that mounts a pairing route, which the desktop-host door
+ * (the desktop-host door, next slice) is about to be. The invite-grant redeem — the one arm that queries the
+ * Cloud-half `invites` table — arrives through the dependency bag instead (`inviteRedeem`
+ * below), so this module's import graph is shippable from the mail half alone. */
 import {
   mintPairingToken, listPairingTokens, revokePairingToken,
-  redeemInviteGrant, redeemDevicePair, type PairingGrant,
-} from "@trafficflow/services";
+  redeemDevicePair, type PairingGrant, type PairedDeviceSessionMinter,
+} from "@trafficflow/services/auth";
 import { ServiceError } from "@trafficflow/services/mail";
 import { silentLogger } from "@trafficflow/core/mail";
 import { serviceContext } from "../context.js";
+import type { ApiDeps } from "../deps.js";
 import { errorResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { json, noContent, readBody } from "./shared.js";
-import { auth } from "./shared-cloud.js";
 
 /**
  * A JSON body read as a plain object. `readBody` returns whatever `JSON.parse` produced, and
@@ -20,6 +26,21 @@ import { auth } from "./shared-cloud.js";
 async function readObjectBody<T extends Record<string, unknown>>(req: Request): Promise<Partial<T>> {
   const raw = await readBody<unknown>(req);
   return (raw !== null && typeof raw === "object" && !Array.isArray(raw)) ? (raw as Partial<T>) : {};
+}
+
+/**
+ * The session minter for the device-pair arm — `deps.services.auth`, which every composition
+ * that mounts this table fills (the hosted `AuthService` IS one; the desktop-host door will
+ * wire the bare lifecycle). Read through an accessor so a misconfigured bag is the same clean
+ * 500 `shared-cloud.ts#auth` answers, not a TypeError mid-ceremony. Deliberately NOT that
+ * accessor itself: this module needs only {@link PairedDeviceSessionMinter}, and importing the
+ * cloud accessor would put `deps-cloud.ts` — a private module — back into a file the engine
+ * bundle is about to carry.
+ */
+function sessionMinter(deps: ApiDeps): PairedDeviceSessionMinter {
+  const svc = deps.services?.auth;
+  if (!svc) throw new ServiceError("internal", 500, "auth service not configured");
+  return svc;
 }
 
 /**
@@ -105,11 +126,20 @@ export const pairRoutes: Route[] = [
     options: { public: true, anonymous: true },
     handler: async (req, deps) => {
       try {
-        const b = await readObjectBody<{ grant?: unknown; token?: unknown; email?: unknown }>(req);
+        const b = await readObjectBody<{ grant?: unknown; token?: unknown; email?: unknown; kind?: unknown }>(req);
         const token = typeof b.token === "string" ? b.token : "";
         const ctx = serviceContext(deps, req);
         if (b.grant === "invite") {
-          const invite = await redeemInviteGrant(ctx, {
+          // Absent port ⇒ this composition's database has no `invites` table to bridge to (the
+          // desktop-host door's exact position, the next slice — the desktop-host door) — a 400 the redeemer can act on,
+          // never a 42P01 dressed as a 500. The self-host composition wires the real function.
+          const redeemInvite = deps.services?.inviteRedeem;
+          if (!redeemInvite) {
+            return errorResponse(
+              "validation_failed", 400, 'grant "invite" is not redeemable on this server',
+            );
+          }
+          const invite = await redeemInvite(ctx, {
             token, email: typeof b.email === "string" ? b.email : "",
           });
           // The client's next move is `POST /auth/register` with this code — the existing
@@ -121,7 +151,12 @@ export const pairRoutes: Route[] = [
           return json({ grant: "invite", invite }, 200);
         }
         if (b.grant === "device-pair") {
-          const { tokens } = await redeemDevicePair(ctx, auth(deps), { token });
+          // `kind` is the redeemer's own declaration — "web" when absent, whitelist-gated in
+          // the service BEFORE the burn (the same wire-input division as the mint's `grant`).
+          const { tokens } = await redeemDevicePair(ctx, sessionMinter(deps), {
+            token,
+            ...(b.kind !== undefined ? { kind: b.kind as "web" | "macos" } : {}),
+          });
           // The bearer pair and nothing else — `POST /auth/desktop-claim`'s shape. No cookie:
           // a token shown on a screen must not be spendable into a browser session.
           return json({ grant: "device-pair", tokens }, 200);

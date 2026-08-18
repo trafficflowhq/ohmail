@@ -706,8 +706,23 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // value can only produce a row no reader matches. No INDEX marker: the UNIQUE on `token_hash`
   // is the redeem's own lookup, and its absence is loud at the first duplicate-free mint —
   // `mailboxes_active_address_uq`'s counter-rule does not apply because nothing here does
-  // `ON CONFLICT`. It is the NEWEST entry in the mail journal.
+  // `ON CONFLICT`.
   ["pairing_tokens", "token_hash"],
+  // mail 0060_refresh_tokens — the rotating-refresh store, moved to the shared half for the
+  // desktop-as-host tier's paired devices (Phase 3). One marker for the whole table, on
+  // 0035's rule. `family_id` is the column because the family-revocation sweep predicates on it
+  // — the statement reuse detection's whole guarantee lives in — and NOT `token_hash`, which is
+  // true but is the same column NAME the `pairing_tokens` probe above already reads; a second
+  // marker on one name tells an operator less than two names. A subtlety this entry owns: on a
+  // HOSTED or self-host database the table predates the migration (cloud 0000 created it), so
+  // this probe passes there whether or not mail 0060 has run — which is the honest answer,
+  // because the question a marker asks is "does the schema this deployment queries exist", not
+  // "which journal built it". The store that can genuinely lack the table is a mail-only
+  // desktop database, and there the engine migrates at boot and this names the migration if it
+  // has not. No CHECK marker (nothing here closes a set), no INDEX marker (the UNIQUE on
+  // `token_hash` is the rotation's claim lookup and its absence is loud). It is the NEWEST
+  // entry in the mail journal.
+  ["refresh_tokens", "family_id"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1230,9 +1245,14 @@ export const MAIL_EXPECTED_MARKERS =
  * no third step. No CHECK marker for the grant CHECK (every writer is a literal behind a closed
  * TS union, and the redeem names the grant in its own WHERE, so an absent CHECK cannot mis-spend
  * a token), no INDEX marker (the UNIQUE on `token_hash` is the redeem's lookup and its absence
- * is loud, not silent). It is the NEWEST entry in the mail journal.
+ * is loud, not silent).
+ *
+ * `0060_refresh_tokens` is probed ONCE, by `refresh_tokens.family_id` — the column the
+ * family-revocation sweep predicates on. The table is old on hosted databases (cloud 0000) and
+ * new only on mail-only desktop stores, so the probe's real subject is the desktop tier; the
+ * marker entry above carries the nuance. It is the NEWEST entry in the mail journal.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0059_pairing_tokens";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0060_refresh_tokens";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

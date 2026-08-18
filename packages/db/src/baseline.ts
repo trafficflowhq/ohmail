@@ -111,6 +111,24 @@ export interface BaselineObjects {
   triggers: string[];
 }
 
+/**
+ * Objects the CLOUD baseline created that the MAIL journal now ALSO creates — `refresh_tokens`
+ * and its two indexes, adopted by mail 0060 (Phase 3: a paired device's refresh family
+ * rotates against the store that serves it; `journal-split.test.ts` pins the arbitration).
+ *
+ * They are EXCLUDED from the cloud baseline's object probe because their presence stopped
+ * discriminating provenance, and the adoption verdict is a provenance question: a database
+ * built by the two-journal path holds them the moment the mail journal has run, so counting
+ * them puts every ordinary fresh setup into the "some objects, no evidence" cell — the exact
+ * refusal the verdict's step 0 note says must not fire on the ordinary path. The cost is one
+ * table's worth of the altered-by-hand check on a genuine adoption, and mail 0060's guarded
+ * CREATE restores the object on the next migrate anyway.
+ */
+const CLOUD_OBJECTS_ADOPTED_BY_MAIL = {
+  tables: new Set(["refresh_tokens"]),
+  indexes: new Set(["refresh_tokens_family_idx", "refresh_tokens_session_idx"]),
+};
+
 export function baselineObjects(spec: JournalSpec): BaselineObjects {
   const tables = new Set<string>();
   const columns = new Map<string, [string, string]>();
@@ -143,6 +161,12 @@ export function baselineObjects(spec: JournalSpec): BaselineObjects {
     const dropRe = /DROP INDEX IF EXISTS "([a-z_]+)"/gi;
     let m: RegExpExecArray | null;
     while ((m = dropRe.exec(sqlText))) indexes.delete(m[1]!);
+  }
+
+  // The adopted table — see {@link CLOUD_OBJECTS_ADOPTED_BY_MAIL}.
+  if (spec.name === "cloud") {
+    for (const t of CLOUD_OBJECTS_ADOPTED_BY_MAIL.tables) tables.delete(t);
+    for (const i of CLOUD_OBJECTS_ADOPTED_BY_MAIL.indexes) indexes.delete(i);
   }
 
   return {

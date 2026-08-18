@@ -2,8 +2,6 @@ import { and, count, eq, gt, isNull, isNotNull, desc, type SQL } from "drizzle-o
 import { type Tx } from "@trafficflow/db";
 import { pairingTokens } from "@trafficflow/db";
 import { generateToken, hashToken } from "./auth/crypto.js";
-import { issueInvite } from "./invites.js";
-import { normalizeRecipient } from "./mail/port.js";
 import type { ServiceContext } from "./context.js";
 import type { OAuthTokens } from "./auth/types.js";
 import { ServiceError } from "./errors.js";
@@ -73,8 +71,14 @@ import { ServiceError } from "./errors.js";
  * `bootCtx.userId === null`). The creator is read from `ctx.userId`, so the boot mint's
  * ownerless row falls out of the context rather than out of a special-case flag.
  *
- * This module bridges to the Cloud-half `invites` table, so it is exported ONLY from the full
- * services barrel — never from `./mail/index.ts`, which the shipped engine bundles from.
+ * ── WHERE THIS MODULE MAY BE EXPORTED FROM, AND WHERE ITS INVITE ARM MAY NOT ─────────────
+ *
+ * Since Phase 3 this module reaches ONLY the shared half — `pairing_tokens` is mail-half
+ * (mail 0059) and the device-pair redeem's session mint arrives through a port — so it rides
+ * the `./auth` entry the desktop engine bundles. The INVITE-grant redeem is the half that
+ * bridges to the Cloud-half `invites` table, and it therefore lives in `pairing-invite.ts`,
+ * which stays FULL BARREL ONLY: never on `./auth`, never on `./mail/index.ts`. The
+ * `auth-entry-census.test.ts` walk pins both facts.
  */
 
 export type PairingGrant = "invite" | "device-pair";
@@ -351,70 +355,6 @@ export async function consumePairingToken(
   return { ...row, grant: row.grant as PairingGrant };
 }
 
-export interface InviteGrantRedeemed {
-  /** The raw invite code — the client's next move is `POST /auth/register` with it. */
-  code: string;
-  /** The address the invite is bound to, normalised. */
-  email: string;
-  /** When the minted INVITE expires ({@link PAIRING_INVITE_TTL_MS}) — not the token, which is spent. */
-  expiresAt: Date;
-}
-
-/**
- * Redeem an `invite`-grant token: consume it and mint an email-bound `invites` row for the
- * address the redeemer presents, in ONE transaction — if the invite mint fails, the rollback
- * un-burns the token (`consumeInvite`-inside-register's rule, from the other side). The email
- * is validated BEFORE anything is consumed for the same reason.
- *
- * The returned code goes straight into the existing `POST /auth/register`. Whether that
- * registration starts EMAIL-VERIFIED rides on the minted invite's `confers_verified`, and the
- * answer is read off the CONSUMED TOKEN ROW inside this same transaction — never off anything
- * the redeemer sent, because this endpoint is anonymous and a caller-writable flag here would
- * let any token holder mint themselves a verified account for an address they do not control:
- *
- *  · `created_by_user_id IS NULL` — the FIRST-BOOT setup token, mintable only by the
- *    composition root before any session machinery exists (the API mint always has a session
- *    user). Whoever presents it read it off the server's own stdout, and control of the box IS
- *    control of the operator's login identifier on that box — so it CONFERS.
- *  · a user's token — its holder types any address they like, nothing was ever mailed, receipt
- *    proves nothing. The invite registers the account and confers NOTHING; the address is
- *    proven later through the ordinary mailed verification flow, exactly like an open signup.
- *
- * Sworn trade-off, said out loud: the pairing token is NOT email-bound, so its holder can spend
- * it on an address of their choosing and learn from register's invite-path 409 whether that
- * address already has an account here. One bit, costs the whole token, on a server whose
- * operator minted the token — accepted.
- */
-export async function redeemInviteGrant(
-  ctx: ServiceContext, input: { token: string; email: string },
-): Promise<InviteGrantRedeemed> {
-  const email = normalizeRecipient(input.email ?? "");
-  if (!email) throw new ServiceError("validation_failed", 400, "a valid email address is required");
-
-  return inTransaction(ctx, async (txCtx) => {
-    const consumed = await consumePairingToken(txCtx, { token: input.token, grant: "invite" });
-    if (!consumed) throw pairingInvalid();
-    const now = txCtx.now();
-    const invite = await issueInvite(asTx(txCtx), {
-      email,
-      expiresAt: new Date(now.getTime() + PAIRING_INVITE_TTL_MS),
-      now,
-      issuedBy: `pairing:${consumed.id}`,
-      // THE DISCRIMINATOR, from the burned row's RETURNING and nowhere else — `input` has no
-      // such field and must never grow one (see the header). Only the ownerless first-boot
-      // token proves address control.
-      confersVerified: consumed.createdByUserId === null,
-      // NO `note`. The token's label is the CREATOR's own words, and this invite row is keyed by
-      // the REDEEMER's email and outlives the creator's account — account erasure cleans
-      // `pairing_tokens` but not an invite bound to someone else's address. Copying the label
-      // here would leave a fragment of the creator's authored text behind after they are gone.
-      // `issued_by = pairing:<id>` already carries every bit of traceability the label provided.
-      note: null,
-    });
-    return { code: invite.code, email: invite.email, expiresAt: invite.expiresAt };
-  });
-}
-
 /**
  * The one thing the device-pair redeem needs from the auth service, as a port: the session
  * mint. `AuthService.establishPairedDevice` is the implementation — the same `establish`
@@ -423,7 +363,7 @@ export async function redeemInviteGrant(
  */
 export interface PairedDeviceSessionMinter {
   establishPairedDevice(
-    ctx: ServiceContext, b: { userId: string; label: string },
+    ctx: ServiceContext, b: { userId: string; label: string; kind: "web" | "macos" },
   ): Promise<{ tokens: OAuthTokens }>;
 }
 
@@ -435,18 +375,34 @@ export interface PairedDeviceSessionMinter {
  * token may have crossed a room on paper, so it is not re-mintable with one click).
  *
  * The response is the bearer pair and nothing else — `claimDesktopLink`'s shape exactly, and
- * for its reasons: the claimant is a native install, and a Set-Cookie would turn a token shown
- * on a screen into a browser session.
+ * for its reasons: a Set-Cookie would turn a token shown on a screen into a browser session.
+ *
+ * ── `kind` — WHAT the redeemer is, declared by the redeemer, defaulted to the strict side ──
+ *
+ * The device row used to be stamped `macos` unconditionally — a wire wart from the desktop-link
+ * tail this redeem was modelled on, and a lie twice over once a phone BROWSER became the
+ * ordinary redeemer (Phase 3's QR flow): the device list said a Mac was paired when a browser
+ * was, and `establish` read the false kind for its TTL surface, handing a browser the long
+ * native window. The redeemer now declares itself; ABSENT means `"web"`, because a caller that
+ * says nothing gets the browser reading and the STRICT (cookie-window) lifetime — the same
+ * default-direction rule `sendSurfaceMaxTotalBytes` states. A PRESENT value outside the closed
+ * set refuses `validation_failed` rather than clamping, and it refuses BEFORE the burn: a
+ * malformed declaration is the caller's bug, and it must not cost them the single-use token.
  */
 export async function redeemDevicePair(
-  ctx: ServiceContext, auth: PairedDeviceSessionMinter, input: { token: string },
+  ctx: ServiceContext, auth: PairedDeviceSessionMinter, input: { token: string; kind?: "web" | "macos" },
 ): Promise<{ tokens: OAuthTokens }> {
+  const kind = input.kind === undefined ? "web" : input.kind;
+  if (kind !== "web" && kind !== "macos") {
+    throw new ServiceError("validation_failed", 400, 'device kind must be "web" or "macos"');
+  }
   return inTransaction(ctx, async (txCtx) => {
     const consumed = await consumePairingToken(txCtx, { token: input.token, grant: "device-pair" });
     if (!consumed || consumed.createdByUserId === null) throw pairingInvalid();
     return auth.establishPairedDevice(txCtx, {
       userId: consumed.createdByUserId,
       label: consumed.label.length > 0 ? consumed.label : "Paired device",
+      kind,
     });
   });
 }

@@ -28,11 +28,27 @@ import { cookieSurface, json } from "./shared.js";
  * the types nor a use for the functions.
  */
 
-/** The AuthService from the per-request bag; a misconfigured deps is a 500 (not a 401). */
+/**
+ * The AuthService from the per-request bag; a misconfigured deps is a 500 (not a 401).
+ *
+ * THE ONE WIDENING in the codebase (Phase 3): `services.auth` is statically the carved
+ * `SessionLifecycle` — the machinery half every host may compile — because the LOCAL engine now
+ * fills the member too. The twenty ceremony routes need the full `AuthService`, and every
+ * composition that mounts them wires one (`apps/server/src/deps.ts`, `apps/api-vercel`, the
+ * test helpers — all construct `makeAuthService(...)`), so the cast recovers what the wiring
+ * guarantees. The probe beside it keeps the guarantee honest at runtime: a bag holding only the
+ * lifecycle half — a composition bug, not a caller's — answers the same clean 500 an absent
+ * service always has, instead of a mid-handler TypeError with a stack.
+ */
 export function auth(deps: ApiDeps): AuthService {
   const svc = deps.services?.auth;
-  if (!svc) throw new ServiceError("internal", 500, "auth service not configured");
-  return svc;
+  // `login` is ceremony-only: it exists on `AuthService` and can never exist on the bare
+  // lifecycle, so its presence is the narrowest honest discriminator (an `instanceof` would
+  // refuse the spy objects the suites inject, which type as the full service and behave as one).
+  if (!svc || typeof (svc as AuthService).login !== "function") {
+    throw new ServiceError("internal", 500, "auth service not configured");
+  }
+  return svc as AuthService;
 }
 
 export function proposals(deps: ApiDeps): ProposalsService {

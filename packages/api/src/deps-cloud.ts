@@ -32,20 +32,12 @@ import type { FetchLike } from "@trafficflow/core";
  */
 declare module "./deps.js" {
   interface ApiServices {
-    /**
-     * OPTIONAL, in the same grammar as `unsubscribe` and `billing` below: its absence is a
-     * first-class state, not a misconfiguration.
-     *
-     * The AUTH SERVICE ESTABLISHES sessions — register, verify a password, enrol a factor, run the
-     * OAuth ceremony. Only the 20 auth routes read it, and a host that does not mount them never
-     * touches it. The LOCAL engine is exactly that host: it mints one session per launch for the
-     * shell that spawned it, and the machine's own login is the boundary.
-     *
-     * Session RESOLUTION is unaffected and still required — `withSession` calls the standalone
-     * `resolveSession` against the `sessions` table, never this field. So a host with no `auth`
-     * still authenticates every request it serves; it simply has no way to create an account.
-     */
-    auth?: AuthService;
+    /* `auth` MOVED to `deps.ts` (Phase 3), retyped as the carved `SessionLifecycle` the
+     * ceremony's `AuthService` extends: the local engine now fills the member too — a bare
+     * lifecycle over its own store, for the desktop-as-host pairing surface — so the
+     * declaration had to live where every host compiles. The hosted compositions still put a
+     * full `AuthService` there, and `routes/shared-cloud.ts#auth` is the ONE place the wider
+     * type is recovered for the twenty ceremony routes. */
     /**
      * OPTIONAL, in the same grammar as `auth` above. The proposer READS a mailbox and asks a model
      * what workflow the user keeps performing by hand, so a host with no model configured can never

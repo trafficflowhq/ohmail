@@ -224,16 +224,20 @@ export {
   type InviteRefusal, type InviteOutcome, type InviteConsumed, type InviteRefused,
 } from "./invites.js";
 // The pairing-token lifecycle (`/pair*` on the self-host composition; the first-boot setup
-// token; QR device pairing). FULL BARREL ONLY, like `invites.ts` beside it: the invite-grant
-// redeem bridges to the Cloud-half `invites` table, so `./mail/index.ts` — which the shipped
-// engine bundles from — must never re-export this module.
+// token; QR device pairing). Split since Phase 3: `pairing.ts` reaches only the shared half
+// and rides the `./auth` entry too, while the INVITE-grant redeem — the half that bridges to
+// the Cloud-half `invites` table — lives in `pairing-invite.ts` and stays FULL BARREL ONLY,
+// like `invites.ts` beside it: `./mail/index.ts` and `./auth` must never re-export it.
 export {
   mintPairingToken, listPairingTokens, revokePairingToken, consumePairingToken,
-  redeemInviteGrant, redeemDevicePair, pairingInvalid,
-  PAIRING_TTL_BOUNDS, PAIRING_LABEL_MAX, PAIRING_LIVE_TOKENS_MAX, PAIRING_INVITE_TTL_MS,
+  redeemDevicePair, pairingInvalid,
+  PAIRING_TTL_BOUNDS, PAIRING_LABEL_MAX, PAIRING_LIVE_TOKENS_MAX,
   type PairingGrant, type PairingTokenMinted, type PairingTokenListed, type PairingTokenStatus,
-  type PairingConsumed, type InviteGrantRedeemed, type PairedDeviceSessionMinter,
+  type PairingConsumed, type PairedDeviceSessionMinter,
 } from "./pairing.js";
+export {
+  redeemInviteGrant, PAIRING_INVITE_TTL_MS, type InviteGrantRedeemed,
+} from "./pairing-invite.js";
 export {
   WaitlistService, makeWaitlistService, DEFAULT_INVITE_TTL_MS, MAX_JOINS_PER_IP_WINDOW,
   type WaitlistServiceDeps, type WaitlistJoinInput, type WaitlistJoinResult,

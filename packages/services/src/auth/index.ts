@@ -2,6 +2,12 @@ export {
   AuthService, makeAuthService, DESKTOP_LINK_PURPOSE,
   type AuthorizeQuery, type TokenBodyAuthCode, type TokenBodyRefresh,
 } from "./auth-service.js";
+// The session MACHINERY `AuthService` extends — carved out in Phase 3 so the desktop engine
+// can run it without the ceremony. See `session-lifecycle.ts`'s header for the boundary.
+export {
+  SessionLifecycle, makeSessionLifecycle,
+  type SessionLifecycleDeps, type PairedDeviceKind,
+} from "./session-lifecycle.js";
 export {
   scryptHasher, generateToken, hashToken, sha256,
   StaticKeyProvider,

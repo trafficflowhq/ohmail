@@ -5,7 +5,7 @@
  * billing, the funnel and the operator connection are declared in `deps-cloud.ts`, which augments
  * the two interfaces below and which only a hosted build loads. */
 import type {
-  AuthConfig, Db, KeyProvider, SessionScope,
+  AuthConfig, Db, KeyProvider, ServiceContext, SessionScope,
   SyncService, PushService, MailboxService, RulesService,
   MessageService, ThreadService,
   ScreenerService, ApprovalService, TriageService, SearchService, PrivacyService,
@@ -17,6 +17,10 @@ import type {
 /* `OAuthTokenProvider` from the MAIL entry, never the root barrel: this file is compiled by every
  * host, including the shipped local engine, and the root barrel's export surface reaches the model
  * half (`ai/*`) that may never leave this workspace. The port lives in `adapters/imap-auth.ts`. */
+/* The session LIFECYCLE — the machinery half of the auth service (Phase 3), from the entry
+ * every host may compile: no ceremony, no Cloud schema, no barrel side effects. The hosted
+ * `AuthService` extends this class, so a hosted bag's member IS one. */
+import type { SessionLifecycle } from "@trafficflow/services/auth";
 import type {
   DraftPort, OpenSendAdapter, KekEnvIdentity, Logger, OAuthTokenProvider,
 } from "@trafficflow/core/mail";
@@ -128,6 +132,37 @@ export type AttachmentStagingFactory = (db: Db) => AttachmentStagingPort;
  */
 export interface ApiServices {
   sync?: SyncService;
+  /**
+   * The session LIFECYCLE — refresh rotation with reuse detection, logout, the device list and
+   * its revoke, and `establishPairedDevice` (what the pairing redeem mints through). OPTIONAL,
+   * in the same grammar as `unsubscribe`: absence is a first-class state, and every route that
+   * reads it answers a clean refusal rather than 500ing into a stack.
+   *
+   * Declared HERE — the mail-half surface — as the CARVED base class, not the full ceremony
+   * (Phase 3). Two different hosts fill it:
+   *  · every HOSTED composition puts its full `AuthService` here, which `extends`
+   *    `SessionLifecycle`, so the twenty ceremony routes keep working through the accessor in
+   *    `routes/shared-cloud.ts` and nothing hosted changes shape;
+   *  · the LOCAL engine puts a bare `SessionLifecycle` over its own store here, which is what
+   *    lets the desktop-as-host door pair devices, rotate their bearer pairs and revoke them
+   *    WITHOUT the ceremony, the Cloud schema, or the barrel's side effects entering the
+   *    shipped bundle.
+   * Session RESOLUTION is unaffected either way — `withSession` calls the standalone
+   * `resolveSession` against the `sessions` table, never this member.
+   */
+  auth?: SessionLifecycle;
+  /**
+   * The INVITE-grant redeem (`redeemInviteGrant`), as a port. OPTIONAL, and its absence is the
+   * honest state of any composition whose database lacks the Cloud-half `invites` table: the
+   * `/pair/redeem` invite arm answers `validation_failed` instead of a 42P01 dressed as a 500.
+   * The self-host composition — the only one that mounts `/pair*` today — wires the real
+   * function from the full barrel; the desktop-host door (the desktop-host door, next slice) deliberately never does.
+   * A port rather than an import so `routes/pair.ts` stays compilable and shippable from the
+   * mail half alone — the same reason the session mint above arrives through the bag.
+   */
+  inviteRedeem?: (
+    ctx: ServiceContext, input: { token: string; email: string },
+  ) => Promise<{ code: string; email: string; expiresAt: Date }>;
   push: PushService;
   /** See {@link ImapAdmissionPort}. */
   imapAdmission: ImapAdmissionPort;

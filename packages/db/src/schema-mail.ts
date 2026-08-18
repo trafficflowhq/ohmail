@@ -1120,6 +1120,42 @@ export const sessions = pgTable("sessions", {
 }));
 
 /**
+ * REFRESH TOKENS (mail 0060 — moved from the Cloud half) — the rotating-refresh history per
+ * session family. A presented refresh token that is already `consumedAt` ⇒ reuse ⇒ the whole
+ * family is revoked (`packages/services/src/auth/session-lifecycle.ts`).
+ *
+ * MAIL-half since Phase 3, and not by analogy: QR device pairing signs a REMOTE device into
+ * the desktop-as-host tier, and that device's bearer pair rotates against the store that serves
+ * it — the desktop arm runs the mail journal only, the same argument that put `users`/`devices`/
+ * `sessions`/`pairing_tokens` here. The old placement's justification ("a local install mints a
+ * session per launch: no refresh rotation") was true until paired devices existed and is false
+ * now. What stays private is the identity CEREMONY — password hashes, login tokens, factors,
+ * PKCE codes: everything that proves WHO somebody is. A refresh row proves nothing about
+ * identity; it is a digest of a credential this same database minted, exactly the
+ * `sessions.access_token_hash` / `pairing_tokens.token_hash` discipline.
+ *
+ * The hosted database already has this table from cloud 0000; mail 0060 creates it guarded, so
+ * either journal order converges on one catalog object (the migration's own header carries the
+ * mechanics). Per-table justification lives in `test/journal-split.test.ts` beside the partition.
+ */
+export const refreshTokens = pgTable("refresh_tokens", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  sessionId: uuid("session_id").notNull().references(() => sessions.id),
+  familyId: uuid("family_id").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  uqToken: unique().on(t.tokenHash),
+  ixFamily: index("refresh_tokens_family_idx").on(t.familyId),
+  ixSession: index("refresh_tokens_session_idx").on(t.sessionId),
+}));
+
+/**
  * PAIRING TOKENS (mail 0059) — the consumable credential behind every pairing ceremony: the
  * standalone server's first-account setup token, a family invite, and QR device pairing.
  *
@@ -1903,5 +1939,5 @@ export const accountSettings = pgTable("account_settings", {
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const mailSchema = {
-  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, accountSettings,
+  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, refreshTokens, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, accountSettings,
 };
