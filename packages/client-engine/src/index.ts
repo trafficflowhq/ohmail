@@ -93,6 +93,17 @@ export {
   purgeLegacyMirror,
   type IndexedDbMirrorStoreOptions,
 } from "./idb.js";
+// The React Native arm of the mirror: same layout and ownership discipline as idb.ts, over an
+// INJECTED SQL executor (expo-sqlite in the app, node:sqlite in tests) — no Node built-in, no
+// browser global, so the module is inert everywhere the executor is not injected.
+export {
+  SqlMirrorStore,
+  type SqlExecutor,
+  type SqlMirrorStoreOptions,
+  type SqlRow,
+  type SqlStatement,
+  type SqlValue,
+} from "./sql-store.js";
 
 // An instant as a wall clock in the reader's zone, and back. The one place that arithmetic lives —
 // `selectors.ts` bands stamps with it and `apps/webapp/app/shell/format.ts` mints its resurface
