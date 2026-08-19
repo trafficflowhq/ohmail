@@ -290,6 +290,27 @@ export function accountDoorFor(status: EngineStatus | null): "cloud" | null {
   return status?.mode === "cloud" && status.credentialState === "ready" ? "cloud" : null;
 }
 
+/**
+ * WHETHER THIS INSTALL MAY OFFER HOST MODE — the Devices pane's door rule, a pure function here
+ * for the reason `gateFor` and `accountDoorFor` are: a decision a test can drive is worth more
+ * than a condition a component describes.
+ *
+ * STANDALONE ONLY, and the boundary is the product rather than the plumbing. Host mode publishes
+ * the mail engine on THIS computer to the user's own devices; on the standalone door that engine
+ * holds the whole mailbox and there is something real to serve. An install mirroring a hosted
+ * account has nothing of its own to publish — its devices should talk to the hosted service
+ * directly — so the pane is withheld structurally there rather than offered onto the shell's
+ * `local-door-required` refusal. The shell enforces the same rule one layer down (that problem
+ * code exists precisely so a mis-wired window degrades instead of serving); this function is what
+ * keeps the refusal unreachable from the UI.
+ *
+ * `null` also covers "no door yet" and "no answer from the shell", `suggestDoorFor`'s rule: never
+ * a pane whose every control could only refuse.
+ */
+export function hostDoorFor(status: EngineStatus | null): "local" | null {
+  return status?.mode === "local" ? "local" : null;
+}
+
 /** What the local door's form collects. Every field is what the user typed, untrimmed. */
 export interface LocalDoorFields {
   /** The preset's id — `providerById` in the shared shell resolves it to hosts and ports. */

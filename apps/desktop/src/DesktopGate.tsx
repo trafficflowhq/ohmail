@@ -52,9 +52,11 @@ import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopBilling } from "./DesktopBilling.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
-  accountDoorFor, awayDoorFor, gateFor, mailMount, profileImportDoorFor, readShell, suggestDoorFor,
+  accountDoorFor, awayDoorFor, gateFor, hostDoorFor, mailMount, profileImportDoorFor, readShell,
+  suggestDoorFor,
   type Shell,
 } from "./doors.js";
+import { DesktopDevices } from "./DesktopDevices.js";
 import { awayOverBridge } from "./local-away.js";
 import { profileImportOverBridge } from "./local-profile-import.js";
 import { consentOverBridge } from "./local-consent.js";
@@ -325,6 +327,12 @@ export function DesktopGate() {
               }
             : undefined
         }
+        /* SETTINGS → DEVICES — host mode's pane, on the STANDALONE door only. `hostDoorFor` is
+           the rule and it is a pure function in `doors.ts` for the reason the other door gates
+           are: host mode publishes the mailbox THIS computer opens, so an install mirroring a
+           hosted account has nothing of its own to serve and gets no entry — withheld
+           structurally rather than offered onto the shell's own refusal. */
+        {...(hostDoorFor(status) === "local" ? { devicesSection: <DesktopDevices /> } : {})}
         /* A SUGGEST CONTROL PER DOOR, because the two doors are not buying the same thing.
            On the STANDALONE door the model belongs to whoever installed it and nothing is
            metered, so the control names no price and says instead whether there is a model at

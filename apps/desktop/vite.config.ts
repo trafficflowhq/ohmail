@@ -169,6 +169,12 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // never routes to it), and listed for the reason `body` and `sync` are: the guard compares
   // this array against what the sources READ, not against what each artifact can display.
   "pairLanding",
+  // `host` is the Settings → Devices pane (`src/DesktopDevices.tsx`) — host mode's whole
+  // surface: the enable ceremony, the guided Tailscale ladder, the pairing QR and the device
+  // list. Reachable only in the engine-bearing build on the standalone door, and listed for the
+  // reason `body` is: the guard compares this array against what the sources READ. Without it
+  // the binary renders `host.lead` where the one sentence that sells the tier belongs.
+  "host",
   "reply", "ribbon", "screener", "screening", "search", "session", "settings",
   // `sync` is the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares

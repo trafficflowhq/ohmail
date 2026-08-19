@@ -577,6 +577,7 @@ export function AppShell({
   securitySection,
   aboutSection,
   desktopSection,
+  devicesSection,
   screeningSection,
   screenerSuggest,
   awayTransport,
@@ -681,6 +682,16 @@ export function AppShell({
    * go looking for it.
    */
   desktopSection?: { label: string; node: ReactNode };
+  /**
+   * SETTINGS → DEVICES — the desktop app's host mode, injected. Serve this install's mail to the
+   * user's other devices over their own tailnet, pair a phone with a QR, revoke a pairing.
+   *
+   * The same seam as {@link desktopSection} and gated one step tighter by the HOST, not here:
+   * the desktop gate wires it only on the standalone door, because host mode publishes the
+   * mailbox THIS computer opens. Absent everywhere else — every browser tab, the hosted door,
+   * the demo — so the nav entry cannot exist where the shell behind it could not serve.
+   */
+  devicesSection?: ReactNode;
   /**
    * THE SCREENER PANE'S OWN CONTROLS, WHEN THE HOST HAS ITS OWN — the desktop's, and nobody else's.
    *
@@ -878,6 +889,7 @@ export function AppShell({
             securitySection={securitySection}
             aboutSection={aboutSection}
             desktopSection={desktopSection}
+            devicesSection={devicesSection}
             screeningSection={screeningSection}
             screenerSuggest={screenerSuggest}
             awayTransport={awayTransport}
@@ -929,7 +941,7 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, suggestWire, aiCredits, onUnread }: {
+function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, suggestWire, aiCredits, onUnread }: {
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
@@ -939,6 +951,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   securitySection?: ReactNode;
   aboutSection?: ReactNode;
   desktopSection?: { label: string; node: ReactNode };
+  devicesSection?: ReactNode;
   screeningSection?: ReactNode;
   screenerSuggest?: (ctx: {
     senders: string[];
@@ -5019,6 +5032,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    above are gated would remove the pane from the only surface that has one. A
                    browser tab passes nothing, so `?demo=1` on the web still has no such pane. */
                 desktopSection={desktopSection}
+                /* Same posture as `desktopSection`, one seam over: the pane is about this
+                   INSTALL's role, the HOST decides where it exists (the desktop gate wires it
+                   only on the standalone door), and a browser tab passes nothing. */
+                devicesSection={devicesSection}
                 /* Same rule: `?demo=1` has no session, so "connect a mailbox" there would
                    be a form posting to a server this tab is not talking to. The demo keeps
                    the fixture list, which is the honest thing for it to show. */

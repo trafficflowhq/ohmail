@@ -53,7 +53,7 @@ import { RulesView, type RuleOutcome } from "./RulesView";
 /* Exported so a caller that LINKS to a pane can name one — `AppShell`'s `openSettingsPane`, and
  * through it the Screener's "start a plan" offer. A string union rather than a free `string`:
  * `pane` selects a render branch, so a name nothing matches is an empty settings screen. */
-export type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "away" | "billing" | "invites" | "tags" | "rules" | "about" | "security" | "account" | "desktop";
+export type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "away" | "billing" | "invites" | "tags" | "rules" | "about" | "security" | "account" | "desktop" | "devices";
 
 /**
  * The notification channels, and why this list is here rather than in the fixtures.
@@ -363,7 +363,7 @@ function TagCreateRow({
  */
 export const PANE_IDS: readonly PaneId[] = [
   "general", "notifications", "mailboxes", "screener", "away", "billing", "invites", "tags", "rules",
-  "about", "security", "account", "desktop",
+  "about", "security", "account", "desktop", "devices",
 ];
 
 export function initialPaneFromUrl(): PaneId {
@@ -392,6 +392,7 @@ export function SettingsView({
   autoUnsubscribeSection,
   awaySection,
   desktopSection,
+  devicesSection,
   initialPane,
 }: {
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
@@ -636,6 +637,19 @@ export function SettingsView({
    */
   desktopSection?: { label: string; node: ReactNode };
   /**
+   * THE DEVICES PANE — the desktop app's host mode: serve this install's mail to the user's
+   * other devices, pair a phone with a QR, see and revoke what is paired.
+   *
+   * The same injected-node seam as {@link invitesSection} and for the mirror-image reason: every
+   * verb in it is a call to the native shell (`tailscale` probes, the arm/disarm ceremony) or a
+   * request down the shell's pipe (the pairing mint, the device list), none of which this shared,
+   * browser-compiled file may name. Absent ⇒ no nav entry and no pane, structurally — which is
+   * every browser tab, and every desktop install that is not on the standalone door: host mode
+   * serves the mailbox THIS computer opens, so an install mirroring a hosted account has nothing
+   * to serve and is withheld rather than offered dead.
+   */
+  devicesSection?: ReactNode;
+  /**
    * WHICH PANE TO OPEN ON, when the caller that sent the user here knows where they are going.
    *
    * The deep link ({@link initialPaneFromUrl}) answers the same question for a REDIRECT arriving
@@ -705,6 +719,11 @@ export function SettingsView({
     // administration group because on that surface it IS the account: the door, the mailbox
     // and the sign-out live here rather than in the three panes below, which need a server.
     ...(desktopSection ? [["desktop", desktopSection.label] as [PaneId, string]] : []),
+    // DEVICES — the desktop host mode's pane, directly after the install it serves from. It sits
+    // here rather than with Mailboxes because it is about this INSTALL taking on a role (serving
+    // the user's other devices), not about a mailbox; present IFF the desktop shell wired it,
+    // which it does only on the standalone door. See {@link devicesSection}.
+    ...(devicesSection ? [["devices", t("devices")] as [PaneId, string]] : []),
     // Account administration. Only where there is something to bill: Desktop is free and standalone,
     // and a Subscription pane there would offer to sell what the tier already gives away.
     ...(billingSection ? [["billing", t("billing")] as [PaneId, string]] : []),
@@ -894,6 +913,9 @@ export function SettingsView({
 
           {/* INVITES — the node brings its own `SettingsSection`, like Security below. */}
           {pane === "invites" ? invitesSection : null}
+
+          {/* DEVICES — the desktop host pane; the node brings its own `SettingsSection` too. */}
+          {pane === "devices" ? devicesSection : null}
 
           {pane === "rules" && rules ? (
             <RulesView rules={rules.items} onRevoke={rules.onRevoke} onRetarget={rules.onRetarget} />
