@@ -119,6 +119,21 @@ export class SqlMirrorStore extends BaseMirrorStore {
   private readonly opener: (dbName: string) => SqlExecutor | Promise<SqlExecutor>;
   private db: SqlExecutor | null = null;
   private opening: Promise<SqlExecutor> | null = null;
+  /**
+   * TRUE from the moment a flush FAILED until the next successful rehydration — the guard that
+   * keeps a later cursor from committing over a hole.
+   *
+   * `BaseMirrorStore.applyResponse` advances the in-memory records and cursor BEFORE the flush,
+   * so a persist that dies leaves memory one page ahead of disk. The page's own failure is
+   * surfaced and harmless — a reload replays it. What is NOT harmless is the write after it: a
+   * RETRY drains from the in-memory cursor, fetches the NEXT page, and flushes that page's rows
+   * with that page's cursor — past rows that never reached sqlite. The seq guard cannot help
+   * (the rows are absent, not stale), so the mirror settles into a permanently truncated state
+   * that looks healthy. Poisoning every subsequent write until `load()` has re-read the disk
+   * (re-syncing memory with persisted truth, so the hole is re-fetched) makes that state
+   * unreachable. Found by review, held by the "poisons the store" case in `sql-store.test.ts`.
+   */
+  private torn = false;
 
   constructor(opts: SqlMirrorStoreOptions) {
     super();
@@ -157,8 +172,20 @@ export class SqlMirrorStore extends BaseMirrorStore {
     if (!this.opening) {
       this.opening = (async () => {
         const db = await this.opener(this.dbName);
-        await db.batch(CREATE_TABLES);
-        await this.bindOwner(db);
+        try {
+          await db.batch(CREATE_TABLES);
+          await this.bindOwner(db);
+        } catch (err) {
+          // The opener succeeded and THEN the ceremony failed: the executor was never
+          // published to `this.db`, so nothing else will ever close it. Release it here or
+          // every retry after a disk-full/corruption leaks one native handle and its locks.
+          try {
+            await db.close?.();
+          } catch {
+            /* closing a broken handle may itself refuse — the leak is what mattered */
+          }
+          throw err;
+        }
         this.db = db;
         return db;
       })();
@@ -196,25 +223,37 @@ export class SqlMirrorStore extends BaseMirrorStore {
 
   async load(): Promise<void> {
     const db = await this.open();
-    const entityRows = await db.all("SELECT key, record FROM entities");
-    const metaRows = await db.all("SELECT key, value FROM meta");
+    // ONE statement, so both tables are read at ONE point — the sqlite twin of idb.ts reading
+    // its two object stores in a single readonly transaction. Two separate SELECTs are two
+    // read transactions, and another handle on the same database (the disconnect-while-drain
+    // shape) could commit a page between them: this load would then hydrate the OLD rows with
+    // the NEW cursor, and the session would resume past mail it never read.
+    const rows = await db.all(
+      "SELECT 'entity' AS kind, key, record AS value FROM entities " +
+        "UNION ALL SELECT 'meta' AS kind, key, value AS value FROM meta",
+    );
 
     this.records.clear();
     this.meta.clear();
     this.highSeq = 0;
-    for (const row of entityRows) {
-      const rec = JSON.parse(String(row.record)) as MirrorRecord;
-      this.records.set(String(row.key), rec);
-      if (rec.seq > this.highSeq) this.highSeq = rec.seq;
-    }
-    for (const row of metaRows) {
-      this.meta.set(String(row.key), JSON.parse(String(row.value)));
+    for (const row of rows) {
+      if (row.kind === "entity") {
+        const rec = JSON.parse(String(row.value)) as MirrorRecord;
+        this.records.set(String(row.key), rec);
+        if (rec.seq > this.highSeq) this.highSeq = rec.seq;
+      } else {
+        this.meta.set(String(row.key), JSON.parse(String(row.value)));
+      }
     }
     this.cursor = (this.meta.get(CURSOR_KEY) as Cursor | undefined) ?? "0";
     this.meta.delete(CURSOR_KEY);
     // The ownership stamp is this store's bookkeeping, not the application's meta — it must
     // not reach `getMeta` and from there a selector.
     this.meta.delete(OWNER_KEY);
+    // Memory now equals persisted truth, so a torn flush (see {@link torn}) is healed: the
+    // rows the failed page put in memory are gone and the cursor is disk's, so the next drain
+    // re-fetches the hole instead of writing past it.
+    this.torn = false;
     this.ver++;
   }
 
@@ -225,6 +264,11 @@ export class SqlMirrorStore extends BaseMirrorStore {
     metaEntries: Array<[string, unknown]>,
   ): Promise<void> {
     if (dirty.length === 0 && cursor === null && metaEntries.length === 0) return;
+    if (this.torn) {
+      throw new Error(
+        "the mirror's memory is ahead of its storage (a flush failed) — reload() before writing, or the cursor would commit past a page sqlite never received",
+      );
+    }
     const db = await this.open();
     const statements: SqlStatement[] = dirty.map((rec) => ({
       sql: UPSERT_ENTITY,
@@ -232,7 +276,14 @@ export class SqlMirrorStore extends BaseMirrorStore {
     }));
     if (cursor !== null) statements.push({ sql: UPSERT_META, params: [CURSOR_KEY, encodeMeta(cursor)] });
     for (const [k, v] of metaEntries) statements.push({ sql: UPSERT_META, params: [k, encodeMeta(v)] });
-    await db.batch(statements);
+    try {
+      await db.batch(statements);
+    } catch (err) {
+      // Memory advanced before this flush; disk did not. See {@link torn} — every later write
+      // refuses until `load()` re-reads the disk, so the hole gets re-fetched, never sealed over.
+      this.torn = true;
+      throw err;
+    }
   }
 
   /**
@@ -253,6 +304,9 @@ export class SqlMirrorStore extends BaseMirrorStore {
     // empty and unowned would be silently claimable by the next account to open it.
     if (this.owner !== null) statements.push({ sql: UPSERT_META, params: [OWNER_KEY, encodeMeta(this.owner)] });
     await db.batch(statements);
+    // A successful wipe puts disk exactly where `resetForBootstrap` just put memory (empty,
+    // cursor "0"), so a standing torn flag is healed — the re-bootstrap IS the recovery.
+    this.torn = false;
   }
 
   close(): void {
