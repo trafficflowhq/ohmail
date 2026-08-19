@@ -83,6 +83,9 @@ interface World {
   /** `tailscale_serve_arm` — records the payload, answers `armAnswer`. */
   armAnswer?: unknown;
   disarmAnswer?: unknown;
+  /** The real disarm can REJECT after the runtime already stood down (a settings-write
+   *  failure) — set this to drive that arm of the contract. */
+  disarmRejects?: string;
   autostartAnswer?: boolean;
 }
 
@@ -108,6 +111,7 @@ function installShell(w: World): void {
         case "tailscale_serve_arm":
           return Promise.resolve(world.armAnswer);
         case "tailscale_serve_disarm":
+          if (world.disarmRejects) return Promise.reject(new Error(world.disarmRejects));
           return Promise.resolve(world.disarmAnswer);
         case "autostart_set":
           return Promise.resolve(world.autostartAnswer ?? (payload as { enabled: boolean }).enabled);
@@ -509,6 +513,138 @@ describe("the lists and the take-backs", () => {
     installShell({ hostState: OFF, tailscale: RUNNING, routes: {} });
     await mount();
     expect(engineAsked).toEqual([]);
+  });
+});
+
+// ── The review battery: the shell states the first cut mishandled ──────────────────────────────
+
+describe("off-state problems are honored — the ladder is not only the probe's", () => {
+  it("off with a stored problem says it, even while the probe reads ready", async () => {
+    // The real shape: a disarm whose tailnet withdrawal was refused stands down anyway and
+    // `host_state` answers OFF with `problem: "serve-refused"` — the old registration may
+    // still exist. A pane that read only the probe would offer a clean ceremony over it.
+    installShell({
+      hostState: { ...OFF, problem: "serve-refused" },
+      tailscale: RUNNING,
+      routes: {},
+    });
+    await mount();
+    expect(text()).toContain(enHost.guideServeRefused!);
+    expect(text()).not.toContain("serve-refused");
+    // The ceremony is still offered — arming again re-publishes, which is a real way out —
+    // but never silently, and never as if nothing stood.
+    expect(button(enHost.enable!)).toBeTruthy();
+  });
+
+  it("an arm the shell refuses pre-serve lands its problem on screen, not a silent loop", async () => {
+    // The shell re-probes inside the arm; a race (Tailscale quit between probe and arm)
+    // answers the CURRENT state — still off — plus this attempt's problem.
+    installShell({
+      hostState: OFF,
+      tailscale: RUNNING,
+      armAnswer: { ...OFF, problem: "not-running" },
+      routes: {},
+    });
+    await mount();
+    await click(button(enHost.enable!));
+    expect(text()).toContain(enHost.guideNotRunning!);
+  });
+});
+
+describe("a live code stays revocable in every armed state", () => {
+  it("degraded, the unused-codes list still renders with its revoke", async () => {
+    // Disarming does not revoke pairing tokens, and the stdio routes stay mounted while
+    // armed — so a code minted before the degradation MUST keep its take-back, or it comes
+    // back to life when serving recovers.
+    installShell({
+      hostState: { ...SERVING, state: "degraded", problem: "serve-refused" },
+      tailscale: RUNNING,
+      routes: {
+        "GET /pair": {
+          status: 200,
+          body: { items: [{ id: "pt-1", grant: "device-pair", status: "live", label: "Mara", createdAt: "2026-08-19T12:00:00Z", expiresAt: "2026-08-19T12:05:00Z", consumedAt: null, revokedAt: null }] },
+        },
+        "GET /devices": { status: 200, body: { items: [] } },
+      },
+    });
+    await mount();
+    expect(text()).toContain("Mara");
+    expect(button(enHost.revoke!)).toBeTruthy();
+  });
+});
+
+describe("a rejected disarm re-reads the world instead of keeping the serving snapshot", () => {
+  it("the pane lands on what host_state now says, plus the failure sentence — never stale serving", async () => {
+    // The real command can reject AFTER the runtime stood down (the settings write failed).
+    // The ground truth is whatever host_state answers now: off.
+    let disarmed = false;
+    installShell({
+      hostState: () => (disarmed ? OFF : SERVING),
+      tailscale: RUNNING,
+      disarmRejects: "the settings file could not be written",
+      routes: EMPTY_LISTS,
+    });
+    await mount();
+    disarmed = true; // the runtime stands down before the rejection reaches the window
+    await click(button(enHost.off!));
+    await click(button(enHost.off!));
+    expect(text()).toContain(enHost.lead!); // the OFF face
+    expect(text()).not.toContain("Serving your devices at");
+    expect(text()).toContain("the settings file could not be written");
+  });
+});
+
+describe("Done refreshes the lists — a scanned code does not linger as unused", () => {
+  it("dismissing the QR re-asks /pair and /devices", async () => {
+    installShell({
+      hostState: SERVING,
+      tailscale: RUNNING,
+      routes: {
+        ...EMPTY_LISTS,
+        "POST /pair": { status: 200, body: { id: "pt-1", token: TOKEN, grant: "device-pair", label: "", expiresAt: "2026-08-19T12:05:00.000Z" } },
+      },
+    });
+    await mount();
+    await click(button(enHost.addAction!));
+    const before = engineAsked.filter((r) => r.method === "GET").length;
+    await click(button(enHost.mintedDone!));
+    const after = engineAsked.filter((r) => r.method === "GET").length;
+    expect(after).toBe(before + 2); // one /pair, one /devices — the scan just consumed a code
+  });
+});
+
+describe("an unknown start-at-login state is said, not rendered as off", () => {
+  it("autostart null gets the unknown sentence instead of the ordinary hint", async () => {
+    installShell({
+      hostState: { ...SERVING, autostart: null },
+      tailscale: RUNNING,
+      routes: EMPTY_LISTS,
+    });
+    await mount();
+    expect(text()).toContain(enHost.autostartUnknown!);
+    expect(text()).not.toContain(enHost.autostartWhy!);
+  });
+});
+
+describe("the port field refuses a numeric prefix — the whole string or nothing", () => {
+  it("'47800x' is refused beside the field, never parsed down and sent", async () => {
+    installShell({ hostState: OFF, tailscale: RUNNING, armAnswer: SERVING, routes: EMPTY_LISTS });
+    await mount();
+    await click(button(enHost.advanced!));
+    const port = hostEl.querySelector(`input[aria-label="${enHost.port}"]`) as HTMLInputElement;
+    await type(port, "47800x");
+    await click(button(enHost.enable!));
+    expect(asked.some((a) => a.command === "tailscale_serve_arm")).toBe(false);
+    expect(text()).toContain(enHost.portInvalid!);
+  });
+});
+
+describe("the default port dodges every supported platform's ephemeral range", () => {
+  it("sits above 1023 and below Linux's 32768 floor (macOS/Windows start at 49152)", () => {
+    // A default inside an ephemeral range can be transiently held by any outbound socket at
+    // the moment of arming, which reports as listener-failed for no reason the user caused.
+    expect(DEFAULT_HOST_PORT).toBeGreaterThan(1023);
+    expect(DEFAULT_HOST_PORT).toBeLessThan(32768);
   });
 });
 

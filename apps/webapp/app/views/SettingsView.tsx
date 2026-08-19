@@ -741,6 +741,16 @@ export function SettingsView({
     ...(aboutSection ? [["about", t("about")] as [PaneId, string]] : []),
   ];
 
+  /* WHICH PANE ACTUALLY RENDERS — the request, clamped to what THIS surface offers.
+     `initialPaneFromUrl` validates `?settings=<pane>` against the GLOBAL id list, but which panes
+     exist is a per-surface fact: `devices` only on the desktop's standalone door, `desktop` never
+     in a browser tab, `invites` only behind the self-host gate. A request for an unoffered pane
+     used to render an empty content column — a blank settings screen with no pane lit. Clamped at
+     RENDER rather than in state, deliberately: panes can arrive a beat after mount (Invites
+     appears once `/hello` answers), and a state clamp would strand a deep link that was about to
+     become valid. */
+  const shown: PaneId = panes.some(([id]) => id === pane) ? pane : "general";
+
   return (
     <section className="view col view-settings">
       <div className="vhead">
@@ -753,7 +763,7 @@ export function SettingsView({
               <button
                 key={id}
                 type="button"
-                className={pane === id ? "on" : undefined}
+                className={shown === id ? "on" : undefined}
                 onClick={() => setPane(id)}
               >
                 {label}
@@ -778,7 +788,7 @@ export function SettingsView({
               wide — nav, content — and stacking a pane's sections inside it with a flex gap that
               owes the nav nothing. Pinned by `test/settings-account-layout.test.tsx`. */}
           <div className="set-pane-col">
-          {pane === "general" ? (
+          {shown === "general" ? (
             <SettingsSection>
               {/* THE LANGUAGE, and the one control in this pane that is NOT injected as a node.
                   Every other host-specific row here arrives as a `ReactNode` because it needs a
@@ -817,7 +827,7 @@ export function SettingsView({
             </SettingsSection>
           ) : null}
 
-          {pane === "notifications" ? (
+          {shown === "notifications" ? (
             <SettingsSection>
               {/* THE HONEST STATE FOR EVERY REAL ACCOUNT (SET-M1). Nothing in the product
                   delivers a notification: the client never asks the browser for permission,
@@ -907,21 +917,21 @@ export function SettingsView({
               `reader.list("mailbox")`, which `/sync` never fills, so it was empty for every real
               account (the built-tested-unreachable branch). The node names its own mode; the nav
               entry above is present only when it is wired. See {@link mailboxSection}. */}
-          {pane === "mailboxes" ? mailboxSection : null}
+          {shown === "mailboxes" ? mailboxSection : null}
 
-          {pane === "billing" ? billingSection : null}
+          {shown === "billing" ? billingSection : null}
 
           {/* INVITES — the node brings its own `SettingsSection`, like Security below. */}
-          {pane === "invites" ? invitesSection : null}
+          {shown === "invites" ? invitesSection : null}
 
           {/* DEVICES — the desktop host pane; the node brings its own `SettingsSection` too. */}
-          {pane === "devices" ? devicesSection : null}
+          {shown === "devices" ? devicesSection : null}
 
-          {pane === "rules" && rules ? (
+          {shown === "rules" && rules ? (
             <RulesView rules={rules.items} onRevoke={rules.onRevoke} onRetarget={rules.onRetarget} />
           ) : null}
 
-          {pane === "tags" ? (
+          {shown === "tags" ? (
             <SettingsSection>
               {tags.length === 0 ? <p className="set-note-inline">{t("tagsEmpty")}</p> : null}
               {tags.map((tag) => (
@@ -962,7 +972,7 @@ export function SettingsView({
               own pane below. Anything that puts it back has to remove it from there in the same
               edit — two live controls over one `PUT /away-responder` each hold their own draft, and
               whichever is saved second silently overwrites the other with a stale one. */}
-          {pane === "screener" ? (
+          {shown === "screener" ? (
             <SettingsSection>
               {screeningSection}
               {dormancySection}
@@ -987,13 +997,13 @@ export function SettingsView({
           ) : null}
           {/* THE AWAY RESPONDER'S OWN PANE. One injected node, wrapped like every other list here —
               the node is a set of `SettingsRow`s and brings no section of its own. */}
-          {pane === "away" ? <SettingsSection>{awaySection}</SettingsSection> : null}
-          {pane === "about" ? aboutSection : null}
-          {pane === "security" ? securitySection : null}
-          {pane === "account" ? accountSection : null}
+          {shown === "away" ? <SettingsSection>{awaySection}</SettingsSection> : null}
+          {shown === "about" ? aboutSection : null}
+          {shown === "security" ? securitySection : null}
+          {shown === "account" ? accountSection : null}
           {/* No `SettingsSection` wrapper here: the node brings its own, because it renders
               several sections (the connection, then the actions) rather than one list. */}
-          {pane === "desktop" ? desktopSection?.node : null}
+          {shown === "desktop" ? desktopSection?.node : null}
           </div>
         </div>
       </div>

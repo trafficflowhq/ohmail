@@ -224,4 +224,14 @@ describe("every designed state renders — and is captured for the design review
     expect(hostEl.textContent).toContain(hostCopy.offWhat!);
     capture("7-off-confirm");
   });
+
+  it("OFF with a stood-down problem: the refused withdrawal is said over the ceremony", async () => {
+    // A disarm whose tailnet withdrawal was refused stands down anyway — host_state answers
+    // OFF with the problem, and the pane says it while leaving the way back on standing.
+    shell({ hostState: { ...OFF, problem: "serve-refused" }, tailscale: RUNNING });
+    await mount();
+    expect(hostEl.textContent).toContain(hostCopy.guideServeRefused!);
+    expect(hostEl.textContent).toContain(hostCopy.autostart!);
+    capture("8-off-problem");
+  });
 });

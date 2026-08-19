@@ -62,12 +62,15 @@ import {
 } from "./host.js";
 
 /**
- * The port the first enable offers. High and fixed rather than "any free port" — the shell's
- * registration points Tailscale at a NUMBER, so the engine must bind the one the user agreed to.
- * Below the ephemeral range (49152+), so the kernel does not hand it out transiently; obscure
- * enough that nothing common squats on it. Re-arming offers the remembered port back instead.
+ * The port the first enable offers. Fixed rather than "any free port" — the shell's registration
+ * points Tailscale at a NUMBER, so the engine must bind the one the user agreed to. Below EVERY
+ * supported platform's ephemeral range (Linux hands out 32768–60999, macOS and Windows
+ * 49152–65535), because a default inside one can be transiently held by any outbound socket at
+ * the moment of arming — which reports as listener-failed for no reason the user caused. 6245 is
+ * MAIL on a phone keypad, above the privileged range, and claimed by nothing common; re-arming
+ * offers the remembered port back instead.
  */
-export const DEFAULT_HOST_PORT = 47800;
+export const DEFAULT_HOST_PORT = 6245;
 
 /**
  * THE GUIDED LADDER — every problem the shell can name, mapped to the one designed sentence and
@@ -295,7 +298,15 @@ export function DesktopDevices() {
 
   const arm = async (): Promise<void> => {
     const fallback = host?.port ?? DEFAULT_HOST_PORT;
-    const typed = portDraft === null ? fallback : Number.parseInt(portDraft.trim(), 10);
+    // The WHOLE string must be the number: `parseInt` alone accepts a numeric prefix, so
+    // "6245x" would arm 6245 and "12.5" would arm port 12 — a validation that edits the value
+    // it validates. Refused beside the field instead.
+    const trimmed = portDraft?.trim();
+    if (trimmed !== undefined && !/^\d{1,5}$/.test(trimmed)) {
+      setProblem(t("portInvalid"));
+      return;
+    }
+    const typed = trimmed === undefined ? fallback : Number.parseInt(trimmed, 10);
     if (!Number.isInteger(typed) || typed < 1 || typed > 65535) {
       setProblem(t("portInvalid"));
       return;
@@ -330,6 +341,27 @@ export function DesktopDevices() {
         if (alive.current) setProbe(seen);
       }
     } catch (err) {
+      /* The real command can REJECT after the runtime already stood down (the settings write
+         failed last, past the withdrawal). Keeping the serving snapshot would leave this pane
+         claiming service — QR button and all — over a shell that is off. The ground truth is
+         whatever `host_state` answers now; the rejection's sentence is set AFTER the re-read,
+         which clears `problem` on its way in. */
+      if (!alive.current) return;
+      setConfirmOff(false);
+      setMinted(null);
+      try {
+        const state = await hostState();
+        if (!alive.current) return;
+        setHost(state);
+        if (state && !state.enabled) {
+          setMints([]);
+          setDevices([]);
+          const seen = await tailscaleStatus();
+          if (alive.current) setProbe(seen);
+        }
+      } catch {
+        /* the sentence below is the whole answer */
+      }
       if (alive.current) setProblem(sentence(err));
     } finally {
       if (alive.current) setBusy(null);
@@ -472,6 +504,17 @@ export function DesktopDevices() {
     /* OFF — the explainer, the one-sentence Tailscale story, and detect-and-guide: the probe
        decides whether what renders next is the one step in the way or the enable ceremony. */
     const guiding = probe !== undefined && probe !== null && probe.state !== "running";
+    /* An OFF `host_state` still CARRIES a problem, and it must be honored over a clean-looking
+       probe: a disarm whose tailnet withdrawal was refused stands down anyway and answers OFF
+       with `serve-refused` (the old registration may still exist), and an arm the shell refused
+       pre-serve answers OFF with that attempt's problem. Rendered as the guided sentence — the
+       same closed vocabulary — with the ceremony left standing below it where the probe allows,
+       because arming again re-publishes and IS a real way out. Suppressed only when the probe's
+       own guidance would say the same sentence twice. */
+    const offProblem =
+      host.problem !== null && (!guiding || guideKey(probe.state) !== guideKey(host.problem))
+        ? guideKey(host.problem)
+        : null;
     return (
       <SettingsSection className="acct">
         <h2 className="acct-h">{t("title")}</h2>
@@ -481,6 +524,12 @@ export function DesktopDevices() {
         {problem ? (
           <p className="acct-warn" role="alert">
             {problem}
+          </p>
+        ) : null}
+
+        {offProblem ? (
+          <p className="acct-warn" role="alert">
+            {t(offProblem)}
           </p>
         ) : null}
 
@@ -613,7 +662,17 @@ export function DesktopDevices() {
               <Button variant="primary" onClick={copy}>
                 {t("copyLink")}
               </Button>
-              <Button onClick={() => setMinted(null)}>{t("mintedDone")}</Button>
+              {/* Done also re-reads the lists: in the ordinary scan-then-Done sequence the code
+                  was just consumed and the paired device just appeared, and this dismissal is
+                  the only moment the serving view naturally refreshes. */}
+              <Button
+                onClick={() => {
+                  setMinted(null);
+                  void refreshLists();
+                }}
+              >
+                {t("mintedDone")}
+              </Button>
             </div>
             <p className="acct-fine">{t("mintedOnce")}</p>
           </div>
@@ -647,7 +706,10 @@ export function DesktopDevices() {
         )
       ) : null}
 
-      {serving && mints.length > 0 ? (
+      {/* In EVERY armed state, not only serving: disarming does not revoke pairing tokens and
+          the stdio routes stay mounted while armed, so a code minted before a degradation must
+          keep its take-back here — or it quietly comes back to life when serving recovers. */}
+      {mints.length > 0 ? (
         <>
           <SettingsSubhead>{t("codesTitle")}</SettingsSubhead>
           {mints.map((m) => (
@@ -716,7 +778,10 @@ export function DesktopDevices() {
 
       <SettingsRow
         label={t("autostart")}
-        description={t("autostartWhy")}
+        /* `autostart: null` is the platform declining to say — a fact, not "off". The row says
+           so instead of drawing an off-position switch over an unknown; the switch stays,
+           because flipping it WRITES a definite state either way. */
+        description={host.autostart === null ? t("autostartUnknown") : t("autostartWhy")}
         control={
           <Switch
             checked={host.autostart === true}

@@ -243,6 +243,7 @@
     "ready": "Dieser Computer ist bereit. In deinem Tailnet heißt er {name}.",
     "autostart": "ohmail beim Anmelden starten",
     "autostartWhy": "Damit deine Post erreichbar ist, ohne dass du die App erst öffnest — solange dieser Computer wach ist.",
+    "autostartUnknown": "Das System wollte nicht sagen, ob das an ist. Den Schalter umzulegen setzt es so oder so neu.",
     "advanced": "Erweitert",
     "port": "Port",
     "portWhy": "Die Tür der Mail-Engine auf diesem Computer. Lass ihn, wie er ist, außer etwas anderes benutzt ihn schon.",

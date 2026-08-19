@@ -1652,7 +1652,7 @@ describe("the UI bundle's build config", () => {
     );
     // The nav entry and the pane are both conditional on the node being supplied.
     expect(settings).toMatch(/desktopSection \? \[\["desktop", desktopSection\.label\]/);
-    expect(settings).toMatch(/pane === "desktop" \? desktopSection\?\.node : null/);
+    expect(settings).toMatch(/shown === "desktop" \? desktopSection\?\.node : null/);
     // And the shared file knows nothing about how any of it works.
     expect(settings).not.toMatch(/engine_logout|engineLogout|invoke\(|__TAURI/);
 
