@@ -11,6 +11,13 @@
  */
 export const ENGINE_VERSION = "0.1.0";
 
+/**
+ * The nameless-attachment naming pair, re-exported from core so every client names a
+ * nameless calendar part the same way (`toAttachmentItem` here already does; the mobile
+ * app's fixture tiles need the same rule and reach core only through this package).
+ */
+export { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
+
 // Wire vocabulary + errors.
 export {
   CursorExpiredError,
