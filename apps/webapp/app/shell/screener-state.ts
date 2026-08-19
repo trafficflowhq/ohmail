@@ -52,6 +52,7 @@ import {
   screenerSegments,
   senderKey,
   type EngineMessage,
+  type EngineMutation,
   type EntityReader,
   type Folder,
   type OhmailEngine,
@@ -61,6 +62,7 @@ import {
 import type { SuggestionOverlay } from "./screener-suggest";
 import {
   dispatchScreeningChange,
+  holdingRules,
   planScreeningChange,
   senderScreening,
 } from "./sender-screening";
@@ -463,6 +465,55 @@ export function useScreenerState(
         ),
       ),
     ).then((landed) => landed.every(Boolean));
+
+  /**
+   * A RELEASE IS TWO HALVES NOW, AND THE ANSWER IS THEIR CONJUNCTION.
+   *
+   * The rule half is what was missing, and its absence is the leckker defect (2026-08-19, live):
+   * a sender with an enabled rule pointing at `ohmail/Quarantine` presents their INBOX and
+   * Screener mail in Spam ({@link holdingRules} states the projection), so a release made of bare
+   * `move`s failed twice over — a move for mail already physically at the destination is the
+   * engine's LOCAL 404 (no effects, nothing sent), and the moves that did land were re-presented
+   * straight back by the rule. "That change could not be saved. Try it again." was true forever.
+   *
+   * So the callers pass the rule rewrites ({@link holdingRules} mapped to `rule_update` or
+   * `rule_delete`) beside the moves, and the moves cover ONLY mail physically in the segment's
+   * own folder ({@link physicallyHeldIn}) — everything else is where the rule change alone
+   * re-presents, and the server's retro pass makes physical later (`PATCH /rules/:id` re-arms
+   * `retro_requested_at` by default, so a retarget walks the whole backlog, including mail the
+   * windowed mirror has evicted).
+   *
+   * Both halves are watched, on `moveAll`'s own doctrine: `rolled_back` or a rejection is a
+   * refusal, `queued` is not (the intent stands on the retry queue). NOTHING TO DO IS A REFUSAL —
+   * a press that can dispatch neither a rule rewrite nor a move cannot change what the reader is
+   * looking at, and answering "landed" would drop the row under a toast about a release that
+   * never happened.
+   */
+  const releaseHeld = (
+    ruleMutations: EngineMutation[],
+    moveIds: string[],
+    folder: Folder,
+  ): Promise<boolean> => {
+    if (ruleMutations.length === 0 && moveIds.length === 0) return Promise.resolve(false);
+    const rules = Promise.all(
+      ruleMutations.map((m) =>
+        engine.mutate(m).then((r) => r.status !== "rolled_back", () => false),
+      ),
+    );
+    return Promise.all([rules, moveAll(moveIds, folder)])
+      .then(([ruled, moved]) => moved && ruled.every(Boolean));
+  };
+
+  /**
+   * The held ids whose mail is PHYSICALLY in `folder` — the only ones a release may move.
+   *
+   * The RAW mirror, deliberately: `sender.held` was minted over the projected reader, where a
+   * rule-held message reports the segment as its folder. Asking to move a message that is
+   * already at the destination is `mutationEffects`' empty answer, which `Engine.mutate` turns
+   * into a rolled-back 404 WITH NOTHING SENT — the deterministic half of the release failure.
+   */
+  const physicallyHeldIn = (raw: EntityReader, sender: ScreenerSenderDTO, folder: Folder): string[] =>
+    heldMessageIds(sender).filter((id) => raw.get<EngineMessage>("message", id)?.folder === folder);
 
   /**
    * THE ROW CAME BACK AND IT SAYS SO — the durable half, with no sentence attached.
@@ -1050,8 +1101,18 @@ export function useScreenerState(
    *
    * There is no un-screen endpoint: `decide` resolves `:id` only against mail whose
    * DESIRED folder is still `ohmail/Screener`, so a screened-out or quarantined
-   * representative is a 404. Per-message `move` releases the held mail for real. It
-   * creates no rule, and the copy says so instead of promising future mail will follow.
+   * representative is a 404. Per-message `move` releases the mail physically filed here.
+   *
+   * ── AND THE HOLDING RULE IS RETARGETED, WHICH THIS USED TO NOT DO ─────────────────────────
+   *
+   * This comment said "It creates no rule, and the copy says so instead of promising future
+   * mail will follow" — and for a sender whose segment membership came from a RULE, that made
+   * the release unperformable (see {@link releaseHeld}; live, 2026-08-19). It still creates no
+   * rule. It RETARGETS the rules that hold the sender here — the reversal of the decision those
+   * rows record — which is also the only rewrite that moves ingest along with the presentation:
+   * a fresh allow rule beside a standing deny rule loses every tie (`compareRules`, deny before
+   * allow before kind), so future mail would have kept arriving in Quarantine under a queue
+   * showing the sender released.
    *
    * @param segment which pile the sender is being released FROM — the one the refusal names, and
    * the one they are still in if it is refused. Passed rather than derived because `release`
@@ -1059,11 +1120,18 @@ export function useScreenerState(
    * identical from in here.
    */
   const release = (sender: ScreenerSenderDTO, dest: "ohbox" | "reads", segment: "screened" | "spam") => {
-    // The moves are WATCHED. `toastReleased` below is raised at press time and states the release
-    // as done — which was the only thing on screen when the moves were refused, beside a row that
-    // had not moved. Keeping it and adding the refusal is the same pairing `decide` uses: the
-    // optimistic sentence when the press happens, the truth when the wire has answered.
-    void moveAll(heldMessageIds(sender), FOLDER_OF_VIEW[dest]).then((landed) => {
+    // The RAW mirror, exactly as `commit` re-reads it: rules and physical folders are locations,
+    // and the projected reader answers presentations.
+    const raw = engine.read();
+    const wanted = FOLDER_OF_VIEW[dest];
+    const segFolder = segment === "spam" ? FOLDER_OF_VIEW.spam : FOLDER_OF_VIEW.screened;
+    const retargets: EngineMutation[] = holdingRules(raw, sender.from.address, segFolder)
+      .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted }));
+    // Both halves are WATCHED. `toastReleased` below is raised at press time and states the
+    // release as done — which was the only thing on screen when the moves were refused, beside a
+    // row that had not moved. Keeping it and adding the refusal is the same pairing `decide`
+    // uses: the optimistic sentence when the press happens, the truth when the wire has answered.
+    void releaseHeld(retargets, physicallyHeldIn(raw, sender, segFolder), wanted).then((landed) => {
       if (landed) clearRefused(sender);
       else refuseRelease(sender, segment);
     });
@@ -1110,13 +1178,24 @@ export function useScreenerState(
     if (row.pinned) return;
     clearRefused(row.sender);
     if (row.sender.derived) {
-      // Back to Waiting means the mail goes back to `ohmail/Screener` — the derived
-      // queue reads the folder, so a local override would show a row whose mail is
+      // Back to Waiting means UNDECIDED: the holding rules are DELETED, never retargeted — no
+      // rule may point at the gate (`ohmail/Screener` is held mail, not a consent destination,
+      // and `consentIndex` skips such rules anyway), and a sender back in the queue is a sender
+      // with no decision on record. With the rules gone, their INBOX mail presents at the gate
+      // by the cutline itself; only the mail physically in Quarantine needs a real move there —
+      // the derived queue reads the folder, so a local override would show a row whose mail is
       // still quarantined and whose decision would 404.
       //
-      // WATCHED, like every other release: a refused move leaves the mail in Quarantine and the
-      // row in Spam, and the toast below states it as back in Waiting.
-      void moveAll(heldMessageIds(row.sender), FOLDER_OF_VIEW.screener).then((landed) => {
+      // WATCHED, like every other release: a refused deletion or move leaves the sender in Spam,
+      // and the toast below states them as back in Waiting.
+      const raw = engine.read();
+      const deletions: EngineMutation[] = holdingRules(raw, row.sender.from.address, FOLDER_OF_VIEW.spam)
+        .map((r) => ({ kind: "rule_delete", ruleId: r.id }));
+      void releaseHeld(
+        deletions,
+        physicallyHeldIn(raw, row.sender, FOLDER_OF_VIEW.spam),
+        FOLDER_OF_VIEW.screener,
+      ).then((landed) => {
         if (landed) clearRefused(row.sender);
         else refuseRelease(row.sender, "spam");
       });
@@ -1168,7 +1247,13 @@ export function useScreenerState(
       const pinAt = s.pins.findIndex((p) => p.id === row.sender.id);
       s.pins = s.pins.filter((p) => p.id !== row.sender.id);
       bump();
-      void moveAll(quarantined.map((m) => m.id), "INBOX").then((landed) => {
+      // The decide that pinned this sender PROMOTED a rule to `ohmail/Quarantine` server-side,
+      // and by now the drain has put it in the mirror. Releasing the mail while that rule stands
+      // is the leckker defect one press later: the moved mail re-presents in Spam and every
+      // future arrival is quarantined. Retargeted to INBOX beside the moves, both watched.
+      const retargets: EngineMutation[] = holdingRules(reader, row.sender.from.address, FOLDER_OF_VIEW.spam)
+        .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: "INBOX" }));
+      void releaseHeld(retargets, quarantined.map((m) => m.id), "INBOX").then((landed) => {
         if (landed) {
           clearRefused(row.sender);
           return;

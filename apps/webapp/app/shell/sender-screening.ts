@@ -695,3 +695,37 @@ export async function dispatchScreeningChange(
   }
   return screeningToast(plan, worstStatus(await Promise.all(rules)));
 }
+
+/**
+ * THE RULES THAT HOLD A SENDER'S MAIL AT `folder` — the rows a release must rewrite.
+ *
+ * The consent cutline presents a decided sender's undecided-residence mail AT THE RULE'S
+ * DESTINATION (`consent-cutline.ts` — `decided !== null ⇒ placeOf = decided`), so a sender with
+ * an enabled rule pointing at `ohmail/Quarantine` has their INBOX and Screener mail LISTED in
+ * Spam while it physically sits elsewhere. A release that only issues `move`s cannot touch that:
+ * the moves either roll back locally (mail already at the destination is no effect, which
+ * `Engine.mutate` reports as a 404 with nothing sent) or land and are re-presented straight back
+ * by the rule on the next render. Measured on a live account, 2026-08-19: every press of
+ * "Not spam → Ohbox" for such a sender answered the refusal toast, deterministically.
+ *
+ * Nor can a NEW allow rule beside the old one fix it: `core/src/rules.ts#compareRules` ranks
+ * deny over allow at equal priority — before kind — so the standing Quarantine rule would keep
+ * winning ingest while the projection (consenting-wins in `consentIndex`) showed the opposite.
+ * The only verbs that make the two surfaces agree are retargeting the holding rule or deleting
+ * it, which is what the release paths in `screener-state.ts` dispatch this list into.
+ *
+ * Term-free only, by the ladder's own doctrine (see `planScreeningChange`): a subject- or
+ * body-narrowed rule is the rule for one SLICE of the sender's mail, deliberately built, and a
+ * whole-sender release must not silently rewrite it. Both kinds are included — a domain-scoped
+ * spam decision writes a `domain` deny rule from a press on one sender's row, and its reversal
+ * has to be able to reach the same row; leaving it standing would keep the whole segment's
+ * presentation and every future arrival exactly where they were.
+ */
+export function holdingRules(reader: EntityReader, address: string, folder: Folder): RuleDTO[] {
+  return rulesList(reader).filter((r) =>
+    r.enabled
+    && r.destination === folder
+    && (r.subjectContains ?? "").trim() === ""
+    && (r.bodyContains ?? "").trim() === ""
+    && ruleMatchesSender(r, address));
+}
