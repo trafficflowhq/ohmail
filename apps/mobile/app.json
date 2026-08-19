@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "ohmail",
+    "slug": "ohmail",
+    "scheme": "ohmail",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#fbfaf9",
+      "dark": {
+        "image": "./assets/splash-icon-dark.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#0e0b08"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "app.ohmail.preview",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "app.ohmail.preview",
+      "adaptiveIcon": {
+        "backgroundColor": "#fbfaf9",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "ohmail uses the camera only to scan a pairing QR code.",
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-secure-store"
+    ]
+  }
+}

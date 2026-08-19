@@ -5,6 +5,7 @@
   "license": "AGPL-3.0-only",
   "workspaces": [
     "apps/api-vercel",
+    "apps/mobile",
     "apps/server",
     "apps/sidecar",
     "apps/webapp",
