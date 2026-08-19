@@ -232,57 +232,42 @@ const HOST_BUSY_BODY = JSON.stringify({
 });
 
 /**
- * ONE admission budget, however many doors wrap handlers in it. `wrap` refuses entry past
+ * The admission bound and the drain, as one reusable pair — the tracking documented at length
+ * inside {@link startHostListener}, factored so the LAN door (`host-lan.ts`) carries the SAME
+ * two review findings instead of a second, divergent copy. `tracked` refuses entry past
  * {@link HOST_MAX_CONCURRENT_REQUESTS} with `503 host_busy`; `drained` resolves only when every
- * admitted handler has SETTLED — the store-safety half of `close()` on any door.
+ * admitted handler has SETTLED — the store-safety half of `close()` on either door.
  */
-export interface Admission {
-  wrap(handle: (req: Request) => Promise<Response>): (req: Request) => Promise<Response>;
-  drained(): Promise<void>;
-}
-
-/**
- * The admission bound and the drain — the tracking documented at length inside
- * {@link startHostListener}, factored so every network door carries the SAME two review
- * findings instead of a divergent copy. The `pending` set lives on the ADMISSION object, not on
- * a listener: {@link HOST_MAX_CONCURRENT_REQUESTS} bounds what the one engine PROCESS holds in
- * flight, and a per-listener copy would double the heap bound the moment a second door (the LAN
- * fallback) opened — `main.ts` therefore builds one of these and hands it to both mounts, and a
- * listener started without one gets a private budget (the single-door tests, and any composition
- * that genuinely has one door).
- */
-export function createAdmission(): Admission {
+export function trackAdmission(handle: (req: Request) => Promise<Response>): {
+  tracked: (req: Request) => Promise<Response>;
+  drained: () => Promise<void>;
+} {
   const pending = new Set<Promise<unknown>>();
-  return {
-    wrap(handle) {
-      return (req: Request): Promise<Response> => {
-        if (pending.size >= HOST_MAX_CONCURRENT_REQUESTS) {
-          return Promise.resolve(new Response(HOST_BUSY_BODY, {
-            status: 503,
-            headers: {
-              "content-type": "application/json",
-              "cache-control": "no-store",
-              "retry-after": "1",
-            },
-          }));
-        }
-        const p = handle(req);
-        const settled = p.then(() => undefined, () => undefined);
-        pending.add(settled);
-        void settled.then(() => pending.delete(settled));
-        return p;
-      };
-    },
-    drained: () => Promise.allSettled([...pending]).then(() => undefined),
+  const tracked = (req: Request): Promise<Response> => {
+    if (pending.size >= HOST_MAX_CONCURRENT_REQUESTS) {
+      return Promise.resolve(new Response(HOST_BUSY_BODY, {
+        status: 503,
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+          "retry-after": "1",
+        },
+      }));
+    }
+    const p = handle(req);
+    const settled = p.then(() => undefined, () => undefined);
+    pending.add(settled);
+    void settled.then(() => pending.delete(settled));
+    return p;
   };
+  const drained = (): Promise<void> => Promise.allSettled([...pending]).then(() => undefined);
+  return { tracked, drained };
 }
 
 export function startHostListener(opts: {
   handle: (req: Request) => Promise<Response>;
   port: number;
   log?: Diagnostic;
-  /** The process-wide admission budget — see {@link createAdmission}. Absent, a private one. */
-  admission?: Admission;
   /** TEST SEAM — production takes {@link HOST_SHUTDOWN_GRACE_MS}. */
   graceMs?: number;
   /** TEST SEAM — see `AdapterOptions.connectionsCheckingIntervalMs`. */
@@ -306,12 +291,9 @@ export function startHostListener(opts: {
    * streaming past that point is socket work, not store work: this door's large responses are
    * buffered JSON (SSE is off), so nothing reads the store after the head resolves.
    *
-   * The mechanism itself is {@link createAdmission}; the BUDGET is process-wide when the caller
-   * hands the shared one in (`main.ts` does — the LAN door draws on the same sixteen).
+   * The mechanism itself is {@link trackAdmission}, shared with the LAN door.
    */
-  const admission = opts.admission ?? createAdmission();
-  const tracked = admission.wrap(opts.handle);
-  const drained = (): Promise<void> => admission.drained();
+  const { tracked, drained } = trackAdmission(opts.handle);
 
   const server = makeHttpServer(tracked, {
     bodyMaxBytes: HOST_BODY_MAX_BYTES,
@@ -384,7 +366,6 @@ export interface HostDoor {
 export async function maybeStartHostListener(
   door: HostDoor,
   log: Diagnostic,
-  admission?: Admission,
 ): Promise<HostListener | null> {
   const { armed, origin, port } = door.hostState;
   if (!armed || door.handleHost === undefined) return null;
@@ -409,7 +390,6 @@ export async function maybeStartHostListener(
       handle: (req) => door.handleHost!(req),
       port,
       log,
-      ...(admission !== undefined ? { admission } : {}),
     });
     log("host_listening", { port: listener.port });
     return listener;

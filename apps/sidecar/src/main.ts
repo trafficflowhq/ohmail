@@ -3,7 +3,7 @@ import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createSidecar, type Sidecar, type SidecarConfig } from "./engine.js";
 import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
-import { createAdmission, maybeStartHostListener, type HostListener } from "./host-listener.js";
+import { maybeStartHostListener, type HostListener } from "./host-listener.js";
 import { maybeStartLanListener, type LanListener } from "./host-lan.js";
 import { encodeFrame, PROTOCOL_VERSION } from "./frame.js";
 import { serveOverStdio, type StdioHost } from "./host.js";
@@ -393,15 +393,11 @@ export async function runSidecar(): Promise<void> {
   // both the port and the served origin, and a refusal to bind degrades to the stdio door with a
   // named line rather than a failed launch. After the bridge is serving, deliberately: the window
   // is the primary consumer and must not wait on a bind; a phone reconnects on its own schedule.
-  // ONE admission budget for however many network doors this launch opens — the concurrency
-  // bound is the ENGINE PROCESS's heap bound, so a second socket must draw on the same sixteen
-  // rather than doubling it. See `createAdmission` in host-listener.ts.
-  const admission = createAdmission();
-  hostListener = await maybeStartHostListener(sidecar, log, admission);
+  hostListener = await maybeStartHostListener(sidecar, log);
   // The LAN fallback's second bind — mounted iff the operator chose an interface, on the
-  // same port. API-only; `host-lan.ts` carries the audit. A refusal degrades with a
+  // same port. API-only by ruling; `host-lan.ts` carries the audit. A refusal degrades with a
   // named line and every other door keeps serving.
-  lanListener = await maybeStartLanListener(sidecar, log, admission);
+  lanListener = await maybeStartLanListener(sidecar, log);
 
   // The mailbox comes up AFTER the bridge is serving. A first sync of a real mailbox takes
   // minutes, and a UI that cannot ask anything until it finishes is a UI that looks broken.

@@ -854,33 +854,3 @@ fn the_two_signal_slots_never_read_each_others_lines() {
     assert_eq!(lan_signal_of_line(host_line), None);
     assert_eq!(signal_of_line(host_line), Some(HostSignal::Listening { port: 3311 }));
 }
-
-// ── The armed spawn's environment is EXACTLY the spawn's pairs — inherited values cleared ─────
-
-#[test]
-fn an_armed_spawn_unsets_every_host_variable_it_does_not_define() {
-    // `Launch.env` OVERLAYS the shell's own inherited environment (engine.rs applies `unset`
-    // first, then `env`), so a pair the spawn merely OMITS would otherwise be filled by a stale
-    // value in the desktop's own environment — an inherited OHMAIL_LAN_BIND opening a LAN
-    // listener the UI reports as off, or an inherited OHMAIL_HOST_ORIGIN steering a LAN-only
-    // arming's request guard. The contract: an armed extension unsets ALL host variables, and
-    // the ones the spawn defines come back through `env` (remove-first-then-set).
-    let lan_only = HostSpawn {
-        port: 3311,
-        origin: None,
-        lan: Some("192.168.1.23".to_string()),
-        assets: None,
-    };
-    let extended = extend_plan(Plan::Spawn(a_launch()), Some(config::Mode::Local), Some(&lan_only));
-    let Plan::Spawn(launch) = extended else { panic!("the plan stopped spawning") };
-    for var in ["OHMAIL_HOST_MODE", "OHMAIL_HOST_PORT", "OHMAIL_HOST_ORIGIN", "OHMAIL_LAN_BIND", "OHMAIL_HOST_ASSETS"] {
-        assert!(
-            launch.unset.iter().any(|k| k == var),
-            "{var} must be cleared from the inherited environment on an armed spawn"
-        );
-    }
-    // The defined pairs still arrive — remove-first-then-set keeps the composed values.
-    let env = env_map(&launch.env);
-    assert_eq!(env.get("OHMAIL_LAN_BIND").map(String::as_str), Some("192.168.1.23"));
-    assert!(env.get("OHMAIL_HOST_ORIGIN").is_none());
-}

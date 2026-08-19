@@ -431,11 +431,7 @@ export function DesktopDevices() {
   };
 
   const mint = async (): Promise<void> => {
-    // The link's base: the served tailnet origin where there is one (the browser flow), else
-    // the LAN address (the app/API flow — this door's only public bootstrap is /pair/redeem,
-    // so a LAN-only install without a mint would be an address nothing can authenticate to).
-    const origin =
-      host?.origin ?? (host?.lan && host?.port ? `http://${host.lan}:${host.port}` : null);
+    const origin = host?.origin;
     if (!origin) return;
     setBusy("mint");
     setProblem(null);
@@ -693,27 +689,11 @@ export function DesktopDevices() {
             <p className="set-note-inline">{t("lanAloneWhy")}</p>
             {lanChooser}
             {lanDraft ? (
-              <>
-                {/* The ruled ceremony line, in THIS ceremony too: start-at-login is a visible,
-                    default-checked choice wherever host mode can be enabled — arming must never
-                    register a login item off a default nobody saw. */}
-                <SettingsRow
-                  label={t("autostart")}
-                  description={t("autostartWhy")}
-                  control={
-                    <Switch
-                      checked={autostartDraft}
-                      ariaLabel={t("autostart")}
-                      onChange={setAutostartDraft}
-                    />
-                  }
-                />
-                <div className="acct-actions">
-                  <Button variant="primary" onClick={() => void arm(true)} disabled={busy !== null}>
-                    {busy === "arm" ? t("enabling") : t("lanEnable")}
-                  </Button>
-                </div>
-              </>
+              <div className="acct-actions">
+                <Button variant="primary" onClick={() => void arm(true)} disabled={busy !== null}>
+                  {busy === "arm" ? t("enabling") : t("lanEnable")}
+                </Button>
+              </div>
             ) : null}
           </>
         ) : null}
@@ -769,12 +749,6 @@ export function DesktopDevices() {
 
   /* ON — serving, or armed with something in the way. */
   const serving = host.state === "serving" && host.origin !== null;
-  /* The LAN-only install (no tailnet identity) whose LAN door holds its socket: degraded above,
-     serving here — and it must still be able to MINT, because the bearer-only door's one public
-     bootstrap is the pairing redeem. Without this, the pane would hand out an address nothing
-     can ever authenticate against. */
-  const lanOnlyServing =
-    !serving && host.lan !== null && host.lanState === "serving" && host.port !== null;
 
   return (
     <SettingsSection className="acct">
@@ -807,25 +781,18 @@ export function DesktopDevices() {
         </>
       )}
 
-      {serving || lanOnlyServing ? (
+      {serving ? (
         minted ? (
           <div className="acct-confirm">
             <p className="acct-lead">
-              {serving
-                ? minted.label
-                  ? t("mintedLeadFor", { name: minted.label })
-                  : t("mintedLead")
-                : t("lanMintedLead")}
+              {minted.label ? t("mintedLeadFor", { name: minted.label }) : t("mintedLead")}
             </p>
-            {/* The QR is the hand-over for the BROWSER flow — a camera on this screen — and the
-                copy button is everything else. In LAN-only there is deliberately NO QR: a camera
-                scan opens a phone browser, and this door refuses browsers by design, so the copy
-                button is the whole hand-over. The raw link is printed nowhere either way. */}
-            {serving ? (
-              <div className="join-qr">
-                <QrCode value={minted.link} ariaLabel={t("qrAria")} />
-              </div>
-            ) : null}
+            {/* The QR is the hand-over — a camera on this screen — and the copy button is
+                everything else (a device with no camera pastes the link into its browser).
+                The raw link is deliberately NOT printed; see the header. */}
+            <div className="join-qr">
+              <QrCode value={minted.link} ariaLabel={t("qrAria")} />
+            </div>
             <div className="acct-actions">
               <Button variant="primary" onClick={copy}>
                 {t("copyLink")}
@@ -869,7 +836,7 @@ export function DesktopDevices() {
                 </Button>
               </span>
             </div>
-            <p className="set-note-inline">{serving ? t("addHint") : t("lanAddHint")}</p>
+            <p className="set-note-inline">{t("addHint")}</p>
           </>
         )
       ) : null}
