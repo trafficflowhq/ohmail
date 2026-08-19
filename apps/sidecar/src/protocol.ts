@@ -82,8 +82,9 @@ export interface ErrorHeader extends Record<string, unknown> {
  *
  * It carries the per-launch session token — minted at launch, never persisted — which is how the
  * shell authenticates without a login ceremony the desktop tier does not have. It travels in-band
- * on a pipe only the parent process holds — there is no listener, so there is nobody else it
- * could reach.
+ * on a pipe only the parent process holds, so there is nobody else it could reach: the host
+ * door's listener (when host mode is armed) is a different transport, and this hello and its
+ * token never travel there.
  */
 export interface ReadyInfo {
   baseUrl: string;

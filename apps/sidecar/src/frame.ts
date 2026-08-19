@@ -3,11 +3,13 @@ import type { Writable } from "node:stream";
 /**
  * THE STDIO FRAME CODEC.
  *
- * The LOCAL engine is a Node sidecar reached over the shell's stdin/stdout — **no TCP listener**,
- * so there is no port to authenticate and nothing on the machine that could connect to it except
- * the process that spawned it. That makes this file the whole transport, and it has to survive the
- * two things a pipe does that an HTTP socket hides from you: chunks arrive at arbitrary
- * boundaries, and a writer that outruns its reader blocks.
+ * The LOCAL engine is a Node sidecar reached over the shell's stdin/stdout — **this transport has
+ * no TCP listener**, so there is no port to authenticate here and nothing on the machine that can
+ * speak it except the process that spawned it. (Host mode, when armed, opens a SEPARATE loopback
+ * HTTP door for the user's own paired devices — `host-listener.ts`, off by default and
+ * mutation-pinned off; nothing about it passes through these frames.) This file is the whole of
+ * the stdio transport, and it has to survive the two things a pipe does that an HTTP socket hides
+ * from you: chunks arrive at arbitrary boundaries, and a writer that outruns its reader blocks.
  *
  * ── THE WIRE ───────────────────────────────────────────────────────────────────────────────
  *

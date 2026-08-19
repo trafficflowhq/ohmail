@@ -10,8 +10,11 @@
 //! ── THE CONTRACT, WHICH IS THE ENGINE'S AND NOT INVENTED HERE ──────────────────────────────
 //!
 //! The engine is a Node process that speaks **length-prefixed frames over its own stdin and
-//! stdout**. There is no TCP listener, no port and no socket: the only party that can reach it is
-//! the process holding the pipe, which is this one. Four consequences shape everything below.
+//! stdout**. The frame stream has no TCP listener, no port and no socket: the only party that can
+//! speak it is the process holding the pipe, which is this one. (With host mode armed the engine
+//! ADDITIONALLY binds a loopback-only HTTP listener for the user's own paired devices — the
+//! engine's own door, configured through the environment in `host.rs` and absent by default;
+//! nothing about it changes the pipe contract below.) Four consequences shape everything below.
 //!
 //!  1. **stdout is the wire.** Diagnostics go to stderr; the engine goes as far as replacing its
 //!     own `process.stdout.write` so that a stray `console.log` cannot inject bytes into a frame.
