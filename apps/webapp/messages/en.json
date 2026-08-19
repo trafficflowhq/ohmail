@@ -315,7 +315,9 @@
     "lanFailed": "The same-network door couldn't open — most often the port is already taken. Turn this off and on again, or pick another port under Advanced.",
     "lanInvalid": "The saved network address isn't usable anymore — this computer's address may have changed. Turn this off and on again and pick a current one.",
     "lanBrowserNote": "A phone browser can't use this address — browsers require HTTPS for a network address. Browsers use the Tailscale address instead.",
-    "lanCopy": "Copy address"
+    "lanCopy": "Copy address",
+    "lanAddHint": "You get a one-time pairing link to copy into an app or API client on your network. It works once and expires in five minutes.",
+    "lanMintedLead": "Copy this pairing link into the app or API client on the other device. It pairs over your network in one step."
   },
   "rail": {
     "compose": "Compose",

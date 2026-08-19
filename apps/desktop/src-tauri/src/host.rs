@@ -137,6 +137,11 @@ pub fn packaged_host_client(resources: Option<&Path>) -> Option<PathBuf> {
     dir.join("index.html").is_file().then_some(dir)
 }
 
+/// Every environment variable the host contract owns — the arming flag, the two endpoints, the
+/// LAN choice and the assets path. What an armed spawn UNSETS before its own pairs apply.
+pub const HOST_ENV_VARS: [&str; 5] =
+    [HOST_MODE_VAR, HOST_PORT_VAR, HOST_ORIGIN_VAR, HOST_LAN_VAR, HOST_ASSETS_VAR];
+
 /// Add the host variables to a plan that is about to spawn — or leave it BYTE-IDENTICAL.
 ///
 /// The dangerous branch requires all three of: a plan that spawns, the LOCAL door, and an armed
@@ -144,9 +149,18 @@ pub fn packaged_host_client(resources: Option<&Path>) -> Option<PathBuf> {
 /// the tests, because "disarmed is today's launch" is a contract, not a tendency. The cloud door
 /// is excluded by name: it mirrors a hosted account, has no host door, and an armed setting left
 /// over from the local door must not follow the user through a door switch.
+///
+/// The armed branch clears ALL host variables before adding the spawn's own pairs
+/// (`Launch.unset` runs first at the spawn — remove-first-then-set), because `Launch.env` merely
+/// OVERLAYS the shell's inherited environment: since the origin and the LAN pairs became
+/// optional, a pair the spawn OMITS is a decision, and a stale `OHMAIL_LAN_BIND` or
+/// `OHMAIL_HOST_ORIGIN` sitting in the desktop's own environment must not fill it — that would
+/// be a LAN listener the window reports as off. The armed engine's host environment is EXACTLY
+/// the spawn's pairs, by construction.
 pub fn extend_plan(mut plan: Plan, mode: Option<config::Mode>, spawn: Option<&HostSpawn>) -> Plan {
     if let (Plan::Spawn(launch), Some(config::Mode::Local), Some(spawn)) = (&mut plan, mode, spawn)
     {
+        launch.unset.extend(HOST_ENV_VARS.iter().map(OsString::from));
         launch.env.extend(env_for(spawn));
     }
     plan

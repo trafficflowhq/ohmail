@@ -315,7 +315,9 @@
     "lanFailed": "Die Netzwerk-Tür konnte nicht öffnen — meistens ist der Port schon belegt. Schalte aus und wieder ein, oder wähle unter „Erweitert“ einen anderen Port.",
     "lanInvalid": "Die gespeicherte Netzwerkadresse ist nicht mehr nutzbar — die Adresse dieses Computers hat sich vielleicht geändert. Schalte aus und wieder ein und wähle eine aktuelle.",
     "lanBrowserNote": "Ein Handy-Browser kann diese Adresse nicht nutzen — Browser verlangen für eine Netzwerkadresse HTTPS. Browser nutzen stattdessen die Tailscale-Adresse.",
-    "lanCopy": "Adresse kopieren"
+    "lanCopy": "Adresse kopieren",
+    "lanAddHint": "Du bekommst einen einmaligen Kopplungslink zum Kopieren in eine App oder einen API-Client in deinem Netzwerk. Er funktioniert einmal und läuft nach fünf Minuten ab.",
+    "lanMintedLead": "Kopiere diesen Kopplungslink in die App oder den API-Client auf dem anderen Gerät. Die Kopplung läuft in einem Schritt über dein Netzwerk."
   },
   "rail": {
     "compose": "Schreiben",

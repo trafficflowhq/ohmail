@@ -1,11 +1,13 @@
 import { isIPv4 } from "node:net";
+import { networkInterfaces } from "node:os";
 import { makeHttpServer } from "@trafficflow/core/adapters/http-host";
 import {
+  createAdmission,
   HOST_BODY_MAX_BYTES,
   HOST_HEADERS_TIMEOUT_MS,
   HOST_REQUEST_TIMEOUT_MS,
   HOST_SHUTDOWN_GRACE_MS,
-  trackAdmission,
+  type Admission,
   type HostState,
 } from "./host-listener.js";
 import { HOST_CLIENT_CSP } from "./host-static.js";
@@ -71,8 +73,34 @@ export interface LanState {
 }
 
 /**
+ * Could this string be one unicast IPv4 interface address? The SHAPE half of the bind rules,
+ * shared by the resolve and the bind so the two can never disagree:
+ *
+ *  · not loopback (`127/8` — that is the host door's own bind),
+ *  · not `0/8` (the unspecified/wildcard block — "every interface", which nobody chose),
+ *  · first octet under 224 — that refuses multicast (`224/4`), the reserved block (`240/4`)
+ *    AND `255.255.255.255`, the limited-broadcast address some kernels bind exactly like the
+ *    wildcard while the kernel echo still reports the address as given. No unicast interface
+ *    address lives above 223.
+ */
+function isUnicastInterfaceShape(address: string): boolean {
+  if (!isIPv4(address)) return false;
+  const first = Number(address.split(".", 1)[0]);
+  return first >= 1 && first <= 223 && first !== 127;
+}
+
+/** Is this address actually assigned to one of THIS machine's interfaces, right now? */
+function isAssignedHere(address: string): boolean {
+  return Object.values(networkInterfaces()).some((list) =>
+    (list ?? []).some((iface) => iface.address === address));
+}
+
+/**
  * THE ONE READING of the LAN knob. Pure, never throws; a refusal names the variable and the
  * rule, never the value (the same discipline as `resolveHostConfig`, and for the same reason).
+ * Membership in the machine's interface list is deliberately NOT checked here — this runs at
+ * composition time and must stay pure; the BIND is where membership is a fact worth reading
+ * ({@link startLanListener}), and an unassigned address degrades there with the named line.
  */
 export function resolveLanBind(cfg: { hostMode?: boolean; lanBind?: string }): LanState {
   const trimmed = cfg.lanBind?.trim() ?? "";
@@ -84,13 +112,13 @@ export function resolveLanBind(cfg: { hostMode?: boolean; lanBind?: string }): L
         "of host mode, so nothing binds",
     };
   }
-  if (!isIPv4(trimmed) || trimmed.startsWith("127.") || trimmed.startsWith("0.")) {
+  if (!isUnicastInterfaceShape(trimmed)) {
     return {
       address: null,
-      reason: "OHMAIL_LAN_BIND must be one bare IPv4 address of a network interface on this " +
-        "computer — never the wildcard, never loopback (that is the host door's own bind), " +
-        "never a hostname or a port, and not IPv6 in this version; same-network access is off " +
-        "for this launch",
+      reason: "OHMAIL_LAN_BIND must be one bare unicast IPv4 address of a network interface on " +
+        "this computer — never the wildcard, never loopback (that is the host door's own " +
+        "bind), never multicast/broadcast, never a hostname or a port, and not IPv6 in this " +
+        "version; same-network access is off for this launch",
     };
   }
   return { address: trimmed, reason: null };
@@ -112,18 +140,32 @@ export function startLanListener(opts: {
   address: string;
   port: number;
   log?: Diagnostic;
+  /** The process-wide admission budget — see `createAdmission`. Absent, a private one. */
+  admission?: Admission;
   /** TEST SEAM — production takes {@link HOST_SHUTDOWN_GRACE_MS}. */
   graceMs?: number;
   /** TEST SEAM — see `AdapterOptions.connectionsCheckingIntervalMs`. */
   connectionsCheckingIntervalMs?: number;
 }): Promise<LanListener> {
-  if (!isIPv4(opts.address) || opts.address.startsWith("127.") || opts.address.startsWith("0.")) {
+  if (!isUnicastInterfaceShape(opts.address)) {
     return Promise.reject(new Error(
-      "the LAN door binds one explicit IPv4 interface address; loopback, the wildcard and " +
-        "everything that is not an interface literal are refused",
+      "the LAN door binds one explicit unicast IPv4 interface address; loopback, the wildcard, " +
+        "multicast/broadcast and everything that is not an interface literal are refused",
     ));
   }
-  const { tracked, drained } = trackAdmission(opts.handle);
+  if (!isAssignedHere(opts.address)) {
+    // MEMBERSHIP, not just shape: the kernel refuses most unassigned unicast binds on its own
+    // (EADDRNOTAVAIL), but the addresses a kernel treats as specially bindable are exactly the
+    // dangerous ones — so the rule is stated positively: the address must be one this machine's
+    // interfaces hold RIGHT NOW, the same list the ceremony offered the choice from.
+    return Promise.reject(new Error(
+      "the LAN door binds only an address assigned to one of this machine's own network " +
+        "interfaces, and this address is not one of them right now",
+    ));
+  }
+  const admission = opts.admission ?? createAdmission();
+  const tracked = admission.wrap(opts.handle);
+  const drained = (): Promise<void> => admission.drained();
   const server = makeHttpServer(tracked, {
     bodyMaxBytes: HOST_BODY_MAX_BYTES,
     headersTimeoutMs: HOST_HEADERS_TIMEOUT_MS,
@@ -244,6 +286,7 @@ export interface LanDoor {
 export async function maybeStartLanListener(
   door: LanDoor,
   log: Diagnostic,
+  admission?: Admission,
 ): Promise<LanListener | null> {
   const { address } = door.lanState;
   if (!door.hostState.armed || door.handleLan === undefined || address === null) return null;
@@ -260,6 +303,7 @@ export async function maybeStartLanListener(
       address,
       port: door.hostState.port,
       log,
+      ...(admission !== undefined ? { admission } : {}),
     });
     // The PORT only, never the address: the log census keeps identifying values off every line,
     // and the chosen interface address identifies the operator's network. The shell knows the
