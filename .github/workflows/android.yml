@@ -1,0 +1,217 @@
+# The Android APK: build it in THIS repository's own Actions, from this tree.
+#
+# Two lanes, one build:
+#
+#   · build check — every push to main (and every pull request) runs the whole native build:
+#     workspace install, `expo prebuild`, Gradle release assembly. The APK it produces is
+#     signed with the locally generated DEBUG keystore — installable for smoke-testing, never
+#     attached to a release — and is kept briefly as a workflow artifact. Pull requests never
+#     see a signing secret; there is nothing to leak and nothing to protect but minutes.
+#
+#   · release — pushing an `android-v*` tag builds the same APK and RE-SIGNS it with the
+#     project's release keystore, which lives only in this repository's Actions secrets.
+#     The signed artifact is verified and attached to the GitHub release for that tag as
+#     `ohmail-android.apk`. Android verifies every later install against this signature, so
+#     an APK signed with any other key will not install over an existing one.
+#
+# The repository guard on every job keeps this inert on forks: a fork's own pushes build
+# nothing here, and a fork's pull request runs only the secretless build check (for
+# `pull_request` events the guard reads the BASE repository, which is the point).
+#
+# SIGNING IS A RE-SIGN, ON PURPOSE. Expo's generated Gradle project signs `assembleRelease`
+# with the debug keystore it mints, which is exactly right for the build check. The release
+# lane then replaces that signature with `apksigner sign` — the Android SDK's own signer —
+# rather than rewriting the generated `build.gradle` to inject a signing config: the Gradle
+# project is BUILD OUTPUT here (prebuild regenerates it every run), and editing generated
+# build files in CI is the kind of sed that breaks silently on the next SDK template. The
+# keystore is written to the runner's job-scoped temp directory and the passwords reach
+# apksigner through `env:` references, never as command-line literals.
+#
+# EXIT CODES ARE CAPTURED WHERE THEY HAPPEN. No pipelines around the build or the checks —
+# a pipe reports the LAST command's status, which has masked real failures in this project
+# before. Every assertion reads a file or a captured variable.
+
+name: android
+
+on:
+  push:
+    branches: [main]
+    tags: ["android-v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── the build check: prove the tree still builds an installable APK ─────────────────────
+  apk:
+    name: android · prebuild · gradle · debug-signed APK
+    if: github.repository == 'trafficflowhq/ohmail' && !startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # The Android SDK is preinstalled on ubuntu-latest; Java is pinned rather than
+      # inherited so a runner image bump cannot silently change what compiles the app.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install the locked dependency tree
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate the native Android project
+        working-directory: apps/mobile
+        env:
+          CI: "1"
+          EXPO_NO_TELEMETRY: "1"
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build the release APK (debug-signed)
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: The artifact is a real APK
+        run: |
+          set -euo pipefail
+          APK=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          test -f "$APK"
+          # A zip's magic bytes, the Android manifest and compiled dex inside, and a size
+          # floor — an "APK" that is an empty shell must fail here, not on somebody's phone.
+          head -c 2 "$APK" > /tmp/magic
+          test "$(cat /tmp/magic)" = "PK"
+          unzip -l "$APK" > /tmp/apk-listing
+          grep -F "AndroidManifest.xml" /tmp/apk-listing
+          grep -F "classes.dex" /tmp/apk-listing
+          SIZE=$(stat -c%s "$APK")
+          test "$SIZE" -gt 10000000
+          echo "APK ok: $SIZE bytes"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ohmail-android-debug-signed
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 7
+
+  # ── the release: same build, the release signature, attached to the tag ─────────────────
+  release:
+    name: android · release APK for the tag
+    if: github.repository == 'trafficflowhq/ohmail' && startsWith(github.ref, 'refs/tags/android-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: The tag matches the app's own version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION=$(node -p "require('./apps/mobile/app.json').expo.version")
+          case "$TAG" in
+            "android-v${VERSION}"*) echo "tag $TAG matches app version $VERSION" ;;
+            *) echo "tag $TAG does not match apps/mobile/app.json version $VERSION" >&2; exit 1 ;;
+          esac
+
+      - name: Install the locked dependency tree
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate the native Android project
+        working-directory: apps/mobile
+        env:
+          CI: "1"
+          EXPO_NO_TELEMETRY: "1"
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build the release APK
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Sign with the release keystore
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_KEYSTORE_B64" || { echo "ANDROID_KEYSTORE_B64 secret is not set" >&2; exit 1; }
+          # The keystore exists only in the job's temp directory, for the life of this job.
+          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
+          "$BT/apksigner" sign \
+            --ks "$RUNNER_TEMP/release.keystore" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --key-pass env:ANDROID_KEY_PASSWORD \
+            --out ohmail-android.apk \
+            apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          rm -f "$RUNNER_TEMP/release.keystore"
+
+      - name: Verify the signature and the artifact
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
+          "$BT/apksigner" verify --print-certs ohmail-android.apk > /tmp/certs
+          cat /tmp/certs
+          unzip -l ohmail-android.apk > /tmp/apk-listing
+          grep -F "AndroidManifest.xml" /tmp/apk-listing
+          grep -F "classes.dex" /tmp/apk-listing
+          SIZE=$(stat -c%s ohmail-android.apk)
+          test "$SIZE" -gt 10000000
+          echo "signed APK ok: $SIZE bytes"
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          # The release is normally cut first, with its own notes; this create is the fallback
+          # so a bare tag push still ends with a downloadable artifact.
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease --verify-tag \
+              --title "$TAG" \
+              --notes "Android APK for $TAG. Built and signed by this repository's Actions from the tagged tree."
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber ohmail-android.apk
+
+      - name: What was uploaded is what was built
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf uploaded && mkdir uploaded
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir uploaded \
+            --pattern "ohmail-android.apk"
+          cmp ohmail-android.apk uploaded/ohmail-android.apk
+          echo "release asset verified byte-for-byte"
