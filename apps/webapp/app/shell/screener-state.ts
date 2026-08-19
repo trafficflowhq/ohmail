@@ -1135,8 +1135,12 @@ export function useScreenerState(
       if (landed) clearRefused(sender);
       else refuseRelease(sender, segment);
     });
+    // TWO SENTENCES, BECAUSE ONLY ONE OF THEM IS TRUE AT A TIME. `toastReleased` says "No rule
+    // was made, so future mail is unchanged" — true for the no-rule release this always was, and
+    // FALSE the moment a holding rule is retargeted above: that retarget is precisely a statement
+    // about future mail. Claims are contracts; the toast follows what was actually dispatched.
     toast(
-      t("toastReleased", {
+      t(retargets.length > 0 ? "toastReleasedRuled" : "toastReleased", {
         count: sender.held.length,
         sender: displayAddress(sender.from.address),
         dest: DECISION_DONE_LABEL[dest],

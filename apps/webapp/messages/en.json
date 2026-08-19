@@ -575,6 +575,7 @@
     "toastBulkSpam": "{count} moved to Spam{unsub, select, true {. ohmail is also unsubscribing you, where they offer one-click.} other {}}",
     "toastAllowed": "Allowed — {count} held + future mail from {sender} go to {dest}.",
     "toastReleased": "{dest} — {count} held from {sender} released. No rule was made, so future mail is unchanged.",
+    "toastReleasedRuled": "{dest} — {count} held from {sender} released. Their rule now files future mail here too.",
     "toastNotSpamOhbox": "Not spam — filed to Ohbox. {sender} is allowed now.",
     "toastNotSpamWaiting": "Not spam — {sender} is back in Waiting.",
     "toastDeleted": "Deleted — {sender}.",

@@ -575,6 +575,7 @@
     "toastBulkSpam": "{count} nach Spam verschoben{unsub, select, true {. ohmail meldet dich dort auch ab, sofern sie Ein-Klick-Abmeldung anbieten.} other {}}",
     "toastAllowed": "Zugelassen — {count} zurückgehaltene und künftige Post von {sender} gehen nach {dest}.",
     "toastReleased": "{dest} — {count} zurückgehaltene Nachrichten von {sender} freigegeben. Es wurde keine Regel angelegt, künftige Post bleibt also unverändert.",
+    "toastReleasedRuled": "{dest} — {count} zurückgehaltene Nachrichten von {sender} freigegeben. Die Regel leitet künftige Post jetzt ebenfalls hierhin.",
     "toastNotSpamOhbox": "Kein Spam — in die Ohbox einsortiert. {sender} ist jetzt zugelassen.",
     "toastNotSpamWaiting": "Kein Spam — {sender} steht wieder unter „Wartend“.",
     "toastDeleted": "Gelöscht — {sender}.",
