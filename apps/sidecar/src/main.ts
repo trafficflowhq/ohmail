@@ -3,7 +3,8 @@ import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createSidecar, type Sidecar, type SidecarConfig } from "./engine.js";
 import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
-import { maybeStartHostListener, type HostListener } from "./host-listener.js";
+import { createAdmission, maybeStartHostListener, type HostListener } from "./host-listener.js";
+import { maybeStartLanListener, type LanListener } from "./host-lan.js";
 import { encodeFrame, PROTOCOL_VERSION } from "./frame.js";
 import { serveOverStdio, type StdioHost } from "./host.js";
 import { createSidecarLog } from "./log.js";
@@ -243,6 +244,10 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
     // knows, handed at spawn). Same no-validation rule as the three above: `host-static.ts`
     // probes it once and a missing build degrades to API-only with a logged reason.
     ...(env.OHMAIL_HOST_ASSETS?.trim() ? { hostAssetsDir: env.OHMAIL_HOST_ASSETS.trim() } : {}),
+    // The LAN fallback's one knob — the operator-chosen interface address. Same
+    // no-validation rule again: `resolveLanBind` (engine-side) is the one place that rules on
+    // the value, and a refusal degrades the LAN half alone with `host_lan_config_invalid`.
+    ...(env.OHMAIL_LAN_BIND?.trim() ? { lanBind: env.OHMAIL_LAN_BIND.trim() } : {}),
   };
 }
 
@@ -308,6 +313,7 @@ export async function runSidecar(): Promise<void> {
 
   let host: StdioHost | null = null;
   let hostListener: HostListener | null = null;
+  let lanListener: LanListener | null = null;
   let shuttingDown: Promise<void> | null = null;
   /**
    * ORDER MATTERS, and getting it wrong corrupts the local mirror.
@@ -328,7 +334,9 @@ export async function runSidecar(): Promise<void> {
     shuttingDown ??= (async () => {
       log("shutdown", { reason, inFlight: host?.inFlight ?? 0 });
       try {
-        await hostListener?.close();
+        // Both network doors stop admitting and drain before the store can close under them —
+        // the LAN socket is a reader of the same store the loopback one is.
+        await Promise.all([hostListener?.close(), lanListener?.close()]);
         if (host) {
           host.stop();
           await host.finished();
@@ -385,7 +393,15 @@ export async function runSidecar(): Promise<void> {
   // both the port and the served origin, and a refusal to bind degrades to the stdio door with a
   // named line rather than a failed launch. After the bridge is serving, deliberately: the window
   // is the primary consumer and must not wait on a bind; a phone reconnects on its own schedule.
-  hostListener = await maybeStartHostListener(sidecar, log);
+  // ONE admission budget for however many network doors this launch opens — the concurrency
+  // bound is the ENGINE PROCESS's heap bound, so a second socket must draw on the same sixteen
+  // rather than doubling it. See `createAdmission` in host-listener.ts.
+  const admission = createAdmission();
+  hostListener = await maybeStartHostListener(sidecar, log, admission);
+  // The LAN fallback's second bind — mounted iff the operator chose an interface, on the
+  // same port. API-only; `host-lan.ts` carries the audit. A refusal degrades with a
+  // named line and every other door keeps serving.
+  lanListener = await maybeStartLanListener(sidecar, log, admission);
 
   // The mailbox comes up AFTER the bridge is serving. A first sync of a real mailbox takes
   // minutes, and a UI that cannot ask anything until it finishes is a UI that looks broken.

@@ -236,10 +236,10 @@ fn the_host_setting_round_trips_and_everything_broken_reads_as_disabled() {
     assert_eq!(read_host(&path), None);
 
     for settings in [
-        HostSettings { enabled: true, port: 3311 },
+        HostSettings { enabled: true, port: 3311, lan: None },
         // Disabled keeps its port, so re-arming can offer the same one back.
-        HostSettings { enabled: false, port: 3311 },
-        HostSettings { enabled: true, port: 65535 },
+        HostSettings { enabled: false, port: 3311, lan: None },
+        HostSettings { enabled: true, port: 65535, lan: None },
     ] {
         write_host(&path, &settings).expect("write");
         assert_eq!(read_host(&path), Some(settings));
@@ -260,12 +260,36 @@ fn the_host_setting_round_trips_and_everything_broken_reads_as_disabled() {
         assert_eq!(read_host(&path), None, "{broken} was read as a setting");
     }
 
+    // ── The LAN choice ───────────────────────────────────────────────────────────────────
+    // Round-trips verbatim; an older file (no `lan` key) reads as OFF; null and empty read as
+    // OFF; a wrong TYPE refuses the whole file, same rule as `enabled` — a hand-edited value
+    // this cannot read must not be half-honoured.
+    let with_lan = HostSettings {
+        enabled: true,
+        port: 3311,
+        lan: Some("192.168.1.23".to_string()),
+    };
+    write_host(&path, &with_lan).expect("write");
+    assert_eq!(read_host(&path), Some(with_lan));
+    fs::write(&path, r#"{ "enabled": true, "port": 3311 }"#).expect("write");
+    assert_eq!(
+        read_host(&path),
+        Some(HostSettings { enabled: true, port: 3311, lan: None }),
+        "a file from before the LAN option must read with the LAN half off"
+    );
+    fs::write(&path, r#"{ "enabled": true, "port": 3311, "lan": null }"#).expect("write");
+    assert_eq!(read_host(&path).and_then(|s| s.lan), None);
+    fs::write(&path, r#"{ "enabled": true, "port": 3311, "lan": "  " }"#).expect("write");
+    assert_eq!(read_host(&path).and_then(|s| s.lan), None);
+    fs::write(&path, r#"{ "enabled": true, "port": 3311, "lan": 42 }"#).expect("write");
+    assert_eq!(read_host(&path), None, "a mistyped lan value must refuse the whole file");
+
     // Private at rest, like the door file: which port an install publishes on is nobody else's
     // business on a shared machine.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        write_host(&path, &HostSettings { enabled: true, port: 3311 }).expect("write");
+        write_host(&path, &HostSettings { enabled: true, port: 3311, lan: None }).expect("write");
         let mode = fs::metadata(&path).expect("stat").permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
     }

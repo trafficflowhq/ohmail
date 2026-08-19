@@ -41,6 +41,19 @@
  * qualifier verbatim, and the catalogue test pins it in both languages: a laptop lid ends the
  * service until it opens again, and a pane that promised otherwise would be lying about the one
  * limit a household will actually meet.
+ *
+ * ── SAME-NETWORK ACCESS, AND WHY ITS COPY SAYS "APPS ONLY" ──────────────────────────────────
+ *
+ * The LAN option binds one operator-chosen interface, plain HTTP — and plain HTTP on a network
+ * address is no secure context, so the browser client CANNOT be served there (the audit is
+ * `apps/sidecar/src/host-lan.ts`'s header; the premise is pinned by
+ * `test/host-client-secure-context.test.ts`). The pane's copy therefore promises the API for
+ * apps and says plainly that a phone browser needs the Tailscale address — truthful over
+ * flattering, because a QR that opened a broken mail client would be worse than a sentence. The
+ * option is opt-in (default off), the address is CHOSEN from the engine's own enumeration
+ * (`GET /local/lan/candidates` over the bridge — never typed, never 0.0.0.0), and it is also
+ * the no-Tailscale path: with a LAN address picked, enabling works without any tailnet and the
+ * pane reports the tailnet half's absence beside a serving same-network half.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -227,12 +240,18 @@ export function DesktopDevices() {
   /** A refusal or a thrown transport, as one sentence beside the controls. Never a toast. */
   const [problem, setProblem] = useState<string | null>(null);
 
-  /* The ceremony's two choices. Autostart default-CHECKED and visible — the always-on role is
+  /* The ceremony's choices. Autostart default-CHECKED and visible — the always-on role is
      the reason most people turn this on, and a hidden default would be a decision made for them
-     in the dark. The port is advanced-only: defaulted, and shown only to whoever asks. */
+     in the dark. The port is advanced-only: defaulted, and shown only to whoever asks. The LAN
+     option is default-OFF — same-network access is an opt-in on top of host mode's opt-in. */
   const [autostartDraft, setAutostartDraft] = useState(true);
   const [portDraft, setPortDraft] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState(false);
+  const [lanDraft, setLanDraft] = useState(false);
+  /** The engine's enumeration: `undefined` = loading, `null` = the read failed, `[]` = none. */
+  const [lanCandidates, setLanCandidates] =
+    useState<Array<{ address: string; name: string }> | null | undefined>(undefined);
+  const [lanChoice, setLanChoice] = useState<string | null>(null);
 
   /** The one appearance of a raw token, dressed as the link it is scanned as. */
   const [minted, setMinted] = useState<{ link: string; label: string } | null>(null);
@@ -296,7 +315,43 @@ export function DesktopDevices() {
     void refresh();
   }, [refresh]);
 
-  const arm = async (): Promise<void> => {
+  /** The engine's enumeration of this machine's offerable addresses — read when the LAN option
+   *  opens, because the choice must be OFFERED, never typed (a typo'd address is a socket that
+   *  binds nothing anyone can reach, or worse, an interface nobody meant). */
+  const loadLanCandidates = useCallback(async (remembered: string | null) => {
+    setLanCandidates(undefined);
+    try {
+      const res = await bridgeFetch("/local/lan/candidates");
+      if (!alive.current) return;
+      if (!res.ok) {
+        setLanCandidates(null);
+        return;
+      }
+      const body = (await res.json()) as { items?: unknown };
+      const rows: Array<{ address: string; name: string }> = [];
+      for (const raw of Array.isArray(body.items) ? body.items : []) {
+        const r = raw as Record<string, unknown>;
+        if (typeof r.address !== "string" || r.address.length === 0) continue;
+        rows.push({ address: r.address, name: typeof r.name === "string" ? r.name : "" });
+      }
+      setLanCandidates(rows);
+      // The remembered choice wins where it is still offerable; otherwise the first real one.
+      setLanChoice((cur) => {
+        const wanted = cur ?? remembered;
+        if (wanted !== null && rows.some((r) => r.address === wanted)) return wanted;
+        return rows[0]?.address ?? null;
+      });
+    } catch {
+      if (alive.current) setLanCandidates(null);
+    }
+  }, []);
+
+  const flipLanDraft = (next: boolean): void => {
+    setLanDraft(next);
+    if (next && lanCandidates === undefined) void loadLanCandidates(host?.lan ?? null);
+  };
+
+  const arm = async (withLan: boolean): Promise<void> => {
     const fallback = host?.port ?? DEFAULT_HOST_PORT;
     // The WHOLE string must be the number: `parseInt` alone accepts a numeric prefix, so
     // "6245x" would arm 6245 and "12.5" would arm port 12 — a validation that edits the value
@@ -311,10 +366,17 @@ export function DesktopDevices() {
       setProblem(t("portInvalid"));
       return;
     }
+    const lanAddress = withLan ? lanChoice : null;
+    if (withLan && lanAddress === null) {
+      // The option is on and there is nothing chosen — arming would silently drop the half the
+      // person just asked for, which is the pane lying by omission.
+      setProblem(t("lanNone"));
+      return;
+    }
     setBusy("arm");
     setProblem(null);
     try {
-      const state = await armHostMode(typed, autostartDraft);
+      const state = await armHostMode(typed, autostartDraft, lanAddress);
       if (!alive.current) return;
       setHost(state);
       if (state?.enabled) await refreshLists();
@@ -369,7 +431,11 @@ export function DesktopDevices() {
   };
 
   const mint = async (): Promise<void> => {
-    const origin = host?.origin;
+    // The link's base: the served tailnet origin where there is one (the browser flow), else
+    // the LAN address (the app/API flow — this door's only public bootstrap is /pair/redeem,
+    // so a LAN-only install without a mint would be an address nothing can authenticate to).
+    const origin =
+      host?.origin ?? (host?.lan && host?.port ? `http://${host.lan}:${host.port}` : null);
     if (!origin) return;
     setBusy("mint");
     setProblem(null);
@@ -469,6 +535,63 @@ export function DesktopDevices() {
     })();
   };
 
+  /** Copy the same-network address. Same fulfilled-first rule as the pairing link's copy. */
+  const copyLan = (address: string): void => {
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(address);
+        if (alive.current) toast(t("copied"));
+      } catch {
+        if (alive.current) setProblem(t("copyFailed"));
+      }
+    })();
+  };
+
+  /* The same-network chooser — the ceremony's opt-in row plus, once open, the engine's own
+     enumeration as a choice. Rendered by BOTH ceremonies (the Tailscale-ready one and the
+     no-Tailscale one), because the choice is the same choice. */
+  const lanChooser = (
+    <>
+      <SettingsRow
+        label={t("lanOption")}
+        description={t("lanOptionWhy")}
+        control={<Switch checked={lanDraft} ariaLabel={t("lanOption")} onChange={flipLanDraft} />}
+      />
+      {lanDraft ? (
+        lanCandidates === undefined ? (
+          <p className="set-note-inline">{t("checking")}</p>
+        ) : lanCandidates === null ? (
+          <p className="acct-warn" role="alert">
+            {t("lanListFailed")}
+          </p>
+        ) : lanCandidates.length === 0 ? (
+          <p className="acct-warn" role="alert">
+            {t("lanNone")}
+          </p>
+        ) : (
+          <SettingsRow
+            label={t("lanPick")}
+            description={t("lanPickWhy")}
+            control={
+              <select
+                className="join-input set-tag-input"
+                aria-label={t("lanPick")}
+                value={lanChoice ?? ""}
+                onChange={(e) => setLanChoice(e.target.value)}
+              >
+                {lanCandidates.map((c) => (
+                  <option key={c.address} value={c.address}>
+                    {c.name ? `${c.address} (${c.name})` : c.address}
+                  </option>
+                ))}
+              </select>
+            }
+          />
+        )
+      ) : null}
+    </>
+  );
+
   const day = (iso: string): string =>
     iso ? format.dateTime(new Date(iso), { dateStyle: "medium" }) : "";
   const moment = (iso: string): string =>
@@ -561,6 +684,37 @@ export function DesktopDevices() {
                 {t("checkAgain")}
               </Button>
             </div>
+            {/* THE NO-TAILSCALE PATH. The guided step above stays the recommendation — it is
+                what gives a phone BROWSER a working, encrypted address — but same-network
+                access does not owe its existence to it, so the option is offered here too,
+                with the honest limitation in its own words (apps only; a browser needs the
+                Tailscale address, because browsers require HTTPS for a network address). */}
+            <SettingsSubhead>{t("lanAlone")}</SettingsSubhead>
+            <p className="set-note-inline">{t("lanAloneWhy")}</p>
+            {lanChooser}
+            {lanDraft ? (
+              <>
+                {/* The ruled ceremony line, in THIS ceremony too: start-at-login is a visible,
+                    default-checked choice wherever host mode can be enabled — arming must never
+                    register a login item off a default nobody saw. */}
+                <SettingsRow
+                  label={t("autostart")}
+                  description={t("autostartWhy")}
+                  control={
+                    <Switch
+                      checked={autostartDraft}
+                      ariaLabel={t("autostart")}
+                      onChange={setAutostartDraft}
+                    />
+                  }
+                />
+                <div className="acct-actions">
+                  <Button variant="primary" onClick={() => void arm(true)} disabled={busy !== null}>
+                    {busy === "arm" ? t("enabling") : t("lanEnable")}
+                  </Button>
+                </div>
+              </>
+            ) : null}
           </>
         ) : null}
 
@@ -581,6 +735,7 @@ export function DesktopDevices() {
                 />
               }
             />
+            {lanChooser}
             {advanced ? (
               <SettingsRow
                 label={t("port")}
@@ -597,7 +752,7 @@ export function DesktopDevices() {
               />
             ) : null}
             <div className="acct-actions">
-              <Button variant="primary" onClick={() => void arm()} disabled={busy !== null}>
+              <Button variant="primary" onClick={() => void arm(lanDraft)} disabled={busy !== null}>
                 {busy === "arm" ? t("enabling") : t("enable")}
               </Button>
               {!advanced ? (
@@ -614,6 +769,12 @@ export function DesktopDevices() {
 
   /* ON — serving, or armed with something in the way. */
   const serving = host.state === "serving" && host.origin !== null;
+  /* The LAN-only install (no tailnet identity) whose LAN door holds its socket: degraded above,
+     serving here — and it must still be able to MINT, because the bearer-only door's one public
+     bootstrap is the pairing redeem. Without this, the pane would hand out an address nothing
+     can ever authenticate against. */
+  const lanOnlyServing =
+    !serving && host.lan !== null && host.lanState === "serving" && host.port !== null;
 
   return (
     <SettingsSection className="acct">
@@ -646,18 +807,25 @@ export function DesktopDevices() {
         </>
       )}
 
-      {serving ? (
+      {serving || lanOnlyServing ? (
         minted ? (
           <div className="acct-confirm">
             <p className="acct-lead">
-              {minted.label ? t("mintedLeadFor", { name: minted.label }) : t("mintedLead")}
+              {serving
+                ? minted.label
+                  ? t("mintedLeadFor", { name: minted.label })
+                  : t("mintedLead")
+                : t("lanMintedLead")}
             </p>
-            {/* The QR is the hand-over — a camera on this screen — and the copy button is
-                everything else (a device with no camera pastes the link into its browser).
-                The raw link is deliberately NOT printed; see the header. */}
-            <div className="join-qr">
-              <QrCode value={minted.link} ariaLabel={t("qrAria")} />
-            </div>
+            {/* The QR is the hand-over for the BROWSER flow — a camera on this screen — and the
+                copy button is everything else. In LAN-only there is deliberately NO QR: a camera
+                scan opens a phone browser, and this door refuses browsers by design, so the copy
+                button is the whole hand-over. The raw link is printed nowhere either way. */}
+            {serving ? (
+              <div className="join-qr">
+                <QrCode value={minted.link} ariaLabel={t("qrAria")} />
+              </div>
+            ) : null}
             <div className="acct-actions">
               <Button variant="primary" onClick={copy}>
                 {t("copyLink")}
@@ -701,9 +869,39 @@ export function DesktopDevices() {
                 </Button>
               </span>
             </div>
-            <p className="set-note-inline">{t("addHint")}</p>
+            <p className="set-note-inline">{serving ? t("addHint") : t("lanAddHint")}</p>
           </>
         )
+      ) : null}
+
+      {/* SAME-NETWORK ACCESS — rendered whenever it is chosen, independent of the tailnet half:
+          a LAN-only install (the no-Tailscale path) is degraded above and serving here, and
+          both sentences are true at once. The copy is the honest one the API-only decision requires:
+          the API for apps, the awake qualifier, and the plain reason a phone browser still
+          needs the Tailscale address. */}
+      {host.lan !== null ? (
+        <>
+          <SettingsSubhead>{t("lanTitle")}</SettingsSubhead>
+          <p className="acct-lead">
+            {host.lanState === "serving" && host.port !== null
+              ? t("lanServing", { address: `http://${host.lan}:${host.port}` })
+              : host.lanState === "failed"
+                ? t("lanFailed")
+                : host.lanState === "invalid"
+                  ? t("lanInvalid")
+                  : t("lanPending")}
+          </p>
+          {host.lanState === "serving" && host.port !== null ? (
+            <>
+              <p className="set-note-inline">{t("lanBrowserNote")}</p>
+              <div className="acct-actions">
+                <Button onClick={() => copyLan(`http://${host.lan}:${host.port}`)}>
+                  {t("lanCopy")}
+                </Button>
+              </div>
+            </>
+          ) : null}
+        </>
       ) : null}
 
       {/* In EVERY armed state, not only serving: disarming does not revoke pairing tokens and

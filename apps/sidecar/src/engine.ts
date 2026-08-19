@@ -48,6 +48,10 @@ import { createHostStatic } from "./host-static.js";
 // a surfaced reason), and the door's own send-surface ceiling. See `host-listener.ts`'s header
 // for the whole arrangement; the listener itself is `main.ts`'s to start.
 import { HOST_SEND_MAX_TOTAL_BYTES, resolveHostConfig, type HostState } from "./host-listener.js";
+// The LAN fallback's one reading and its browser-facing explainer — the API-only decision and
+// the secure-context audit behind it live in `host-lan.ts`'s header.
+import { resolveLanBind, serveLanFallback, type LanState } from "./host-lan.js";
+import { localLanRoutes } from "./lan-routes.js";
 // ── THE ONE PIPELINE ────────────────────────────────────────────────────────────────────────
 // `runSyncCycle` is imported, never reimplemented. There is ONE pipeline implementation and both
 // the desktop engine and the hosted service run it: two engines diverge, and divergence here means
@@ -249,6 +253,17 @@ export interface SidecarConfig {
    * plain sentence — a degradation with a logged reason (`host_assets_missing`), never a crash.
    */
   hostAssetsDir?: string;
+  /**
+   * THE LAN FALLBACK (`OHMAIL_LAN_BIND`) — one operator-chosen IPv4 interface address the host
+   * door ALSO binds, plain HTTP, for same-network use without Tailscale. API-only by ruling:
+   * the served browser client depends on secure-context APIs a plain-http network origin does
+   * not provide, so this door serves `desktopHostRoutes` for native clients and an honest
+   * explainer page for a browser — see `host-lan.ts`'s header for the audit. Meaningless
+   * without `hostMode`; a refused value degrades the LAN half alone (`host_lan_config_invalid`)
+   * and can never kill the stdio door or the Tailscale half. Absent ⇒ byte-identical to the
+   * pre-LAN composition.
+   */
+  lanBind?: string;
 }
 
 /**
@@ -297,6 +312,19 @@ export interface Sidecar {
    * composition was built from, and so the shell can render a degraded arm as a sentence.
    */
   readonly hostState: HostState;
+  /**
+   * THE LAN DOOR — {@link handleHost}'s API over the operator-chosen LAN interface, with the
+   * one structural difference the API-only decision is: non-API paths answer a script-free explainer,
+   * NEVER the packaged browser client (`serveLanFallback` — the secure-context audit is
+   * `host-lan.ts`'s header). Present IFF host mode is armed AND `lanBind` resolved; the LAN
+   * listener that binds this is `host-lan.ts`'s, started by `main.ts` from {@link lanState}.
+   */
+  handleLan?(req: Request): Promise<Response>;
+  /**
+   * What the LAN knob resolved to — the chosen address, or the surfaced reason it was refused.
+   * One reading (`resolveLanBind`), exposed for the same two consumers `hostState` serves.
+   */
+  readonly lanState: LanState;
   /**
    * Run cycles until the mailbox reports no backlog, then return how many ran.
    *
@@ -772,10 +800,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       log("host_config_invalid", { reason: hostConfig.state.reason });
     }
     const hostMode = hostConfig.state.armed;
+    // The LAN fallback's one reading — same discipline: a refused value degrades the LAN half
+    // with a surfaced reason and nothing else changes. Absent stays silent.
+    const lan = resolveLanBind(config);
+    if (lan.reason !== null) {
+      log("host_lan_config_invalid", { reason: lan.reason });
+    }
     const app = createApp([
       ...localRoutes,
       ...localAiRoutes(ai),
       ...localAutoSuggestRoutes({ db, accountId: world.accountId, ai, now }),
+      // Which addresses this machine could serve same-network access on — the LAN ceremony's
+      // one read, mounted UNARMED because the choice is offered before host mode exists. Never
+      // on the host/LAN doors; see `lan-routes.ts`.
+      ...localLanRoutes(),
       // The window-only pairing mint (mint/list/revoke), on this door alone and only when host
       // mode is armed. The machine's own login is the step-up; see `host-pair-routes.ts`.
       ...(hostMode ? hostPairRoutes : []),
@@ -1899,9 +1937,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               if (match.matched || match.methodNotAllowed) return hostApp.handle(req, depsForHost());
               return hostStatic!.serve(req, new URL(req.url));
             },
+            // The LAN door, present IFF the operator also chose an interface: the SAME table and
+            // the SAME per-request deps as the Tailscale door — one composition, two sockets —
+            // and the API-only static half in place of the packaged client. Which handler a
+            // socket was given decides, structurally; no header is consulted.
+            ...(lan.address !== null
+              ? {
+                  handleLan: async (req: Request): Promise<Response> => {
+                    const match = matchRoute(desktopHostRoutes, req.method, new URL(req.url).pathname);
+                    if (match.matched || match.methodNotAllowed) return hostApp.handle(req, depsForHost());
+                    return serveLanFallback(req);
+                  },
+                }
+              : {}),
           }
         : {}),
       hostState: hostConfig.state,
+      lanState: lan,
       syncUntilQuiet,
       organizerState: () => organizer,
       credentialState: async () => (await resolveLogin()).state,

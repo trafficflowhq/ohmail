@@ -326,7 +326,7 @@ describe("the enable ceremony", () => {
     expect(autostart.getAttribute("aria-checked")).toBe("true");
     await click(button(enHost.enable!));
     const arm = asked.find((a) => a.command === "tailscale_serve_arm");
-    expect(arm?.payload).toEqual({ port: DEFAULT_HOST_PORT, autostart: true });
+    expect(arm?.payload).toEqual({ port: DEFAULT_HOST_PORT, autostart: true, lan: null });
     expect(text()).toContain("while this computer is awake");
   });
 
@@ -338,6 +338,7 @@ describe("the enable ceremony", () => {
     expect(asked.find((a) => a.command === "tailscale_serve_arm")?.payload).toEqual({
       port: DEFAULT_HOST_PORT,
       autostart: false,
+      lan: null,
     });
   });
 

@@ -48,6 +48,14 @@ export const HOST_PROBLEMS = [
   "host-config-invalid",
 ] as const;
 
+/**
+ * The same-network half's own state — the engine's LAN door as the shell reads it off the
+ * engine's `host_lan_*` signals. `null` on the wire means "no LAN address is chosen".
+ */
+export type LanState = (typeof LAN_STATES)[number];
+
+export const LAN_STATES = ["serving", "pending", "failed", "invalid"] as const;
+
 /** Host mode as the shell reports it. */
 export interface HostState {
   /** Armed — the user turned it on and this install is on the local door. */
@@ -56,6 +64,10 @@ export interface HostState {
   port: number | null;
   /** The served origin, `https://<machine>.<tailnet>.ts.net`, when one was derived. */
   origin: string | null;
+  /** The chosen same-network address, or null when the LAN option is off. */
+  lan: string | null;
+  /** The LAN door's live state; null when no LAN address is chosen or host mode is off. */
+  lanState: LanState | null;
   state: HostTriState;
   problem: HostProblem | null;
   /** Whether this install starts at login; null when the platform would not say. */
@@ -113,6 +125,10 @@ export function hostStateOfPayload(payload: unknown): HostState | null {
     enabled: raw.enabled,
     port: portOf(raw.port),
     origin: typeof raw.origin === "string" && raw.origin.length > 0 ? raw.origin : null,
+    lan: typeof raw.lan === "string" && raw.lan.length > 0 ? raw.lan : null,
+    // The same asymmetry as `problem`: an unknown LAN state name degrades to null (the row
+    // renders its generic line) rather than voiding the whole answer.
+    lanState: oneOf(raw.lanState, LAN_STATES),
     state,
     // The deliberate asymmetry — see the header: an unknown problem name degrades to null
     // rather than voiding the answer.
@@ -152,23 +168,31 @@ export async function tailscaleStatus(): Promise<TailscaleStatus | null> {
 }
 
 /**
- * Arm host mode on `port`, with the enable ceremony's start-at-login choice. The shell probes
- * the tailnet first — a probe refusal changes nothing and answers with the CURRENT state plus
- * this attempt's `problem` — and then arms in the safe order: setting persisted, engine
- * respawned with its host door, and the tailnet route published LAST, only once the engine's
- * own listener holds the loopback port. A failure past the probe therefore comes back as
- * `enabled: true` with `state: "degraded"` and a typed problem, and no route exists.
+ * Arm host mode on `port`, with the enable ceremony's start-at-login choice and — when the
+ * operator picked one — the same-network interface address. The shell probes the tailnet
+ * first; WITHOUT a LAN choice a probe refusal changes nothing and answers with the CURRENT
+ * state plus this attempt's `problem`, exactly as before. WITH one, the refusal no longer
+ * refuses: the shell arms the LAN-only spawn (the no-Tailscale path), publishes nothing, and
+ * answers armed + degraded with the tailnet problem beside a live `lanState`. The safe order
+ * stands either way: setting persisted, engine respawned, the tailnet route published LAST and
+ * only once the engine's own listener holds the loopback port.
  *
  * The port is checked HERE as well as in the shell, because 1–65535 is the contract and a caller
  * passing 0 is a bug worth an exception rather than a guided state.
  */
-export async function armHostMode(port: number, autostart: boolean): Promise<HostState | null> {
+export async function armHostMode(
+  port: number,
+  autostart: boolean,
+  lan?: string | null,
+): Promise<HostState | null> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new RangeError("host mode needs a fixed port between 1 and 65535");
   }
   const shell = internals();
   if (!shell) return null;
-  return hostStateOfPayload(await shell.invoke(ARM_COMMAND, { port, autostart }));
+  return hostStateOfPayload(
+    await shell.invoke(ARM_COMMAND, { port, autostart, lan: lan ?? null }),
+  );
 }
 
 /** Disarm host mode. The registration is withdrawn, start-at-login removed, the setting kept

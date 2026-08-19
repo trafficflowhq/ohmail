@@ -32,7 +32,7 @@ fn the_armed_spawn_composes_exactly_three_variables_with_the_frozen_spellings() 
     // …when the bundle packages no host client. The assets pair is the ONE optional member of
     // the contract; the frozen three never move.
     let spawn =
-        HostSpawn { port: 3311, origin: "https://mac.tail1234.ts.net".to_string(), assets: None };
+        HostSpawn { port: 3311, origin: Some("https://mac.tail1234.ts.net".to_string()), lan: None, assets: None };
     let pairs = env_for(&spawn);
     assert_eq!(pairs.len(), 3);
     let env = env_map(&pairs);
@@ -51,7 +51,8 @@ fn the_armed_spawn_composes_exactly_three_variables_with_the_frozen_spellings() 
 fn a_packaged_host_client_adds_the_assets_variable_and_only_that() {
     let spawn = HostSpawn {
         port: 3311,
-        origin: "https://mac.tail1234.ts.net".to_string(),
+        origin: Some("https://mac.tail1234.ts.net".to_string()),
+        lan: None,
         assets: Some(PathBuf::from("/bundle/resources/host-client")),
     };
     let pairs = env_for(&spawn);
@@ -85,7 +86,7 @@ fn the_packaged_host_client_is_found_by_its_index_and_absent_otherwise() {
 fn the_origin_is_passed_through_verbatim_and_never_validated_here() {
     // The engine owns validation and degrades host mode over garbage with a logged reason; a
     // shell-side check would be a second copy of the engine's rules. So garbage crosses AS IS.
-    let spawn = HostSpawn { port: 1, origin: "not a url at all".to_string(), assets: None };
+    let spawn = HostSpawn { port: 1, origin: Some("not a url at all".to_string()), lan: None, assets: None };
     let env = env_map(&env_for(&spawn));
     assert_eq!(env.get("OHMAIL_HOST_ORIGIN").map(String::as_str), Some("not a url at all"));
 }
@@ -100,7 +101,7 @@ fn a_launch() -> engine::Launch {
 }
 
 fn a_spawn() -> HostSpawn {
-    HostSpawn { port: 3311, origin: "https://mac.tail1234.ts.net".to_string(), assets: None }
+    HostSpawn { port: 3311, origin: Some("https://mac.tail1234.ts.net".to_string()), lan: None, assets: None }
 }
 
 #[test]
@@ -461,19 +462,19 @@ fn no_setting_and_a_disabled_setting_both_boot_disarmed() {
     let boot = HostBoot::detect_with(None, Some(config::Mode::Local), &probe_ok, None);
     assert!(!boot.armed);
     assert!(boot.spawn.is_none() && boot.problem.is_none());
-    let off = config::HostSettings { enabled: false, port: 3311 };
+    let off = config::HostSettings { enabled: false, port: 3311, lan: None };
     let boot = HostBoot::detect_with(Some(off), Some(config::Mode::Local), &probe_ok, None);
     assert!(!boot.armed && boot.spawn.is_none());
 }
 
 #[test]
 fn enabled_on_the_wrong_door_is_off_with_its_reason_and_probes_nothing() {
-    let on = config::HostSettings { enabled: true, port: 3311 };
+    let on = config::HostSettings { enabled: true, port: 3311, lan: None };
     let probe_must_not_run = || -> Result<TailnetIdentity, Problem> {
         panic!("the probe ran for a door that has no host mode")
     };
     for mode in [Some(config::Mode::Cloud), None] {
-        let boot = HostBoot::detect_with(Some(on), mode, &probe_must_not_run, None);
+        let boot = HostBoot::detect_with(Some(on.clone()), mode, &probe_must_not_run, None);
         assert!(!boot.armed);
         assert_eq!(boot.problem, Some(Problem::LocalDoorRequired));
         assert!(boot.spawn.is_none());
@@ -482,19 +483,19 @@ fn enabled_on_the_wrong_door_is_off_with_its_reason_and_probes_nothing() {
 
 #[test]
 fn enabled_on_the_local_door_arms_with_the_probed_origin() {
-    let on = config::HostSettings { enabled: true, port: 3311 };
+    let on = config::HostSettings { enabled: true, port: 3311, lan: None };
     let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &probe_ok, None);
     assert!(boot.armed);
     assert_eq!(
         boot.spawn,
-        Some(HostSpawn { port: 3311, origin: "https://mac.tail1234.ts.net".to_string(), assets: None })
+        Some(HostSpawn { port: 3311, origin: Some("https://mac.tail1234.ts.net".to_string()), lan: None, assets: None })
     );
     assert_eq!(boot.problem, None);
 }
 
 #[test]
 fn the_packaged_assets_ride_the_armed_spawn() {
-    let on = config::HostSettings { enabled: true, port: 3311 };
+    let on = config::HostSettings { enabled: true, port: 3311, lan: None };
     let assets = Some(PathBuf::from("/bundle/resources/host-client"));
     let boot =
         HostBoot::detect_with(Some(on), Some(config::Mode::Local), &probe_ok, assets.clone());
@@ -507,7 +508,7 @@ fn a_failed_probe_arms_degraded_and_spawns_the_safe_branch() {
     // — while the engine spawns WITHOUT the host variables, because a host door with no origin
     // to guard against is a door the engine would refuse anyway. The problem is what the tray
     // and the window report.
-    let on = config::HostSettings { enabled: true, port: 3311 };
+    let on = config::HostSettings { enabled: true, port: 3311, lan: None };
     let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &|| {
         Err(Problem::NotLoggedIn)
     }, None);
@@ -575,6 +576,7 @@ fn armed_runtime() -> HostRuntime<tauri::Wry> {
         serve_ops: Mutex::new(()),
         port: Mutex::new(Some(3311)),
         origin: Mutex::new(None),
+        lan: Mutex::new(None),
         problem: Mutex::new(None),
         tray: Mutex::new(None),
     }
@@ -722,4 +724,163 @@ fn a_listener_that_takes_a_few_polls_is_still_found() {
     });
     assert_eq!(outcome, Ok(3311));
     assert_eq!(polls.get(), 3);
+}
+
+// ── The LAN fallback: the spawn's optional halves, the boot's no-Tailscale branch ────────────
+
+#[test]
+fn a_lan_only_spawn_composes_mode_port_and_lan_and_no_origin() {
+    // The no-Tailscale path: the probe found nothing, the operator chose an interface. The
+    // engine must NOT receive OHMAIL_HOST_ORIGIN (there is no served origin to allow-list) and
+    // MUST receive the LAN address verbatim.
+    let spawn = HostSpawn {
+        port: 3311,
+        origin: None,
+        lan: Some("192.168.1.23".to_string()),
+        assets: None,
+    };
+    let pairs = env_for(&spawn);
+    assert_eq!(pairs.len(), 3);
+    let env = env_map(&pairs);
+    assert_eq!(env.get("OHMAIL_HOST_MODE").map(String::as_str), Some("1"));
+    assert_eq!(env.get("OHMAIL_HOST_PORT").map(String::as_str), Some("3311"));
+    assert_eq!(env.get("OHMAIL_LAN_BIND").map(String::as_str), Some("192.168.1.23"));
+    assert!(env.get("OHMAIL_HOST_ORIGIN").is_none());
+}
+
+#[test]
+fn a_tailnet_spawn_with_a_lan_choice_carries_both_doors() {
+    let spawn = HostSpawn {
+        port: 3311,
+        origin: Some("https://mac.tail1234.ts.net".to_string()),
+        lan: Some("10.0.0.7".to_string()),
+        assets: None,
+    };
+    let env = env_map(&env_for(&spawn));
+    assert_eq!(
+        env.get("OHMAIL_HOST_ORIGIN").map(String::as_str),
+        Some("https://mac.tail1234.ts.net")
+    );
+    assert_eq!(env.get("OHMAIL_LAN_BIND").map(String::as_str), Some("10.0.0.7"));
+}
+
+#[test]
+fn a_failed_probe_with_a_lan_choice_still_spawns_the_lan_door_and_keeps_the_problem() {
+    // The fallback's whole point: no Tailscale, same-network access anyway. Armed, the LAN-only spawn
+    // exists — origin None, the chosen address riding — and the tailnet problem is REPORTED
+    // rather than swallowed, because the user also asked for a tailnet half that is not serving.
+    let on = config::HostSettings {
+        enabled: true,
+        port: 3311,
+        lan: Some("192.168.1.23".to_string()),
+    };
+    let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &|| {
+        Err(Problem::NoCli)
+    }, None);
+    assert!(boot.armed);
+    assert_eq!(boot.problem, Some(Problem::NoCli));
+    assert_eq!(boot.lan.as_deref(), Some("192.168.1.23"));
+    assert_eq!(
+        boot.spawn,
+        Some(HostSpawn {
+            port: 3311,
+            origin: None,
+            lan: Some("192.168.1.23".to_string()),
+            assets: None,
+        })
+    );
+}
+
+#[test]
+fn a_failed_probe_without_a_lan_choice_still_spawns_nothing() {
+    // The pre-LAN contract, re-pinned beside its new sibling: with neither a tailnet identity
+    // nor a LAN choice there is no door anybody could reach, so the safe branch spawns the
+    // engine with no host variables at all.
+    let on = config::HostSettings { enabled: true, port: 3311, lan: None };
+    let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &|| {
+        Err(Problem::NoCli)
+    }, None);
+    assert!(boot.armed && boot.spawn.is_none());
+    assert_eq!(boot.problem, Some(Problem::NoCli));
+}
+
+#[test]
+fn the_lan_choice_rides_a_healthy_tailnet_boot_too() {
+    let on = config::HostSettings {
+        enabled: true,
+        port: 3311,
+        lan: Some("10.0.0.7".to_string()),
+    };
+    let boot = HostBoot::detect_with(Some(on), Some(config::Mode::Local), &probe_ok, None);
+    let spawn = boot.spawn.expect("armed");
+    assert_eq!(spawn.origin.as_deref(), Some("https://mac.tail1234.ts.net"));
+    assert_eq!(spawn.lan.as_deref(), Some("10.0.0.7"));
+    assert_eq!(boot.problem, None);
+}
+
+// ── The LAN signal: its own slot, its own grammar ─────────────────────────────────────────────
+
+#[test]
+fn lan_signal_lines_parse_into_their_own_vocabulary() {
+    assert_eq!(
+        lan_signal_of_line(r#"{"event":"host_lan_listening","address":"192.168.1.23","port":3311}"#),
+        Some(LanSignal::Listening { port: 3311 })
+    );
+    assert_eq!(
+        lan_signal_of_line(r#"{"event":"host_lan_listen_failed"}"#),
+        Some(LanSignal::Failed)
+    );
+    assert_eq!(
+        lan_signal_of_line(r#"{"event":"host_lan_config_invalid"}"#),
+        Some(LanSignal::ConfigInvalid)
+    );
+    assert_eq!(
+        lan_signal_of_line(r#"{"event":"host_lan_skipped"}"#),
+        Some(LanSignal::ConfigInvalid)
+    );
+    // Garbage ports and everything else stay None.
+    assert_eq!(lan_signal_of_line(r#"{"event":"host_lan_listening","port":0}"#), None);
+    assert_eq!(lan_signal_of_line(r#"{"event":"host_listening","port":3311}"#), None);
+    assert_eq!(lan_signal_of_line("plain text"), None);
+}
+
+#[test]
+fn the_two_signal_slots_never_read_each_others_lines() {
+    // One launch can hold BOTH listeners, and the tailnet publication gates on the loopback
+    // slot — a LAN line read into it would publish a route against the wrong evidence.
+    let lan_line = r#"{"event":"host_lan_listening","address":"192.168.1.23","port":3311}"#;
+    assert_eq!(signal_of_line(lan_line), None);
+    let host_line = r#"{"event":"host_listening","port":3311}"#;
+    assert_eq!(lan_signal_of_line(host_line), None);
+    assert_eq!(signal_of_line(host_line), Some(HostSignal::Listening { port: 3311 }));
+}
+
+// ── The armed spawn's environment is EXACTLY the spawn's pairs — inherited values cleared ─────
+
+#[test]
+fn an_armed_spawn_unsets_every_host_variable_it_does_not_define() {
+    // `Launch.env` OVERLAYS the shell's own inherited environment (engine.rs applies `unset`
+    // first, then `env`), so a pair the spawn merely OMITS would otherwise be filled by a stale
+    // value in the desktop's own environment — an inherited OHMAIL_LAN_BIND opening a LAN
+    // listener the UI reports as off, or an inherited OHMAIL_HOST_ORIGIN steering a LAN-only
+    // arming's request guard. The contract: an armed extension unsets ALL host variables, and
+    // the ones the spawn defines come back through `env` (remove-first-then-set).
+    let lan_only = HostSpawn {
+        port: 3311,
+        origin: None,
+        lan: Some("192.168.1.23".to_string()),
+        assets: None,
+    };
+    let extended = extend_plan(Plan::Spawn(a_launch()), Some(config::Mode::Local), Some(&lan_only));
+    let Plan::Spawn(launch) = extended else { panic!("the plan stopped spawning") };
+    for var in ["OHMAIL_HOST_MODE", "OHMAIL_HOST_PORT", "OHMAIL_HOST_ORIGIN", "OHMAIL_LAN_BIND", "OHMAIL_HOST_ASSETS"] {
+        assert!(
+            launch.unset.iter().any(|k| k == var),
+            "{var} must be cleared from the inherited environment on an armed spawn"
+        );
+    }
+    // The defined pairs still arrive — remove-first-then-set keeps the composed values.
+    let env = env_map(&launch.env);
+    assert_eq!(env.get("OHMAIL_LAN_BIND").map(String::as_str), Some("192.168.1.23"));
+    assert!(env.get("OHMAIL_HOST_ORIGIN").is_none());
 }

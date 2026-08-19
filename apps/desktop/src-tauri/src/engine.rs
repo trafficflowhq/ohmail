@@ -707,6 +707,11 @@ struct Shared {
     /// Per RUN, like `ready`: cleared when a new child starts, because a signal belongs to the
     /// launch that produced it. `None` on every disarmed launch, and until an armed one speaks.
     host_signal: Option<crate::host::HostSignal>,
+    /// The LAN door's own slot — `host_lan_*` lines. A SEPARATE slot, not a widened vocabulary:
+    /// one launch can hold both listeners, and the LAN door's later line must not overwrite
+    /// what the loopback listener said (the tailnet publication gates on THAT). Same per-run
+    /// lifetime as `host_signal`.
+    lan_signal: Option<crate::host::LanSignal>,
     stop: bool,
     /// When the current child must be killed if it has not left by itself.
     deadline: Option<Instant>,
@@ -745,6 +750,7 @@ fn new_shared(state: EngineState, finished: bool) -> Shared {
         last_exit: None,
         fault: None,
         host_signal: None,
+        lan_signal: None,
         stop: false,
         deadline: None,
         finished,
@@ -828,6 +834,12 @@ impl Engine {
     /// host module's tri-state; see `Shared::host_signal` for the per-run reset.
     pub fn host_signal(&self) -> Option<crate::host::HostSignal> {
         self.inner.shared.lock().expect("engine state").host_signal
+    }
+
+    /// What this run's engine said about its LAN door, if anything yet. Read by the host
+    /// module's same-network state; see `Shared::lan_signal` for why it is a separate slot.
+    pub fn lan_signal(&self) -> Option<crate::host::LanSignal> {
+        self.inner.shared.lock().expect("engine state").lan_signal
     }
 
     /// Ask the engine to leave, wait for it, and kill it if it will not. Idempotent, and safe to
@@ -1395,8 +1407,9 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             s.boot_phase = None;
             s.fault = None;
             // A host signal belongs to one run — a restart must not report the last child's
-            // listener as this one's.
+            // listener as this one's. The LAN slot follows the same rule.
             s.host_signal = None;
+            s.lan_signal = None;
             // THE DEADLINE BELONGS TO ONE RUN, AND CARRYING IT INTO THE NEXT KILLS THE NEXT.
             //
             // Found by the crash-loop tests rather than reasoned about: a run torn down for a
@@ -2042,6 +2055,10 @@ fn forward_diagnostics(mut stderr: ChildStderr, inner: &Arc<Inner>) {
                         if let Ok(line) = std::str::from_utf8(&carry) {
                             if let Some(signal) = crate::host::signal_of_line(line) {
                                 inner.shared.lock().expect("engine state").host_signal =
+                                    Some(signal);
+                            }
+                            if let Some(signal) = crate::host::lan_signal_of_line(line) {
+                                inner.shared.lock().expect("engine state").lan_signal =
                                     Some(signal);
                             }
                         }

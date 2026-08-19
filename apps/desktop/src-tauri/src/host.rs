@@ -12,6 +12,13 @@
 //! start-at-login registration — and the ENGINE's half (the listener, its request guard, its
 //! refusals) deliberately lives in the engine, which validates everything this module passes it.
 //!
+//! On top of that, the operator may OPT IN to SAME-NETWORK ACCESS: one chosen LAN interface
+//! the engine also binds — plain HTTP, API-only (the secure-context ruling lives in the engine's
+//! `host-lan.ts`), and the no-Tailscale path: with a LAN address chosen, host mode arms without
+//! any tailnet, serves apps on the user's own network, and reports the tailnet half's absence
+//! truthfully instead of refusing. This module's share is the persisted choice, one more spawn
+//! variable ([`HOST_LAN_VAR`]), and the LAN door's own signal slot — never a `tailscale` call.
+//!
 //! ── THE INVARIANT THIS FILE IS PINNED TO ────────────────────────────────────────────────────
 //!
 //! **`tailscale serve`, never `tailscale funnel`.** Serve publishes to the user's own tailnet;
@@ -78,25 +85,44 @@ pub const HOST_ORIGIN_VAR: &str = "OHMAIL_HOST_ORIGIN";
 /// with a logged reason (`host_assets_missing`) — its rule, not re-implemented here.
 pub const HOST_ASSETS_VAR: &str = "OHMAIL_HOST_ASSETS";
 
+/// The LAN interface address the engine ALSO binds — same-network access without Tailscale
+/// The operator's explicit choice, persisted in `host.json` and passed VERBATIM: the
+/// engine validates it (`resolveLanBind`) and a garbage value degrades the LAN half alone with
+/// a logged reason (`host_lan_config_invalid`). The engine's LAN door is API-only by ruling —
+/// a plain-http network origin is no secure context for the browser client — and it serves an
+/// honest explainer to any browser that lands there.
+pub const HOST_LAN_VAR: &str = "OHMAIL_LAN_BIND";
+
 /// The values one armed spawn composes. Derived fresh each launch, never stored whole —
-/// the PORT is the persisted setting, the ORIGIN is whatever the tailnet says today, and the
-/// ASSETS path is wherever this launch's bundle keeps its packaged host-client (None on a build
-/// that packages none — the engine then serves its API alone).
+/// the PORT is the persisted setting, the ORIGIN is whatever the tailnet says today (`None`
+/// when the tailnet had nothing to say and the LAN choice is what keeps host mode useful),
+/// the LAN address is the persisted operator choice, and the ASSETS path is wherever this
+/// launch's bundle keeps its packaged host-client (None on a build that packages none — the
+/// engine then serves its API alone). At least one of `origin`/`lan` is always `Some`:
+/// [`HostBoot::detect_with`] composes no spawn otherwise, because an armed engine with neither
+/// a served origin nor a LAN address has no door anybody could reach.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostSpawn {
     pub port: u16,
-    pub origin: String,
+    pub origin: Option<String>,
+    pub lan: Option<String>,
     pub assets: Option<PathBuf>,
 }
 
-/// The environment pairs, exactly — the whole of what an armed spawn adds. Three always; the
-/// assets pair joins iff this bundle packages a host client.
+/// The environment pairs, exactly — the whole of what an armed spawn adds. The mode and port
+/// always; the origin iff the tailnet probe found one; the LAN address iff the operator chose
+/// one; the assets pair iff this bundle packages a host client.
 pub fn env_for(spawn: &HostSpawn) -> Vec<(OsString, OsString)> {
     let mut pairs = vec![
         (OsString::from(HOST_MODE_VAR), OsString::from("1")),
         (OsString::from(HOST_PORT_VAR), OsString::from(spawn.port.to_string())),
-        (OsString::from(HOST_ORIGIN_VAR), OsString::from(spawn.origin.clone())),
     ];
+    if let Some(origin) = &spawn.origin {
+        pairs.push((OsString::from(HOST_ORIGIN_VAR), OsString::from(origin.clone())));
+    }
+    if let Some(lan) = &spawn.lan {
+        pairs.push((OsString::from(HOST_LAN_VAR), OsString::from(lan.clone())));
+    }
     if let Some(assets) = &spawn.assets {
         pairs.push((OsString::from(HOST_ASSETS_VAR), OsString::from(assets.as_os_str())));
     }
@@ -111,6 +137,11 @@ pub fn packaged_host_client(resources: Option<&Path>) -> Option<PathBuf> {
     dir.join("index.html").is_file().then_some(dir)
 }
 
+/// Every environment variable the host contract owns — the arming flag, the two endpoints, the
+/// LAN choice and the assets path. What an armed spawn UNSETS before its own pairs apply.
+pub const HOST_ENV_VARS: [&str; 5] =
+    [HOST_MODE_VAR, HOST_PORT_VAR, HOST_ORIGIN_VAR, HOST_LAN_VAR, HOST_ASSETS_VAR];
+
 /// Add the host variables to a plan that is about to spawn — or leave it BYTE-IDENTICAL.
 ///
 /// The dangerous branch requires all three of: a plan that spawns, the LOCAL door, and an armed
@@ -118,9 +149,18 @@ pub fn packaged_host_client(resources: Option<&Path>) -> Option<PathBuf> {
 /// the tests, because "disarmed is today's launch" is a contract, not a tendency. The cloud door
 /// is excluded by name: it mirrors a hosted account, has no host door, and an armed setting left
 /// over from the local door must not follow the user through a door switch.
+///
+/// The armed branch clears ALL host variables before adding the spawn's own pairs
+/// (`Launch.unset` runs first at the spawn — remove-first-then-set), because `Launch.env` merely
+/// OVERLAYS the shell's inherited environment: since the origin and the LAN pairs became
+/// optional, a pair the spawn OMITS is a decision, and a stale `OHMAIL_LAN_BIND` or
+/// `OHMAIL_HOST_ORIGIN` sitting in the desktop's own environment must not fill it — that would
+/// be a LAN listener the window reports as off. The armed engine's host environment is EXACTLY
+/// the spawn's pairs, by construction.
 pub fn extend_plan(mut plan: Plan, mode: Option<config::Mode>, spawn: Option<&HostSpawn>) -> Plan {
     if let (Plan::Spawn(launch), Some(config::Mode::Local), Some(spawn)) = (&mut plan, mode, spawn)
     {
+        launch.unset.extend(HOST_ENV_VARS.iter().map(OsString::from));
         launch.env.extend(env_for(spawn));
     }
     plan
@@ -575,7 +615,9 @@ pub enum HostSignal {
 ///
 /// Held to the line's own grammar: a JSON object whose `event` is one of the four names. The
 /// cheap substring test in front is so the megabytes of ordinary diagnostics never pay for a
-/// JSON parse.
+/// JSON parse. The LAN door's `host_lan_*` events are deliberately NOT in this vocabulary —
+/// they are a separate slot ([`lan_signal_of_line`]), because one launch can carry both and a
+/// later LAN line must not overwrite what the loopback listener said.
 pub fn signal_of_line(line: &str) -> Option<HostSignal> {
     if !line.contains("host_") {
         return None;
@@ -592,6 +634,38 @@ pub fn signal_of_line(line: &str) -> Option<HostSignal> {
         Some("host_listener_skipped") => Some(HostSignal::Skipped),
         Some("host_listen_failed") => Some(HostSignal::Failed),
         Some("host_config_invalid") => Some(HostSignal::ConfigInvalid),
+        _ => None,
+    }
+}
+
+/// The engine's own account of its LAN door — `host_lan_listening`, `host_lan_listen_failed`,
+/// `host_lan_config_invalid` — read off the same diagnostic stream, into its own slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LanSignal {
+    Listening { port: u16 },
+    Failed,
+    ConfigInvalid,
+}
+
+/// The LAN signal one diagnostic line carries, or `None` for every other line.
+pub fn lan_signal_of_line(line: &str) -> Option<LanSignal> {
+    if !line.contains("host_lan_") {
+        return None;
+    }
+    let parsed = serde_json::from_str::<serde_json::Value>(line).ok()?;
+    match parsed.get("event").and_then(serde_json::Value::as_str) {
+        Some("host_lan_listening") => {
+            let port = parsed.get("port").and_then(serde_json::Value::as_u64)?;
+            if port == 0 || port > u16::MAX as u64 {
+                return None;
+            }
+            Some(LanSignal::Listening { port: port as u16 })
+        }
+        Some("host_lan_listen_failed") => Some(LanSignal::Failed),
+        // A skip (armed with an address but no port) cannot happen from this shell's own spawn —
+        // it always passes both — but a state the engine can say needs a reading here, and "a
+        // knob is missing" is a configuration fact, not a bind failure.
+        Some("host_lan_skipped") | Some("host_lan_config_invalid") => Some(LanSignal::ConfigInvalid),
         _ => None,
     }
 }
@@ -645,9 +719,15 @@ pub struct HostBoot {
     /// choice is armed and the tray is where the degradation is reported.
     pub armed: bool,
     pub port: Option<u16>,
-    /// The three-variable spawn, present only when the probe found an identity to serve as.
+    /// The operator's persisted LAN choice, carried whether or not a spawn exists — the window
+    /// renders the same-network row from the CHOICE, and its live state from the engine's own
+    /// LAN signal.
+    pub lan: Option<String>,
+    /// The spawn's variables, present when there is a door anybody could reach: the probe found
+    /// an identity, or the operator chose a LAN address (the no-Tailscale path).
     pub spawn: Option<HostSpawn>,
-    /// Why the spawn is absent (or the mode inapplicable), when it is.
+    /// Why the tailnet half is absent (or the mode inapplicable), when it is. With a LAN choice
+    /// this coexists with a spawn: armed, serving same-network, tailnet degraded — three truths.
     pub problem: Option<Problem>,
 }
 
@@ -655,7 +735,7 @@ impl HostBoot {
     /// Host mode off — the launch every install without the setting gets, byte-identical to the
     /// builds that predate host mode.
     pub fn disarmed() -> HostBoot {
-        HostBoot { armed: false, port: None, spawn: None, problem: None }
+        HostBoot { armed: false, port: None, lan: None, spawn: None, problem: None }
     }
 
     /// Decide from the stored setting, the stored door, an injected probe, and the packaged
@@ -676,6 +756,7 @@ impl HostBoot {
             return HostBoot {
                 armed: false,
                 port: Some(settings.port),
+                lan: settings.lan,
                 spawn: None,
                 problem: Some(Problem::LocalDoorRequired),
             };
@@ -684,16 +765,32 @@ impl HostBoot {
             Ok(identity) => HostBoot {
                 armed: true,
                 port: Some(settings.port),
-                spawn: Some(HostSpawn { port: settings.port, origin: identity.origin, assets }),
+                lan: settings.lan.clone(),
+                spawn: Some(HostSpawn {
+                    port: settings.port,
+                    origin: Some(identity.origin),
+                    lan: settings.lan,
+                    assets,
+                }),
                 problem: None,
             },
-            // Armed and degraded: the user chose an always-on role, so the tray and the hide
-            // lifecycle stand, the engine spawns WITHOUT the host variables (the safe branch),
-            // and the problem is what the tray and the window report.
+            // Armed with the tailnet degraded. WITH a LAN choice the engine still spawns its
+            // doors — origin absent, LAN present — because same-network access is exactly the
+            // path that owes nothing to the tailnet (the no-Tailscale flow); the problem is
+            // still reported, because the tailnet half the user also asked for is not serving.
+            // WITHOUT one, the engine spawns with no host variables at all (the safe branch):
+            // an armed engine with neither a served origin nor a LAN address has no door
+            // anybody could reach.
             Err(problem) => HostBoot {
                 armed: true,
                 port: Some(settings.port),
-                spawn: None,
+                lan: settings.lan.clone(),
+                spawn: settings.lan.map(|lan| HostSpawn {
+                    port: settings.port,
+                    origin: None,
+                    lan: Some(lan),
+                    assets,
+                }),
                 problem: Some(problem),
             },
         }
@@ -715,11 +812,28 @@ impl HostBoot {
             packaged_host_client(paths.resources.as_deref()),
         );
         match (&boot.spawn, &boot.problem) {
-            (Some(spawn), _) => engine::log_line(format_args!(
-                "host mode armed: the engine's host door binds 127.0.0.1:{} and the tailnet \
-                 serves {}",
-                spawn.port, spawn.origin
-            )),
+            (Some(spawn), problem) => {
+                match &spawn.origin {
+                    Some(origin) => engine::log_line(format_args!(
+                        "host mode armed: the engine's host door binds 127.0.0.1:{} and the \
+                         tailnet serves {}",
+                        spawn.port, origin
+                    )),
+                    None => engine::log_line(format_args!(
+                        "host mode armed without a tailnet identity ({}); the engine serves \
+                         same-network access only on port {}",
+                        problem.map(Problem::as_str).unwrap_or("unknown"),
+                        spawn.port
+                    )),
+                }
+                if spawn.lan.is_some() {
+                    engine::log_line(format_args!(
+                        "host mode: same-network access is chosen; the engine's LAN door binds \
+                         the configured interface on port {}",
+                        spawn.port
+                    ));
+                }
+            }
             (None, Some(problem)) => engine::log_line(format_args!(
                 "host mode is enabled and cannot publish this launch ({}); the engine starts \
                  without its host door",
@@ -740,9 +854,12 @@ const TRAY_STATE_ID: &str = "host:state";
 const TRAY_OPEN_ID: &str = "host:open";
 const TRAY_QUIT_ID: &str = "host:quit";
 
-/// The state line's three sentences. Short, because a tray menu is not a place to explain — the
-/// window's own screens carry the guidance, keyed off the typed problem.
+/// The state line's four sentences. Short, because a tray menu is not a place to explain — the
+/// window's own screens carry the guidance, keyed off the typed problem. The same-network line
+/// exists so a LAN-only install (the no-Tailscale path) is not told it "needs attention" for
+/// ever about a tailnet it deliberately does not have — while still not claiming the tailnet.
 const TRAY_LINE_SERVING: &str = "Serving your tailnet";
+const TRAY_LINE_LAN_ONLY: &str = "Serving your network only";
 const TRAY_LINE_DEGRADED: &str = "Host mode needs attention";
 const TRAY_LINE_OFF: &str = "Host mode off";
 
@@ -773,6 +890,10 @@ pub struct HostRuntime<R: tauri::Runtime> {
     serve_ops: Mutex<()>,
     port: Mutex<Option<u16>>,
     origin: Mutex<Option<String>>,
+    /// The operator's LAN choice as it stands — `None` when same-network access is off. What
+    /// `host_state` reports as `lan`; the live half (`lanState`) comes from the engine's own
+    /// LAN signal, never from this field.
+    lan: Mutex<Option<String>>,
     /// The launch- or arm-time problem. `None` when nothing stands between this install and
     /// serving (the tri-state still derives listener-pending from the engine's own signals).
     problem: Mutex<Option<Problem>>,
@@ -814,6 +935,31 @@ impl<R: tauri::Runtime> HostRuntime<R> {
         }
     }
 
+    /// Whether the engine's LAN door holds its socket right now — read off the engine's own
+    /// signal, like the loopback listener's tri-state input.
+    fn lan_listening(&self) -> bool {
+        matches!(self.shell.engine().lan_signal(), Some(LanSignal::Listening { .. }))
+    }
+
+    /// The same-network half's own wire state, or `Null` when no LAN address is chosen (or host
+    /// mode is off). A closed vocabulary the window mirrors: serving / pending / failed /
+    /// invalid — the engine's LAN signal, told as it stands.
+    fn lan_state_json(&self) -> serde_json::Value {
+        if !self.armed() || self.lan.lock().expect("host lan").is_none() {
+            return serde_json::Value::Null;
+        }
+        let engine = self.shell.engine();
+        if !matches!(engine.state(), EngineState::Serving { .. }) {
+            return serde_json::json!("pending");
+        }
+        serde_json::json!(match engine.lan_signal() {
+            Some(LanSignal::Listening { .. }) => "serving",
+            Some(LanSignal::Failed) => "failed",
+            Some(LanSignal::ConfigInvalid) => "invalid",
+            None => "pending",
+        })
+    }
+
     /// What `host_state` answers — and the one place its shape is composed.
     fn state_json(&self, autostart: Option<bool>) -> serde_json::Value {
         let (state, problem) = self.tri_state();
@@ -821,6 +967,8 @@ impl<R: tauri::Runtime> HostRuntime<R> {
             "enabled": self.armed(),
             "port": *self.port.lock().expect("host port"),
             "origin": *self.origin.lock().expect("host origin"),
+            "lan": *self.lan.lock().expect("host lan"),
+            "lanState": self.lan_state_json(),
             "state": state,
             "problem": problem.map(Problem::as_str),
             "autostart": autostart,
@@ -845,8 +993,14 @@ impl<R: tauri::Runtime> HostRuntime<R> {
     /// from arm/disarm; menu item setters proxy to the main thread themselves.
     fn refresh_tray_line(&self) {
         let (state, _) = self.tri_state();
+        // "Degraded" with a live LAN door is the no-Tailscale install doing exactly what was
+        // asked of it — say what serves, not only what does not.
+        let lan_only = state == "degraded"
+            && self.lan.lock().expect("host lan").is_some()
+            && self.lan_listening();
         let text = match state {
             "serving" => TRAY_LINE_SERVING,
+            "degraded" if lan_only => TRAY_LINE_LAN_ONLY,
             "degraded" => TRAY_LINE_DEGRADED,
             _ => TRAY_LINE_OFF,
         };
@@ -876,7 +1030,8 @@ pub fn manage<R: tauri::Runtime>(
         published: AtomicBool::new(false),
         serve_ops: Mutex::new(()),
         port: Mutex::new(boot.port),
-        origin: Mutex::new(boot.spawn.as_ref().map(|s| s.origin.clone())),
+        origin: Mutex::new(boot.spawn.as_ref().and_then(|s| s.origin.clone())),
+        lan: Mutex::new(boot.lan.clone()),
         problem: Mutex::new(boot.problem),
         tray: Mutex::new(None),
     });
@@ -888,8 +1043,10 @@ pub fn manage<R: tauri::Runtime>(
         // listener to hold the port, THEN `serve --bg` (normally a no-op — the registration is
         // persistent in the daemon — but it heals one lost to a reset). Off the startup path,
         // and generation-gated: a disarm clicked before this runs wins, and this publishes
-        // nothing.
-        if let Some(spawn) = boot.spawn {
+        // nothing. A LAN-only spawn (origin None — the no-Tailscale path) publishes NOTHING:
+        // there is no loopback listener to wait for and no tailnet to route, and the wait would
+        // only end in `listener-skipped` overwriting the truthful tailnet problem.
+        if let Some(spawn) = boot.spawn.filter(|s| s.origin.is_some()) {
             let runtime = Arc::clone(&runtime);
             let generation = runtime.generation.load(Ordering::SeqCst);
             std::thread::spawn(move || {
@@ -997,7 +1154,11 @@ fn stand_up_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>, runtime: &Arc<Hos
                                 .lock()
                                 .expect("host problem")
                                 .map(|p| p != Problem::ListenerPending)
-                                .unwrap_or(false);
+                                .unwrap_or(false)
+                                // A LAN-only arming (no tailnet identity — the no-Tailscale
+                                // path) has no publication to complete: this run's engine holds
+                                // no loopback listener, and the route would proxy nothing.
+                                || runtime.origin.lock().expect("host origin").is_none();
                             if let (Some(port), false) = (port, blocked) {
                                 let generation = runtime.generation.load(Ordering::SeqCst);
                                 // One try, no wait: this tick only publishes when the signal
@@ -1133,13 +1294,19 @@ pub fn tailscale_status() -> serde_json::Value {
 /// is provably the engine's.
 ///
 /// `autostart` is the enable ceremony's pre-checked line, passed explicitly so unchecking it is
-/// part of the same arming rather than a race against it.
+/// part of the same arming rather than a race against it. `lan` is the ceremony's same-network
+/// choice — one interface address the operator picked, or `None` for the Tailscale-only default
+/// — and it is ALSO what makes the no-Tailscale path real: with a LAN address in hand, a failed
+/// probe no longer refuses the arming — the engine spawns with the LAN door alone, nothing is
+/// published (there is no tailnet identity to publish), and the probe's problem is reported
+/// beside a serving same-network half. Without one, a failed probe refuses exactly as before.
 #[tauri::command(async)]
 pub fn tailscale_serve_arm<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     host: tauri::State<'_, Arc<HostRuntime<R>>>,
     port: u16,
     autostart: bool,
+    lan: Option<String>,
 ) -> Result<serde_json::Value, String> {
     if port == 0 {
         // The frozen contract: 1–65535. Port 0 means "any free port", and the registration
@@ -1149,13 +1316,18 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
     if host.shell.config_mode() != Some(config::Mode::Local) {
         return Ok(host.refusal_json(Problem::LocalDoorRequired, autostart_enabled(&app)));
     }
+    // The LAN choice, shaped only (non-empty after trim); the ENGINE rules on the value and a
+    // garbage address degrades the LAN half over there with a logged reason.
+    let lan = lan.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
     let run = |args: &[String]| run_tailscale(args);
-    let identity = match probe_with(&run) {
-        Ok(identity) => identity,
-        // The refusal changes nothing — an install that was already armed keeps its state, and
-        // the answer says so while naming what THIS attempt hit.
-        Err(problem) => return Ok(host.refusal_json(problem, autostart_enabled(&app))),
-    };
+    // The probed identity, or — WITH a LAN choice — the problem to report beside a LAN-only
+    // arming. Without one, a probe refusal changes nothing, exactly as it always has.
+    let (identity, tailnet_problem): (Option<TailnetIdentity>, Option<Problem>) =
+        match probe_with(&run) {
+            Ok(identity) => (Some(identity), None),
+            Err(problem) if lan.is_some() => (None, Some(problem)),
+            Err(problem) => return Ok(host.refusal_json(problem, autostart_enabled(&app))),
+        };
 
     // The setting first: the file and the runtime agree host mode is ON before any route can
     // exist, so a crash anywhere past this line leaves an armed, unpublished install — never a
@@ -1164,7 +1336,7 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
         .settings_path
         .clone()
         .ok_or_else(|| "this computer named no place for the app to keep its settings".to_string())?;
-    config::write_host(&path, &config::HostSettings { enabled: true, port })?;
+    config::write_host(&path, &config::HostSettings { enabled: true, port, lan: lan.clone() })?;
 
     {
         use tauri_plugin_autostart::ManagerExt;
@@ -1182,8 +1354,10 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
     host.published.store(false, Ordering::SeqCst);
     host.armed.store(true, Ordering::SeqCst);
     *host.port.lock().expect("host port") = Some(port);
-    *host.origin.lock().expect("host origin") = Some(identity.origin.clone());
-    host.set_problem(None);
+    *host.origin.lock().expect("host origin") =
+        identity.as_ref().map(|i| i.origin.clone());
+    *host.lan.lock().expect("host lan") = lan.clone();
+    host.set_problem(tailnet_problem);
     // The engine respawns with the host variables; the mirror and the stdio door pay one
     // ordinary restart for it, which is the same cost as choosing a door. The assets path is the
     // same resolution the launch detection performs — this bundle's packaged host-client, or
@@ -1192,30 +1366,45 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
         use tauri::Manager;
         packaged_host_client(app.path().resource_dir().ok().as_deref())
     };
-    host.shell.set_host_spawn(Some(HostSpawn { port, origin: identity.origin.clone(), assets }));
+    host.shell.set_host_spawn(Some(HostSpawn {
+        port,
+        origin: identity.as_ref().map(|i| i.origin.clone()),
+        lan,
+        assets,
+    }));
     host.shell.replan();
     stand_up_tray(&app, host.inner());
 
-    // The publication, last. This waits for the fresh engine's `host_listening` — seconds, on
-    // the door the person is already using — so the ceremony's answer states the finished truth.
-    match host.publish_when_listening(port, generation) {
-        Ok(true) => {
-            host.set_problem(None);
-            engine::log_line(format_args!(
-                "host mode armed: the engine's host door binds 127.0.0.1:{port} and the \
-                 tailnet serves {}",
-                identity.origin
-            ));
+    // The publication, last, and ONLY with a tailnet identity in hand. This waits for the fresh
+    // engine's `host_listening` — seconds, on the door the person is already using — so the
+    // ceremony's answer states the finished truth. A LAN-only arming publishes nothing: no
+    // loopback listener exists this run and no tailnet could route to it.
+    if let Some(identity) = identity {
+        match host.publish_when_listening(port, generation) {
+            Ok(true) => {
+                host.set_problem(None);
+                engine::log_line(format_args!(
+                    "host mode armed: the engine's host door binds 127.0.0.1:{port} and the \
+                     tailnet serves {}",
+                    identity.origin
+                ));
+            }
+            Ok(false) => { /* a stand-down won the race and already said so */ }
+            Err(problem) => {
+                engine::log_line(format_args!(
+                    "host mode armed and NOT published ({}); no route exists until the engine \
+                     holds the port",
+                    problem.as_str()
+                ));
+                host.set_problem(Some(problem));
+            }
         }
-        Ok(false) => { /* a stand-down won the race and already said so */ }
-        Err(problem) => {
-            engine::log_line(format_args!(
-                "host mode armed and NOT published ({}); no route exists until the engine \
-                 holds the port",
-                problem.as_str()
-            ));
-            host.set_problem(Some(problem));
-        }
+    } else {
+        engine::log_line(format_args!(
+            "host mode armed without a tailnet identity ({}); same-network access only, on the \
+             configured interface, port {port}",
+            tailnet_problem.map(Problem::as_str).unwrap_or("unknown"),
+        ));
     }
     host.refresh_tray_line();
     Ok(host.state_json(autostart_enabled(&app)))
@@ -1270,8 +1459,9 @@ fn stand_down<R: tauri::Runtime>(
 
     if let Some(path) = host.settings_path.as_deref() {
         let port = host.port.lock().expect("host port").unwrap_or(1);
-        // The port survives a disarm so re-arming offers the same one back.
-        config::write_host(path, &config::HostSettings { enabled: false, port })?;
+        // The port and the LAN choice survive a disarm so re-arming offers the same ones back.
+        let lan = host.lan.lock().expect("host lan").clone();
+        config::write_host(path, &config::HostSettings { enabled: false, port, lan })?;
     }
     Ok(withdraw.err())
 }

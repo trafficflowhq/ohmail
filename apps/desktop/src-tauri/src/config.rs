@@ -433,12 +433,18 @@ pub fn remove(path: &Path) -> Result<(), String> {
 /// What the host-mode file is called inside the app's data directory.
 pub const HOST_FILE_NAME: &str = "host.json";
 
-/// The persisted host-mode setting: whether it is armed, and the loopback port the engine's
-/// host door binds (which is also the target `tailscale serve` proxies to).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The persisted host-mode setting: whether it is armed, the loopback port the engine's
+/// host door binds (which is also the target `tailscale serve` proxies to), and — when the
+/// operator chose one — the LAN interface address the engine ALSO binds for same-network
+/// access without Tailscale (API-only; the engine's `host-lan.ts` carries the decision).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostSettings {
     pub enabled: bool,
     pub port: u16,
+    /// The chosen LAN address, verbatim — the ENGINE validates it (`resolveLanBind`) and a
+    /// garbage value degrades the LAN half over there with a logged reason. `None` is off,
+    /// which is the default: same-network access is opt-in on top of host mode's own opt-in.
+    pub lan: Option<String>,
 }
 
 /// Read the host-mode setting. Absent, unreadable, malformed, or carrying port 0 all read as
@@ -462,7 +468,18 @@ pub fn read_host(path: &Path) -> Option<HostSettings> {
     if port == 0 || port > u16::MAX as u64 {
         return None;
     }
-    Some(HostSettings { enabled, port: port as u16 })
+    // The LAN choice: absent and null are OFF (every file written before the option existed); a non-empty string
+    // travels verbatim for the engine to judge; anything else refuses the whole file — the same
+    // rule as `enabled`, because a hand-edited value this cannot read must not be half-honoured.
+    let lan = match map.get("lan") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+        }
+        _ => return None,
+    };
+    Some(HostSettings { enabled, port: port as u16, lan })
 }
 
 /// Write the host-mode setting. Same discipline as {@link write}: the directory is created if it
@@ -476,6 +493,7 @@ pub fn write_host(path: &Path, settings: &HostSettings) -> Result<(), String> {
     let body = serde_json::to_vec_pretty(&serde_json::json!({
         "enabled": settings.enabled,
         "port": settings.port,
+        "lan": settings.lan,
     }))
     .map_err(|err| format!("the host-mode setting could not be encoded ({err})"))?;
     fs::write(path, &body).map_err(|err| format!("{} could not be written ({err})", path.display()))?;

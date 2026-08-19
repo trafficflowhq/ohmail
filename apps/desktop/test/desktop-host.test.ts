@@ -63,6 +63,9 @@ const A_STATE = {
   enabled: true,
   port: 3311,
   origin: "https://mac.tail1234.ts.net",
+  // The same-network half: the chosen address and its own closed state, null when off.
+  lan: null,
+  lanState: null,
   state: "serving",
   problem: null,
   autostart: true,
@@ -83,7 +86,7 @@ describe("the command bindings", () => {
     expect(asked).toEqual([
       { command: "host_state" },
       { command: "tailscale_status" },
-      { command: "tailscale_serve_arm", payload: { port: 3311, autostart: true } },
+      { command: "tailscale_serve_arm", payload: { port: 3311, autostart: true, lan: null } },
       { command: "tailscale_serve_disarm" },
       { command: "autostart_get" },
       { command: "autostart_set", payload: { enabled: false } },
