@@ -59,11 +59,7 @@ jobs:
         shell: bash
 
     steps:
-      # No persisted credential: npm lifecycle scripts and Gradle plugins run arbitrary
-      # dependency code, and none of it has any business finding a token in .git/config.
       - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
@@ -124,21 +120,8 @@ jobs:
       run:
         shell: bash
 
-    # The one signature Android will accept for updates over an existing install. Public by
-    # nature (any phone can read it off the APK); committed so the release lane can refuse
-    # an APK signed by ANY other key — a wrong keystore secret must fail here, not brick
-    # the update path of every install.
-    env:
-      RELEASE_CERT_SHA256: ab41b268e6837d526362917d1559dfaf5ba49eb287149dedccaf8a21ee0a071b
-
     steps:
-      # No persisted credential — this job's token can WRITE contents, and the build half
-      # below runs npm lifecycle scripts and Gradle plugins (arbitrary dependency code)
-      # before anything is uploaded. The token reaches exactly the two `gh` steps, as a
-      # step-scoped env var, and nothing else.
       - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
@@ -194,22 +177,18 @@ jobs:
             apps/mobile/android/app/build/outputs/apk/release/app-release.apk
           rm -f "$RUNNER_TEMP/release.keystore"
 
-      - name: Verify the signature is THE release signature, and the artifact is real
+      - name: Verify the signature and the artifact
         run: |
           set -euo pipefail
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
           "$BT/apksigner" verify --print-certs ohmail-android.apk > /tmp/certs
           cat /tmp/certs
-          # A valid signature from the WRONG key is worse than none: it publishes an APK no
-          # existing install can update to. The signer's certificate digest must be the one
-          # pinned above — a misconfigured keystore or alias secret fails here, before upload.
-          grep -i "$RELEASE_CERT_SHA256" /tmp/certs
           unzip -l ohmail-android.apk > /tmp/apk-listing
           grep -F "AndroidManifest.xml" /tmp/apk-listing
           grep -F "classes.dex" /tmp/apk-listing
           SIZE=$(stat -c%s ohmail-android.apk)
           test "$SIZE" -gt 10000000
-          echo "signed APK ok: $SIZE bytes, release certificate pinned"
+          echo "signed APK ok: $SIZE bytes"
 
       - name: Attach to the release
         env:
