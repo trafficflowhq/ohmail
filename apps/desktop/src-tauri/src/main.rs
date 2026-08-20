@@ -130,6 +130,12 @@ fn main() {
             // close hid the window (and withdrew the dock icon), this activation is the OTHER
             // way back in beside the tray, and the only one left if the tray failed to build.
             // Showing an already-visible window is a no-op, so this needs no armed check.
+            //
+            // cfg'd to macOS because `RunEvent::Reopen` IS: tauri compiles the variant out of
+            // the enum everywhere else, so an unguarded match arm is a compile error on
+            // Windows and Linux — not a dead branch. The event cannot fire off macOS (no dock),
+            // so the guard removes nothing those platforms ever had.
+            #[cfg(target_os = "macos")]
             if matches!(&_event, tauri::RunEvent::Reopen { .. }) {
                 host::show_main_window(_app);
             }

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Belt to the door's braces: the real policy is the header the engine's static handler
+         serves (apps/sidecar/src/host-static.ts → HOST_CLIENT_CSP), and this is the same policy
+         minus `frame-ancestors`, which a <meta> element is specified to ignore. The header
+         carries it. NO inline script exists in this document, and none may be added — the /pair
+         landing reads a credential out of location.hash, and `script-src 'self'` refusing every
+         inline block is the mitigation that guards it. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-src 'self'; worker-src 'none'; manifest-src 'self'; media-src 'self'" />
+    <!-- Relative, so vite bundles it as a hashed asset; the phone's /favicon.ico probe would
+         otherwise 404 into its console. Same file the installers use. -->
+    <link rel="icon" type="image/png" href="./src-tauri/icons/32x32.png" />
+    <title>ohmail</title>
+  </head>
+  <body class="mo-canvas app-body">
+    <div id="root"></div>
+    <script type="module" src="/src/host-client/main.tsx"></script>
+  </body>
+</html>
