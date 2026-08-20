@@ -174,7 +174,7 @@ takes a minute and no command line:
 
 Each person gets their own account: their own sign-in, their own mail.
 The Invites page lists the invites still open and lets you revoke one that
-went astray — a revoked or expired link simply stops working, and you make
+went astray — a revoked or expired link stops working, and you make
 a new one. Treat an invite link like a key to the house: send it over a
 channel you trust, because opening it is all it takes to claim the account.
 

@@ -23,7 +23,7 @@ browser features it uses (secure cookies, passkeys) do not exist on plain
 so an Umbrel install needs two things most Umbrel apps don't:
 
 1. **A domain name** pointing at your home's public IP address —
-   `mail.yourfamily.example`. A dynamic-DNS name works if your home IP
+   `mail.yourhome.example`. A dynamic-DNS name works if your home IP
    changes.
 2. **One port forwarded on your router:** outside port 443 to your Umbrel's
    address, port 443. The app obtains and renews its TLS certificate itself
@@ -57,7 +57,7 @@ The app keeps its settings in one file in its data directory,
 
 ```sh
 nano ~/umbrel/app-data/ohmail-server/env/settings.env
-# set:  OHMAIL_ORIGIN=https://mail.yourfamily.example
+# set:  OHMAIL_ORIGIN=https://mail.yourhome.example
 ```
 
 then restart the ohmail app from the Umbrel dashboard.
@@ -90,7 +90,7 @@ block (`docker logs --tail 60 ohmail-server_api_1`).
 > **[screenshot placeholder: the FIRST-RUN SETUP block in the Umbrel log
 > viewer]**
 
-Then open `https://mail.yourfamily.example` in a browser. A fresh server
+Then open `https://mail.yourhome.example` in a browser. A fresh server
 greets you with its setup page (also directly at `/setup`): paste the token,
 choose your email address, name and password, and the page creates the first
 account and walks straight on — second factor, recovery codes, first
