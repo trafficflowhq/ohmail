@@ -70,6 +70,12 @@ concurrency:
 jobs:
   feeds:
     name: sign + publish latest.json and appcast-macos.xml
+    # Desktop releases only. An Android release (android-v*) attaches an APK and
+    # no desktop binaries, so running here could only fail — and a red run on
+    # every phone release teaches people to ignore this workflow's failures,
+    # which are the ones that strand updaters. A manual dispatch names its tag
+    # on purpose and always runs.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
     # macOS, because Sparkle's sign_update is a macOS binary; the Tauri minisign
     # step runs here too, so both feeds are produced from one asset download.
     runs-on: macos-15
