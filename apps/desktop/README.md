@@ -14,8 +14,11 @@ of the reading below.**
 - **The engine-bearing app**, which is what the releases ship on all three
   platforms. It carries the mail engine and its own Node runtime as resources,
   speaks IMAP to your own server, and grants the window a small, named set of
-  commands over a bridge — the engine, one notification, the badge, and a fixed
-  table of pages it may hand to your browser. The webview still reaches the
+  commands over a bridge — the engine, one notification, the badge, a fixed
+  table of pages it may hand to your browser, opening a clicked link or an
+  attachment outside the app, and host mode's shell controls (state, the
+  Tailscale probe and serve, start-at-login). The full list is
+  `WINDOW_COMMANDS` in `src-tauri/build.rs`. The webview still reaches the
   network through nothing of its own.
 
 Set the halves together or they disagree; `npm run app:build:engine` is the one
@@ -361,7 +364,7 @@ verification; the cost was a second data directory for the same mailbox and an
 update path that could never hand over between them, which is a permanent fork in
 every path the app touches in exchange for a convenience while testing.
 
-The version is **`0.9.8`**, bare, in every place it is written: `tauri.conf.json`,
+The version is **`0.10.0`**, bare, in every place it is written: `tauri.conf.json`,
 `Cargo.toml`, `Cargo.lock`, `package.json`, and the macOS `Info.plist`. The
 `-preview` suffix earlier builds carried is retired — it marked "this build
 cannot update itself yet", and this build ships the auto-updater, so the claim is
@@ -380,7 +383,7 @@ identifier and updated through Sparkle, which compares a feed's version against
 the installed `CFBundleVersion` — so a bundle announcing `0.8.0` there would be
 read as a downgrade from a four-digit build number, and every installed copy
 would report itself up to date for ever. Nothing a person sees uses it:
-`CFBundleShortVersionString` is `0.9.8` and is what the app and every download
+`CFBundleShortVersionString` is `0.10.0` and is what the app and every download
 page show. The floor is asserted in `release-feeds.yml`, so a plist that loses
 the key fails the release instead of stranding the installs it protects.
 

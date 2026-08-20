@@ -18,7 +18,7 @@ source, AGPL-3.0, no account.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
 [![GitHub stars](https://img.shields.io/github/stars/trafficflowhq/ohmail?style=flat&label=%E2%98%85&color=a3461c)](https://github.com/trafficflowhq/ohmail/stargazers)
-[![latest release](https://img.shields.io/badge/download-v0.9.8-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
+[![latest release](https://img.shields.io/badge/download-v0.10.0-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
 [![licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -91,6 +91,52 @@ with the sender's original one click away.
 <sub>Every frame above is the shipped interface over the built-in demo mailbox
 — fictional people, fictional brands, zero network. It is the same demo you can
 open at [ohmail.app/demo](https://ohmail.app/demo).</sub>
+
+## Your settings live in your mailbox, and move with it
+
+The senders you've screened in, your rules, your notification choices, your
+away reply and your tag names are stored **in the mailbox itself** — a few
+kilobytes of versioned JSON in the hidden `ohmail/_meta` folder, written by
+whichever organizer is active. Connect the same mailbox from a desktop
+install, from [ohmail Cloud](https://ohmail.app) or from a server you run, and
+ohmail finds them and asks first: *"We found your ohmail settings on this
+mailbox."* No export step, no transfer flow, no account linkage — switching
+how you run ohmail is reconnecting a mailbox, not migrating a product.
+
+And if you stop using ohmail entirely, those decisions are still yours: in
+your own mailbox, in a published format anything can parse —
+[docs/organizer-profile.md](docs/organizer-profile.md) is the specification.
+Rules that live in a SaaS die with the subscription; these don't. Exactly what
+travels today: screener verdicts, rules, notification rules, the away
+responder and tag names — the settings you made, never credentials, never
+keys.
+
+## Host your own devices from your desktop
+
+Since 0.10.0, a desktop install that organizes your own mailbox can serve it
+to your other devices: **Settings → Devices**, one switch. Your phone's
+browser then opens the same client this repository builds — your Ohbox, your
+Screener, reading and filing real mail — through your own computer, while it
+is awake. No cloud in the path, and nothing opened to the internet: the engine
+listens on this computer only, and [Tailscale](https://tailscale.com) — a free
+private tunnel between your own devices — carries it to your phone under a
+real HTTPS address. The pane detects whether Tailscale is installed and
+running and walks you through what's missing, in plain words.
+
+Adding a device is a QR code: scan it with the device's camera, and it opens
+your mail and pairs in one step. Each code works once and expires in five
+minutes; every paired device is listed and can be removed at any moment, and
+removing one cuts it off with its next request. Relaunching or updating the
+desktop app does not unpair anything. When host mode is on, closing the window
+hides the app instead of quitting it — the tray brings it back — and the
+enable step offers start-at-login as a visible choice, not a hidden default.
+Turned off, none of this machinery exists: no listener, no tray, the same app
+0.9.x was.
+
+For devices on the same network there is also a plain-HTTP door you can opt
+into — for apps and API clients, not for phone browsers, which require HTTPS
+and use the Tailscale address. It binds one address you choose, never all of
+them.
 
 ## Also in the box
 
@@ -210,8 +256,10 @@ ohmail/
 `_meta` also holds your ohmail settings for this mailbox — the senders you've
 screened in, your rules, notification choices, away reply and tag names — as a
 small versioned-JSON message, so they live in your mailbox rather than in any
-ohmail database. The format is documented in the source
-(`packages/core/src/adapters/organizer-profile.ts`); deleting the message only
+ohmail database and move with it (see "Your settings live in your mailbox"
+above). The format is specified in
+[docs/organizer-profile.md](docs/organizer-profile.md) and implemented in
+`packages/core/src/adapters/organizer-profile.ts`; deleting the message only
 resets ohmail's settings, never your mail.
 
 There is no folder called "Spam" — the pile ohmail sets junk-grade mail aside
@@ -221,7 +269,11 @@ over it.
 **Cloud mode** — optional: the same app can instead sign in to
 [ohmail Cloud](https://ohmail.app), the hosted service, and act as a viewer of
 a mailbox Cloud organizes on a machine that does not sleep — which is what
-push, mobile and screening-while-your-laptop-is-shut require. It is a
+push, mobile and screening-while-your-laptop-is-shut require. If you have a
+machine of your own that stays awake, host mode (above) gives your other
+devices the same mailbox without Cloud — push notifications are the one job
+that still needs Cloud. Cloud is for when the always-on machine should be
+ours rather than yours. It is a
 commercial service built from the server source in this repository (see
 "What's in this repository" below — only the billing machinery is separate);
 the desktop app neither asks for it nor needs it, and the choice is made in
@@ -244,7 +296,7 @@ documentation link inside an error message, Microsoft's WebView2 download page
 `apps/desktop/README.md` goes through them one by one. The rest — every string
 that names ohmail or TrafficFlow — is a short list CI spells out entry by entry
 and **fails the run** on anything outside it: the pinned update feed,
-`https://api.ohmail.app` (contacted only after you sign in to Cloud), and four
+`https://api.ohmail.app` (contacted only after you sign in to Cloud), and five
 `ohmail.app` pages the app may hand to your own browser. Your mail server never
 appears in that list and cannot: it is not compiled in, it is whatever you
 typed, held in your own configuration file.
@@ -363,10 +415,15 @@ the window talks to over a private pipe — no port, no socket, no listener.
 is `connect-src 'none'`, so `fetch`, XHR and WebSocket are refused before they
 are attempted. In the interface-only build the main window's capability list
 is literally empty (`"permissions": []`). In the build you download, the
-window can call six commands and nothing else: the bridge to the mail engine,
-a notification, and the icon's badge. Mail does not travel over the network
-from the page — it travels down a pipe to a process on the same machine. The
-engine holds the IMAP connection; the page holds no credential.
+window can call sixteen commands and nothing else, every one declared in
+`src-tauri/build.rs`: the bridge to the mail engine, a notification and the
+icon's badge, opening a link or an attachment outside the app (validated by
+the shell, never fetched by the page), and host mode's controls — reading its
+state, probing and arming Tailscale, start-at-login, and opening Tailscale's
+download page as one more fixed address the shell owns. Mail does not travel
+over the network from the page — it travels down a pipe to a process on the
+same machine. The engine holds the IMAP connection; the page holds no
+credential.
 
 Every colour, radius and spacing step comes from `packages/tokens`; the
 interface sources under `apps/webapp/app/` and `packages/ui` are the same ones

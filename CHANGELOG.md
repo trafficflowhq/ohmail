@@ -16,6 +16,97 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.10.0] — 2026-08-20
+
+Two additions with one idea between them: what's yours stays with you. Your other
+devices can now read your mailbox through your own computer instead of through
+anyone's cloud, and the decisions you make — who gets in, where mail files — now
+live in the mailbox itself and travel with it.
+
+### Host mode: your computer serves your other devices
+
+**Settings → Devices turns a desktop install into the host for your other
+devices.** Your phone's browser opens the same ohmail client through your own
+computer — the Ohbox, the Screener, reading and filing real mail — while that
+computer is awake. It works over [Tailscale](https://tailscale.com), a private
+tunnel between your own devices: the mail engine listens on this computer only,
+never on a network interface, and Tailscale carries the connection under a real
+HTTPS address. Nothing is opened to the internet, and the pane refuses the
+public-funnel variant structurally. The pane detects what is missing — Tailscale
+not installed, not running, signed out, unnamed — and says what to do in plain
+words instead of an error code.
+
+**Adding a device is a QR code.** Scan it with the device's camera and it opens
+your mail and pairs in one step. Every code works once and expires in five
+minutes; unused codes and paired devices are listed and revocable at any moment,
+and a removed device is cut off with its next request. Relaunching or updating
+the desktop app does not unpair anything — paired sessions survive on purpose,
+and a test holds that promise.
+
+**While hosting, the app stays out of the way.** Closing the window hides the
+app (the tray brings it back; on macOS the Dock icon does too), quitting from the
+tray really quits, and the enable step offers start-at-login as a visible,
+pre-checked choice rather than a hidden default. With host mode off, none of this
+machinery exists — no listener, no tray, the exact lifecycle earlier releases
+had.
+
+**A same-network door, for apps rather than browsers.** Devices on your own
+network can opt into a plain-HTTP address for API clients. It binds one address
+you choose — never all interfaces — and the pane says plainly why a phone
+browser still needs the Tailscale address: browsers require HTTPS for a network
+address.
+
+### Your settings live in the mailbox
+
+**The senders you've screened in, your rules, notification rules, away reply and
+tag names are stored in the mailbox itself** — a few kilobytes of versioned JSON
+in the hidden `ohmail/_meta` folder, beside the marker that already coordinates
+which ohmail organizes the mailbox. Connect the same mailbox from another ohmail
+— a fresh desktop install, the hosted service, a server you run — and it finds
+them and asks before importing. Your local decisions are never overwritten
+silently: the found settings win only for the entries they actually name, and
+you can decline durably.
+
+The format is public and documented in
+[docs/organizer-profile.md](docs/organizer-profile.md): natural keys only
+(sender addresses, folder names, tag names — never database ids), unknown fields
+tolerated so builds of different ages can read each other's documents, and never
+any credential or key. Deleting the message only resets ohmail's settings, never
+your mail. If you stop using ohmail, the document is still yours, in your own
+mailbox, readable by anything that parses JSON.
+
+### The Screener
+
+**"Not spam" now releases the sender, not just the message.** When mail sat in
+spam because a rule you once made held the sender there, the release buttons
+moved the messages but left the rule standing — so the same sender's mail kept
+re-presenting as spam, and mail physically in the inbox appeared to do nothing
+at all. Releasing a sender now retargets or deletes the rule that holds them,
+moves only the mail that is physically present, and re-files the sender's
+backlog. The confirmation names the rule it rewrote, so what happened is what
+the screen says happened.
+
+### Fixes
+
+- **A failed permission-tightening on the configuration file is an error, not a
+  silent success.** The config and host-mode files are set to owner-only after
+  every write — they name your mail server and username — but a failed chmod
+  used to be discarded. It now surfaces the way the key file's always has.
+- **The public tree compiles on Windows and Linux again.** A macOS-only window
+  event reached a match arm without a platform guard, which broke `cargo test`
+  for anyone building this repository on the other two platforms. The served
+  host client's entry document also joins the repository — it was missing, so
+  the engine-bearing app could not be built from a clone.
+
+### The licence
+
+This repository is **AGPL-3.0** now (0.9.x shipped under GPL-3.0), and it grew:
+the server source behind ohmail.app — the sync API, the background organizer,
+the web client and the self-host deployment — lives here beside the desktop app.
+Anyone can run it; anyone who redistributes a changed version or hosts it as a
+service for others must publish their changes under the same terms.
+Contributions need no CLA — a DCO sign-off (`git commit -s`) is enough.
+
 ## [0.9.8] — 2026-08-15
 
 **0.9.7 quits a few seconds after you open it, on every platform, every launch. This
@@ -1994,7 +2085,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.9.8...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.10.0
 [0.9.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.8
 [0.9.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.7
 [0.9.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.6
