@@ -1085,7 +1085,12 @@ a.btn {
   font-weight: 550;
   color: var(--ink);
 }
-.l-pt-ic {
+/* The check STAYS an `ic` — it is a stroke drawing like every other mark here. Only its
+   size and weight are local decisions, and a bare `.l-pt-ic` (0,1,0) loses both to `svg.ic`
+   (0,1,1) in the base layer — the 13px/1.8 check was rendering at the reset's 15px/1.3.
+   Scoped to the list so it outranks the reset on class count rather than on import order,
+   which is not something this file can depend on. Same trap as `.l-star-ic` above. */
+.l-points .l-pt-ic {
   width: 13px;
   height: 13px;
   stroke-width: 1.8;
@@ -1905,7 +1910,9 @@ a.btn {
   font-weight: 550;
   padding-left: 21px;
 }
-.l-cmp-ic {
+/* Same trap as `.l-pt-ic`: the check keeps `ic`, and its 13px/1.8 needs the cell's class
+   in front of it to outrank the base reset on class count. */
+.l-cmp-cell .l-cmp-ic {
   position: absolute;
   left: 0;
   top: 4px;
@@ -1979,7 +1986,9 @@ a.btn {
   .l-cmp-cell.is-us {
     padding-left: 0;
   }
-  .l-cmp-ic {
+  /* `display` never conflicted with the reset, but one icon gets one selector — a bare
+     `.l-cmp-ic` surviving here is the pattern the guard test forbids. */
+  .l-cmp-cell .l-cmp-ic {
     display: none;
   }
   .l-cmp-who {
