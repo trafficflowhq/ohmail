@@ -683,13 +683,16 @@ export function AppShell({
    */
   desktopSection?: { label: string; node: ReactNode };
   /**
-   * SETTINGS → DEVICES — the desktop app's host mode, injected. Serve this install's mail to the
-   * user's other devices over their own tailnet, pair a phone with a QR, revoke a pairing.
+   * SETTINGS → DEVICES — pairing this account's mail onto other devices, injected in whichever
+   * shape the host has: the desktop's host mode (serve this install's mail over the user's own
+   * tailnet, gated by the desktop gate to the standalone door), or the Cloud client's
+   * server-side ceremony (mint a pairing QR, list and revoke the signed-in devices, gated on
+   * `/hello` announcing `features.pairing`).
    *
-   * The same seam as {@link desktopSection} and gated one step tighter by the HOST, not here:
-   * the desktop gate wires it only on the standalone door, because host mode publishes the
-   * mailbox THIS computer opens. Absent everywhere else — every browser tab, the hosted door,
-   * the demo — so the nav entry cannot exist where the shell behind it could not serve.
+   * DEMO-MASKED below like the other account panes, and no longer exempt: the exemption's
+   * premise ("a browser tab passes nothing") ended when the Cloud client grew its node, and an
+   * unmasked seam let `?demo=1` grow the ONE account pane whose every verb mints or revokes a
+   * real credential.
    */
   devicesSection?: ReactNode;
   /**
@@ -5032,10 +5035,18 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    above are gated would remove the pane from the only surface that has one. A
                    browser tab passes nothing, so `?demo=1` on the web still has no such pane. */
                 desktopSection={desktopSection}
-                /* Same posture as `desktopSection`, one seam over: the pane is about this
-                   INSTALL's role, the HOST decides where it exists (the desktop gate wires it
-                   only on the standalone door), and a browser tab passes nothing. */
-                devicesSection={devicesSection}
+                /* DEMO-MASKED, unlike `desktopSection` directly above — and this line used to
+                   read `devicesSection={devicesSection}` with a comment whose premise ("a
+                   browser tab passes nothing") the Cloud Devices pane retired. Measured on
+                   production: with the seam unmasked, `?demo=1` in a signed-in browser grew a
+                   Devices entry — the one account pane that leaked — and opened onto the REAL
+                   device list with a live mint verb, every verb a cookie-authenticated
+                   credential mutation inside a UI that promises fixtures and zero network. The
+                   Cloud host also gates its node on the same flag (`useDevicePairing(demo)`),
+                   so this mask is the shared shell's own guarantee, not the only one. The
+                   desktop is unaffected: its gate wires the pane only on the standalone door
+                   with an engine behind it, which is never a `demo` render. */
+                devicesSection={demo ? undefined : devicesSection}
                 /* Same rule: `?demo=1` has no session, so "connect a mailbox" there would
                    be a form posting to a server this tab is not talking to. The demo keeps
                    the fixture list, which is the honest thing for it to show. */

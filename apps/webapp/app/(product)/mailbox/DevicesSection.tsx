@@ -54,10 +54,23 @@ import { QrCode } from "../../shell/QrCode";
  * learns a ceremony's presence from the descriptor, never from a 404 mid-flow. `false` while
  * the answer is pending: a nav entry appearing a beat after mount is cheaper than one that
  * appears instantly and opens onto refusals.
+ *
+ * ── `demo` IS THE FIRST WORD, AND IT ENDS THE QUESTION ────────────────────────────────────
+ *
+ * In the demo the answer is a constant `false` and NO `/hello` round trip is ever paid.
+ * Before this parameter existed, a signed-in browser's `/?demo=1` paid that round trip (the
+ * demo promises zero fetches), grew a Devices entry in the demo's Settings nav — the ONE
+ * account pane that leaked, every sibling being demo-masked in `AppShell` — and the opened
+ * pane rendered the account's REAL device list inside the fixtures UI, with a live mint verb
+ * beside it. Every verb here is a cookie-authenticated credential mutation, which is exactly
+ * what a fixtures world must not be able to reach. The flag is the same authoritative `demo`
+ * the shell masks its other account panes by (`CloudShell` forwards its own prop), and
+ * `AppShell` withholds the seam under the same flag as defense in depth.
  */
-export function useDevicePairing(): boolean {
+export function useDevicePairing(demo: boolean): boolean {
   const [pairing, setPairing] = useState(false);
   useEffect(() => {
+    if (demo) return;
     let alive = true;
     void serverHello().then((h) => {
       if (alive) setPairing(h?.features?.pairing === true);
@@ -65,7 +78,7 @@ export function useDevicePairing(): boolean {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [demo]);
   return pairing;
 }
 
@@ -87,8 +100,13 @@ export function DevicesSection() {
   const [codes, setCodes] = useState<PairingTokenDTO[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
-  /** The one appearance of a raw token, dressed as the link it is scanned or typed as. */
-  const [minted, setMinted] = useState<{ link: string; label: string } | null>(null);
+  /**
+   * The one appearance of a raw token, dressed as the link it is scanned or typed as. `id` is
+   * the same row the list below shows, kept so the display retires WITH the row: revoking the
+   * just-minted code from the list must take the QR and the typed-entry link down too — a dead
+   * credential left on screen reads as usable while every redemption of it refuses.
+   */
+  const [minted, setMinted] = useState<{ id: string; link: string; label: string } | null>(null);
   const [labelDraft, setLabelDraft] = useState("");
   /** The device whose sign-out is awaiting confirmation, or `null`. */
   const [removing, setRemoving] = useState<string | null>(null);
@@ -155,7 +173,7 @@ export function DevicesSection() {
       if (!alive.current) return;
       // The link, assembled ONCE, here — the frozen fragment idiom. See the module header for
       // why the origin is the API's and why the token rides the fragment.
-      setMinted({ link: `${pairOrigin()}/pair#${out.token}`, label: out.label });
+      setMinted({ id: out.id, link: `${pairOrigin()}/pair#${out.token}`, label: out.label });
       setLabelDraft("");
       await refresh();
     });
@@ -170,6 +188,11 @@ export function DevicesSection() {
         if (!(err instanceof ApiError && err.status === 404)) throw err;
       }
       if (!alive.current) return;
+      // The display retires with its row: if the code being revoked is the one whose QR and
+      // typed-entry link are still up, they come down in the same act — keyed on the row's own
+      // id (a functional update against the stale-closure race), so revoking an OLDER code
+      // never takes a live display with it.
+      setMinted((cur) => (cur && cur.id === id ? null : cur));
       toast(t("revoked"));
       await refresh();
     });
