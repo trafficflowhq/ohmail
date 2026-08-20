@@ -46,16 +46,24 @@ function sessionMinter(deps: ApiDeps): PairedDeviceSessionMinter {
 
 /**
  * THE PAIRING CEREMONY (`/pair*`) — the MINT/LIST/REVOKE are mounted by `routes/self-host.ts`
- * and by NOTHING ELSE; the anonymous REDEEM is carved into its own export below, because the
- * desktop-host door (`routes/desktop-host.ts`) mounts the redeem and only the redeem — its mint
- * lives on the desktop's stdio door, where the machine's own login is the step-up.
+ * and, since the managed device-pairing slice, by the HOSTED table (`routes/index.ts`); the
+ * anonymous REDEEM is carved into its own export below, because the desktop-host door
+ * (`routes/desktop-host.ts`) mounts the redeem and only the redeem — its mint lives on the
+ * desktop's stdio door, where the machine's own login is the step-up.
  *
- * Not on the hosted table, any of it: an invite redeem there would mint a registration that
- * bypasses the billing funnel. Not on the local table: the single-user engine mints one session
- * per launch and has nobody to invite. `/hello`'s `features.pairing` is what makes the
- * not-mounting safe — a client learns the ceremony's absence from the descriptor, never from a
- * 404 mid-flow — and the composition censuses in `hello.test.ts` and `desktop-host.test.ts`
- * prove the four tables hold exactly what this paragraph claims.
+ * What each composition may mint and redeem is decided by ONE bag member, `services.inviteRedeem`
+ * — never by a variant handler. The hosted deployment wires none, so on it the ceremony is
+ * DEVICE-PAIR ONLY in both directions: the invite REDEEM refuses (the original argument stands —
+ * an invite redeem there would mint a registration that bypasses the billing funnel), and the
+ * invite MINT refuses symmetrically in the handler below, because a grant a composition cannot
+ * redeem must not be mintable on it — the minted credential would be dead on arrival, discovered
+ * at redeem time by whoever it was handed to, which is the inverse of the honest-404 contract
+ * `/hello` exists to keep. The standalone server wires the real bridge and keeps both grants.
+ * Still not on the local table: the single-user engine mints one session per launch and has
+ * nobody to invite. `/hello`'s `features.pairing` is what makes each mount honest — a client
+ * learns the ceremony's presence or absence from the descriptor, never from a 404 mid-flow —
+ * and the composition censuses in `hello.test.ts`, `pair-hosted.test.ts` and
+ * `desktop-host.test.ts` prove the four tables hold exactly what this paragraph claims.
  *
  * The lifecycle, the bounds and the redeem semantics live in `packages/services/src/pairing.ts`;
  * this module is transport. Authority:
@@ -90,6 +98,18 @@ const pairCeremonyRoutes: Route[] = [
     options: { stepUp: true },
     handler: async (req, deps) => {
       const b = await readObjectBody<{ grant?: unknown; label?: unknown; ttlSeconds?: unknown }>(req);
+      // THE COMPOSITION GUARD, keyed on the SAME bag member the redeem's invite arm refuses on:
+      // a composition that wires no invite bridge cannot redeem an invite, so it must not mint
+      // one — the token would be a dead credential, refused later in the hand of whoever it was
+      // given to. On the hosted table (which wires no `inviteRedeem`) this is what makes the
+      // mount device-pair only; on the standalone server the port is wired and this branch is
+      // never taken. The refusal is the redeem arm's exact sentence shape, so the two halves of
+      // one absence read as one fact.
+      if (b.grant === "invite" && !deps.services?.inviteRedeem) {
+        throw new ServiceError(
+          "validation_failed", 400, 'grant "invite" is not mintable on this server',
+        );
+      }
       // The casts carry wire input into the service, whose runtime whitelist and bounds are the
       // actual gate (`mintPairingToken` refuses an unknown grant and a non-integer ttl) — the
       // same division `readBody` already establishes for every other handler.
@@ -126,13 +146,15 @@ const pairCeremonyRoutes: Route[] = [
 ];
 
 /**
- * THE ANONYMOUS REDEEM, as its own export — the one member of the ceremony that mounts on TWO
- * tables: `routes/self-host.ts` (via {@link pairRoutes}, whole) and `routes/desktop-host.ts`
- * (this array alone). It is the same route OBJECT on both, so the burn semantics, the error
- * envelope and the no-cookie answer cannot fork between the standalone server and the desktop
- * host. What keeps the desktop mount honest is the dependency bag, not a variant handler: the
- * host door wires no `inviteRedeem`, so the invite arm refuses `validation_failed` there, and
- * its `services.auth` is the bare `SessionLifecycle`, which is all the device-pair arm needs.
+ * THE ANONYMOUS REDEEM, as its own export — one route OBJECT on THREE tables:
+ * `routes/self-host.ts` and `routes/index.ts` (each via {@link pairRoutes}, whole) and
+ * `routes/desktop-host.ts` (this array alone). Being the same object everywhere is what keeps
+ * the burn semantics, the error envelope and the no-cookie answer from forking between the
+ * standalone server, the hosted service and the desktop host. What keeps each mount honest is
+ * the dependency bag, not a variant handler: the desktop-host door and the hosted deployment
+ * wire no `inviteRedeem`, so the invite arm refuses `validation_failed` on both, and the
+ * desktop door's `services.auth` is the bare `SessionLifecycle`, which is all the device-pair
+ * arm needs (the hosted bag's full `AuthService` extends it).
  */
 export const pairRedeemRoutes: Route[] = [
   {
@@ -202,8 +224,9 @@ export const pairRedeemRoutes: Route[] = [
 ];
 
 /**
- * The whole ceremony — mint, list, revoke AND the redeem — for `routes/self-host.ts`, whose
- * table is this array's only mount. The members are the two arrays above, spread, so the
- * self-host mounts and the desktop-host redeem are the same objects and cannot drift.
+ * The whole ceremony — mint, list, revoke AND the redeem — for `routes/self-host.ts` and for
+ * the hosted table in `routes/index.ts` (the managed device-pairing mount). The members are the
+ * two arrays above, spread, so the self-host mounts, the hosted mounts and the desktop-host
+ * redeem are the same objects and cannot drift.
  */
 export const pairRoutes: Route[] = [...pairCeremonyRoutes, ...pairRedeemRoutes];

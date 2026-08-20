@@ -8,6 +8,7 @@ import { AboutSection } from "./AboutSection";
 import { AccountLocale } from "./AccountLocale";
 import { AiCreditNotice } from "./AiCreditNotice";
 import { BillingSection } from "./BillingSection";
+import { DevicesSection, useDevicePairing } from "./DevicesSection";
 import { InvitesSection, useUserInvites } from "./InvitesSection";
 import { SecuritySection } from "./SecuritySection";
 import { AccountSection } from "./AccountSection";
@@ -62,6 +63,17 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * on managed the Settings nav structurally cannot grow an Invites entry.
    */
   const userInvites = useUserInvites();
+
+  /**
+   * Does this server pair devices? ONE gate, the server's runtime `features.pairing` word —
+   * no compiled flavor arm, because BOTH flavors mount the device-pair ceremony (the managed
+   * table and the self-host table each spread the same `pairRoutes`; see `routes/index.ts`).
+   * `false` while `/hello` is pending or on an older server: no nav entry, never a dead pane.
+   * The DEMO flag rides in and settles the question first: a fixtures world pays no `/hello`
+   * round trip and grows no pane whose every verb mutates real credentials — the hook's own
+   * header carries the measured leak this closed.
+   */
+  const devicePairing = useDevicePairing(demo);
 
   const resolveOwner = useCallback(async (): Promise<string | null> => {
     try {
@@ -196,6 +208,9 @@ export function CloudShell({ demo }: { demo: boolean }) {
         /* SELF-HOST ONLY — see `userInvites` above. `undefined` (managed, an old server, the
            answer still pending) means no nav entry, never an empty pane. */
         invitesSection={userInvites ? <InvitesSection /> : undefined}
+        /* WHEREVER `/hello` says the server pairs devices — managed and self-host both, since
+           each mounts the device-pair ceremony. Same absence rule as the invites pane. */
+        devicesSection={devicePairing ? <DevicesSection /> : undefined}
         aboutSection={<AboutSection />}
         /* The Screener's AI-allowance line. The same seam again — it reads
            `GET /billing/subscription`, which `app/shell` may not call — and a FUNCTION because

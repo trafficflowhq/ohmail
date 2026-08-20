@@ -56,6 +56,16 @@ import { adminOAuthRoutes } from "./admin-oauth.js";
  * and not two; `mailbox-oauth.ts`'s header states why the callback cannot do the work (the
  * `SameSite=Strict` session cookie is withheld on a cross-site top-level navigation). */
 import { mailboxOAuthRoutes } from "./mailbox-oauth.js";
+/* THE PAIRING CEREMONY — mint/list/revoke (session + step-up) and the anonymous redeem. On this
+ * table it is DEVICE PAIRING and nothing else, enforced by the dependency bag rather than by a
+ * variant handler: the hosted deployment wires no `services.inviteRedeem`, so both invite arms
+ * refuse `validation_failed` (mint and redeem alike — see `pair.ts`'s header for why the two
+ * refusals are one fact). This mount is what lights the managed card in the mobile picker: the
+ * webapp's Devices pane mints a QR, the phone redeems `${origin}/pair#<token>` for a bearer
+ * pair, and `apps/api-vercel` flips `hello.features.pairing` to `true` in the same change. The
+ * redeem answers tokens in the BODY with zero `Set-Cookie` — a token shown on a screen must not
+ * be spendable into a browser session — pinned by the census in `pair-hosted.test.ts`. */
+import { pairRoutes } from "./pair.js";
 
 export { authRoutes } from "./auth.js";
 
@@ -198,7 +208,8 @@ export const waitlistRoutesGroup: Route[] = waitlistRoutes;
  * `POST /waitlist`, and the 6 admin reads.
  *
  * **The MEASURED length of this array is 143** (141 + the two admin WRITE routes,
- * `POST /admin/accounts/{suspend,resume}`) at the time that sentence was written; it is 159 now.
+ * `POST /admin/accounts/{suspend,resume}`) at the time that sentence was written; it is 169 now
+ * (the last four are the pairing ceremony's, mounted for managed device pairing).
  * Cloud 0009 added five: three for the Microsoft consent ceremony (`POST …/oauth/microsoft/start`,
  * `GET …/callback`, `POST …/complete`) and two for the admin registration surface
  * (`POST /admin/oauth/microsoft`, `…/save`).
@@ -223,6 +234,10 @@ export const apiRoutes: Route[] = [
   ...adminActionRoutes,
   ...adminOAuthRoutes,
   ...authRoutes,
+  // The pairing ceremony, directly after the auth surface it extends: `POST /pair` (ceremony,
+  // step-up), `GET /pair` (read), `DELETE /pair/:id` (ceremony, step-up), `POST /pair/redeem`
+  // (anonymous). Device-pair only in effect — the bag wires no invite bridge; see the import.
+  ...pairRoutes,
   ...syncRoutes,
   ...eventsRoutes,
   ...pushRoutes,

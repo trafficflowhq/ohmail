@@ -637,16 +637,18 @@ export function SettingsView({
    */
   desktopSection?: { label: string; node: ReactNode };
   /**
-   * THE DEVICES PANE — the desktop app's host mode: serve this install's mail to the user's
-   * other devices, pair a phone with a QR, see and revoke what is paired.
+   * THE DEVICES PANE — pairing this account's mail onto other devices, in whichever shape the
+   * surface behind it has: on the desktop it is host mode (serve THIS install's mail over the
+   * user's own network — tailscale probes, the arm/disarm ceremony, the stdio mint), and on the
+   * Cloud client it is the server-side ceremony (`POST /pair` device-pair mint → QR, the
+   * `GET /devices` list, the revoke).
    *
-   * The same injected-node seam as {@link invitesSection} and for the mirror-image reason: every
-   * verb in it is a call to the native shell (`tailscale` probes, the arm/disarm ceremony) or a
-   * request down the shell's pipe (the pairing mint, the device list), none of which this shared,
-   * browser-compiled file may name. Absent ⇒ no nav entry and no pane, structurally — which is
-   * every browser tab, and every desktop install that is not on the standalone door: host mode
-   * serves the mailbox THIS computer opens, so an install mirroring a hosted account has nothing
-   * to serve and is withheld rather than offered dead.
+   * The same injected-node seam as {@link invitesSection}, and it has to be one from both
+   * directions: the desktop node's every verb is a call to the native shell, the Cloud node's
+   * every verb goes through `app/api-client` — and neither may be named by this shared file.
+   * Absent ⇒ no nav entry and no pane, structurally — a desktop install on the hosted door has
+   * nothing local to serve, a browser tab against a server whose `/hello` does not announce
+   * `features.pairing` has nothing to mint, and each is withheld rather than offered dead.
    */
   devicesSection?: ReactNode;
   /**
@@ -719,10 +721,11 @@ export function SettingsView({
     // administration group because on that surface it IS the account: the door, the mailbox
     // and the sign-out live here rather than in the three panes below, which need a server.
     ...(desktopSection ? [["desktop", desktopSection.label] as [PaneId, string]] : []),
-    // DEVICES — the desktop host mode's pane, directly after the install it serves from. It sits
-    // here rather than with Mailboxes because it is about this INSTALL taking on a role (serving
-    // the user's other devices), not about a mailbox; present IFF the desktop shell wired it,
-    // which it does only on the standalone door. See {@link devicesSection}.
+    // DEVICES — pairing and the signed-in device list, in the account-administration group. On
+    // the desktop it sits directly after the install it serves from (host mode); on the Cloud
+    // client `desktopSection` is absent and it opens the group instead. Present IFF the shell
+    // wired it — the desktop's standalone door, or a Cloud client whose server announces
+    // `features.pairing`. See {@link devicesSection}.
     ...(devicesSection ? [["devices", t("devices")] as [PaneId, string]] : []),
     // Account administration. Only where there is something to bill: Desktop is free and standalone,
     // and a Subscription pane there would offer to sell what the tier already gives away.
@@ -743,8 +746,9 @@ export function SettingsView({
 
   /* WHICH PANE ACTUALLY RENDERS — the request, clamped to what THIS surface offers.
      `initialPaneFromUrl` validates `?settings=<pane>` against the GLOBAL id list, but which panes
-     exist is a per-surface fact: `devices` only on the desktop's standalone door, `desktop` never
-     in a browser tab, `invites` only behind the self-host gate. A request for an unoffered pane
+     exist is a per-surface fact: `devices` only where a shell wired one (the desktop's standalone
+     door, or a Cloud client whose server pairs), `desktop` never in a browser tab, `invites` only
+     behind the self-host gate. A request for an unoffered pane
      used to render an empty content column — a blank settings screen with no pane lit. Clamped at
      RENDER rather than in state, deliberately: panes can arrive a beat after mount (Invites
      appears once `/hello` answers), and a state clamp would strand a deep link that was about to

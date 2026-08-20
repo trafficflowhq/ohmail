@@ -33,8 +33,10 @@ import { proposalsRoutes } from "./proposals.js";
 // The alert driver. Both routes are shared-secret guarded and answer 404 on a host that
 // injects no `deps.alerts`, which is every install until its operator arms one.
 import { internalRoutes } from "./internal.js";
-// The pairing ceremony — mint/list/revoke (session + step-up) and the anonymous redeem. This
-// table is its ONLY mount; see `pair.ts` for why the hosted and local tables must not carry it.
+// The pairing ceremony — mint/list/revoke (session + step-up) and the anonymous redeem. The
+// hosted table mounts the same array since the managed device-pairing slice (device-pair only
+// in effect there — its bag wires no invite bridge); this table alone keeps BOTH grants,
+// because `apps/server` wires `inviteRedeem`. See `pair.ts` for the whole mount map.
 import { pairRoutes } from "./pair.js";
 
 /**
@@ -64,8 +66,10 @@ import { pairRoutes } from "./pair.js";
  * everything a multi-user server with real sign-in needs: the full auth surface including the
  * device list, Microsoft 365 onboarding, attachment staging (this deployment owns object
  * storage), account erasure, consent, the per-account AI switch, the AI-proposal reads, the
- * alert driver, and the pairing ceremony (`/pair*` — its ONLY mount; see `pair.ts` for why the
- * hosted and local tables must not carry it). `GET /hello` answers `flavor: "selfhost"` from
+ * alert driver, and the pairing ceremony (`/pair*` — both grants live only here, because only
+ * this composition wires the invite bridge; the hosted table mounts the same routes device-pair
+ * only, and the local table never carries them — see `pair.ts` for the mount map).
+ * `GET /hello` answers `flavor: "selfhost"` from
  * the descriptor this server's composition root injects, and computes `needsSetup` from whether
  * any user exists yet.
  *
@@ -84,8 +88,9 @@ import { pairRoutes } from "./pair.js";
  *  2. **`deps.hello.features.pairing: true`.** The pairing routes are mounted, so the
  *     descriptor this server injects must announce them — a descriptor still saying `false`
  *     makes a client's server picker hide a ceremony that answers, which is the inverse of the
- *     honest-404 contract `/hello` exists to keep. The managed and local descriptors keep
- *     `pairing: false`, truthfully: their tables do not carry these routes.
+ *     honest-404 contract `/hello` exists to keep. The managed descriptor says `true` too since
+ *     its own mount (`apps/api-vercel`); the local descriptor keeps `false`, truthfully — that
+ *     table does not carry these routes.
  *
  *  3. **The first-account ceremony is a BOOT MINT into the pairing service, not open signup.**
  *     At boot with zero users, the composition root calls

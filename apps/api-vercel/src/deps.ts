@@ -598,8 +598,13 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         staging: cfg.attachmentStaging !== null,
         // Armed with the model key: the draft/suggest surfaces answer 503 without it.
         ai: cfg.anthropicApiKey !== null,
-        // The pairing-token ceremony is not mounted on this composition.
-        pairing: false,
+        // The pairing ceremony is mounted on this table (managed device pairing — the webapp's
+        // Devices pane mints, a phone redeems for a bearer pair). A CONSTANT, unlike the three
+        // flags above, because the mount is structural: `apiRoutes` carries the routes in every
+        // deployment of this host, with no environment arm to read. Device-pair only in effect —
+        // this bag wires no `services.inviteRedeem`, so both invite arms refuse; the descriptor
+        // still says `true` because the capability the picker gates on IS device pairing.
+        pairing: true,
       },
     },
     // `withRequestId` binds `requestId` onto this, so every line downstream carries the

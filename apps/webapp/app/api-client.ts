@@ -547,7 +547,9 @@ export const auth = {
     }),
 };
 
-// ── Pairing tokens (self-host servers only — `/hello` announces `features.pairing`) ───────
+// ── Pairing tokens (wherever `/hello` announces `features.pairing` — the self-host server
+//    mints BOTH grants; the managed service mints device-pair only, its invite arms refused
+//    server-side because that deployment wires no invite bridge) ─────────────────────────────
 
 /**
  * One row of `GET /pair` — the caller's own mints, never the token itself (raw tokens exist
@@ -578,6 +580,19 @@ export const pair = {
       "/pair", { method: "POST", body: { grant: "invite", ...(b.label ? { label: b.label } : {}) } },
     ),
 
+  /**
+   * `POST /pair` with the `device-pair` grant — the device mint behind Settings → Devices'
+   * "Add a device". Step-up gated exactly as the invite mint is, and the returned `token` is
+   * likewise the raw value's ONE appearance: the pane turns it into the frozen
+   * `${apiOrigin}/pair#<token>` link (QR + typed entry) and never stores it. No `ttlSeconds`
+   * is sent, so the server's device-pair default (five minutes) applies — the pane's copy
+   * states that lifetime, and deriving both from one place keeps the sentence true.
+   */
+  mintDevice: (b: { label?: string }) =>
+    api<{ id: string; token: string; grant: "device-pair"; label: string; expiresAt: string }>(
+      "/pair", { method: "POST", body: { grant: "device-pair", ...(b.label ? { label: b.label } : {}) } },
+    ),
+
   /** The caller's own pairing tokens, newest first — metadata only, see {@link PairingTokenDTO}. */
   list: () => api<{ items: PairingTokenDTO[] }>("/pair"),
 
@@ -604,6 +619,38 @@ export const pair = {
     api<{ grant: "invite"; invite: { code: string; email: string; expiresAt: string } }>(
       "/pair/redeem", { method: "POST", body: { grant: "invite", token: b.token, email: b.email } },
     ),
+};
+
+// ── Devices — the sessions signed into this account, and the take-back ────────────────────
+
+/**
+ * One row of `GET /devices` — a live session, named by its device row. `id` is the DEVICE id
+ * (what `DELETE /devices/:id` takes); `label` is the pairing mint's own word for the device
+ * ("kitchen iPad"), or the server's default for a plain sign-in ("Web"). `current` marks the
+ * session making the request, which is the one row the pane must not offer to revoke — that
+ * verb already exists and is called signing out.
+ */
+export interface DeviceDTO {
+  id: string;
+  kind: "web" | "macos";
+  label: string;
+  createdAt: string;
+  lastSeenAt: string;
+  ip: string;
+  current: boolean;
+  pushToken: string | null;
+}
+
+export const devices = {
+  /** The caller's own live sessions, newest first. */
+  list: () => api<{ items: DeviceDTO[] }>("/devices"),
+
+  /**
+   * Revoke a device's sessions — the take-back that makes offering a pairing QR safe at all.
+   * Step-up gated (`DELETE /devices/:id`), so the pane reports a 403 with the same
+   * sign-in-again sentence the mint uses rather than swallowing it.
+   */
+  revoke: (id: string) => api<void>(`/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };
 
 // ── Mailboxes ────────────────────────────────────────────────────────────────────────────
