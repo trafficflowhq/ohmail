@@ -2259,6 +2259,145 @@ a.btn {
   text-wrap: pretty;
 }
 
+/* ── get ohmail — the four ways to run it, free ones first ────────────
+   The nav CTA's landing place. Two registers, so the free/managed
+   separation reads before a word does: the three self-run ways are
+   lifted panel cards, the managed option is a flat tint band — the same
+   quiet tint as the comparison table's goodwill close, deliberately NOT
+   a second accent band (the trial owns the page's one change of
+   surface). The section closes on the portable-profile claim, centered
+   like the section head, because it is the punchline that makes the
+   four-way choice safe: the configuration lives in the mailbox, not in
+   the tier. No icons anywhere in the section — every new landing icon
+   is a specificity negotiation with `svg.ic` (see the checkmark guards),
+   and this section is type-led instead. */
+
+.l-get {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 5vw, 32px) clamp(90px, 12vw, 150px);
+}
+/* the group eyebrow: "run it yourself — free" / "or we run it for you".
+   Uppercase and quiet, like the demo's plane labels — a wayfinding label,
+   not a heading. */
+.l-get-way {
+  margin-top: clamp(34px, 4.5vw, 52px);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.l-get-free {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(14px, 2vw, 20px);
+  align-items: stretch;
+}
+.l-get-card {
+  background: var(--panel);
+  border-radius: 18px;
+  box-shadow: var(--lift-1);
+  padding: clamp(20px, 2.6vw, 26px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.l-get-name {
+  font-size: 15px;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  color: var(--ink);
+}
+.l-get-body {
+  font-size: 13.5px;
+  line-height: 1.62;
+  color: var(--ink2);
+  text-wrap: pretty;
+}
+/* one link per card, bottom-aligned across the row so the three exits
+   sit on one line whatever the bodies measure */
+.l-get-link {
+  margin-top: auto;
+  padding-top: 8px;
+  align-self: start;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+.l-get-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* the managed band: same product, our hosting, a monthly price — one
+   register quieter than the cards, and visibly a different material */
+.l-get-managed {
+  margin-top: clamp(22px, 3vw, 34px);
+  padding: clamp(22px, 3vw, 30px) clamp(22px, 3vw, 32px);
+  border-radius: 18px;
+  background: var(--tint);
+  display: grid;
+  gap: 7px;
+  justify-items: start;
+}
+.l-get-managed .l-get-way {
+  margin-top: 0;
+}
+.l-get-q {
+  font-size: 17px;
+  font-weight: 680;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+.l-get-mbody {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--ink2);
+  max-width: 76ch;
+  text-wrap: pretty;
+}
+/* the portable-profile close — the flagship claim, centered like the
+   section head so it reads as the section's own last word rather than
+   as a footnote to the band above it */
+.l-get-move {
+  margin-top: clamp(34px, 4.5vw, 54px);
+  text-align: center;
+  display: grid;
+  justify-items: center;
+  gap: 11px;
+}
+.l-get-move-title {
+  font-size: clamp(1.15rem, 1rem + 0.7vw, 1.45rem);
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.l-get-move p {
+  font-size: 14px;
+  line-height: 1.68;
+  color: var(--ink2);
+  max-width: 74ch;
+  text-wrap: pretty;
+}
+.l-get-move .l-get-link {
+  margin-top: 0;
+  padding-top: 0;
+  align-self: center;
+}
+
+@media (max-width: 960px) {
+  .l-get-free {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── the trial band ───────────────────────────────────────────────────
    The strongest thing this page can offer a stranger is "try it, we are
    not asking for a card" — and it used to be a 12.5px line underneath the

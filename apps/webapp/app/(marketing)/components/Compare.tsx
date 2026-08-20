@@ -1,7 +1,11 @@
 import { useTranslations } from "next-intl";
 import { Reveal } from "./Reveal";
 
-const ROWS = ["addresses", "folders", "leave", "offline", "ai"] as const;
+/* `settings` sits between "where the organization lives" and "if you leave" because it
+   is the bridge between them: the rules and screening decisions live in the mailbox
+   itself (the portable organizer profile, in a published format), which is what makes
+   the leave row true of the configuration and not only of the folders. */
+const ROWS = ["addresses", "folders", "settings", "leave", "offline", "ai"] as const;
 
 /**
  * The restrained us-vs-them table. Axis: ohmail works on the mailbox you

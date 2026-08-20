@@ -5,6 +5,7 @@ import { Views } from "./components/Views";
 import { Screener, InPlace, Fast, DarkMode } from "./components/FeatureSections";
 import { AiSection } from "./components/AiSection";
 import { Everyday } from "./components/Everyday";
+import { GetOhmail } from "./components/GetOhmail";
 import { Compare } from "./components/Compare";
 import { DataOwnership } from "./components/DataOwnership";
 import { FolderShowcase } from "./components/FolderShowcase";
@@ -37,6 +38,9 @@ import { publicSignupEnabled } from "../signup-mode";
  *     Compare and DataOwnership carry the same trust argument to its end.
  *  6. Fast — search.
  *  7. DarkMode — polish, last.
+ *  8. GetOhmail — the four ways to run it, free ones first; it opens the acting
+ *     cluster (trial → pricing → download) and is where the nav's "Get ohmail."
+ *     button lands.
  *
  * The feat-shaped sections sit in `.l-features` blocks (the shared grid rhythm); the
  * wide sections stand between them. A story-order guard holds this sequence.
@@ -68,6 +72,9 @@ export default function Page() {
           <DarkMode />
           <Everyday />
         </div>
+        {/* the four ways to run ohmail — self-run first, managed as the convenience;
+            everything below this is the detail of the choices it lays out */}
+        <GetOhmail />
         {/* the trial stands before the price, not after it */}
         <Trial />
         <Pricing publicSignup={publicSignup} />

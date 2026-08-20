@@ -101,16 +101,18 @@ export function Nav() {
             <>
               {/* The demo is the proof, so it keeps a place in the bar — but the
                   bar's job is the ask. Primary is "Get ohmail.", set as the
-                  wordmark is set, pointing at the tiers. Sign in sits directly
-                  beside it, same quiet weight as the demo link: the returning
-                  customer's door, never competing with the ask. */}
+                  wordmark is set, pointing at the section of the same name: the
+                  four ways to run it, free ones first — never straight at the
+                  price list, because three of the four ways have no price. Sign
+                  in sits directly beside it, same quiet weight as the demo link:
+                  the returning customer's door, never competing with the ask. */}
               <a className="l-nav-demo" href="#demo">
                 {t("ctaDemo")}
               </a>
               <a className="l-nav-signin" href="/login">
                 {t("signIn")}
               </a>
-              <a className="btn primary l-nav-cta" href="#pricing">
+              <a className="btn primary l-nav-cta" href="#get">
                 <DotLabel text={t("cta")} />
               </a>
             </>
