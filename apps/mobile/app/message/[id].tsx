@@ -31,9 +31,23 @@ import { useTheme } from "../../src/theme";
 import { useWorld, type WorldMail } from "../../src/state/world";
 import { Button, Chip, Panel, Screen, Scroller, Txt } from "../../src/ui/base";
 import { DetailBar } from "../../src/ui/chrome";
+import { Gated } from "../../src/ui/Gated";
 import { Icon } from "../../src/ui/Icon";
 
+/**
+ * Gated like the tabs: a deep link (`ohmail://message/<id>`) can mount this route with the
+ * tabs layout never focusing, and without the gate an unpaired phone would land on the
+ * empty world's "no longer here" with no way out.
+ */
 export default function MessageScreen() {
+  return (
+    <Gated>
+      <MessageBody />
+    </Gated>
+  );
+}
+
+function MessageBody() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const t = useTheme();
   const w = useWorld();

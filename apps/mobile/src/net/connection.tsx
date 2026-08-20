@@ -198,17 +198,31 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   // Through the gate like every other transition, so a fast first tap supersedes it cleanly.
   // `starting` holds only until the keystore answers — the gate component renders nothing
   // during it, so a paired phone never flashes the welcome screen on its way to mail.
+  //
+  // AND THE KEYSTORE'S REFUSAL IS AN ANSWER: a SecureStore read can reject (a damaged or
+  // locked keystore), and a boot that only ever left `starting` on success would render the
+  // blank launch surface forever. The catch settles into `refused` with the failure in a
+  // sentence — the gate routes that to the Servers screen, which shows it and still offers
+  // every way to pair.
   useEffect(() => {
-    void gate.run(async (stillCurrent) => {
-      await refreshProfiles();
-      const active = await env.profiles.active();
-      if (!stillCurrent()) return;
-      if (active === null) {
-        setState((s) => (s.k === "starting" ? { k: "idle" } : s));
-        return;
-      }
-      await runConnect(active.id, stillCurrent);
-    });
+    void gate
+      .run(async (stillCurrent) => {
+        await refreshProfiles();
+        const active = await env.profiles.active();
+        if (!stillCurrent()) return;
+        if (active === null) {
+          setState((s) => (s.k === "starting" ? { k: "idle" } : s));
+          return;
+        }
+        await runConnect(active.id, stillCurrent);
+      })
+      .catch((err) => {
+        setState((s) =>
+          s.k === "starting"
+            ? { k: "refused", reason: `could not read this phone's stored pairings — ${String(err)}` }
+            : s,
+        );
+      });
     return () => {
       if (live.current.k === "live") teardown(live.current.session);
     };
@@ -263,6 +277,16 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             const bearer = live.current.session.bearer;
             revokeLive = () => bearer.logout();
             teardown(live.current.session);
+            setState({ k: "idle" });
+          } else if (live.current.k === "connecting") {
+            // SETTLE a state no later transition will. Every other transition ends by setting
+            // its own state; forget was the one that could leave a SUPERSEDED boot's
+            // `connecting` standing — tap a profile, tap Forget before the boot settles, and
+            // the stale runConnect (correctly) adopts nothing while forget (wrongly) said
+            // nothing either: the gate rendered "connecting" forever. Requesting forget made
+            // that boot stale, and the gate serializes, so nothing else is in flight — idle
+            // is the truth. `refused`/`ended` stay: they are terminal, and their sentence is
+            // the reason the Servers screen exists.
             setState({ k: "idle" });
           }
           await env.profiles.remove(profileId);

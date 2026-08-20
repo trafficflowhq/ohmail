@@ -14,9 +14,19 @@ import { usePrefs } from "../src/state/store";
 import { useWorld } from "../src/state/world";
 import { Panel, Screen, Scroller, Section, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
+import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
 
+/** Gated like the tabs: the About block states a live session's facts, so it needs one. */
 export default function SettingsScreen() {
+  return (
+    <Gated>
+      <SettingsBody />
+    </Gated>
+  );
+}
+
+function SettingsBody() {
   const w = useWorld();
   const { themePref, setTheme } = usePrefs();
 

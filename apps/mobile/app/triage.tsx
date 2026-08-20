@@ -14,6 +14,7 @@ import { useTheme } from "../src/theme";
 import { useWorld } from "../src/state/world";
 import { Badge, Panel, Screen, Scroller, TapRow, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
+import { Gated } from "../src/ui/Gated";
 import { Icon, type IconName } from "../src/ui/Icon";
 
 const PILE_ICON: Record<string, IconName> = {
@@ -22,7 +23,16 @@ const PILE_ICON: Record<string, IconName> = {
   resurface: "up",
 };
 
+/** Gated like the tabs — a deep-linked route must not render the empty world. */
 export default function TriageScreen() {
+  return (
+    <Gated>
+      <TriageBody />
+    </Gated>
+  );
+}
+
+function TriageBody() {
   const t = useTheme();
   const w = useWorld();
 

@@ -132,6 +132,17 @@ function ProfileRow({ profile, active }: { profile: ServerProfile; active: boole
   const conn = useConnection();
   const t = useTheme();
   const needsPair = profile.refreshToken === null;
+  // Forgetting the FINAL pairing returns to the welcome screen — explicitly, from the
+  // action itself. The tabs' redirect cannot be trusted to fire here: while /servers is
+  // the focused route, the gated layouts behind it may never re-render their verdict, and
+  // "the app went back to its first screen" must not depend on which screen was focused.
+  // Counted before the await (this handler's `conn` is the render's snapshot; the forget
+  // removes exactly this row).
+  const forget = async () => {
+    const wasLast = conn.profiles.length === 1;
+    await conn.forget(profile.id);
+    if (wasLast) router.replace("/welcome");
+  };
   return (
     <View style={{ marginHorizontal: 8 }}>
       <TapRow
@@ -162,7 +173,7 @@ function ProfileRow({ profile, active }: { profile: ServerProfile; active: boole
         </Txt>
       </TapRow>
       <View style={{ flexDirection: "row", paddingHorizontal: 12, paddingBottom: 6 }}>
-        <Button label={Copy.serversForget} variant="quiet" onPress={() => void conn.forget(profile.id)} />
+        <Button label={Copy.serversForget} variant="quiet" onPress={() => void forget()} />
       </View>
     </View>
   );
