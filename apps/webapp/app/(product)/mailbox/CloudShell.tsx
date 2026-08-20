@@ -69,11 +69,8 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * no compiled flavor arm, because BOTH flavors mount the device-pair ceremony (the managed
    * table and the self-host table each spread the same `pairRoutes`; see `routes/index.ts`).
    * `false` while `/hello` is pending or on an older server: no nav entry, never a dead pane.
-   * The DEMO flag rides in and settles the question first: a fixtures world pays no `/hello`
-   * round trip and grows no pane whose every verb mutates real credentials — the hook's own
-   * header carries the measured leak this closed.
    */
-  const devicePairing = useDevicePairing(demo);
+  const devicePairing = useDevicePairing();
 
   const resolveOwner = useCallback(async (): Promise<string | null> => {
     try {
