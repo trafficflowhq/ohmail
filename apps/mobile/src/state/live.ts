@@ -34,8 +34,8 @@
  * move needs a location. Every action below reads `engine.read()` (raw); every selector call
  * a screen renders goes through {@link presentedOf}.
  *
- * No React, no I/O of its own, and NO network: the engine is handed in, which is what lets this
- * module be driven against a real loopback server without a renderer.
+ * No React, no I/O of its own, and NO network: the engine is handed in. The root vitest suite
+ * drives this module against a real loopback server (`test/live-screens.test.ts`).
  */
 import {
   CALENDAR_FALLBACK_FILENAME,
@@ -802,7 +802,7 @@ export interface WorldActions {
   /** Demo-only: files every waiting sender where the AI suggests. No-op live (no AI rows). */
   applyAllSuggestions(): void;
   addToPile(kind: PileKind, item: PileItem): void;
-  /** Demo-only: tags are not yet shown on live accounts. */
+  /** Demo-only: tags arrive on live accounts with a later slice. */
   toggleTag(messageId: string, tag: TagId): void;
 }
 

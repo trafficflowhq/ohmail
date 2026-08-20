@@ -109,7 +109,7 @@ export default function ReceiptsScreen() {
                 </View>
               </View>
             ))}
-            <Tail>{Copy.receiptsTail(total, w.live)}</Tail>
+            <Tail>{Copy.receiptsTail(total)}</Tail>
           </Panel>
         </View>
       </Scroller>

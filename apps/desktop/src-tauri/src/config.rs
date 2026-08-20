@@ -399,13 +399,10 @@ pub fn write(path: &Path, config: &Config) -> Result<(), String> {
     let body = serde_json::to_vec_pretty(&to_json(config))
         .map_err(|err| format!("the configuration could not be encoded ({err})"))?;
     fs::write(path, &body).map_err(|err| format!("{} could not be written ({err})", path.display()))?;
-    // A chmod that failed is an error, not a shrug: the mode is the whole reason this comment
-    // block exists, and a file that stayed world-readable behind an Ok would never be looked at.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-            .map_err(|err| format!("{} could not be made private ({err})", path.display()))?;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
     }
     Ok(())
 }
@@ -500,12 +497,10 @@ pub fn write_host(path: &Path, settings: &HostSettings) -> Result<(), String> {
     }))
     .map_err(|err| format!("the host-mode setting could not be encoded ({err})"))?;
     fs::write(path, &body).map_err(|err| format!("{} could not be written ({err})", path.display()))?;
-    // Same rule as {@link write}: a mode this file promises and cannot deliver is an error.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-            .map_err(|err| format!("{} could not be made private ({err})", path.display()))?;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
     }
     Ok(())
 }

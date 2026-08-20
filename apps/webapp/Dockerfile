@@ -41,32 +41,12 @@ RUN npm install --no-save \
       @types/node@22.10.2 \
       @types/react@18.3.12 \
       @types/react-dom@18.3.1
-# THE LOCKFILE HOISTS `styled-jsx` — next's own dependency — TO THE ROOT while nesting next,
-# react and react-dom under this app, and the root also carries a DIFFERENT React major for an
-# unrelated workspace. styled-jsx resolves `react` by walking UP from where it physically sits,
-# so at the root it binds that foreign React, while react-dom arms the hook dispatcher on the
-# React instance it resolved beside this app — and every pages-router prerender (`/_error`,
-# /404, /500; the app-router pages use Next's vendored React and never notice) dies with
-# "Cannot read properties of null (reading 'useContext')". Relocate styled-jsx beside the
-# react it must share an instance with. This step MUST stay below the stage's last npm
-# operation: any `npm install` reconciles the whole tree against the lockfile and puts
-# styled-jsx back at the root (measured — the install above undid an earlier placement of
-# this line). The guard makes it a no-op the day the lockfile nests styled-jsx correctly
-# itself; a tree carrying NEITHER copy fails right here, at build time.
-RUN [ -d apps/webapp/node_modules/styled-jsx ] \
- || mv node_modules/styled-jsx apps/webapp/node_modules/styled-jsx
 # The flavor is a BUILD fact (see next.config.mjs — the proxy owns the split, so this bundle
 # rewrites nothing and calls /api on its own origin). The star count is pinned so the config's
 # build-time badge fetch never reaches the network from inside a build container.
 ENV OHMAIL_FLAVOR=selfhost \
     NEXT_PUBLIC_GITHUB_STARS=1
-# WHERE `next` PHYSICALLY LANDS IS THE LOCKFILE'S DECISION, NOT THIS FILE'S. npm hoists a
-# workspace dependency to the root node_modules only while nothing forces it deeper; a lockfile
-# regeneration moved it to apps/webapp/node_modules and broke a hardcoded ../../node_modules/
-# .bin/next here. `npx --offline` asks npm's own resolver instead of assuming a layout, and
-# `--offline` keeps the failure honest: a genuinely absent binary is a hard error, never a
-# registry fetch of whatever `next` currently is — the image builds from the tree alone.
-RUN cd apps/webapp && npx --offline next build
+RUN cd apps/webapp && ../../node_modules/.bin/next build
 # Fail the BUILD, not the container, if Next emitted nothing.
 RUN test -d apps/webapp/.next
 # The type pass's tools leave before the runtime stage copies the workspace: `next start`
@@ -87,7 +67,5 @@ USER node
 WORKDIR /app/apps/webapp
 EXPOSE 3000
 # The port is this file's own choice: the compose network expects this container on 3000.
-# Same resolution story as the build stage: the lockfile decides where `next` sits, so ask
-# npm (`npx --offline`) rather than hardcode a hoisted path. npx forwards SIGTERM to the
-# server it spawns, so `docker stop` still shuts Next down instead of waiting out the kill.
-CMD ["npx", "--offline", "next", "start", "-p", "3000"]
+# npm workspaces put every bin at the ROOT node_modules, hence the relative path up.
+CMD ["../../node_modules/.bin/next", "start", "-p", "3000"]

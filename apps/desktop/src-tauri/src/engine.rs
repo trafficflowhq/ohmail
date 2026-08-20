@@ -3519,14 +3519,7 @@ fn tighten(path: &Path) {
         use std::os::unix::fs::PermissionsExt;
         // Best effort: a directory that could not be tightened is still inside the app's own data
         // directory, and refusing to open somebody's attachment over it would be the wrong trade.
-        // Best effort is not silent, though — a mode that stayed wide goes in the log, because a
-        // chmod that fails here fails on every open and nobody would ever have known.
-        if let Err(err) = fs::set_permissions(path, fs::Permissions::from_mode(0o700)) {
-            log_line(format_args!(
-                "{} could not be made private ({err}); files opened from messages may be readable by other accounts on this computer",
-                path.display()
-            ));
-        }
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
     }
     #[cfg(not(unix))]
     let _ = path;

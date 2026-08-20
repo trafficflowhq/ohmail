@@ -15,8 +15,8 @@
  * yet are never answered as passed — an unmeasured offset defaults to "not past", because
  * marking mail read is the irreversible half of a guess.
  *
- * Pure and renderer-free so the geometry — the off-screen-group case included — can be held
- * and checked without a device.
+ * Pure and renderer-free so the root suite can hold the geometry without a device: the
+ * off-screen-group case is pinned red in `test/live-screens.test.ts`.
  */
 export class GroupedSweepLedger {
   private panelY: number | null = null;

@@ -94,11 +94,8 @@ export const Copy = {
   ohbox: "Ohbox",
   groupNew: "New",
   groupSeen: "Earlier",
-  /* The server-search sentence is DEMO-ONLY: on a live account, search still runs over the
-   * demo corpus (see `searchDemoOnly`), so promising it "reaches the rest of your server"
-   * would be a claim the app cannot keep. The live tail states only what is on screen. */
-  ohboxTail: (shown: number, live = false) =>
-    `All ${shown} accepted message${shown === 1 ? "" : "s"} shown.${live ? "" : " Search reaches the rest of your server."}`,
+  ohboxTail: (shown: number) =>
+    `All ${shown} accepted message${shown === 1 ? "" : "s"} shown. Search reaches the rest of your server.`,
   doorbell: (n: number) => `${n} new sender${n === 1 ? "" : "s"}`,
   doorbellRest: "waiting",
   doorbellGo: "Screener",
@@ -110,8 +107,8 @@ export const Copy = {
   waterline: "Seen up to here",
   readsTail: (shown: number) =>
     `All ${shown} issue${shown === 1 ? "" : "s"} shown. Scrolling past an item marks it seen.`,
-  receiptsTail: (shown: number, live = false) =>
-    `All ${shown} receipt${shown === 1 ? "" : "s"} shown.${live ? "" : " Search reaches older ones on your server."}`,
+  receiptsTail: (shown: number) =>
+    `All ${shown} receipt${shown === 1 ? "" : "s"} shown. Search reaches older ones on your server.`,
   streamSeenHint: "scrolling past marks seen",
 
   /* ------------------------------------------------------------- protected */

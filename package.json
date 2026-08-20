@@ -48,9 +48,6 @@
     "@tiptap/extensions": "3.29.2",
     "@tiptap/pm": "3.29.2",
     "@tiptap/react": "3.29.2",
-    "@tiptap/starter-kit": "3.29.2",
-    "react-native": {
-      "react": "19.2.3"
-    }
+    "@tiptap/starter-kit": "3.29.2"
   }
 }
