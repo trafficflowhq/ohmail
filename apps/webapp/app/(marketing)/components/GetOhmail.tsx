@@ -1,5 +1,10 @@
 import { useTranslations } from "next-intl";
 import { Reveal } from "./Reveal";
+import {
+  PROFILE_MESSAGE_EXCERPT,
+  PROFILE_MESSAGE_FOLDER,
+  PROFILE_MESSAGE_SUBJECT,
+} from "./profile-message.data";
 
 /**
  * The mirror's own paths — a contract with the public repository's layout, like the
@@ -43,7 +48,9 @@ const FREE = [
  * product. The claim names exactly what travels today — screener verdicts, rules,
  * notification choices, the away reply, tag names — never "all settings", and
  * `test/get-ohmail.test.ts` holds that list in agreement with the public README's own
- * "exactly what travels" sentence, which is the claim's source.
+ * "exactly what travels" sentence, which is the claim's source. Under the claim sits
+ * its proof: the profile message itself, quoted verbatim (see the exhibit's comment
+ * below and `profile-message.data.ts`).
  *
  * ── SHAPE ──────────────────────────────────────────────────────────────────────────
  *
@@ -104,6 +111,23 @@ export function GetOhmail() {
       <Reveal as="div" className="l-get-move" delay={80}>
         <h3 className="l-get-move-title">{t("moveTitle")}</h3>
         <p>{t("moveBody")}</p>
+        {/* the proof under the claim: the message itself, quoted verbatim. The profile
+            IS one small message in the mailbox, and its body opens with a letter to
+            whoever finds it in an ordinary mail client — the folder showcase's
+            restraint again (a real artifact, typographic, no fake chrome): the folder
+            it lives in, its real Subject header, one hairline, the letter's first
+            paragraph. profile-message.data.ts is diffed against the writer in
+            @trafficflow/core by a guard, so this exhibit can never drift into fiction. */}
+        <figure className="l-get-msg">
+          <div className="l-get-msg-sheet">
+            <p className="l-get-msg-loc">{PROFILE_MESSAGE_FOLDER}</p>
+            <p className="l-get-msg-subj">
+              <span className="l-get-msg-h">Subject:</span> {PROFILE_MESSAGE_SUBJECT}
+            </p>
+            <p className="l-get-msg-body">{PROFILE_MESSAGE_EXCERPT}</p>
+          </div>
+          <figcaption className="l-get-msg-cap">{t("moveMsgNote")}</figcaption>
+        </figure>
         <a className="l-get-link" href={PROFILE_SPEC_URL} rel="noreferrer">
           {t("moveSpec")}
         </a>

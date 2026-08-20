@@ -2391,6 +2391,65 @@ a.btn {
   padding-top: 0;
   align-self: center;
 }
+/* the message exhibit — the profile message itself, quoted verbatim.
+   A sculpted Blanc panel like every panel on this page (lift, no border),
+   but left-aligned inside the centered close, because it is a letter, not
+   a layout. The one hairline separates the header facts from the body —
+   the same deliberate rule the FAQ keeps. Location and header label are
+   the page's only monospace: they are a folder path and an RFC822 header,
+   quoted, not styled. */
+.l-get-msg {
+  margin: clamp(10px, 1.6vw, 18px) 0 0;
+  width: min(100%, 620px);
+  display: grid;
+  gap: 12px;
+}
+.l-get-msg-sheet {
+  background: var(--panel);
+  border-radius: 18px;
+  box-shadow: var(--lift-1);
+  padding: clamp(20px, 3vw, 28px) clamp(20px, 3.4vw, 32px);
+  text-align: left;
+  display: grid;
+  gap: 7px;
+}
+.l-get-msg-loc {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+  color: var(--ink3);
+}
+.l-get-msg-subj {
+  font-size: 15px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--hair-soft);
+}
+.l-get-msg-h {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  color: var(--ink3);
+}
+.l-get-msg-body {
+  margin-top: 3px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--ink2);
+  text-wrap: pretty;
+}
+.l-get-msg-cap {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink3);
+  /* one line inside the sheet's width at desk; wraps with the figure below it —
+     a ch cap here orphaned "as JSON." onto its own line */
+  margin: 0 auto;
+  text-wrap: pretty;
+}
 
 @media (max-width: 960px) {
   .l-get-free {

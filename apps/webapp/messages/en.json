@@ -1275,6 +1275,7 @@
     "managedCta": "See the tiers below",
     "moveTitle": "Your settings live in your mailbox, and move with it.",
     "moveBody": "The senders you've screened, your rules, your notification choices, your away reply and your tag names are stored in the mailbox itself — a few kilobytes of versioned JSON in a hidden folder. Pick any option above and change your mind later: connect the same mailbox elsewhere, and ohmail finds your settings and asks before using them. Leave ohmail entirely and those decisions are still yours, in your own mailbox, in a format anything can parse.",
+    "moveMsgNote": "The first lines of the real message, word for word — the rest is your settings, as JSON.",
     "moveSpec": "The format is public — read the specification"
   },
   "trial": {

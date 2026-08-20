@@ -1275,6 +1275,7 @@
     "managedCta": "Die Tarife unten ansehen",
     "moveTitle": "Deine Einstellungen liegen in deinem Postfach — und ziehen mit.",
     "moveBody": "Die Absender, die du gescreent hast, deine Regeln, deine Benachrichtigungs-Entscheidungen, deine Abwesenheitsantwort und deine Tag-Namen liegen im Postfach selbst — ein paar Kilobyte versioniertes JSON in einem versteckten Ordner. Nimm oben irgendeine Option und entscheide später um: verbinde dasselbe Postfach woanders, und ohmail findet deine Einstellungen und fragt, bevor es sie benutzt. Verlässt du ohmail ganz, gehören diese Entscheidungen weiter dir — in deinem eigenen Postfach, in einem Format, das alles lesen kann.",
+    "moveMsgNote": "Die ersten Zeilen der echten Nachricht, Wort für Wort — der Rest sind deine Einstellungen, als JSON.",
     "moveSpec": "Das Format ist öffentlich — zur Spezifikation"
   },
   "trial": {
