@@ -2,40 +2,22 @@
  * One mail row — the prototype's `.row`, at thumb scale.
  *
  * Four lines at most, and the fourth only when the mail has something true to
- * say about itself (an attachment, a blocked tracker, a protected class, a
- * tag). Blanc's row hierarchy survives the narrower column intact: weight
- * carries unread, colour carries seen, and the dot is the only mark.
+ * say about itself (a blocked tracker, a protected class, a conversation).
+ * Blanc's row hierarchy survives the narrower column intact: weight carries
+ * unread, colour carries seen, and the dot is the only mark.
  */
 import { View } from "react-native";
-import type { TagId } from "@ohmail/fixtures";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
-import { threadCount } from "../state/derived";
 import type { Mail } from "../state/model";
-import { world } from "../state/model";
-import { Badge, TagChip, TapRow, Txt } from "./base";
+import { Badge, TapRow, Txt } from "./base";
 
-export function MailRow({
-  m,
-  tags,
-  place,
-  onPress,
-}: {
-  m: Mail;
-  tags: TagId[];
-  /**
-   * Shown only where the row has left its own list — the tag view, which has to
-   * prove a tag is not a folder. Everywhere else the place is the screen.
-   */
-  place?: string;
-  onPress: () => void;
-}) {
+export function MailRow({ m, onPress }: { m: Mail; onPress: () => void }) {
   const t = useTheme();
   const seen = !m.unread;
-  const thread = threadCount(m);
+  const thread = m.earlier.length > 0 ? m.earlier.length + 1 : 0;
   const preview = m.protected ? Copy.protectedPreview : (m.snippet ?? firstLine(m.body));
-  const badges =
-    !!place || tags.length > 0 || !!m.attachment || !!m.protected || !!m.trackerNote || thread > 1;
+  const badges = !!m.protected || !!m.trackerNote || thread > 1;
 
   return (
     <TapRow
@@ -93,21 +75,13 @@ export function MailRow({
 
       {badges ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
-          {place ? <Badge tone="place">{place}</Badge> : null}
           {m.protected ? (
             <Badge icon="shield" tone="accent">
               {Copy.protectedLead}
             </Badge>
           ) : null}
-          {m.attachment ? <Badge icon="clip">{m.attachment.size}</Badge> : null}
           {thread > 1 ? <Badge>{thread}</Badge> : null}
           {m.trackerNote ? <Badge icon="shield">{trackerShort(m.trackerNote)}</Badge> : null}
-          {tags.map((id) => {
-            const tag = world.tags.find((x) => x.id === id);
-            if (!tag) return null;
-            const hue = t.c.tag[tag.hue];
-            return <TagChip key={id} name={tag.name} ink={hue.ink} bg={hue.bg} />;
-          })}
         </View>
       ) : null}
     </TapRow>

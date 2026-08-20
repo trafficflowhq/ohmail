@@ -1,7 +1,7 @@
 /**
  * The shell. Providers, then a stack of screens on the Blanc canvas.
  *
- * Theme preference lives in the store, so it has to be read *inside* the store
+ * Theme preference lives in the prefs store, so it has to be read *inside* that
  * provider and handed to the theme provider — hence the small `Shell` split.
  */
 import { Stack } from "expo-router";
@@ -9,31 +9,31 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ThemeProvider, useTheme } from "../src/theme";
 import { ConnectionProvider } from "../src/net/connection";
-import { StoreProvider, useApp } from "../src/state/store";
+import { PrefsProvider, usePrefs } from "../src/state/store";
 import { WorldProvider } from "../src/state/world";
 import { Toast } from "../src/ui/chrome";
 
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <StoreProvider>
-        {/* The connection layer sits at the root so a live session survives every screen —
-            the demo world (fixtures) keeps rendering untouched until a profile goes live.
-            The world layer above the screens is what switches them between the two. */}
+      <PrefsProvider>
+        {/* The connection layer sits at the root so a live session survives every screen.
+            The world layer above the screens renders its mirror; with nothing connected
+            the tabs gate hands the screen to the connect flow instead. */}
         <ConnectionProvider>
           <WorldProvider>
             <Shell />
           </WorldProvider>
         </ConnectionProvider>
-      </StoreProvider>
+      </PrefsProvider>
     </SafeAreaProvider>
   );
 }
 
 function Shell() {
-  const s = useApp();
+  const prefs = usePrefs();
   return (
-    <ThemeProvider pref={s.themePref}>
+    <ThemeProvider pref={prefs.themePref}>
       <Screens />
     </ThemeProvider>
   );

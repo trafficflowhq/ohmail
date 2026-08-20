@@ -22,7 +22,7 @@ import { router, useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
 import { GroupedSweepLedger } from "../../src/state/sweep";
 import { useWorld } from "../../src/state/world";
-import { Panel, Screen, Scroller, Section, Tail, Txt, Waterline } from "../../src/ui/base";
+import { Empty, Panel, Screen, Scroller, Section, Tail, Txt, Waterline } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { MailRow } from "../../src/ui/MailRow";
 
@@ -64,7 +64,7 @@ export default function ReceiptsScreen() {
     [actions, ledger],
   );
 
-  // The leave commit for this stream's own waterline — live only, by the world's arm.
+  // The leave commit for this stream's own waterline.
   useFocusEffect(
     useCallback(() => () => actions.leaveFeed("receipts"), [actions]),
   );
@@ -82,6 +82,9 @@ export default function ReceiptsScreen() {
 
         <View onLayout={(e) => ledger.setPanel(e.nativeEvent.layout.y)}>
           <Panel style={{ paddingBottom: 4 }}>
+            {total === 0 ? (
+              <Empty glyph="🧾" title={Copy.receiptsEmptyTitle} hint={Copy.receiptsEmptyHint} />
+            ) : null}
             {groups.map((g, gi) => (
               <View key={groupKeyOf(g)} onLayout={(e) => ledger.setGroup(groupKeyOf(g), e.nativeEvent.layout.y)}>
                 <Section style={gi === 0 ? { paddingTop: 18 } : undefined}>{g.label}</Section>
@@ -99,17 +102,13 @@ export default function ReceiptsScreen() {
                       {/* The line stands ABOVE the newest receipt already seen at the last
                           visit — this stream's own anchor, independent of Reads'. */}
                       {waterlineAboveId === m.id ? <Waterline label={waterLabel} meta="" /> : null}
-                      <MailRow
-                        m={m}
-                        tags={w.tagsOf(m.id)}
-                        onPress={() => router.push(`/message/${m.id}`)}
-                      />
+                      <MailRow m={m} onPress={() => router.push(`/message/${m.id}`)} />
                     </View>
                   ))}
                 </View>
               </View>
             ))}
-            <Tail>{Copy.receiptsTail(total, w.live)}</Tail>
+            {total > 0 ? <Tail>{Copy.receiptsTail(total)}</Tail> : null}
           </Panel>
         </View>
       </Scroller>

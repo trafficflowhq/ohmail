@@ -136,7 +136,7 @@ export class ServerProfileStore {
     return rows.filter((r): r is ServerProfile => r !== null);
   }
 
-  /** The profile the app boots, or null (the demo world / first launch). */
+  /** The profile the app boots, or null (nothing paired / first launch). */
   async active(): Promise<ServerProfile | null> {
     const idx = await this.readIndex();
     return idx.active === null ? null : this.readProfile(idx.active);

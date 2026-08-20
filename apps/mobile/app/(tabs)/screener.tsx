@@ -6,28 +6,31 @@
  * decision bar, full screen, because you never decide about a sender you
  * cannot see.
  *
- * Demo rows carry the fixtures' AI pre-suggestion and the one-tap "apply all";
- * a live derived row honestly has neither (no classifier runs client-side and
- * /sync carries no suggestion), so that chrome renders only where the data is
- * real. The rows themselves come from ONE world shape either way.
+ * A row's AI suggestion badge renders only where the server sent one — no
+ * classifier runs client-side, and a row without a suggestion honestly has none.
  */
 import { useState } from "react";
 import { View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
-import { destDone, world, type ScreenerSeg } from "../../src/state/model";
+import { destDone, type ScreenerSeg } from "../../src/state/model";
 import { useWorld, type ScreenerRow } from "../../src/state/world";
-import { Badge, Button, Empty, Panel, Screen, Scroller, Tail, TapRow, Txt } from "../../src/ui/base";
+import { Badge, Empty, Panel, Screen, Scroller, Tail, TapRow, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { Segmented } from "../../src/ui/Segmented";
+
+const EMPTY: Record<ScreenerSeg, { glyph: string; title: string; hint: string }> = {
+  waiting: { glyph: "🚪", title: Copy.waitingEmptyTitle, hint: Copy.waitingEmptyHint },
+  screened: { glyph: "🚪", title: Copy.screenedEmptyTitle, hint: Copy.screenedEmptyHint },
+  spam: { glyph: "🛡", title: Copy.spamEmptyTitle, hint: Copy.spamEmptyHint },
+};
 
 export default function ScreenerScreen() {
   const w = useWorld();
   const [seg, setSeg] = useState<ScreenerSeg>("waiting");
-  const empty = world.emptyStates[seg];
+  const empty = EMPTY[seg];
   const { waiting, screened, spam, meta } = w.screener;
-  const hasSuggestions = waiting.some((row) => row.ai !== null);
 
   return (
     <Screen>
@@ -56,22 +59,11 @@ export default function ScreenerScreen() {
             waiting.length === 0 ? (
               <Empty {...empty} />
             ) : (
-              <>
-                <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
-                  {waiting.map((row) => (
-                    <WaitingRow key={row.id} row={row} />
-                  ))}
-                </View>
-                {hasSuggestions ? (
-                  <View style={{ paddingHorizontal: 18, paddingTop: 10, paddingBottom: 6 }}>
-                    <Button label={Copy.applyAll} icon="spark" onPress={w.actions.applyAllSuggestions} />
-                    <Txt variant="caption" tone="ink3" style={{ marginTop: 8, lineHeight: 16 }}>
-                      Files every waiting sender where the AI suggests — unread, so nothing is marked
-                      read on your behalf. Undo is one tap.
-                    </Txt>
-                  </View>
-                ) : null}
-              </>
+              <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
+                {waiting.map((row) => (
+                  <WaitingRow key={row.id} row={row} />
+                ))}
+              </View>
             )
           ) : null}
 

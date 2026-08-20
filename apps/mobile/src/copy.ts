@@ -2,27 +2,24 @@
  * Every string the chrome says, in one place — the phone's copy deck.
  *
  * Blanc's rule is **factual microcopy only**: no slogans, no praise, no
- * invented numbers. Each line here is either verbatim from the canonical
- * prototype (`design/proposals/blanc/index.html`, whose wording the retired
- * macOS client established as the copy deck) or
- * a literal statement of what the app just did. Keeping them together makes
- * that auditable, and keeps the privacy grep to one file's worth of prose.
+ * invented numbers. Each line is either the canonical product wording (the
+ * desktop client established the copy deck) or a literal statement of what the
+ * app just did. Keeping them together makes that auditable, and keeps the
+ * privacy grep to one file's worth of prose.
  *
  * Phone-specific lines are marked. They exist because a thumb does things a
  * cursor did not — nothing here softens or oversells the desktop wording.
  */
 export const Copy = {
-  /* ---------------------------------------------------------------- status */
+  /* --------------------------------------------------------------- welcome */
 
-  /**
-   * The status banner. The default world is still Mila's fixtures and that mode
-   * still makes no network request — but the build now carries the real engine
-   * behind a manual connect screen, so the old "no network, no sync" sentence
-   * would be a claim outliving the code. Say what is true instead.
-   */
-  previewTitle: "Demo world",
-  previewNote:
-    "Mila's demo world, rendered from fixtures — not an account, and this mode makes no network requests. Connect to a server (under More) to sync real mail.",
+  welcomeTitle: "Connect your server",
+  welcomeLead:
+    "This app is the phone client for an ohmail server — your own, or the ohmail desktop app on your computer. It shows nothing until it is connected: your mail stays on your server, and this phone mirrors it.",
+  welcomeHow:
+    "Your desktop's Devices screen and a self-hosted server's setup page both show a pairing QR. Scanning it is the whole ceremony — no password is typed here.",
+  welcomeScan: "Scan the pairing QR",
+  welcomeOther: "Other ways to connect",
 
   /* --------------------------------------------------- servers & pairing */
 
@@ -37,7 +34,7 @@ export const Copy = {
   serversForget: "Forget",
   serversForgetNote:
     "Forgetting removes the pairing from this phone. The server's Devices list can revoke it there too.",
-  serversEmpty: "No pairings yet. The demo world stays until you add one.",
+  serversEmpty: "No pairings yet.",
 
   choiceManaged: "ohmail (managed)",
   choiceManagedNote: "The hosted service at ohmail.app",
@@ -86,7 +83,6 @@ export const Copy = {
   connectDisconnect: "Disconnect",
   connectMirrored: (n: number, cursor: string) =>
     `${n} message${n === 1 ? "" : "s"} on this device · cursor ${cursor}`,
-  connectOhbox: (fresh: number, seen: number) => `Ohbox: ${fresh} new · ${seen} earlier`,
   connectSyncFailed: (detail: string) => `Sync failed — the mirror keeps what it has. ${detail}`,
 
   /* ----------------------------------------------------------------- ohbox */
@@ -94,11 +90,9 @@ export const Copy = {
   ohbox: "Ohbox",
   groupNew: "New",
   groupSeen: "Earlier",
-  /* The server-search sentence is DEMO-ONLY: on a live account, search still runs over the
-   * demo corpus (see `searchDemoOnly`), so promising it "reaches the rest of your server"
-   * would be a claim the app cannot keep. The live tail states only what is on screen. */
-  ohboxTail: (shown: number, live = false) =>
-    `All ${shown} accepted message${shown === 1 ? "" : "s"} shown.${live ? "" : " Search reaches the rest of your server."}`,
+  ohboxTail: (shown: number) => `All ${shown} accepted message${shown === 1 ? "" : "s"} shown.`,
+  ohboxEmptyTitle: "Nothing here yet.",
+  ohboxEmptyHint: "Mail from senders you said Yes to lands here as it syncs.",
   doorbell: (n: number) => `${n} new sender${n === 1 ? "" : "s"}`,
   doorbellRest: "waiting",
   doorbellGo: "Screener",
@@ -110,8 +104,11 @@ export const Copy = {
   waterline: "Seen up to here",
   readsTail: (shown: number) =>
     `All ${shown} issue${shown === 1 ? "" : "s"} shown. Scrolling past an item marks it seen.`,
-  receiptsTail: (shown: number, live = false) =>
-    `All ${shown} receipt${shown === 1 ? "" : "s"} shown.${live ? "" : " Search reaches older ones on your server."}`,
+  receiptsTail: (shown: number) => `All ${shown} receipt${shown === 1 ? "" : "s"} shown.`,
+  readsEmptyTitle: "No issues yet.",
+  readsEmptyHint: "Newsletters and long reads you file here arrive as they sync.",
+  receiptsEmptyTitle: "No receipts yet.",
+  receiptsEmptyHint: "Orders, invoices and tickets you file here arrive as they sync.",
   streamSeenHint: "scrolling past marks seen",
 
   /* ------------------------------------------------------------- protected */
@@ -127,7 +124,6 @@ export const Copy = {
   segWaiting: "Waiting",
   segScreened: "Screened out",
   segSpam: "Spam",
-  applyAll: "Apply all suggestions",
   aiSuggests: (dest: string, confidence: number) => `${dest} · ${confidence.toFixed(2)}`,
   scopeSender: "this sender",
   scopeDomain: "whole domain",
@@ -147,6 +143,12 @@ export const Copy = {
   notSpamLabel: "Not spam — move all held mail to",
   spamNote:
     "Detection reads structure — sender, headers, link targets. Content is not sent anywhere.",
+  waitingEmptyTitle: "Nobody is waiting.",
+  waitingEmptyHint: "First-time senders knock here before anything reaches your Ohbox.",
+  screenedEmptyTitle: "Nobody is screened out.",
+  screenedEmptyHint: "Senders you say No to wait here — held, never deleted.",
+  spamEmptyTitle: "No spam held.",
+  spamEmptyHint: "Suspected spam waits here for your eyes, never deleted unseen.",
 
   /* ---------------------------------------------------------------- triage */
 
@@ -158,50 +160,25 @@ export const Copy = {
   resurface: "Resurface",
   pileEmpty: "Nothing here yet.",
 
-  /* ------------------------------------------------------------------ tags */
-
-  tags: "Tags",
-  tagEmpty: "Nothing carries this tag yet.",
-  tagEmptySub: "Open a message and tap a tag to add it.",
-  tagsNote: "A tag groups messages across Ohbox, Reads and Receipts without moving them.",
-
   /* ---------------------------------------------------------------- search */
 
   search: "Search",
-  /** Shown on a LIVE session: this screen still searches the demo corpus, and must say so. */
-  searchDemoOnly:
-    "This screen searches the demo corpus only — searching your synced mail arrives with a later update.",
-  searchPlaceholder: "Search everything — typos welcome",
-  searchIndex: "local index",
-  searchEmptyTitle: "No local results.",
-  searchEmptySub: "This preview searches the fixtures on your device — nothing leaves it.",
-  searchIdleTitle: "Search Mila's world.",
-  searchIdleSub: "Try “invoce” — the misspelling still finds the invoice.",
-  fuzzyNote: (term: string) => `fuzzy match — “${term}”`,
-  results: (n: number, ms: number) =>
-    `${n} result${n === 1 ? "" : "s"} · ${ms} ms · ${Copy.searchIndex}`,
+  /** More's one honest sentence about it — there is no search screen to route to yet. */
+  searchLater: "Arrives in a later update",
 
   /* -------------------------------------------------------------- settings */
 
   settings: "Settings",
-  /** Shown on a LIVE session: every panel below is still the demo world's, and must say so. */
-  settingsDemoOnly:
-    "These settings are the demo world's — settings for a connected server arrive with a later update. Manage the pairing itself under More → Connect to a server.",
-  /** The About block while a session is live — states what is real on this build. */
-  aboutLive: (origin: string) =>
-    `Paired with ${origin}. Mail syncs into an on-device mirror; reading and triage are live. Search and the settings above still show the demo world.`,
   theme: "Appearance",
   themeNote: "Follows the system unless set.",
-  mailboxes: "Mailboxes",
-  mailboxesNote: "Mail stays in real folders on these servers.",
-  notifications: "Notifications",
-  vipHeading: "VIP — always notifies",
-  connected: "Connected",
   about: "About this build",
+  /** The About block — states what is real on this build, no more. */
+  aboutLive: (origin: string) =>
+    `Paired with ${origin}. Mail syncs into an on-device mirror; reading and triage are live. Compose, search and tags arrive with later updates.`,
 
-  /* ------------------------------------------------- live world (phone-specific) */
+  /* ------------------------------------------------- world (phone-specific) */
 
-  /** The Ohbox pin group — resurfaced mail, above everything (live accounts only). */
+  /** The Ohbox pin group — resurfaced mail, above everything. */
   groupResurfaced: "Resurfaced",
   /** One plain sentence for any rejected write; the optimistic view has rolled back. */
   liveSaveFailed: "That change could not be saved. Try it again.",
@@ -223,10 +200,8 @@ export const Copy = {
 
   /* -------------------------------------------------------- message actions */
 
-  reply: "Reply",
   routedBy: "Why it landed here",
   earlierInThread: (n: number) => `Earlier in this conversation — all ${n} shown`,
   openMessage: "Open",
   back: "Back",
-  undo: "Undo",
 } as const;

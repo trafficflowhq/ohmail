@@ -14,9 +14,9 @@
  *     every held message seen first. Filing as read therefore does not move
  *     any unread count — it files mail, it does not announce it.
  *
- * The decision and the releases go through the world's actions — the demo's
- * pure transitions, or `engine.mutate` with the optimistic overlay and the
- * watched rollback (including the rule-rewriting release family).
+ * The decision and the releases go through the world's actions — `engine.mutate`
+ * with the optimistic overlay and the watched rollback (including the
+ * rule-rewriting release family).
  *
  * Layout note: the decision bar is pinned to the bottom, because that is where
  * the thumb is and because the mail should be the thing under the eye.
@@ -60,10 +60,9 @@ export default function SenderScreen() {
   const row = rows.find((x) => x.routeKey === id);
 
   // The decision is over the sender's ACTUAL mail: fetch every held body when the screen
-  // opens (live; the demo's fixtures carry theirs). `actions` is identity-stable, and the
-  // held list is keyed by its ids so a re-minted row re-asks only when the bag changed —
-  // plus the worldKey, so a route restored before the session went live re-asks against
-  // the engine once it exists.
+  // opens. `actions` is identity-stable, and the held list is keyed by its ids so a
+  // re-minted row re-asks only when the bag changed — plus the worldKey, so a route
+  // restored before the session went live re-asks against the engine once it exists.
   const heldKey = row ? row.held.map((h) => h.id).join(",") : "";
   const hydrateHeld = w.actions.hydrateHeld;
   const worldKey = w.worldKey;

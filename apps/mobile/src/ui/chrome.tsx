@@ -2,8 +2,9 @@
  * The persistent chrome: top bar, the Screener doorbell, and the toast.
  *
  * The desktop shell has a rail and a command dock. A phone has neither, so the
- * wordmark moves into a top bar that also carries the two things a thumb wants
- * within reach — search, and the route out to everything the tabs do not hold.
+ * wordmark moves into a top bar. (No search affordance yet: search over the
+ * synced mirror arrives with a later update, and a control that cannot perform
+ * does not render.)
  */
 import { useEffect, useRef } from "react";
 import { Animated, Easing, View } from "react-native";
@@ -11,8 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
-import { useStore } from "../state/store";
-import { useWorld, useWorldToast } from "../state/world";
+import { useWorldToast } from "../state/world";
 import { Icon } from "./Icon";
 import { Wordmark } from "./Icon";
 import { Tap, Txt } from "./base";
@@ -36,22 +36,20 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
       <Wordmark color={t.c.ink} dot={t.c.accent} size={17} />
       <View style={{ flex: 1 }} />
       {trailing}
-      <Tap
-        onPress={() => router.push("/search")}
-        accessibilityRole="button"
-        accessibilityLabel={Copy.search}
-        style={{ padding: 8 }}
-      >
-        <Icon name="search" size={17} color={t.c.ink2} />
-      </Tap>
     </View>
   );
 }
 
-/** A back bar for the pushed screens (message, screener detail, settings…). */
+/**
+ * A back bar for the pushed screens (message, screener detail, settings…).
+ * The Servers screen can also be the FIRST screen (the gate lands a paired but
+ * disconnected phone there), where there is no history to pop — the back
+ * affordance hides rather than offering a press that goes nowhere.
+ */
 export function DetailBar({ title, right }: { title?: string; right?: React.ReactNode }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
+  const canBack = router.canGoBack();
   return (
     <View
       style={{
@@ -63,19 +61,21 @@ export function DetailBar({ title, right }: { title?: string; right?: React.Reac
         gap: 6,
       }}
     >
-      <Tap
-        onPress={() => router.back()}
-        accessibilityRole="button"
-        accessibilityLabel={Copy.back}
-        style={{ flexDirection: "row", alignItems: "center", gap: 4, padding: 8 }}
-      >
-        <View style={{ transform: [{ rotate: "180deg" }] }}>
-          <Icon name="chev" size={15} color={t.c.ink2} />
-        </View>
-        <Txt variant="button" tone="ink2">
-          {Copy.back}
-        </Txt>
-      </Tap>
+      {canBack ? (
+        <Tap
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel={Copy.back}
+          style={{ flexDirection: "row", alignItems: "center", gap: 4, padding: 8 }}
+        >
+          <View style={{ transform: [{ rotate: "180deg" }] }}>
+            <Icon name="chev" size={15} color={t.c.ink2} />
+          </View>
+          <Txt variant="button" tone="ink2">
+            {Copy.back}
+          </Txt>
+        </Tap>
+      ) : null}
       {title ? (
         <Txt variant="button" tone="ink3" numberOfLines={1} style={{ flexShrink: 1, marginLeft: 4 }}>
           {title}
@@ -155,28 +155,19 @@ export function Doorbell({ initials, count }: { initials: string[]; count: numbe
 /* ------------------------------------------------------------------- toast */
 
 /**
- * The toast. Rises once, holds, and offers the undo when the action had one.
- * Under reduced motion it appears and disappears instantly — Blanc's policy is
- * that a state change becomes instant, never merely slower.
+ * The toast. Rises once, holds, dismisses itself. Under reduced motion it
+ * appears and disappears instantly — Blanc's policy is that a state change
+ * becomes instant, never merely slower.
  *
- * Two worlds, one capsule — GATED BY THE ACTIVE WORLD. On a live session only
- * the live sentence renders (a retained fixture toast is the demo's story, and
- * showing it over real mail — or letting it out-shout a live failure — mixes
- * the worlds the split exists to keep apart); in the demo only the store's
- * toast renders, undo and all. A live rejection carries no undo: the engine
- * has already rolled the act back.
+ * One sentence, no undo: a rejection means the engine has already rolled the
+ * act back, and a stated act needs no ceremony.
  */
 export function Toast() {
   const t = useTheme();
   const insets = useSafeAreaInsets();
-  const { s, undo, dismissToast } = useStore();
-  const w = useWorld();
-  const live = useWorldToast();
+  const { toast, dismiss } = useWorldToast();
   const anim = useRef(new Animated.Value(0)).current;
-  const fromDemo = !w.live;
-  const message = fromDemo ? s.toast?.message : live.toast?.message;
-  const hasUndo = fromDemo && !!s.toast?.undo;
-  const dismiss = fromDemo ? dismissToast : live.dismiss;
+  const message = toast?.message;
 
   useEffect(() => {
     if (!message) return;
@@ -186,12 +177,12 @@ export function Toast() {
       easing: Easing.bezier(...t.motion.easing.spring),
       useNativeDriver: true,
     }).start();
-    const timer = setTimeout(dismiss, hasUndo ? 6000 : 3200);
+    const timer = setTimeout(dismiss, 3200);
     return () => {
       clearTimeout(timer);
       anim.setValue(0);
     };
-  }, [message, hasUndo, anim, dismiss, t]);
+  }, [message, anim, dismiss, t]);
 
   if (!message) return null;
 
@@ -229,13 +220,6 @@ export function Toast() {
         <Txt variant="meta" numberOfLines={2} style={{ flexShrink: 1 }}>
           {message}
         </Txt>
-        {hasUndo ? (
-          <Tap onPress={undo} accessibilityRole="button" style={{ paddingVertical: 2 }}>
-            <Txt variant="button" tone="accent">
-              {Copy.undo}
-            </Txt>
-          </Tap>
-        ) : null}
       </View>
     </Animated.View>
   );

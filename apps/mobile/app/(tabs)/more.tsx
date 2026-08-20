@@ -3,24 +3,19 @@
  *
  * The rail is typographic on desktop: names and counts, no icons. That holds
  * up here too, so this screen is a list of destinations with their real
- * numbers rather than a grid of tiles.
+ * numbers rather than a grid of tiles. A feature that is not live yet gets a
+ * plain sentence, never a control that goes nowhere.
  */
 import { View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
-import { taggedMail } from "../../src/state/derived";
-import { world } from "../../src/state/model";
-import { useApp } from "../../src/state/store";
 import { useWorld } from "../../src/state/world";
 import { Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { Icon } from "../../src/ui/Icon";
-import { PreviewNote } from "./index";
 
 export default function MoreScreen() {
-  const t = useTheme();
-  const s = useApp();
   const w = useWorld();
   const pileCountOf = (kind: string) => w.piles.find((p) => p.kind === kind)?.items.length ?? 0;
 
@@ -28,9 +23,7 @@ export default function MoreScreen() {
     <Screen>
       <TopBar />
       <Scroller>
-        {/* The header names whose mail this is: Mila's fixture account in the demo, the
-            paired server + account on a live session — never the fixture identity over
-            somebody's real mailbox. */}
+        {/* The header names whose mail this is: the paired server and account. */}
         <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14 }}>
           <Txt variant="h1" numberOfLines={1}>{w.account.name}</Txt>
           <Txt variant="meta" tone="ink3" style={{ marginTop: 4 }} numberOfLines={1}>
@@ -56,41 +49,28 @@ export default function MoreScreen() {
             onPress={() => router.push("/triage")}
           />
 
-          {/* Tags are the demo world's until they arrive on live accounts — fixture rows
-              over a real account would be counts about mail that is not there. */}
-          {!w.live ? (
-            <>
-              <Section>{Copy.tags}</Section>
-              {world.tags.map((tag) => {
-                const hue = t.c.tag[tag.hue];
-                return (
-                  <Nav
-                    key={tag.id}
-                    label={tag.name}
-                    dot={hue.ink}
-                    count={taggedMail(s, tag.id).length}
-                    onPress={() => router.push(`/tag/${tag.id}`)}
-                  />
-                );
-              })}
-              <View style={{ paddingHorizontal: 20, paddingTop: 4, paddingBottom: 8 }}>
-                <Txt variant="caption" tone="ink3" style={{ lineHeight: 16 }}>
-                  {Copy.tagsNote}
-                </Txt>
-              </View>
-            </>
-          ) : null}
-
           <Rule inset={20} />
 
-          <Nav label={Copy.search} onPress={() => router.push("/search")} chevron />
+          {/* Search over the synced mirror is not built yet. Said in words, not a dead row. */}
+          <View
+            style={{
+              marginHorizontal: 8,
+              paddingHorizontal: 12,
+              paddingVertical: 12,
+              minHeight: 46,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <Txt variant="navLabel" tone="ink3">{Copy.search}</Txt>
+            <View style={{ flex: 1 }} />
+            <Txt variant="caption" tone="ink3">{Copy.searchLater}</Txt>
+          </View>
           <Nav label={Copy.settings} onPress={() => router.push("/settings")} chevron />
-          {/* The pairing door: the server picker (QR scan, own-server, managed) that
-              replaced the dev-only manual bearer entry. A release feature, not a dev one. */}
+          {/* The pairing door: the server picker (QR scan, own-server, managed). */}
           <Nav label={Copy.serversRow} onPress={() => router.push("/servers")} chevron />
         </Panel>
-
-        <PreviewNote />
       </Scroller>
     </Screen>
   );
@@ -99,13 +79,11 @@ export default function MoreScreen() {
 function Nav({
   label,
   count,
-  dot,
   chevron,
   onPress,
 }: {
   label: string;
   count?: number;
-  dot?: string;
   chevron?: boolean;
   onPress: () => void;
 }) {
@@ -125,7 +103,6 @@ function Nav({
         gap: 10,
       }}
     >
-      {dot ? <View style={{ width: 7, height: 7, borderRadius: t.radius.dot, backgroundColor: dot }} /> : null}
       <Txt variant="navLabel">{label}</Txt>
       <View style={{ flex: 1 }} />
       {count !== undefined ? (

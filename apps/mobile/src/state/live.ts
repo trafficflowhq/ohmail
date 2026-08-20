@@ -8,8 +8,7 @@
  *    functions the webapp and desktop shells render from — over the consent-cutline
  *    projection (`presentationReader` ∘ `consentPartition`), so the piles this phone shows
  *    are the piles a second client shows for the same mirror. The mapping here only reshapes
- *    their DTOs into the row shapes the prototype screens already render (the screens stay
- *    logic-free, which is the fixtures world's own contract).
+ *    their DTOs into the row shapes the screens render (the screens stay logic-free).
  *
  *  · **Writes** go through `engine.mutate({kind: …})` — the SAME contract every other client
  *    uses, with the optimistic overlay and the server-rejection rollback owned by the engine.
@@ -38,11 +37,9 @@
  * module be driven against a real loopback server without a renderer.
  */
 import {
-  CALENDAR_FALLBACK_FILENAME,
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
   bodyOf,
-  isCalendarMime,
   consentPartition,
   messageDisplayTime,
   feedPartition,
@@ -68,10 +65,7 @@ import {
   type ScreenDest,
   type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
-import type { TagId } from "@ohmail/fixtures";
 import { Copy } from "../copy";
-import type { ConnectionState } from "../net/connection";
-import type { ConnectedSession } from "../net/pairing";
 import {
   destDone,
   domainOf,
@@ -85,47 +79,6 @@ import {
   type Place,
   type Scope,
 } from "./model";
-
-/* ─────────────────────────────────────────────────────── attachment naming */
-
-/**
- * THE NAME AN ATTACHMENT TILE RENDERS — never an empty label.
- *
- * A calendar invite commonly arrives as a NAMELESS `text/calendar` part (the big providers
- * nest it unnamed under `multipart/alternative`), and the meeting-invite fixtures carry
- * exactly that wire shape (`filename: ""`). Rendering `filename` raw put an empty label on
- * the tile. The fallbacks are the server's own stems for a nameless part
- * (`attachments-service.ts#uniqueName`, mirrored by the engine's `toAttachmentItem`):
- * `CALENDAR_FALLBACK_FILENAME` for a calendar part, `attachment-<id>.bin` for anything else
- * — so the name on the tile is the same name a download or a zip entry would carry, on
- * every client. The live strip's items arrive named already (the engine applies this rule
- * at the wire); this covers the demo world's fixture tiles with the same words.
- */
-export function attachmentDisplayName(filename: string, contentType: string | undefined, id: string): string {
-  const named = filename.trim();
-  if (named) return named;
-  return isCalendarMime(contentType ?? "") ? CALENDAR_FALLBACK_FILENAME : `attachment-${id}.bin`;
-}
-
-/** The demo world's tile label: the fixture's name, through the same fallback. */
-export function attachmentLabelOf(m: Mail): string | null {
-  if (!m.attachment) return null;
-  return attachmentDisplayName(m.attachment.filename, m.attachment.contentType, m.id);
-}
-
-/* ─────────────────────────────────────────────────────────────── the switch */
-
-export type WorldSource = { mode: "demo" } | { mode: "live"; session: ConnectedSession };
-
-/**
- * Which world the screens render. LIVE means exactly `state.k === "live"` — a boot in
- * progress, a refusal and an ended session all render the demo world (the fixtures machine),
- * with the connection's own screens carrying the status sentences. The demo is a MODE,
- * never a fallback that quietly stands in for an account.
- */
-export function sourceOf(state: ConnectionState): WorldSource {
-  return state.k === "live" ? { mode: "live", session: state.session } : { mode: "demo" };
-}
 
 /* ─────────────────────────────────────────────────────── the projected read */
 
@@ -166,9 +119,8 @@ export interface WorldAttachment {
 }
 
 /**
- * The screens' row type, unchanged from the demo world, plus the live-only extras:
- * a many-attachments strip (the fixture world carries at most one), and the body's
- * honest state so the reading pane never presents a snippet as the whole mail.
+ * The screens' row type: the mail row plus an attachment strip and the body's
+ * honest state, so the reading pane never presents a snippet as the whole mail.
  */
 export type WorldMail = Mail & {
   attachments?: WorldAttachment[];
@@ -273,13 +225,8 @@ export function liveReceipts(pres: EntityReader, v: WorldView): WorldReceipts {
 }
 
 /**
- * One Screener row, whichever world minted it. The demo's richer fields (an AI suggestion,
- * spam detection metadata) are OPTIONAL because a derived live row honestly has neither —
- * no classifier runs client-side and `/sync` carries no suggestion (`screenerSegments`).
- */
-/**
- * One held message on the sender screen — the demo's shape plus the body's HONEST state.
- * A live derived row's held bodies start as snippets and hydrate; a consent decision taken
+ * One held message on the sender screen — the row shape plus the body's HONEST state.
+ * A derived row's held bodies start as snippets and hydrate; a consent decision taken
  * on a truncation is the risk the Screener exists to remove, so the preview has to say
  * which of the states it is in (`screenerSegments` carries it; dropping it here made every
  * first-contact decision a decision over one line).
@@ -295,9 +242,8 @@ export interface ScreenerRow {
   id: string;
   /**
    * The STABLE identity a screen may navigate and keep state by: the sender key (the
-   * case-folded address) on live rows, the fixture row's own id in the demo (stable there).
-   * A detail screen looked up by `id` said "no longer in the Screener" the moment a drain
-   * landed newer mail from the very sender on screen.
+   * case-folded address). A detail screen looked up by `id` said "no longer in the
+   * Screener" the moment a drain landed newer mail from the very sender on screen.
    */
   routeKey: string;
   name: string;
@@ -328,7 +274,7 @@ export interface WorldScreener {
   spam: ScreenerRow[];
 }
 
-const DEMO_AI_DESTS = new Set<string>(["ohbox", "reads", "receipts", "screened", "spam"]);
+const AI_DESTS = new Set<string>(["ohbox", "reads", "receipts", "screened", "spam"]);
 
 function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
   const held: ScreenerHeld[] = dto.held.map((h) => ({
@@ -336,14 +282,14 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
     subject: h.subject,
     time: h.time,
     body: h.body,
-    // The body's honest state travels with the text — absent means `full` (a fixture row
-    // carries its bodies verbatim), exactly the DTO's own contract.
+    // The body's honest state travels with the text — absent means `full`, exactly the
+    // DTO's own contract.
     ...(h.bodyState ? { bodyState: h.bodyState } : {}),
     ...(h.trackerNote ? { trackerNote: h.trackerNote } : {}),
     seen: false,
   }));
   const ai =
-    dto.ai && !dto.ai.noAnswer && DEMO_AI_DESTS.has(dto.ai.dest)
+    dto.ai && !dto.ai.noAnswer && AI_DESTS.has(dto.ai.dest)
       ? { dest: dto.ai.dest as Destination, confidence: dto.ai.confidence, rationale: dto.ai.rationale }
       : null;
   return {
@@ -390,7 +336,7 @@ export interface WorldPile {
   items: PileItem[];
 }
 
-/** The pile blurbs, verbatim from the demo world (`model.ts#initialState`) — one wording. */
+/** The pile blurbs — one wording, shared with the desktop client's. */
 export const PILE_META: Record<PileKind, { title: string; note: string }> = {
   replyLater: { title: "Answer Later", note: "Answers you owe. A Reply Run walks them one screen at a time." },
   setAside: { title: "Parked", note: "Kept in view without keeping the Ohbox busy." },
@@ -419,7 +365,7 @@ export function livePiles(pres: EntityReader, v: WorldView): WorldPile[] {
 /**
  * The reading view's row: the mirror's message with its body resolved (`bodyOf` — hydrated
  * text once `hydrateBody` lands, honest `bodyState` until then), its conversation as the
- * demo's `earlier` shape (`threadOf`, every member rendered in full), and the attachment
+ * `earlier` shape (`threadOf`, every member rendered in full), and the attachment
  * strip from the engine's own items — whose nameless-ICS fallback (`invite.ics`) the engine
  * already mints, matching the webapp and the download names.
  */
@@ -782,28 +728,24 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
 /* ─────────────────────────────────────────────────────── the stable facade */
 
-/** What every mail screen may DO — one vocabulary for both worlds. */
+/** What every mail screen may DO — one vocabulary, delegating to the engine. */
 export interface WorldActions {
-  /** The scroll-seen sweep (Reads/Receipts). Demo: the model's waterline; live: the wire. */
+  /** The scroll-seen sweep (Reads/Receipts), riding the wire's `feed_mark_seen`. */
   markSeenThrough(place: "reads" | "receipts", ids: string[]): void;
-  /** Leaving a stream commits the live waterline; the demo world has nothing to commit. */
+  /** Leaving a stream commits the waterline. */
   leaveFeed(place: "reads" | "receipts"): void;
-  /** Opening a message: live marks it read + hydrates; the demo's Ohbox read is non-destructive. */
+  /** Opening a message marks it read and hydrates its text, thread and files. */
   openMessage(id: string): void;
-  /** An explicit re-ask for one message's full text (a card expand, a reopen). Demo no-op. */
+  /** An explicit re-ask for one message's full text (a card expand, a reopen). */
   hydrateMessage(id: string): void;
-  /** The sender screen's open: fetch every held body. Demo no-op (fixtures carry theirs). */
+  /** The sender screen's open: fetch every held body. */
   hydrateHeld(ids: string[]): void;
   decide(row: ScreenerRow, dest: Destination, read: boolean): void;
   setScope(row: ScreenerRow, scope: Scope): void;
   /** Allow (screened) / Not spam (spam): release the whole held bag to a place. */
   allow(row: ScreenerRow, dest: Place): void;
   notSpam(row: ScreenerRow, dest: Place): void;
-  /** Demo-only: files every waiting sender where the AI suggests. No-op live (no AI rows). */
-  applyAllSuggestions(): void;
   addToPile(kind: PileKind, item: PileItem): void;
-  /** Demo-only: tags are not yet shown on live accounts. */
-  toggleTag(messageId: string, tag: TagId): void;
 }
 
 /**
@@ -829,9 +771,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     setScope: (row, scope) => current().setScope(row, scope),
     allow: (row, dest) => current().allow(row, dest),
     notSpam: (row, dest) => current().notSpam(row, dest),
-    applyAllSuggestions: () => current().applyAllSuggestions(),
     addToPile: (kind, item) => current().addToPile(kind, item),
-    toggleTag: (messageId, tag) => current().toggleTag(messageId, tag),
   };
 }
 
@@ -843,6 +783,6 @@ function nextMorning(from: Date): Date {
   return d;
 }
 
-/* Re-exported so the world layer and the suite spell the demo/live split identically. */
+/* Re-exported so the world layer and the suite spell the vocabulary identically. */
 export { destDone, isPlace };
 export type { Destination, Held, Mail, PileItem, PileKind, Place, Scope };

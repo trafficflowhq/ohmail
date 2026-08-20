@@ -1,21 +1,19 @@
 /**
  * Ohbox — mail from people you said Yes to.
  *
- * The list splits new / previously seen and never re-sorts under the reader:
- * opening a message in the DEMO Ohbox is non-destructive, so a row cannot cross
- * the boundary by being read. On a live account the split is the engine's own
- * `ohboxView` — new-for-you / earlier, plus the resurfaced pin group above both
- * (mail whose "show me this again" moment has come).
+ * The list splits new / previously seen and never re-sorts under the reader.
+ * The split is the engine's own `ohboxView` — new-for-you / earlier, plus the
+ * resurfaced pin group above both (mail whose "show me this again" moment has
+ * come).
  *
- * The screen renders whichever world `useWorld()` answers and holds no logic of
- * its own; the demo world's lists are still the `derived.ts` selectors the
- * no-collapse manifest is asserted over.
+ * The screen renders what `useWorld()` answers and holds no logic of its own.
+ * An empty mailbox renders an honest empty state, never sample mail.
  */
 import { View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useWorld, type WorldMail } from "../../src/state/world";
-import { Panel, Screen, Scroller, Section, Tail, Txt } from "../../src/ui/base";
+import { Empty, Panel, Screen, Scroller, Section, Tail, Txt } from "../../src/ui/base";
 import { Doorbell, TopBar } from "../../src/ui/chrome";
 import { MailRow } from "../../src/ui/MailRow";
 
@@ -26,12 +24,7 @@ export default function OhboxScreen() {
   const group = (rows: WorldMail[]) => (
     <View style={{ paddingHorizontal: 6 }}>
       {rows.map((m) => (
-        <MailRow
-          key={m.id}
-          m={m}
-          tags={w.tagsOf(m.id)}
-          onPress={() => router.push(`/message/${m.id}`)}
-        />
+        <MailRow key={m.id} m={m} onPress={() => router.push(`/message/${m.id}`)} />
       ))}
     </View>
   );
@@ -44,33 +37,37 @@ export default function OhboxScreen() {
         <Doorbell initials={w.doorbell.initials} count={w.doorbell.count} />
 
         <Panel style={{ paddingBottom: 4 }}>
-          {resurfaced.length > 0 ? (
+          {total === 0 ? (
+            <Empty glyph="📭" title={Copy.ohboxEmptyTitle} hint={Copy.ohboxEmptyHint} />
+          ) : (
             <>
-              <Section style={{ paddingTop: 18 }}>{Copy.groupResurfaced}</Section>
-              {group(resurfaced)}
-            </>
-          ) : null}
+              {resurfaced.length > 0 ? (
+                <>
+                  <Section style={{ paddingTop: 18 }}>{Copy.groupResurfaced}</Section>
+                  {group(resurfaced)}
+                </>
+              ) : null}
 
-          {fresh.length > 0 ? (
-            <>
-              <Section style={resurfaced.length === 0 ? { paddingTop: 18 } : undefined}>
-                {Copy.groupNew}
-              </Section>
-              {group(fresh)}
-            </>
-          ) : null}
+              {fresh.length > 0 ? (
+                <>
+                  <Section style={resurfaced.length === 0 ? { paddingTop: 18 } : undefined}>
+                    {Copy.groupNew}
+                  </Section>
+                  {group(fresh)}
+                </>
+              ) : null}
 
-          {seen.length > 0 ? (
-            <>
-              <Section>{Copy.groupSeen}</Section>
-              {group(seen)}
-            </>
-          ) : null}
+              {seen.length > 0 ? (
+                <>
+                  <Section>{Copy.groupSeen}</Section>
+                  {group(seen)}
+                </>
+              ) : null}
 
-          <Tail>{Copy.ohboxTail(total, w.live)}</Tail>
+              <Tail>{Copy.ohboxTail(total)}</Tail>
+            </>
+          )}
         </Panel>
-
-        <PreviewNote />
       </Scroller>
     </Screen>
   );
@@ -82,27 +79,6 @@ function ViewHeadOhbox({ meta }: { meta: string }) {
       <Txt variant="h1">{Copy.ohbox}</Txt>
       <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
         {meta}
-      </Txt>
-    </View>
-  );
-}
-
-/**
- * The status the demo depends on, stated on the first screen rather than buried
- * in a README: this is fixtures, and nothing leaves the device. On a LIVE
- * session the sentence would be false, so it renders nothing — claims are
- * contracts, and this one belongs to the demo world alone.
- */
-export function PreviewNote() {
-  const w = useWorld();
-  if (w.live) return null;
-  return (
-    <View style={{ paddingHorizontal: 20, paddingTop: 20, gap: 3 }}>
-      <Txt variant="caption" tone="ink2">
-        {Copy.previewTitle}
-      </Txt>
-      <Txt variant="caption" tone="ink3" style={{ lineHeight: 16 }}>
-        {Copy.previewNote}
       </Txt>
     </View>
   );

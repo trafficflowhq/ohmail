@@ -63,7 +63,7 @@ export default function ServersScreen() {
 function StatusPanel() {
   const conn = useConnection();
   const s = conn.state;
-  if (s.k === "demo") {
+  if (s.k === "starting" || s.k === "idle") {
     return conn.profiles.length === 0 ? (
       <Panel style={{ paddingVertical: 16 }}>
         <View style={{ paddingHorizontal: 20 }}>

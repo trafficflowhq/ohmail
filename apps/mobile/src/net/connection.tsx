@@ -2,7 +2,7 @@
  * THE CONNECTION LAYER — one live session for the whole app, as a React context.
  *
  * This is the surface the real mail screens consume: `useConnection()` answers the current
- * state (the demo world, a connecting/live session, a refusal, or an ENDED session), and the
+ * state (idle, a connecting/live session, a refusal, or an ENDED session), and the
  * live state carries the engine + store the screens subscribe to. The connection screens (the
  * picker, the scanner, the manual fallback) drive the transitions; nothing else in the app
  * touches the network seam.
@@ -50,7 +50,10 @@ import {
 import { TransitionGate } from "./transitions";
 
 export type ConnectionState =
-  | { k: "demo" }
+  /** The launch instant, before the keystore has answered whether a pairing exists. */
+  | { k: "starting" }
+  /** No session: nothing paired yet, or the reader disconnected. The connect flow owns the screen. */
+  | { k: "idle" }
   | { k: "connecting"; origin: string }
   | { k: "live"; session: ConnectedSession }
   | { k: "refused"; reason: string }
@@ -65,7 +68,7 @@ export interface Connection {
   syncError: string | null;
   /** Every pairing on this phone — kept current across pair/forget/switch. */
   profiles: ServerProfile[];
-  /** The active profile id (which row the app boots), or null in the demo world. */
+  /** The active profile id (which row the app boots), or null with nothing paired. */
   activeId: string | null;
   /** The picker's /hello probe — negotiation lives in the seam, screens render the answer. */
   ask(origin: string): Promise<Negotiation>;
@@ -75,7 +78,7 @@ export interface Connection {
   switchTo(profileId: string): Promise<Attempt>;
   /** Forget the pairing on this phone AND revoke it server-side (best-effort). */
   forget(profileId: string): Promise<void>;
-  /** Back to the demo world. The mirror stays on disk — that is the point of the mirror. */
+  /** End the session without forgetting the pairing. The mirror stays on disk — that is the point. */
   disconnect(): Promise<void>;
   syncNow(): void;
 }
@@ -99,7 +102,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const gateRef = useRef<TransitionGate | null>(null);
   const gate = (gateRef.current ??= new TransitionGate());
 
-  const [state, setState] = useState<ConnectionState>({ k: "demo" });
+  const [state, setState] = useState<ConnectionState>({ k: "starting" });
   const [profiles, setProfiles] = useState<ServerProfile[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -191,13 +194,19 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     [adopt, env, refreshProfiles, teardown],
   );
 
-  // The app launch: whichever profile was active reconnects; none means the demo world.
+  // The app launch: whichever profile was active reconnects; none means the connect flow.
   // Through the gate like every other transition, so a fast first tap supersedes it cleanly.
+  // `starting` holds only until the keystore answers — the gate component renders nothing
+  // during it, so a paired phone never flashes the welcome screen on its way to mail.
   useEffect(() => {
     void gate.run(async (stillCurrent) => {
       await refreshProfiles();
       const active = await env.profiles.active();
-      if (active === null || !stillCurrent()) return;
+      if (!stillCurrent()) return;
+      if (active === null) {
+        setState((s) => (s.k === "starting" ? { k: "idle" } : s));
+        return;
+      }
       await runConnect(active.id, stillCurrent);
     });
     return () => {
@@ -254,7 +263,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             const bearer = live.current.session.bearer;
             revokeLive = () => bearer.logout();
             teardown(live.current.session);
-            setState({ k: "demo" });
+            setState({ k: "idle" });
           }
           await env.profiles.remove(profileId);
           await refreshProfiles();
@@ -264,7 +273,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       disconnect: () =>
         gate.run(async () => {
           if (live.current.k === "live") teardown(live.current.session);
-          setState({ k: "demo" });
+          setState({ k: "idle" });
           setSyncError(null);
         }),
       syncNow: () => {

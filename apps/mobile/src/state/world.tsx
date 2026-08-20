@@ -1,20 +1,20 @@
 /**
- * THE WORLD LAYER — one hook the mail screens render from, whichever world is on.
+ * THE WORLD LAYER — one hook the mail screens render from.
  *
- * `useWorld()` answers the SAME shape in both modes, so a screen holds no branch beyond the
- * few live-only affordances it hides (the demo's AI chrome, the fixtures disclaimer):
+ * `useWorld()` answers the connected session's mirror through the shared client-engine
+ * selectors (`src/state/live.ts`): reads over the consent projection, `engine.mutate`
+ * behind every action, watched, with rejections surfacing as one plain toast sentence
+ * ({@link useWorldToast}).
  *
- *  · **demo** — the fixtures machine, verbatim: every list comes from `derived.ts`'s own
- *    selectors and every action delegates to the store's pure transitions, so the demo world
- *    renders and behaves exactly as before this layer existed (fixtures mode
- *    stays whole; the no-collapse manifest still holds over these selectors).
- *  · **live** — `src/state/live.ts`: the shared client-engine selectors over the consent
- *    projection, and `engine.mutate` behind every action, watched, with rejections surfacing
- *    as one plain toast sentence ({@link useWorldToast}).
+ * WITHOUT A LIVE SESSION THE WORLD IS EMPTY — empty lists, no account, no-op actions.
+ * The navigation gate keeps the mail screens off-screen while nothing is connected (the
+ * app opens into the connect flow instead), so the empty world exists for the moments the
+ * gate cannot cover: a deep link restored mid-boot, one render between a teardown and the
+ * redirect. It is honestly nothing, never sample data standing in for an account.
  *
- * Computed ONCE per change here (the engine's own version signal / the store's state) and
- * shared through context, rather than per screen — six consumers re-deriving five piles per
- * render would scan the mirror thirty times per drain tick.
+ * Computed ONCE per change here (the engine's own version signal) and shared through
+ * context, rather than per screen — six consumers re-deriving five piles per render would
+ * scan the mirror thirty times per drain tick.
  *
  * ── `world.actions` IS ONE OBJECT FOR THE APP'S WHOLE LIFE ────────────────────────────────
  *
@@ -36,12 +36,9 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import type { TagId } from "@ohmail/fixtures";
 import { Copy } from "../copy";
 import { useConnection } from "../net/connection";
-import * as D from "./derived";
 import {
-  attachmentLabelOf,
   liveActions,
   liveMessage,
   liveOhbox,
@@ -51,7 +48,6 @@ import {
   liveScreener,
   presentedOf,
   readerZone,
-  sourceOf,
   stableActions,
   type ScreenerRow,
   type WorldActions,
@@ -59,22 +55,21 @@ import {
   type WorldPile,
   type WorldView,
 } from "./live";
-import { world as fixtures, type AppState, type Scope } from "./model";
-import { useStore, type Store } from "./store";
+import type { Scope } from "./model";
 
 export type { ScreenerRow, WorldActions, WorldMail, WorldPile } from "./live";
 
 export interface World {
   live: boolean;
   /**
-   * WHICH WORLD/SESSION this is — `"demo"`, or the live session's mirror owner key. The one
+   * WHICH SESSION this is — the live session's mirror owner key, or `"none"`. The one
    * legitimate effect dependency for "do this again when the world changes": the actions
    * facade is identity-stable BY DESIGN (so mirror versions cannot re-fire effects), which
-   * means an effect that must re-run when demo becomes live — the message screen's open on
-   * a restored route, the sender screen's held hydration — has to depend on THIS instead.
+   * means an effect that must re-run when the session goes live — the message screen's open
+   * on a restored route, the sender screen's held hydration — has to depend on THIS instead.
    */
   worldKey: string;
-  /** The header identity: Mila's fixture account, or the paired server + account id. */
+  /** The header identity: the paired server + account id; empty while nothing is live. */
   account: { name: string; email: string };
   ohbox: {
     resurfaced: WorldMail[];
@@ -89,7 +84,6 @@ export interface World {
     items: WorldMail[];
     waterlineAboveId: string | null;
     waterLabel: string;
-    waterMeta: string;
     meta: string;
   };
   receipts: {
@@ -103,7 +97,6 @@ export interface World {
   piles: WorldPile[];
   pilesMeta: string;
   message(id: string): WorldMail | undefined;
-  tagsOf(id: string): TagId[];
   actions: WorldActions;
 }
 
@@ -115,7 +108,7 @@ export function useWorld(): World {
   return w;
 }
 
-/** The live world's toast — one sentence, no undo. Rendered by the chrome beside the demo's. */
+/** The world's toast — one sentence, no undo (the engine already rolled the act back). */
 export interface WorldToast {
   toast: { id: number; message: string } | null;
   dismiss(): void;
@@ -127,129 +120,35 @@ export function useWorldToast(): WorldToast {
   return useContext(WorldToastContext);
 }
 
-/* ────────────────────────────────────────────────────────────── demo arm */
+/* ─────────────────────────────────────────────────────────── the empty world */
 
-function demoScreenerRows(s: AppState): { waiting: ScreenerRow[]; screened: ScreenerRow[]; spam: ScreenerRow[] } {
-  return {
-    waiting: s.waiting.map((w) => ({
-      id: w.id,
-      // The demo's own ids are stable (the fixtures machine keys senders by them), so the
-      // route key IS the id there — live rows key by the sender address instead.
-      routeKey: w.id,
-      name: w.from.name,
-      address: w.from.address,
-      initial: w.initial,
-      time: w.time,
-      newestSubject: w.held[w.held.length - 1]?.subject ?? "",
-      dull: w.dull,
-      scope: w.scope,
-      ai: w.ai,
-      held: w.held,
-      screenedOn: "",
-      detection: "",
-      gatePhysical: true,
-    })),
-    screened: s.screened.map((x) => ({
-      id: x.id,
-      routeKey: x.id,
-      name: x.address,
-      address: x.address,
-      initial: (x.address.trim()[0] ?? "?").toUpperCase(),
-      time: "",
-      newestSubject: x.held[x.held.length - 1]?.subject ?? "",
-      dull: false,
-      scope: "sender" as const,
-      ai: null,
-      held: x.held,
-      screenedOn: x.screenedOn,
-      detection: "",
-      gatePhysical: true,
-    })),
-    spam: s.spam.map((x) => ({
-      id: x.id,
-      routeKey: x.id,
-      name: x.from,
-      address: x.from,
-      initial: (x.from.trim()[0] ?? "?").toUpperCase(),
-      time: "",
-      newestSubject: x.held[x.held.length - 1]?.subject ?? "",
-      dull: false,
-      scope: "sender" as const,
-      ai: null,
-      held: x.held,
-      screenedOn: "",
-      detection: x.detection,
-      gatePhysical: true,
-    })),
-  };
-}
+/** Every action refused politely: nothing is connected, so nothing can be done. */
+const NO_ACTIONS: WorldActions = {
+  markSeenThrough: () => undefined,
+  leaveFeed: () => undefined,
+  openMessage: () => undefined,
+  hydrateMessage: () => undefined,
+  hydrateHeld: () => undefined,
+  decide: () => undefined,
+  setScope: () => undefined,
+  allow: () => undefined,
+  notSpam: () => undefined,
+  addToPile: () => undefined,
+};
 
-/** A demo message, with the attachment strip resolved through the shared name fallback. */
-function demoMessage(s: AppState, id: string): WorldMail | undefined {
-  const m = D.mail(s, id);
-  if (!m) return undefined;
-  const label = attachmentLabelOf(m);
-  return {
-    ...m,
-    ...(m.attachment && label
-      ? { attachments: [{ id: m.id, filename: label, size: m.attachment.size }] }
-      : {}),
-  };
-}
-
-/** The demo backend: every act is the store's own pure transition, verbatim. */
-function demoBackend(store: Store): WorldActions {
-  return {
-    markSeenThrough: (place, ids) => store.markSeenThrough(place, ids),
-    leaveFeed: () => undefined,
-    openMessage: () => undefined,
-    hydrateMessage: () => undefined,
-    hydrateHeld: () => undefined,
-    decide: (row, dest, read) => store.decide(row.id, dest, read),
-    setScope: (row, scope) => store.setScope(row.id, scope),
-    allow: (row, dest) => store.allowScreened(row.id, dest),
-    notSpam: (row, dest) => store.notSpam(row.id, dest),
-    applyAllSuggestions: () => store.applyAllSuggestions(),
-    addToPile: (kind, item) => store.addToPile(kind, item),
-    toggleTag: (messageId, tag) => store.toggleTag(messageId, tag),
-  };
-}
-
-function demoWorld(store: Store, actions: WorldActions): World {
-  const s = store.s;
-  const rows = demoScreenerRows(s);
+function emptyWorld(actions: WorldActions): World {
   return {
     live: false,
-    worldKey: "demo",
-    account: { name: fixtures.account.displayName, email: fixtures.account.email },
-    ohbox: {
-      resurfaced: [],
-      fresh: D.ohboxNew(s),
-      seen: D.ohboxSeen(s),
-      unread: D.ohboxUnread(s),
-      total: s.ohbox.length,
-      meta: D.ohboxMeta(s),
-    },
-    doorbell: { initials: s.waiting.map((w) => w.initial), count: s.waiting.length },
-    reads: {
-      items: D.readsStream(s),
-      waterlineAboveId: D.waterlineAbove(s),
-      waterLabel: fixtures.waterline.label,
-      waterMeta: fixtures.waterline.meta,
-      meta: D.readsMeta(s),
-    },
-    receipts: {
-      groups: D.receiptGroups(s),
-      waterlineAboveId: null,
-      waterLabel: Copy.waterline,
-      total: D.receiptStream(s).length,
-      meta: D.receiptsMeta(s),
-    },
-    screener: { ...rows, meta: D.screenerMeta(s) },
-    piles: s.piles.map((p) => ({ kind: p.kind, title: p.title, note: p.note, items: p.items })),
-    pilesMeta: D.triageMeta(s),
-    message: (id) => demoMessage(s, id),
-    tagsOf: (id) => D.tagsOfMessage(s, id),
+    worldKey: "none",
+    account: { name: "", email: "" },
+    ohbox: { resurfaced: [], fresh: [], seen: [], unread: 0, total: 0, meta: "" },
+    doorbell: { initials: [], count: 0 },
+    reads: { items: [], waterlineAboveId: null, waterLabel: Copy.waterline, meta: "" },
+    receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, meta: "" },
+    screener: { waiting: [], screened: [], spam: [], meta: "" },
+    piles: [],
+    pilesMeta: "",
+    message: () => undefined,
     actions,
   };
 }
@@ -258,10 +157,8 @@ function demoWorld(store: Store, actions: WorldActions): World {
 
 export function WorldProvider({ children }: { children: ReactNode }) {
   const conn = useConnection();
-  const store = useStore();
 
-  const source = sourceOf(conn.state);
-  const session = source.mode === "live" ? source.session : null;
+  const session = conn.state.k === "live" ? conn.state.session : null;
   const engine = session?.engine ?? null;
 
   /* The engine's own change signal — the exact idiom `LiveFacts` (servers.tsx) established. */
@@ -270,7 +167,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     () => (engine ? engine.read().version() : 0),
   );
 
-  /* The live toast: one sentence per rejected (or optimistically stated) act. */
+  /* The toast: one sentence per rejected (or optimistically stated) act. */
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const toastSeq = useRef(0);
   const showToast = useCallback((message: string) => {
@@ -280,7 +177,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const dismissToast = useCallback(() => setToast(null), []);
   const worldToast = useMemo<WorldToast>(() => ({ toast, dismiss: dismissToast }), [toast, dismissToast]);
 
-  /* Per-sender scope choice (this sender / whole domain) — view state on a live account,
+  /* Per-sender scope choice (this sender / whole domain) — view state on the session,
      keyed by the STABLE routeKey (the sender address), never the representative id. */
   const [scopes, setScopes] = useState<Record<string, Scope>>({});
 
@@ -288,18 +185,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * SESSION LIFECYCLE for the per-session view state. Scope choices are keyed by sender
    * ADDRESS, and the same address legitimately exists on two accounts — carried across a
    * profile switch, account A's "whole domain" would silently widen a decision on account B.
-   * The outgoing world's toast is cleared for the same
-   * worlds-don't-leak reason: a sentence hidden by the world gate must not resurrect when
-   * that world next renders. The demo store's own toast is dismissed through a ref so this
-   * effect keys on the SESSION alone, not on every store update.
+   * The outgoing session's toast is cleared for the same sessions-don't-leak reason: a
+   * sentence must not resurrect when the next session renders.
    */
-  const dismissDemoToast = useRef(store.dismissToast);
-  dismissDemoToast.current = store.dismissToast;
   const sessionKey = session?.ownerKey ?? null;
   useEffect(() => {
     setScopes({});
     setToast(null);
-    dismissDemoToast.current();
   }, [sessionKey]);
 
   const zone = useMemo(readerZone, []);
@@ -309,7 +201,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   );
 
   /* The CURRENT backend, refreshed per render; the stable facade delegates per call. */
-  const backendRef = useRef<WorldActions | null>(null);
+  const backendRef = useRef<WorldActions>(NO_ACTIONS);
   backendRef.current =
     engine && acts
       ? {
@@ -322,18 +214,16 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           setScope: (row, scope) => setScopes((held) => ({ ...held, [row.routeKey]: scope })),
           allow: (row, dest) => void acts.release(row, dest, "screened"),
           notSpam: (row, dest) => void acts.release(row, dest, "spam"),
-          applyAllSuggestions: () => undefined,
           addToPile: (kind, item) => {
             if (item.messageId) void acts.setPile(item.messageId, kind);
           },
-          toggleTag: () => undefined,
         }
-      : demoBackend(store);
+      : NO_ACTIONS;
   /* One identity for the app's life — see the header for what per-version identity cost. */
-  const actions = useMemo(() => stableActions(() => backendRef.current ?? demoBackend(store)), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const actions = useMemo(() => stableActions(() => backendRef.current), []);
 
   const world = useMemo<World>(() => {
-    if (engine === null || session === null) return demoWorld(store, actions);
+    if (engine === null || session === null) return emptyWorld(actions);
     const v: WorldView = { now: new Date(), zone };
     const pres = presentedOf(engine.read(), v.now);
     const ohbox = liveOhbox(pres, v);
@@ -354,7 +244,6 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       reads: {
         ...reads,
         waterLabel: Copy.waterline,
-        waterMeta: "",
         meta: `${reads.newCount} new`,
       },
       receipts: {
@@ -371,13 +260,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       piles,
       pilesMeta: `${pileTotal} item${pileTotal === 1 ? "" : "s"}`,
       message: (id) => liveMessage(engine, id, { now: new Date(), zone }),
-      tagsOf: () => [],
       actions,
     };
-    // `version` IS the dependency that re-derives the live world on every mirror change; the
+    // `version` IS the dependency that re-derives the world on every mirror change; the
     // reader itself is stable across drains, so it cannot stand in for it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, session, store, scopes, zone, actions, version]);
+  }, [engine, session, scopes, zone, actions, version]);
 
   return (
     <WorldContext.Provider value={world}>

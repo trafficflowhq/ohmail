@@ -15,23 +15,21 @@
  *    redacted.)
  *
  * The whole conversation renders. `earlier` is listed in full under the
- * message, never summarised into a badge. On a live account opening the
- * message marks it read through the engine (the optimistic overlay; a
- * rejection rolls back with a sentence), asks for the full body — the pane
- * says honestly when it is still showing the preview — and the attachment
- * strip carries the engine's own names, nameless-ICS fallback included. The
- * triage buttons file through `engine.mutate` there; tags and Reply stay the
- * demo's until they arrive on live accounts with a later update.
+ * message, never summarised into a badge. Opening the message marks it read
+ * through the engine (the optimistic overlay; a rejection rolls back with a
+ * sentence), asks for the full body — the pane says honestly when it is still
+ * showing the preview — and the attachment strip carries the engine's own
+ * names, nameless-ICS fallback included. The triage buttons file through
+ * `engine.mutate`. Compose/reply and tags arrive with later updates, so no
+ * control for them renders — a screen offers no control it cannot perform.
  */
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { View } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
-import { world } from "../../src/state/model";
-import { useStore } from "../../src/state/store";
 import { useWorld, type WorldMail } from "../../src/state/world";
-import { Badge, Button, Chip, Panel, Screen, Scroller, Tap, TagChip, Txt } from "../../src/ui/base";
+import { Button, Chip, Panel, Screen, Scroller, Txt } from "../../src/ui/base";
 import { DetailBar } from "../../src/ui/chrome";
 import { Icon } from "../../src/ui/Icon";
 
@@ -40,16 +38,14 @@ export default function MessageScreen() {
   const t = useTheme();
   const w = useWorld();
   const m = w.message(id ?? "");
-  const tags = m ? w.tagsOf(m.id) : [];
 
-  // The live open: mark read (watched — the engine owns the overlay and the rollback),
-  // hydrate the full text + conversation + file list. The demo world's arm is a no-op:
-  // reading in the demo Ohbox is deliberately non-destructive.
+  // The open: mark read (watched — the engine owns the overlay and the rollback),
+  // hydrate the full text + conversation + file list.
   //
   // KEYED ON THE WORLD, not just the id: `openMessage` is identity-stable by design (so
   // mirror versions cannot re-fire this), which means a route restored while the session is
-  // still booting would otherwise open against the demo no-op and never re-run when the
-  // world goes live — an unread message under an indefinitely loading snippet.
+  // still booting would otherwise open against the empty world's no-op and never re-run
+  // when the session goes live — an unread message under an indefinitely loading snippet.
   const openMessage = w.actions.openMessage;
   const worldKey = w.worldKey;
   useEffect(() => {
@@ -70,9 +66,9 @@ export default function MessageScreen() {
   }
 
   const bodyNote =
-    w.live && !m.protected && (m.bodyState === "snippet" || m.bodyState === "loading")
+    !m.protected && (m.bodyState === "snippet" || m.bodyState === "loading")
       ? Copy.liveBodyLoading
-      : w.live && !m.protected && m.bodyState === "failed"
+      : !m.protected && m.bodyState === "failed"
         ? Copy.liveBodyFailed
         : null;
 
@@ -108,18 +104,6 @@ export default function MessageScreen() {
             ) : null}
             {m.trackerNote ? <Chip icon="shield">{m.trackerNote}</Chip> : null}
             {m.amount ? <Chip>{m.amount}</Chip> : null}
-            {!w.live
-              ? world.tags.map((tag) => {
-                  const on = tags.includes(tag.id);
-                  const hue = t.c.tag[tag.hue];
-                  return on ? (
-                    <Tap key={tag.id} onPress={() => w.actions.toggleTag(m.id, tag.id)} accessibilityRole="button">
-                      <TagChip name={tag.name} ink={hue.ink} bg={hue.bg} />
-                    </Tap>
-                  ) : null;
-                })
-              : null}
-            {!w.live ? <AddTag messageId={m.id} active={tags} /> : null}
           </View>
 
           {m.protected ? <ProtectedBlock label={m.protected.label} policy={m.protected.policy} /> : null}
@@ -164,9 +148,6 @@ export default function MessageScreen() {
           ) : null}
 
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 34 }}>
-            {/* Reply is the demo's decoration until compose lands — a live screen
-                offers no control it cannot perform. */}
-            {!w.live ? <Button label={Copy.reply} icon="pen" /> : null}
             <Button
               label={Copy.replyLater}
               icon="clock"
@@ -207,12 +188,11 @@ export default function MessageScreen() {
 }
 
 /**
- * The attachment strip. The demo's single fixture tile and the live list render
- * through one shape (`WorldMail.attachments`), and every name has already been
- * through the nameless-part fallback — a calendar invite that arrived unnamed
- * reads `invite.ics`, the same name its download would carry, never an empty
- * label. Opening the bytes is not supported yet; these tiles state what the
- * mail carries.
+ * The attachment strip — the engine's own items, every name already through the
+ * nameless-part fallback: a calendar invite that arrived unnamed reads
+ * `invite.ics`, the same name its download would carry, never an empty label.
+ * Opening the bytes is not supported yet; these tiles state what the mail
+ * carries.
  */
 function AttachmentTiles({ m }: { m: WorldMail }) {
   const t = useTheme();
@@ -280,75 +260,6 @@ function ProtectedBlock({ label, policy }: { label: string; policy: string }) {
         {policy.replace(/^Protected/, "")}
       </Txt>
     </View>
-  );
-}
-
-/**
- * The add-tag affordance — `.chip.addtag`: one outlined capsule, because it
- * takes input rather than stating a fact. It opens the picker inline; three
- * permanently-visible "+ Tag" chips would out-shout the message they annotate.
- * Demo world only: tags reach live accounts with a later update.
- */
-function AddTag({ messageId, active }: { messageId: string; active: string[] }) {
-  const t = useTheme();
-  const { toggleTag } = useStore();
-  const [open, setOpen] = useState(false);
-  const available = world.tags.filter((tag) => !active.includes(tag.id));
-  if (available.length === 0) return null;
-
-  const outline = {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    gap: 5,
-    borderRadius: t.radius.pill,
-    borderWidth: 1,
-    borderColor: t.c.hair,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-  };
-
-  if (!open) {
-    return (
-      <Tap onPress={() => setOpen(true)} accessibilityRole="button" accessibilityLabel="Add a tag">
-        <View style={outline}>
-          <Icon name="plus" size={11} color={t.c.ink3} />
-          <Txt variant="chip" tone="ink3">
-            {Copy.tags}
-          </Txt>
-        </View>
-      </Tap>
-    );
-  }
-
-  return (
-    <>
-      {available.map((tag) => {
-        const hue = t.c.tag[tag.hue];
-        return (
-          <Tap
-            key={tag.id}
-            onPress={() => {
-              toggleTag(messageId, tag.id);
-              setOpen(false);
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={`Add tag ${tag.name}`}
-          >
-            <View style={outline}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: hue.ink }} />
-              <Txt variant="chip" tone="ink2">
-                {tag.name}
-              </Txt>
-            </View>
-          </Tap>
-        );
-      })}
-      <Tap onPress={() => setOpen(false)} accessibilityRole="button" accessibilityLabel="Close tag picker">
-        <View style={outline}>
-          <Icon name="x" size={11} color={t.c.ink3} />
-        </View>
-      </Tap>
-    </>
   );
 }
 

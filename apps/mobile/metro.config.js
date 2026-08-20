@@ -13,21 +13,15 @@
  *    switching off the upward walk makes them unresolvable. (`expo-router`
  *    importing `@expo/metro-runtime` is the first thing that breaks.)
  *
- * 2. **NodeNext `.js` specifiers.** `@ohmail/fixtures` is consumed straight
- *    from TypeScript source (`main: ./src/index.ts`) and its internal imports
- *    are written `./data.js` / `./types.js`, because the package is authored
- *    for `moduleResolution: NodeNext`. Metro's resolver takes that literally
- *    and fails on a file that does not exist. TypeScript solves this with
- *    `extensionAlias`, and webpack needs the same hint. The
+ * 2. **NodeNext `.js` specifiers.** `@ohmail/client-engine` is consumed
+ *    straight from TypeScript source (`main: ./src/index.ts`) and its internal
+ *    imports are written `./engine.js` / `./types.js`, because the package is
+ *    authored for `moduleResolution: NodeNext`. Metro's resolver takes that
+ *    literally and fails on a file that does not exist. TypeScript solves this
+ *    with `extensionAlias`, and webpack needs the same hint. The
  *    `resolveRequest` hook below is Metro's version of it: for a relative
  *    `.js` specifier coming from a file inside `packages/`, try `.ts`/`.tsx`
  *    first, then fall through to the stock resolver.
- *
- *    This is why the fixtures are **not** vendored. A build step that copied
- *    `packages/fixtures` into `apps/mobile` would make the demo world forkable
- *    — two corpora, one privacy review — and "the demo invents nothing" is
- *    exactly the kind of promise that rots when its source of truth is
- *    duplicated. Twelve lines of resolver keep one corpus.
  */
 const { getDefaultConfig } = require("expo/metro-config");
 const path = require("node:path");
