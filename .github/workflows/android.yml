@@ -1,31 +1,48 @@
 # The Android APK: build it in THIS repository's own Actions, from this tree.
 #
-# Two lanes, one build:
+# Three jobs, and the split between the last two is the whole security posture:
 #
-#   · build check — every push to main (and every pull request) runs the whole native build:
+#   · apk — every push to main (and every pull request) runs the whole native build:
 #     workspace install, `expo prebuild`, Gradle release assembly. The APK it produces is
 #     signed with the locally generated DEBUG keystore — installable for smoke-testing, never
 #     attached to a release — and is kept briefly as a workflow artifact. Pull requests never
 #     see a signing secret; there is nothing to leak and nothing to protect but minutes.
 #
-#   · release — pushing an `android-v*` tag builds the same APK and RE-SIGNS it with the
-#     project's release keystore, which lives only in this repository's Actions secrets.
-#     The signed artifact is verified and attached to the GitHub release for that tag as
-#     `ohmail-android.apk`. Android verifies every later install against this signature, so
-#     an APK signed with any other key will not install over an existing one.
+#   · build — pushing an `android-v*` tag runs the SAME native build, secretless, and uploads
+#     the (debug-signed) APK as an artifact. No signing key is present in this job.
+#
+#   · sign — a SEPARATE job that receives the release keystore and its passwords. It runs NO
+#     project code: no checkout of the tree, no `npm`, no `expo`, no Gradle. It downloads the
+#     artifact `build` produced and re-signs it with the release keystore. This isolation is
+#     deliberate. If the build job and the signing job were one — as they were — then any code
+#     that ran during `npm ci`, `expo prebuild` or Gradle (a compromised lockfile lifecycle
+#     script, an Expo/Gradle plugin, a mutable-tag action) would be running on the same runner
+#     that later holds the key, and could plant a shim on `PATH` or read the injected secret
+#     and exfiltrate the long-lived signing identity while every signature and byte check still
+#     passed. The key is the one thing that cannot be rotated without breaking the update path
+#     for existing installs, so the code that could steal it must never share a runner with it.
+#
+# Every action is pinned to a full commit SHA, not a moving tag: a `@v4` that an attacker can
+# repoint is exactly the mutable-dependency the signing job must not run.
 #
 # The repository guard on every job keeps this inert on forks: a fork's own pushes build
 # nothing here, and a fork's pull request runs only the secretless build check (for
 # `pull_request` events the guard reads the BASE repository, which is the point).
 #
 # SIGNING IS A RE-SIGN, ON PURPOSE. Expo's generated Gradle project signs `assembleRelease`
-# with the debug keystore it mints, which is exactly right for the build check. The release
-# lane then replaces that signature with `apksigner sign` — the Android SDK's own signer —
-# rather than rewriting the generated `build.gradle` to inject a signing config: the Gradle
-# project is BUILD OUTPUT here (prebuild regenerates it every run), and editing generated
-# build files in CI is the kind of sed that breaks silently on the next SDK template. The
-# keystore is written to the runner's job-scoped temp directory and the passwords reach
-# apksigner through `env:` references, never as command-line literals.
+# with the debug keystore it mints, which is exactly right for the build check. The sign job
+# then replaces that signature with `apksigner sign` — the Android SDK's own signer — rather
+# than rewriting the generated `build.gradle` to inject a signing config: the Gradle project is
+# BUILD OUTPUT here (prebuild regenerates it every run), and editing generated build files in
+# CI is the kind of sed that breaks silently on the next SDK template. The keystore is written
+# to the runner's job-scoped temp directory and the passwords reach apksigner through `env:`
+# references, never as command-line literals.
+#
+# THE SIGNER IS ASSERTED, NOT JUST PRINTED. `apksigner verify` succeeds for ANY internally
+# valid signature, so printing its output proves nothing about WHICH key signed. The sign job
+# compares the certificate's SHA-256 digest and subject against the release key's known public
+# values and fails before upload on any mismatch — so a swapped or rotated keystore cannot
+# publish an APK that would strand every existing install behind a changed update identity.
 #
 # EXIT CODES ARE CAPTURED WHERE THEY HAPPEN. No pipelines around the build or the checks —
 # a pipe reports the LAST command's status, which has masked real failures in this project
@@ -59,15 +76,15 @@ jobs:
         shell: bash
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
 
       # The Android SDK is preinstalled on ubuntu-latest; Java is pinned rather than
       # inherited so a runner image bump cannot silently change what compiles the app.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: 17
@@ -102,32 +119,32 @@ jobs:
           test "$SIZE" -gt 10000000
           echo "APK ok: $SIZE bytes"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ohmail-android-debug-signed
           path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 7
 
-  # ── the release: same build, the release signature, attached to the tag ─────────────────
-  release:
-    name: android · release APK for the tag
+  # ── the tag build: same native build, secretless, hand the APK to the sign job ──────────
+  build:
+    name: android · tag build (no secrets)
     if: github.repository == 'trafficflowhq/ohmail' && startsWith(github.ref, 'refs/tags/android-v')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
-      contents: write
+      contents: read
     defaults:
       run:
         shell: bash
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: 17
@@ -152,9 +169,58 @@ jobs:
           EXPO_NO_TELEMETRY: "1"
         run: npx expo prebuild --platform android --no-install
 
-      - name: Build the release APK
+      - name: Build the release APK (debug-signed, to be re-signed by the sign job)
         working-directory: apps/mobile/android
         run: ./gradlew assembleRelease --no-daemon
+
+      - name: The artifact is a real APK
+        run: |
+          set -euo pipefail
+          APK=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          test -f "$APK"
+          head -c 2 "$APK" > /tmp/magic
+          test "$(cat /tmp/magic)" = "PK"
+          unzip -l "$APK" > /tmp/apk-listing
+          grep -F "AndroidManifest.xml" /tmp/apk-listing
+          grep -F "classes.dex" /tmp/apk-listing
+          SIZE=$(stat -c%s "$APK")
+          test "$SIZE" -gt 10000000
+          echo "APK ok: $SIZE bytes"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ohmail-android-unsigned
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 1
+          if-no-files-found: error
+
+  # ── the sign job: the ONLY job that sees the key, and it runs no project code ───────────
+  sign:
+    name: android · re-sign + attach the release APK
+    needs: build
+    if: github.repository == 'trafficflowhq/ohmail' && startsWith(github.ref, 'refs/tags/android-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # No checkout of the tree: this job builds nothing, so no source of this repository (and
+      # none of its dependencies) executes on the runner that holds the key. Java is for
+      # apksigner; the Android SDK build-tools are preinstalled on ubuntu-latest.
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Fetch the built APK from the build job
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ohmail-android-unsigned
+          path: unsigned
 
       - name: Sign with the release keystore
         env:
@@ -165,8 +231,10 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$ANDROID_KEYSTORE_B64" || { echo "ANDROID_KEYSTORE_B64 secret is not set" >&2; exit 1; }
-          # The keystore exists only in the job's temp directory, for the life of this job.
-          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          test -f unsigned/app-release.apk || { echo "no built APK was fetched from the build job" >&2; exit 1; }
+          # Absolute tool paths: nothing this job ran could have planted a shim on PATH, but the
+          # decoder that touches the key reads the key on stdin, so it is named outright.
+          /usr/bin/base64 -d <<< "$ANDROID_KEYSTORE_B64" > "$RUNNER_TEMP/release.keystore"
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
           "$BT/apksigner" sign \
             --ks "$RUNNER_TEMP/release.keystore" \
@@ -174,15 +242,30 @@ jobs:
             --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
             --key-pass env:ANDROID_KEY_PASSWORD \
             --out ohmail-android.apk \
-            apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+            unsigned/app-release.apk
           rm -f "$RUNNER_TEMP/release.keystore"
 
-      - name: Verify the signature and the artifact
+      - name: Verify the signature IS the release key, and the artifact is real
+        env:
+          # The release certificate's public identity — safe to commit (it is what an installer
+          # sees). A signature by any other key must fail this job, not ship.
+          EXPECTED_CERT_SHA256: "ab41b268e6837d526362917d1559dfaf5ba49eb287149dedccaf8a21ee0a071b"
+          EXPECTED_CERT_DN: "CN=ohmail android release"
         run: |
           set -euo pipefail
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
           "$BT/apksigner" verify --print-certs ohmail-android.apk > /tmp/certs
           cat /tmp/certs
+          # SHA-256 digest, normalised to lowercase hex with separators stripped, compared to
+          # the known release fingerprint. Captured into a variable — never piped to grep -q,
+          # whose SIGPIPE could turn a dead producer into a false pass.
+          GOT_SHA256=$(/usr/bin/grep -m1 'SHA-256 digest:' /tmp/certs | sed 's/.*digest:[[:space:]]*//' | tr 'A-F' 'a-f' | tr -d ' :')
+          test -n "$GOT_SHA256" || { echo "apksigner printed no SHA-256 digest" >&2; exit 1; }
+          test "$GOT_SHA256" = "$EXPECTED_CERT_SHA256" \
+            || { echo "signer SHA-256 $GOT_SHA256 is not the release key $EXPECTED_CERT_SHA256" >&2; exit 1; }
+          /usr/bin/grep -qF "$EXPECTED_CERT_DN" /tmp/certs \
+            || { echo "signer subject is not $EXPECTED_CERT_DN" >&2; exit 1; }
+          echo "signer verified: $GOT_SHA256 ($EXPECTED_CERT_DN)"
           unzip -l ohmail-android.apk > /tmp/apk-listing
           grep -F "AndroidManifest.xml" /tmp/apk-listing
           grep -F "classes.dex" /tmp/apk-listing
@@ -205,7 +288,7 @@ jobs:
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber ohmail-android.apk
 
-      - name: What was uploaded is what was built
+      - name: What was uploaded is what was signed
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
