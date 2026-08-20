@@ -18,7 +18,7 @@
  *  · **a failed sync re-hydrates** so the torn-flush guard's refusal window closes before
  *    the retry this layer offers.
  *
- * And two rules review added, both about the family's ONE refresh token:
+ * Two further rules, both about the family's ONE refresh token:
  *
  *  · **every transition runs through the {@link TransitionGate}** — serialized, last-wins.
  *    Two overlapping taps would otherwise build two managers on one profile, each presenting

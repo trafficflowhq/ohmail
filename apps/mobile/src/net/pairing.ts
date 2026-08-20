@@ -53,7 +53,7 @@ export const MANAGED_ORIGIN = "https://api.ohmail.app";
 /** What the picker acts on, narrowed from the frozen /hello wire. */
 export interface HelloAnswer {
   flavor: string;
-  /** `features.pairing` — the one capability this slice's choices gate on. */
+  /** `features.pairing` — the one capability the picker's choices gate on. */
   pairing: boolean;
   needsSetup: boolean;
   apiVersion: string;
@@ -261,8 +261,8 @@ export async function pairWithServer(
   }
 
   // 2 — spend the token: its one appearance, in the redeem body. `kind` is omitted (the wire
-  // defaults it); an honest "mobile" device kind is a service whitelist change, named as a
-  // follow-up rather than smuggled past the frozen wire here.
+  // defaults it); an honest "mobile" device kind would need a server-side whitelist change, so
+  // it is left for later rather than smuggled past the frozen wire here.
   let redeemed: Response;
   try {
     redeemed = await fetchImpl(`${origin}/pair/redeem`, {
@@ -298,7 +298,7 @@ export async function pairWithServer(
     // and the mirror's name, its __owner stamp and the drain-time guard all require the
     // server's word — a placeholder owner here would be a wrong default standing in for a
     // missing fact. The token above is single-use and is now spent, so the sentence says so.
-    // (A follow-up worth doing on its own: an identity read on the desktop-host door.)
+    // (An identity read on the desktop-host door would let this name the account; not today.)
     return {
       kind: "refused",
       reason:
