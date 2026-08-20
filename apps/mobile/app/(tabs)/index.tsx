@@ -67,7 +67,7 @@ export default function OhboxScreen() {
             </>
           ) : null}
 
-          <Tail>{Copy.ohboxTail(total)}</Tail>
+          <Tail>{Copy.ohboxTail(total, w.live)}</Tail>
         </Panel>
 
         <PreviewNote />

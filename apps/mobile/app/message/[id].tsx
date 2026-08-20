@@ -211,8 +211,8 @@ export default function MessageScreen() {
  * through one shape (`WorldMail.attachments`), and every name has already been
  * through the nameless-part fallback — a calendar invite that arrived unnamed
  * reads `invite.ics`, the same name its download would carry, never an empty
- * label. Opening the bytes is a later slice; these tiles state what the mail
- * carries.
+ * label. Opening the bytes is not supported yet; these tiles state what the
+ * mail carries.
  */
 function AttachmentTiles({ m }: { m: WorldMail }) {
   const t = useTheme();
