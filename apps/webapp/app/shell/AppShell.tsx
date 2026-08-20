@@ -5037,15 +5037,16 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 desktopSection={desktopSection}
                 /* DEMO-MASKED, unlike `desktopSection` directly above — and this line used to
                    read `devicesSection={devicesSection}` with a comment whose premise ("a
-                   browser tab passes nothing") the Cloud Devices pane retired. Measured on
-                   production: with the seam unmasked, `?demo=1` in a signed-in browser grew a
-                   Devices entry — the one account pane that leaked — and opened onto the REAL
-                   device list with a live mint verb, every verb a cookie-authenticated
-                   credential mutation inside a UI that promises fixtures and zero network. The
-                   Cloud host also gates its node on the same flag (`useDevicePairing(demo)`),
-                   so this mask is the shared shell's own guarantee, not the only one. The
-                   desktop is unaffected: its gate wires the pane only on the standalone door
-                   with an engine behind it, which is never a `demo` render. */
+                   browser tab passes nothing") the Cloud Devices pane retired. With the seam
+                   unmasked, `?demo=1` in a signed-in browser grew a Devices entry — the one
+                   account pane that leaked — and opened onto the REAL device list with a live
+                   mint verb, every verb a cookie-authenticated credential mutation inside a UI
+                   that promises fixtures and zero network. The Cloud host also gates its node
+                   on the same flag (`useDevicePairing(demo)`), so this mask is the shared
+                   shell's own guarantee, not the only one. The desktop is unaffected: its gate
+                   wires the pane only on the standalone door with an engine behind it, which
+                   is never a `demo` render (a demo render there means the sample mount, whose
+                   shell reports no status for `hostDoorFor` to say "local" about). */
                 devicesSection={demo ? undefined : devicesSection}
                 /* Same rule: `?demo=1` has no session, so "connect a mailbox" there would
                    be a form posting to a server this tab is not talking to. The demo keeps
