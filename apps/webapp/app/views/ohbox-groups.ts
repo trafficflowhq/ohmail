@@ -29,10 +29,13 @@ import type { EngineMessage } from "@ohmail/client-engine";
    ── ORDER: THE FIRST MEMBER KEEPS THE ROW'S PLACE ───────────────────────────────────────────
 
    A group renders at its first member's position in the section's own order, so grouping never
-   re-sorts a section. That is also what keeps a live arrival IN PLACE: the view's session
-   placement appends a new unread's id to the end of its session order, and folding it into the
-   conversation's existing group leaves the row where it was — the count and the newest snippet
-   change, the row does not move and no second row appears.
+   re-sorts a section. The section's order is the view's session placement, which merges a live
+   arrival in at the slot the selector's date order gives it — the top, for genuinely new mail
+   (see `reconcile` in `OhboxView.tsx`) — so a new unread reply SURFACES its conversation's row:
+   the fold keys the row at the first member it meets, which is now the arrival. An OLD member
+   delivered late (a mirror backfill) merges in below the row's existing members and moves
+   nothing: the row keeps the highest slot any member holds. Either way the count and the newest
+   snippet update and no second row appears.
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /** One rendered row of a grouped section: a conversation, or a lone message. */

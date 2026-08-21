@@ -283,15 +283,20 @@ export function OhboxView({
    * ═══ SESSION-SCOPED PLACEMENT, AND THE SLIDE THAT ENDS IT ════════════════════════════
    *
    * Two refs, one per pinned upper group — resurfaced and New for you. Each is reconciled at
-   * render: it keeps the ids it already held that are still in the Ohbox, then appends any that the
-   * selector has newly placed in that group. Refs, and reconciled in render rather than an effect,
-   * for the reason `allRef` below is: the value has to be right for the render that reads it, not
-   * one render late.
+   * render: it keeps the ids it already held that are still in the Ohbox, then MERGES any that the
+   * selector has newly placed in that group into the slot the selector's own order gives them
+   * relative to the kept rows (see `reconcile`). Refs, and reconciled in render rather than an
+   * effect, for the reason `allRef` below is: the value has to be right for the render that reads
+   * it, not one render late.
    *
    * What the session order is FOR is the ordering: a row keeps the slot it was given rather than
-   * being re-sorted every time the selector recomputes, and a live arrival lands at the end of it
-   * instead of shuffling everything above it. What it is NOT for is holding a message in "New for
-   * you" after it has been read.
+   * being re-sorted every time the selector recomputes, and a live arrival INSERTS between the
+   * kept rows without shuffling their order among themselves. For genuinely new mail — the common
+   * arrival — that slot is the TOP, which is where new mail belongs. Appending is what shipped,
+   * and it was a reported defect: every message that arrived by sync after mount filed at the
+   * BOTTOM of "New for you", below mail that had been sitting on screen since the mount, for the
+   * whole session. What the session order is NOT for is holding a message in "New for you" after
+   * it has been read.
    *
    * ── A READ MESSAGE LEAVES "NEW FOR YOU" NOW, NOT ON THE NEXT RELOAD ──────────────────
    *
@@ -318,12 +323,13 @@ export function OhboxView({
    * ── THE REVERSE MOVE: `promoted` ─────────────────────────────────────────────────────
    *
    * `promoted` holds the ids the reader has explicitly put back to unread this session, and
-   * `reconcile` enters each of them at the FRONT of the New order rather than appending. Appending
-   * is what shipped, and it is the reported defect: the row a reader has just finished with sits at
-   * the TOP of "Earlier", so appending moved it exactly one position — past the "Earlier" label to
-   * the last slot of New, where it looks like nothing happened. The top of New is also where the
-   * next thing the reader intends to do with it is, and on a long list the bottom of New is off
-   * screen.
+   * `reconcile` enters each of them at the FRONT of the New order rather than at the slot the
+   * date merge would give them. A message somebody marks unread is usually OLD, so its date slot
+   * is the bottom of New — where the append used to put it too, and that was a reported defect:
+   * the row a reader has just finished with sits at the TOP of "Earlier", so filing it by date
+   * moved it exactly one position — past the "Earlier" label to the last slot of New, where it
+   * looks like nothing happened. The top of New is also where the next thing the reader intends
+   * to do with it is, and on a long list the bottom of New is off screen.
    *
    * IT WINS OVER A SLIDE THAT IS ALREADY RUNNING, which is why `promote` cancels the timer, clears
    * `settling` and clears `dismissed`: a message read a moment ago is on its way down, and the
@@ -402,12 +408,37 @@ export function OhboxView({
   const earlierIds = useMemo(() => new Set(previouslySeen.map((m) => m.id)), [previouslySeen]);
 
   /**
+   * ── THE STABLE MERGE: WHERE A FRESH ID ENTERS THE SESSION ORDER ──────────────────────────
+   *
+   * A fresh id — one the session order is not already holding — inserts BEFORE the first kept
+   * row the selector ranks after it, and at the end when there is none. For New, the selector's
+   * order is date desc, so "ranks after" is "is older": a genuinely new arrival is newer than
+   * everything on screen and enters at the TOP, which is the reported defect this replaces (the
+   * append filed every post-mount arrival at the bottom). And it is a MERGE, not a re-sort, on
+   * both sides: kept rows never move relative to each other — the list does not shuffle under
+   * the reader — and fresh ids keep the selector's own order among themselves.
+   *
+   * THE HONEST HALF OF THE RULE IS THE OLD ARRIVAL. A sync can also deliver an OLD unread
+   * message — a mirror backfill, or old mail marked unread on another client, which arrives as a
+   * plain re-partition with no `promote` anywhere — and "new mail at the top" must not read as
+   * "anything fresh at the top": its date slot is below everything newer, so it files there, and
+   * only mail that genuinely just arrived leads the list.
+   *
+   * The rank is the id's index in `current` — the selector's own output — not a date comparator
+   * of this view's: `byDateDesc` lives in the selector and a copy here would be a second writer
+   * of the same rule, one tiebreak drift away from disagreeing with it. A kept id the selector
+   * no longer files in this group (a row mid-slide to "Earlier", holding its slot on the
+   * `dismissed` lease) has no rank and no opinion: it anchors no insertion and keeps its slot.
+   *
    * `lead` is the promote block: ids entering this group for the first time that the reader has
-   * explicitly marked unread go to the FRONT, keeping the group's own relative order among
-   * themselves (a bulk unread of three keeps their arrival order rather than reversing it), and
-   * everything else appends as before. An id already in `prev` is skipped by `have`, so a row the
-   * session order is already holding never moves — which is what makes marking a row that is
-   * already in New a no-op on placement.
+   * explicitly marked unread go to the FRONT — above even a genuinely newer arrival merging in
+   * the same render, because the promote is the reader's own act at this instant and the later
+   * word wins — keeping the group's relative order among themselves (a bulk unread of three
+   * keeps their arrival order rather than reversing it). Once placed, a promoted id is a kept
+   * row like any other: mail newer than it arriving on a LATER sync files above it, which is the
+   * rule every inbox keeps after a mark-unread. An id already in `prev` is skipped by `have`, so
+   * a row the session order is already holding never moves — which is what makes marking a row
+   * that is already in New a no-op on placement.
    *
    * A DISMISSAL IS SPENT THE MOMENT THE SELECTOR STOPS FILING THE ROW UNDER "EARLIER", which is
    * what `dropped` says. `dismissed` is a session set that now takes an entry for every message
@@ -425,11 +456,22 @@ export function OhboxView({
   ): string[] => {
     const keep = prev.filter((id) => byId.has(id) && !dropped(id));
     const have = new Set(keep);
+    const rank = new Map(current.map((m, i) => [m.id, i]));
     const lead: string[] = [];
     for (const m of current) {
       if (dropped(m.id) || have.has(m.id)) continue;
-      (front?.has(m.id) ? lead : keep).push(m.id);
       have.add(m.id);
+      if (front?.has(m.id)) {
+        lead.push(m.id);
+        continue;
+      }
+      const r = rank.get(m.id)!;
+      let at = keep.length;
+      for (let i = 0; i < keep.length; i++) {
+        const kr = rank.get(keep[i]!);
+        if (kr !== undefined && kr > r) { at = i; break; }
+      }
+      keep.splice(at, 0, m.id);
     }
     return lead.length > 0 ? [...lead, ...keep] : keep;
   };
