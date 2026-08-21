@@ -435,6 +435,42 @@ function installShellStub(window) {
         if (url === `/mailboxes/${MAILBOX_ID}/profile-import` && (payload?.method ?? "GET") === "GET") {
           return Promise.resolve(frame(200, "OK", { state: "none" }));
         }
+        /* `GET /messages/bodies?ids=…` — THE BATCH BODY READ, asked for at boot now that recent
+           mail hydrates in the BACKGROUND rather than only when a message is opened. Nothing about
+           the window changed here; the engine simply started warming the newest run, and this stub
+           had never been taught the route, so all four platform jobs went red on this one check
+           out of thirty-nine — which is precisely the drift the `unmodelled` list exists to name,
+           doing its job.
+
+           Modelled, not prefix-matched: `/messages/:id/…` mutations (`load-remote`, `unsubscribe`)
+           live under the same first segment and are user actions this boot never takes, so a
+           `startsWith("/messages")` would answer them 200 and hide them. Query only, GET only.
+
+           THE ANSWER IS THE SAME SHAPE THE REAL ROUTE SERVES — `{ items: [...] }`, one row per id
+           with `messageId` ON the row, because position is meaningless on this wire: the server
+           answers only the ids it owns and omits the rest. Bodies are the served snippet, which
+           keeps the stub's world consistent (the snippet check below reads the same text) and
+           keeps every privacy-shaped field at its resting value: `html: null`, no remote content
+           loaded, no unsubscribe header, and no `withheld` key — that key exists only when a
+           server says it, and inventing one would make this boot exercise the storage-cap
+           surface instead of the ordinary one. */
+        if (url.startsWith("/messages/bodies?") && (payload?.method ?? "GET") === "GET") {
+          const asked = new Set(
+            new URLSearchParams(url.slice(url.indexOf("?") + 1)).get("ids")?.split(",") ?? [],
+          );
+          return Promise.resolve(frame(200, "OK", {
+            /* Only the ids this stub owns, and silently no row for anything else — the real
+               route's omission rule, kept so the check cannot pass against a laxer stub. */
+            items: SERVED.filter((m) => asked.has(m.id)).map((m) => ({
+              messageId: m.id,
+              text: m.snippet,
+              html: null,
+              loadedRemoteContent: false,
+              unsubscribe: "no_header",
+              unsubscribeUrl: null,
+            })),
+          }));
+        }
         /* RECORDED, not silently 404'd into a console error the checks would then
            report as a product defect. A surface that starts calling a second route
            at boot has to be modelled here; until it is, this says so by name. */
