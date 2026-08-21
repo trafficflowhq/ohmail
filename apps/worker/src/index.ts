@@ -5,6 +5,7 @@ import {
   makeAiCreditGate,
   runAlertPass,
   webhookAlertSink,
+  resendAlertSink,
   newDeliveryStreak,
   writeHeartbeat,
   refreshHeartbeat,
@@ -564,6 +565,14 @@ export async function startWorkerWithLock(
     const alertSinks: AlertSink[] = [];
     const hook = webhookAlertSink(config.alertWebhookUrl, config.alertPost);
     if (hook) alertSinks.push(hook);
+    // The MAIL arm — the product's own transactional mailer, added when the webhook arm's
+    // endpoint turned out to blackhole this host's egress (see `alert-mail.ts` for the
+    // measurement). Both arms share the injected `alertPost` seam, so no test opens a socket.
+    const mailArm = resendAlertSink(
+      { apiKey: config.resendApiKey, from: config.mailFrom, to: config.alertEmail },
+      config.alertPost,
+    );
+    if (mailArm) alertSinks.push(mailArm);
     /**
      * The consecutive-failure memory behind `alerts_undeliverable` for a CONFIGURED sink.
      *
@@ -4012,7 +4021,8 @@ export async function startWorkerWithLock(
           // nothing. Said out loud, every pass, so it cannot be the thing nobody noticed.
           log.error("alerts_undeliverable", {
             firing: result.firing.length,
-            reason: "no alert sink is configured — set TF_ALERT_WEBHOOK_URL",
+            reason: "no alert sink is configured — set TF_ALERT_EMAIL " +
+              "(with RESEND_API_KEY + MAIL_FROM) or TF_ALERT_WEBHOOK_URL",
           });
         }
       } catch (err) {

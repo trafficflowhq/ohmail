@@ -446,6 +446,26 @@ export interface WorkerConfig {
    * nobody, and `alerts_undeliverable` says so at warn level rather than failing silently.
    */
   alertWebhookUrl?: string;
+  /**
+   * The MAIL arm of the pager (`TF_ALERT_EMAIL`, armed with `RESEND_API_KEY` + `MAIL_FROM`).
+   *
+   * Added when the webhook arm's endpoint (ntfy.sh) turned out to blackhole the hosting
+   * platform's egress IPs — measured from inside this worker's own container, 2026-08-21,
+   * while `api.resend.com` answered 200 from the same place. The product IS mail; the mailer
+   * the API host already sends transactional mail through is one JSON POST away, so the
+   * "core + db only" import rule holds: `resendAlertSink` lives in `packages/db`, not in
+   * `packages/services` next to `MailService`.
+   *
+   * `TF_ALERT_EMAIL` is the ARMING variable: unset ⇒ no mail arm, quietly. Set with either
+   * mailer half missing ⇒ a sink that refuses every delivery naming the missing variable, so
+   * the escalation reports the misconfiguration instead of a silent hole. The spellings are
+   * the API host's own (`msOAuthEnv` rule).
+   */
+  alertEmail?: string;
+  /** `MAIL_FROM` — the From the product already sends transactional mail as. */
+  mailFrom?: string;
+  /** `RESEND_API_KEY` — the mail arm's bearer credential. Scoped, sending-only. */
+  resendApiKey?: string;
   /** How often the leader runs the alert pass. Default {@link DEFAULT_ALERT_INTERVAL_MS}. */
   alertIntervalMs?: number;
   // ── The organizer lease (mail migration 0027) ───────────────────────────────────────
@@ -763,6 +783,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       ...(env.TF_PROFILE_FLUSH_MS ? { profileFlushIntervalMs: optInt(env, "TF_PROFILE_FLUSH_MS", 0) } : {}),
     },
     alertWebhookUrl: env.TF_ALERT_WEBHOOK_URL,
+    alertEmail: env.TF_ALERT_EMAIL,
+    mailFrom: env.MAIL_FROM,
+    resendApiKey: env.RESEND_API_KEY,
     alertIntervalMs: optInt(env, "TF_ALERT_INTERVAL_MS", DEFAULT_ALERT_INTERVAL_MS),
     ...loadAttachmentStagingConfig(env),
     ...loadAiPorts(env),

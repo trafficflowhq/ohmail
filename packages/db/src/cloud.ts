@@ -155,6 +155,10 @@ export {
 } from "./alerts.js";
 
 export {
+  resendAlertSink, RESEND_EMAILS_URL, type ResendAlertSinkConfig,
+} from "./alert-mail.js";
+
+export {
   makeAiCreditGate, aiRefusalReason, classifyLedgerSource, screenerLedgerSource, AI_ACTION_COST,
   // The account-level AI off switch (migration 0022). Read by the gate itself on every
   // spend decision; these two are the settings surface over the same column.

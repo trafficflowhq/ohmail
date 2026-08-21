@@ -420,8 +420,15 @@ export interface AlertNotifyContext {
 /**
  * One JSON POST. `body` is the response text and is OPTIONAL — a fake that returns only a
  * status is still a valid `PostJson`, which is what keeps every existing test fake compiling.
+ *
+ * `headers` was added for `resendAlertSink` (`alert-mail.ts`), whose credential travels in an
+ * `Authorization` header rather than in the URL path. Optional and LAST, so every existing
+ * two-parameter fake remains assignable — a function taking fewer parameters satisfies a type
+ * taking more, which is the property the widening leans on.
  */
-export type PostJson = (url: string, body: string) => Promise<{ status: number; body?: string }>;
+export type PostJson = (
+  url: string, body: string, headers?: Record<string, string>,
+) => Promise<{ status: number; body?: string }>;
 
 /**
  * Production `PostJson` over `fetch`, with a hard timeout. Injected so tests never open a socket.
@@ -433,13 +440,13 @@ export type PostJson = (url: string, body: string) => Promise<{ status: number; 
  * pointed at something that answers megabytes cannot turn an alert into a memory event; the
  * read shares the same abort signal, so a server that stalls mid-body still times out.
  */
-export const nodePostJson: PostJson = async (url, body) => {
+export const nodePostJson: PostJson = async (url, body, headers) => {
   const ac = new AbortController();
   const timer = setTimeout(() => { ac.abort(); }, 8000);
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...headers },
       body,
       signal: ac.signal,
     });
