@@ -24,3 +24,16 @@ export {
 export {
   makePushEndpointGuard, PUSH_ENDPOINT_MAX_LEN, type PushEndpointGuard,
 } from "./push-endpoint.js";
+/**
+ * The encrypting arm of the same one mechanism. It belongs on THIS subpath and not on the package
+ * barrel for the reason above — it imports `node:crypto` — and beside the gate rather than in a
+ * subpath of its own because a wake request is one thing: an endpoint the gate cleared, a socket
+ * pinned to what the gate returned, and a body only the device that registered can open. Splitting
+ * the encryption off would make it possible to import the gate and the pin and then send a
+ * plaintext body to a connector that cannot render it, which is the exact gap this closes.
+ */
+export {
+  WebPushRefusal, encryptWebPushBody, encryptWebPushRecord,
+  makeVapidIdentity, vapidIdentityFromEnv,
+  type WebPushKeys, type VapidIdentity, type VapidFromEnv,
+} from "./webpush.js";

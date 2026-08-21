@@ -440,6 +440,13 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
       // field exists so the connection guards' blind spots are visible, not as a fault.
       dbProvider: providerFamily(cfg.databaseUrl),
     },
+    /**
+     * What `GET /push/vapid-key` answers. The PUBLIC half only — see config.ts: this process never
+     * reads `TF_VAPID_PRIVATE_KEY`, because nothing a request handler does needs the ability to
+     * sign a wake. `null` when the operator generated no keypair, which the app renders as a
+     * sentence rather than an error.
+     */
+    vapidPublicKey: cfg.vapidPublicKey,
     // What `GET /hello` answers — this host's capability statement. Every flag reads the SAME
     // member the wiring arms from, so the negotiation cannot disagree with what the routes do.
     hello: {

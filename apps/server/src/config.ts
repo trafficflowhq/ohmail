@@ -177,6 +177,11 @@ export interface ServerConfig {
   msOAuth: MsOAuthBootstrap;
   /** `TF_PROBE_ALLOW_PRIVATE=1` — see {@link loadServerConfig}. Absent means ENFORCE. */
   probeAllowPrivate: boolean;
+  /**
+   * `TF_VAPID_PUBLIC_KEY` — the public half of this install's wake-signing keypair, or null.
+   * Served to clients; never a secret. The PRIVATE half is the organizer's alone.
+   */
+  vapidPublicKey: string | null;
   /** `TF_PUSH_ALLOW_PRIVATE=1` — see {@link loadServerConfig}. Absent means ENFORCE. */
   pushAllowPrivate: boolean;
   environment: string;
@@ -477,6 +482,18 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
      * because a security default nobody chose is not a default.
      */
     pushAllowPrivate: trimmed(env, "TF_PUSH_ALLOW_PRIVATE") === "1",
+    /**
+     * This install's VAPID **public** key, served by `GET /push/vapid-key` so a phone can register
+     * its distributor with it. Empty means no keypair — an honest `null` on that route, not an
+     * error.
+     *
+     * `TF_VAPID_PRIVATE_KEY` is deliberately NOT read here. The API never signs a wake; the
+     * organizer does. Reading the private key in this process would put a signing key in the
+     * request-handling surface for no purpose, and "the api holds only the public half" is a
+     * property worth being structural rather than remembered — the compose file is asserted to
+     * pass only the public one to this service.
+     */
+    vapidPublicKey: trimmed(env, "TF_VAPID_PUBLIC_KEY") || null,
     environment: trimmed(env, "TF_ENV") || "production",
     bodyMaxBytes: BODY_MAX_BYTES,
     headersTimeoutMs: SERVER_HEADERS_TIMEOUT_MS,

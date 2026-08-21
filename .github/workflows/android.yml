@@ -47,6 +47,22 @@
 # EXIT CODES ARE CAPTURED WHERE THEY HAPPEN. No pipelines around the build or the checks —
 # a pipe reports the LAST command's status, which has masked real failures in this project
 # before. Every assertion reads a file or a captured variable.
+#
+# NO GOOGLE PUSH CODE IN THE BINARY, AND THE APK IS WHAT IS ASKED. The app wakes through a
+# UnifiedPush distributor the user chose; `expo-unified-push` also declares an EMBEDDED
+# Firebase Cloud Messaging distributor, which a config plugin excludes at the Gradle level
+# (apps/mobile/plugins/without-embedded-fcm.js). A build-time exclusion that silently stops
+# applying — a template change, a dependency bump — would put an FCM client back in a product
+# whose whole claim is that no Google push service stands between a person's mailbox and their
+# phone, so the artifact is inspected rather than the configuration trusted.
+#
+# It is inspected in the ONE place that can be right: the compiled dex. `unzip -l` cannot see a
+# class, because classes live inside `classes*.dex` — a zip-listing grep for `com/google/firebase`
+# passes on every APK ever built, which is the "guard that has never been red" shape this
+# repository has paid for. So the dex bytes are searched for the type descriptors, and the
+# CONNECTOR's descriptors must be PRESENT in the same scan: an extraction that produced nothing,
+# or a search that matched nothing because the strings are stored differently than assumed, then
+# fails instead of passing quietly.
 
 name: android
 
@@ -124,6 +140,9 @@ jobs:
           test "$SIZE" -gt 10000000
           echo "APK ok: $SIZE bytes"
 
+      - name: No Google push code in the binary
+        run: bash .github/scripts/assert-no-fcm.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ohmail-android-debug-signed
@@ -196,6 +215,11 @@ jobs:
           SIZE=$(stat -c%s "$APK")
           test "$SIZE" -gt 10000000
           echo "APK ok: $SIZE bytes"
+
+      # On the TAG path too, and not only on the build check: this is the artifact that gets
+      # signed and attached, so it is the one whose contents are a published claim.
+      - name: No Google push code in the binary
+        run: bash .github/scripts/assert-no-fcm.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

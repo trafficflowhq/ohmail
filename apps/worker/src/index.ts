@@ -65,7 +65,9 @@ import { syncKickPass } from "./sync-kick.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
 import { awayResponderPass } from "./away-responder.js";
 import { isCliEntry, flushExit, installCrashHandlers } from "./entry.js";
-import { startPushWake, pushEndpointGuardFromEnv, type RunningPushWake } from "./push-wake.js";
+import {
+  startPushWake, pushEndpointGuardFromEnv, vapidFromEnv, type RunningPushWake,
+} from "./push-wake.js";
 import { driverWriteRaceReason } from "./driver-write-race.js";
 import type { Tx } from "@trafficflow/db";
 import {
@@ -4244,6 +4246,16 @@ export async function startWorkerWithLock(
      */
     try {
       wakeHub = makeChangeWakeHub(config.databaseUrl, log);
+      /**
+       * THE VAPID IDENTITY, OR THE REASON THERE IS NONE — read here, ONCE, at boot.
+       *
+       * `TF_VAPID_PRIVATE_KEY` is read in this process and in no other: the API serves the public
+       * half so phones can register with it, and nothing a request handler does needs the ability to
+       * sign. Read once rather than per use because `makeVapidIdentity` derives a key and asserts
+       * the pair, and because two reads could disagree if the environment changed under a
+       * long-running process — one value, one boot, one log line.
+       */
+      const vapid = vapidFromEnv();
       pushWake = startPushWake({
         db: db as unknown as Tx,
         source: wakeHub,
@@ -4259,7 +4271,22 @@ export async function startWorkerWithLock(
          * single-shard configuration it returns true without a query.
          */
         ownsAccount: (accountId) => accountInShard(db, accountId, selection),
+        /**
+         * Passing the whole discriminated answer rather than a nullable identity is what lets the
+         * sender distinguish "the operator configured nothing" (degrade: the plaintext arm still
+         * serves raw consumers) from "the operator configured something broken" (refuse to send at
+         * all: a half-working feature would hide the mistake). See `PushWakeDeps.vapid`.
+         */
+        vapid,
         log,
+      });
+      // Said at BOOT rather than left to the first wake, because "are encrypted wakes on" is a
+      // fact an operator wants when the process starts — and because both the `absent` and
+      // `configured` arms are deliberately silent from then on.
+      log.info("push_wake_started", {
+        vapid: vapid.kind,
+        encryptedWakes: vapid.kind === "configured",
+        ...(vapid.kind === "configured" ? {} : { why: vapid.why }),
       });
     } catch (err) {
       log.warn("push_wake_unavailable", {

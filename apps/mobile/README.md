@@ -21,7 +21,21 @@ Honest edges, stated here and on the screens themselves:
   picker's managed card negotiates against the real server and reports what it
   answers — today, that pairing arrives with a later update. No date is
   promised.
-- Sync is foreground polling plus pull-to-refresh. There is no push wake yet.
+- **New-mail wake works while the app is running — open or in the background —
+  and not when it has been swiped away.** The server sends a fifteen-byte
+  signal, encrypted to this device, through a [UnifiedPush][up] distributor you
+  choose and install yourself; no Google or Apple push service is in the path,
+  and the app carries no client for either. Settings shows the distributors
+  found on your phone and one sentence when there are none. If you close the
+  app, mail arrives the next time you open it; foreground sync and
+  pull-to-refresh are the floor underneath all of it. Waking a closed app needs
+  native code that is not written yet.
+- The server must have a signing keypair for a wake to be renderable — the
+  managed service has one, and a self-hosted install generates its own with
+  `node scripts/vapid-keygen.mjs`. Without one, Settings says so rather than
+  showing a control that cannot work.
+
+[up]: https://unifiedpush.org
 - The theme choice resets to "system" on relaunch; a persisted preference is a
   later update.
 

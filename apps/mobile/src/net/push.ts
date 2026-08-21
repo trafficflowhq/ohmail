@@ -13,17 +13,29 @@ import type { ConnectedSession } from "./pairing.js";
  *
  * ── WHAT THIS FILE IS, AND WHAT IT DELIBERATELY IS NOT ────────────────────────────────────────
  *
- * It is the SERVER SIDE of that handshake: given an endpoint a distributor produced, register it
- * with the ACTIVE profile's server, and take it down again on forget. That half is finished and
- * tested.
+ * It is the SERVER SIDE of that handshake: fetch the key the device must register with, hand the
+ * resulting endpoint to the ACTIVE profile's server, and take it down again on forget.
  *
- * It is NOT a distributor connector, and there is no connector in the shipped dependency graph
- * yet. {@link UnifiedPushDistributor} is the port one plugs into, and {@link NO_DISTRIBUTOR} — no
- * distributor available, nothing to register — is what the app runs on today. That is a real state
- * on a real phone (most Android devices have no distributor installed until the user picks one, and
- * every iPhone is in it permanently), so it is a state the UI has to say out loud rather than a
- * placeholder: Settings shows one plain sentence, and there is no switch to flip. A toggle that
- * cannot do anything is worse than no toggle.
+ * It is NOT the distributor connector. That is `unified-push.ts`, which is the only file that
+ * touches the native module, and it arrives here through the {@link UnifiedPushDistributor} port —
+ * so every test in this file hands over a double and none of them needs a device.
+ * {@link NO_DISTRIBUTOR} remains the answer on a phone with no distributor chosen and on every
+ * iPhone, which is a real state rather than a placeholder: Settings says so in one sentence.
+ *
+ * ── THE SERVER'S VAPID KEY IS PART OF THE HANDSHAKE, AND IT COMES FIRST ───────────────────────
+ *
+ * A UnifiedPush 3.x connector cannot register without a VAPID public key: it gives the key to the
+ * distributor and thereafter renders only wakes signed by the matching private half. The key is
+ * per-DEPLOYMENT, so it has to be asked for — `GET /push/vapid-key` on the profile the user paired
+ * with. Two consequences that shape this file:
+ *
+ *  · the fetch happens BEFORE the distributor is asked for anything, because a registration made
+ *    with the wrong key is indistinguishable from a working one until a wake silently fails to
+ *    render on the phone;
+ *  · a server that answers `{ publicKey: null }` has no keypair, and that is a real, supported
+ *    configuration rather than an error. It gets its own {@link WakeState} and its own sentence,
+ *    because "your server has not set this up" is actionable by the person running the server and
+ *    "wake notifications could not be set up" is not.
  *
  * ── THE ENDPOINT GOES TO THE ACTIVE PROFILE'S SERVER. NEVER ANYWHERE ELSE. ────────────────────
  *
@@ -48,34 +60,52 @@ export interface WakeRegistration {
    * The Web Push key pair a UnifiedPush 3.x connector hands back (`p256dh` = the device's public
    * key, `auth` = its authentication secret).
    *
-   * Sent when present and otherwise omitted, and NOTHING here depends on them. They are forwarded
-   * because the server stores them if offered, which is what lets an encrypting sender arrive
-   * later without every device having to re-register. The wake this app's servers send today is
-   * unencrypted, so a connector that requires the encrypted profile will not render it — that is
-   * the open question this slice reports rather than papers over.
+   * Sent when present and omitted otherwise, and this file reads neither: they are the DEVICE's
+   * key material and their only consumer is the server's sender, which seals the wake to them so
+   * that only this phone can open it.
+   *
+   * Absent is not a broken registration — a distributor that does not implement the encrypted
+   * profile hands back a URL alone, and the server's plaintext arm serves it. Present is the
+   * ordinary case for a UnifiedPush 3.x connector, and it is what makes a wake renderable.
    */
   keys?: { p256dh: string; auth: string };
 }
 
 /**
- * A UnifiedPush distributor, as this app needs it. The port exists so the app can be honest about
- * having none: `available()` is the single question Settings asks, and the answer today is `false`.
+ * A UnifiedPush distributor, as this app needs it.
+ *
+ * A PORT rather than a direct dependency on the native module, for two reasons that both still
+ * hold now that a real connector exists: `available()` has to be answerable on a phone with no
+ * distributor and on every iPhone, and every test of the registration flow gets to run without a
+ * device. `unified-push.ts` is the real implementation; {@link NO_DISTRIBUTOR} is the honest
+ * answer everywhere it cannot load.
  */
 export interface UnifiedPushDistributor {
-  /** Is there a distributor on this device we could register with? */
+  /** Is there a distributor on this device we could register with — chosen AND installed? */
   available(): boolean;
-  /** Ask the distributor for an endpoint. `null` means it declined or there is none. */
-  register(): Promise<WakeRegistration | null>;
+  /**
+   * Ask the distributor for an endpoint, registering with `vapidPublicKey`.
+   *
+   * The key is a PARAMETER rather than something the implementation holds, and that is the shape
+   * that makes "registered against the wrong server's key" hard to write: the key comes from
+   * whichever profile is active, the app can hold several profiles, and a distributor object that
+   * had been constructed with one key could outlive a switch to another. Passing it per call means
+   * the key and the server it is sent to are read in the same breath.
+   *
+   * `null` means the distributor declined, timed out, or there is none.
+   */
+  register(vapidPublicKey: string): Promise<WakeRegistration | null>;
   /** Tell the distributor to forget this app. Best-effort; a failure is not an error to show. */
   unregister(): Promise<void>;
 }
 
 /**
- * The shipped distributor: none.
+ * NO distributor: an explicit value rather than an `undefined` somebody has to remember to handle.
  *
- * Named explicitly rather than left as an `undefined` somebody has to remember to handle. Every
- * caller in this app takes a distributor as an argument and this is the value they get, so the
- * no-distributor path is the one the app actually executes and the one the tests exercise.
+ * It is what `unified-push.ts` effectively becomes on iOS, on a build without the native module,
+ * and — the common case — on an Android phone where the user has not chosen a distributor yet. So
+ * this is not a stub for a missing feature: it is the state a large share of devices are genuinely
+ * in, which is why Settings renders a sentence for it and no dead control.
  */
 export const NO_DISTRIBUTOR: UnifiedPushDistributor = {
   available: () => false,
@@ -85,10 +115,18 @@ export const NO_DISTRIBUTOR: UnifiedPushDistributor = {
 
 /** What the Settings pane needs to know, and the only thing it renders from. */
 export type WakeState =
-  /** No distributor on the device — the ordinary case, and not an error. */
+  /** No distributor chosen or installed — the ordinary case, and not an error. */
   | { k: "no_distributor" }
   /** This profile is a desktop host; wake registrations are a hosted-journal thing. */
   | { k: "not_supported_here" }
+  /**
+   * The SERVER has no VAPID keypair, so it cannot sign a wake this phone would render.
+   *
+   * Its own state rather than an `off` reason, because it is the only one whose fix belongs to a
+   * different person: whoever runs the server generates a keypair. Telling a self-hoster that is
+   * useful; telling them "wake notifications could not be set up" is not.
+   */
+  | { k: "server_has_no_key" }
   /** Registered with the paired server. `id` is what a forget takes down. */
   | { k: "on"; id: string }
   /** A distributor exists but the registration did not land. `reason` is for the sentence. */
@@ -98,12 +136,48 @@ export type WakeState =
 const HOSTED_FLAVORS = new Set(["managed", "selfhost", "self-host"]);
 
 /**
+ * Ask the active profile's server for its VAPID public key.
+ *
+ * `null` covers three cases on purpose — no keypair configured, the route not mounted, the request
+ * failed — and they collapse because the app's next move is the same in all three: do not register,
+ * and say so. Distinguishing "your server has no key" from "your server did not answer" would put a
+ * second sentence on the screen for a difference the user cannot act on differently.
+ *
+ * The key is NOT cached across calls. It is one small request made when a Settings pane opens or a
+ * registration is attempted, and a stale key is exactly the failure this whole path exists to avoid:
+ * an operator who rotates their keypair must have the next registration pick up the new one.
+ */
+export async function serverVapidKey(session: ConnectedSession): Promise<string | null> {
+  try {
+    const res = await session.bearer.fetch(`${session.profile.origin}/push/vapid-key`, {
+      method: "GET",
+    });
+    if (res.status !== 200) return null;
+    const body = (await res.json()) as { publicKey?: unknown };
+    // A trimmed non-empty string or nothing. An empty string would be handed straight to
+    // `registerDevice`, which would reject — a null here turns that into a sentence instead.
+    if (typeof body.publicKey !== "string") return null;
+    const key = body.publicKey.trim();
+    return key === "" ? null : key;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Register this device's wake endpoint with the active profile's server.
  *
- * The order is deliberate: ask the LOCAL questions first (is this profile even a hosted one, is
- * there a distributor at all) and only then make a request. Every refusal that can be decided
- * without a round trip is decided without one, so the failure a user is shown names the actual
- * reason instead of a status code.
+ * The order is deliberate, and there are now four steps rather than two:
+ *
+ *  1. LOCAL questions first — is this profile even a hosted one, is a distributor chosen. Every
+ *     refusal that can be decided without a round trip is decided without one, so the failure a
+ *     user is shown names the actual reason instead of a status code.
+ *  2. THE SERVER'S VAPID KEY, before the distributor is asked for anything. A registration made
+ *     against the wrong key, or against no key, looks exactly like a working one from here — the
+ *     distributor mints an endpoint either way and the server stores it happily — and only fails
+ *     later, on the phone, silently. So the key is obtained first and its absence is a refusal.
+ *  3. THE DISTRIBUTOR, with that key.
+ *  4. THE SERVER, with the endpoint the distributor produced.
  */
 export async function registerWake(
   session: ConnectedSession, distributor: UnifiedPushDistributor,
@@ -111,9 +185,17 @@ export async function registerWake(
   if (!HOSTED_FLAVORS.has(session.profile.flavor)) return { k: "not_supported_here" };
   if (!distributor.available()) return { k: "no_distributor" };
 
+  /**
+   * NO KEY, NO REGISTRATION. Not a soft failure: without a keypair the server cannot sign a wake,
+   * the connector will not render one, and registering anyway would produce a row the organizer
+   * skips and a Settings pane that says "on" about nothing.
+   */
+  const vapidKey = await serverVapidKey(session);
+  if (vapidKey === null) return { k: "server_has_no_key" };
+
   let reg: WakeRegistration | null;
   try {
-    reg = await distributor.register();
+    reg = await distributor.register(vapidKey);
   } catch {
     return { k: "off", reason: "distributor_refused" };
   }

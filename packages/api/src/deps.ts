@@ -674,6 +674,25 @@ export interface ApiDeps {
    */
   hello?: HelloConfig;
   /**
+   * This deployment's VAPID **public** key, base64url — what `GET /push/vapid-key` serves.
+   *
+   * ── WHY THE PUBLIC HALF AND ONLY THE PUBLIC HALF LIVES HERE ─────────────────────────────
+   *
+   * A UnifiedPush connector cannot register without one: it hands the key to the device's
+   * distributor and thereafter renders only messages signed by the matching private key. So the
+   * phone has to be able to ASK, and this is what it asks. The private half is read by the
+   * organizer and by nothing else — no request handler has any business being able to sign a
+   * wake, and keeping the signing key out of the serverless surface entirely is cheaper than
+   * auditing that nothing there reaches for it.
+   *
+   * ABSENT or `null` means this host has no keypair, and the route answers `{ publicKey: null }`
+   * — a real answer, not an error. It is what a self-host that has not configured one says, and
+   * the app turns it into a sentence rather than a dead switch. Deliberately NOT a `/hello`
+   * feature flag: a boolean there and a key here could disagree, and then a client would be told
+   * the capability exists by one route and refused it by the other.
+   */
+  vapidPublicKey?: string | null;
+  /**
    * The structured logger for THIS request.
    *
    * `withRequestId` binds `requestId` onto it, so every line a handler or middleware writes

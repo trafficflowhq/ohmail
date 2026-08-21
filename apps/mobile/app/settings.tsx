@@ -1,19 +1,26 @@
 /**
- * Settings — appearance, and what this build is.
+ * Settings — appearance, new mail, and what this build is.
  *
  * Every control here is real, and every claim is one this build can keep: the
- * theme switch is the app's own preference, and the About block states what is
- * live on this build and names what is not. Per-server settings (notifications,
- * rules, mailboxes) arrive with later updates — until then they are absent, not
- * mocked. The pairing itself is managed on the Servers screen.
+ * theme switch is the app's own preference, the New mail block registers with
+ * the server this phone is paired with, and the About block states what is live
+ * and names what is not. The remaining per-server settings (rules, mailboxes)
+ * arrive with later updates — until then they are absent, not mocked. The
+ * pairing itself is managed on the Servers screen.
+ *
+ * The New mail block is the reason this header no longer says notifications are
+ * absent: it now shows a real choice when the phone has distributors installed,
+ * and one sentence with no control when it does not. Which of the two appears is
+ * a fact read from the device, never a build-time assumption.
  */
 import { View } from "react-native";
 import { Copy } from "../src/copy";
-import { NO_DISTRIBUTOR, type WakeState } from "../src/net/push";
+import { type WakeState } from "../src/net/push";
+import { useWake } from "../src/state/wake";
 import type { ThemePref } from "../src/theme";
 import { usePrefs } from "../src/state/store";
 import { useWorld } from "../src/state/world";
-import { Panel, Screen, Scroller, Section, Txt } from "../src/ui/base";
+import { Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
@@ -35,10 +42,11 @@ export default function SettingsScreen() {
  * rather than a lookup, because adding a state to {@link WakeState} then fails to compile here
  * instead of silently rendering nothing.
  */
-function wakeSentence(state: WakeState): string {
+export function wakeSentence(state: WakeState): string {
   switch (state.k) {
     case "no_distributor": return Copy.wakeNoDistributor;
     case "not_supported_here": return Copy.wakeDesktopHost;
+    case "server_has_no_key": return Copy.wakeServerNoKey;
     case "on": return Copy.wakeOn;
     case "off": return Copy.wakeOff(state.reason);
   }
@@ -47,15 +55,7 @@ function wakeSentence(state: WakeState): string {
 function SettingsBody() {
   const w = useWorld();
   const { themePref, setTheme } = usePrefs();
-  /**
-   * No distributor in this build, so no request is made and no state is kept — the pane is a
-   * function of one fact. `NO_DISTRIBUTOR.available()` is the fact, read here rather than
-   * hard-coded, so the day a connector is wired this line starts telling the truth about it
-   * instead of having to be found and changed.
-   */
-  const wakeState: WakeState = NO_DISTRIBUTOR.available()
-    ? { k: "off", reason: "not_registered" }
-    : { k: "no_distributor" };
+  const wake = useWake();
 
   return (
     <Screen>
@@ -85,22 +85,55 @@ function SettingsBody() {
         </Panel>
 
         {/*
-          NEW MAIL — one sentence, and no control.
+          NEW MAIL — a real control when there is a real choice, and a sentence otherwise.
 
-          The wake registration itself is finished (`src/net/push.ts`), and what is missing is a
-          UnifiedPush DISTRIBUTOR: a separate app the user installs and chooses. There is no
-          connector in this build's dependency graph, so `NO_DISTRIBUTOR` is the honest answer and
-          `wakeState` resolves to a sentence rather than to a switch. A toggle here would be a dead
-          control, which is the one thing this screen's header comment forbids.
+          The list comes from the DEVICE (`listDistributors()`), so this block shows rows only when
+          the phone actually has distributors installed. On a phone with none — and on every iPhone,
+          where UnifiedPush cannot exist — `wake.choices` is empty and the pane is one sentence with
+          no control, which is the rule this screen was built on: a toggle that cannot move is worse
+          than a paragraph saying why.
 
-          When a connector lands, this block gains the `on`/`off` sentences that are already
-          written for it and a control — and this comment goes with the change.
+          The `None` row is last and separated, because it is the only destructive option here: it
+          drops the registration from the server as well as forgetting the distributor.
         */}
         <Panel style={{ paddingVertical: 18, marginBottom: 14 }}>
           <View style={{ paddingHorizontal: 20, gap: 6 }}>
             <Txt variant="settingsLabel">{Copy.wake}</Txt>
-            <Txt variant="note" tone="ink2">{wakeSentence(wakeState)}</Txt>
+            <Txt variant="note" tone="ink2">{wakeSentence(wake.state)}</Txt>
           </View>
+
+          {wake.choices.length > 0 && (
+            <View style={{ marginTop: 14 }}>
+              <Section>{Copy.wakeDistributor}</Section>
+              <View style={{ paddingHorizontal: 12, gap: 2 }}>
+                {wake.choices.map((d) => (
+                  <TapRow
+                    key={d.id}
+                    selected={d.id === wake.chosen}
+                    disabled={wake.busy}
+                    onPress={() => { wake.choose(d.id); }}
+                    style={{ paddingHorizontal: 8, paddingVertical: 12 }}
+                  >
+                    <Txt variant="body">{d.name}</Txt>
+                  </TapRow>
+                ))}
+                <Rule inset={8} />
+                <TapRow
+                  selected={wake.chosen === null}
+                  disabled={wake.busy}
+                  onPress={() => { wake.turnOff(); }}
+                  style={{ paddingHorizontal: 8, paddingVertical: 12 }}
+                >
+                  <Txt variant="body" tone="ink2">{Copy.wakeDistributorNone}</Txt>
+                </TapRow>
+              </View>
+              <View style={{ paddingHorizontal: 20, paddingTop: 10 }}>
+                <Txt variant="caption" tone="ink3">
+                  {wake.chosen === null ? Copy.wakeDistributorNoneHint : Copy.wakeDistributorHint}
+                </Txt>
+              </View>
+            </View>
+          )}
         </Panel>
 
         {/* about — one sentence, true of the session on screen */}

@@ -133,6 +133,16 @@ services:
       # neither — the api validates the registration and the organizer dials it, and a value on
       # only one of them is a phone with a registration nothing ever rings.
       TF_PUSH_ALLOW_PRIVATE: ${TF_PUSH_ALLOW_PRIVATE:-}
+      # The PUBLIC half of this install's wake-signing keypair, served to phones by
+      # GET /push/vapid-key so a UnifiedPush connector can register with it. Not a secret: every
+      # device that registers gets it, and it travels in the clear on every wake.
+      #
+      # TF_VAPID_PRIVATE_KEY IS DELIBERATELY ABSENT FROM THIS SERVICE. The api never signs a wake —
+      # the organizer does — so a signing key here would be a capability with no caller, in the one
+      # process that is reachable from the internet. A test asserts this omission, because "the api
+      # holds only the public half" is the kind of property that is true until somebody tidies the
+      # two blocks into a shared anchor.
+      TF_VAPID_PUBLIC_KEY: ${TF_VAPID_PUBLIC_KEY:-}
       TF_ALERT_SECRET: ${TF_ALERT_SECRET:-}
       TF_ALERT_WEBHOOK_URL: ${TF_ALERT_WEBHOOK_URL:-}
       MS_OAUTH_CLIENT_ID: ${MS_OAUTH_CLIENT_ID:-}
@@ -180,6 +190,20 @@ services:
       # value set on only one service produces a registration the api accepted and the organizer
       # refuses (logged as `push_wake_endpoint_refused`, invisible from the phone).
       TF_PUSH_ALLOW_PRIVATE: ${TF_PUSH_ALLOW_PRIVATE:-}
+      # BOTH HALVES OF THE KEYPAIR, here and only here. This is the process that signs and sends a
+      # wake, so it is the only one that needs the private key — and the only one that has it.
+      #
+      # Set neither and encrypted wakes are off: phones that registered for them are skipped (with
+      # one log line saying so) and raw consumers still get the plaintext constant. Set them WRONG —
+      # a mismatched pair, one half, a truncated paste — and the organizer refuses to send any wake
+      # at all rather than let the arm that still works hide the mistake. `pnpm vapid:check` on the
+      # host reports which of the three you are in.
+      TF_VAPID_PUBLIC_KEY: ${TF_VAPID_PUBLIC_KEY:-}
+      TF_VAPID_PRIVATE_KEY: ${TF_VAPID_PRIVATE_KEY:-}
+      # Optional. RFC 8292's `sub` claim: a mailto: or https: URI a push service can use to reach
+      # the operator about a misbehaving sender. Omitted from the signed token when unset, which is
+      # conformant — the spec says SHOULD, and a made-up address would be a wrong fact in a token.
+      TF_VAPID_SUBJECT: ${TF_VAPID_SUBJECT:-}
       TF_ALERT_WEBHOOK_URL: ${TF_ALERT_WEBHOOK_URL:-}
       MS_OAUTH_CLIENT_ID: ${MS_OAUTH_CLIENT_ID:-}
       MS_OAUTH_CLIENT_SECRET: ${MS_OAUTH_CLIENT_SECRET:-}

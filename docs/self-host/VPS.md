@@ -97,6 +97,30 @@ Two optional blocks worth deciding now:
   `TF_PROBE_ALLOW_PRIVATE` on purpose, and it has to be set on **both** the
   `api` and the `organizer` — the first accepts the registration, the second
   dials it.
+- **Want the phone to actually ring?** Generate this install's own VAPID
+  keypair:
+
+  ```sh
+  node scripts/vapid-keygen.mjs
+  ```
+
+  Paste `TF_VAPID_PUBLIC_KEY` and `TF_VAPID_PRIVATE_KEY` into `.env`. The app
+  hands the public key to your phone's distributor when it registers, and the
+  distributor's connector then renders only wakes signed with the private half
+  — so without a keypair a phone can register but nothing it receives will
+  wake it. The public key goes to both services; the private key stays on the
+  `organizer`, which is the only process that signs.
+
+  Generate your own. Never copy another install's pair — whoever holds a
+  private key can send wakes the matching phones accept. `node
+  scripts/vapid-keygen.mjs --check` verifies what you set, including whether
+  the two halves are really a pair; a mismatch is the one failure nothing else
+  reports, because phones register normally and simply never ring.
+
+  Leave both empty and encrypted wakes are off: mail still arrives, the app
+  still syncs when you open it, and a raw consumer still gets the plain wake.
+  Set them wrong and the organizer sends nothing at all rather than let the
+  working half hide the mistake.
 
 ## 5. Start it
 

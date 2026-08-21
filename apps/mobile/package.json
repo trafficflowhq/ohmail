@@ -14,6 +14,7 @@
     "expo-sqlite": "57.0.1",
     "expo-status-bar": "57.0.1",
     "expo-system-ui": "57.0.2",
+    "expo-unified-push": "0.6.0",
     "react": "19.2.3",
     "react-native": "0.86.2",
     "react-native-safe-area-context": "5.7.0",

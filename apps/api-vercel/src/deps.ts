@@ -578,6 +578,16 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
       // "unconfigured" ("in-process" left with the deleted Stripe arm).
       billing: cfg.billingPlane ? "plane" : "unconfigured",
     },
+    /**
+     * What `GET /push/vapid-key` answers — the PUBLIC half of the wake-signing keypair.
+     *
+     * Read straight from the environment because it is a per-deployment constant with no policy
+     * attached: it is not a secret (every device that registers gets it, and it rides in the clear
+     * in the `k=` field of every wake), so there is nothing here to gate. `TF_VAPID_PRIVATE_KEY`
+     * is NOT read on this arm and must never be — the managed worker signs, this service does not,
+     * and a signing key in the serverless surface would be a capability with no caller.
+     */
+    vapidPublicKey: (process.env.TF_VAPID_PUBLIC_KEY ?? "").trim() || null,
     // What `GET /hello` answers — this host's capability statement, on `health`'s injection
     // pattern. Every feature flag reads the SAME config member the wiring arms from, so the
     // negotiation cannot disagree with what the routes actually do.

@@ -188,17 +188,55 @@ export const Copy = {
    * honest — that the app still gets mail without one. Nothing here promises a future version.
    */
   wakeNoDistributor:
-    "Your phone has no push distributor installed, so nothing wakes this app between visits. "
+    "No push distributor is chosen on this phone, so nothing wakes this app between visits. "
     + "UnifiedPush distributors are separate apps you choose yourself — no Google or Apple push "
     + "service is involved either way. Mail arrives when you open the app or pull to refresh.",
   /** The desktop-host arm. Same shape: what happens instead, not what is missing. */
   wakeDesktopHost:
     "Wake notifications need a hosted server. Paired with a desktop, this app syncs when you open "
     + "it and when you pull to refresh.",
-  /** Registered. Says exactly what leaves the building, because that is the interesting part. */
+  /**
+   * THE SERVER HAS NO KEYPAIR — the one state whose fix belongs to somebody else.
+   *
+   * Named as its own sentence rather than folded into `wakeOff` because the action is on the person
+   * running the server, and telling them WHICH thing is missing is the difference between a
+   * five-minute fix and a support thread. It does not name the environment variables: this is a
+   * phone screen, and the self-host guide is where the command lives.
+   */
+  wakeServerNoKey:
+    "This server has not set up a signing key, so it cannot send wake notifications this phone "
+    + "would accept. Whoever runs it can generate one — see the self-hosting guide. Mail still "
+    + "arrives when you open the app or pull to refresh.",
+  /**
+   * REGISTERED — and the qualification in the second sentence is load-bearing.
+   *
+   * A wake reaches this app when its process is alive: open, or in the background. If the user
+   * swipes the app away, the connector's service still receives the wake and there is no JS to hand
+   * it to, so nothing happens until they open the app again. So the copy may NOT say "your phone
+   * wakes when mail arrives" full stop, and it does not — it says while ohmail is running, and then
+   * says what happens the rest of the time. A sentence that overstated this would be a claim the
+   * build cannot keep, on the one screen where a user would notice.
+   */
   wakeOn:
-    "Your server tells this phone that something changed — a signal with no subject, no sender and "
-    + "no count in it. The app then fetches your mail directly, as it does when you open it.",
+    "While ohmail is running — open or in the background — your server tells this phone that "
+    + "something changed, and the app fetches your mail directly. The signal carries no subject, no "
+    + "sender and no count. If you close the app, mail arrives the next time you open it.",
+  /**
+   * The distributor picker's label and hint.
+   *
+   * A REAL choice, shown only when the phone has distributors installed — the list comes from the
+   * device, so an empty list means the `wakeNoDistributor` sentence and no control at all. Naming
+   * two of the common ones is a kindness rather than an endorsement: "install a UnifiedPush
+   * distributor" is not an actionable instruction to somebody who has never heard the word.
+   */
+  wakeDistributor: "Push distributor",
+  wakeDistributorHint:
+    "The app that carries the wake signal to this phone. You choose it, you can change it, and it "
+    + "is the only thing in the path besides your own server.",
+  /** Turning the choice off. Says what it costs, since it is the one destructive option here. */
+  wakeDistributorNone: "None",
+  wakeDistributorNoneHint:
+    "Turning this off stops wake notifications and removes the registration from your server.",
   /** The distributor exists and the registration did not land. One sentence per real cause. */
   wakeOff: (reason: string): string => reason === "endpoint_refused"
     ? "Your distributor's address was refused by the server, so wake notifications are off. Mail "

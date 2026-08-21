@@ -3,7 +3,8 @@ import { pushSubscriptions } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
 import {
   SsrfRefusal, pinnedHttpRequest, makePushEndpointGuard, nodeHostResolver,
-  type PushEndpointGuard,
+  encryptWebPushBody, vapidIdentityFromEnv,
+  type PushEndpointGuard, type VapidIdentity, type VapidFromEnv, type WebPushKeys,
 } from "@trafficflow/core/net";
 
 /**
@@ -37,16 +38,36 @@ import {
  * The content-free census beside this app's other tests is the evidence, and it is watched red by
  * threading a subject through — not by reading this comment.
  *
+ * ── TWO WIRE FORMS FOR ONE PAYLOAD, CHOSEN BY WHAT THE DEVICE REGISTERED ─────────────────────
+ *
+ * UnifiedPush 3.x endpoints are Web Push endpoints, and a connector that implements the encrypted
+ * profile renders ONLY an RFC 8291 `aes128gcm` body under an RFC 8292 VAPID `Authorization`. A
+ * distributor forwards whatever bytes arrive either way, so a plaintext constant does reach the
+ * device — and is then dropped by the connector, silently, with every status code on the path
+ * saying 2xx. So this module sends whichever form the registration asked for:
+ *
+ *  · the row has `p256dh` AND `auth` → the constant is SEALED to that device's key and signed
+ *    with this deployment's VAPID identity. Only the phone that registered can open it, and the
+ *    signature is what tells the connector the wake came from the server it paired with rather
+ *    than from anybody who learned the endpoint URL.
+ *  · the row has neither → the constant goes as it always did, `application/json`, fifteen bytes.
+ *    That arm is not legacy and is not deprecated: a raw consumer — an `ntfy` topic somebody
+ *    watches directly, a script — is a supported way to use this, and it has no keys to seal to.
+ *
+ * **The PLAINTEXT is identical in both.** Encryption changes who can read the fifteen bytes, not
+ * what they are, and the censuses are written to keep saying so: the ciphertext necessarily differs
+ * per device and per message (a fresh salt and ephemeral key each time — reusing either would leak
+ * the AES-GCM authentication key), so what they pin is the CONSTANT going in, the absence of any
+ * message-derived input, and — since a signed token is the obvious place for one to hide — the
+ * exact claim set of the VAPID JWT.
+ *
  * ── WHAT IS *NOT* HERE, SO NOBODY READS THIS AS DONE ─────────────────────────────────────────
  *
- * The wake goes out UNENCRYPTED. UnifiedPush 3.x endpoints are Web Push endpoints and the spec
- * expects an RFC 8291 `aes128gcm` body under an RFC 8292 VAPID `Authorization`; a distributor
- * (ntfy, NextPush) forwards whatever bytes arrive either way, so a plaintext constant does reach
- * the device — but a CONNECTOR that implements the encrypted profile will fail to decrypt it. The
- * registration path already stores `p256dh`/`auth` when a connector offers them, so the encrypting
- * arm needs no migration and no re-registration; it needs a VAPID keypair and its own slice. This
- * module reads neither column, and it says so here rather than leaving the absence to be read as
- * an oversight.
+ * A wake that arrives while the app's process is DEAD currently does nothing on the phone. The
+ * connector's service starts, decrypts, finds no `id` field in the payload — because the payload is
+ * `{"type":"wake"}` — and renders no notification, which is exactly what is wanted while the app is
+ * alive (a wake is not a notification) and is a dead end when it is not. Closing that needs native
+ * code on the device, not a change here. The app's copy says which of the two it does.
  *
  * Desktop-host wake is not here either and is not owed: `push_subscriptions` is a cloud-half
  * table, so a desktop-host profile has nothing to register against. Foreground sync plus
@@ -149,6 +170,28 @@ export interface PushWakeDeps {
    * is turned on.
    */
   ownsAccount: (accountId: string) => Promise<boolean>;
+  /**
+   * THIS DEPLOYMENT'S VAPID IDENTITY, OR THE REASON IT HAS NONE. REQUIRED, with no default.
+   *
+   * Required for `guard`'s and `ownsAccount`'s reason — a defaulted absence is the untested branch
+   * shipping — and it is the discriminated `VapidFromEnv` rather than a nullable identity because
+   * the three answers are three different behaviours and a nullable value cannot tell two of them
+   * apart:
+   *
+   *  · `configured` — keyed registrations are sealed and signed; keyless ones still get the
+   *    plaintext constant.
+   *  · `absent` — the operator configured nothing. The keyless arm runs; keyed registrations are
+   *    SKIPPED (counted, and warned about exactly once) because a plaintext body sent to a
+   *    connector that expects the encrypted profile is dropped on the device with nothing on the
+   *    wire to show it. Sending it anyway would look like a delivery and be a discard.
+   *  · `invalid` — the operator configured SOMETHING and it is unusable: a truncated paste, a
+   *    mismatched pair, one half of it. Then this sender does not start at all, and that is the
+   *    point: if it fell back to the keyless arm, the wakes an operator could still see working
+   *    would hide the fact that the thing they configured does nothing. A configuration error must
+   *    not be masked by a partially working feature. The worker keeps running — mail syncing is
+   *    never held hostage to this — and the refusal is logged with the reason.
+   */
+  vapid: VapidFromEnv;
   log?: WakeLog;
   /** The POST, injectable so the e2e can watch a real request without a real distributor. */
   post?: PushWakePost;
@@ -162,18 +205,36 @@ export interface PushWakeDeps {
 /**
  * The one network operation, as a port.
  *
- * `url` and `pin` are the ONLY arguments, and the signature is the census's first line of
- * defence: there is no parameter here that a message could be threaded through. A body argument
+ * `url`, `pin` and `keys` are the ONLY arguments, and the signature is the census's first line of
+ * defence: there is no parameter here that a MESSAGE could be threaded through. A body argument
  * would be exactly such a parameter, which is why the constant is read from module scope by the
- * implementation rather than passed in.
+ * implementation rather than passed in — and why an "opaque already-framed request" seam was
+ * rejected: that is a body parameter wearing a hat.
+ *
+ * `keys` is the third argument and it is not content. `p256dh` and `auth` are registration
+ * provenance — the same class of value as the endpoint URL, which has always crossed this seam:
+ * they came from the device at registration time, they say nothing about any message, and the
+ * census pins their SHAPE to exactly those two fields so a threaded value fails it. `null` means
+ * the registration offered no keys and the plaintext constant is what goes out.
  */
-export type PushWakePost = (url: string, pin: readonly string[]) => Promise<{ status: number }>;
+export type PushWakePost = (
+  url: string, pin: readonly string[], keys: WebPushKeys | null,
+) => Promise<{ status: number }>;
 
 export interface RunningPushWake {
   /** Unsubscribe from the hub and cancel every pending debounce. Idempotent. */
   stop(): void;
   /** Wakes POSTed with a 2xx, for `/health` and the tests. */
   sent(): number;
+  /**
+   * Wakes NOT sent because the registration offered keys and this deployment cannot seal to them.
+   *
+   * Separate from `sent()` because it is the ONLY signal that a VAPID misconfiguration exists. A
+   * keyed registration on a deployment with no identity is not an error anywhere: the row is
+   * valid, the endpoint is reachable, nothing is pruned, and the phone simply never rings. A
+   * counter is what makes that visible from `/health` instead of from nowhere.
+   */
+  skipped(): number;
 }
 
 /**
@@ -218,8 +279,39 @@ export interface RunningPushWake {
  * that the connection is not reused, which for a per-account-debounced wake is not a cost worth
  * measuring. Nothing about the response is logged except its status.
  */
-function makeDefaultPost(opts: { signal: AbortSignal; timeoutMs: number }): PushWakePost {
-  return async function post(url: string, pin: readonly string[]): Promise<{ status: number }> {
+function makeDefaultPost(
+  opts: { signal: AbortSignal; timeoutMs: number; vapid: VapidIdentity | null },
+): PushWakePost {
+  const vapid = opts.vapid;
+  return async function post(
+    url: string, pin: readonly string[], keys: WebPushKeys | null,
+  ): Promise<{ status: number }> {
+    /**
+     * ── SEAL, OR DO NOT — and the headers follow from that one decision ──────────────────────
+     *
+     * `sealed === null` is the plaintext arm, byte-identical to what this sender has always put on
+     * the wire. Otherwise the constant is encrypted to the device's own key and the request grows
+     * exactly two headers: the content coding, and the signature that says which server sent it.
+     *
+     * The `throw` is unreachable by construction — `fire` skips a keyed row when there is no
+     * identity, which is what `skipped()` counts — and it is here rather than a non-null assertion
+     * because the alternative shape of this bug is silently sending a plaintext body to a device
+     * that will discard it, i.e. a delivery that is not one. A throw is caught by the caller's
+     * per-endpoint `catch` and retried on the next wake; a silent discard is forever.
+     */
+    let sealed: Buffer | null = null;
+    let sealedHeaders: Record<string, string> = {};
+    if (keys !== null) {
+      if (vapid === null) throw new Error("cannot seal a wake without a VAPID identity");
+      sealed = encryptWebPushBody(WAKE_BODY, keys);
+      sealedHeaders = {
+        "content-encoding": "aes128gcm",
+        // RFC 8292. The audience is derived from THIS url's origin inside `authorizationFor`, so a
+        // token is never replayable at a different distributor.
+        "authorization": vapid.authorizationFor(url),
+      };
+    }
+
     // TWO reasons to abort, one signal: this request's own deadline, and the sender being stopped
     // (a lost leader lock must not leave a POST in flight that its successor is also making).
     const ac = new AbortController();
@@ -233,14 +325,15 @@ function makeDefaultPost(opts: { signal: AbortSignal; timeoutMs: number }): Push
         method: "POST",
         pin,
         headers: {
-          "content-type": "application/json",
-          "content-length": String(WAKE_BODY_BYTES),
+          "content-type": sealed === null ? "application/json" : "application/octet-stream",
+          "content-length": String(sealed === null ? WAKE_BODY_BYTES : sealed.length),
           // RFC 8030's TTL. Four minutes: a wake that could not be delivered while the phone was
           // offline is worth nothing once the phone comes back and syncs on its own. A constant,
           // like everything else on this request.
           "ttl": "240",
+          ...sealedHeaders,
         },
-        body: WAKE_BODY,
+        body: sealed ?? WAKE_BODY,
         signal: ac.signal,
       });
       // ORDER IS LOAD-BEARING. The listener goes on before the destroy, because `destroy()` can
@@ -274,6 +367,19 @@ export function pushEndpointGuardFromEnv(env: NodeJS.ProcessEnv = process.env): 
 }
 
 /**
+ * Read this deployment's VAPID identity from the worker's environment.
+ *
+ * Re-exported through this module rather than imported straight from core by the composition root,
+ * for `pushEndpointGuardFromEnv`'s reason: the variables the wake sender reads are named in ONE
+ * place, so "what does the organizer need in its environment for wakes to work" has one answer a
+ * reader can find. `TF_VAPID_PRIVATE_KEY` is read HERE and nowhere else in the product — the API
+ * holds only the public half, because nothing a request handler does needs the ability to sign.
+ */
+export function vapidFromEnv(env: NodeJS.ProcessEnv = process.env): VapidFromEnv {
+  return vapidIdentityFromEnv(env);
+}
+
+/**
  * Start the sender. Returns immediately; everything after that is the hub's callback.
  *
  * ── FAILURE IS ALWAYS DEGRADATION, NEVER A CRASH ─────────────────────────────────────────────
@@ -294,6 +400,29 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
   const now = deps.now ?? Date.now;
 
   /**
+   * AN UNUSABLE VAPID CONFIGURATION STOPS THE SENDER HERE, BEFORE IT SUBSCRIBES TO ANYTHING.
+   *
+   * Not a degraded mode, and this is the one place in this module that deliberately does LESS on a
+   * failure than it could. The keyless arm would still work — so an operator watching their own
+   * `ntfy` topic would see wakes arriving and conclude the feature is fine, while every phone they
+   * actually care about gets nothing. A half-working feature is worse than an off one when the
+   * working half is the half nobody is testing with.
+   *
+   * The worker itself is untouched: this returns an inert handle, mail keeps syncing, and the
+   * reason is in the log with no key material in it.
+   */
+  if (deps.vapid.kind === "invalid") {
+    log?.warn("push_wake_vapid_invalid", {
+      why: deps.vapid.why,
+      reason: "this deployment configured a VAPID keypair that cannot be used, so NO wakes are "
+        + "sent — including the unencrypted ones, deliberately, so a broken configuration is not "
+        + "hidden by the arm that still works. Devices still sync on foreground and pull-to-refresh.",
+    });
+    return { stop(): void { /* nothing was ever started */ }, sent: () => 0, skipped: () => 0 };
+  }
+  const vapid = deps.vapid.kind === "configured" ? deps.vapid.identity : null;
+
+  /**
    * ONE ABORT FOR THE WHOLE SENDER, aborted by {@link stop}.
    *
    * It exists so that losing the leader lock actually stops the traffic rather than only stopping
@@ -302,21 +431,34 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
    * rows to be dialled one by one by a worker that is no longer the leader.
    */
   const stopping = new AbortController();
-  const post = deps.post ?? makeDefaultPost({ signal: stopping.signal, timeoutMs });
+  const post = deps.post ?? makeDefaultPost({ signal: stopping.signal, timeoutMs, vapid });
 
   /** One pending debounce per account. The VALUE is a timer and nothing else — no payload. */
   const pending = new Map<string, ReturnType<typeof setTimeout>>();
   /** Last successful POST per endpoint URL, for {@link WAKE_MIN_INTERVAL_MS}. */
   const lastSentAt = new Map<string, number>();
   let sentCount = 0;
+  let skippedCount = 0;
   let stopped = false;
+  /**
+   * The "we cannot seal for this device" warning is said ONCE per sender, not once per row.
+   *
+   * The same argument the per-failure logging refusal below makes: a deployment with no identity
+   * and fifty keyed registrations would otherwise write fifty lines every time any of those
+   * accounts received mail, which is an incident-shaped volume for a static configuration fact.
+   * The COUNTER is the per-occurrence signal; the log line exists to say the reason once.
+   */
+  let warnedNoVapid = false;
 
   /**
    * Dial one account's endpoints.
    *
    * The account id is used ONCE — as the SELECT predicate — and never leaves this function. The
-   * rows it reads are `{ id, endpoint }`: the projection is narrow on purpose, so that a future
-   * edit which wants a message-derived value has to widen the SELECT, which the census sees.
+   * rows it reads are `{ id, endpoint, p256dh, auth }` and nothing else: the projection is narrow
+   * on purpose, so that a future edit which wants a message-derived value has to widen the SELECT,
+   * which the census sees. The two key columns are in it because sealing needs them and for no
+   * other reason — they are the device's own material, they are never logged, and they never leave
+   * this function except as the encryptor's input.
    */
   const fire = async (accountId: string): Promise<void> => {
     /**
@@ -334,6 +476,8 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
     const rows = await db.select({
       id: pushSubscriptions.id,
       endpoint: pushSubscriptions.endpoint,
+      p256dh: pushSubscriptions.p256dh,
+      auth: pushSubscriptions.auth,
     }).from(pushSubscriptions).where(and(
       eq(pushSubscriptions.accountId, accountId),
       eq(pushSubscriptions.transport, "unifiedpush"),
@@ -355,6 +499,42 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
 
       const last = lastSentAt.get(url);
       if (last !== undefined && now() - last < minIntervalMs) continue;   // per-endpoint floor
+
+      /**
+       * DID THIS DEVICE ASK TO BE SEALED TO? BOTH COLUMNS OR NEITHER.
+       *
+       * A UnifiedPush connector hands the app `{url, pubKey, auth}` together or not at all, so one
+       * column without the other is not a half-capable device — it is a corrupt row, and treating
+       * it as keyed would throw inside the encryptor on every wake for ever. Treating it as keyless
+       * is the safe reading: a raw consumer gets the plaintext constant, which is exactly what a
+       * row with no keys is.
+       */
+      const keys: WebPushKeys | null = row.p256dh !== null && row.auth !== null
+        ? { p256dh: row.p256dh, auth: row.auth }
+        : null;
+
+      /**
+       * A KEYED REGISTRATION ON A DEPLOYMENT THAT CANNOT SEAL IS SKIPPED, NOT DOWNGRADED.
+       *
+       * Sending the plaintext constant here would look like a delivery and be a discard: the
+       * distributor answers 2xx, `sent()` goes up, and the connector on the phone drops the body it
+       * cannot decrypt. Nothing on the wire would ever say so. So it is counted instead — the
+       * counter is the only place a VAPID misconfiguration is visible — and the row is left alone,
+       * because it becomes deliverable the moment an operator sets the keypair.
+       */
+      if (keys !== null && vapid === null) {
+        skippedCount += 1;
+        if (!warnedNoVapid) {
+          warnedNoVapid = true;
+          log?.warn("push_wake_vapid_unconfigured", {
+            reason: "a device registered for encrypted wakes and this deployment has no VAPID "
+              + "keypair, so those wakes are skipped rather than sent in a form the phone would "
+              + "discard. Set TF_VAPID_PUBLIC_KEY and TF_VAPID_PRIVATE_KEY on the organizer, and "
+              + "the public key on the api, to turn them on. Devices still sync on foreground.",
+          });
+        }
+        continue;
+      }
 
       /**
        * THE GATE, AT SEND TIME, ON EVERY SEND — not once at registration.
@@ -380,7 +560,7 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
 
       let status: number;
       try {
-        ({ status } = await post(url, pin));
+        ({ status } = await post(url, pin, keys));
       } catch {
         // A socket error, a timeout, an abort. Not evidence about the registration — retried on
         // the next wake. Deliberately not logged per failure: a distributor outage would otherwise
@@ -448,6 +628,9 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
     },
     sent(): number {
       return sentCount;
+    },
+    skipped(): number {
+      return skippedCount;
     },
   };
 }
