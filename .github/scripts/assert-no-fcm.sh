@@ -89,6 +89,19 @@ check_absent() {
   n=$(/usr/bin/grep -a -c -F "$needle" "$WORK/all.dex" || true)
   if [ "${n:-0}" -gt 0 ]; then
     echo "assert-no-fcm: FOUND $label ($needle) in the APK's dex — $n match line(s)." >&2
+    # NAME THE CLASSES, do not just count them. A count says "something is wrong" and leaves the
+    # next person to rebuild a 137 MB APK to find out what; the descriptors say WHICH code it is,
+    # which is the difference between deciding and guessing. Measured: the first real run of this
+    # guard reported three matches for the Firebase prefix while the embedded distributor, Play
+    # Services messaging and Firebase Installations were all absent — so the question was never
+    # "is the exclusion working" but "what else in the graph names Firebase", and a count could not
+    # answer it.
+    local found
+    found=$(/usr/bin/grep -a -o "${needle}[A-Za-z0-9_/$;]*" "$WORK/all.dex" | sort -u || true)
+    if [ -n "$found" ]; then
+      echo "  the descriptors present are:" >&2
+      printf '    %s\n' $found >&2
+    fi
     fail=1
   else
     echo "assert-no-fcm: absent — $label"
@@ -107,9 +120,26 @@ check_absent "Firebase Installations" 'Lcom/google/firebase/installations/'
 
 test "$fail" -eq 0 || {
   echo "" >&2
-  echo "The Gradle exclusion in apps/mobile/plugins/without-embedded-fcm.js is not taking effect." >&2
-  echo "Do not ship this APK: the app's copy and its privacy census both state that no Google" >&2
-  echo "push service is in the path, and this binary would make that false." >&2
+  echo "Do not ship this APK. The app's copy and its privacy census both state that no Google" >&2
+  echo "push service stands between a person's mailbox and their phone, and something in this" >&2
+  echo "binary may make that false." >&2
+  echo "" >&2
+  # TWO DIFFERENT DIAGNOSES, and conflating them sent the first real failure down the wrong path.
+  # The original message asserted "the Gradle exclusion is not taking effect" for ANY hit — but the
+  # embedded distributor can be absent (exclusion working) while some unrelated part of the Expo
+  # graph still names Firebase. A guard that misreports the cause costs more than one that only
+  # reports the fact.
+  if /usr/bin/grep -a -q -F 'Lorg/unifiedpush/android/embedded_fcm_distributor/' "$WORK/all.dex"; then
+    echo "The embedded UnifiedPush FCM distributor IS present, so the Gradle exclusion in" >&2
+    echo "apps/mobile/plugins/without-embedded-fcm.js is not taking effect. Fix the exclusion." >&2
+  else
+    echo "The embedded UnifiedPush FCM distributor is ABSENT, so the Gradle exclusion IS working." >&2
+    echo "Something else in the dependency graph pulls in the descriptors listed above. Identify" >&2
+    echo "what declares them before changing this script: if they are genuinely not a push client," >&2
+    echo "narrow the check to the packages that are (messaging, iid, installations, cloudmessaging)" >&2
+    echo "and record which dependency introduced them and why it is harmless. Do NOT simply drop a" >&2
+    echo "check to make this pass." >&2
+  fi
   exit 1
 }
 
