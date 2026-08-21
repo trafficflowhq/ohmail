@@ -50,6 +50,8 @@ export function ReceiptsView({
   hydrateBody,
   jumpTo,
   onJumped,
+  closeTo,
+  onClosed,
   onAction,
   onMarkAllRead,
 }: {
@@ -101,6 +103,9 @@ export function ReceiptsView({
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   jumpTo: string | null;
   onJumped: () => void;
+  /** The controlled close and its acknowledgement — see `ReadsView` for the contract. */
+  closeTo?: string | null;
+  onClosed?: () => void;
   /** The message verbs — the shell's `onMessageAction`. Optional, exactly as in `ReadsView`. */
   onAction?: (action: MessageAction, message: EngineMessage) => void;
   /** Mark every unread receipt read, chunked, via the shell. Optional: this view mounts
@@ -183,8 +188,11 @@ export function ReceiptsView({
      `open` marks a jump from OUTSIDE the pile, which must leave the message open and not merely
      selected — the same pair, for the same reasons, as `ReadsView`. */
   const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean } | null>(null);
+  /** A card the shell has since asked to close — see `ReadsView.closedRef` for the race. */
+  const closedRef = useRef<string | null>(null);
   /** Open the landed card the way a click opens it — see `ReadsView.openLandedCard`. */
   const openLandedCard = useCallback((id: string) => {
+    if (closedRef.current === id) return;
     document
       .querySelector<HTMLElement>(`.view-receipts .scast[data-sid="${CSS.escape(id)}"]`)
       ?.click();
@@ -195,6 +203,21 @@ export function ReceiptsView({
     streamRef.current?.scrollTo(id, open ? () => openLandedCard(id) : undefined);
     setPendingScroll(null);
   }, [pendingScroll, openLandedCard]);
+  /** The controlled close, through the card's own pill — see `ReadsView` for the full reasoning. */
+  const closeRefs = useRef({ onClosed });
+  closeRefs.current = { onClosed };
+  useEffect(() => {
+    if (!closeTo) return;
+    closedRef.current = closeTo;
+    setPendingScroll((p) => (p && p.id === closeTo ? null : p));
+    document
+      .querySelector<HTMLElement>(
+        `.view-receipts .scast[data-sid="${CSS.escape(closeTo)}"] .sc-x[aria-expanded="true"]`,
+      )
+      ?.click();
+    closeRefs.current.onClosed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closeTo]);
   const current = cur ?? all.find(isUnread)?.id ?? all[0]?.id ?? null;
 
   const seenMark = (id: string) => {
@@ -222,6 +245,8 @@ export function ReceiptsView({
     const timer = requestAnimationFrame(() => {
       jumpRefs.current.onCur(jumpTo);
       stream.ensure(allRef.current.findIndex((m) => m.id === jumpTo));
+      // A NEW request to show this message outranks any earlier close of it.
+      if (closedRef.current === jumpTo) closedRef.current = null;
       setPendingScroll({ id: jumpTo, open: true });
       jumpRefs.current.onJumped();
     });
@@ -299,7 +324,8 @@ export function ReceiptsView({
      version bump; see its header. */
   const onToggle = useCallback(
     (id: string, open: boolean) => {
-      setExpandedId(open ? id : null);
+      /* Closing clears the bar only if the bar is THIS card's — see `ReadsView.onToggle`. */
+      setExpandedId((prev) => (open ? id : prev === id ? null : prev));
       if (open) hydrateBody(id, { retry: true });
     },
     [hydrateBody],

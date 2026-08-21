@@ -1612,6 +1612,15 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   const [searchQuery, setSearchQuery] = useState("");
   const [jump, setJump] = useState<{ view: "reads" | "receipts"; id: string } | null>(null);
   /**
+   * THE STREAM CLOSE REQUEST — `jump`'s counterpart, and deliberately the same shape.
+   *
+   * A one-shot "close this card": the URL stopped claiming a stream reading, so the view is asked
+   * to collapse the ONE card the bar had claimed. Cleared on the view's acknowledgement, exactly
+   * as `jump` is, so it is a request in flight and never a mirror of what is expanded — expansion
+   * stays the card's own, and this shell keeps no register of it.
+   */
+  const [closeCard, setCloseCard] = useState<{ view: "reads" | "receipts"; id: string } | null>(null);
+  /**
    * ── ABSOLUTE-TIME STAMPS — A MOMENTARY, VIEW-SCOPED FLIP, NOT A SETTING ────────────────────
    *
    * Clicking any stamp flips every stamp on screen to the exact date and time — in the open
@@ -3809,18 +3818,24 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     if (agreedKey !== routeMsgAgreed.current) {
       const id = route.messageId;
       if (id === null) {
-        const cameFrom = routeMsgAgreed.current.split("|")[0];
+        // BOTH HALVES, READ BEFORE THE OVERWRITE ON THE NEXT LINE. The id the bar was claiming
+        // is the one to close, and it exists only in this ref until `agreedKey` replaces it —
+        // reading it afterwards would close the empty string, i.e. nothing, for ever.
+        const [cameFrom, leftId] = routeMsgAgreed.current.split("|");
         routeMsgAgreed.current = agreedKey;
         if (cameFrom === route.view) {
           // The id was dropped IN PLACE — Back walked out of the reading on this same view:
-          // close what the URL no longer claims. The stream cursor goes with it; the card a
-          // one-shot jump expanded is the VIEW's own state and stays until the reader closes
-          // it — a bar that under-claims, recorded as the known residue of this arm until the
-          // stream grows a controlled close.
+          // close what the URL no longer claims. The stream cursor goes with it, AND the card
+          // the bar was claiming: the stream has a controlled close now, so the view collapses
+          // that card through its own pill. Only that one — a second card the reader expanded
+          // themselves is scroll posture this bar never claimed, and it stays open.
           setReaderFor(null);
           if (route.view === "ohbox") setOhboxSel(null);
           if (route.view === "reads") setReadsCur(null);
           if (route.view === "receipts") setReceiptsCur(null);
+          if (leftId && (route.view === "reads" || route.view === "receipts")) {
+            setCloseCard({ view: route.view, id: leftId });
+          }
           return;
         }
         // A fresh ARRIVAL at a bare view — ordinary navigation, `openMessage`'s own `go()`
@@ -5027,6 +5042,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 hydrateBody={hydrateBody}
                 jumpTo={jump?.view === "reads" ? jump.id : null}
                 onJumped={() => setJump(null)}
+                closeTo={closeCard?.view === "reads" ? closeCard.id : null}
+                onClosed={() => setCloseCard(null)}
                 onAction={onStreamAction}
                 onMarkAllRead={markAllRead}
               />
@@ -5054,6 +5071,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 hydrateBody={hydrateBody}
                 jumpTo={jump?.view === "receipts" ? jump.id : null}
                 onJumped={() => setJump(null)}
+                closeTo={closeCard?.view === "receipts" ? closeCard.id : null}
+                onClosed={() => setCloseCard(null)}
                 onAction={onStreamAction}
                 onMarkAllRead={markAllRead}
               />

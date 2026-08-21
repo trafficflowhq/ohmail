@@ -62,6 +62,8 @@ export function ReadsView({
   hydrateBody,
   jumpTo,
   onJumped,
+  closeTo,
+  onClosed,
   onAction,
   onMarkAllRead,
 }: {
@@ -112,6 +114,24 @@ export function ReadsView({
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   jumpTo: string | null;
   onJumped: () => void;
+  /**
+   * ── THE CONTROLLED CLOSE — the counterpart of `jumpTo`, and the same one-shot shape ─────────
+   *
+   * An id the shell is asking this view to CLOSE, because the URL no longer claims that reading:
+   * Back walked out of a stream reading in place. `onClosed` acknowledges it, exactly the way
+   * `onJumped` acknowledges a jump, so the request is state the shell clears rather than a
+   * standing prop this view has to diff.
+   *
+   * A REQUEST, NOT A MIRROR OF EXPANSION. `StreamCard` owns the visual open and this view owns
+   * only `expandedId` (the verbs), and neither becomes shell state or URL state here — a stream's
+   * expanded card stays scroll posture, which is the shell's standing ruling. What the shell gains
+   * is the ability to close the ONE card it had claimed, never to enumerate what is open.
+   *
+   * Optional, so a view mounted without a shell (the demo, most tests) simply has no close
+   * channel and behaves exactly as it did.
+   */
+  closeTo?: string | null;
+  onClosed?: () => void;
   /**
    * The message verbs — the shell's `onMessageAction`, the same one the Ohbox reader is given.
    * OPTIONAL, and absent leaves the cards with no bar rather than a bar that does nothing: this
@@ -227,7 +247,19 @@ export function ReadsView({
    * fold carries `content-visibility: auto`) measures its intrinsic box rather than its text —
    * which would clip the message it was just asked to show.
    */
+  /**
+   * A CARD THE SHELL HAS SINCE ASKED TO CLOSE — the anchor loop's own race, closed by name.
+   *
+   * `scrollTo`'s landing callback fires up to ~1.5s after the jump was requested (the anchoring
+   * budget), and a Back inside that window closes the card and then lets the landing re-open it.
+   * The re-open is not a state flip this view can see — `openLandedCard` clicks the DOM — so the
+   * defence is to remember which id was closed and refuse to open THAT one. Cleared when a fresh
+   * jump for the same id arrives, because a second deep link to a message the reader closed
+   * earlier is a new request and must open.
+   */
+  const closedRef = useRef<string | null>(null);
   const openLandedCard = useCallback((id: string) => {
+    if (closedRef.current === id) return;
     document
       .querySelector<HTMLElement>(`.view-reads .scast[data-sid="${CSS.escape(id)}"]`)
       ?.click();
@@ -238,6 +270,42 @@ export function ReadsView({
     streamRef.current?.scrollTo(id, open ? () => openLandedCard(id) : undefined);
     setPendingScroll(null);
   }, [pendingScroll, openLandedCard]);
+  /**
+   * THE CONTROLLED CLOSE, driven through the card's OWN PILL — see `closeTo` on the props.
+   *
+   * The pill is the one definition of close in this codebase: it runs the collapse animation,
+   * flips `StreamCard`'s internal `open`, and reports `onToggle(id, false)`, which clears
+   * `expandedId` and takes the verbs down in the same motion. A second way to close a card would
+   * be a second definition of closed, exactly as `openLandedCard` clicks the card rather than
+   * inventing a second way to open one.
+   *
+   * THE PILL AND NOT THE CARD. Clicking the card selects and EXPANDS it (`expandOnClick`), so a
+   * card-click here would re-open the very reading Back just left — and re-select it.
+   *
+   * Synchronous, with no `requestAnimationFrame`: the jump's frame exists to let a commit mount
+   * the target row first, and a close has no such ordering — the card is on screen or there is
+   * nothing to close. `[closeTo]` is the whole dependency list for the same reason the jump's is
+   * (`onClosed` is a fresh closure on every shell render); the callback is read through a ref.
+   *
+   * A request for a card that is not mounted, or not open, is ACKNOWLEDGED and does nothing —
+   * the shell must not be left holding a request forever because the reader had already
+   * collapsed the card themselves.
+   */
+  const closeRefs = useRef({ onClosed });
+  closeRefs.current = { onClosed };
+  useEffect(() => {
+    if (!closeTo) return;
+    closedRef.current = closeTo;
+    // A landing still in flight for this id would re-open it; drop it before it can.
+    setPendingScroll((p) => (p && p.id === closeTo ? null : p));
+    document
+      .querySelector<HTMLElement>(
+        `.view-reads .scast[data-sid="${CSS.escape(closeTo)}"] .sc-x[aria-expanded="true"]`,
+      )
+      ?.click();
+    closeRefs.current.onClosed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closeTo]);
   // The waterline marks the fresh/seen junction; render it only when that junction is inside
   // the mounted window, so it travels with the boundary instead of pinning to the list top.
   const showWaterline = partition.waterline != null && win.start <= freshCount && win.end > freshCount;
@@ -304,6 +372,8 @@ export function ReadsView({
     const timer = requestAnimationFrame(() => {
       jumpRefs.current.onCur(jumpTo);
       stream.ensure(allRef.current.findIndex((m) => m.id === jumpTo));
+      // A NEW request to show this message outranks any earlier close of it — see `closedRef`.
+      if (closedRef.current === jumpTo) closedRef.current = null;
       setPendingScroll({ id: jumpTo, open: true });
       jumpRefs.current.onJumped();
     });
@@ -448,7 +518,11 @@ export function ReadsView({
      can skip a card whose inputs did not change across a version bump — see its header. */
   const onToggle = useCallback(
     (id: string, open: boolean) => {
-      setExpandedId(open ? id : null);
+      /* CLOSING CLEARS THE BAR ONLY IF THE BAR IS THIS CARD'S. Expansion is per-card and
+         multi-card — opening B never collapses A — so once the shell can close A on its own,
+         "collapse A while the bar sits on B" is a real sequence, and the unguarded
+         `open ? id : null` stripped B's verbs while B stayed open. */
+      setExpandedId((prev) => (open ? id : prev === id ? null : prev));
       if (open) hydrateBody(id, { retry: true });
     },
     [hydrateBody],
