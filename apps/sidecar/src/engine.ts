@@ -1,7 +1,7 @@
 import { hostname } from "node:os";
 import { and, eq } from "drizzle-orm";
 import {
-  StaticKeyProvider, kekRingFingerprint,
+  StaticKeyProvider, kekRingFingerprint, UNMETERED_STORAGE_CAP,
   type KekEnvIdentity, type KeyProvider, type OpenSendAdapter, type SendAdapter,
 } from "@trafficflow/core/mail";
 import { ImapAdapter, buildImapAuth, type ImapConfig, type MailboxAdapter, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
@@ -595,6 +595,11 @@ function localServices(
     // not been read. Until a local install's server has been probed the column is NULL and this
     // still resolves to 3 MB, so the loose direction is unreachable without a measurement.
     sendSurfaceMaxTotalBytes: null,
+    // UNMETERED STORAGE, typed on the same declaration-not-inference terms as the mailbox
+    // allowance below: the desktop tier is free and its limit is the user's own disk. A value
+    // somebody wrote, never an absent-config default — the send route REFUSES the sent-copy
+    // projection on a host that declared nothing.
+    storageCapOf: async () => UNMETERED_STORAGE_CAP,
     push: LOCAL_PUSH,
     imapAdmission: LOCAL_IMAP_ADMISSION,
     // The add-time probe's SSRF gate is a no-op on a local install: a desktop user's own mail
@@ -1225,6 +1230,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // mailbox may believe is a fact about the host THIS config dials — Gmail/Microsoft
       // resolve to their signing authserv-id, everything else to the empty set (demote nothing).
       trustedAuthservIds: providerAuthservIds(config.imap.host),
+      // UNMETERED STORAGE, typed — the free tier's limit is the user's own disk, and the field
+      // is required precisely so this line has to exist rather than be inferred from absence.
+      // (The assertion keeps the unique-symbol type from widening to `symbol` in this untyped
+      // literal; it changes no value.)
+      storageCap: UNMETERED_STORAGE_CAP as typeof UNMETERED_STORAGE_CAP,
     };
 
     let stopped = false;

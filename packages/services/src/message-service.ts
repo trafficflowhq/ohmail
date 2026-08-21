@@ -259,6 +259,9 @@ export class MessageService {
       loadedRemoteContent: body?.loadedRemoteContent ?? false,
       unsubscribe,
       unsubscribeUrl: unsubscribe === "not_one_click" ? httpsUnsubscribeUri(headers) : null,
+      // The row's own marker, verbatim (mail 0062): present ONLY when ingest declined the
+      // content at the storage cap, so an ordinary empty body stays exactly the wire it was.
+      ...(body?.withheldReason === "storage_cap" ? { withheld: "storage_cap" as const } : {}),
     };
   }
 
@@ -292,6 +295,7 @@ export class MessageService {
       text: messageBodies.text,
       html: messageBodies.html,
       loadedRemoteContent: messageBodies.loadedRemoteContent,
+      withheldReason: messageBodies.withheldReason,
     }).from(messages)
       .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
       .where(and(...filters))
@@ -303,7 +307,13 @@ export class MessageService {
     for (const r of rows.slice(0, limit)) {
       const text = r.text ?? "";
       const html = r.html ?? null;
-      items.push({ messageId: r.messageId, text, html, loadedRemoteContent: r.loadedRemoteContent ?? false });
+      items.push({
+        messageId: r.messageId, text, html, loadedRemoteContent: r.loadedRemoteContent ?? false,
+        // The marker rides the MIRROR mode deliberately: without it a withheld body mirrors as
+        // an empty complete one, the gap query never re-asks, and the desktop tells the same
+        // lie the web used to. A fact about the stored row, not a rehydrate.
+        ...(r.withheldReason === "storage_cap" ? { withheld: "storage_cap" as const } : {}),
+      });
       bytes += Buffer.byteLength(text, "utf8") + (html ? Buffer.byteLength(html, "utf8") : 0);
       // Stop AFTER including the row that crossed the budget, so at least one row always makes
       // progress; the cursor below carries the rest.
@@ -375,6 +385,7 @@ export class MessageService {
       html: messageBodies.html,
       headers: messageBodies.headers,
       loadedRemoteContent: messageBodies.loadedRemoteContent,
+      withheldReason: messageBodies.withheldReason,
     }).from(messages)
       .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
       .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, ids)))
@@ -395,6 +406,7 @@ export class MessageService {
         loadedRemoteContent: r.loadedRemoteContent ?? false,
         unsubscribe,
         unsubscribeUrl: unsubscribe === "not_one_click" ? httpsUnsubscribeUri(headers) : null,
+        ...(r.withheldReason === "storage_cap" ? { withheld: "storage_cap" as const } : {}),
       });
       bytes += Buffer.byteLength(text, "utf8") + (html ? Buffer.byteLength(html, "utf8") : 0);
       // Stop AFTER the row that crossed the budget, so one oversized body cannot starve the

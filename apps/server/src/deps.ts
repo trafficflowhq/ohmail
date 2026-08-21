@@ -7,7 +7,7 @@ import {
 } from "@trafficflow/db/cloud";
 import {
   makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter,
-  MicrosoftTokenProvider,
+  MicrosoftTokenProvider, UNMETERED_STORAGE_CAP,
   type FetchLike, type Logger, type UpdateSecretPort,
 } from "@trafficflow/core";
 import { mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
@@ -219,6 +219,11 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
       : makeProbeHostGuard(nodeHostResolver),
     // The adapter's own body cap expressed in raw attachment bytes — config.ts derives the pair.
     sendSurfaceMaxTotalBytes: SELF_HOST_SEND_MAX_TOTAL_BYTES,
+    // UNMETERED STORAGE, on SELF_HOST_MAILBOX_ALLOWANCE's exact argument above: the operator
+    // pays for their own disk, and a value somebody WROTE is the only admissible spelling of
+    // that — a bag that declared nothing gets the send route's refusing resolver, never a
+    // silent unmetered.
+    storageCapOf: async () => UNMETERED_STORAGE_CAP,
     // ── AND THIS IS THE WAY ROUND THAT CAP, when the operator armed object storage ──────────
     // The browser mints a grant, PUTs the bytes straight into the bucket (MinIO on the compose;
     // any S3 endpoint or a Supabase project via TF_STORAGE_KIND), and the send carries a

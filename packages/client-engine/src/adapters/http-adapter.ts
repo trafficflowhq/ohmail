@@ -235,6 +235,9 @@ function narrowBody(wire: Partial<MessageBodyWire>): MessageBodyWire {
         ? wire.unsubscribe
         : "no_header",
     unsubscribeUrl: typeof wire.unsubscribeUrl === "string" ? wire.unsubscribeUrl : null,
+    // Carried only when the server said it (the one value the union has), so an older server —
+    // or an ordinary stored body — narrows to a record without the key, exactly as the wire.
+    ...(wire.withheld === "storage_cap" ? { withheld: "storage_cap" as const } : {}),
   };
 }
 

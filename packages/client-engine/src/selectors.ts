@@ -184,7 +184,7 @@ function byDateAsc(a: EngineMessage, b: EngineMessage): number {
  * lived. Moving it in here would mean two places deciding what a protected message shows,
  * and the surface would still need its branch for the fixture case.
  *
- * ── `ready` WITH EMPTY TEXT IS STILL `full` ────────────────────────────────────────────
+ * ── `ready` WITH EMPTY TEXT IS STILL `full` — unless the server SAID why it is empty ────
  *
  * `getBody` answers `text: ""` for a message whose body row was never ingested. That is
  * reported as `full` rather than falling back to the snippet, because the snippet is
@@ -192,6 +192,14 @@ function byDateAsc(a: EngineMessage, b: EngineMessage): number {
  * populated snippet" is not a state the pipeline produces, and inventing a fallback for it
  * would mean rendering a preview while claiming it is the whole message. The empty case
  * renders empty, which is what the server has.
+ *
+ * The storage cap created exactly the state that argument said could not exist — an empty
+ * body BESIDE a populated snippet (the snippet is on the message row; the body content was
+ * declined) — and the server now says so on the wire (`withheld: "storage_cap"`). That
+ * record reports `state: "withheld"` with the SNIPPET as its text: a real preview exists,
+ * and rendering nothing while a preview is in hand would waste the one thing the cap kept.
+ * Terminal like `full`, honest like `failed`, and neither: no Retry, no claim of
+ * completeness.
  */
 export function bodyOf(
   reader: EntityReader,
@@ -211,6 +219,19 @@ export function bodyOf(
   }
   const rec = reader.get<MessageBodyRecord>("message_body", m.id);
   if (!rec) return { text: m.snippet, state: "snippet", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null };
+  if (rec.state === "ready" && rec.withheld === "storage_cap") {
+    // The server answered and the answer is "not holding it" — see the header block. The
+    // snippet is the text because it is the only text there is, exactly as loading/failed
+    // below; what differs is that this state is TERMINAL and no Retry can change it.
+    return {
+      text: m.snippet,
+      state: "withheld",
+      html: null,
+      loadedRemoteContent: false,
+      unsubscribe: rec.unsubscribe ?? "no_header",
+      unsubscribeUrl: rec.unsubscribeUrl ?? null,
+    };
+  }
   if (rec.state === "ready") {
     return {
       text: rec.text,

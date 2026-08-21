@@ -1280,7 +1280,14 @@ export function MessagePane({
     return subscribeSessionRevival(() => chrome.hydrateBody(message.id, { retry: true }));
   }, [bodyFailed, isProtected, chrome, message.id]);
   const bodyNote =
-    isProtected || body.state === "full" ? undefined : body.state === "failed" || stalled ? (
+    isProtected || body.state === "full" ? undefined : body.state === "withheld" ? (
+      /* ── WITHHELD IS ANSWERED, NOT FAILED — so no Retry and no spinner. ─────────────────────
+         The server said it holds no content for this message (the account's storage space was
+         full when it arrived), which a retry cannot change and a "couldn't load" would misstate:
+         nothing failed, and the mail itself is untouched in the mailbox on the user's own
+         server. One plain sentence; the preview above it is real (the snippet is stored). */
+      tb("withheld")
+    ) : body.state === "failed" || stalled ? (
       sessionDead ? (
         <>
           {tb("sessionEnded")}{" "}

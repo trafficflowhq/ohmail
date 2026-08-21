@@ -184,9 +184,15 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   ],
   "public.billing_subscriptions": [
     "id", "account_id", "stripe_subscription_id", "stripe_price_id", "plan", "status",
-    "mailbox_limit", "monthly_credits", "current_period_start", "current_period_end",
-    "cancel_at_period_end", "grace_until", "stripe_event_ts", "created_at", "updated_at",
+    "mailbox_limit", "monthly_credits", "storage_bytes_limit", "current_period_start",
+    "current_period_end", "cancel_at_period_end", "grace_until", "stripe_event_ts",
+    "created_at", "updated_at",
   ],
+  // `account_storage` (mail 0062) — the stored-body byte counter. Usage data by the isolation
+  // rule's own words (staff see billing and usage, never content): an id, a byte count, a
+  // timestamp — nothing derived from what any message says. Granted because the alert pass
+  // runs on this role and its `storage_at_cap` rule counts this table.
+  "public.account_storage": ["account_id", "bytes", "updated_at"],
   "public.credit_balances": ["account_id", "balance", "updated_at"],
   // Minus `meta` — a bag that once had to be cleaned up after `pipeline.ts` wrote a Message-ID
   // into it — and minus `source`, which is the OTHER mail-derived column on this table.

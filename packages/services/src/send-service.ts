@@ -5,7 +5,7 @@ import {
 import {
   createLogger, mintMessageId, recordSentMessage,
   type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundMessage,
-  type OpenSendAdapter, type RepoPort, type RoutingPort,
+  type OpenSendAdapter, type RepoPort, type RoutingPort, type StorageCap,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
@@ -75,6 +75,21 @@ function forwardedQuote(
 /** Per-call send deps: the INJECTED adapter factory (prod = makeSendAdapter; tests = a fake/GreenMail spy). */
 export interface SendDeps {
   openSendAdapter: OpenSendAdapter;
+  /**
+   * THE ACCOUNT'S MANAGED STORAGE CAP, for the sent-copy projection — resolved lazily (per
+   * send, inside the projection's own try) because the cap is per-account and this bag is built
+   * per request before anything about the account's billing has been read.
+   *
+   * The hosted API resolves it from the subscription row (`ApiDeps.storageCapOf`); the local
+   * engine and the self-host server type `UNMETERED_STORAGE_CAP` — a value somebody WROTE, the
+   * declaration-not-inference rule. ABSENT means REFUSAL, never unmetered — the
+   * mailbox-allowance registry's exact default: `projectSentCopy` substitutes a resolver that
+   * throws, which costs exactly the projection (swallowed and logged; the send answered `sent`
+   * long before), and the worker's Sent-folder pass — metered through its own REQUIRED cap —
+   * writes the row on its next cycle. So a host nobody read gets a loud log line per send and a
+   * row that arrives a poll interval late, and can never get uncapped storage.
+   */
+  resolveStorageCap?: (ctx: ServiceContext) => Promise<StorageCap>;
   /**
    * THE PLATFORM CEILING OF THE HOST SERVING THIS SEND, in raw attachment bytes — or `null` for a
    * host that has none. **Three values, and `undefined` is not a fourth spelling of `null`.**
@@ -587,9 +602,18 @@ export class SendService {
     // tests, and an adapter that cannot say what it appended is covered by the Sent-folder watch.
     if (!appended) return;
     try {
+      // Resolved INSIDE the try: a cap read that fails costs this projection and nothing else —
+      // the mail is delivered, the failure is the log line below, and the worker's Sent-folder
+      // pass (metered through its own cap) writes the row on its next cycle. An undeclared host
+      // REFUSES here rather than defaulting to unmetered — see `SendDeps.resolveStorageCap`.
+      const resolve = deps.resolveStorageCap ?? (async () => {
+        throw new ServiceError("server_error", 500, "no storage-cap policy is configured for this host");
+      });
+      const storageCap = await resolve(ctx);
       await recordSentMessage(appended, {
         accountId: ctx.accountId,
         mailboxId,
+        storageCap,
         // The read phase runs on the request's own handle, outside a transaction — the same shape
         // the worker's plan phase has.
         repo: makeDrizzleRepo(ctx.db as never) as RepoPort,

@@ -894,6 +894,25 @@ export const messageBodies = pgTable("message_bodies", {
   html: text("html"),
   headers: jsonb("headers").notNull().default(sql`'{}'::jsonb`),
   loadedRemoteContent: boolean("loaded_remote_content").notNull().default(false),
+  /**
+   * ── Mail 0062: WHY THIS ROW HOLDS NO CONTENT — the managed storage cap's honest marker ──
+   *
+   * NULL for every ordinarily stored body. `'storage_cap'` means ingest DECLINED to store this
+   * message's text/html because the account was at its managed storage cap — the row still
+   * carries the real `headers` (the organizing passes read stored headers; declining them would
+   * silently break unsubscribe/screener/consent/away on exactly the mail the cap touches) and
+   * `text = ''`/`html = NULL`, and the message on the IMAP server is UNTOUCHED (the mailbox is
+   * the master; the cap governs OUR copy only).
+   *
+   * A marker column and not "no row", three times over: no-row is indistinguishable from "not
+   * yet mirrored" (the sidecar's gap query would re-ask forever), the DTO must say WHY the text
+   * is empty (an empty body claiming to be complete is the lie this column ends), and a future
+   * ratified restore pass is then an UPDATE in place (`redacted-restore.ts`'s exact shape) with
+   * `WHERE withheld_reason = 'storage_cap'` as its predicate. The repair passes that re-fetch
+   * bodies from IMAP must SKIP rows where this is non-null — they repair damage, and a withheld
+   * row is policy, not damage.
+   */
+  withheldReason: text("withheld_reason"),
   // ── Migration 0008: the body-text lexical index lives HERE
   // (on `message_bodies`, not `messages`), over the full stored `text`. Bodies are stored
   // unredacted (the mailbox on the server holds them in full anyway), so search reaches all of
@@ -912,6 +931,46 @@ export const messageBodies = pgTable("message_bodies", {
   // the rest, and this makes a regression in either LOUD. Declared here so the ORM's view of
   // the table matches the journal; `0022_message_body_html_cap.sql` carries the full argument.
   ckHtmlCap: check("message_bodies_html_cap", sql`octet_length(${t.html}) <= 262144`),
+}));
+
+/**
+ * ── Mail 0062: PER-ACCOUNT STORED-BODY BYTES — the managed storage cap's ledger ──────────────
+ *
+ * One row per account: how many bytes of message-body content (`octet_length(text) +
+ * octet_length(html)`) this account holds in `message_bodies`. Maintained in the SAME
+ * transaction as every body write — the ingest insert increments it, the two repair passes
+ * (`sensitive-backfill`, `redacted-restore`) apply their byte delta, account deletion drops the
+ * row — so the number can never describe a state the table is not in.
+ *
+ * What deliberately does NOT count: `headers` (small, bounded, and still written at cap — a
+ * count of undeclinable bytes would grow with no user remedy), `messages.snippet`, drafts,
+ * attachment METADATA (attachment bytes are never stored server-side — pulled on demand from
+ * IMAP), outbound `attachment_staging` (transient, its own quota), and `body_tsv` (derived).
+ * The user-facing sentence is therefore scoped to "mail body storage", never "storage".
+ *
+ * A maintained counter and not an aggregate because `message_bodies` is the largest table in
+ * the database and `sum(octet_length(...))` over it has no index; a MAIL-schema table (not
+ * cloud) because the bytes it counts live in the mail schema on every tier. On desktop and
+ * self-host it is maintained and read by nothing — the cap is a MANAGED-tier policy wired only
+ * in the hosted worker. In the sidecar's cloud-MIRROR mode it is not even maintained: the
+ * mirror copies the hosted store, whose authoritative counter is the hosted one, and nothing
+ * may ever read the local row there.
+ *
+ * LOCK ORDER (pinned by `storage-reserve.pg.test.ts`): within any transaction, the
+ * `account_storage` row is written BEFORE the first `recordChange`/`allocateSeq` — the ingest
+ * path writes bodies before deltas, and the repair passes apply their delta before their
+ * `recordChange`, so the two locks are always taken in the same order.
+ */
+export const accountStorage = pgTable("account_storage", {
+  accountId: uuid("account_id").primaryKey(),
+  // bigint: a mailbox measured in bytes outruns int4 at 2 GiB, which is an ordinary mailbox.
+  bytes: bigint("bytes", { mode: "number" }).notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  // Declared here so the ORM's view matches the journal; created by mail 0062, which carries
+  // the argument. The floor of last resort: no app-side decrement (the repair passes' clamped
+  // deltas) can COMMIT a negative byte count.
+  ckBytesNonNegative: check("account_storage_bytes_nonneg", sql`${t.bytes} >= 0`),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────

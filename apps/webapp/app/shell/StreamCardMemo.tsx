@@ -63,6 +63,8 @@ export interface StreamCardMemoProps {
   bodyLoadedRemote: boolean;
   loadingLabel: string;
   failedLabel: string;
+  /** The storage-cap sentence — terminal, honest, no retry implied. */
+  withheldLabel: string;
   /** Stable — a `useState` setter chain in the view. Called with the card id. */
   onSelect: (id: string) => void;
   /** Stable — records which card is open and hydrates it. Called with the card id + open state. */
@@ -73,7 +75,7 @@ export interface StreamCardMemoProps {
 
 function StreamCardMemoInner({
   m, now, current, expanded, unread,
-  bodyText, bodyState, bodyHtml, bodyLoadedRemote, loadingLabel, failedLabel,
+  bodyText, bodyState, bodyHtml, bodyLoadedRemote, loadingLabel, failedLabel, withheldLabel,
   onSelect, onToggle, onAction,
 }: StreamCardMemoProps) {
   const bodySlot: ReactNode =
@@ -97,6 +99,7 @@ function StreamCardMemoInner({
       bodyState={bodyState}
       loadingLabel={loadingLabel}
       failedLabel={failedLabel}
+      withheldLabel={withheldLabel}
       bodySlot={bodySlot}
       art={art}
       unread={unread}
@@ -131,6 +134,7 @@ function areEqual(a: StreamCardMemoProps, b: StreamCardMemoProps): boolean {
     a.bodyLoadedRemote === b.bodyLoadedRemote &&
     a.loadingLabel === b.loadingLabel &&
     a.failedLabel === b.failedLabel &&
+    a.withheldLabel === b.withheldLabel &&
     a.onSelect === b.onSelect &&
     a.onToggle === b.onToggle &&
     a.onAction === b.onAction

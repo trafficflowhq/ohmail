@@ -1,6 +1,7 @@
 import { and, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
 import {
   accountSettings,
+  accountStorage,
   accountSyncState,
   accounts,
   approvals,
@@ -254,6 +255,10 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     await drop("messages", tx.delete(messages).where(eq(messages.accountId, accountId)));
     await drop("threads", tx.delete(threads).where(eq(threads.accountId, accountId)));
     await drop("contacts", tx.delete(contacts).where(eq(contacts.accountId, accountId)));
+    // The stored-body byte counter (mail 0062). AFTER `message_bodies`, whose bytes it counts:
+    // a number derived from mail somebody erased is itself residue, and the catalog sweep
+    // enumerates this table by its `account_id` column, so forgetting this line is a red test.
+    await drop("account_storage", tx.delete(accountStorage).where(eq(accountStorage.accountId, accountId)));
 
     // ── 4. Mailboxes — the credentials go with them ─────────────────────────────
     if (mailboxIds.length) {

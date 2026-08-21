@@ -428,6 +428,14 @@ export interface MessageBodyWire {
    * server → `null` (§8).
    */
   unsubscribeUrl: string | null;
+  /**
+   * The server's word for why `text` is empty, when it is empty by POLICY: the account was at
+   * its managed storage cap when this message arrived, so the hosted store holds no body — the
+   * mail itself is untouched on the user's own mail server. Absent on every ordinarily stored
+   * body and on an older server (§8). See {@link MessageBodyRecord.withheld} for how the engine
+   * carries it and {@link BodyState} for the terminal surface state it becomes.
+   */
+  withheld?: "storage_cap";
 }
 
 /**
@@ -471,6 +479,17 @@ export interface MessageBodyRecord {
   state: "loading" | "ready" | "failed";
   /** The endpoint's already-redacted text. Empty while loading and after a failure. */
   text: string;
+  /**
+   * The server's word for WHY a `ready` record's text is empty: `"storage_cap"` means ingest
+   * declined to store this body because the account was at its managed storage cap — the mail
+   * itself is untouched in the mailbox on the user's own server. Optional for `html`'s
+   * IndexedDB reason (older records carry no key), and ABSENT on every ordinarily stored body,
+   * so `bodyOf` can finally tell "this message says nothing" from "the server is not holding
+   * what it says". ANSWERED-TERMINAL: the server replied, so the single-flight ledger treats
+   * it as answered — never `failed` (failed implies Retry, and a retry cannot un-withhold),
+   * never re-asked in a loop.
+   */
+  withheld?: "storage_cap";
   /**
    * The endpoint's html part, or `null` — for a message with none, for sensitive
    * mail, and for every record that is not `ready`. Held here rather than on the message
@@ -553,13 +572,18 @@ export interface MessageBodyRecord {
  * signal anywhere that there is more. A surface that cannot tell these apart cannot show
  * the difference, so the distinction is in the type rather than in each caller's guesswork.
  *
- *  · `full`    — this IS the whole message. Clamp it, offer the pill, say nothing.
- *  · `snippet` — a preview; the body has not been asked for. The pill must still be
- *                offered, or there is no way to ask.
- *  · `loading` — asked, in flight. Say so.
- *  · `failed`  — asked, refused. Say so, and differently.
+ *  · `full`     — this IS the whole message. Clamp it, offer the pill, say nothing.
+ *  · `snippet`  — a preview; the body has not been asked for. The pill must still be
+ *                 offered, or there is no way to ask.
+ *  · `loading`  — asked, in flight. Say so.
+ *  · `failed`   — asked, refused. Say so, and differently.
+ *  · `withheld` — asked, ANSWERED: the server holds no body for this message because the
+ *                 account was at its storage cap when it arrived. Terminal, not a failure —
+ *                 no Retry (a retry cannot un-withhold), no spinner, and the honest sentence
+ *                 instead of a blank pane claiming to be complete. The mail itself is still
+ *                 in the mailbox on the user's own server.
  */
-export type BodyState = "full" | "snippet" | "loading" | "failed";
+export type BodyState = "full" | "snippet" | "loading" | "failed" | "withheld";
 
 /**
  * The body to render plus what it actually is. See {@link BodyState}.

@@ -1,6 +1,7 @@
 import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
 import {
-  auditLog, mailboxes, messageBodies, messages, recordChange, type Tx,
+  applyBodyBytesDelta, auditLog, bodyBytesOf, mailboxes, messageBodies, messages, recordChange,
+  type Tx,
 } from "@trafficflow/db";
 import {
   classifySensitivity, fingerprintDedupKey, messageFingerprint, normalizeMessageId, normalizeMime,
@@ -614,6 +615,10 @@ async function selectCandidates(
   const filters = [
     eq(messages.mailboxId, opts.mailboxId),
     DAMAGED,
+    // A WITHHELD row is policy, not damage: its body was declined at the storage cap, and a
+    // repair pass that re-fetched it from IMAP and stored the bytes would be a cap bypass
+    // wearing a repair's name. Skipped here, at the population, so the fetch never happens.
+    isNull(messageBodies.withheldReason),
   ];
   if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));
 
@@ -686,11 +691,26 @@ async function repairOne(
     // message. Body redaction is removed, so there is no redacted branch to mirror: a re-read
     // original is stored verbatim. (This pass only reaches here for a row the fixed classifier
     // re-reads as `ordinary`; a still-sensitive original keeps its stored body and its label —
-    // see the caller.)
+    // see the caller. A cap-withheld row never reaches here at all — `selectCandidates` skips
+    // `withheld_reason` rows, because a withheld body is policy, not damage.)
+    const [oldBody] = await tx.select({
+      oldBytes: sql<number>`octet_length(${messageBodies.text}) + coalesce(octet_length(${messageBodies.html}), 0)`,
+    }).from(messageBodies).where(eq(messageBodies.messageId, messageId)).limit(1);
+    const storedText = fresh.textBody;
+    const storedHtml = prepareHtmlForStorage(fresh.htmlBody);
     await tx.update(messageBodies).set({
-      text: fresh.textBody,
-      html: prepareHtmlForStorage(fresh.htmlBody),
+      text: storedText,
+      html: storedHtml,
     }).where(eq(messageBodies.messageId, messageId));
+
+    // KEEP THE COUNTER TRUE: same transaction, before the `recordChange` below (the lock order
+    // every `account_storage` writer holds), clamped at zero so a pre-backfill row can never
+    // abort the repair. Not gated on any cap — a repair of a body the account already owns is
+    // not new storage.
+    await applyBodyBytesDelta(
+      tx, accountId,
+      bodyBytesOf({ text: storedText, html: storedHtml }) - Number(oldBody?.oldBytes ?? 0),
+    );
 
     // ALL FIVE FIELDS, and that is not thoroughness for its own sake. The DTO computes
     // `sensitive` as `category !== null || no_ai || no_forward || no_kb || priority`, so a repair

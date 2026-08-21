@@ -10,6 +10,7 @@ import {
   markMailboxStoodDown, stampMailboxSync, type LeaderFence,
 } from "./mailboxes.js";
 import { LeaderFencedError, runSyncCycle, type SyncDeps } from "./sync.js";
+import { makeStorageCapResolver } from "./storage-cap.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, cloudInstallId, readMailboxLease,
 } from "./lease.js";
@@ -286,6 +287,10 @@ export async function runReconcileCron(
       repo: makeDrizzleRepo(db), adapter, accountId, mailboxId,
       // The same host string the adapter above dials names whose report may be believed.
       trustedAuthservIds: providerAuthservIds(config.imap.host),
+      // METERED, like the loop this pass stands in for: the backstop ingests the same mail the
+      // worker would have, so it consults the same subscription-derived cap — read once here and
+      // held on these deps for the sweep's two cycles.
+      storageCap: await makeStorageCapResolver(db as unknown as Tx, log)(accountId),
       // The leader fence, on this path too. Same builder, same shard-leadership definition, same
       // synchronous tripwire — see the block at the top of this file.
       fence: makeSyncWriteFence(db, mailboxId, fence, () => lockLost),

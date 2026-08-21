@@ -54,11 +54,21 @@ import type { LedgerTx, Tx } from "./change-log.js";
  *
  * Credits are unchanged (2k / 6k / 20k): the mailbox count is a capacity promise, an AI action
  * is a metered cost, and only the first one was under-priced against what the product does.
+ *
+ * `storageBytes` is the managed STORED-BODY cap — how many bytes of message body
+ * (`text` + `html` octets; headers, snippets, attachment metadata and the transient outbound
+ * staging never count) the hosted tier stores for the account. At cap, ingest keeps ORGANIZING
+ * on IMAP and stops storing new bodies (`withheld_reason = 'storage_cap'`); nothing existing is
+ * ever deleted. DECIMAL gigabytes deliberately (5/15/50 × 10⁹), so the number a customer is
+ * shown — "5 GB" — is the number enforced, with no binary-unit gap to explain. Worst-case cost
+ * at the ceiling (~$0.125/GB-mo managed PG): $0.63 / $1.88 / $6.25 against $9 / $15 / $29 —
+ * 7% / 12.5% / 21.5% of tier revenue, and a plausible usage mix sits far below the ceiling.
+ * If these numbers change, they change HERE, with the pricing UI, in one commit.
  */
 export const PLAN_LIMITS = {
-  solo: { priceUsd: 9, mailboxes: 5, monthlyCredits: 2_000 },
-  plus: { priceUsd: 15, mailboxes: 10, monthlyCredits: 6_000 },
-  pro: { priceUsd: 29, mailboxes: 50, monthlyCredits: 20_000 },
+  solo: { priceUsd: 9, mailboxes: 5, monthlyCredits: 2_000, storageBytes: 5_000_000_000 },
+  plus: { priceUsd: 15, mailboxes: 10, monthlyCredits: 6_000, storageBytes: 15_000_000_000 },
+  pro: { priceUsd: 29, mailboxes: 50, monthlyCredits: 20_000, storageBytes: 50_000_000_000 },
 } as const;
 
 export type Plan = keyof typeof PLAN_LIMITS;
@@ -149,6 +159,8 @@ export interface SubscriptionSnapshot {
   mailboxLimit: number;
   /** Denormalized at sale time; the renewal grant amount. */
   monthlyCredits: number;
+  /** Denormalized at sale time; the managed stored-body cap in bytes (cloud 0019). */
+  storageBytesLimit: number;
   graceUntil: Date | null;
   currentPeriodEnd: Date | null;
   cancelAtPeriodEnd: boolean;
@@ -206,6 +218,19 @@ export interface Entitlements {
   canAddMailbox: boolean;
   aiEnabled: boolean;
   syncEnabled: boolean;
+  /**
+   * The managed STORED-BODY cap in bytes — the RETENTION-shaped sibling of
+   * {@link Entitlements.mailboxLimit}, read from the row's denormalized `storage_bytes_limit`.
+   *
+   * FINITE ON EVERY ARM, including `trialing`, because no allowance may cost more than the
+   * revenue behind it: an unmetered trial would be unbounded pre-revenue storage — the same
+   * rule that bounds the trial's AI bounty. The zero-entitlement states answer 0, which
+   * gates nothing extra — every one of them already has `syncEnabled: false`, so no ingest runs
+   * to consult it — but keeps the function total. At cap ingest stops STORING new bodies and
+   * keeps organizing; it never deletes (a billing state must never destroy user data — the same
+   * rule that makes `mailboxLimit` disable-never-delete).
+   */
+  storageBytesLimit: number;
   reason: EntitlementReason;
 }
 
@@ -301,6 +326,9 @@ export function entitlementsFor(input: EntitlementsInput): Entitlements {
   if (!sub) return NOTHING("no_subscription");
 
   const plan = sub.mailboxLimit;
+  // The row's sold-at storage cap, on the same denormalization argument as `plan` above. Every
+  // arm below that grants retention grants THIS number; the zero shape answers 0.
+  const storage = sub.storageBytesLimit;
   /**
    * MAY THIS ACCOUNT SPEND — the whole predicate, not the subscription's half of it.
    *
@@ -338,28 +366,28 @@ export function entitlementsFor(input: EntitlementsInput): Entitlements {
       return NOTHING("no_subscription");
 
     case "trialing":
-      return { mailboxLimit: plan, canAddMailbox: true, aiEnabled: canSpend, syncEnabled: true, reason: spendReason("trialing") };
+      return { mailboxLimit: plan, storageBytesLimit: storage, canAddMailbox: true, aiEnabled: canSpend, syncEnabled: true, reason: spendReason("trialing") };
 
     case "active":
-      return { mailboxLimit: plan, canAddMailbox: true, aiEnabled: canSpend, syncEnabled: true, reason: spendReason("active") };
+      return { mailboxLimit: plan, storageBytesLimit: storage, canAddMailbox: true, aiEnabled: canSpend, syncEnabled: true, reason: spendReason("active") };
 
     case "past_due": {
       // Within grace the account is fully live; past it (or with no grace recorded — fail
       // closed) it keeps its mailboxes and its sync but stops spending.
       const inGrace = sub.graceUntil != null && now.getTime() <= sub.graceUntil.getTime();
       return inGrace
-        ? { mailboxLimit: plan, canAddMailbox: true, aiEnabled: canSpend, syncEnabled: true, reason: spendReason("past_due_grace") }
-        : { mailboxLimit: plan, canAddMailbox: false, aiEnabled: false, syncEnabled: true, reason: "past_due" };
+        ? { mailboxLimit: plan, storageBytesLimit: storage, canAddMailbox: true, aiEnabled: canSpend, syncEnabled: true, reason: spendReason("past_due_grace") }
+        : { mailboxLimit: plan, storageBytesLimit: storage, canAddMailbox: false, aiEnabled: false, syncEnabled: true, reason: "past_due" };
     }
 
     case "unpaid":
-      return { mailboxLimit: plan, canAddMailbox: false, aiEnabled: false, syncEnabled: withinExportWindow, reason: "unpaid" };
+      return { mailboxLimit: plan, storageBytesLimit: storage, canAddMailbox: false, aiEnabled: false, syncEnabled: withinExportWindow, reason: "unpaid" };
 
     case "canceled":
-      return { mailboxLimit: plan, canAddMailbox: false, aiEnabled: false, syncEnabled: withinExportWindow, reason: "canceled" };
+      return { mailboxLimit: plan, storageBytesLimit: storage, canAddMailbox: false, aiEnabled: false, syncEnabled: withinExportWindow, reason: "canceled" };
 
     case "paused":
-      return { mailboxLimit: plan, canAddMailbox: false, aiEnabled: false, syncEnabled: false, reason: "paused" };
+      return { mailboxLimit: plan, storageBytesLimit: storage, canAddMailbox: false, aiEnabled: false, syncEnabled: false, reason: "paused" };
 
     default: {
       // Compile-time exhaustiveness…
@@ -373,7 +401,7 @@ export function entitlementsFor(input: EntitlementsInput): Entitlements {
 
 /** The zero-entitlement shape: retention 0, no creation, no AI, no sync. */
 function NOTHING(reason: EntitlementReason): Entitlements {
-  return { mailboxLimit: 0, canAddMailbox: false, aiEnabled: false, syncEnabled: false, reason };
+  return { mailboxLimit: 0, canAddMailbox: false, aiEnabled: false, syncEnabled: false, storageBytesLimit: 0, reason };
 }
 
 /** What {@link liveSubscriptionOf} returns: the snapshot plus the row's identity. */
@@ -414,6 +442,7 @@ export async function liveSubscriptionOf(
       status: billingSubscriptions.status,
       mailboxLimit: billingSubscriptions.mailboxLimit,
       monthlyCredits: billingSubscriptions.monthlyCredits,
+      storageBytesLimit: billingSubscriptions.storageBytesLimit,
       graceUntil: billingSubscriptions.graceUntil,
       currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
       cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
@@ -436,6 +465,7 @@ export async function liveSubscriptionOf(
     status: row.status as SubscriptionStatus,
     mailboxLimit: row.mailboxLimit,
     monthlyCredits: row.monthlyCredits,
+    storageBytesLimit: row.storageBytesLimit,
     graceUntil: row.graceUntil ?? null,
     currentPeriodEnd: row.currentPeriodEnd ?? null,
     cancelAtPeriodEnd: row.cancelAtPeriodEnd,
@@ -495,6 +525,7 @@ export async function newestSubscriptionOf(
       status: billingSubscriptions.status,
       mailboxLimit: billingSubscriptions.mailboxLimit,
       monthlyCredits: billingSubscriptions.monthlyCredits,
+      storageBytesLimit: billingSubscriptions.storageBytesLimit,
       graceUntil: billingSubscriptions.graceUntil,
       currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
       cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
@@ -513,6 +544,7 @@ export async function newestSubscriptionOf(
     status: row.status as SubscriptionStatus,
     mailboxLimit: row.mailboxLimit,
     monthlyCredits: row.monthlyCredits,
+    storageBytesLimit: row.storageBytesLimit,
     graceUntil: row.graceUntil ?? null,
     currentPeriodEnd: row.currentPeriodEnd ?? null,
     cancelAtPeriodEnd: row.cancelAtPeriodEnd,
@@ -681,6 +713,7 @@ export async function accountsWithSyncDisabled(
       status: billingSubscriptions.status,
       mailboxLimit: billingSubscriptions.mailboxLimit,
       monthlyCredits: billingSubscriptions.monthlyCredits,
+      storageBytesLimit: billingSubscriptions.storageBytesLimit,
       graceUntil: billingSubscriptions.graceUntil,
       currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
       cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
@@ -703,6 +736,7 @@ export async function accountsWithSyncDisabled(
         status: r.status as SubscriptionStatus,
         mailboxLimit: r.mailboxLimit,
         monthlyCredits: r.monthlyCredits,
+        storageBytesLimit: r.storageBytesLimit,
         graceUntil: r.graceUntil ?? null,
         currentPeriodEnd: r.currentPeriodEnd ?? null,
         cancelAtPeriodEnd: r.cancelAtPeriodEnd,
@@ -792,8 +826,9 @@ export async function claimBillingEvent(tx: LedgerTx, ev: BillingEventClaim): Pr
  * to do, so the row is written `applied` — suppressing every retry — with the WHY on the row.
  *
  * Born from one production event (2026-08-19): a `customer.subscription.deleted` whose
- * subscription metadata named an account that had been removed outright. The mirror upsert
- * failed the `accounts` FK, the row landed `failed`, and it could never succeed by retrying —
+ * subscription metadata named an account that had been removed outright. The transaction
+ * failed the `accounts` FK (the claim's own insert hits it first; the mirror write would hit
+ * the same key), the row landed `failed`, and it could never succeed by retrying —
  * the account was not coming back and the subscription was already canceled at Stripe, which
  * is what the event said. A permanently-failed row is not an operator queue item; it is a
  * stuck `billing_events_failed` alert, paging hourly about nothing anyone can do.

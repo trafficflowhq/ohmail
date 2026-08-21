@@ -1,6 +1,7 @@
 import {
   planChange, commitChange, MAX_RAW_MESSAGE_BYTES,
   type Change, type ClassifierPort, type CreditGate, type Logger, type OhboxPolicy,
+  type StorageCap,
 } from "@trafficflow/core/mail";
 import {
   WATCHED_FOLDERS, MessageGoneError, parseRef, FILING_BATCH_MAX,
@@ -117,6 +118,17 @@ export interface SyncDeps {
    * type the empty set" rule `UnsubscribeDeps` established.
    */
   trustedAuthservIds: ReadonlySet<string>;
+  /**
+   * The account's managed storage cap, threaded into `commitChange` — REQUIRED, on
+   * `trustedAuthservIds`'s exact argument one field up: for a storage cap the absent-config
+   * default IS the dangerous branch (a wiring refactor that dropped an optional field would
+   * silently unmeter the hosted store), so a caller that has genuinely decided not to meter
+   * types `UNMETERED_STORAGE_CAP` — the sidecar's local engine, the self-host worker, and
+   * every test that is not about the cap. The hosted worker resolves it per account per cycle
+   * (`index.ts`, from the subscription row via `storageCapOf`) — one read, not one per
+   * message, on `screeningCutoff`'s resolved-once-per-cycle discipline.
+   */
+  storageCap: StorageCap;
   /**
    * The account's Ohbox posture, resolved from `account_settings.ohbox_policy` and threaded into
    * `planChange`. ABSENT ⇒ `planChange` resolves it to the lenient `DEFAULT_OHBOX_POLICY`, so a
@@ -488,7 +500,7 @@ export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boole
 }
 
 async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
-  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, log } = deps;
+  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, storageCap, log } = deps;
   const deadLetters = deps.deadLetters ?? new DeadLetterLedger();
   const version = deps.buildVersion ?? buildVersionOf(process.env);
   deadLetters.beginCycle();
@@ -673,7 +685,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     await attempt(ch, async () => {
       const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff });
       await fencedIngest(deps, (txRepo) =>
-        commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId }),
+        commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap }),
       );
     });
   }
@@ -809,7 +821,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
 async function retryFailedMessages(
   deps: SyncDeps, deadLetters: DeadLetterLedger, version: string,
 ): Promise<void> {
-  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, log } = deps;
+  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, storageCap, log } = deps;
   // A backend that cannot re-read one message degrades to the pre-0041 behaviour rather than
   // erroring: the rows stay owed and a later deploy (or a real adapter) picks them up.
   if (!adapter.fetchByUid) return;
@@ -910,7 +922,7 @@ async function retryFailedMessages(
       try {
         const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff });
         await fencedIngest(deps, (txRepo) =>
-          commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId }),
+          commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap }),
         );
       } catch (err) {
         // Lost leadership is not evidence about the message and not an outage to wait out —

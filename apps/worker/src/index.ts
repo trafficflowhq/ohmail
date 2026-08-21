@@ -48,6 +48,7 @@ import {
 } from "./health.js";
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
 import { runSyncCycle, LeaderFencedError, type SyncDeps } from "./sync.js";
+import { makeStorageCapResolver } from "./storage-cap.js";
 import { DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
 import { KnownSetCache } from "./known-set.js";
 import { markDatabaseFaults, asDatabaseFault } from "./db-fault.js";
@@ -1053,6 +1054,13 @@ export async function startWorkerWithLock(
     // direction for an unknown is the consent gate, and a transient blip must not start leaving a
     // stranger's mail in the INBOX. That is why the catch returns only `ohboxPolicy` — every other
     // field, this one included, is absent there on purpose.
+    // ── AND THE STORAGE CAP, PER ACCOUNT, ON THE SAME DISCIPLINE ──────────────────────────────
+    //
+    // The hosted worker is THE metered composition: `SyncDeps.storageCap` is required, the local
+    // engines type `UNMETERED_STORAGE_CAP`, and this resolver is the one place a subscription row
+    // becomes the number ingest reserves against. Resolved at attach for the runtime's base deps
+    // and refreshed in the per-cycle spread below, so a plan change moves the cap within a cycle.
+    const storageCapFor = makeStorageCapResolver(db as unknown as Tx, log);
     const SCREENING_TTL_MS = 30_000;
     type ScreeningDeps = Pick<SyncDeps, "ohboxPolicy" | "ohboxBar" | "screeningCutoff">;
     const screeningCache = new Map<string, { at: number; value: ScreeningDeps }>();
@@ -1668,6 +1676,10 @@ export async function startWorkerWithLock(
           // rather than left to garbage collection — a memo of somebody else's mailbox must stop
           // existing at the moment leadership is in doubt, not at the moment nothing references it.
           knownSet: new KnownSetCache(mb.mailboxId),
+          // The account's managed storage cap AT ATTACH — the per-cycle spread below refreshes
+          // it, so this value's real job is that the field cannot be forgotten: it is required,
+          // and this composition is the metered one.
+          storageCap: await storageCapFor(mb.accountId),
           log,
         };
 
@@ -2677,6 +2689,9 @@ export async function startWorkerWithLock(
           // one cycle and the next without touching `sync.ts`, `pipeline.ts` or `SyncDeps`.
           const { hasBacklog, owesFiling } = await runSyncCycle({
             ...rt.deps, ...aiFor(rt.mailboxId, rt.accountId), ...(await screeningFor(rt.accountId)),
+            // The cap is refreshed per cycle like the screening posture beside it, so an
+            // upgrade's headroom (or a downgrade's new ceiling) applies without a re-attach.
+            storageCap: await storageCapFor(rt.accountId),
           });
           rt.failures = 0;
           // …and the shard-wide database condition, on the ONLY evidence strong enough to end it:

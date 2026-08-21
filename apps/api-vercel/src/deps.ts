@@ -2,7 +2,7 @@ import { noticeSinkFor, setNoticeSink, IDEMPOTENCY_TTL_MS, type Tx } from "@traf
 import { makePooledDb } from "@trafficflow/db/cloud";
 import {
   adminDbFor, attestStaffDbFault, makeAiCreditGate, resetAdminDbs, webhookAlertSink,
-  acquireImapSlot, releaseImapSlot, balanceOf,
+  acquireImapSlot, releaseImapSlot, balanceOf, storageCapOf,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
   // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
   // send path, because the retention sweep's caller is the worker, which may not depend on
@@ -12,7 +12,7 @@ import {
 } from "@trafficflow/db/cloud";
 import {
   createLogger, makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter,
-  MicrosoftTokenProvider,
+  MicrosoftTokenProvider, UNMETERED_STORAGE_CAP,
   type Logger, type FetchLike, type UpdateSecretPort,
 } from "@trafficflow/core";
 import { mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
@@ -29,6 +29,7 @@ import {
   workflowsService, proposalsService,
   makeEntitlementsService, makeBillingPlaneClient,
   MailService, ResendMailer, mailAlertSink, dbRecipientLimiter, makeWaitlistService,
+  type ServiceContext,
 } from "@trafficflow/services";
 import { makeProbeHostGuard } from "@trafficflow/api";
 import type { AiCreditGateFactory, ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
@@ -165,6 +166,17 @@ function buildServices(cfg: HostConfig): ApiServices {
     // branch; this deployment HAS been read, and a reader should be able to see which of the two
     // states it is in.
     sendSurfaceMaxTotalBytes: SEND_ATTACHMENT_MAX_TOTAL_BYTES,
+    // THE METERED STORAGE CAP — this is the hosted deployment, the one composition that reads
+    // the subscription row instead of typing UNMETERED_STORAGE_CAP. It feeds the send route's
+    // sent-copy projection; the sync worker threads the same read into ordinary ingest, so
+    // whichever path commits an own-sent copy first, the cap it consulted is the same one.
+    // `null` from the read is the documented fail-open for an account with no subscription row
+    // at all (the roster keeps such accounts syncing; storage follows), and it maps to the
+    // typed unmetered value rather than leaking a second spelling of it.
+    storageCapOf: async (ctx: ServiceContext) => {
+      const cap = await storageCapOf(ctx.db as never, ctx.accountId, ctx.now());
+      return cap === null ? UNMETERED_STORAGE_CAP : cap;
+    },
     // ── AND THIS IS THE WAY ROUND IT ────────────────────────────────────────────────────
     //
     // The ceiling above is a fact about this host's REQUEST BODY, so the way past it is a

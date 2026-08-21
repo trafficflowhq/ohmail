@@ -53,6 +53,16 @@ export {
 // worker imports directly: the reason they moved is not layering but SHIPPING — see the header
 // of `cloud.ts`.
 
+/**
+ * The stored-body byte accounting over `account_storage` (mail 0062) — the counter every body
+ * writer moves in its own transaction, and the reserve `DrizzleRepo.insertMessageBody` gates
+ * the managed storage cap on. Mail schema only; the cap READ (`storageCapOf`) and the at-cap
+ * roster are billing reads and live on `@trafficflow/db/cloud`.
+ */
+export {
+  bodyBytesOf, storageUsageOf, reserveBodyBytes, releaseBodyBytes, applyBodyBytesDelta,
+} from "./storage.js";
+
 /** One definition of "transaction pooler", shared by every host that must refuse one. */
 export { transactionPoolerReason, sessionUrlRejection } from "./session-url.js";
 /** And one definition of "unusable as the serverless runtime connection". */

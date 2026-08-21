@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
-import { accounts, mailboxes, type LedgerTx, type Tx } from "@trafficflow/db";
+import { accounts, mailboxes, storageUsageOf, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
   LIVE_SUBSCRIPTION_STATUSES,
   PLAN_LIMITS,
@@ -164,11 +164,22 @@ export interface SubscriptionStatusDTO {
     status: SubscriptionStatus;
     mailboxLimit: number;
     monthlyCredits: number;
+    /** The sold-at stored-body cap in bytes (cloud 0019) — the row's, never the card's. */
+    storageBytesLimit: number;
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
     graceUntil: string | null;
   } | null;
   balance: number;
+  /**
+   * The account's counted stored-body bytes (`account_storage`, mail 0062) — what the Settings
+   * row renders against `entitlements.storageBytesLimit`. About the ACCOUNT where the cap is
+   * about the plan, exactly the `balance`/`trialCredits` split one field up; scoped to mail
+   * BODIES (headers, snippets and attachment metadata never count, and attachment bytes are
+   * never stored server-side at all), which is why every sentence built on it says "mail body
+   * storage" rather than "storage".
+   */
+  storageUsedBytes: number;
   entitlements: Entitlements;
   /** The canonical plan card, so the client need not hardcode prices. */
   plans: typeof PLAN_LIMITS;
@@ -410,6 +421,7 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
         status,
         mailboxLimit: card.mailboxes,
         monthlyCredits: card.monthlyCredits,
+        storageBytesLimit: card.storageBytes,
         currentPeriodStart: period.start,
         currentPeriodEnd: period.end,
         cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
@@ -436,6 +448,12 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
           monthlyCredits: sql`case when excluded.stripe_price_id = ${billingSubscriptions.stripePriceId}
                                    then ${billingSubscriptions.monthlyCredits}
                                    else excluded.monthly_credits end`,
+          // The storage cap is a sold-at allowance like its two siblings, so it moves ONLY when
+          // the price moves — the same guard, for the same reason: a routine status event the
+          // day after the plan card changes must not re-price (nor re-cap) a live customer.
+          storageBytesLimit: sql`case when excluded.stripe_price_id = ${billingSubscriptions.stripePriceId}
+                                      then ${billingSubscriptions.storageBytesLimit}
+                                      else excluded.storage_bytes_limit end`,
           currentPeriodStart: sql`excluded.current_period_start`,
           currentPeriodEnd: sql`excluded.current_period_end`,
           cancelAtPeriodEnd: sql`excluded.cancel_at_period_end`,
@@ -1298,6 +1316,10 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
       // false while the number is real. The ledger row is the fact the label needs,
       // so the route ships it rather than letting the client guess from the status.
       const invoiceGranted = (await latestInvoiceGrantSource(ctx.db, ctx.accountId)) !== null;
+      // THE COUNTED STORED-BODY BYTES — one primary-key read of `account_storage`, the same
+      // counter the ingest reserve moves, so the Settings row and the gate cannot disagree
+      // about one account. A missing row is 0: nothing stored, nothing owed.
+      const storageUsedBytes = await storageUsageOf(ctx.db as unknown as Tx, ctx.accountId);
       // COMPOSED, never re-decided: every policy question — trial semantics, grace, the export
       // window, `paused`, fail-closed nulls — is already answered by `entitlementsFor`, and an
       // `if (status === …)` here would be a second copy of it that drifts.
@@ -1315,12 +1337,14 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
             status: sub.status,
             mailboxLimit: sub.mailboxLimit,
             monthlyCredits: sub.monthlyCredits,
+            storageBytesLimit: sub.storageBytesLimit,
             currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null,
             cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
             graceUntil: sub.graceUntil?.toISOString() ?? null,
           }
           : null,
         balance,
+        storageUsedBytes,
         entitlements,
         plans: PLAN_LIMITS,
         trialCredits: TRIAL_GRANT_CREDITS,

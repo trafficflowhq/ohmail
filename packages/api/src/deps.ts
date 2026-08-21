@@ -22,7 +22,7 @@ import type {
  * `AuthService` extends this class, so a hosted bag's member IS one. */
 import type { SessionLifecycle } from "@trafficflow/services/auth";
 import type {
-  DraftPort, OpenSendAdapter, KekEnvIdentity, Logger, OAuthTokenProvider,
+  DraftPort, OpenSendAdapter, KekEnvIdentity, Logger, OAuthTokenProvider, StorageCap,
 } from "@trafficflow/core/mail";
 /* What a completed SMTP login proved. From the adapter entrypoint rather than the mail barrel
  * because it belongs to the dial, and `imap-probe.ts` — the only implementor — imports it there. */
@@ -273,6 +273,18 @@ export interface ApiServices {
    * install, where its absence is what keeps the standalone door from staging to Cloud storage.
    */
   attachmentStaging?: AttachmentStagingFactory;
+  /**
+   * THE ACCOUNT'S MANAGED STORAGE CAP, as the send route's sent-copy projection needs it.
+   *
+   * Declared by every live host: the hosted deployment resolves it from the subscription row
+   * (`storageCapOf`), the local engine and the self-host server type `UNMETERED_STORAGE_CAP`.
+   * ABSENT is a host nobody has read, and it resolves to REFUSAL, not to unmetered — the route
+   * substitutes a resolver that throws, which costs exactly the sent-copy projection
+   * (swallow-and-log; the send answered `sent` already, and the worker's Sent-folder pass
+   * remains the metered backstop). The same "somebody has to type the empty set" rule as
+   * `trustedAuthservIds`: for a storage cap the absent-config default is the dangerous branch.
+   */
+  storageCapOf?: (ctx: ServiceContext) => Promise<StorageCap>;
 }
 
 /**

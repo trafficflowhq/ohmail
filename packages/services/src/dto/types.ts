@@ -176,6 +176,16 @@ export interface MessageBodyDTO {
    * reaches the client), and `no_header`/`mailto_only` have no https link to offer.
    */
   unsubscribeUrl: string | null;
+  /**
+   * WHY `text` is empty, when it is empty by POLICY: `"storage_cap"` means ingest declined to
+   * store this body because the account was at its managed storage cap — the mail itself is
+   * untouched in the mailbox on the user's own server. Absent for every ordinarily stored body,
+   * including a genuinely empty one, so the client can finally tell "this message says nothing"
+   * from "we are not holding what it says" — the two used to collapse into one blank pane
+   * claiming to be complete. Served AS STORED, on the same no-rehydrate contract as everything
+   * else here: nothing on this surface re-fetches a body on demand.
+   */
+  withheld?: "storage_cap";
 }
 
 /**
@@ -211,6 +221,14 @@ export interface MessageBodyBatchItem {
   unsubscribe?: UnsubscribeHeaderState;
   /** The sender's own https unsubscribe page, `?ids=` mode and `not_one_click` only; else null. */
   unsubscribeUrl?: string | null;
+  /**
+   * The stored row's withheld marker, BOTH modes — see {@link MessageBodyDTO.withheld}. In both
+   * it is a fact about the ROW, projected verbatim: the mirror needs it or a withheld body is
+   * mirrored as an empty complete one and never re-asked; the reader needs it for the honest
+   * sentence. It extends the no-rehydrate pin rather than weakening it — a withheld row is
+   * served exactly as stored, and nothing here gains a fetch.
+   */
+  withheld?: "storage_cap";
 }
 
 export interface ThreadDTO {

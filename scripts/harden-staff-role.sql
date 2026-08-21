@@ -656,9 +656,17 @@ GRANT SELECT (account_id, stripe_customer_id, email, created_at, updated_at)
 REVOKE ALL ON public.billing_subscriptions FROM ohmail_admin;
 GRANT SELECT (
   id, account_id, stripe_subscription_id, stripe_price_id, plan, status,
-  mailbox_limit, monthly_credits, current_period_start, current_period_end,
+  mailbox_limit, monthly_credits, storage_bytes_limit, current_period_start, current_period_end,
   cancel_at_period_end, grace_until, stripe_event_ts, created_at, updated_at
 ) ON public.billing_subscriptions TO ohmail_admin;
+
+-- `account_storage` (mail 0062) — the stored-body byte counter behind the managed storage cap.
+-- Usage data in the invariant's own words (staff may see billing and usage, never content): an
+-- id, a byte count and a timestamp, nothing derived from what any message says. The alerts
+-- driver on this role reads it for the `storage_at_cap` rule, which is why the grant exists at
+-- all rather than the table staying un-granted like `messages`.
+REVOKE ALL ON public.account_storage FROM ohmail_admin;
+GRANT SELECT (account_id, bytes, updated_at) ON public.account_storage TO ohmail_admin;
 
 REVOKE ALL ON public.credit_balances FROM ohmail_admin;
 GRANT SELECT (account_id, balance, updated_at) ON public.credit_balances TO ohmail_admin;

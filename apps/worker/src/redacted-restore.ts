@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
-import { auditLog, messageBodies, messages, recordChange, type Tx } from "@trafficflow/db";
+import { applyBodyBytesDelta, auditLog, bodyBytesOf, messageBodies, messages, recordChange, type Tx } from "@trafficflow/db";
 import {
   fingerprintDedupKey, messageFingerprint, normalizeMessageId, normalizeMime,
   prepareHtmlForStorage, silentLogger,
@@ -279,16 +279,34 @@ async function restoreOne(
   db: Tx, accountId: string, messageId: string, fresh: NormalizedMessage, now: Date,
 ): Promise<boolean> {
   return db.transaction(async (tx) => {
-    const [live] = await tx.select({ id: messageBodies.messageId }).from(messageBodies)
+    const [live] = await tx.select({
+      id: messageBodies.messageId,
+      // The OLD body's octets, read under the same lock the rewrite holds, so the byte
+      // accounting below is a delta between two states this transaction has both seen.
+      oldBytes: sql<number>`octet_length(${messageBodies.text}) + coalesce(octet_length(${messageBodies.html}), 0)`,
+    }).from(messageBodies)
       .where(and(eq(messageBodies.messageId, messageId), STILL_REDACTED))
       .limit(1)
       .for("update");
     if (!live) return false;
 
+    const storedText = fresh.textBody;
+    const storedHtml = prepareHtmlForStorage(fresh.htmlBody);
     await tx.update(messageBodies).set({
-      text: fresh.textBody,
-      html: prepareHtmlForStorage(fresh.htmlBody),
+      text: storedText,
+      html: storedHtml,
     }).where(eq(messageBodies.messageId, messageId));
+
+    // KEEP THE COUNTER TRUE: this rewrite changes the row's stored bytes, so the same
+    // transaction moves `account_storage` by the difference — BEFORE the `recordChange` below,
+    // the lock order every counter writer holds. `applyBodyBytesDelta` clamps at zero, so a
+    // pre-backfill row can never abort the restore this pass exists to make. Deliberately NOT
+    // gated on any cap: this is a REPAIR of a body the account already owns, not new storage,
+    // and blocking a repair on a billing state would be destroying data by another name.
+    await applyBodyBytesDelta(
+      tx, accountId,
+      bodyBytesOf({ text: storedText, html: storedHtml }) - Number(live.oldBytes),
+    );
 
     await tx.update(messages).set({
       snippet: snippetOf(fresh),

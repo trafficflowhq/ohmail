@@ -1068,7 +1068,8 @@
     "failed": "Couldn't load the full message — showing the preview.",
     "sessionEnded": "Your session ended, so the full message couldn't load.",
     "signIn": "Sign in",
-    "retry": "Retry"
+    "retry": "Retry",
+    "withheld": "Not stored — your storage space was full when this arrived. The message itself is safe in your mailbox on your mail server; this is the preview."
   },
   "message": {
     "toLabel": "To",
@@ -1398,7 +1399,7 @@
     "desktopNote": "Desktop-only is meant to be a complete way to use ohmail, forever — no account, no cloud, nothing of yours on our side, and not a trial version of anything. If you would rather have a hosted account, the same app can sign in to Cloud instead; that is a choice you make in the app, not a different download.",
     "cloudTerm": "Cloud",
     "cloudOptional": "optional",
-    "cloudBody": "Cloud keeps a full copy of your mail — bodies, headers, subjects and senders, not just metadata — on EU servers, for one purpose: delivering sync, push and search to your devices. Storage is encrypted at rest, connections between your devices and ohmail are encrypted in transit, and your mailbox credentials are additionally encrypted at the application level. It is not end-to-end encrypted — the service has to read mail to file and search it, and a small number of people with production database access could technically read it. Never sold, never mined, never used for anything but serving you. Deleting your account erases that data from live systems immediately and from backups within 30 days. The full privacy policy, naming exactly who can access what, publishes before the first real mailbox connects; the subprocessor and retention list linked in the footer is live today.",
+    "cloudBody": "Cloud keeps a copy of your mail — bodies up to your plan's storage space, headers, subjects and senders, not just metadata — on EU servers, for one purpose: delivering sync, push and search to your devices. At the cap, new message content stops being stored and everything keeps working from your mailbox itself; nothing stored is ever deleted for space. Storage is encrypted at rest, connections between your devices and ohmail are encrypted in transit, and your mailbox credentials are additionally encrypted at the application level. It is not end-to-end encrypted — the service has to read mail to file and search it, and a small number of people with production database access could technically read it. Never sold, never mined, never used for anything but serving you. Deleting your account erases that data from live systems immediately and from backups within 30 days. The full privacy policy, naming exactly who can access what, publishes before the first real mailbox connects; the subprocessor and retention list linked in the footer is live today.",
     "cloudNote": "Why a cloud exists at all: your phone can’t keep a connection to your mailbox open all day — the battery and the operating system won’t allow it. Something has to stay awake to notice new mail and tap you on the shoulder. That is what Cloud is for — push, the web app, and the mobile apps when they land — and doing that job is why it holds a copy of your mail rather than only your rules.",
     "aiTerm": "AI",
     "aiOptional": "optional, both tiers",
@@ -1789,6 +1790,11 @@
     "mailboxesSub": "How many you can connect on this plan.",
     "credits": "AI actions left",
     "creditsSub": "Refilled each billing period.",
+    "storage": "Storage",
+    "storageSub": "Message content stored for the web app. Your mailbox on your own server is never counted.",
+    "storageOf": "{used} of {cap}",
+    "storageNear": "Storage is nearly full. When it fills, mail keeps arriving and gets organized as usual — new message content just stops being stored here.",
+    "storageFull": "Storage is full. Mail keeps arriving and gets organized as usual, but new message content isn't being stored — it stays readable in your mailbox on your mail server. Nothing already stored is deleted. A bigger plan gives new mail room.",
     "aiTitle": "AI",
     "aiLabel": "Managed AI actions",
     "aiSub": "Screener suggestions, drafts and summaries run on our servers.",

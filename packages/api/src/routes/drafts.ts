@@ -228,6 +228,11 @@ export const draftsRoutes: Route[] = [
         serviceContext(deps, req), params.id!, key,
         {
           openSendAdapter, openFetchAdapter,
+          // THE STORAGE CAP for the sent-copy projection. Every live host declares one
+          // (`ApiDeps.storageCapOf` — the hosted deployment's subscription read, the local
+          // hosts' typed UNMETERED). Passed through as-is: ABSENT means the service REFUSES
+          // the projection (never unmetered) — `SendDeps.resolveStorageCap` carries the rule.
+          ...(deps.services?.storageCapOf ? { resolveStorageCap: deps.services.storageCapOf } : {}),
           // WHICH HOST IS CARRYING THESE BYTES. Absent on the hosted API, which resolves to the
           // serverless body limit; `null` from the local engine, which has no request pipeline
           // between this handler and SMTP. `SendService` takes the SMALLER of this and the

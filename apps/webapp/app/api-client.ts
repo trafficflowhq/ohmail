@@ -381,16 +381,26 @@ export interface SubscriptionStatus {
     status: string;
     mailboxLimit: number;
     monthlyCredits: number;
+    /** The sold-at stored-body cap in bytes. Optional: an older server omits it. */
+    storageBytesLimit?: number;
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
     graceUntil: string | null;
   } | null;
   balance: number;
+  /**
+   * The account's counted stored mail-body bytes, rendered against
+   * `entitlements.storageBytesLimit`. Optional like `trialCredits` and read the same way: an
+   * absent value means "say nothing about storage", never "0 of 0".
+   */
+  storageUsedBytes?: number;
   entitlements: {
     mailboxLimit: number;
     canAddMailbox: boolean;
     aiEnabled: boolean;
     syncEnabled: boolean;
+    /** The effective stored-body cap in bytes. Optional: an older server omits it. */
+    storageBytesLimit?: number;
     reason: string;
   };
   /**

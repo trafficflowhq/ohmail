@@ -402,11 +402,37 @@ export interface PlanDeps {
   screeningCutoff?: Date;
 }
 
+/**
+ * THE TYPED "NO CAP" — the value a composition root writes to say its deployment meters no
+ * storage: the desktop engine and the self-host server (a self-hoster's limit is their own
+ * disk), and every test that is not about the cap.
+ *
+ * A symbol and not `null`/`undefined`, because for the storage cap the absent-config default IS
+ * the dangerous branch (a wiring refactor that drops the field must be a compile error, not a
+ * silently unmetered cap) — the same declaration-not-inference rule `trustedAuthservIds` and
+ * `mailbox-allowance-registry` each state for their own gates. The hosted worker never types
+ * this name; its composition threads `storageCapOf`'s per-account number, and a test pins that
+ * wiring by flipping it here and watching the decline path go dark.
+ */
+export const UNMETERED_STORAGE_CAP: unique symbol = Symbol("ohmail: unmetered storage");
+
+/** An account's storage cap as `commitChange` receives it: bytes, or the typed "no cap". */
+export type StorageCap = number | typeof UNMETERED_STORAGE_CAP;
+
 export interface CommitDeps {
   repo: RepoPort;
   accountId: string;
   mailboxId: string;
   routing?: RoutingPort;
+  /**
+   * The account's managed storage cap, REQUIRED — resolved once per account per cycle by the
+   * caller (the hosted worker via `storageCapOf`; everything unmetered types
+   * {@link UNMETERED_STORAGE_CAP}). At cap the body write stores a withheld husk instead of
+   * content and NOTHING else changes: same message row, same snippet, same attachments
+   * metadata, same threading, same deltas, same folder move, same routing. The mailbox on the
+   * IMAP server is the master and never suffers.
+   */
+  storageCap: StorageCap;
 }
 
 /**
@@ -1070,6 +1096,17 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
 export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<ProcessResult> {
   const { repo, accountId, mailboxId, routing } = deps;
 
+  // REQUIRED AT RUNTIME TOO, not only in the type: most test files are not typechecked, so a
+  // stale caller would otherwise thread `undefined` — which is neither a number nor the typed
+  // unmetered symbol, and would reach the adapter's cap comparison as a silent decline of every
+  // body. For a storage cap every wrong default is the dangerous branch in one direction or the
+  // other, so an undeclared caller fails HERE, loudly, before any write.
+  if ((deps.storageCap as unknown) === undefined) {
+    throw new Error(
+      "CommitDeps.storageCap is required: pass the account's cap in bytes, or UNMETERED_STORAGE_CAP",
+    );
+  }
+
   // ── THE VERIFIED LEGACY KEY IS REWRITTEN FIRST, IN THIS TRANSACTION ────────────────────────
   //
   // Before anything else, so that whatever this commit does next it does to a row that is already
@@ -1217,10 +1254,21 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // writer of `message_bodies.html` (`privacy-service.ts` flips `loadedRemoteContent` and
     // nothing else; `message-service.ts` only reads). It strips oversized inline base64 payloads
     // and enforces the 256 KiB cap that the `message_bodies_html_cap` CHECK constraint asserts.
+    //
+    // THE STORAGE-CAP SEAM is inside this one call and reaches nothing else in this
+    // function: the adapter reserves the body's bytes against `deps.storageCap` in this same
+    // transaction, and at cap it stores the withheld husk (headers kept, content empty,
+    // `withheld_reason='storage_cap'`) instead. Everything below — threading, deltas,
+    // folder_state, routing, the IMAP move — is deliberately upstream or downstream of the
+    // body's CONTENT and proceeds identically; the acceptance that matters is a rule-matched
+    // sender still moving on IMAP while its body is withheld.
     await repo.insertMessageBody(stored.id, {
       text: p.normalized.textBody,
       html: prepareHtmlForStorage(p.normalized.htmlBody),
       headers: p.normalized.headers,
+    }, {
+      accountId,
+      capBytes: deps.storageCap === UNMETERED_STORAGE_CAP ? null : deps.storageCap,
     });
 
     // ── THREADING, HERE AND NOT ANYWHERE ELSE ──────────────────────────────────────────────

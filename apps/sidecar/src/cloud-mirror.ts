@@ -1440,6 +1440,12 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           text: item.text ?? "",
           html: item.html ?? null,
           loadedRemoteContent: !!item.loadedRemoteContent,
+          // The hosted store's withheld marker, mirrored verbatim (mail 0062 — the local journal
+          // has the column too). Without it a cap-withheld body lands here as an empty COMPLETE
+          // one and the desktop tells the lie the marker exists to end; with it, the same honest
+          // state renders on every tier. The mirror's own counter is deliberately untouched —
+          // this store copies the hosted one, whose counter is the hosted counter.
+          withheldReason: item.withheld === "storage_cap" ? ("storage_cap" as const) : null,
         };
         await tx.insert(messageBodies).values({ messageId: item.messageId, ...row })
           .onConflictDoUpdate({ target: messageBodies.messageId, set: row });

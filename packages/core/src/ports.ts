@@ -291,6 +291,26 @@ export interface MessageBodyInput {
 }
 
 /**
+ * What the account's managed storage cap means for THIS body write — resolved by the caller
+ * (`commitChange`, from the required `CommitDeps.storageCap`) and enforced by the adapter in
+ * the SAME transaction as the insert.
+ *
+ * `capBytes: null` is UNMETERED, and it is a value somebody TYPED (`UNMETERED_STORAGE_CAP` at a
+ * composition root), never an absent-config default — the declaration-not-inference rule
+ * `trustedAuthservIds` established. A number is the account's cap in bytes; at or over it the
+ * adapter stores a WITHHELD row (empty text, no html, the real headers,
+ * `withheld_reason = 'storage_cap'`) instead of the content, and everything else about ingest
+ * proceeds unchanged.
+ */
+export interface BodyStorageContext {
+  accountId: string;
+  capBytes: number | null;
+}
+
+/** What the adapter did with the body's CONTENT. Organizing is identical either way. */
+export type BodyStorageOutcome = "stored" | "withheld";
+
+/**
  * A client-visible mutation to append to the delta `change_log`. The
  * pipeline emits ONE of these per mutation via `repo.recordChange`, which — on the
  * DrizzleRepo — allocates the gap-free per-account seq and inserts the row inside
@@ -404,7 +424,16 @@ export interface RepoPort {
    * whole tail; a loser that proceeds duplicates every child row it touches.
    */
   insertMessage(input: InsertMessageInput): Promise<InsertedMessage>;
-  insertMessageBody(messageId: string, body: MessageBodyInput): Promise<void>;
+  /**
+   * Persist the body — or, at the storage cap, the honest husk of one. The adapter reserves
+   * `bodyBytesOf(body)` against `storage.capBytes` and the body insert in ONE transaction;
+   * a decline writes the withheld row (headers kept, content empty,
+   * `withheld_reason='storage_cap'`) so organizing and the mirror keep working. The IMAP
+   * original is untouched either way.
+   */
+  insertMessageBody(
+    messageId: string, body: MessageBodyInput, storage: BodyStorageContext,
+  ): Promise<BodyStorageOutcome>;
   /**
    * Persist attachment METADATA (never bytes) for a message. Called by the pipeline
    * in the SAME transaction as `insertMessage` (atomic ingest — no orphan

@@ -306,6 +306,7 @@ export function ReceiptsView({
   );
   const loadingLabel = tb("loading");
   const failedLabel = tb("failed");
+  const withheldLabel = tb("withheld");
 
   /* One memoized card per MOUNTED message — same shape as `ReadsView.card`. */
   const card = (m: EngineMessage) => {
@@ -324,6 +325,7 @@ export function ReceiptsView({
         bodyLoadedRemote={body.loadedRemoteContent}
         loadingLabel={loadingLabel}
         failedLabel={failedLabel}
+        withheldLabel={withheldLabel}
         onSelect={onCur}
         onToggle={onToggle}
         onAction={onAction}

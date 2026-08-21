@@ -1845,6 +1845,7 @@ export class OhmailEngine {
           loadedRemoteContent: wire.loadedRemoteContent === true,
           unsubscribe: wire.unsubscribe ?? "no_header",
           unsubscribeUrl: wire.unsubscribeUrl ?? null,
+          ...(wire.withheld === "storage_cap" ? { withheld: "storage_cap" as const } : {}),
         });
       } catch (err) {
         await this.failBody(id, err);
@@ -1969,6 +1970,11 @@ export class OhmailEngine {
               // a bare test double or the FixturesAdapter — which answer `{ text }` — honest.
               unsubscribe: wire.unsubscribe ?? "no_header",
               unsubscribeUrl: wire.unsubscribeUrl ?? null,
+              // The server's withheld marker, carried only when present: the record stays
+              // `ready` — the server ANSWERED, so the single-flight ledger and every "a READY
+              // body is not re-fetched" rule apply unchanged — and `bodyOf` derives the
+              // terminal `withheld` surface state from the marker, never from emptiness.
+              ...(wire.withheld === "storage_cap" ? { withheld: "storage_cap" as const } : {}),
             },
       );
     } catch (err) {

@@ -1,4 +1,4 @@
-import { commitChange, planChange, type ProcessResult } from "./pipeline.js";
+import { commitChange, planChange, type ProcessResult, type StorageCap } from "./pipeline.js";
 import type { AppendedSent } from "./send.js";
 import type { Change, RepoPort, RoutingPort } from "./ports.js";
 
@@ -101,6 +101,15 @@ import type { Change, RepoPort, RoutingPort } from "./ports.js";
 export interface RecordSentDeps {
   accountId: string;
   mailboxId: string;
+  /**
+   * The account's managed storage cap, threaded to `commitChange` — REQUIRED, like every other
+   * utterance of it, and METERED on the hosted tier rather than exempt: the same Sent copy also
+   * arrives through ordinary sync ingest, whichever path commits first decides storage (the
+   * loser exits `duplicate` before the body write), so an exemption here would make own-sent
+   * at-cap behavior depend on a race. Bytes are bytes; the sent mail is on the IMAP server —
+   * the Sent folder — in full either way.
+   */
+  storageCap: StorageCap;
   /** The READ phase's repo — outside any transaction, exactly as the worker's plan phase is. */
   repo: RepoPort;
   /**
@@ -142,6 +151,6 @@ export async function recordSentMessage(
   // means a future edit that moves that early return also breaks the build here.
   const plan = await planChange(change, { repo, accountId, mailboxId });
   return deps.withTx((txRepo) =>
-    commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId }),
+    commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap: deps.storageCap }),
   );
 }

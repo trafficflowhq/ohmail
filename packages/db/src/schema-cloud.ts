@@ -235,6 +235,11 @@ export const billingSubscriptions = pgTable("billing_subscriptions", {
   status: text("status").notNull(),                               // SubscriptionStatus (CHECK)
   mailboxLimit: integer("mailbox_limit").notNull(),               // sold-at entitlement, not PLAN_LIMITS
   monthlyCredits: integer("monthly_credits").notNull(),           // sold-at entitlement, not PLAN_LIMITS
+  // Sold-at entitlement like its two siblings (cloud 0019): the managed stored-body cap in
+  // BYTES. Denormalized at sale time and grandfathered by the same price-moves-only CASE, so a
+  // later change to the plan card cannot shrink what a live customer already bought. bigint —
+  // the smallest card value (5 GB) already outruns int4.
+  storageBytesLimit: bigint("storage_bytes_limit", { mode: "number" }).notNull(),
   currentPeriodStart: timestamp("current_period_start", { withTimezone: true }),
   currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),

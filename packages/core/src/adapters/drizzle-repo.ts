@@ -1,10 +1,10 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { messages, messageInstances, messageFailures, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
+import { messages, messageInstances, messageFailures, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, bodyBytesOf, reserveBodyBytes, releaseBodyBytes, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   Rule, NativeLocator, EmailAddress,
-  MessageBodyInput, RepoChangeInput, RoutingDecisionInput, ApprovalInput, AttachmentMeta,
+  MessageBodyInput, BodyStorageContext, BodyStorageOutcome, RepoChangeInput, RoutingDecisionInput, ApprovalInput, AttachmentMeta,
   ThreadParent, ThreadUpsertInput, ThreadUpsertResult, ThreadMergeInput,
   // `../mail.js`, not `../index.js`: the repository adapter needs the mail vocabulary, and the
   // default barrel re-exports the model half beside it — so naming it here would put the
@@ -793,9 +793,36 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return rows.length > 0;
   }
 
-  async insertMessageBody(messageId: string, body: MessageBodyInput): Promise<void> {
-    await this.db.insert(messageBodies).values({
-      messageId, text: body.text, html: body.html,
+  /**
+   * Persist the body — or, at the storage cap, its honest husk — and keep the account's byte
+   * counter true, all in the ambient transaction.
+   *
+   * ── ORDER, AND WHY EACH STEP IS WHERE IT IS ────────────────────────────────────────────────
+   *
+   *  1. `reserveBodyBytes` — the atomic conditional increment on `account_storage` (its header
+   *     carries the race argument). FIRST, and before any `recordChange` this transaction will
+   *     make: the lock-order rule, so ingest and the repair passes always take the counter row
+   *     and the seq row in the same order. `capBytes: null` (typed unmetered) still counts —
+   *     accounting is not billing.
+   *  2. ONE values-builder for both outcomes. A declined body keeps its REAL headers (the
+   *     organizing passes read stored headers) with `text=''`/`html=null` and the marker;
+   *     forking the insert would fork the header spread below, whose exact shape is the fix.
+   *  3. The compensation: a reserve whose insert then hit the 1:1 conflict (`ON CONFLICT DO
+   *     NOTHING` returned no row) reserved bytes it will not store, so it gives them back —
+   *     `GREATEST(0, …)`-clamped, on the row lock the reserve already holds. Unreachable from
+   *     `commitChange` today (`stored.created` guards the tail), kept because this method's
+   *     contract — counter moves ⇔ content stored — must not depend on who calls it.
+   */
+  async insertMessageBody(
+    messageId: string, body: MessageBodyInput, storage: BodyStorageContext,
+  ): Promise<BodyStorageOutcome> {
+    const bytes = bodyBytesOf(body);
+    const reserved = await reserveBodyBytes(this.db, storage.accountId, bytes, storage.capBytes);
+    const rows = await this.db.insert(messageBodies).values({
+      messageId,
+      text: reserved ? body.text : "",
+      html: reserved ? body.html : null,
+      withheldReason: reserved ? null : ("storage_cap" as const),
       /**
        * `{ ...body.headers }` — the spread is LOAD-BEARING and this is the database boundary
        * `packages/core/src/mime.ts` names when it says the null-prototype guarantee "does not
@@ -818,7 +845,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
        * that catches it is an e2e, so a unit run stays green.
        */
       headers: { ...body.headers },
-    }).onConflictDoNothing({ target: messageBodies.messageId });
+    }).onConflictDoNothing({ target: messageBodies.messageId })
+      .returning({ id: messageBodies.id });
+    if (reserved && rows.length === 0) {
+      await releaseBodyBytes(this.db, storage.accountId, bytes);
+    }
+    return reserved ? "stored" : "withheld";
   }
 
   /** Persist attachment metadata (never bytes) in the ambient tx. No-op when empty. */

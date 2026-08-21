@@ -720,9 +720,34 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // "which journal built it". The store that can genuinely lack the table is a mail-only
   // desktop database, and there the engine migrates at boot and this names the migration if it
   // has not. No CHECK marker (nothing here closes a set), no INDEX marker (the UNIQUE on
-  // `token_hash` is the rotation's claim lookup and its absence is loud). It is the NEWEST
-  // entry in the mail journal.
+  // `token_hash` is the rotation's claim lookup and its absence is loud). It was the newest
+  // entry in the mail journal until 0062 landed the storage accounting below.
   ["refresh_tokens", "family_id"],
+  // mail 0062_storage_accounting, marker ONE of two — the per-account stored-body byte counter,
+  // a whole new table on 0035's rule (42P01 ahead of the migration). `bytes` is the column
+  // because it is the one every statement names: the ingest reserve's conditional UPDATE (where
+  // the managed cap's decline decision lives), the repair passes' clamped deltas, and the
+  // billing status route's usage read. The WORKER half fails loud — `insertMessageBody` now
+  // reserves unconditionally, so a worker ahead of the migration fails ingest into the ordinary
+  // quarantine rather than storing uncounted bodies. The API half is the settings read
+  // (`subscriptionStatus`), which would 42703 the whole billing card. Deploy order: migration →
+  // API → worker, and the backfill re-run after the worker deploy is the runbook's, not a
+  // marker's, concern.
+  //
+  // No CHECK marker for `account_storage_bytes_nonneg`, on 0030's rule extended one step: the
+  // CHECK arrives in the SAME migration statement block as the table, so a database carrying
+  // the table without it is not a state the journal can produce — the column probe already
+  // implies it, and every app-side decrement is `GREATEST(0, …)`-clamped besides. No INDEX
+  // marker: one row per account, fetched by primary key.
+  ["account_storage", "bytes"],
+  // mail 0062, marker TWO — the withheld-body marker column. It earns its own probe on the
+  // whole-row-select rule at its widest for this table: `getBody` does
+  // `select().from(messageBodies)`, so an API ahead of the migration 42703s the BODY of every
+  // message — the reading surface itself — and both batch modes name the column explicitly.
+  // The worker half is the same loud INSERT as `bytes` above (one values-builder writes both
+  // features). No CHECK marker for `message_bodies_withheld_reason` (0030's rule: a closed-set
+  // CHECK the column marker already implies — same migration, same transaction).
+  ["message_bodies", "withheld_reason"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1262,8 +1287,15 @@ export const MAIL_EXPECTED_MARKERS =
  * prod before the API alias, re-run idempotently after). The one behavioral consequence of a
  * missed apply is cosmetic and self-healing: the Devices pane groups legacy "Web" rows as
  * named devices until the statements run.
+ *
+ * `0062_storage_accounting` is probed TWICE — `account_storage.bytes` (a whole new table) and
+ * `message_bodies.withheld_reason` (the widest whole-row-select on the reading surface) — the
+ * entries in {@link MAIL_SCHEMA_MARKERS} carry both arguments. Its backfill is data and, like
+ * 0061's, belongs to the runbook: re-run once after the worker deploy, because the OLD worker
+ * keeps ingesting uncounted bodies between the pre-alias migration and its own restart, and the
+ * backfill's `ON CONFLICT … DO UPDATE` recomputes rather than preserves.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0061_web_sessions_deviceless";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0062_storage_accounting";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

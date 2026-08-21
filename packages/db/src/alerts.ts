@@ -3,6 +3,7 @@ import {
   alertState, billingEvents, mailboxes, outboundSends, workerHeartbeats,
 } from "./schema.js";
 import { accountsWithSyncDisabled } from "./billing.js";
+import { accountsAtStorageCap } from "./storage-cloud.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -66,7 +67,7 @@ import type { Tx } from "./change-log.js";
    The rules, and the numbers the arch doc fixed
    ════════════════════════════════════════════════════════════════════════════════════════ */
 
-/** The four conditions. Stable strings — they are the alert identity in `alert_state`. */
+/** The five conditions. Stable strings — they are the alert identity in `alert_state`. */
 export type AlertKind =
   /** No leader heartbeat for a shard within the threshold: nothing is syncing. */
   | "worker_down"
@@ -79,7 +80,16 @@ export type AlertKind =
    * "On duty" is `status <> 'disabled'` AND an entitlement that says sync is on — the worker's
    * definition, not a second one; see rule 4 for what calling it "enabled" used to cost.
    */
-  | "sync_lag";
+  | "sync_lag"
+  /**
+   * An on-duty account whose counted stored-body bytes have reached its subscription's cap:
+   * its mail keeps organizing on IMAP and NEW bodies are being withheld from the
+   * hosted store. A scan rule and not an ingest-transition emission, deliberately — at-cap is
+   * also ENTERED with no ingest event at all (a plan downgrade shrinks the cap; the 0062
+   * backfill mints day-one at-cap accounts), and the two-driver design already survives the
+   * worker being down.
+   */
+  | "storage_at_cap";
 
 export type AlertSeverity = "critical" | "warning";
 
@@ -364,6 +374,43 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
           : ""),
       count: lagCount,
       oldestSeconds,
+    });
+  }
+
+  // ── 5. accounts at their storage cap ───────────────────────────────────────────────────
+  //
+  // The population is `accountsAtStorageCap` — counted stored-body bytes ≥ the EFFECTIVE
+  // subscription row's cap, resolved with the same live-preferred ordering as every other
+  // entitlement read. Accounts the roster has PARKED are subtracted on rule 4's own argument:
+  // a parked account ingests nothing, so nothing is being withheld from it, and paging about
+  // it would be the noisy-alert failure again. One grouped alert, not one per account —
+  // bounded, content-free (a count and two byte figures), and the operator's remedy is the
+  // same whoever is in it.
+  //
+  // WARNING, not critical: the product is behaving as specified — mail still arrives, still
+  // organizes on IMAP, the user has been told in Settings and on the message — but a human
+  // should know who is bumping the ceiling before the support mail arrives.
+  const atCap = await accountsAtStorageCap(db);
+  const capParked = await accountsWithSyncDisabled(db, atCap.map((r) => r.accountId), now);
+  const atCapOnDuty = atCap.filter((r) => !capParked.has(r.accountId));
+  if (atCapOnDuty.length > 0) {
+    const worst = atCapOnDuty.reduce((m, r) => (r.bytes - r.storageBytesLimit > m.bytes - m.storageBytesLimit ? r : m));
+    alerts.push({
+      key: "storage_at_cap",
+      kind: "storage_at_cap",
+      severity: "warning",
+      title: `${atCapOnDuty.length} account${atCapOnDuty.length === 1 ? " is" : "s are"} at the storage cap`,
+      detail:
+        `${atCapOnDuty.length} on-duty account(s) hold stored mail bodies at or over their plan's ` +
+        `storage cap; new bodies are being withheld from the hosted store while their mail keeps ` +
+        `organizing on IMAP. Nothing is deleted. The largest overshoot is ` +
+        `${worst.bytes - worst.storageBytesLimit} bytes over a ${worst.storageBytesLimit}-byte cap.` +
+        (capParked.size > 0
+          ? ` (${capParked.size} further at-cap account(s) are parked by their subscription's ` +
+            `entitlement and ingest nothing — not counted.)`
+          : ""),
+      count: atCapOnDuty.length,
+      oldestSeconds: null,
     });
   }
 

@@ -52,11 +52,18 @@ export interface StreamCardProps {
    * the pill reachable however short the text is, because the text being short is precisely
    * the symptom.
    */
-  bodyState?: "full" | "snippet" | "loading" | "failed";
+  bodyState?: "full" | "snippet" | "loading" | "failed" | "withheld";
   /** Shown in place of the body while it is being fetched. App-owned copy. */
   loadingLabel?: string;
   /** Shown when the fetch failed — distinct from "this is the whole message". */
   failedLabel?: string;
+  /**
+   * Shown when the server holds NO content for this message (the account's storage space was
+   * full when it arrived). TERMINAL, unlike the two above: expanding fetches nothing more, so
+   * `withheld` does not keep the pill reachable the way `pending` states do — the preview plus
+   * this sentence IS the whole of what this card can show. App-owned copy.
+   */
+  withheldLabel?: string;
   /**
    * THE RENDERED MESSAGE, swapped in for the plain-text preview once the card is OPEN.
    *
@@ -114,6 +121,7 @@ export function StreamCard({
   bodyState = "full",
   loadingLabel,
   failedLabel,
+  withheldLabel,
   bodySlot,
   onSelect,
   onToggle,
@@ -186,8 +194,14 @@ export function StreamCard({
    * there is nothing more to show. `.pend` in `stream.css` re-enables the pill
    * and drops the fade for a card that is both short and pending.
    */
-  const pending = bodyState !== "full";
-  const note = bodyState === "loading" ? loadingLabel : bodyState === "failed" ? failedLabel : null;
+  // `withheld` is deliberately NOT pending: pending keeps the Expand pill reachable because
+  // expanding is how the rest gets fetched, and for a withheld body there is no rest to fetch —
+  // the server answered, and the answer is the sentence below.
+  const pending = bodyState !== "full" && bodyState !== "withheld";
+  const note = bodyState === "loading" ? loadingLabel
+    : bodyState === "failed" ? failedLabel
+    : bodyState === "withheld" ? withheldLabel
+    : null;
 
   const toggle = () => {
     const clip = clipRef.current;
@@ -282,9 +296,10 @@ export function StreamCard({
             </Fragment>
           ))
         )}
-        {/* The one line of chrome hydration adds, and only for the two states that need it:
-            "we are fetching this" and "we could not". A card whose body has not been asked
-            for says nothing — the Expand pill IS that signal — and a complete body says
+        {/* The one line of chrome hydration adds, for the three states that need it:
+            "we are fetching this", "we could not", and "the server holds no content for this
+            one" (the storage cap — terminal, no retry implied). A card whose body has not been
+            asked for says nothing — the Expand pill IS that signal — and a complete body says
             nothing either, which is the Blanc card unchanged. It sits INSIDE `.sc-clip`
             beside the text it qualifies, above the fade. */}
         {note ? (

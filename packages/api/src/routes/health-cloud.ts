@@ -130,6 +130,16 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // stop writing the column, which resurrects the exact verification forgery the column exists
   // to close. A 503 at the deploy gate forecloses the whole path.
   ["invites", "confers_verified"],
+  // cloud 0019_storage_bytes_limit — the third sold-at allowance on the subscription row, the
+  // managed stored-body cap. The easy case (one added `NOT NULL` bigint), and its sentence is
+  // about how WIDELY it fails: every subscription read names the column in its select list —
+  // `liveSubscriptionOf`, `newestSubscriptionOf`, the roster's `DISTINCT ON` — so an API ahead
+  // of the migration 42703s the billing status route, the mailbox gate AND the webhook mirror's
+  // upsert (which writes the column with its grandfathering CASE), while the WORKER's cap read
+  // (`storageCapOf`, per account per cycle) fails into its own logged fail-open and quietly
+  // unmeters storage — the one consumer whose failure is silent, which is exactly what the
+  // deploy-gate 503 exists to forestall. Deploy order: migration → API → worker.
+  ["billing_subscriptions", "storage_bytes_limit"],
 ] as const;
 
 /**
@@ -295,10 +305,15 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * half-migrated host (drop the column from the writes) is precisely the verification forgery
  * the column closes. The deploy-gate 503 is what makes that repair never look attractive.
  *
+ * `0019_storage_bytes_limit` is the easy case — one added column on an existing table,
+ * `billing_subscriptions.storage_bytes_limit` — and its marker entry carries the argument worth
+ * keeping: of its consumers, the one whose too-early failure is SILENT is the worker's cap read,
+ * whose fail-open would quietly unmeter managed storage.
+ *
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0018_invites_confers_verified";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0019_storage_bytes_limit";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

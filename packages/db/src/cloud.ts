@@ -158,6 +158,16 @@ export {
   resendAlertSink, RESEND_EMAILS_URL, type ResendAlertSinkConfig,
 } from "./alert-mail.js";
 
+/**
+ * The managed storage cap's CLOUD half: the per-account cap read the hosted worker
+ * threads into ingest, and the at-cap roster the `storage_at_cap` alert rule counts. Here and
+ * not on the root barrel because both read `billing_subscriptions`; the byte counter itself is
+ * mail schema and exports from the root.
+ */
+export {
+  storageCapOf, accountsAtStorageCap, type AtCapAccount,
+} from "./storage-cloud.js";
+
 export {
   makeAiCreditGate, aiRefusalReason, classifyLedgerSource, screenerLedgerSource, AI_ACTION_COST,
   // The account-level AI off switch (migration 0022). Read by the gate itself on every

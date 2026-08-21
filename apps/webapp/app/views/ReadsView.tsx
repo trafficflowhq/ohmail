@@ -455,6 +455,7 @@ export function ReadsView({
   );
   const loadingLabel = tb("loading");
   const failedLabel = tb("failed");
+  const withheldLabel = tb("withheld");
 
   /* One memoized card per MOUNTED message — the memo keeps an apply that touched nothing from
      re-rendering the run, and the run itself keeps a switch from mounting the pile. `bodyOf` is
@@ -478,6 +479,7 @@ export function ReadsView({
         bodyLoadedRemote={body.loadedRemoteContent}
         loadingLabel={loadingLabel}
         failedLabel={failedLabel}
+        withheldLabel={withheldLabel}
         onSelect={onCur}
         onToggle={onToggle}
         onAction={onAction}

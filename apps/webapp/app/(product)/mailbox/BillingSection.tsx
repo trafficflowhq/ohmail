@@ -46,6 +46,7 @@ import {
   type TwofaChallenge,
 } from "../../api-client";
 import { aiCreditMessageKey, aiCreditState } from "./ai-credit-state";
+import { formatStorageBytes, storageState } from "./storage-state";
 
 type Plan = "solo" | "plus" | "pro";
 type Factor = "webauthn" | "totp" | "recovery_code";
@@ -293,6 +294,8 @@ export function BillingSection() {
   const creditNote = creditState
     ? (creditState.kind === "trial_credits" ? "trialSub" : aiCreditMessageKey(creditState))
     : null;
+  /** The storage derivation, pure over the same DTO — `storage-state.ts` carries the argument. */
+  const storState = storageState(sub);
 
   return (
     <SettingsSection className="acct">
@@ -333,6 +336,25 @@ export function BillingSection() {
             description={creditState ? tc(creditNote as never) : t("creditsSub")}
             value={String(sub?.balance ?? 0)}
           />
+          {/* ── STORAGE: the numbers, and — from ninety percent — the sentence. ──────────
+              Rendered only when the server sent BOTH figures (an older server sends neither,
+              and "0 GB of 0 GB" would be a broken claim). The sublabel is scoped to message
+              CONTENT deliberately: the mailbox on the user's own server is never counted, and
+              a row that just said "Storage" would read as a claim about their mail itself. */}
+          {storState || (typeof sub?.storageUsedBytes === "number" && typeof ent?.storageBytesLimit === "number" && ent.storageBytesLimit > 0) ? (
+            <SettingsRow
+              label={t("storage")}
+              description={
+                storState
+                  ? t(storState.kind === "at_cap" ? "storageFull" : "storageNear")
+                  : t("storageSub")
+              }
+              value={t("storageOf", {
+                used: formatStorageBytes(sub!.storageUsedBytes!),
+                cap: formatStorageBytes(ent!.storageBytesLimit!),
+              })}
+            />
+          ) : null}
         </>
       ) : subFailed ? (
         /* A failed read is not an empty result — the read was refused, so this pane knows of no plan and knows of no

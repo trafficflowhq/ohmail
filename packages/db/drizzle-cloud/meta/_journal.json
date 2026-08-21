@@ -134,6 +134,13 @@
       "when": 1790290940527,
       "tag": "0018_invites_confers_verified",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790636540527,
+      "tag": "0019_storage_bytes_limit",
+      "breakpoints": true
     }
   ]
 }
