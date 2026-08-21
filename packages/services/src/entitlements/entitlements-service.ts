@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
-import { mailboxes, type LedgerTx, type Tx } from "@trafficflow/db";
+import { accounts, mailboxes, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
   LIVE_SUBSCRIPTION_STATUSES,
   PLAN_LIMITS,
@@ -21,6 +21,7 @@ import {
   liveSubscriptionOf,
   lockAccountBalance,
   recordBillingEventFailure,
+  recordBillingEventNoop,
   renewCredits,
   suspendAccountForRevenueReversal,
   LedgerReplayError,
@@ -1338,6 +1339,10 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
      *  2. resolve the account — a plain READ. A HANDLED kind that cannot be resolved is an apply
      *     FAILURE, not a silent 200: by the next retry the customer link usually exists, and
      *     acknowledging a money event we could not place is how a payment silently vanishes.
+     *  2b. the TERMINAL NO-OP — `subscription` phase `deleted` whose resolved account no
+     *     longer EXISTS ⇒ record applied-with-disposition and 200. The one shape whose retry
+     *     can never succeed and whose effect has already happened (see the arm's comment);
+     *     every sibling kind for a missing account stays on arm 5, loudly.
      *  3. `db.transaction`: claim, then apply. The claim row and the effect become durable
      *     TOGETHER — and that is why there is no window in which credits exist
      *     without their dedup record or vice versa. `claimed === false` ⇒ already applied ⇒
@@ -1386,6 +1391,55 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
             "account_unresolved",
             `${event.type}: no account could be resolved from the subscription metadata or the customer link`,
           );
+        }
+
+        // ── THE TERMINAL NO-OP: subscription.deleted for a subject that no longer exists ──
+        //
+        // The DELETED phase alone, and only when the `accounts` row is GONE. The measured case
+        // (2026-08-19, a live-mode event): the subscription's metadata names an account that
+        // has been removed outright, so the mirror upsert can only ever fail the `accounts`
+        // FK — and a `failed` row that can never succeed is not an operator queue item, it is
+        // a stuck `billing_events_failed` alert, paging hourly about a cancellation that has
+        // already happened. There is nothing to mirror (the row the mirror would write is
+        // FK-anchored to the missing account) and nothing to revoke (the event IS the
+        // revocation, already done at Stripe), so this is recorded as applied-with-disposition
+        // and the retries stop.
+        //
+        // DELIBERATELY NOT its siblings: a `created`/`updated` for a missing account is a LIVE
+        // subscription with nowhere to land — money being taken for nothing — and an
+        // `invoice.paid` doubly so. Those keep the loud 500 + `failed` + alert path below (the
+        // ordinary cause is a checkout racing account provisioning, where the retry heals it;
+        // the extraordinary one is exactly what a human must see). The check-then-act race —
+        // an account deleted between this read and the transaction — falls through to the FK
+        // failure and self-heals on the next delivery, in this arm.
+        //
+        // `claim.accountId` is dropped for the record: `billing_events.account_id` FKs
+        // `accounts` too (the same reason the failure fallback drops attribution), so the
+        // orphaned id survives in the disposition text instead.
+        if (event.kind === "subscription" && event.phase === "deleted" && accountId != null) {
+          const alive = await (db as unknown as Tx)
+            .select({ id: accounts.id })
+            .from(accounts)
+            .where(eq(accounts.id, accountId))
+            .limit(1);
+          if (alive.length === 0) {
+            const disposition =
+              `noop: ${event.type} for account ${accountId}, which no longer exists — ` +
+              `nothing to mirror or revoke; recorded as applied with no effect`;
+            const recorded = await attempt(() =>
+              recordBillingEventNoop(db as unknown as Tx, { ...claim, accountId: null }, disposition));
+            if (!recorded) {
+              // Unlike the replay path, a 200 here without the row would erase the event from
+              // every audit surface — there is no ledger row testifying it existed. No money
+              // is at stake either way, so the safe direction is the retryable one.
+              raise({
+                stage: "record", code: "noop_record_failed",
+                stripeEventId: event.id, eventType: event.type, accountId,
+              });
+              return { status: 500, body: { error: "apply_failed" } };
+            }
+            return { status: 200, body: { received: true, orphaned: true } };
+          }
         }
 
         await db.transaction(async (tx) => {

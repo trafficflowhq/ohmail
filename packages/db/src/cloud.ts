@@ -91,7 +91,7 @@ export {
   TRIAL_STARTS_PER_IP, TRIAL_START_WINDOW_MS,
   entitlementsFor, liveSubscriptionOf, newestSubscriptionOf, effectiveSubscriptionOf,
   accountsWithSyncDisabled,
-  claimBillingEvent, recordBillingEventFailure,
+  claimBillingEvent, recordBillingEventFailure, recordBillingEventNoop,
   type Plan, type SubscriptionStatus, type SubscriptionSnapshot, type LiveSubscription,
   type EntitlementsInput, type EntitlementReason, type Entitlements, type BillingEventClaim,
 } from "./billing.js";

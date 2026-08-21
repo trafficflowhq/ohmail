@@ -788,6 +788,61 @@ export async function claimBillingEvent(tx: LedgerTx, ev: BillingEventClaim): Pr
 }
 
 /**
+ * Record that an apply was a DELIBERATE NO-OP: the event is final and there is nothing for it
+ * to do, so the row is written `applied` — suppressing every retry — with the WHY on the row.
+ *
+ * Born from one production event (2026-08-19): a `customer.subscription.deleted` whose
+ * subscription metadata named an account that had been removed outright. The mirror upsert
+ * failed the `accounts` FK, the row landed `failed`, and it could never succeed by retrying —
+ * the account was not coming back and the subscription was already canceled at Stripe, which
+ * is what the event said. A permanently-failed row is not an operator queue item; it is a
+ * stuck `billing_events_failed` alert, paging hourly about nothing anyone can do.
+ *
+ * `disposition` lands in `error` — the row's one free-text column — which on an APPLIED row
+ * reads as "why applying meant doing nothing". `ev.accountId` must be NULL when the subject is
+ * gone: `billing_events.account_id` FKs `accounts`, which is the same reason the failure
+ * fallback drops attribution; the disposition text is where the orphaned id survives.
+ *
+ * Idempotent, and final-respecting: a `failed` row converts (that is the whole point — the
+ * production row predated this path), an `applied` row is left untouched and still counts as
+ * success, exactly like {@link claimBillingEvent}'s already-applied answer. Autocommit is
+ * correct here for the same reason it is in the replay path: there is no effect for a
+ * transaction to be atomic WITH.
+ */
+export async function recordBillingEventNoop(
+  tx: Tx, ev: BillingEventClaim, disposition: string,
+): Promise<boolean> {
+  const rows = await tx
+    .insert(billingEvents)
+    .values({
+      stripeEventId: ev.stripeEventId,
+      type: ev.type,
+      accountId: ev.accountId ?? null,
+      payload: ev.payload,
+      eventTs: ev.eventTs,
+      status: "applied",
+      error: disposition,
+    })
+    .onConflictDoUpdate({
+      target: billingEvents.stripeEventId,
+      set: { status: "applied", error: disposition, receivedAt: sql`now()` },
+      // Only a failed attempt may be converted — an applied event is final, whichever path
+      // applied it.
+      setWhere: eq(billingEvents.status, "failed"),
+    })
+    .returning({ id: billingEvents.stripeEventId });
+  if (rows.length > 0) return true;
+  // Zero rows ⇒ the row exists and is already `applied` (the setWhere refused). That is a
+  // re-delivery of a no-op already recorded — success, nothing to write.
+  const existing = await tx
+    .select({ status: billingEvents.status })
+    .from(billingEvents)
+    .where(eq(billingEvents.stripeEventId, ev.stripeEventId))
+    .limit(1);
+  return existing[0]?.status === "applied";
+}
+
+/**
  * Record that an apply FAILED, from a transaction of its own (the apply transaction has rolled
  * back by the time this runs — that is why the row has to be written from outside it).
  *
