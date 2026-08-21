@@ -12,21 +12,28 @@
  * outside the app — a development server, or the render check that loads the built files in a
  * headless DOM — and there is no engine to have a state. In the packaged app it cannot happen:
  * the runtime defines its command channel before any bundle script runs. So the notice is
- * reserved for the case that matters, which is a shell that IS there and cannot answer.
+ * reserved for the case that matters, which is a shell that IS there and cannot answer — and the
+ * no-shell case lands on the door chooser, because "nothing is connected" is exactly what is
+ * true there. The app has two states, not connected and connected; there is no third surface and
+ * no sample mailbox (the one demo lives on ohmail.app's landing page).
  *
  * ── THE MAIL IS THE MAILBOX'S ───────────────────────────────────────────────────────────────
  *
  * When the shell says an engine is serving, `AppShell` below is handed a real client engine
  * running over the bridge (`bridge-fetch.ts`) and renders that mailbox — the same component, the
- * same views, the same keyboard, with the data coming from the process on this machine instead of
- * from fixtures. {@link mailMount} is the decision and it is a pure function, so which of the three
- * surfaces a given engine state produces is something a test drives rather than something this
- * component describes.
+ * same views, the same keyboard, with the data coming from the process on this machine.
+ * {@link mailMount} is the decision and it is a pure function, so which surface a given engine
+ * state produces is something a test drives rather than something this component describes.
  *
- * Loaded WITHOUT a shell — a development server, or the render check that loads the built files in
- * a headless DOM — there is no engine to run against and the bundle shows the invented mailbox it
- * has always shown. That is the same "there is no shell" case the notice section below is about,
- * seen from the mail surface.
+ * ── A MAILTO CLICK ANYWHERE ON THIS COMPUTER LANDS HERE ─────────────────────────────────────
+ *
+ * Once ohmail is the default mail app, the OS delivers every mailto click to the shell, which
+ * holds the link until this window claims it (`native.ts`, take-once). The claim happens twice —
+ * on the shell's poke, and once at mount for the click that STARTED the app — and the parsed
+ * fields (`mailto.ts`, the one parser) wait in state until the mail client is on screen, then
+ * seed the compose form through `AppShell`'s `mailtoDraft` seam. Clicked before a mailbox is
+ * connected, the draft simply waits: connecting is the thing the person has to do first, and the
+ * compose opens once it is done.
  *
  * ── AND THE NATIVE CHROME IS DRIVEN FROM HERE ───────────────────────────────────────────────
  *
@@ -64,7 +71,11 @@ import { cloudSuggestWire } from "./cloud-suggest.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
 import { LocalSuggest } from "./local-suggest.js";
 import { CloudSuggest } from "./CloudSuggest.js";
-import { notify, onMenuCommand, onMenuNavigate, setBadge, type MenuCommand } from "./native.js";
+import {
+  claimMailto, notify, onMailto, onMenuCommand, onMenuNavigate, setBadge, type MenuCommand,
+} from "./native.js";
+import { parseMailto, type MailtoDraft } from "./mailto.js";
+import { DefaultMailAsk, DefaultMailRow } from "./DesktopDefaultMail.js";
 import { createLocalEngine, type EngineStatus } from "./bridge-fetch.js";
 
 /**
@@ -109,6 +120,23 @@ export function DesktopGate() {
   useEffect(() => {
     void onMenuNavigate((view) => go(view));
     void onMenuCommand(runMenuCommand);
+  }, []);
+
+  /* A MAILTO CLICK, CLAIMED. The shell holds the link (take-once); this window claims it on the
+     shell's poke and once at mount — the mount claim is the activation that STARTED the app,
+     whose poke fired before this bundle's scripts ran. The parsed draft waits in state until the
+     mail client is on screen (the AppShell below consumes it), so a click on a not-yet-connected
+     install becomes the compose the moment a mailbox is. See the header. */
+  const [mailtoDraft, setMailtoDraft] = useState<MailtoDraft | null>(null);
+  useEffect(() => {
+    const claim = async (): Promise<void> => {
+      const raw = await claimMailto();
+      if (raw === null) return;
+      const draft = parseMailto(raw);
+      if (draft) setMailtoDraft(draft);
+    };
+    void onMailto(() => void claim());
+    void claim();
   }, []);
 
   const onStatus = useCallback((next: EngineStatus) => {
@@ -184,11 +212,11 @@ export function DesktopGate() {
   }
 
   if (shell === null) {
-    /* Nothing has been asked yet, and no sample world: a window that guesses at this moment is a
+    /* Nothing has been asked yet, and no guessing: a window that guesses at this moment is a
        window that guesses wrong on a slow first launch. The same surface the opening state below
        draws — the skeleton behind its grace, the boot line at the rail's foot — with no phase,
        because no phase has been read. In the packaged app this frame lasts one status call; on a
-       dev server it is replaced by the preview before either grace elapses. */
+       dev server it is replaced by the chooser before either grace elapses. */
     return (
       <div className="gate gate-boot">
         <BootSkeleton active rail />
@@ -231,18 +259,18 @@ export function DesktopGate() {
      has to draw something, and the honest something is the line below. */
   const engine = mount.kind === "engine" && live?.key === mount.key ? live.engine : null;
 
-  if (mount.kind !== "sample" && engine === null) {
+  if (engine === null) {
     /* A door is chosen and no engine has served yet — a first launch migrating a database, or an
-       engine on its way back up. No mail: the two things this window could put on screen instead
-       are a guess and the sample mailbox, and the sample mailbox under somebody's own address is
-       the worse of the two. The settling poll above is what ends this state.
+       engine on its way back up. No mail: the only thing this window could put on screen instead
+       is a guess, and a guess about somebody's own mailbox is worse than a quiet frame. The
+       settling poll above is what ends this state.
 
        AND, ONCE THE WAIT STOPS BEING AN ORDINARY ONE, THE SHAPE OF THE WINDOW BEHIND IT.
        `BootSkeleton` is `mailMount`'s answer drawn out, never a second opinion about it: this
        branch is chosen entirely above, and the silhouette is decoration inside a decision that
        has already been made. It carries no text and nothing derived from any mailbox, which is
-       what keeps it on the right side of the rule this comment states — a shape is not the sample
-       world, for exactly as long as there is nothing in it.
+       what keeps it on the right side of the rule this comment states — a shape is not invented
+       mail, for exactly as long as there is nothing in it.
 
        It is delayed behind its own grace, so the ordinary launch is the quiet frame it has always
        been. The wait it exists for is the one-off recovery launch: an install whose previous run
@@ -266,11 +294,11 @@ export function DesktopGate() {
   return (
     <>
       <AppShell
-        /* The invented mailbox is what a window with no engine behind it shows; a window with one
-           shows that engine's mail. `demo` is the client's own flag for the first — it is what
-           puts the ribbon on screen and freezes the clock — and it must be false in the second,
-           because every one of those things would be a lie about somebody's own mail. */
-        demo={engine === null}
+        /* Always false, structurally: the early return above means this line is only reached
+           with a real engine behind the window, and `demo` — the ribbon, the frozen clock, the
+           fixtures adapter — would be a lie about somebody's own mail. The desktop has no demo
+           surface at all; the one demo lives on ohmail.app's landing page. */
+        demo={false}
         {...(engine ? { engine } : {})}
         /* WHAT THE SYNC LINE IS ALLOWED TO SAY. Its ladder begins with "can we see this account's
            mailboxes?" and stays silent when it cannot — which is what this window used to be,
@@ -433,8 +461,21 @@ export function DesktopGate() {
               ),
             }
           : {})}
+        /* SETTINGS → GENERAL, THE DEFAULT-MAIL ROW. Present whenever the shell answered — the
+           question is about this COMPUTER, not about a door, so both doors get it. Every read
+           and verb in the row is a shell command (`DesktopDefaultMail.tsx`). */
+        {...(status ? { defaultMailSection: <DefaultMailRow /> } : {})}
+        /* A MAILTO CLICK BECOMING THE COMPOSE FORM — the claim effect above holds the parsed
+           fields until this render has a real engine behind it, and the shell seeds compose
+           exactly the way `writeTo` does (see `AppShell`'s `mailtoDraft`). Cleared once seeded,
+           so a remount cannot seed the same click twice. */
+        {...(mailtoDraft ? { mailtoDraft, onMailtoDraftSeeded: () => setMailtoDraft(null) } : {})}
         onUnread={onUnread}
       />
+      {/* THE ONE-TIME DEFAULT-MAIL ASK — over the mail, once a mailbox is connected, and never
+          twice: either answer persists, and "already the default" persists too. The Settings row
+          above is the durable way back for whoever says "Not now". */}
+      <DefaultMailAsk />
       {overlay ? (
         /* OVER the client, not under it. `.gate` is a full-height flow element — correct when it
            IS the window, wrong when the mail is already on screen behind it, where it would

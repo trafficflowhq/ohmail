@@ -293,14 +293,16 @@ describe("the window is granted the command it calls", () => {
   });
 });
 
-describe("the engine-bearing build arms it, and the preview cannot", () => {
+describe("the window entry arms it", () => {
   const main = sourceOf("src/main.tsx");
 
-  it("`enableDesktopAttachments` is called inside the build-time branch", () => {
-    expect(main).toContain("enableDesktopAttachments");
-    // Inside the literal's branch, so the bundler folds it out of the preview entirely — the
-    // artifact whose published claim is that it calls no command.
-    expect(main).toMatch(/if \(__OHMAIL_LOCAL_ENGINE__\)[\s\S]{0,600}?enableDesktopAttachments\(\)/);
+  it("`enableDesktopAttachments` is called from the entry, unconditionally", () => {
+    // The guard it used to sit inside (`if (__OHMAIL_LOCAL_ENGINE__)`) existed for the retired
+    // preview artifact, whose published claim was that it calls no command. The window entry is
+    // the engine build's alone now, so the arming is unconditional — outside the app the seam's
+    // own no-shell contract is what refuses, not a build-time branch.
+    expect(main).toContain("enableDesktopAttachments()");
+    expect(main).not.toMatch(/__OHMAIL_LOCAL_ENGINE__/);
   });
 
   it("and it is armed exactly once", () => {

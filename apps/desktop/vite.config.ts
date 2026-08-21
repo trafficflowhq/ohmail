@@ -12,24 +12,25 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
  *
  * One directory, two outputs, and the difference is not a runtime switch:
  *
- *  · the PREVIEW (default) is what has shipped so far — fixture mail, no engine, no adapter that
- *    could reach anything. The sync client is aliased to a stub whose constructor throws, and the
- *    bridge to a local engine is not in the bundle at all;
- *  · the LOCAL-ENGINE build carries the real client and `src/bridge-fetch.ts`, which is the only
- *    thing in either output that can address anything outside the page — and it addresses the
- *    shell, not the network.
+ *  · the WINDOW bundle (the default arm) is the desktop app's own UI: the real sync client over
+ *    the bridge in `src/bridge-fetch.ts`, which is the only thing in either output that can
+ *    address anything outside the page — and it addresses the shell, not the network. It belongs
+ *    in a binary compiled with the Rust `local-engine` feature, whose commands it calls;
+ *  · the HOST CLIENT (next constant) is the browser bundle the host door serves to a phone.
  *
- * An environment variable rather than a Vite `mode`, because the Rust half is selected by a Cargo
- * feature (`local-engine`) and the two must be set together: `npm run ui:build:engine` produces
- * the bundle that belongs in a binary built with that feature, and `npm run ui:build` produces the
- * one that belongs in a binary built without it. Pairing them the other way gives a window with a
- * bridge and no commands to call, or commands with nothing to call them.
+ * There used to be a THIRD arm, and it was the default: an "interface preview" over fixture
+ * mail, built and smoked but never shipped. Retired under the no-demo rule — the app has no
+ * demo surface; the one demo lives on ohmail.app's landing page — so the window bundle is the
+ * default now, `OHMAIL_LOCAL_ENGINE=1` remains as its explicit spelling (`scripts/build-ui.mjs
+ * --engine` still sets it, and refuses a bare invocation so a build is always a named choice),
+ * and a bare `vite` dev server gets the same arm: the real client, whose no-shell surface is
+ * the door chooser rather than invented mail.
  *
  * The variable is set by the SCRIPT rather than by the caller's shell — see `scripts/build-ui.mjs`
  * — because `OHMAIL_LOCAL_ENGINE=1 vite build` is POSIX syntax that cmd.exe reads as a program
  * name, and Windows is one of the platforms this app ships to.
  */
-const LOCAL_ENGINE = process.env.OHMAIL_LOCAL_ENGINE === "1";
+const LOCAL_ENGINE = process.env.OHMAIL_HOST_CLIENT !== "1";
 
 /**
  * THE THIRD ARTIFACT — the HOST CLIENT: the browser bundle the desktop's host door serves to a
@@ -56,7 +57,7 @@ const LOCAL_ENGINE = process.env.OHMAIL_LOCAL_ENGINE === "1";
  * artifact cannot be both the window bundle and the served one.
  */
 const HOST_CLIENT = process.env.OHMAIL_HOST_CLIENT === "1";
-if (HOST_CLIENT && LOCAL_ENGINE) {
+if (HOST_CLIENT && process.env.OHMAIL_LOCAL_ENGINE === "1") {
   throw new Error("OHMAIL_HOST_CLIENT and OHMAIL_LOCAL_ENGINE select different artifacts — set one");
 }
 
@@ -345,20 +346,23 @@ function hostIndexName(): Plugin {
  *     `useTranslations`. Aliasing the framework wrapper away keeps the ICU
  *     semantics byte-identical instead of re-implementing plurals in a shim.
  *
- *  2. `./adapters/http-adapter.js` → `src/no-http-adapter.ts`, IN THE PREVIEW ONLY.
- *     That artifact has no engine to talk to, so its sync client is not merely
- *     unused, it is not in the module graph: grep the preview's output and there
- *     is no request builder to find.
+ *  2. `./adapters/fixtures-adapter.js` → `src/no-fixtures-adapter.ts`, IN BOTH ARTIFACTS.
+ *     The shared shell keeps a demo arm because the landing page's demo is built
+ *     from it; `engine-config.ts` therefore names `FixturesAdapter` in a branch a
+ *     desktop build can never take — and a branch never taken still puts its
+ *     import in the bundle, which here is the whole fixtures corpus: invented
+ *     people and sample mail inside an app whose rule is that it opens EMPTY.
+ *     So the module is replaced rather than merely unreached, and
+ *     `scan-artifact.mjs` greps the output for the sample world in both
+ *     directions.
  *
- *     The ENGINE build resolves the real module, and must — it is the client that
- *     runs the mail against the engine on this machine, over the bridge. That is
- *     what the `LOCAL_ENGINE ? [] : [alias]` below says, and it is why the real
- *     module is published: a binary that carries it has to offer it. This note
- *     used to claim the file was published nowhere, which stayed true right up
- *     until a second artifact existed, and then shipped a window that went blank
- *     the moment a mailbox served, because the stub was standing in for a class
- *     the artifact constructs. `scan-artifact.mjs` now asserts which of the two
- *     each bundle contains, in both directions.
+ *     (A sibling alias used to sit here the OTHER way round: the retired
+ *     "interface preview" aliased the real `http-adapter` to a throwing stub.
+ *     It once shipped a window that went blank the moment a mailbox served,
+ *     because the published tree substituted the stub for the class the engine
+ *     build constructs — the reason the scan asserts presence AND absence, and
+ *     the reason no artifact aliases the sync client any more: both remaining
+ *     artifacts are engine-bearing and carry the real one.)
  *
  *  3. `../api-client` → `src/no-api-client.ts`, IN BOTH ARTIFACTS. Neither has a
  *     Cloud account or a server; both talk to a local engine over a pipe. This one
@@ -432,11 +436,10 @@ export default defineConfig({
        tabs keep their hidden-tab-zero-syncs behaviour unchanged — a web-side guard fails if the
        flag ever leaks on (grep `syncsWhileHidden` in the web app's test suite). */
     "process.env.NEXT_PUBLIC_DESKTOP": HOST_CLIENT ? "undefined" : JSON.stringify("1"),
-    /* Which artifact this is, as a literal. `main.tsx` branches on it, and the
-       bundler removes the branch it did not take — so the preview does not carry
-       a dormant bridge and the engine build does not carry a dead stub. See
-       `src/build-flags.d.ts` for the declaration the type checker reads. */
-    __OHMAIL_LOCAL_ENGINE__: JSON.stringify(LOCAL_ENGINE),
+    /* `__OHMAIL_LOCAL_ENGINE__` was defined here while a fixtures-only preview artifact shared
+       this entry — `main.tsx` branched on it and the bundler removed the arm not taken. The
+       preview is retired, the entry has one arm, and the flag is gone with its last consumer
+       (a define nothing reads is a knob that looks load-bearing and is not). */
     /* The version the installer is stamped with, for the About pane. Read from the manifest
        here rather than imported by the module that shows it: an import would compile the whole
        manifest — scripts, dependency ranges, the prose above them — into the artifact for one
@@ -463,26 +466,23 @@ export default defineConfig({
       { find: "@tiptap/starter-kit", replacement: r("./node_modules/@tiptap/starter-kit") },
       { find: "@tiptap/extension-link", replacement: r("./node_modules/@tiptap/extension-link") },
       { find: "dompurify", replacement: r("./node_modules/dompurify") },
-      /* pdf.js is kept OUT of the runtime bundle: the shell is fixtures-only (no attachment bytes,
-         worker-src 'none'), so it never previews a PDF, and the real library's module-init breaks
-         boot under the locked CSP. The dynamic import resolves to a no-op stub. tsconfig.json still
-         points the TYPE at the real package, so AttachmentPreview.tsx typechecks against pdf.js. */
+      /* pdf.js is kept OUT of the runtime bundle: the desktop window never previews a PDF inline
+         (worker-src 'none'; an attachment opens in the platform's own viewer over
+         `open_attachment`), and the real library's module-init breaks boot under the locked CSP.
+         The dynamic import resolves to a no-op stub. tsconfig.json still points the TYPE at the
+         real package, so AttachmentPreview.tsx typechecks against pdf.js. */
       { find: "pdfjs-dist", replacement: r("./src/no-pdfjs.ts") },
 
       /* Anchored at both ends: a RegExp `find` replaces only the matched span,
          so a pattern that leaves the leading "./" behind yields a broken path.
 
-         PRESENT IN THE PREVIEW ONLY. The local-engine build needs the real
-         adapter — it is the client that runs against the engine, over the bridge
-         in `src/bridge-fetch.ts` rather than over a socket — and the HOST CLIENT
-         needs it for the plainer reason: it IS the socket client, in bearer mode
-         against the origin that served it. So the stub is aliased in neither.
-         Everything the stub's header says about the preview stays exactly as
-         true: that build still has no request builder, no CSRF header and no
-         cursor protocol in it, because that build still has the alias. */
-      ...(LOCAL_ENGINE || HOST_CLIENT
-        ? []
-        : [{ find: /^(?:.*\/)?adapters\/http-adapter\.js$/, replacement: r("./src/no-http-adapter.ts") }]),
+         IN BOTH ARTIFACTS — see seam (2) in the header. The window bundle and the
+         served host client each render the shared shell, whose demo branch names
+         the fixtures adapter; neither may carry the sample world, so the module
+         resolves to the refusing stub and the corpus behind it never enters the
+         graph. (The sync client, by contrast, is aliased in NEITHER artifact:
+         both are engine-bearing and construct the real `HttpAdapter`.) */
+      { find: /^(?:.*\/)?adapters\/fixtures-adapter\.js$/, replacement: r("./src/no-fixtures-adapter.ts") },
 
       /* The Cloud API client, absent — IN BOTH ARTIFACTS, and the lack of a
          `LOCAL_ENGINE` condition is the whole point rather than an oversight.
@@ -510,7 +510,9 @@ export default defineConfig({
 
       { find: "@ohmail/tokens/tokens.css", replacement: r("../../packages/tokens/src/tokens.css") },
       { find: "@ohmail/tokens", replacement: r("../../packages/tokens/src/index.ts") },
-      { find: "@ohmail/fixtures", replacement: r("../../packages/fixtures/src/index.ts") },
+      /* `@ohmail/fixtures` needs no entry: its one importer was the real fixtures adapter, which
+         the stub alias above takes out of the graph — so the corpus is unresolvable here by
+         construction, not merely unimported. */
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
 
@@ -542,15 +544,15 @@ export default defineConfig({
        no `fetch(` at all is worth more here than a polyfill for browsers this
        app cannot be opened in. */
     modulePreload: false,
-    /* Tauri ships the sources' shape, not their names — but a preview that
+    /* Tauri ships the sources' shape, not their names — but a bundle that
        cannot be read back is not verifiable, so keep the module graph legible
        in the artifact inspection step. */
     sourcemap: false,
     target: "es2022",
     assetsInlineLimit: 0,
     /* Emit ONE chunk, no dynamic-import split. The shared shell's only dynamic import is
-       AttachmentPreview.tsx's `import("pdfjs-dist")` (here a no-op stub — the preview never runs in
-       this fixtures-only shell). Vite otherwise code-splits it and wraps the call in a preload helper
+       AttachmentPreview.tsx's `import("pdfjs-dist")` (here a no-op stub — the desktop opens
+       attachments in the platform's viewer). Vite otherwise code-splits it and wraps the call in a preload helper
        that references `import.meta.url`; the smoke loads the bundle as a CLASSIC script (jsdom cannot
        run module scripts), where `import.meta` is a syntax error that aborts the whole boot and
        renders nothing. Inlining removes the split and the `import.meta`, so the bundle boots as one

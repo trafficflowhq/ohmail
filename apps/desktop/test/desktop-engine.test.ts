@@ -204,12 +204,15 @@ describe("mailMount — which mail the window shows", () => {
     expect(mailMount(status({}), null)).toEqual({ kind: "engine", key: "mbx-1" });
   });
 
-  it("shows the sample mailbox only when there is no shell to ask", () => {
-    expect(mailMount({ kind: "none" }, null)).toEqual({ kind: "sample" });
-    // …and never once a shell has answered, whatever it answered.
+  it("never answers a sample world — no shell means not connected, nothing else", () => {
+    // The retired arm: `{kind:"none"}` used to answer `sample`, the invented mailbox. Under the
+    // no-demo rule it answers `opening` — and the GATE never even asks, because `gateFor` routes
+    // the no-shell case to the chooser (the not-connected surface) before any mail is mounted.
+    expect(mailMount({ kind: "none" }, null)).toEqual({ kind: "opening" });
+    // …and no state a shell can answer produces anything but the two honest kinds.
     for (const state of ["serving", "starting", "stopped", "failed", "not_configured"] as const) {
-      expect(mailMount(status({ state }), null).kind).not.toBe("sample");
-      expect(mailMount(status({ state }), "mbx-1").kind).not.toBe("sample");
+      expect(["engine", "opening"]).toContain(mailMount(status({ state }), null).kind);
+      expect(["engine", "opening"]).toContain(mailMount(status({ state }), "mbx-1").kind);
     }
   });
 
@@ -321,10 +324,17 @@ describe("the window against a serving engine", () => {
     expect(text).not.toMatch(/nothing leaves this tab/i);
   });
 
-  it("shows the sample mailbox, and touches no bridge, when there is no shell", async () => {
+  it("shows the not-connected surface, and touches no bridge, when there is no shell", async () => {
+    // The retired render: this used to assert the invented mailbox ("invented mail" on screen).
+    // The no-demo rule replaced it with the door chooser — the honest not-connected state — and
+    // the bridge stays untouched either way.
     const urls = shell(null);
     const el = await render();
     expect(urls).toEqual([]);
-    expect(el.textContent ?? "").toMatch(/invented mail/i);
+    const text = el.textContent ?? "";
+    expect(text).not.toMatch(/invented mail/i);
+    // The chooser's own question is on screen — the surface a fresh install lands on.
+    expect(text).toMatch(/Which mailbox is this\?/);
+    expect(el.querySelector(".gate-card")).not.toBeNull();
   });
 });

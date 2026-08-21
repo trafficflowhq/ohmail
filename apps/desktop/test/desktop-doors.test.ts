@@ -131,15 +131,18 @@ describe("what the window shows", () => {
   });
 
   /**
-   * "NO SHELL AT ALL" IS NOT A FAILURE AND IS NOT ROUTED TO ONE.
+   * "NO SHELL AT ALL" IS NOT A FAILURE AND IS NOT ROUTED TO ONE — it is NOT CONNECTED.
    *
-   * It means the bundle is loaded outside the app — a development server, or the render check that
-   * loads the built files in a headless DOM. The packaged app always has a command channel, so
-   * this branch is unreachable there; treating it as an error would put a notice on the one
-   * surface whose whole job is to render the client.
+   * It means the bundle is loaded outside the app — a development server, or the render check
+   * that loads the built files in a headless DOM. The packaged app always has a command channel,
+   * so this branch is unreachable there. The app has two states, not connected and connected,
+   * and with no shell there is nothing to be connected to — so the honest surface is the door
+   * chooser, whose submits fail with a sentence. (This used to route to "app", which mounted a
+   * sample mailbox; the no-demo rule retired that arm — demo mail lives on the landing page and
+   * nowhere an app opens.)
    */
-  it("leaves the preview alone when there is no shell to ask", () => {
-    expect(gateFor({ kind: "none" }).kind).toBe("app");
+  it("shows the not-connected surface when there is no shell to ask", () => {
+    expect(gateFor({ kind: "none" }).kind).toBe("choose");
   });
 });
 

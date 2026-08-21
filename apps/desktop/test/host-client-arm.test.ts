@@ -32,8 +32,11 @@ describe("the vite arm", () => {
     expect(config).toContain('input: r("./host.html")');
   });
 
-  it("resolves the REAL http-adapter — the stub is aliased in neither engine-bearing artifact", () => {
-    expect(config).toContain("...(LOCAL_ENGINE || HOST_CLIENT");
+  it("resolves the REAL http-adapter — no artifact aliases the sync client any more", () => {
+    // Both remaining artifacts are engine-bearing and construct the real class; the alias that
+    // once stubbed it (the retired preview's) is gone rather than conditional, so no path in
+    // this config can hand either bundle a sync client whose constructor throws.
+    expect(config).not.toMatch(/find:[^\n]*http-adapter/);
   });
 
   it("does NOT declare itself a desktop window: NEXT_PUBLIC_DESKTOP stays undefined, so a hidden phone tab keeps the slow sync cadence", () => {
@@ -41,7 +44,7 @@ describe("the vite arm", () => {
   });
 
   it("the two artifact flags are mutually exclusive, in the config and in the build script", () => {
-    expect(config).toContain("HOST_CLIENT && LOCAL_ENGINE");
+    expect(config).toContain('HOST_CLIENT && process.env.OHMAIL_LOCAL_ENGINE === "1"');
     const build = read("scripts/build-ui.mjs");
     expect(build).toContain("engine && hostClient");
   });

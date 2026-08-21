@@ -22,7 +22,7 @@
  * or commands with nothing to call them. The third is worse than either, because it is invisible
  * until the app is opened on a machine that is not the one that built it — the binary has the whole
  * engine lifecycle compiled in and the resources it looks for are simply not in the bundle, so it
- * reports itself as the interface preview and is believed.
+ * reports "built without a mail engine" and is believed.
  *
  * A workflow that spells the three by hand is a workflow where a later edit fixes two of them. So
  * the three live here, in one place, and CI calls this and nothing else.
@@ -87,27 +87,25 @@ run(process.execPath, [join(ROOT, "scripts", "stage-desktop-resources.mjs")], RO
 
 say("2/4 · build the engine-bearing UI bundle");
 run(process.execPath, [join(APP, "scripts", "build-ui.mjs"), "--engine"], APP);
-/* …and read what came out. The engine bundle carries a surface the preview must not have at all —
- * the pane that points this install at a model of its own, and the Screener control that uses it —
- * and a bundle built with the wrong flag is exactly how the two halves of this app end up
- * mismatched with nothing failing until somebody opens the window. Cheap, and it runs where the
- * artifact is made rather than where somebody remembers to check it. */
+/* …and read what came out. The window bundle carries gate-only surfaces (the local-model pane,
+ * the hosted suggest transport, the shell commands) and must carry NO sample world — the no-demo
+ * rule, asserted from the emitted bytes with a paired presence so deletion cannot go green.
+ * Cheap, and it runs where the artifact is made rather than where somebody remembers to check. */
 run(process.execPath, [join(APP, "scripts", "scan-artifact.mjs"), "--expect", "engine"], APP);
-/* …and RENDER it. The scan reads the bundle's bytes for the surface that belongs to this
- * artifact; this executes it. They answer different questions and the second one had no asker
- * until now: `smoke.mjs` ran only over the interface preview, so the bundle people actually open
+/* …and RENDER it. The scan reads the bundle's bytes; this executes it, offline audit included.
+ * They answer different questions and the second one once had no asker: the bundle people open
  * their mail in had never been drawn anywhere, on any machine — and a released build spent its
  * whole life showing a white window the moment a mailbox started serving, because its copy of the
- * client's HTTP adapter was the preview's throwing stub and the constructor runs inside a React
- * render. A stub Tauri channel serves one small mailbox and the checks assert the window reached
- * it over the bridge and drew it.
+ * client's HTTP adapter was a throwing stub and the constructor runs inside a React render. A
+ * stub Tauri channel serves one small mailbox and the checks assert the window reached it over
+ * the bridge and drew it.
  *
  * FAILS THE BUILD, like every other step here: `run` is `execFileSync` with inherited stdio and no
  * shell and no pipe, so the status is the smoke's own — a pipeline would report the LAST command's
  * status, which is how a died check reports success. */
 run(process.execPath, [join(APP, "scripts", "smoke.mjs"), "--expect", "engine"], APP);
 
-/* THE SERVED CLIENT — the third artifact, packaged as the `host-client` resource so the engine's
+/* THE SERVED CLIENT — the second artifact, packaged as the `host-client` resource so the engine's
  * host door has a browser client to hand the phone that scans the pairing QR. Built HERE, in the
  * same script that selects the other halves, for the same reason those live here: a bundle staged
  * from last week's dist-host would serve last week's client under this week's engine, and nothing
@@ -119,6 +117,10 @@ run(process.execPath, [join(APP, "scripts", "build-ui.mjs"), "--host-client"], A
 if (!existsSync(join(APP, "dist-host", "index.html"))) {
   die("the host-client build produced no dist-host/index.html — nothing for the host door to serve");
 }
+/* The served bundle stands under the same no-demo rule as the window's — it renders the same
+ * shared shell one static import away from the sample world — so it is scanned where it is made,
+ * like its sibling above. */
+run(process.execPath, [join(APP, "scripts", "scan-artifact.mjs"), "--expect", "host-client"], APP);
 
 say("4/4 · build the app");
 /* `tauri` from this package's own `node_modules/.bin`, resolved through node rather than named as a

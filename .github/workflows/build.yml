@@ -6,11 +6,11 @@ name: build
 # client here; it now builds the same Tauri app as Windows and Linux, carrying
 # the same mail engine. Each job does the same five things in the same order:
 #
-#   1. render check   — build the PREVIEW bundle and smoke it. The offline audit
-#                       can only be run against this artifact, because the
-#                       engine-bearing bundle is supposed to talk to its engine;
-#                       keeping it means the interface is still proven to draw
-#                       rather than merely to compile.
+#   1. render check   — build the WINDOW bundle and smoke it, offline audit
+#                       included: the page's whole reach is the shell's command
+#                       channel (`invoke`, not `fetch`), so "it opens no
+#                       connection" is asserted against the artifact that
+#                       ships. Fail-fast, in front of the platform toolchains.
 #   2. engine         — build the one-file mail engine from this source, with
 #                       the pinned esbuild.
 #   3. runtime        — download the official Node build for this platform and
@@ -47,47 +47,32 @@ name: build
 # check is run by hand at release time, which is a person remembering rather
 # than a guard.
 #
-# ── BOTH BUNDLES ARE RENDERED, AND THE ENGINE ONE IS RENDERED TWICE ───────
+# ── THE WINDOW BUNDLE IS RENDERED THREE TIMES, AND EACH RUN ANSWERS FOR ITSELF ──
 #
-# Step 1 of each platform job smokes the PREVIEW. The ENGINE-bearing bundle is
-# smoked in two places, and the second one exists because the first one alone
-# was not enough:
+# There used to be a second UI artifact here — a fixtures-only "interface
+# preview", retired under the product's no-demo rule — and step 1 smoked THAT,
+# which is how the engine-bearing bundle once went unrendered for two releases
+# while a red preview smoke stood in front of it. The window bundle is the one
+# UI artifact now, and it is smoked in three places, each for its own reason:
 #
-#   · inside `app:build:engine` (see `apps/desktop/scripts/build-engine-app.mjs`),
-#     which all three platform jobs call. That one is beside the artifact, where
-#     a red smoke STOPS the build instead of being reported next to it. It is
-#     the gate, and it stays exactly where it is.
-#   · in the `engine-ui-smoke` job below, which builds the engine-bearing bundle,
-#     reads it, renders it, and does nothing else. That one is the VERDICT, and
-#     it is a separate job precisely so that nothing else can decide whether it
-#     runs.
+#   · step 1 of each platform job — FAIL-FAST, in front of the hour of native
+#     compile, so a broken UI is a two-minute red rather than an hour-long one;
+#   · inside `app:build:engine` (see `apps/desktop/scripts/build-engine-app.mjs`)
+#     — the GATE, beside the artifact, over the dist rebuilt from staged
+#     resources, where a red smoke STOPS the build;
+#   · in the `engine-ui-smoke` job below — the VERDICT, a separate job precisely
+#     so that nothing else (a Rust toolchain failure, a runtime download, any
+#     earlier step) can decide whether the bundle's own question gets asked.
 #
-# This file used to argue the opposite — that one caller was better than two,
-# because two callers of one check is one caller that can drift. That reasoning
-# was right about drift and wrong about what it was buying. Steps inside a job
-# are sequential and a failure ends the job: the engine smoke sat a dozen steps
-# behind the preview smoke in the same job, so a red PREVIEW meant the engine
-# bundle was never rendered at all. Not failed, not skipped — never asked. It went
-# unrun that way for two releases, on a preview smoke reddened by a fixture
-# change that had nothing to do with the engine bundle, and the gap it would
-# have caught surfaced when the release was cut instead.
+# What makes all three cheap: none needs the engine binary or the vendored Node
+# runtime. `smoke.mjs --expect engine` serves the window from a stub Tauri
+# channel, so each run is a `vite build` and a jsdom render.
 #
-# So the engine smoke now has a verdict that does not depend on the preview's,
-# and the preview keeps its fail-fast position in front of the expensive
-# platform builds — a red preview still stops those before they spend an hour.
-#
-# What makes a job of its own cheap enough to be worth having: neither caller
-# needs the engine binary or the vendored Node runtime. `smoke.mjs --expect
-# engine` serves the window from a stub Tauri channel, so the whole check is a
-# `vite build` and a jsdom render on the cheapest runner. It adds no wall time,
-# because it finishes long before any platform job does.
-#
-# The engine bundle went unsmoked for its whole life until the first caller
+# The window bundle went unsmoked for its whole life until the first caller
 # existed, and the cost was measured: a released build showed a blank white
 # window the moment a mailbox started serving, because its copy of the client's
-# HTTP adapter was the preview's throwing stub and that constructor runs inside
-# a React render. Nothing in this file could have seen it — the preview it
-# smoked was fine.
+# HTTP adapter was a throwing stub and that constructor runs inside a React
+# render. Nothing this file smoked at the time could have seen it.
 #
 # Nothing here is signed: no Apple Developer ID, no Authenticode certificate.
 # See the per-platform "unsigned" notes in the README; the macOS artifact is
@@ -153,15 +138,16 @@ jobs:
         working-directory: apps/desktop
         run: npm run ui:typecheck
 
-      # ── 1 · the render check, over the PREVIEW bundle ──────────────────────
-      # The preview is the only artifact "it opens no connection" can be
-      # asserted against. It is built first and smoked first; step 4 rebuilds
-      # dist/ with the bridge in it.
-      - name: Build the preview bundle
+      # ── 1 · the render check, fail-fast over the WINDOW bundle ─────────────
+      # Built and smoked before the platform toolchains, offline audit included
+      # (the page reaches nothing but the shell channel, so the audit runs on
+      # the artifact that ships). `app:build:engine` (step 4) rebuilds dist/
+      # from staged resources and scans+smokes it again beside the artifact.
+      - name: Build the window bundle
         working-directory: apps/desktop
-        run: npm run ui:build
+        run: npm run ui:build:engine
 
-      - name: Smoke the preview bundle
+      - name: Smoke the window bundle
         working-directory: apps/desktop
         run: npm run smoke
 
@@ -402,11 +388,13 @@ jobs:
         working-directory: apps/desktop
         run: npm run ui:typecheck
 
-      - name: Build the preview bundle
+      # Fail-fast render check over the WINDOW bundle — offline audit included;
+      # app:build:engine rebuilds, scans and smokes it again beside the artifact.
+      - name: Build the window bundle
         working-directory: apps/desktop
-        run: npm run ui:build
+        run: npm run ui:build:engine
 
-      - name: Smoke the preview bundle
+      - name: Smoke the window bundle
         working-directory: apps/desktop
         run: npm run smoke
 
@@ -465,11 +453,11 @@ jobs:
           # ── The installer MUST be able to fetch the WebView2 runtime ───────
           #
           # THIS ASSERTION IS THE REVERSE OF WHAT IT USED TO BE, and the reversal
-          # is a product decision rather than a loosened guard. The preview build
-          # set `webviewInstallMode: skip` and this job proved the downloader was
-          # absent, because an app that claimed to reach nothing must not ship an
-          # installer that reaches something. That preview did not need a webview
-          # to be useful — it drew fixtures.
+          # is a product decision rather than a loosened guard. A retired build
+          # (the fixtures-only interface preview) set `webviewInstallMode: skip`
+          # and this job proved the downloader was absent, because an app that
+          # claimed to reach nothing had to not ship an installer that reaches
+          # something.
           #
           # The engine-bearing build is a mail client. Its window IS the product,
           # so a missing WebView2 runtime is not a degraded experience, it is an
@@ -480,8 +468,8 @@ jobs:
           # the README: with WebView2 present the installer opens no connection;
           # without it, it downloads the runtime from Microsoft.
           #
-          # The preview artifact keeps `skip` in the base config, so its own
-          # claim is untouched. This check is about the artifact people download.
+          # (`skip` survives in the base config, which no shipped artifact is
+          # built from alone. This check is about the artifact people download.)
           #
           # NSIS packs a plugin DLL only when a call to it is compiled, and
           # `NSISdl::download` lives inside
@@ -672,11 +660,13 @@ jobs:
         working-directory: apps/desktop
         run: npm run ui:typecheck
 
-      - name: Build the preview bundle
+      # Fail-fast render check over the WINDOW bundle — offline audit included;
+      # app:build:engine rebuilds, scans and smokes it again beside the artifact.
+      - name: Build the window bundle
         working-directory: apps/desktop
-        run: npm run ui:build
+        run: npm run ui:build:engine
 
-      - name: Smoke the preview bundle
+      - name: Smoke the window bundle
         working-directory: apps/desktop
         run: npm run smoke
 
@@ -982,30 +972,30 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ==========================================================================
-  # THE ENGINE-BEARING BUNDLE'S OWN VERDICT.
+  # THE WINDOW BUNDLE'S OWN VERDICT.
   #
-  # The three platform jobs already build this bundle and smoke it, inside
-  # `app:build:engine`, beside the artifact it is about to be packaged into.
-  # That is the right place for a GATE and the wrong place for an ANSWER: it
-  # sits a dozen steps beyond the preview smoke in the same job, so for two
-  # releases a red preview meant this bundle was never rendered on any machine,
-  # and nothing said so — the platform jobs were red for the preview's reason
-  # and the engine bundle's question was simply never put.
+  # The three platform jobs already build this bundle and smoke it — fail-fast
+  # at step 1, and again inside `app:build:engine` beside the artifact it is
+  # packaged into. Those are the right places for a GATE and the wrong place
+  # for an ANSWER: a platform job that dies earlier (a toolchain update, a
+  # runtime download, a Rust regression) is a run where the bundle's own
+  # question was never put — which is exactly how it once went unrendered for
+  # two releases, behind a red smoke of a since-retired second artifact.
   #
   # This job puts it, and can be stopped by nothing else. No `needs:`, no
-  # preview smoke, no Rust, no engine binary, no vendored Node runtime: the
-  # engine smoke serves the window from a stub Tauri channel, so building the
-  # bundle and rendering it is a `vite build` and a jsdom render. It is the
-  # cheapest job in the file and it finishes before any platform job has
-  # finished installing its toolchain.
+  # Rust, no engine binary, no vendored Node runtime: the smoke serves the
+  # window from a stub Tauri channel, so building the bundle and rendering it
+  # is a `vite build` and a jsdom render. It is the cheapest job in the file
+  # and it finishes before any platform job has finished installing its
+  # toolchain.
   #
-  # It runs the SAME two checks over the SAME bundle as `app:build:engine` does,
-  # spelled identically on purpose — `scan:engine` reads the bundle's bytes for
-  # the surface that belongs to this artifact and not the preview, and
-  # `smoke.mjs --expect engine` executes it. Two callers of one check can drift;
-  # what stops that here is that both call the same script with the same
-  # argument, and that the answer this one gives is the answer the release is
-  # read against.
+  # It runs the SAME two checks over the SAME bundle as the platform jobs do,
+  # spelled identically on purpose — `scan:engine` reads the bundle's bytes
+  # (the gate-only surfaces present, the sample world absent), and `smoke.mjs
+  # --expect engine` executes it, offline audit included. Two callers of one
+  # check can drift; what stops that here is that all call the same script
+  # with the same argument, and that the answer this one gives is the answer
+  # the release is read against.
   # ==========================================================================
   engine-ui-smoke:
     name: engine-bearing UI · scan · smoke
@@ -1054,6 +1044,6 @@ jobs:
             echo
             echo 'Built with the bridge and rendered against a stub shell.'
             echo 'This job produces no artifact. It is red or green on its own,'
-            echo 'so that a red preview smoke can never again mean this bundle'
+            echo 'so that no earlier failure can ever again mean this bundle'
             echo 'went unrendered — and a red here fails the run like any other.'
           } >> "$GITHUB_STEP_SUMMARY"

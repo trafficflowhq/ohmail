@@ -1,38 +1,31 @@
 /**
  * ohmail Desktop — the entry point of the embedded UI.
  *
- * There is no desktop fork of the interface. `AppShell` below is the same file
- * app.ohmail.app renders; the rail, the Screener, the reader, the ⌘K palette and
- * every view come from `apps/webapp/app/{shell,views}` and `@ohmail/ui`. What is
- * different here is only what a window needs and a browser tab does not:
- * providers wired by hand instead of by Next, and the offline guard.
+ * There is no desktop fork of the interface. The mail client this window renders is the same
+ * `AppShell` app.ohmail.app renders; the rail, the Screener, the reader, the ⌘K palette and
+ * every view come from `apps/webapp/app/{shell,views}` and `@ohmail/ui`. What is different here
+ * is only what a window needs and a browser tab does not: providers wired by hand instead of by
+ * Next, the offline guard, and `DesktopGate` around the shell — which asks the native process
+ * what the engine is doing and shows the door chooser, an honest notice, or the mail client
+ * running against the engine on this machine.
  *
- * `demo` is hard-coded true on the mount below, and it is not a flag to flip
- * later: this is the interface preview, the Cloud adapter is aliased out of the
- * bundle entirely (see `no-http-adapter.ts`), and the invented mailbox is the
- * only mail there is anything to show.
- *
- * ── TWO MOUNTS, ONE OF WHICH IS COMPILED AWAY ──────────────────────────────
- *
- * The engine-bearing build wraps the same shell in `DesktopGate`, which asks
- * the native shell what the engine is doing and shows the door chooser, an
- * honest notice, or the mail client running against the engine on this machine.
- * `__OHMAIL_LOCAL_ENGINE__` is a literal at build time, so the preview keeps
- * exactly the mount it has always had and the gate and everything it reaches
- * are not in that bundle at all.
+ * There is deliberately NO other mount. The app has two states — not connected (the door
+ * chooser) and connected (your mail) — and nothing else to show: no sample mailbox, no demo.
+ * The one demo lives on ohmail.app's landing page, where "invented mail, nothing leaves this
+ * tab" is the point rather than a lie about somebody's own mailbox. Loaded outside the app (a
+ * development server, the render check) there is no shell to ask, and the gate shows the
+ * not-connected surface, honestly.
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
-import { AppShell } from "../../webapp/app/shell/AppShell";
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
 import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
 import { DesktopLocale } from "./DesktopLocale.js";
 import "../../webapp/app/app.css";
 
-import { connectLocalEngine } from "./bridge-fetch.js";
+import { bridgeAvailable, connectLocalEngine } from "./bridge-fetch.js";
 import { DesktopGate } from "./DesktopGate.js";
 import { errorSentence, GateBoundary } from "./GateBoundary.js";
 import { GateNotice } from "./GateNotice.js";
@@ -40,22 +33,11 @@ import { installOfflineGuard } from "./offline-guard.js";
 
 installOfflineGuard();
 
-/* ── THE LOCAL-ENGINE BUILD'S ONE EXTRA STEP ────────────────────────────────
-   Two artifacts are built from this directory. The preview is what has shipped
-   so far: fixtures, no engine, nothing to connect to. The other carries a mail
-   engine, and this is where its window meets it — one status call over the
-   shell's command channel, and the adapter the client will run against.
-
-   `__OHMAIL_LOCAL_ENGINE__` is folded to a literal at build time, so in the
-   preview this branch and everything it reaches is removed from the bundle
-   rather than merely skipped: grep the preview's output for `engine_request`
-   and there is nothing to find.
-
-   The call is a boot-time check. It proves two things at once: that this window
-   can reach the shell at all, and that this build compiled the real client
-   rather than the preview's stub, whose constructor throws. The engine the MAIL
-   runs on is built by `DesktopGate`, once the shell has said which mailbox is
-   being served.
+/* ── THE BOOT CHECK ─────────────────────────────────────────────────────────
+   One status call over the shell's command channel. It proves two things at
+   once: that this window can reach the shell at all, and that this build
+   compiled the real sync client. The engine the MAIL runs on is built by
+   `DesktopGate`, once the shell has said which mailbox is being served.
 
    ── ITS FAILURE REACHES THE SCREEN, AND THAT IS NOT A REFINEMENT ─────────────
 
@@ -69,9 +51,14 @@ installOfflineGuard();
    status call, so a failure REPLACES the first paint instead of racing it. The
    cost is bounded and small — the shell answers this over a pipe on the same
    machine — and the alternative is the door chooser appearing and then being
-   taken away, which reads as the app changing its mind. */
+   taken away, which reads as the app changing its mind.
+
+   OUTSIDE the app — a development server, the render check's headless DOM —
+   there is no shell to check against; that is not a boot failure, it is the
+   environment, and the gate already draws the honest not-connected surface for
+   it. So the check simply does not run there, `readShell`'s own rule. */
 async function waitForBoot(): Promise<string | null> {
-  if (!__OHMAIL_LOCAL_ENGINE__) return null;
+  if (!bridgeAvailable()) return null;
   try {
     const status = await connectLocalEngine();
     console.info(`ohmail: local engine — ${status.state}`);
@@ -88,28 +75,17 @@ async function waitForBoot(): Promise<string | null> {
    no window — silently, correctly, and with no error anywhere. Every link in the app did
    nothing, in a mail body and out of it. `open-external.ts` carries the mechanism and why the
    seam is here; this is the one call that arms it, and the two documents it is armed on are
-   this one and each message frame (`MessageBody.tsx`).
-
-   INSIDE THE ENGINE BRANCH, and not above it. The interface preview's window is granted
-   nothing and its published claim is that it calls no command — a click that invoked
-   `open_external` there would be refused by the ACL and still open nothing, having made the
-   claim false on the way. `__OHMAIL_LOCAL_ENGINE__` is a build-time literal, so the preview
-   does not carry this call or anything it reaches. */
+   this one and each message frame (`MessageBody.tsx`). */
 /* AND AN ATTACHMENT OPENS IN THE VIEWER THIS COMPUTER ALREADY HAS, SWITCHED ON HERE FOR THE SAME
-   REASONS AND WITH THE SAME BOUNDARY. In a tab, a hidden `<a download>` saves the file. In this
-   window the webview asks its host to perform the download and, finding no handler registered,
-   cancels it — so every attachment press did nothing, silently, exactly as every link did.
-   `open-attachment.ts` carries the mechanism; the shell writes the bytes under its own directory
-   and opens the path with the platform's opener, which is Preview and Quick Look on macOS.
-
-   INSIDE THE ENGINE BRANCH, like the line above it. The interface preview serves no attachment
-   bytes and its published claim is that it calls no command; `__OHMAIL_LOCAL_ENGINE__` is a
-   build-time literal, so that artifact does not carry this call or the command's name. */
-if (__OHMAIL_LOCAL_ENGINE__) {
-  enableExternalLinks();
-  interceptLinkClicks(document, { trustSameOrigin: true });
-  enableDesktopAttachments();
-}
+   REASONS. In a tab, a hidden `<a download>` saves the file. In this window the webview asks its
+   host to perform the download and, finding no handler registered, cancels it — so every
+   attachment press did nothing, silently, exactly as every link did. `open-attachment.ts`
+   carries the mechanism; the shell writes the bytes under its own directory and opens the path
+   with the platform's opener, which is Preview and Quick Look on macOS. Outside the app both
+   arms find no shell and refuse per their own contracts. */
+enableExternalLinks();
+interceptLinkClicks(document, { trustSameOrigin: true });
+enableDesktopAttachments();
 
 /* The pre-paint theme stamp. `themeInitScript()` from @ohmail/ui exists for
    server-rendered pages, which inline it as a <script>; the desktop CSP forbids
@@ -163,10 +139,8 @@ const paint = (bootFailure: string | null): void =>
                   actionLabel="Reload"
                   onAction={() => location.reload()}
                 />
-              ) : __OHMAIL_LOCAL_ENGINE__ ? (
-                <DesktopGate />
               ) : (
-                <AppShell demo />
+                <DesktopGate />
               )}
             </GateBoundary>
           </ToastHost>

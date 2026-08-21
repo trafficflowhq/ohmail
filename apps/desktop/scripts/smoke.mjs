@@ -21,38 +21,35 @@
  * display, and layout is not what is at risk here — the Blanc geometry is
  * verified against the design system in packages/ui's own suite.
  *
- * ── TWO ARTIFACTS, AND ONE CHECK THAT BELONGS TO ONLY ONE OF THEM ─────────
+ * ── ONE WINDOW BUNDLE, AND THE OFFLINE AUDIT IT INHERITED ─────────────────
  *
- * This directory builds two bundles. `npm run ui:build` is the interface
- * PREVIEW — fixtures, no engine, the sync client aliased to a stub — and
- * `--engine` is the bundle that goes inside a binary compiled with the Rust
- * `local-engine` feature, which reaches a mail engine on this machine over the
- * shell's command channel (`src/bridge-fetch.ts`).
+ * `--expect engine` names the artifact under test: the window bundle that goes
+ * inside a binary compiled with the Rust `local-engine` feature, which reaches
+ * a mail engine on this machine over the shell's command channel
+ * (`src/bridge-fetch.ts`). It is the only value, and it is still REQUIRED —
+ * the artifact is declared, not sniffed, and the flag once distinguished a
+ * second, fixtures-only "interface preview" (retired under the no-demo rule;
+ * a caller passing `--expect preview` is told it is gone rather than handed
+ * these checks under an old name).
  *
- * `--expect` says which one is at `--dist`, and the two run the SAME checks with
- * two deliberate differences:
+ * Four sections:
  *
- *   · COMMON — sections 1, 2 and 3 below. Both artifacts have to execute
- *     cleanly, draw the rail and its app controls, put mail on screen and collapse
- *     nothing. The two assertions that matter most, "no uncaught exceptions"
- *     and "no console errors", are common and are not relaxed for either.
- *   · PREVIEW ONLY — section 4, the offline audit, and the fixture world it is
- *     written about (the invented senders, the demo ribbon). The preview opens
- *     no connection and says so on screen; the engine-bearing bundle reaches
- *     its engine BY DESIGN, so pointing section 4 at it would not find a
- *     defect, it would report one that is the product working.
- *   · ENGINE ONLY — section 5. A stub command channel stands in for the shell,
- *     serves one small mailbox, and the checks assert the window asked for it,
- *     reached it over the bridge and drew it.
+ *   · 1–3: it executed cleanly, it drew, nothing collapsed. The two assertions
+ *     that matter most, "no uncaught exceptions" and "no console errors", catch
+ *     exactly the released defect this mode exists for — a build whose sync
+ *     client threw inside a React render and showed a blank white window the
+ *     moment a mailbox served.
+ *   · 4, THE OFFLINE AUDIT — inherited from the retired preview and now run on
+ *     the artifact that SHIPS, which is strictly more than it proved before:
+ *     `installOfflineGuard()` is in this bundle's entry, the page's whole reach
+ *     is the shell's command channel, and fetch/XHR/WebSocket/EventSource/
+ *     sendBeacon must all refuse. The bridge is `invoke`, not `fetch`, so the
+ *     engine build passes this audit BY DESIGN rather than by exemption.
+ *   · 5: a stub command channel stands in for the shell, serves one small
+ *     mailbox, and the checks assert the window asked for it, reached it over
+ *     the bridge and drew it — with no demo ribbon over somebody's own mail.
  *
- * The engine bundle had NO render check at all until this mode existed, and the
- * cost was a released build that showed a blank white window the moment a
- * mailbox started serving: its copy of the client's HTTP adapter was a stub
- * whose constructor throws, and the constructor runs inside a React render.
- * Both halves of that — the uncaught exception and the console error — are
- * section 1, which is why section 1 is common and stays common.
- *
- *   node scripts/smoke.mjs [--dist dist] [--expect preview|engine]
+ *   node scripts/smoke.mjs [--dist dist] --expect engine
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -66,20 +63,21 @@ const args = process.argv.slice(2);
 const distArg = args.indexOf("--dist");
 const DIST = path.resolve(APP, distArg >= 0 ? (args[distArg + 1] ?? "dist") : "dist");
 
-/* The artifact under test. `preview` is the default so every existing caller —
-   `npm run smoke`, the mirror's CI, the release runbook — keeps the meaning it
-   had. A `--expect` with a missing or unknown value is REFUSED rather than
-   defaulted: silently smoking the preview's checks over the engine bundle is
-   the failure this flag exists to make impossible. */
+/* The artifact under test, still DECLARED rather than defaulted or sniffed, and with one valid
+   value now. `preview` used to be one — the retired fixtures artifact — and is refused with its
+   own sentence so a stale caller learns what happened instead of getting these checks under an
+   old name. */
 const expectArg = args.indexOf("--expect");
-const EXPECT = expectArg >= 0 ? args[expectArg + 1] : "preview";
-if (EXPECT !== "preview" && EXPECT !== "engine") {
+const EXPECT = expectArg >= 0 ? args[expectArg + 1] : undefined;
+if (EXPECT !== "engine") {
   process.stderr.write(
-    `smoke: --expect takes "preview" or "engine"; got ${EXPECT === undefined ? "nothing" : `"${EXPECT}"`}\n`,
+    EXPECT === "preview"
+      ? `smoke: the interface preview is retired — the app has no demo artifact to smoke.\n` +
+        `  The window bundle is the one artifact: npm run ui:build:engine && npm run smoke\n`
+      : `smoke: --expect takes "engine"; got ${EXPECT === undefined ? "nothing" : `"${EXPECT}"`}\n`,
   );
   process.exit(1);
 }
-const ENGINE = EXPECT === "engine";
 
 const failures = [];
 let checks = 0;
@@ -94,7 +92,7 @@ const check = (label, ok, detail = "") => {
 if (!fs.existsSync(path.join(DIST, "index.html"))) {
   process.stderr.write(
     `smoke: no ${EXPECT} bundle at ${DIST}\n` +
-      `  Build it first:  ${ENGINE ? "npm run ui:build:engine" : "npm run ui:build"}\n`,
+      `  Build it first:  npm run ui:build:engine\n`,
   );
   process.exit(1);
 }
@@ -368,8 +366,8 @@ function consentState() {
  * where the stub is deliberately absent — so the preview died at first render with
  * `ReferenceError: TextEncoder is not defined` and reported twenty failed checks that all said
  * "nothing drew". A real webview has all four in both artifacts; jsdom has none of them; so both
- * artifacts get them, and only `__TAURI_INTERNALS__` stays behind the `ENGINE` branch, because a
- * shell is the one thing the preview genuinely must not find.
+ * artifacts got them, and the lesson outlived the preview: the harness supplies the
+ * platform globals a real webview supplies, unconditionally.
  *
  * jsdom's own `Headers` is left alone — the bridge's `toHeaders` builds one and hands it to the
  * borrowed `Response`, which reads it as an iterable, and that pairing is exercised on every
@@ -412,7 +410,7 @@ function installShellStub(window) {
         }
         /* The away-responder notice reads its state at boot the same way the mailbox
            list is read: one GET, render-only, parsed as `{enabled, audience}`. A
-           disabled responder is the honest stub — the preview has none — and keeps
+           disabled responder is the honest stub and keeps
            the boot free of 404s. */
         if (url === "/away-responder") {
           return Promise.resolve(
@@ -536,10 +534,10 @@ const dom = new JSDOM(classic, {
        could not draw. */
     installPlatformGlobals(window);
 
-    /* THE ONE PIECE OF ENVIRONMENT THAT IS PER-ARTIFACT. The preview must find no
-       shell — that is the "loaded outside the app" case `doors.ts` routes to the
-       invented mailbox — so the stub is installed for the engine bundle only. */
-    if (ENGINE) installShellStub(window);
+    /* The stand-in for the Rust side. Without it the bundle would find no shell and honestly
+       draw the door chooser (`doors.ts` routes no-shell to not-connected); WITH it, the run
+       proves the whole path this artifact ships for — status, bridge, mail on screen. */
+    installShellStub(window);
 
     window.addEventListener("error", (e) => uncaught.push(String(e.error ?? e.message)));
     window.addEventListener("unhandledrejection", (e) => uncaught.push(String(e.reason)));
@@ -552,28 +550,23 @@ const dom = new JSDOM(classic, {
 });
 
 /* The engine boots in an effect and drains its first page asynchronously. Give
-   the microtask queue and a few timer turns a chance rather than guessing.
-
-   The engine bundle gets more turns because it has more to do before it can draw
-   mail: a status call, then the client engine's hydrate, then a full drain over
-   the bridge — where the preview's fixtures adapter answers in place. These are
-   TIMER TURNS and not a wall clock, so a loaded runner stretches them along with
-   everything else. */
+   the microtask queue and a few timer turns a chance rather than guessing: a
+   status call, then the client engine's hydrate, then a full drain over the
+   bridge. These are TIMER TURNS and not a wall clock, so a loaded runner
+   stretches them along with everything else. */
 const { window } = dom;
-for (let i = 0; i < (ENGINE ? 80 : 40); i++) await new Promise((r) => setTimeout(r, 25));
+for (let i = 0; i < 80; i++) await new Promise((r) => setTimeout(r, 25));
 
 const doc = window.document;
 const root = doc.getElementById("root");
 const text = doc.body.textContent ?? "";
 const rows = doc.querySelectorAll(".rows > *").length;
 
-/* ══ COMMON — sections 1, 2 and 3. Both artifacts, no relaxation for either. ══ */
-
 /* ── 1 · it executed cleanly ───────────────────────────────────────────── */
 /* THESE TWO ARE THE ONES THAT CATCH A BROKEN ENGINE BUILD. A copy of the client
-   whose HTTP adapter is the throwing stub fails both, because the constructor
+   whose HTTP adapter throws on construction fails both, because the constructor
    runs inside a React render: the exception escapes to `window.onerror` and
-   React logs it. Neither may be narrowed to the preview. */
+   React logs it. That is the released blank-window build, caught here. */
 check("no uncaught exceptions", uncaught.length === 0, uncaught.slice(0, 3).join(" | "));
 check("no console errors", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" | "));
 
@@ -585,18 +578,16 @@ check("the wordmark rendered", doc.querySelector(".rail .wordmark") != null);
 /* THE APP CONTROLS, WHEREVER THEY LIVE — and they moved. They used to be a capsule fixed over
    the bottom of the window (`.dock`), and they are now rows at the foot of the rail. This check
    asserted the retired class, so it went red on the runners the moment the move landed and green
-   nowhere: the preview bundle is only ever smoked in CI. What it is FOR is that the palette and
+   nowhere: this bundle is only ever smoked in CI. What it is FOR is that the palette and
    the theme control reached the screen, so it asserts the two controls and not merely their
    container — a `.rail-dock` that rendered empty is exactly the failure a container check misses. */
 check("the rail's app controls rendered", doc.querySelector(".rail .rail-dock") != null);
 check("the command control rendered", doc.querySelector(".rail-dock .dock-cmd") != null);
 check("the theme control rendered", doc.querySelector(".rail-dock .dock-theme") != null);
 check("a list pane rendered", doc.querySelector(".rows") != null);
-/* The floor is per-artifact and the reason is the dataset, not the bundle: the
-   preview draws a whole invented mailbox, the engine build draws whatever the
-   stub served. Both floors are far above "an empty shell rendered its chrome". */
-const MIN_TEXT = ENGINE ? 400 : 800;
-check("body text is substantial", text.length > MIN_TEXT, `${text.length} chars`);
+/* The floor follows the dataset — whatever the stub served — and is still far
+   above "an empty shell rendered its chrome". */
+check("body text is substantial", text.length > 400, `${text.length} chars`);
 
 for (const label of ["Ohbox", "Screener", "Reads", "Receipts", "Answer Later", "Search", "Settings"]) {
   check(`rail names "${label}"`, text.includes(label));
@@ -608,32 +599,15 @@ for (const label of ["Ohbox", "Screener", "Reads", "Receipts", "Answer Later", "
 const collapsed = text.match(/\b\d+\s+(more|others?|collapsed|hidden)\b/i);
 check("no collapsed-mail placeholder", collapsed == null, collapsed?.[0] ?? "");
 
-if (!ENGINE) {
-  /* ══ PREVIEW ONLY ══════════════════════════════════════════════════════ */
-
-  /* Real fixture mail, from Mila's world — proves the engine bootstrapped and the
-     selectors ran, not just that a chrome shell mounted. */
-  check("message rows rendered", rows >= 3, `${rows} rows`);
-  for (const who of ["Giulia", "Ben", "Petra"]) {
-    check(`fixture sender "${who}" is on screen`, text.includes(who));
-  }
-  /* THE RIBBON HAS TO MAKE BOTH CLAIMS, not merely exist. This build shows invented mail and opens
-     no connection, and the ribbon is the only place a reader is told either — so the check is the two
-     claims, and it is deliberately not a search for the ribbon's element or for one loose phrase.
-     It used to look for "fixtures only", which the copy has not said for some time: the ribbon was
-     rendering, and honestly, while the check reported it missing. A stale assertion and a real defect
-     look identical from the exit code, so the assertion follows the sentence.
-
-     One check rather than two, so the count three published documents quote stays 31. */
-  check(
-    "the demo ribbon is honest about fixtures",
-    /invented mail/i.test(text) && /nothing leaves this tab/i.test(text),
-  );
-
-  /* ── 4 · it is offline ───────────────────────────────────────────────── */
-  /* THE PREVIEW'S, AND ONLY THE PREVIEW'S — see the header. Not weakened, not
-     widened, and deliberately not made conditional inside each check: an offline
-     assertion with an escape hatch in it is an assertion nobody trusts. */
+/* ── 4 · it is offline ─────────────────────────────────────────────────── */
+/* INHERITED FROM THE RETIRED PREVIEW AND NOW RUN ON THE ARTIFACT THAT SHIPS —
+   which is strictly the stronger audit: `installOfflineGuard()` is this bundle's
+   own entry line, the page's whole reach is the shell's command channel
+   (`invoke`, not `fetch`), and every network-capable API must refuse. Not
+   weakened, not widened, and deliberately not made conditional inside each
+   check: an offline assertion with an escape hatch in it is an assertion nobody
+   trusts. */
+{
   const foreign = requested.filter((u) => !u.startsWith("file://"));
   check("no non-file request was made", foreign.length === 0, foreign.slice(0, 3).join(" | "));
   const outside = requested
@@ -656,9 +630,10 @@ if (!ENGINE) {
   for (const api of ["XMLHttpRequest", "WebSocket", "EventSource"]) {
     check(`the offline guard makes ${api} throw`, refuses(`new ${api}('wss://example.invalid')`));
   }
-} else {
-  /* ══ ENGINE ONLY — 5 · it reached the engine, and drew what it was served ══ */
+}
 
+/* ══ 5 · it reached the engine, and drew what it was served ══════════════ */
+{
   const commands = invoked.map((i) => i.command);
   const asked = invoked.filter((i) => i.command === "engine_request");
 
@@ -699,10 +674,10 @@ if (!ENGINE) {
      than left to be inferred from a thin body and a missing rail.
 
      The bundle draws it whenever the boot check or the error boundary catches
-     something, and its text IS that something — for a build carrying the preview's
-     throwing adapter stub, the adapter's own refusal. Reporting the sentence here
-     is the difference between a list of checks that failed and a list of checks
-     that failed BECAUSE there is no sync client in this build. */
+     something, and its text IS that something — for the released build whose
+     sync client was a throwing stub, the stub's own refusal. Reporting the
+     sentence here is the difference between a list of checks that failed and a
+     list of checks that failed BECAUSE there is no sync client in this build. */
   const notice = doc.querySelector(".gate-card");
   check(
     "the window drew mail rather than an apology",
@@ -718,10 +693,11 @@ if (!ENGINE) {
   }
   check("a served snippet is on screen", text.includes(SERVED[0].snippet.slice(0, 40)));
 
-  /* AND IT IS NOT PRETENDING TO BE THE DEMO. `demo` is false whenever a client
-     engine is mounted, which is what freezes the clock and puts the ribbon on
-     screen in the preview — both of which would be lies about somebody's own
-     mail. A ribbon here means the engine mount silently fell back to fixtures. */
+  /* AND IT IS NOT PRETENDING TO BE THE DEMO. `demo` is structurally false in
+     this artifact — the ribbon and the frozen clock belong to the landing
+     page's demo, and both would be lies about somebody's own mail. The fixtures
+     adapter behind them is aliased to a refusing stub in this bundle
+     (`src/no-fixtures-adapter.ts`), so a ribbon here means that alias came off. */
   check(
     "no demo ribbon over a served mailbox",
     !/invented mail/i.test(text) && !/nothing leaves this tab/i.test(text),
@@ -737,9 +713,7 @@ if (failures.length) {
   process.exit(1);
 }
 process.stdout.write(
-  ENGINE
-    ? `SMOKE OK (${checks} checks, engine) — ${rows} rows, ${text.length} chars, ` +
-        `${invoked.length} shell command(s) over the bridge\n`
-    : `SMOKE OK (${checks} checks) — ${rows} rows, ${text.length} chars, ` +
-        `${requested.length} local file request(s), 0 network\n`,
+  `SMOKE OK (${checks} checks, engine) — ${rows} rows, ${text.length} chars, ` +
+    `${invoked.length} shell command(s) over the bridge, ` +
+    `${requested.length} local file request(s), 0 network\n`,
 );

@@ -233,18 +233,21 @@ describe("the window while an engine is still coming up", () => {
 });
 
 describe("the silhouette decides nothing — `mailMount` still routes", () => {
-  it("no shell at all is the interface preview's mailbox, never bars", async () => {
+  it("no shell at all is the door chooser, never bars", async () => {
     /* `kind: "none"` — a development server, or the render check that loads the built files in a
        headless DOM. There is no engine to have a state, so there is no wait to draw. A window
-       that showed a silhouette here would be claiming to be opening something. */
+       that showed a silhouette here would be claiming to be opening something. (This used to
+       land on a sample mailbox; the no-demo rule routes it to the not-connected surface — the
+       chooser — and no mail of any kind is on screen.) */
     shell(null);
     await render();
     await advance(BOOT_SKELETON_GRACE_MS * 20);
 
-    expect(mailMount({ kind: "none" }, null)).toEqual({ kind: "sample" });
+    expect(mailMount({ kind: "none" }, null)).toEqual({ kind: "opening" });
     expect(skeleton(), "the silhouette appeared over a window with nothing to open").toBeNull();
-    // …and the preview world is what is on screen, exactly as it always was.
-    expect(mountPoint!.querySelectorAll(".row").length).toBeGreaterThan(0);
+    // …and the chooser is what is on screen: no rows, because there is no mail to draw.
+    expect(mountPoint!.textContent ?? "").toMatch(/Which mailbox is this\?/);
+    expect(mountPoint!.querySelectorAll(".row").length).toBe(0);
   });
 
   it("the decision table is untouched by the silhouette", () => {

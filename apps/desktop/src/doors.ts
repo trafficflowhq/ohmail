@@ -76,8 +76,11 @@ export type Gate =
  *
  * `"none"` is NOT an error state and is deliberately not routed to a notice. It means the bundle
  * is being loaded outside the app — a development server, or the render check that loads the
- * built bundle in a headless DOM — where there is no shell to have an engine. The only honest
- * thing to show there is what the bundle has always shown without one.
+ * built bundle in a headless DOM — where there is no shell to have an engine. The app has two
+ * states, not connected and connected, and with no shell there is nothing to be connected TO, so
+ * the honest surface there is the not-connected one: the door chooser, whose submits fail with a
+ * sentence rather than pretending. (It used to be a sample mailbox; the no-demo rule retired it —
+ * demo mail lives on the landing page and nowhere an app opens.)
  *
  * In the packaged app this value is never `"none"`: the runtime defines its command channel
  * before any bundle script runs. So the case that matters — a shell that IS there and an engine
@@ -97,7 +100,9 @@ export type Shell =
  * produces neither and must not land on the chooser, because choosing a door would not help.
  */
 export function gateFor(shell: Shell): Gate {
-  if (shell.kind === "none") return { kind: "app" };
+  // No shell ⇒ not connected, and nothing to connect with. The chooser is the honest surface;
+  // see the note on {@link Shell} for why this is not a notice and not a sample world.
+  if (shell.kind === "none") return { kind: "choose" };
   if (shell.kind === "unreachable") return { kind: "notice", reason: shell.reason };
 
   const status = shell.status;
@@ -134,17 +139,14 @@ export function gateFor(shell: Shell): Gate {
  *
  * `gateFor` answers the onboarding question — chooser, notice, or the app. This answers the one
  * after it, and they are genuinely different questions: "a door is chosen" is not the same fact as
- * "there is an engine serving mail right now", and the window has three honest things to draw.
+ * "there is an engine serving mail right now", and the window has two honest things to draw.
  *
- *  · `sample` — there is no shell to ask. The bundle is running outside the app: a development
- *    server, or the render check that loads the built files in a headless DOM. Nothing is being
- *    organized, so the invented mailbox is the only thing there is to show, and it is the same
- *    thing this bundle has always shown without a shell.
  *  · `engine` — the shell says an engine is serving, and `key` names the mailbox it is serving.
  *    The real client runs against it.
  *  · `opening` — a door is chosen and no engine has served yet. Nothing is drawn about the mail,
- *    because the only alternatives are a guess and somebody else's sample mail under their own
- *    mailbox's name.
+ *    because the only alternative is a guess. (There used to be a third kind, `sample` — an
+ *    invented mailbox for the no-shell case. The no-demo rule retired it: `gateFor` routes the
+ *    no-shell case to the chooser now, so this question is only ever asked with a shell present.)
  *
  * ── `mounted` IS WHY A RESTART DOES NOT EMPTY THE SCREEN ─────────────────────────────────────
  *
@@ -156,12 +158,10 @@ export function gateFor(shell: Shell): Gate {
  * would be showing one mailbox's mail under another's name.
  */
 export type MailMount =
-  | { kind: "sample" }
   | { kind: "engine"; key: string }
   | { kind: "opening" };
 
 export function mailMount(shell: Shell, mounted: string | null): MailMount {
-  if (shell.kind === "none") return { kind: "sample" };
   const status = shell.kind === "status" ? shell.status : null;
   if (status?.state === "serving" && status.mailboxId) {
     return { kind: "engine", key: status.mailboxId };
