@@ -1587,6 +1587,162 @@ export class AuthService extends SessionLifecycle {
     await db.delete(totpSecrets).where(eq(totpSecrets.userId, userId));
   }
 
+  // ── Step-up re-verification (the inline ceremony behind a stale 5-minute window) ────────
+  //
+  // `withStepUp` refuses a stale `last_twofa_at` with 403 `step_up_required`, and until these
+  // methods existed the ONLY way to refresh the stamp was a full sign-out/sign-in round trip —
+  // which turned every step-up-gated verb (mint a pairing code, revoke a device, remove a
+  // factor) into a dead end the moment five minutes had passed. These are the sign-in second
+  // factor, re-run against the session the caller already holds:
+  //
+  //  · **The factor is the whole proof.** Same verify, same single-use guards (the TOTP
+  //    timestep advance, the challenge claim), same throttle key and lockout as the sign-in
+  //    path — so a code spent at sign-in cannot be replayed here, and spraying codes at this
+  //    door locks the same counter the sign-in door locks.
+  //  · **The stamp is a GUARDED update** ({@link stampStepUp}): `revoked_at IS NULL AND
+  //    scope = 'full'` re-checked in the write itself, `RETURNING` inspected, 401 on zero
+  //    rows. An enrollment-scoped session can never re-stamp itself into step-up standing
+  //    (`withSession` already refuses it these routes; the predicate refuses it again), and a
+  //    session revoked mid-ceremony gets a refusal, never `{ok:true}` over an unstamped row.
+  //  · **No new cookie surface.** The response is `{ok: true}` and nothing else — no tokens,
+  //    no Set-Cookie, no session exchange. The session is the one the caller presented; only
+  //    its factor clock moves.
+  //  · A paired device's bearer (minted with `twofaAt: null` — see `establishPairedDevice`)
+  //    MAY earn step-up standing here by asserting a real factor. That is the designed door:
+  //    "this session cannot reach POST /pair until its holder asserts a factor of their own."
+
+  /** Re-verify TOTP against the caller's own session and re-stamp its step-up clock. */
+  async stepUpTotp(ctx: ServiceContext, b: { code: string }): Promise<{ ok: true }> {
+    const userId = this.requireUser(ctx);
+    requireField(b.code, "code");
+    if (!ctx.sessionId) throw new ServiceError("unauthorized", 401, "no active session");
+    const db = asTx(ctx);
+    const user = await this.loadUser(db, userId);
+    // RESERVED, not read — the sign-in verify's exact argument: six digits behind a pure-read
+    // gate is a code an attacker can spray as wide as their connection count.
+    await this.throttleReserve(db, `user:${user.id}`);
+
+    const row = (await db.select().from(totpSecrets)
+      .where(and(eq(totpSecrets.userId, user.id), eq(totpSecrets.activated, true))).limit(1))[0];
+    if (!row) {
+      await this.twofaFail(db, user, ctx);
+      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+    }
+    const secret = await this.deps.keyProvider.decrypt(row.secretEnc, row.keyVersion);
+    const v = verifyTotp({ secret, token: b.code, now: ctx.now(), window: this.cfg.totpWindow, afterStep: numOrNull(row.lastConsumedStep) });
+    if (!v.valid) {
+      await this.twofaFail(db, user, ctx);
+      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+    }
+    // The conditional advance, INCLUDING the fail-on-zero-rows arm — `totpVerify`'s exact
+    // shape, and the property it buys here is cross-door: a code consumed at sign-in (or at a
+    // concurrent step-up) advanced the SAME row, so this write matches nothing and the replay
+    // is refused with the wrong-code sentence.
+    const advanced = await db.update(totpSecrets)
+      .set({ lastConsumedStep: BigInt(v.timeStep!), updatedAt: ctx.now() })
+      .where(and(
+        eq(totpSecrets.userId, user.id),
+        eq(totpSecrets.activated, true),
+        or(
+          isNull(totpSecrets.lastConsumedStep),
+          lessThan(totpSecrets.lastConsumedStep, BigInt(v.timeStep!)),
+        ),
+      ))
+      .returning({ id: totpSecrets.id });
+    if (advanced.length === 0) {
+      await this.twofaFail(db, user, ctx);
+      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+    }
+    // A TOTP code was just verified, here, by the holder of THIS session.
+    return this.stampStepUp(ctx, db, user, "totp");
+  }
+
+  /**
+   * Open a WebAuthn assertion for step-up. The challenge row is bound to the USER
+   * (`userId` set, `loginTokenId` NULL) — the exact inverse of a sign-in assertion row
+   * (`loginTokenId` set, `userId` NULL), so neither ceremony's consume predicate can ever
+   * select the other's challenge: `consumeChallenge` ANDs the key it is given, and a NULL
+   * column matches no equality. Origin admission runs before the first database read,
+   * `webauthnAssertOptions`'s ordering exactly.
+   */
+  async stepUpWebauthnOptions(ctx: ServiceContext): Promise<{ options: unknown }> {
+    const userId = this.requireUser(ctx);
+    if (!ctx.sessionId) throw new ServiceError("unauthorized", 401, "no active session");
+    const db = asTx(ctx);
+    const origin = resolveCeremonyOrigin(this.cfg, ctx.origin);
+    const allow = await this.webauthnCreds(db, userId);
+    if (allow.length === 0) {
+      throw new ServiceError("unprocessable", 422, "no passkey enrolled");
+    }
+    const options = await buildAuthenticationOptions(this.cfg, allow);
+    await db.insert(webauthnChallenges).values({
+      userId, challenge: options.challenge, type: "authentication",
+      rpId: this.cfg.rpID, origin,
+      expiresAt: new Date(ctx.now().getTime() + this.cfg.webauthnChallengeTtlMs),
+    });
+    return { options };
+  }
+
+  /** Verify the step-up assertion and re-stamp the caller's session. */
+  async stepUpWebauthnVerify(ctx: ServiceContext, b: { credential: any }): Promise<{ ok: true }> {
+    const userId = this.requireUser(ctx);
+    if (!ctx.sessionId) throw new ServiceError("unauthorized", 401, "no active session");
+    if (b.credential == null) throw new ServiceError("validation_failed", 400, "credential is required");
+    const db = asTx(ctx);
+    const user = await this.loadUser(db, userId);
+    await this.throttleReserve(db, `user:${user.id}`);
+
+    // `userId` is the ctx's own, NON-optionally — `consumeChallenge`'s keys are optional, and
+    // a call that passed neither key would select ANY newest authentication challenge.
+    const ch = await this.consumeChallenge(db, ctx, { userId: user.id, type: "authentication" });
+    const credId = b.credential?.id as string | undefined;
+    const stored = (await this.webauthnCreds(db, user.id)).find((c) => c.credentialId === credId);
+    if (!stored) {
+      await this.twofaFail(db, user, ctx);
+      throw new ServiceError("unauthorized", 401, "unknown credential");
+    }
+    let result;
+    try {
+      result = await verifyAssertion(this.cfg, b.credential, ch.challenge, stored, ch.origin);
+    } catch {
+      await this.twofaFail(db, user, ctx);
+      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+    }
+    await db.update(webauthnCredentials)
+      .set({ counter: result.newCounter, lastUsedAt: ctx.now() })
+      .where(eq(webauthnCredentials.credentialId, stored.credentialId));
+    // A WebAuthn assertion just succeeded, here, by the holder of THIS session.
+    return this.stampStepUp(ctx, db, user, "webauthn");
+  }
+
+  /**
+   * The one writer of a step-up RE-stamp (the mint-time writer is `establish`'s `twofaAt`).
+   * Guarded in the statement itself — `revoked_at IS NULL AND scope = 'full'` — and judged by
+   * `RETURNING`: zero rows is a refusal, never a success over an unstamped session. Reached
+   * only from a factor verify that has already succeeded in this same call.
+   */
+  private async stampStepUp(
+    ctx: ServiceContext, db: Tx, user: typeof users.$inferSelect, method: "totp" | "webauthn",
+  ): Promise<{ ok: true }> {
+    const now = ctx.now();
+    const stamped = await db.update(sessions)
+      .set({ lastTwofaAt: now, lastSeenAt: now })
+      .where(and(
+        eq(sessions.id, ctx.sessionId!),
+        eq(sessions.userId, user.id),
+        isNull(sessions.revokedAt),
+        eq(sessions.scope, "full"),
+      ))
+      .returning({ id: sessions.id });
+    if (stamped.length === 0) {
+      throw new ServiceError("unauthorized", 401, "no active session");
+    }
+    await this.audit(db, user, "2fa_verified", method, ctx);
+    await this.throttleReset(db, `user:${user.id}`);
+    await this.throttleReset(db, `email:${user.email}`);
+    return { ok: true };
+  }
+
   // ── Recovery codes ──────────────────────────────────────────────────────────
 
   /**

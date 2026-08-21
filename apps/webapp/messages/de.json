@@ -265,7 +265,19 @@
     "removeWhat": "Mit der nächsten Anfrage verliert es den Zugriff. Mit einem neuen Code lässt es sich jederzeit wieder koppeln.",
     "removed": "Gerät abgemeldet.",
     "cancel": "Abbrechen",
-    "stepUpExpired": "Dein Bestätigungsfenster ist zu. Melde dich neu an und versuch es dann nochmal."
+    "stepUpExpired": "Dein Bestätigungsfenster ist zu. Melde dich neu an und versuch es dann nochmal.",
+    "stepUpLead": "Bestätige zuerst, dass du es bist. Verifiziere deinen zweiten Faktor, und es geht direkt hier weiter — ohne neue Anmeldung.",
+    "stepUpPasskey": "Mit Passkey bestätigen",
+    "stepUpTotpLabel": "Sechsstelliger Code aus deiner Authenticator-App",
+    "stepUpVerify": "Code prüfen",
+    "stepUpTotpToggle": "Stattdessen Einmal-Code verwenden",
+    "stepUpPasskeyToggle": "Stattdessen Passkey verwenden",
+    "webGroup": "{count, plural, one {# weitere Web-Sitzung} other {# weitere Web-Sitzungen}}",
+    "webGroupMeta": "Browser-Anmeldungen außer dieser · zuletzt gesehen {seen}. Deine gekoppelten Geräte bleiben unberührt.",
+    "webGroupAction": "Alle abmelden",
+    "webGroupAsk": "{count, plural, one {# Web-Sitzung} other {# Web-Sitzungen}} abmelden?",
+    "webGroupWhat": "Jede verliert den Zugriff mit ihrer nächsten Anfrage. Dieser Browser und deine gekoppelten Geräte bleiben angemeldet.",
+    "webGroupDone": "{count, plural, one {# Web-Sitzung abgemeldet} other {# Web-Sitzungen abgemeldet}}."
   },
   "host": {
     "title": "Geräte",

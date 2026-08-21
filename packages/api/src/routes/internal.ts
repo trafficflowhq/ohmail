@@ -1,6 +1,7 @@
 import { runAlertPass, listOpenAlerts, newDeliveryStreak } from "@trafficflow/db/cloud";
 import { silentLogger, type Logger } from "@trafficflow/core";
-import type { AdminDb } from "@trafficflow/services";
+import type { Tx } from "@trafficflow/db";
+import { reapStaleWebSessions, type AdminDb } from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import type { AlertsConfig } from "../deps-cloud.js";
 import type { Route } from "../router.js";
@@ -122,6 +123,14 @@ import type { Route } from "../router.js";
  * "configured, and silently not running" state the whole slice exists to make impossible.
  */
 export const ALERT_CRON_PATH = "/internal/alerts/run";
+
+/**
+ * The PATH Vercel Cron fires the session reaper at — exported for the same reason
+ * {@link ALERT_CRON_PATH} is: the host deployment's cron config names it as a literal string
+ * and a test asserts the two agree, because a cron whose path this router does not serve is
+ * hygiene that "shipped" and silently never runs.
+ */
+export const SESSIONS_REAP_CRON_PATH = "/internal/sessions/reap";
 
 /**
  * The two arming facts, in ONE place, because the three routes must never disagree about them.
@@ -340,6 +349,61 @@ export const internalRoutes: Route[] = [
         return json(200, { now: deps.now().toISOString(), open });
       } catch {
         return json(503, { error: { code: "alert_read_failed" } });
+      }
+    },
+  },
+  {
+    /**
+     * `GET /internal/sessions/reap` — THE WEB-SESSION REAPER'S CLOCK. Revokes plain browser
+     * sessions (`device_id IS NULL`, scope `full`) unseen for over sixty days, refresh
+     * families included; paired devices are structurally out of reach
+     * (`reapStaleWebSessions`, where the whole policy is argued). Without this pass a
+     * session that stops being presented simply stops rolling and sits live-but-idle for
+     * ever — the flood the Devices pane showed its owner.
+     *
+     * The alert cron's shape verbatim, and each borrowed property is load-bearing:
+     *  · **GET, because Vercel Cron issues GET and only GET** — the same trade the alerts
+     *    run makes, and the same defense: a link preview or a crawler cannot present a
+     *    bearer token, and an unauthenticated GET here is a 401 that reaps nothing.
+     *  · **Two accepted secrets** — `TF_ALERT_SECRET` (the operator's own driver) or
+     *    `CRON_SECRET` (what the platform presents on cron invocations), both constant-time.
+     *  · **No secret configured ⇒ 404** — a deployment that armed no internal surface has no
+     *    reaper, and advertising an endpoint it cannot authenticate is worse than not having
+     *    one. (Consequence, named because the ruling named it: on such a deployment the
+     *    hygiene DOES NOT RUN. The live acceptance curls the armed route and reads a count.)
+     *
+     * It runs on `deps.db`, the RUNTIME connection, and NOT the content-blind staff handle —
+     * the opposite choice from every alert route above, argued rather than inherited:
+     * revoking sessions is session machinery on user tables (`sessions`,
+     * `refresh_tokens`), a write grant `ohmail_admin` does not hold and must not gain. The
+     * shared secret gates WHO can fire the pass; what the pass may touch is pinned by the
+     * reaper's own structural predicate.
+     */
+    method: "GET",
+    pattern: SESSIONS_REAP_CRON_PATH,
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => {
+      const log = (deps.logger ?? silentLogger).child({ route: SESSIONS_REAP_CRON_PATH });
+      const cfg = deps.alerts;
+      if (!cfg || cfg.secret.trim().length === 0) {
+        return json(404, { error: { code: "not_found" } });
+      }
+      const cron = cfg.cronSecret?.trim();
+      const authorized = presentsSecret(req, cfg.secret)
+        || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+      if (!authorized) {
+        log.warn("sessions_reap_unauthorized", {});
+        return json(401, { error: { code: "unauthorized" } });
+      }
+      try {
+        const result = await reapStaleWebSessions(deps.db as unknown as Tx, deps.now());
+        if (result.reaped > 0) log.info("sessions_reaped", { reaped: result.reaped });
+        return json(200, { now: deps.now().toISOString(), reaped: result.reaped });
+      } catch (err) {
+        // `raw` means no error envelope above this handler; it must never throw.
+        log.error("sessions_reap_failed", { err });
+        return json(503, { error: { code: "sessions_reap_failed" } });
       }
     },
   },

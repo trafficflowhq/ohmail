@@ -141,6 +141,13 @@ export interface Device {
   lastSeenAt: string;
   ip: string;
   current: boolean;
+  /**
+   * Does a `devices` row back this session? `true` = a NAMED device (a pairing redeem's
+   * mint, the desktop's macos claim) — listed individually and revoked by its device id.
+   * `false` = a plain browser sign-in (`device_id IS NULL`) — a client may collapse these
+   * into one group, and `POST /devices/revoke-web-sessions` sweeps exactly this set.
+   */
+  named: boolean;
   pushToken?: { transport: "apns" | "webpush"; registeredAt: string } | null;
 }
 

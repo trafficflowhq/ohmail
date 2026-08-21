@@ -545,6 +545,26 @@ export const auth = {
     api<AuthenticatedSession & { remainingCodes: number }>("/auth/2fa/recovery-codes/verify", {
       method: "POST", body: b,
     }),
+
+  // ── Step-up re-verification (the inline ceremony behind a stale 5-minute window) ────────
+  //
+  // `step_up_required` used to be a dead end: the only remedy a pane could offer was a full
+  // sign-out/sign-in round trip. These three re-run the sign-in second factor against the
+  // SESSION THE BROWSER ALREADY HOLDS and re-stamp its factor clock — the response is
+  // `{ok: true}` and carries NO cookies and NO tokens (the server censuses that), so nothing
+  // about the session changes except that step-up-gated verbs work again for five minutes.
+  // A pane catches `step_up_required`, runs one of these, and retries its own verb.
+
+  stepUpTotp: (b: { code: string }) =>
+    api<{ ok: true }>("/auth/step-up/totp", { method: "POST", body: b }),
+
+  stepUpWebauthnOptions: () =>
+    api<{ options: PublicKeyCredentialRequestOptionsJSON }>("/auth/step-up/webauthn/options", {
+      method: "POST", body: {},
+    }),
+
+  stepUpWebauthnVerify: (b: { credential: unknown }) =>
+    api<{ ok: true }>("/auth/step-up/webauthn/verify", { method: "POST", body: b }),
 };
 
 // ── Pairing tokens (wherever `/hello` announces `features.pairing` — the self-host server
@@ -624,11 +644,17 @@ export const pair = {
 // ── Devices — the sessions signed into this account, and the take-back ────────────────────
 
 /**
- * One row of `GET /devices` — a live session, named by its device row. `id` is the DEVICE id
- * (what `DELETE /devices/:id` takes); `label` is the pairing mint's own word for the device
- * ("kitchen iPad"), or the server's default for a plain sign-in ("Web"). `current` marks the
- * session making the request, which is the one row the pane must not offer to revoke — that
- * verb already exists and is called signing out.
+ * One row of `GET /devices` — a live session. `id` is the DEVICE id for a NAMED device and
+ * the session's own id for a plain browser sign-in (both are what `DELETE /devices/:id`
+ * takes); `label` is the pairing mint's own word for the device ("kitchen iPad") and empty
+ * for a plain sign-in. `current` marks the session making the request, which is the one row
+ * the pane must not offer to revoke — that verb already exists and is called signing out.
+ *
+ * `named` is the server's own discriminator (does a device row back this session?): `false`
+ * is a plain browser sign-in, which the pane may collapse into one group; `true` is a paired
+ * device or the desktop app, listed individually. OPTIONAL because an older server does not
+ * send it — absent means "treat as named", i.e. the pre-grouping rendering, which degrades to
+ * exactly what that server's list looked like.
  */
 export interface DeviceDTO {
   id: string;
@@ -638,6 +664,7 @@ export interface DeviceDTO {
   lastSeenAt: string;
   ip: string;
   current: boolean;
+  named?: boolean;
   pushToken: string | null;
 }
 
@@ -647,10 +674,19 @@ export const devices = {
 
   /**
    * Revoke a device's sessions — the take-back that makes offering a pairing QR safe at all.
-   * Step-up gated (`DELETE /devices/:id`), so the pane reports a 403 with the same
-   * sign-in-again sentence the mint uses rather than swallowing it.
+   * Step-up gated (`DELETE /devices/:id`); the pane answers a 403 `step_up_required` with the
+   * inline re-verification prompt rather than a dead end.
    */
   revoke: (id: string) => api<void>(`/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /**
+   * Sign out every OTHER plain web session in one act — the collapsed group's verb. The
+   * server scopes it structurally (device-less, full-scope, never the caller's session or
+   * family, never a paired device) and answers how many it revoked. Step-up gated like every
+   * other credential revocation.
+   */
+  revokeWebSessions: () =>
+    api<{ revoked: number }>("/devices/revoke-web-sessions", { method: "POST", body: {} }),
 };
 
 // ── Mailboxes ────────────────────────────────────────────────────────────────────────────

@@ -4,12 +4,14 @@ import { webauthnRoutes } from "./webauthn.js";
 import { totpRoutes } from "./totp.js";
 import { recoveryRoutes } from "./recovery.js";
 import { oauthRoutes } from "./oauth.js";
-import { deviceRoutes } from "./devices.js";
+import { deviceRoutes, webSessionRevokeRoutes } from "./devices.js";
+import { stepUpRoutes } from "./step-up.js";
 
 /**
- * The 20 auth/2FA/OAuth endpoints (contract §2), each wired to an AuthService
+ * The auth/2FA/OAuth endpoints (contract §2), each wired to an AuthService
  * method. Route `options` drive the middleware pipeline: `public` (no session),
- * `stepUp` (recent-2FA gate), `raw` (no envelope/CSRF/idempotency).
+ * `stepUp` (recent-2FA gate), `raw` (no envelope/CSRF/idempotency). The count lives in
+ * `spend-gate.test.ts`'s table census, not here — a literal in this comment drifted once.
  *
  * ITS OWN MODULE, deliberately, and the reason is which tables can mount it. This composition
  * used to live in `routes/index.ts`, whose module graph carries every route there is — billing,
@@ -31,4 +33,12 @@ export const authRoutes: Route[] = [
   ...recoveryRoutes,
   ...oauthRoutes,
   ...deviceRoutes,
+  // The step-up RE-verification ceremony and the bulk web-session take-back. Both belong to
+  // the sign-in surface (`shared-cloud.ts#auth` / the lifecycle) and NEITHER may reach the
+  // desktop-host door: the ceremony would 500 on its bare `SessionLifecycle` bag, and the bulk
+  // verb's device-less sweep would include that door's own launch session. They ride
+  // `authRoutes` — a table the desktop-host composition never imports — and
+  // `desktop-host.test.ts` censuses the absence.
+  ...stepUpRoutes,
+  ...webSessionRevokeRoutes,
 ];

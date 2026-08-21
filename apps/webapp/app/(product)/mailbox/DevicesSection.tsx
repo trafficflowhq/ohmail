@@ -4,6 +4,19 @@
  * SETTINGS → DEVICES — pair another device with this account, see what is signed in, take one
  * back.
  *
+ * Two behaviors of this pane are DECISIONS, not decoration:
+ *
+ *  · **A stale step-up window is a ceremony, not a dead end.** Every credential verb here is
+ *    step-up-gated on a five-minute factor window; `step_up_required` parks the verb and opens
+ *    {@link StepUpPrompt} — the second factor, verified inline against the session the browser
+ *    already holds — then re-runs the verb. The sign-in-again sentence survives only for a
+ *    genuinely dead session.
+ *  · **Plain browser sessions collapse into one group** ("N other web sessions", one bulk
+ *    sign-out), keyed on the SERVER's `named` discriminator (a device row means a named
+ *    device) and offered only where `/hello`'s flavor says the bulk route is mounted — see
+ *    `collapseWeb` below for the desktop-host argument. The current session stays pinned
+ *    first; named devices keep their individual rows and verbs.
+ *
  * The Cloud half of the one pairing mechanism every flavor shares: mint (`POST /pair`,
  * device-pair grant, step-up gated) → ONE link, `<apiOrigin>/pair#<token>` → shown once, as a
  * QR for the ohmail app's scanner plus the raw link for typed entry → the app redeems it
@@ -47,6 +60,7 @@ import {
 import { ALLOWED_API_ORIGINS } from "../../api-origin";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { QrCode } from "../../shell/QrCode";
+import { StepUpPrompt } from "./StepUpPrompt";
 
 /**
  * Should this client offer the Devices pane? One gate, the server's own runtime word —
@@ -87,7 +101,7 @@ function pairOrigin(): string {
   return SELF_HOST_BUILD ? window.location.origin : ALLOWED_API_ORIGINS[0]!;
 }
 
-type Busy = null | "mint" | `revoke:${string}` | `remove:${string}`;
+type Busy = null | "mint" | "web-group" | `revoke:${string}` | `remove:${string}`;
 
 export function DevicesSection() {
   const t = useTranslations("devices");
@@ -100,6 +114,23 @@ export function DevicesSection() {
   const [codes, setCodes] = useState<PairingTokenDTO[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
+  /**
+   * A step-up-gated verb was refused with `step_up_required` and is PARKED here while the
+   * inline factor prompt runs. On success the exact refused action re-runs; on cancel it is
+   * dropped. This is the repair for the pane's one dead end: the old answer was "sign in
+   * again", a full round trip for someone already in their mailbox.
+   */
+  const [stepUp, setStepUp] = useState<{ kind: Exclude<Busy, null>; fn: () => Promise<void> } | null>(null);
+  /**
+   * May the plain-browser remainder collapse into one group with a bulk sign-out?
+   * Hosted/self-host only, decided by the server's own `/hello` flavor: on a DESKTOP-HOST
+   * door the device-less non-current session is the host's own launch session and the bulk
+   * route is deliberately unmounted — a collapsed group there would offer a verb that 404s.
+   * Unknown/absent flavor falls back to individual rows, which every server can serve.
+   */
+  const [collapseWeb, setCollapseWeb] = useState(false);
+  /** The collapsed group's sign-out is awaiting confirmation. */
+  const [confirmingGroup, setConfirmingGroup] = useState(false);
   /**
    * The one appearance of a raw token, dressed as the link it is scanned or typed as. `id` is
    * the same row the list below shows, kept so the display retires WITH the row: revoking the
@@ -138,11 +169,19 @@ export function DevicesSection() {
 
   useEffect(() => {
     void refresh();
+    // The one flavor read the collapse arm branches on — see `collapseWeb`'s doc.
+    void serverHello().then((h) => {
+      if (alive.current) setCollapseWeb(h?.flavor === "managed" || h?.flavor === "selfhost");
+    });
   }, [refresh]);
 
   /**
-   * A step-up-gated call, reported honestly — `InvitesSection.run`'s exact shape: 401/403 is
-   * "your confirmation window closed, sign in again", said instead of swallowed.
+   * A step-up-gated call, and the refusal that used to dead-end is now a ceremony:
+   * `step_up_required` PARKS the action and opens the inline factor prompt
+   * ({@link StepUpPrompt}); a verified factor re-runs the exact action, in place, with the
+   * session the browser already holds. Every OTHER refusal keeps `InvitesSection.run`'s
+   * honesty — said, never swallowed — and a genuinely dead session (a plain 401) still gets
+   * the sign-in-again sentence, because for that one the round trip IS the remedy.
    */
   const run = useCallback(
     (kind: Exclude<Busy, null>, fn: () => Promise<void>) => {
@@ -151,13 +190,18 @@ export function DevicesSection() {
         setError(null);
         try {
           await fn();
+          if (alive.current) setStepUp(null);
         } catch (err) {
           if (!alive.current) return;
-          setError(
-            err instanceof ApiError && (err.status === 401 || err.status === 403)
-              ? t("stepUpExpired")
-              : messageOf(err),
-          );
+          if (err instanceof ApiError && err.status === 403 && err.code === "step_up_required") {
+            setStepUp({ kind, fn });
+          } else {
+            setError(
+              err instanceof ApiError && (err.status === 401 || err.status === 403)
+                ? t("stepUpExpired")
+                : messageOf(err),
+            );
+          }
         } finally {
           if (alive.current) setBusy(null);
         }
@@ -206,6 +250,16 @@ export function DevicesSection() {
       await refresh();
     });
 
+  /** The collapsed group's one verb — every other plain web session, signed out in one act. */
+  const revokeGroup = () =>
+    run("web-group", async () => {
+      const { revoked } = await devicesApi.revokeWebSessions();
+      if (!alive.current) return;
+      setConfirmingGroup(false);
+      toast(t("webGroupDone", { count: revoked }));
+      await refresh();
+    });
+
   const copy = () => {
     if (!minted) return;
     const link = minted.link;
@@ -227,6 +281,15 @@ export function DevicesSection() {
   const kindWord = (kind: DeviceDTO["kind"]): string =>
     kind === "macos" ? t("kindMac") : t("kindWeb");
 
+  // Current pinned first; NAMED devices individually; the plain-browser remainder collapses
+  // into `groupedWeb` where the server mounts the bulk verb, and renders row-by-row where it
+  // does not (older servers, the desktop-host door) — see `collapseWeb`'s doc for why.
+  const current = items?.find((d) => d.current) ?? null;
+  const others = (items ?? []).filter((d) => !d.current);
+  const groupedWeb = collapseWeb ? others.filter((d) => d.named === false) : [];
+  const individualOthers = collapseWeb ? others.filter((d) => d.named !== false) : others;
+  const visibleRows = [...(current ? [current] : []), ...individualOthers];
+
   return (
     <SettingsSection className="acct">
       <h2 className="acct-h">{t("title")}</h2>
@@ -238,7 +301,21 @@ export function DevicesSection() {
         </p>
       ) : null}
 
-      {minted ? (
+      {stepUp ? (
+        // The inline ceremony. It REPLACES the add-a-device block below while it runs (one
+        // call to action at a time); the lists stay visible, because the person is deciding
+        // about exactly those rows. A verified factor re-runs the parked verb unchanged.
+        <StepUpPrompt
+          onVerified={() => {
+            const parked = stepUp;
+            setStepUp(null);
+            if (parked) run(parked.kind, parked.fn);
+          }}
+          onCancel={() => setStepUp(null)}
+        />
+      ) : null}
+
+      {stepUp ? null : minted ? (
         <div className="acct-confirm">
           <p className="acct-lead">
             {minted.label ? t("mintedLeadFor", { name: minted.label }) : t("mintedLead")}
@@ -326,7 +403,12 @@ export function DevicesSection() {
       {items && items.length > 0 ? (
         <>
           <SettingsSubhead>{t("devicesTitle")}</SettingsSubhead>
-          {items.map((d) =>
+          {/* Current session pinned first, NAMED devices individually, and — where the server
+              mounts the bulk verb (`collapseWeb`) — the plain-browser remainder as ONE group
+              row with one sign-out. `named === false` is the server's own discriminator; an
+              older server that never sends it gets every row individually, exactly as its own
+              list has always rendered. */}
+          {visibleRows.map((d) =>
             removing === d.id ? (
               <SettingsRow
                 key={d.id}
@@ -369,6 +451,41 @@ export function DevicesSection() {
               />
             ),
           )}
+          {groupedWeb.length > 0 ? (
+            confirmingGroup ? (
+              <SettingsRow
+                key="web-group-confirm"
+                label={t("webGroupAsk", { count: groupedWeb.length })}
+                description={t("webGroupWhat")}
+                control={
+                  <span className="set-tag-acts">
+                    <Button
+                      variant="primary"
+                      className="danger"
+                      onClick={revokeGroup}
+                      disabled={busy === "web-group"}
+                    >
+                      {busy === "web-group" ? t("working") : t("webGroupAction")}
+                    </Button>
+                    <Button variant="ghost" onClick={() => setConfirmingGroup(false)}>
+                      {t("cancel")}
+                    </Button>
+                  </span>
+                }
+              />
+            ) : (
+              <SettingsRow
+                key="web-group"
+                label={t("webGroup", { count: groupedWeb.length })}
+                description={t("webGroupMeta", { seen: day(groupedWeb[0]!.lastSeenAt) })}
+                control={
+                  <span className="acct-row-act">
+                    <Button onClick={() => setConfirmingGroup(true)}>{t("webGroupAction")}</Button>
+                  </span>
+                }
+              />
+            )
+          ) : null}
         </>
       ) : null}
     </SettingsSection>

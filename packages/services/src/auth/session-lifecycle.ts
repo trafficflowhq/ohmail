@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, ne, or } from "drizzle-orm";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
 import type { ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
@@ -231,6 +231,11 @@ export class SessionLifecycle {
         lastSeenAt: s.lastSeenAt.toISOString(),
         ip: dev?.ip ?? "",
         current: ctx.sessionId === s.id,
+        // A device row means a NAMED device (a pairing redeem's mint, the desktop's macos
+        // claim) — the sidecar's launch-session discriminator, promoted to the projection so
+        // a client can pin the current session, list named devices individually, and collapse
+        // the plain-browser remainder without guessing from labels.
+        named: dev != null,
         pushToken: null,
       });
     }
@@ -268,11 +273,73 @@ export class SessionLifecycle {
     const userId = this.requireUser(ctx);
     if (opts.requireStepUp !== false) await this.requireStepUp(ctx);
     const db = asTx(ctx);
+    // The id the list exposed: the device id for a NAMED device, the session's OWN id for a
+    // device-less one (`listDevices` has always published `s.deviceId ?? s.id`). The second
+    // arm used to be missing, and its absence was a FALSE SUCCESS: revoking a device-less row
+    // matched zero sessions, audited `device_revoked`, answered 204 — and the "revoked"
+    // session's next request still worked. The session-id arm is narrowed to
+    // `isNull(deviceId)` so a session id can never be a side door around the device
+    // predicate, and both arms stay user-scoped: nothing of anybody else's is reachable.
     const rows = await db.select().from(sessions)
-      .where(and(eq(sessions.userId, userId), eq(sessions.deviceId, deviceId), isNull(sessions.revokedAt)));
+      .where(and(
+        eq(sessions.userId, userId),
+        isNull(sessions.revokedAt),
+        or(
+          eq(sessions.deviceId, deviceId),
+          and(eq(sessions.id, deviceId), isNull(sessions.deviceId)),
+        ),
+      ));
     for (const s of rows) await this.revokeFamily(db, s.familyId, ctx.now());
     const u = await this.loadUser(db, userId);
     await this.audit(db, u, "device_revoked", undefined, ctx);
+  }
+
+  /**
+   * Revoke every DEVICE-LESS full session of the caller except the caller's own — the one
+   * bulk verb behind "sign out all other web sessions".
+   *
+   * The scope is structural, never a label: `device_id IS NULL` is what a plain browser
+   * sign-in is (a device row means a NAMED device — a pairing redeem's mint or the desktop's
+   * macos claim), so a paired device can never be swept by this however it is labeled. The
+   * caller survives twice over — its session id AND its family are excluded — and the scope
+   * pin (`scope = 'full'`) keeps the predicate exact rather than relying on "no enrollment
+   * session can coexist with a full one" holding forever.
+   *
+   * Step-up gated for `logout {allDevices}`'s exact reason: mass sign-out is device
+   * revocation in effect. NOT mounted on the desktop-host door (`routes/desktop-host.ts`) —
+   * there the device-less non-current session IS the host's launch session, which a remote
+   * viewer must never be able to kill; the route array that carries this verb is spread into
+   * `authRoutes` only, and `desktop-host.test.ts` censuses the absence.
+   */
+  async revokeWebSessions(ctx: ServiceContext): Promise<{ revoked: number }> {
+    const userId = this.requireUser(ctx);
+    await this.requireStepUp(ctx);
+    const db = asTx(ctx);
+    const now = ctx.now();
+    const current = ctx.sessionId
+      ? (await db.select({ familyId: sessions.familyId }).from(sessions)
+        .where(eq(sessions.id, ctx.sessionId)).limit(1))[0]
+      : undefined;
+    const preds = [
+      eq(sessions.userId, userId),
+      isNull(sessions.deviceId),
+      eq(sessions.scope, "full"),
+      isNull(sessions.revokedAt),
+    ];
+    if (ctx.sessionId) preds.push(ne(sessions.id, ctx.sessionId));
+    if (current) preds.push(ne(sessions.familyId, current.familyId));
+    const rows = await db.select({ id: sessions.id, familyId: sessions.familyId })
+      .from(sessions).where(and(...preds));
+    // Family revocation, session by session — the same act `revokeDevice` performs, so the
+    // refresh chain dies with the session and a held `tf_refresh` cannot resurrect it.
+    for (const familyId of [...new Set(rows.map((r) => r.familyId))]) {
+      await this.revokeFamily(db, familyId, now);
+    }
+    if (rows.length > 0) {
+      const u = await this.loadUser(db, userId);
+      await this.audit(db, u, "device_revoked", undefined, ctx);
+    }
+    return { revoked: rows.length };
   }
 
   /** Throws `step_up_required` unless the current session had a 2FA assertion
@@ -363,11 +430,20 @@ export class SessionLifecycle {
     // from: a pairing redeem's kind arrives from the anonymous redeemer, so the paired mint pins
     // the surface its TRANSPORT dictates instead — see the option's doc above.
     const ttls = surfaceTtls(this.cfg, o.surface ?? (o.kind === "macos" ? "native" : "cookie"));
-    let deviceId = o.deviceId;
-    if (!deviceId) {
+    // A device row means a NAMED device, so only the macos claim auto-mints one ("ohmail for
+    // Mac" — the desktop app really is a device a user manages by name). A plain web ceremony
+    // mints NO row: it used to mint one labeled "Web" per sign-in, which turned the list that
+    // exists to make PAIRED devices visible into a flood of indistinguishable rows (hundreds
+    // on a well-used account) and left `devices` growing without bound. Device-less is also
+    // what the sidecar's launch session has always been (`identity.ts` narrows on
+    // `isNull(sessions.deviceId)`), so `device_id IS NULL` now means the same thing on every
+    // tier: a session that is not a named device. Migration 0061 backfills the historical
+    // "Web" rows to match.
+    let deviceId = o.deviceId ?? null;
+    if (!deviceId && o.kind === "macos") {
       const [dev] = await db.insert(devices).values({
         accountId: user.accountId, userId: user.id, kind: o.kind,
-        label: o.kind === "macos" ? "ohmail for Mac" : "Web", ip: o.ip ?? ctx.ip ?? "",
+        label: "ohmail for Mac", ip: o.ip ?? ctx.ip ?? "",
       }).returning();
       deviceId = dev!.id;
     }

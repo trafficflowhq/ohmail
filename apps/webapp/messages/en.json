@@ -265,7 +265,19 @@
     "removeWhat": "It loses access with its next request. You can pair it again with a new code.",
     "removed": "Device signed out.",
     "cancel": "Cancel",
-    "stepUpExpired": "Your confirmation window has closed. Sign in again, then retry."
+    "stepUpExpired": "Your confirmation window has closed. Sign in again, then retry.",
+    "stepUpLead": "Confirm it's you first. Verify your second factor and this continues right here — no need to sign in again.",
+    "stepUpPasskey": "Confirm with passkey",
+    "stepUpTotpLabel": "Six-digit code from your authenticator app",
+    "stepUpVerify": "Verify code",
+    "stepUpTotpToggle": "Use a one-time code instead",
+    "stepUpPasskeyToggle": "Use a passkey instead",
+    "webGroup": "{count, plural, one {# other web session} other {# other web sessions}}",
+    "webGroupMeta": "Browser sign-ins that aren't this one · last seen {seen}. Signing them out won't touch your paired devices.",
+    "webGroupAction": "Sign out all",
+    "webGroupAsk": "Sign out {count, plural, one {# web session} other {# web sessions}}?",
+    "webGroupWhat": "Each loses access with its next request. This browser and your paired devices stay signed in.",
+    "webGroupDone": "Signed out {count, plural, one {# web session} other {# web sessions}}."
   },
   "host": {
     "title": "Devices",

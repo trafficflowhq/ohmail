@@ -428,6 +428,13 @@
       "when": 1790377340527,
       "tag": "0060_refresh_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1790463740527,
+      "tag": "0061_web_sessions_deviceless",
+      "breakpoints": true
     }
   ]
 }

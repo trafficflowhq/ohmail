@@ -42,7 +42,11 @@ export const HELLO_TIMEOUT_MS = 5_000;
 /** The frozen `/hello` wire shape — the fields this app acts on (the contract carries more). */
 export interface ServerHello {
   product: string;
-  flavor: "managed" | "selfhost" | "local";
+  // `desktop-host` joined the union when the Devices pane started branching on the flavor
+  // (collapse-and-bulk-revoke is a hosted/self-host arm only; on a desktop host the
+  // device-less non-current session is the HOST's own launch session and the bulk route is
+  // deliberately unmounted). The value itself has been on the wire since Phase 3.
+  flavor: "managed" | "selfhost" | "local" | "desktop-host";
   needsSetup: boolean;
   features: { staging: boolean; pairing: boolean };
 }

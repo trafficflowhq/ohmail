@@ -42,7 +42,7 @@ export { secretMatches, bearerOf, presentsSecret, secretRouteJson } from "./secr
 
 // The path the host deployment's cron schedule points at. Exported so the deployment config
 // and the router cannot disagree about it; a suite on the host side pins the agreement.
-export { ALERT_CRON_PATH } from "./routes/internal.js";
+export { ALERT_CRON_PATH, SESSIONS_REAP_CRON_PATH } from "./routes/internal.js";
 
 // On-demand attachment adapter factory (decrypt mailbox creds → connected ImapAdapter).
 export { makeOpenAdapter } from "./attachments-adapter.js";

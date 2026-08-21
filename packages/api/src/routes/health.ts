@@ -1250,9 +1250,20 @@ export const MAIL_EXPECTED_MARKERS =
  * `0060_refresh_tokens` is probed ONCE, by `refresh_tokens.family_id` — the column the
  * family-revocation sweep predicates on. The table is old on hosted databases (cloud 0000) and
  * new only on mail-only desktop stores, so the probe's real subject is the desktop tier; the
- * marker entry above carries the nuance. It is the NEWEST entry in the mail journal.
+ * marker entry above carries the nuance.
+ *
+ * `0061_web_sessions_deviceless` is probed by NOTHING, and that absence is a decision, not a
+ * gap: it is a DATA backfill (auto-minted "Web" device rows detached from their sessions —
+ * DEVICES) that creates no table, no column, no index and no constraint, so a database before
+ * and after it is SCHEMA-IDENTICAL and there is no object a probe could select. The anti-drift
+ * gate (`health.test.ts`: "each marker tag is still the NEWEST entry in its own journal")
+ * exists to force exactly this sentence to be written when a migration lands; what it cannot
+ * force — the census being unable to see data — the deploy runbook carries instead (applied to
+ * prod before the API alias, re-run idempotently after). The one behavioral consequence of a
+ * missed apply is cosmetic and self-healing: the Devices pane groups legacy "Web" rows as
+ * named devices until the statements run.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0060_refresh_tokens";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0061_web_sessions_deviceless";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
