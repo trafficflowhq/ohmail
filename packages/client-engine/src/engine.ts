@@ -810,9 +810,16 @@ export class OhmailEngine {
    * {@link OhmailEngine.hydrateBody}, which is the call every reading surface already makes.
    */
   private readonly renderedIds = new Set<string>();
-  /** In-flight body fetches, and the ones waiting for a slot. See {@link bodySlot}. */
+  /**
+   * In-flight body fetches, and the ones waiting for a slot. See {@link bodySlot}.
+   *
+   * A waiting entry carries the message ids it is FOR, because "urgent jumps the queue" has to
+   * hold for a message that is already queued: an open arriving after a background pass has
+   * registered that id finds the in-flight promise and would otherwise wait behind the backlog.
+   * See {@link promoteBodyRequest}.
+   */
   private bodyActive = 0;
-  private readonly bodyQueue: Array<() => void> = [];
+  private readonly bodyQueue: Array<{ ids: readonly string[]; start: () => void }> = [];
   /**
    * WHEN THIS ENGINE STARTED, epoch ms — the line a `failed` body record is compared against.
    *
@@ -1133,10 +1140,18 @@ export class OhmailEngine {
       })
       .finally(() => {
         this.eagerRun = null;
-        if (this.eagerAgain) {
-          this.eagerAgain = false;
-          void this.prefetchRecentBodies();
-        }
+        const again = this.eagerAgain;
+        this.eagerAgain = false;
+        /*
+         * THE QUEUED RE-RUN IS ALSO CANCELLED BY TEARDOWN, and it was not. `stopEagerBodies()`
+         * bumps the generation, which the running pass checks between slices — but the re-run was
+         * started from here unconditionally and then read the CURRENT generation, so a discarded
+         * engine (a live→demo navigation swaps it) resumed fetching hundreds of bodies on behalf
+         * of nobody, which is the exact shape the opt-in and the driver-owned kick exist to
+         * prevent. The flag is consumed either way: it is a request for another pass in THIS
+         * engine's life, not a standing order.
+         */
+        if (again && gen === this.eagerGen) void this.prefetchRecentBodies();
       });
     return this.eagerRun;
   }
@@ -1172,9 +1187,14 @@ export class OhmailEngine {
       .sort((a, b) => (b.entity.date ?? "").localeCompare(a.entity.date ?? ""))
       .slice(0, EAGER_BODIES_MAX)
       .map((e) => e.id);
+    // The stop check is BETWEEN slices here and INSIDE the slice via `stopped` — a batch answer
+    // the server truncated on its byte budget leaves a per-id tail of up to
+    // {@link EAGER_BODIES_SLICE} single requests, and without a check in there a teardown between
+    // the batch response and its tail let a discarded engine issue every one of them.
+    const stopped = (): boolean => gen !== this.eagerGen;
     for (let i = 0; i < ids.length; i += EAGER_BODIES_SLICE) {
-      if (gen !== this.eagerGen) return;
-      await this.hydrateMany(ids.slice(i, i + EAGER_BODIES_SLICE), { rendered: false });
+      if (stopped()) return;
+      await this.hydrateMany(ids.slice(i, i + EAGER_BODIES_SLICE), { rendered: false, stopped });
     }
   }
 
@@ -1665,7 +1685,14 @@ export class OhmailEngine {
      */
     this.noteRendered(messageId);
     const inFlight = this.bodyRequests.get(messageId);
-    if (inFlight) return inFlight;
+    if (inFlight) {
+      // JOINED, and then re-prioritised: the request may have been created by the background pass
+      // (or by a thread open) and be sitting in the non-urgent queue. See
+      // {@link promoteBodyRequest} — without this the claim "an open always jumps" is false for
+      // precisely the messages the prefetch has queued.
+      if (opts.urgent === true || opts.retry === true) this.promoteBodyRequest(messageId);
+      return inFlight;
+    }
 
     const plan = this.bodyPlan(messageId, opts.retry === true);
     if (plan.kind === "skip") return;
@@ -1850,7 +1877,7 @@ export class OhmailEngine {
     urgent: boolean,
   ): Promise<void> {
     return this.markLoading(messageId, held)
-      .then(() => this.bodySlot(urgent, () => this.fetchBodyInto(messageId)))
+      .then(() => this.bodySlot(urgent, () => this.fetchBodyInto(messageId), [messageId]))
       .finally(() => {
         this.bodyRequests.delete(messageId);
       });
@@ -1925,7 +1952,10 @@ export class OhmailEngine {
    * prune; a background prefetch means none of them is, and pinning them would flush the
    * {@link RENDERED_PINS} LRU of the ids that genuinely are.
    */
-  private hydrateMany(messageIds: string[], opts: { rendered: boolean }): Promise<void> {
+  private hydrateMany(
+    messageIds: string[],
+    opts: { rendered: boolean; stopped?: () => boolean },
+  ): Promise<void> {
     const fetchBodies = this.fetchBodiesFn;
     const ids = [...new Set(messageIds)];
     if (!fetchBodies) {
@@ -1933,8 +1963,11 @@ export class OhmailEngine {
         return Promise.all(ids.map((id) => this.hydrateBody(id))).then(() => undefined);
       }
       // The per-id fallback WITHOUT the pin write `hydrateBody` opens with — same admission,
-      // same single-flight registration, no claim that a surface is rendering anything.
+      // same single-flight registration, no claim that a surface is rendering anything. A caller
+      // that can be torn down (the eager pass) is asked before each id, for the reason
+      // `runEagerBodies` gives: this loop is as long as the slice.
       const runs = ids.map((id) => {
+        if (opts.stopped?.() === true) return Promise.resolve();
         const inFlight = this.bodyRequests.get(id);
         if (inFlight) return inFlight;
         const plan = this.bodyPlan(id, false);
@@ -1966,7 +1999,7 @@ export class OhmailEngine {
       const chunk = take.slice(i, i + BODIES_IDS_MAX);
       const chunkIds = chunk.map((c) => c.id);
       const run = Promise.all(chunk.map((c) => this.markLoading(c.id, c.held)))
-        .then(() => this.bodySlot(false, () => this.fetchBodiesInto(chunkIds, fetchBodies)))
+        .then(() => this.bodySlot(false, () => this.fetchBodiesInto(chunkIds, fetchBodies, opts.stopped), chunkIds))
         .finally(() => {
           for (const id of chunkIds) this.bodyRequests.delete(id);
         });
@@ -1991,7 +2024,11 @@ export class OhmailEngine {
    * their refusals — every id gets the `failed` record it would have got asking alone, which is a
    * state the surfaces render with a Retry beside it.
    */
-  private async fetchBodiesInto(ids: string[], fetchBodies: FetchBodiesFn): Promise<void> {
+  private async fetchBodiesInto(
+    ids: string[],
+    fetchBodies: FetchBodiesFn,
+    stopped?: () => boolean,
+  ): Promise<void> {
     let rows: MessageBodyBatchWire[] | null;
     try {
       rows = await fetchBodies(ids);
@@ -2035,7 +2072,18 @@ export class OhmailEngine {
         await this.failBody(id, err);
       }
     }
-    for (const id of missing) await this.fetchBodyInto(id);
+    /*
+     * THE PER-ID TAIL, AND IT IS INTERRUPTIBLE. "Shorter than asked" is a normal answer — the
+     * server omits ids the account does not own and stops early on its byte budget — so this loop
+     * can be as long as the batch was, one request at a time. A background pass that has been
+     * torn down must not walk it: the generation was checked before the batch left, and the answer
+     * arrives arbitrarily later. Bodies already in the air still land in the store; nothing new
+     * leaves.
+     */
+    for (const id of missing) {
+      if (stopped?.() === true) return;
+      await this.fetchBodyInto(id);
+    }
   }
 
   /**
@@ -2065,23 +2113,55 @@ export class OhmailEngine {
    * failure would starve every later hydration and do it silently — the same class of defect as
    * the one above, reached from the other side.
    */
-  private bodySlot<T>(urgent: boolean, run: () => Promise<T>): Promise<T> {
+  private bodySlot<T>(urgent: boolean, run: () => Promise<T>, ids: readonly string[] = []): Promise<T> {
     if (urgent || this.bodyActive < MAX_CONCURRENT_BODIES) {
       this.bodyActive++;
       return run().finally(() => {
         this.bodyActive--;
-        this.bodyQueue.shift()?.();
+        this.bodyQueue.shift()?.start();
       });
     }
     return new Promise<T>((resolve, reject) => {
-      this.bodyQueue.push(() => {
-        this.bodyActive++;
-        run().then(resolve, reject).finally(() => {
-          this.bodyActive--;
-          this.bodyQueue.shift()?.();
-        });
+      this.bodyQueue.push({
+        ids,
+        start: () => {
+          this.bodyActive++;
+          run().then(resolve, reject).finally(() => {
+            this.bodyActive--;
+            this.bodyQueue.shift()?.start();
+          });
+        },
       });
     });
+  }
+
+  /**
+   * LET A WAITING REQUEST FOR THIS MESSAGE GO NOW — the other half of "an open always jumps".
+   *
+   * ── THE DEFECT THIS CLOSES ──────────────────────────────────────────────────────────────
+   *
+   * `hydrateBody` single-flights on `bodyRequests`: a request already in the air for a message is
+   * JOINED rather than duplicated, which is right. But the eager pass registers hundreds of ids
+   * that way, and a request registered by a background pass is queued NON-urgently — so opening
+   * one of those messages found the existing promise, returned it, and waited behind up to four
+   * slots of work nobody was looking at. The urgency was decided when the request was created and
+   * never revisited, which made "urgent opens always jump the queue" false in exactly the case
+   * the prefetch created: the message the reader picked is the one most likely to be queued.
+   *
+   * So urgency is re-decided on demand. The entry is pulled out of the queue and started
+   * immediately — the same bypass an urgent request gets at creation, including exceeding
+   * {@link MAX_CONCURRENT_BODIES} by one, which is what "urgent" has always meant here.
+   *
+   * A no-op when the id is not waiting: it may be running already (nothing to do), or done. A
+   * BATCH entry is promoted whole, because its ids travel in one request and there is no way to
+   * extract one — the reader's message arrives with a handful of siblings, which is the same
+   * shape a thread open has always had.
+   */
+  private promoteBodyRequest(messageId: string): void {
+    const at = this.bodyQueue.findIndex((e) => e.ids.includes(messageId));
+    if (at < 0) return;
+    const [entry] = this.bodyQueue.splice(at, 1);
+    entry!.start();
   }
 
   /**

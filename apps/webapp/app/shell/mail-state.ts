@@ -309,15 +309,22 @@ export interface MailboxFacts {
  * feature exists for. One missing answer therefore withdraws the whole claim, which is the
  * behaviour every other optional field on {@link MailboxFacts} already has.
  *
- * Summed over CONNECTED mailboxes only, for the reason the ladder filters them everywhere else:
- * a `disabled` row's mail stays in the mirror (nothing is deleted for a disconnect) while the
- * account stops counting it, so including it can only bias the comparison toward a deficit that
- * is not one.
+ * SUMMED OVER EVERY MAILBOX THE FACTS CARRY, connected or not, because the NUMERATOR is the whole
+ * mirror — `MailStateInputs.mirrored` is every message in the local store, and a disconnected
+ * mailbox's mail stays there (nothing is deleted for a disconnect). Summing only the connected
+ * rows against that numerator compares two different populations: with mail retained for a
+ * disabled mailbox the pair on screen is wrong in the reader's favour (it counts messages the
+ * denominator does not) and a real shortfall on the connected mailbox is masked or hidden
+ * entirely. An earlier version of this function did exactly that.
+ *
+ * A mailbox the hosted account no longer names has no entry in the map at all — a local tombstone
+ * keeps its mail but reports no count — so that case withdraws the denominator through the rule
+ * below rather than through a filter here, which is the same fail-safe by a shorter path.
  */
-export function hostedTotal(connected: readonly MailboxFacts[]): number | null {
-  if (connected.length === 0) return null;
+export function hostedTotal(mailboxes: readonly MailboxFacts[]): number | null {
+  if (mailboxes.length === 0) return null;
   let sum = 0;
-  for (const m of connected) {
+  for (const m of mailboxes) {
     if (typeof m.hostedMessageCount !== "number") return null;
     sum += m.hostedMessageCount;
   }
@@ -1236,11 +1243,13 @@ function climb(input: MailStateInputs): MailState {
   // `now` is the SHELL's clock, beaten every `MAIL_CLOCK_MS` by `MailStateProvider` while
   // `state.clock` is true — which is what ends a latched episode. The reducer only ever runs when
   // the mirror MOVES, so an import that simply stops would otherwise never be told it had.
-  // THE DENOMINATOR, computed once for both arms that may quote it. `hostedTotal` is
+  // THE DENOMINATOR, computed once for both arms that may quote it, over EVERY mailbox on the
+  // account and not just the connected ones — the numerator is the whole mirror, so the
+  // denominator has to cover the same population (see {@link hostedTotal}). `hostedTotal` is
   // every-or-nothing and the `> mirrored` clamp is applied at each use rather than here, because
   // the two arms below want the same arithmetic for different reasons and a pre-clamped value
   // would hide which of them made the decision.
-  const accountTotal = hostedTotal(connected);
+  const accountTotal = hostedTotal(mailboxes);
   const totalIfAhead = accountTotal !== null && accountTotal > mirrored ? accountTotal : null;
 
   if (isImporting(growth, sync.bootstrapping, now)) {
