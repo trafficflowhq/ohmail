@@ -170,6 +170,13 @@ function SenderBody() {
               <Txt variant="caption" tone="ink3" style={{ marginTop: 12 }}>
                 {Copy.liveBodyLoading}
               </Txt>
+            ) : h.bodyState === "withheld" ? (
+              /* The cap's terminal state belongs here more than anywhere: the comment above is
+                 about not taking a consent decision over a truncation presented as the mail,
+                 and a withheld body is permanently exactly that. */
+              <Txt variant="caption" tone="ink3" style={{ marginTop: 12 }}>
+                {Copy.liveBodyWithheld}
+              </Txt>
             ) : h.bodyState === "failed" ? (
               <Txt variant="caption" tone="ink3" style={{ marginTop: 12 }}>
                 {Copy.liveBodyFailed}

@@ -1768,7 +1768,34 @@ export class OhmailEngine {
      * no transport can produce a record that lands back in this branch. `body-hydration.test.ts`
      * asserts the count, not just the outcome, for exactly that reason.
      */
-    if (held?.state === "ready" && held.html !== undefined) return { kind: "skip" };
+    if (held?.state === "ready" && held.html !== undefined) {
+      /**
+       * ── THE ONE READY RECORD THAT IS STILL WORTH ASKING ABOUT ───────────────────────────────
+       *
+       * A record written by a build that predates the storage-cap marker cannot be told from a
+       * genuinely empty message: `{state: "ready", text: "", html: null}` is exactly what a
+       * pre-slice client persists for a body the server has begun WITHHOLDING, because it drops
+       * the wire field it does not know. Left alone, the clause above skips it for ever and
+       * `bodyOf` reports `full` over nothing — the marker's whole purpose defeated, permanently,
+       * for every tab that was open across the deploy.
+       *
+       * `withheld === undefined` is the discriminator, and it exists only because both write
+       * sites now ALWAYS set the key (`null` for an ordinarily stored body). So this is not a
+       * poll: one re-ask heals the record, the answer writes the key either way, and the record
+       * can never match this branch again.
+       *
+       * NARROW ON PURPOSE — the cost argument above is load-bearing. Only `text === ""` AND
+       * `html === null` qualifies, which is the shape a withheld body has. A plain-text mail with
+       * real text and `html: null` is the common `html`-absence case and must never become a
+       * request; a record already carrying the key, in either value, has been answered by a build
+       * that could tell. And `bodyHealed` bounds it to ONCE per engine even if the mirror write
+       * is refused, exactly as the `failed` arm below does.
+       */
+      const preCapEmpty = held.text === "" && held.html === null && held.withheld === undefined;
+      if (!preCapEmpty || this.bodyHealed.has(messageId)) return { kind: "skip" };
+      this.bodyHealed.add(messageId);
+      return { kind: "fetch", held };
+    }
     /**
      * ── A FAILURE IS FOR THIS SESSION, NOT FOR EVER ────────────────────────────────────────
      *
@@ -1998,7 +2025,11 @@ export class OhmailEngine {
           loadedRemoteContent: wire.loadedRemoteContent === true,
           unsubscribe: wire.unsubscribe ?? "no_header",
           unsubscribeUrl: wire.unsubscribeUrl ?? null,
-          ...(wire.withheld === "storage_cap" ? { withheld: "storage_cap" as const } : {}),
+          // ALWAYS written, never spread conditionally — `null` is "a withheld-aware build
+          // answered, and this body is ordinarily stored". Absence is reserved for records no
+          // such build ever touched, which is what makes the pre-slice heal terminate. The batch
+          // path and the single path must agree; see `MessageBodyRecord.withheld`.
+          withheld: wire.withheld === "storage_cap" ? ("storage_cap" as const) : null,
         });
       } catch (err) {
         await this.failBody(id, err);
@@ -2123,11 +2154,14 @@ export class OhmailEngine {
               // a bare test double or the FixturesAdapter — which answer `{ text }` — honest.
               unsubscribe: wire.unsubscribe ?? "no_header",
               unsubscribeUrl: wire.unsubscribeUrl ?? null,
-              // The server's withheld marker, carried only when present: the record stays
-              // `ready` — the server ANSWERED, so the single-flight ledger and every "a READY
-              // body is not re-fetched" rule apply unchanged — and `bodyOf` derives the
-              // terminal `withheld` surface state from the marker, never from emptiness.
-              ...(wire.withheld === "storage_cap" ? { withheld: "storage_cap" as const } : {}),
+              // The server's withheld marker, ALWAYS written — `null` when the body is
+              // ordinarily stored, never omitted. The record stays `ready` (the server ANSWERED,
+              // so the single-flight ledger and every "a READY body is not re-fetched" rule
+              // apply unchanged) and `bodyOf` derives the terminal `withheld` surface state from
+              // the marker, never from emptiness. Writing the key unconditionally is what lets
+              // the guard below distinguish "not withheld" from "never asked by a build that
+              // could tell", and so what makes the pre-slice heal happen ONCE and stop.
+              withheld: wire.withheld === "storage_cap" ? ("storage_cap" as const) : null,
             },
       );
     } catch (err) {

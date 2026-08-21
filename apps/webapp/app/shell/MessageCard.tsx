@@ -381,6 +381,25 @@ export function MessageCard({
   const stalled = useBodyStalled(message.id, waiting);
 
   const loadingNote: ReactNode = !stalled && waiting ? <p className="hm-state">{tb("loading")}</p> : null;
+  /**
+   * ── WITHHELD IS ANSWERED, NOT FAILED — the same rule the focused pane follows ──────────────
+   *
+   * The panel used to enumerate only `loading`/`snippet` and `failed`, so the storage-cap
+   * slice's terminal `withheld` state matched NEITHER arm and fell through to a bare
+   * {@link MessageBody} over `bodyOf`'s snippet — the PREVIEW presented as the message, with
+   * nothing on screen saying the body was never stored. The focused message was honest
+   * throughout, which is what kept this invisible: the dishonesty only ever appeared on a
+   * sibling of an open thread.
+   *
+   * No Retry, deliberately, and this is not a styling choice: the server ANSWERED, and its
+   * answer is that it holds no content for this message because the account's storage space was
+   * full when it arrived. A retry cannot change that, and `failed`'s control exists precisely
+   * because a state with no way out is a dead end — offering one that cannot succeed is worse
+   * than offering none. Not `warn` either: nothing went wrong, and the mail itself is untouched
+   * in the mailbox on the user's own server.
+   */
+  const withheldNote: ReactNode =
+    body.state === "withheld" ? <p className="hm-state">{tb("withheld")}</p> : null;
   const failedNote: ReactNode =
     body.state === "failed" || (stalled && waiting) ? (
       <p className="hm-state warn">
@@ -414,6 +433,7 @@ export function MessageCard({
           />
         </div>
         {loadingNote}
+        {withheldNote}
         {failedNote}
         {/* NO VERB FOOTER, AND NOT AN OVERSIGHT. Reply / Reply all / Forward live in the
             header's ⋯ menu now (`MessageHeader`), per panel, through the same chrome the old

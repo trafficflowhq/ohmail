@@ -66,14 +66,31 @@ ALTER TABLE "message_bodies" ADD CONSTRAINT "message_bodies_withheld_reason"
   CHECK ("withheld_reason" IS NULL OR "withheld_reason" IN ('storage_cap'));
 --> statement-breakpoint
 
--- ══ THE BACKFILL, RE-RUNNABLE BY DESIGN ══════════════════════════════════════════════════════
+-- ══ THE BACKFILL — A ONE-TIME RECOMPUTE. DO NOT RE-RUN THIS STATEMENT. ═══════════════════════
 --
 -- `ON CONFLICT … DO UPDATE SET bytes = excluded.bytes` rather than DO NOTHING, deliberately:
 -- between this migration running on prod (BEFORE the api alias, per the runbook) and the new
--- worker going live, the OLD worker keeps ingesting uncounted bodies — so the deploy runbook
--- re-runs exactly this statement once after the worker deploy, and the re-run RECOMPUTES
--- instead of preserving the drifted value. Idempotent at any moment: the sum is derived from
--- the tables themselves.
+-- worker going live, the OLD worker keeps ingesting uncounted bodies, so the counter must be
+-- recomputed once after the worker deploy rather than preserved. Correct here, where it runs
+-- once against a schema no new-worker reservation is touching yet.
+--
+-- ── THE CORRECTION, AND WHY THIS STATEMENT IS NOT THE TOOL FOR IT ───────────────────────────
+--
+-- This comment used to instruct the runbook to "re-run exactly this statement once after the
+-- worker deploy". That instruction was WRONG and a review found it: `excluded.bytes` is fixed
+-- from this statement's OWN snapshot, taken before the row lock is ever requested, so a worker
+-- transaction that commits a body plus its `bytes = bytes + n` reservation in between is
+-- overwritten by the stale sum. The body stays stored and UNCOUNTED — the account's effective
+-- allowance grows silently — and the window is open precisely when the re-run was prescribed,
+-- with mail arriving. Nothing errors and the number looks plausible.
+--
+-- The repeatable operation is `recomputeAccountStorage` in `packages/db/src/storage.ts`, which
+-- locks the counter row FIRST and only then aggregates, so a concurrent reservation is either
+-- already visible or blocked behind it. `storage-cap.pg.test.ts` forces that interleaving with
+-- two connections and watches this statement's form lose the bytes.
+--
+-- The SQL below is deliberately left EXACTLY as it ran when this migration was applied: it is
+-- the historical record of that run, not a procedure to call again.
 --
 -- The join goes through `messages` because `message_bodies` carries no `account_id` — the same
 -- ownership path every body read proves. O(message_bodies), once, at today's hosted scale a

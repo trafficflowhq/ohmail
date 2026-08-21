@@ -113,9 +113,11 @@ function StreamCard({ m, onExpand }: { m: WorldMail; onExpand: () => void }) {
   const bodyNote =
     open && (m.bodyState === "snippet" || m.bodyState === "loading")
       ? Copy.liveBodyLoading
-      : open && m.bodyState === "failed"
-        ? Copy.liveBodyFailed
-        : null;
+      : open && m.bodyState === "withheld"
+        ? Copy.liveBodyWithheld
+        : open && m.bodyState === "failed"
+          ? Copy.liveBodyFailed
+          : null;
 
   return (
     <Panel level="l1" radius={t.radius.card} style={{ marginBottom: 12 }}>

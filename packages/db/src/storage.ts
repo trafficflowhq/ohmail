@@ -103,6 +103,61 @@ export async function releaseBodyBytes(tx: Tx, accountId: string, bytes: number)
 }
 
 /**
+ * RECOMPUTE the account's counter from `message_bodies`, race-safely, in the caller's
+ * transaction. Returns the value written.
+ *
+ * ── WHY THIS EXISTS, AND WHY THE MIGRATION'S OWN STATEMENT IS NOT IT ────────────────────────
+ *
+ * `0062_storage_accounting.sql`'s backfill is `INSERT … SELECT SUM(…) … ON CONFLICT DO UPDATE
+ * SET bytes = excluded.bytes`. As a ONE-TIME migration on a quiesced schema that is correct, and
+ * it is the historical record of what ran. As the REPEATABLE operation the runbook used to
+ * describe ("re-run exactly this statement once after the worker deploy") it has a lost-update
+ * hole, and the hole is open precisely when the re-run is prescribed — while mail is arriving:
+ *
+ *   1. the statement's `SELECT SUM(…)` fixes `excluded.bytes` from ITS OWN snapshot;
+ *   2. a worker transaction then commits a body AND its `bytes = bytes + n` reservation;
+ *   3. the backfill's conflict arm now waits for that row lock, gets it, and writes the STALE
+ *      sum — silently erasing the reservation from step 2.
+ *
+ * The body stays stored and uncounted, so the account's effective allowance grows for ever, or
+ * until some later full recomputation. Ordinary inbound mail during the prescribed re-run is
+ * enough; nothing errors, and the counter looks plausible.
+ *
+ * ── THE FIX IS THE LOCK ORDER, NOT A BIGGER LOCK ────────────────────────────────────────────
+ *
+ * Take the counter row's lock FIRST, then compute. Under READ COMMITTED every statement takes a
+ * fresh snapshot, so the aggregate below runs on a snapshot taken AFTER the lock was granted —
+ * which means every reservation that committed before us is visible, and every reservation still
+ * in flight is blocked on the row we hold and applies its delta after we commit. Both orderings
+ * are then correct, which is the property the single-statement form cannot have: there, the
+ * snapshot is taken before the lock is even requested.
+ *
+ * `SELECT … FOR UPDATE` and the aggregate are deliberately SEPARATE statements for that reason —
+ * folding them into one would restore the very snapshot-before-lock shape this removes. Same
+ * per-account row lock as {@link reserveBodyBytes}, so this introduces no new lock and no new
+ * ordering: call it before the transaction's first `recordChange`, like every other writer here.
+ */
+export async function recomputeAccountStorage(tx: Tx, accountId: string): Promise<number> {
+  // The row must EXIST before it can be locked — an account whose bodies all predate 0062 has no
+  // row, and `FOR UPDATE` locks nothing rather than waiting for one to appear.
+  await tx.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();
+  await tx.execute(sql`
+    select 1 from ${accountStorage} where ${accountStorage.accountId} = ${accountId} for update`);
+  const rows = await tx.execute<{ bytes: string }>(sql`
+    update ${accountStorage}
+       set bytes = coalesce((select sum(octet_length(b."text") + coalesce(octet_length(b."html"), 0))
+                               from message_bodies b
+                               join messages m on m."id" = b."message_id"
+                              where m."account_id" = ${accountId}), 0),
+           updated_at = now()
+     where ${accountStorage.accountId} = ${accountId}
+    returning bytes`);
+  // Driver split, the credits precedent: postgres-js answers the array, PGlite `{ rows }`.
+  const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Array<{ bytes: string }> }).rows;
+  return Number((list as Array<{ bytes: string }>)[0]?.bytes ?? 0);
+}
+
+/**
  * Apply a byte DELTA for a body a repair pass rewrote in place (`sensitive-backfill`,
  * `redacted-restore`: old body out, fresh body in — delta = fresh − old). Ensures the row (an
  * account whose bodies all predate 0062's backfill still gets a row), clamps at zero so a

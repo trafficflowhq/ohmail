@@ -61,6 +61,7 @@ export {
  */
 export {
   bodyBytesOf, storageUsageOf, reserveBodyBytes, releaseBodyBytes, applyBodyBytesDelta,
+  recomputeAccountStorage,
 } from "./storage.js";
 
 /** One definition of "transaction pooler", shared by every host that must refuse one. */

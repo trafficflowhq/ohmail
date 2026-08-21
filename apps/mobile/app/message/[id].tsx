@@ -79,12 +79,16 @@ function MessageBody() {
     );
   }
 
+  // `withheld` is checked BEFORE the failure arm and never folded into it: the storage cap is an
+  // answer the server gave, so "reopen to try again" would be false. See `Copy.liveBodyWithheld`.
   const bodyNote =
     !m.protected && (m.bodyState === "snippet" || m.bodyState === "loading")
       ? Copy.liveBodyLoading
-      : !m.protected && m.bodyState === "failed"
-        ? Copy.liveBodyFailed
-        : null;
+      : !m.protected && m.bodyState === "withheld"
+        ? Copy.liveBodyWithheld
+        : !m.protected && m.bodyState === "failed"
+          ? Copy.liveBodyFailed
+          : null;
 
   return (
     <Screen>

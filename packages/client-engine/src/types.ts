@@ -482,14 +482,39 @@ export interface MessageBodyRecord {
   /**
    * The server's word for WHY a `ready` record's text is empty: `"storage_cap"` means ingest
    * declined to store this body because the account was at its managed storage cap — the mail
-   * itself is untouched in the mailbox on the user's own server. Optional for `html`'s
-   * IndexedDB reason (older records carry no key), and ABSENT on every ordinarily stored body,
-   * so `bodyOf` can finally tell "this message says nothing" from "the server is not holding
-   * what it says". ANSWERED-TERMINAL: the server replied, so the single-flight ledger treats
-   * it as answered — never `failed` (failed implies Retry, and a retry cannot un-withhold),
-   * never re-asked in a loop.
+   * itself is untouched in the mailbox on the user's own server. So `bodyOf` can tell "this
+   * message says nothing" from "the server is not holding what it says". ANSWERED-TERMINAL: the
+   * server replied, so the single-flight ledger treats it as answered — never `failed` (failed
+   * implies Retry, and a retry cannot un-withhold), never re-asked in a loop.
+   *
+   * ── TRI-STATE, EXACTLY LIKE `html`, AND FOR THE SAME REASON ─────────────────────────────────
+   *
+   *  · `"storage_cap"`  answered, and withheld.
+   *  · `null`           answered by a withheld-AWARE build: this body is ordinarily stored.
+   *  · `undefined`      NO withheld-aware build has ever answered for this record.
+   *
+   * The third case is the one that matters and it used to be unrepresentable. This field was
+   * `withheld?: "storage_cap"` written through a conditional spread, so absence meant BOTH "not
+   * withheld" and "written by a build that had never heard of the marker" — and that ambiguity
+   * was a permanent lie on a rolling upgrade. A tab still running pre-slice code fetches a body
+   * the server has just begun withholding, does not know the wire field, and persists
+   * `{state: "ready", text: "", html: null}`. Reloaded into withheld-aware code, the hydration
+   * guard sees a `ready` record with an `html` key and skips for ever; `bodyOf` reports `full`
+   * over an empty body; and the withheld message is indistinguishable from a genuinely empty one
+   * for the life of that IndexedDB record. Nothing can heal it, because there is no way to ask
+   * "did the build that wrote this understand the marker?".
+   *
+   * Writing `null` explicitly answers that question, and it terminates for the same reason
+   * `html`'s normalization does: the write ALWAYS sets the key, so a healed record can never land
+   * back in the re-ask branch. Both write sites must normalize — see `fetchBodyInto` and
+   * `fetchBodiesInto`; one of the two left as a conditional spread turns every genuinely empty
+   * mail into a once-per-session poll.
+   *
+   * The WIRE type is deliberately NOT tri-state ({@link MessageBodyDTO.withheld}): absence there
+   * still means "not withheld, or a server too old to say", which is a statement about a response,
+   * not about what this store has ever been told.
    */
-  withheld?: "storage_cap";
+  withheld?: "storage_cap" | null;
   /**
    * The endpoint's html part, or `null` — for a message with none, for sensitive
    * mail, and for every record that is not `ready`. Held here rather than on the message

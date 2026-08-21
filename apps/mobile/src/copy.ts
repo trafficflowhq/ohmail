@@ -265,6 +265,15 @@ export const Copy = {
   /** The reading pane while the full text is on its way / when the fetch was refused. */
   liveBodyLoading: "Loading the whole message…",
   liveBodyFailed: "Only the preview could be loaded. Reopen to try again.",
+  /**
+   * THE STORAGE CAP'S TERMINAL STATE — an ANSWER, not a failure, so it must not borrow
+   * {@link liveBodyFailed}'s "reopen to try again": reopening cannot change it. The server holds
+   * no content for this message because the account's storage space was full when it arrived;
+   * the mail itself is untouched on the user's own mail server, which is the half the reader
+   * needs, and the preview above the note is real.
+   */
+  liveBodyWithheld:
+    "Not stored — your storage space was full when this arrived. This is the preview; the message itself is safe in your mailbox on your mail server.",
 
   /* -------------------------------------------------------- message actions */
 
