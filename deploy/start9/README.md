@@ -37,9 +37,12 @@ StartOS package translates them, it does not re-decide them.
   origin is the one required user-facing value; the database password, the
   credential-encryption key (`TF_KEK_V1`, 64 hex chars), and the staging-store
   password are generated; SMTP, the Microsoft OAuth block (all four values,
-  including the redirect URI), the AI key, and the private-network probe
-  allowance (`TF_PROBE_ALLOW_PRIVATE=1`) are optional fields with the template's
-  own sentences beside them.
+  including the redirect URI), the AI key, the private-network probe
+  allowance (`TF_PROBE_ALLOW_PRIVATE=1`) and the private-network push-endpoint
+  allowance (`TF_PUSH_ALLOW_PRIVATE=1`, for a UnifiedPush distributor on the
+  same box — a separate decision from the probe, since it licenses an
+  unattended sender rather than one connection check) are optional fields with
+  the template's own sentences beside them.
 - **The origin requirement carries over.** ohmail refuses a plain-http,
   non-loopback origin — secure cookies and passkeys demand https. StartOS
   provisions `.onion` and `.local` addresses for services, and those do not
