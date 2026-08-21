@@ -2259,18 +2259,22 @@ a.btn {
   text-wrap: pretty;
 }
 
-/* ── get ohmail — the four ways to run it, free ones first ────────────
+/* ── get ohmail — run it yourself first, managed as the convenience ───
    The nav CTA's landing place. Two registers, so the free/managed
-   separation reads before a word does: the three self-run ways are
-   lifted panel cards, the managed option is a flat tint band — the same
-   quiet tint as the comparison table's goodwill close, deliberately NOT
-   a second accent band (the trial owns the page's one change of
-   surface). The section closes on the portable-profile claim, centered
-   like the section head, because it is the punchline that makes the
-   four-way choice safe: the configuration lives in the mailbox, not in
-   the tier. No icons anywhere in the section — every new landing icon
-   is a specificity negotiation with `svg.ic` (see the checkmark guards),
-   and this section is type-led instead. */
+   separation reads before a word does: the free ways are lifted panel
+   cards, the managed option is a flat tint band — the same quiet tint
+   as the comparison table's goodwill close, deliberately NOT a second
+   accent band (the trial owns the page's one change of surface). Inside
+   the free register, "Self-host ohmail" is its own titled block (owner
+   ask, 2026-08-21): one wide card for the desktop app, then three icon
+   cards for exactly the three ways to run it on hardware you own. The
+   section closes on the portable-profile claim, centered like the
+   section head, because it is the punchline that makes the choice safe:
+   the configuration lives in the mailbox, not in the tier. The three
+   icons are the section's only ones, drawn in the base layer's stroke
+   weight, and their size lives behind the scoped `.l-get-disc .l-sh-ic`
+   selector — every landing icon is a specificity negotiation with
+   `svg.ic` (see the checkmark guards), and a bare class loses it. */
 
 .l-get {
   max-width: 1060px;
@@ -2288,9 +2292,47 @@ a.btn {
   text-transform: uppercase;
   color: var(--ink3);
 }
-.l-get-free {
+/* the desktop app, standalone: one wide panel — the same material as the
+   cards below, full measure because it is alone on its row. The body caps
+   at prose width like the managed band's; a 1000px line is not a card. */
+.l-get-app {
+  margin-top: 14px;
+  background: var(--panel);
+  border-radius: 18px;
+  box-shadow: var(--lift-1);
+  padding: clamp(20px, 2.6vw, 26px) clamp(20px, 3vw, 30px);
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+.l-get-app .l-get-body {
+  max-width: 76ch;
+}
+/* self-host: its own titled block inside the free register. The title
+   sits at the move-close's scale — a real heading (it is a nav
+   destination), one rank under the section's h2, never a second h2
+   competing with "Get ohmail." */
+.l-get-sh {
+  margin-top: clamp(40px, 5.5vw, 62px);
+}
+.l-get-sh-title {
+  font-size: clamp(1.15rem, 1rem + 0.7vw, 1.45rem);
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  color: var(--ink);
+}
+.l-get-sh-lede {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ink2);
+  max-width: 68ch;
+  text-wrap: pretty;
+}
+.l-get-sh-grid {
   list-style: none;
-  margin: 14px 0 0;
+  margin: 18px 0 0;
   padding: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2306,7 +2348,32 @@ a.btn {
   flex-direction: column;
   gap: 10px;
 }
+/* the icon disc: the page's existing tint (the nav's star capsule, the
+   managed band) as a small circle, so the cards gain a face without the
+   page gaining a material. Ink2 stroke — the accent stays rationed to
+   the one link each card already carries. */
+.l-get-disc {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--tint);
+  color: var(--ink2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 2px;
+}
+/* size only — `ic` keeps the weight; the scope keeps the size (0,2,0
+   beats the reset's 0,1,1, import order irrelevant) */
+.l-get-disc .l-sh-ic {
+  width: 18px;
+  height: 18px;
+}
 .l-get-name {
+  /* the self-host card names are h4 (one rank under the block's own h3 title), and
+     the UA gives h4 a 1.33em margin the base reset does not clear — in a flex column
+     it stacks onto the gap instead of collapsing, so it is zeroed here */
+  margin: 0;
   font-size: 15px;
   font-weight: 680;
   letter-spacing: -0.01em;
@@ -2452,7 +2519,7 @@ a.btn {
 }
 
 @media (max-width: 960px) {
-  .l-get-free {
+  .l-get-sh-grid {
     grid-template-columns: 1fr;
   }
 }

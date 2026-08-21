@@ -40,6 +40,9 @@ export function Nav() {
         </a>
         <nav className="l-nav-links" aria-label="Site">
           <a href="#product">{t("product")}</a>
+          {/* left of Pricing on purpose (owner ask, 2026-08-21): running it yourself
+              is presented before paying for it, in the bar as on the page */}
+          <a href="#selfhost">{t("selfhost")}</a>
           <a href="#pricing">{t("pricing")}</a>
           {/* The free product is the thing a visitor can act on immediately, and until
               this link existed the only route to it was scrolling past the price. */}
