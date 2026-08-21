@@ -66,6 +66,25 @@ function requireField(v: unknown, field: string): string {
 }
 
 /**
+ * The challenge a submitted WebAuthn assertion was actually signed over, read from its own
+ * `clientDataJSON` — the base64url value the browser wrote there verbatim from the options.
+ * A SELECTOR for the challenge-row claim, never a proof: `verifyAssertion` still checks the
+ * signature over the claimed row's challenge and origin, so lying here can only select a row
+ * the signature then fails against. `null` for anything malformed — the caller treats that as
+ * a failed factor, exactly as a garbled signature would land.
+ */
+function challengeOfAssertion(credential: unknown): string | null {
+  try {
+    const cdj = (credential as { response?: { clientDataJSON?: unknown } })?.response?.clientDataJSON;
+    if (typeof cdj !== "string" || cdj.length === 0) return null;
+    const parsed = JSON.parse(Buffer.from(cdj, "base64url").toString("utf8")) as { challenge?: unknown };
+    return typeof parsed.challenge === "string" && parsed.challenge.length > 0 ? parsed.challenge : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The advertised password rule, ENFORCED WHERE IT IS TRUE — on the server.
  *
  * `/join` renders `minLength={12}` and the copy says "at least 12 characters", and until
@@ -1692,9 +1711,23 @@ export class AuthService extends SessionLifecycle {
     const user = await this.loadUser(db, userId);
     await this.throttleReserve(db, `user:${user.id}`);
 
-    // `userId` is the ctx's own, NON-optionally — `consumeChallenge`'s keys are optional, and
-    // a call that passed neither key would select ANY newest authentication challenge.
-    const ch = await this.consumeChallenge(db, ctx, { userId: user.id, type: "authentication" });
+    // The claim binds to the challenge THIS assertion was signed over — read from the
+    // credential's own clientDataJSON — never merely "the user's newest". A user-only lookup
+    // let two overlapping ceremonies (two tabs, or any second session of the same user) burn
+    // each other: the older tab's legitimate assertion was matched against the newer tab's
+    // challenge, failed, counted toward the SHARED lockout, and consumed the newer row —
+    // repeatable into a factor lockout by anyone holding any session of the account. The
+    // extracted value is only a row SELECTOR: `verifyAssertion` below still checks the signed
+    // clientDataJSON against the claimed row's challenge and origin, so a forged selector can
+    // only select a row the signature then has to actually match. `userId` stays in the
+    // predicate NON-optionally — `consumeChallenge`'s keys are optional, and a call that
+    // passed neither key would select ANY newest authentication challenge.
+    const submitted = challengeOfAssertion(b.credential);
+    if (!submitted) {
+      await this.twofaFail(db, user, ctx);
+      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+    }
+    const ch = await this.consumeChallenge(db, ctx, { userId: user.id, type: "authentication", challenge: submitted });
     const credId = b.credential?.id as string | undefined;
     const stored = (await this.webauthnCreds(db, user.id)).find((c) => c.credentialId === credId);
     if (!stored) {
@@ -2188,11 +2221,17 @@ export class AuthService extends SessionLifecycle {
 
   private async consumeChallenge(
     db: Tx, ctx: ServiceContext,
-    q: { userId?: string; loginTokenId?: string; type: string },
+    // `challenge` narrows the claim to the ceremony the caller's assertion was actually signed
+    // over (step-up passes it, from the assertion's own clientDataJSON) — without it, a caller
+    // with several open ceremonies gets "the newest", which is how two overlapping step-ups
+    // burned each other. It is a selector only: the signature check downstream still binds the
+    // claimed row's challenge and origin.
+    q: { userId?: string; loginTokenId?: string; type: string; challenge?: string },
   ): Promise<typeof webauthnChallenges.$inferSelect> {
     const preds = [eq(webauthnChallenges.type, q.type), isNull(webauthnChallenges.consumedAt)];
     if (q.userId) preds.push(eq(webauthnChallenges.userId, q.userId));
     if (q.loginTokenId) preds.push(eq(webauthnChallenges.loginTokenId, q.loginTokenId));
+    if (q.challenge) preds.push(eq(webauthnChallenges.challenge, q.challenge));
     const row = (await db.select().from(webauthnChallenges)
       .where(and(...preds)).orderBy(desc(webauthnChallenges.createdAt)).limit(1))[0];
     if (!row || row.expiresAt.getTime() <= ctx.now().getTime()) {

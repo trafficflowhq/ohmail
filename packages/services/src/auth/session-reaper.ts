@@ -78,9 +78,12 @@ export async function reapStaleWebSessions(
   let reaped = 0;
   for (let i = 0; i < candidates.length; i += CHUNK) {
     const ids = candidates.slice(i, i + CHUNK).map((r) => r.id);
-    // The claim re-states the whole predicate, not just the id list: a session revoked (or
-    // paired — impossible today, but the predicate should not depend on that) between the
-    // read and this write is skipped, and only rows THIS statement flipped count.
+    // The claim re-states the WHOLE predicate, the cutoff included, not just the id list: a
+    // session revoked (or paired — impossible today, but the predicate should not depend on
+    // that) between the read and this write is skipped, and — the arm the review caught
+    // missing — a session that ROTATED in that window (`mintRotation` stamps `last_seen_at`
+    // current) is a browser that just came back to life, which a maintenance pass must not
+    // sign out. Only rows THIS statement flipped count.
     const claimed = await db.update(sessions)
       .set({ revokedAt: now })
       .where(and(
@@ -88,6 +91,7 @@ export async function reapStaleWebSessions(
         isNull(sessions.deviceId),
         eq(sessions.scope, "full"),
         isNull(sessions.revokedAt),
+        lt(sessions.lastSeenAt, cutoff),
       ))
       .returning({ familyId: sessions.familyId });
     if (claimed.length > 0) {
