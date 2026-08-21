@@ -1,8 +1,8 @@
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
-import { accounts, mailboxes, storageUsageOf, type LedgerTx, type Tx } from "@trafficflow/db";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { accounts, storageUsageOf, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
   LIVE_SUBSCRIPTION_STATUSES,
-  PLAN_LIMITS,
+  PLAN_LIMITS, ADDON_CARD, MAX_ADDON_QUANTITY, setupPoolOf,
   TRIAL_GRANT_CREDITS,
   TRIAL_STARTS_PER_IP,
   TRIAL_START_WINDOW_MS,
@@ -166,6 +166,11 @@ export interface SubscriptionStatusDTO {
     monthlyCredits: number;
     /** The sold-at stored-body cap in bytes (cloud 0019) — the row's, never the card's. */
     storageBytesLimit: number;
+    /** 'year' means the cycle grant is twelve months of credits at once (cloud 0022). */
+    billingInterval: "month" | "year";
+    /** Add-on quantities riding the subscription (cloud 0022); composed into `entitlements`. */
+    addonStorageUnits: number;
+    addonMailboxes: number;
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
     graceUntil: string | null;
@@ -183,6 +188,14 @@ export interface SubscriptionStatusDTO {
   entitlements: Entitlements;
   /** The canonical plan card, so the client need not hardcode prices. */
   plans: typeof PLAN_LIMITS;
+  /** The canonical add-on card (+10 GB storage, +1 mailbox), for the same no-hardcoding reason. */
+  addons: typeof ADDON_CARD;
+  /**
+   * The account's live SETUP pool (cloud 0021) — the screening-only, expiring credits each
+   * connected mailbox brings, drawn by the Screener before `balance`. Shipped so the billing
+   * surface can explain why screening keeps working at balance 0 without inventing a number.
+   */
+  setupCredits: { remaining: number; expiresAt: string | null };
   /**
    * What a trial is granted, shipped for the same reason the plan card is: so no screen has to
    * hardcode a policy number.
@@ -255,9 +268,18 @@ export interface EntitlementsService {
    * throttle, and the customer-ref read. Returns the plane request; the route forwards it to
    * {@link BillingPlanePort.checkout}.
    */
-  checkoutPreflight(ctx: ServiceContext, plan: string): Promise<PlaneCheckoutRequest>;
+  checkoutPreflight(ctx: ServiceContext, plan: string, interval?: string): Promise<PlaneCheckoutRequest>;
   /** The 404-before-network read: this account's Stripe customer, or `no_billing_account`. */
   portalCustomerRef(ctx: ServiceContext): Promise<{ stripeCustomerId: string }>;
+  /**
+   * Everything decided BEFORE the plane is asked to change an add-on: the kind and quantity
+   * validation, the live-subscription requirement (a trial has no card, so add-ons need
+   * `active`), and the bound. Returns the plane request; the route forwards it to
+   * {@link BillingPlanePort.setAddonQuantity}.
+   */
+  addonPreflight(ctx: ServiceContext, addon: string, quantity: unknown): Promise<{
+    stripeSubscriptionId: string; addon: "storage" | "mailbox"; quantity: number;
+  }>;
   /** Served entirely open — zero plane calls; works with the plane down. */
   subscriptionStatus(ctx: ServiceContext): Promise<SubscriptionStatusDTO>;
   /** Today's claim+apply transaction, over the plane's verified DTO. */
@@ -352,17 +374,36 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
     };
   };
 
-  /** The subscription's price — exactly one distinct price id, or a retryable failure. */
-  const priceOf = (sub: SubscriptionDTO): { priceId: string; plan: Plan | null } => {
-    const ids = [...new Set(sub.items.map((i) => i.priceId).filter((s): s is string => !!s))];
+  /**
+   * The subscription's PLAN price — exactly one distinct plan price id, or a retryable failure.
+   *
+   * Since contract v2 a subscription legitimately carries several items: one plan item and any
+   * add-on items (the plane labels those `addon`). The one-distinct-price rule therefore binds
+   * the PLAN items alone; an item the plane could label NEITHER way is an unconfigured price
+   * and keeps the old refusal, because a mirror that guessed about it would guess about money.
+   */
+  const priceOf = (sub: SubscriptionDTO): {
+    priceId: string; plan: Plan | null; interval: "month" | "year";
+  } => {
+    const planItems = sub.items.filter((i) => i.addon == null);
+    const ids = [...new Set(planItems.map((i) => i.priceId).filter((s): s is string => !!s))];
     if (ids.length !== 1) {
       throw new BillingApplyError(
         "ambiguous_price",
-        `subscription mirror: expected exactly one price on the subscription, found ${ids.length}`,
+        `subscription mirror: expected exactly one PLAN price on the subscription, found ${ids.length}`,
       );
     }
     const priceId = ids[0]!;
-    return { priceId, plan: sub.items.find((i) => i.priceId === priceId)?.plan ?? null };
+    const item = planItems.find((i) => i.priceId === priceId)!;
+    return { priceId, plan: item.plan ?? null, interval: item.interval === "year" ? "year" : "month" };
+  };
+
+  /** The subscription's add-on QUANTITIES, summed per kind. A missing quantity means 1. */
+  const addonUnitsOf = (sub: SubscriptionDTO): { storage: number; mailbox: number } => {
+    const sum = (kind: "storage" | "mailbox") => sub.items
+      .filter((i) => i.addon === kind)
+      .reduce((n, i) => n + (i.quantity ?? 1), 0);
+    return { storage: sum("storage"), mailbox: sum("mailbox") };
   };
 
   /**
@@ -401,6 +442,7 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
   ): Promise<{ mailboxLimit: number } | null> => {
     const price = priceOf(sub);
     const plan = requirePlan(price.plan, "subscription mirror");
+    const addons = addonUnitsOf(sub);
     const status = (statusOverride ?? sub.status) as SubscriptionStatus;
     const period = periodOf(sub);
     const eventTs = fromUnix(event.created);
@@ -422,6 +464,9 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
         mailboxLimit: card.mailboxes,
         monthlyCredits: card.monthlyCredits,
         storageBytesLimit: card.storageBytes,
+        addonStorageUnits: addons.storage,
+        addonMailboxes: addons.mailbox,
+        billingInterval: price.interval,
         currentPeriodStart: period.start,
         currentPeriodEnd: period.end,
         cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
@@ -454,6 +499,17 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
           storageBytesLimit: sql`case when excluded.stripe_price_id = ${billingSubscriptions.stripePriceId}
                                       then ${billingSubscriptions.storageBytesLimit}
                                       else excluded.storage_bytes_limit end`,
+          // The ADD-ON quantities move on EVERY admitted write, deliberately outside the
+          // price-moves-only CASE: an add-on purchase or removal arrives as
+          // `customer.subscription.updated` with the plan price unchanged, and gating these on
+          // the price would make the purchase invisible forever. The fence below still orders
+          // the writes, so a stale event cannot regress a quantity.
+          addonStorageUnits: sql`excluded.addon_storage_units`,
+          addonMailboxes: sql`excluded.addon_mailboxes`,
+          // The interval is a property of the PRICE, so it moves exactly when the price does.
+          billingInterval: sql`case when excluded.stripe_price_id = ${billingSubscriptions.stripePriceId}
+                                    then ${billingSubscriptions.billingInterval}
+                                    else excluded.billing_interval end`,
           currentPeriodStart: sql`excluded.current_period_start`,
           currentPeriodEnd: sql`excluded.current_period_end`,
           cancelAtPeriodEnd: sql`excluded.cancel_at_period_end`,
@@ -495,62 +551,28 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
     return rows[0] ?? null;
   };
 
-  /**
-   * RETENTION on a downgrade: disable the excess mailboxes, NEWEST FIRST, and never delete
-   * (risk 17 — a billing event must not destroy user data).
+  /*
+   * THE RETENTION DISABLER IS GONE, BY RULING — a downgrade disables NOTHING.
    *
-   * Newest-first because the oldest mailboxes are the ones the account was built around; losing
-   * the primary mailbox because a plan changed would be the worst possible reading of "we
-   * disabled two". One statement, so the count and the disable cannot drift apart under
-   * concurrency.
+   * `disableExcessMailboxes` lived here: on every admitted subscription mirror it counted the
+   * account's enabled mailboxes and disabled the newest ones over the row's `mailbox_limit`.
+   * The 2026-08-21 re-pricing ratified the opposite semantics: **an over-limit account keeps
+   * every mailbox it already connected, working; the limit gates NEW connects (and re-enables)
+   * only** — `mailbox-allowance.ts#decideMailboxAllowance` is that gate and is untouched. Two
+   * things forced the ruling's hand at once:
    *
-   * The predicate `status <> 'disabled'` is copied from the worker's own enabled predicate
-   * (`apps/worker/src/mailboxes.ts` `ne(mailboxes.status, "disabled")`) rather than invented —
-   * if the two disagreed, we would disable a number the worker does not consider enabled.
-   * `mailboxes` has no `deleted_at`: disconnect is a soft delete to `status='disabled'`, because
-   * `messages.mailbox_id` FK-references the row.
+   *  · the same change migrates EVERY existing row to the smaller card (cloud 0020), so the
+   *    disabler's next routine run would have shut off working mailboxes on accounts whose
+   *    price never moved — a billing event destroying service nobody's plan change asked for;
+   *  · leave-anytime is the product. A downgrade that amputates the mailboxes a person built
+   *    their account around is a migration forced by a price, which is the exact shape the
+   *    IMAP-is-master invariant exists to forbid.
    *
-   * Idempotent (a disabled row stays disabled, and a re-applied event finds the count already
-   * at the limit). Upgrades deliberately do NOT auto-re-enable: which mailboxes come back is the
-   * user's choice, and the re-enable-within-limit gate is the mailbox service's.
-   *
-   * **Run-parking is NOT owed here:** every plan's `mailboxLimit` is
-   * at least 5, so the disabler always leaves enabled mailboxes, the account stays on the
-   * worker's duty roster and its pending runs keep draining — correct, because the account is
-   * still paying. Account-wide disablement belongs to the suspend path and the worker's
-   * entitlement-driven sync gate.
-   *
-   * No `change_log` entity is emitted: mailbox status changes are REST-only today
-   * (`MailboxService.update`/`delete` write the column and emit nothing), and inventing a sync
-   * entity for this one path would be a protocol change smuggled in on a billing event.
+   * What bounds the cost of honouring old connects: the worker's rotation already serves only
+   * enabled mailboxes the account is entitled to sync (`entitlementsFor().syncEnabled`), and an
+   * over-limit account cannot grow — every path that raises the enabled count gates on the
+   * limit. The population shrinks by ordinary attrition and never grows.
    */
-  const disableExcessMailboxes = async (
-    tx: LedgerTx,
-    accountId: string,
-    mailboxLimit: number,
-  ): Promise<number> => {
-    const counted = await tx
-      .select({ n: sql<number>`count(*)::int` })
-      .from(mailboxes)
-      .where(and(eq(mailboxes.accountId, accountId), ne(mailboxes.status, "disabled")));
-    const enabled = Number(counted[0]?.n ?? 0);
-    const excess = enabled - mailboxLimit;
-    if (excess <= 0) return 0;
-
-    const doomed = await tx
-      .select({ id: mailboxes.id })
-      .from(mailboxes)
-      .where(and(eq(mailboxes.accountId, accountId), ne(mailboxes.status, "disabled")))
-      .orderBy(desc(mailboxes.createdAt), desc(mailboxes.id))
-      .limit(excess);
-    if (doomed.length === 0) return 0;
-
-    await tx
-      .update(mailboxes)
-      .set({ status: "disabled" })
-      .where(sql`${mailboxes.id} in ${doomed.map((d) => d.id)}`);
-    return doomed.length;
-  };
 
   // ── invoice.paid: THE money ─────────────────────────────────────────────────────────────
 
@@ -567,10 +589,12 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
   const monthlyCreditsFor = async (
     tx: LedgerTx, inv: InvoiceDTO,
   ): Promise<number> => {
-    // The price this invoice actually CHARGED: the recurring (non-proration) line. A renewal
-    // invoice names exactly one; anything else is not a shape we can reason about, and we simply
-    // do not use it as evidence.
-    const recurring = inv.lines.filter((l) => !l.proration);
+    // The PLAN price this invoice actually CHARGED: the recurring (non-proration) line that is
+    // not an add-on. A renewal invoice names exactly one; anything else is not a shape we can
+    // reason about, and we simply do not use it as evidence. Add-on lines (contract v2) ride the
+    // same cycle invoice legitimately and grant nothing — the add-on IS its entitlement, and the
+    // mirror carries it; letting them into `charged` would refuse every renewal that has one.
+    const recurring = inv.lines.filter((l) => !l.proration && l.addon == null);
     const charged = [...new Set(recurring.map((l) => l.priceId).filter((s): s is string => !!s))];
     // Stripe paginates `lines` at 10 (the same fact `applyProration` refuses on). A truncated
     // list can HIDE a recurring line past the first page, so `charged` computed from it is not
@@ -585,6 +609,7 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
         .select({
           monthlyCredits: billingSubscriptions.monthlyCredits,
           stripePriceId: billingSubscriptions.stripePriceId,
+          billingInterval: billingSubscriptions.billingInterval,
         })
         .from(billingSubscriptions)
         .where(eq(billingSubscriptions.stripeSubscriptionId, subId))
@@ -625,7 +650,14 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
               "mirror records — the mirror is stale; retry once the subscription event lands",
           );
         }
-        return row.monthlyCredits;
+        // AN ANNUAL CYCLE GRANTS THE YEAR AT ONCE. `monthly_credits` stays the monthly figure
+        // (the card's unit, and what every surface displays); the cadence multiplies it here,
+        // where the grant is computed, because an annual subscription has exactly one cycle
+        // invoice a year — granting the monthly figure on it would sell 1/12th of the plan.
+        // The revenue is already in hand (the year was paid on this very invoice), so the
+        // upfront pool keeps the ordering the whole allowance design rests on: money first,
+        // then spend.
+        return row.monthlyCredits * (row.billingInterval === "year" ? 12 : 1);
       }
     }
     // No mirror row yet — fall back to the plane's price→plan verdict on the charged line.
@@ -642,7 +674,8 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
       );
     }
     const chargedLine = recurring.find((l) => l.priceId === charged[0])!;
-    return PLAN_LIMITS[requirePlan(chargedLine.plan, "invoice.paid")].monthlyCredits;
+    return PLAN_LIMITS[requirePlan(chargedLine.plan, "invoice.paid")].monthlyCredits
+      * (chargedLine.interval === "year" ? 12 : 1);
   };
 
   /**
@@ -690,6 +723,24 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
     }
     const reason = inv.billingReason;
     const amountPaid = inv.amountPaid;
+
+    // AN ADD-ON-ONLY CYCLE INVOICE IS NOT A RENEWAL BOUNDARY. A mixed-cadence subscription —
+    // an annual plan carrying monthly add-ons — bills the add-ons on their own monthly cycle
+    // invoices, whose non-proration lines are ALL add-on lines. The plan's period did not roll:
+    // granting would sell a month nobody's plan price bought, and running the no-rollover
+    // expiry would confiscate eleven twelfths of an annual pool at the first add-on cycle. So
+    // the invoice is applied as a no-op — the add-on's entitlement is the mirror's quantity,
+    // already carried by the subscription events. Refusing to reason about a TRUNCATED list
+    // stays: `monthlyCreditsFor` below owns that refusal for every shape this arm does not take.
+    // (Review finding: before this arm, such an invoice threw `ambiguous_price` and parked as
+    // failed forever — a paid, legitimate delivery.)
+    const nonProration = inv.lines.filter((l) => !l.proration);
+    const addonOnlyCycle =
+      reason === "subscription_cycle" &&
+      !inv.linesTruncated &&
+      nonProration.length > 0 &&
+      nonProration.every((l) => l.addon != null);
+    if (addonOnlyCycle) return;
 
     const isRenewal =
       reason === "subscription_cycle" ||
@@ -837,7 +888,12 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
     tx: LedgerTx, accountId: string, inv: InvoiceDTO, invoiceId: string, amountPaid: number,
     stripeEventId: string,
   ): Promise<void> => {
-    const prorations = inv.lines.filter((l) => l.proration);
+    // PLAN prorations only. An add-on purchase or removal mid-cycle produces proration lines
+    // for the ADD-ON price (typically one-sided: just the new item's charge), and those grant no
+    // credits — the add-on's entitlement is the mirror's quantity, already applied. Before this
+    // filter, the first add-on ever bought would have thrown `ambiguous_proration` (a PAID
+    // invoice with no old/new plan pair) and parked as failed, forever.
+    const prorations = inv.lines.filter((l) => l.proration && l.addon == null);
     const oldLine: InvoiceLineDTO | undefined = prorations.find((l) => l.amount < 0);
     const newLine: InvoiceLineDTO | undefined = prorations.find((l) => l.amount > 0);
     const oldPrice = oldLine?.priceId;
@@ -847,6 +903,13 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
     // the wrong difference.
     const truncated = inv.linesTruncated;
 
+    // An invoice whose prorations are ALL add-on lines is a complete, readable shape: money was
+    // paid, for add-ons, and the credit consequence of an add-on is nothing. Distinguished from
+    // the one-sided PLAN pair below, which stays a refusal — there, a plan price moved and the
+    // difference could not be computed.
+    if (!oldPrice && !newPrice && inv.lines.some((l) => l.proration && l.addon != null) && !truncated) {
+      return;
+    }
     if (!oldPrice || !newPrice || truncated) {
       // ABSENT OR ONE-SIDED LINES ARE ONLY SAFE AT $0 (fix #2).
       //
@@ -871,7 +934,15 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
 
     const from = requirePlan(oldLine!.plan, "invoice.paid (proration, old price)");
     const to = requirePlan(newLine!.plan, "invoice.paid (proration, new price)");
-    const diff = Math.max(0, PLAN_LIMITS[to].monthlyCredits - PLAN_LIMITS[from].monthlyCredits);
+    // SOLD MONTHS, both sides: an upgrade between annual plans is worth twelve months of the
+    // difference, and a month→year switch of the SAME plan is worth the eleven months the
+    // customer just paid for (their twelfth is the monthly grant they already hold). Year→month
+    // is downgrade-shaped (negative), grants nothing, and normalizes at the next cycle exactly
+    // like a plan downgrade.
+    const fromMonths = oldLine!.interval === "year" ? 12 : 1;
+    const toMonths = newLine!.interval === "year" ? 12 : 1;
+    const diff = Math.max(0,
+      PLAN_LIMITS[to].monthlyCredits * toMonths - PLAN_LIMITS[from].monthlyCredits * fromMonths);
 
     // A DOWNGRADE's diff is 0 — the smaller allowance is not clawed back mid-cycle; it simply
     // lands at the next cycle's renewal, where the expiry clears the old plan's balance.
@@ -889,9 +960,10 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
     // immediate plan changes. Change down: Stripe issues customer-balance credit and this handler
     // deliberately claws nothing back, so the high-tier allowance stays spendable. Change back up:
     // Stripe applies that balance, `amount_paid` is 0, both proration lines are present — and the
-    // old code granted `PLAN_LIMITS[to] − PLAN_LIMITS[from]` in full. Solo→Pro is 18 000 credits
-    // for a zero-cash invoice, repeatable, because each upgrade invoice has its own `invoice:`
-    // source and ledger idempotency has nothing to refuse.
+    // old code granted `PLAN_LIMITS[to] − PLAN_LIMITS[from]` in full. Solo→Pro was 18 000 credits
+    // for a zero-cash invoice — 3 000 since the 2026-08-21 re-pricing, and the guard is no less
+    // necessary for the number being smaller — repeatable, because each upgrade invoice has its
+    // own `invoice:` source and ledger idempotency has nothing to refuse.
     //
     // Recorded and accepted, unchanged by this guard: an upgrade near the period end pays only a
     // small fractional proration and still receives the WHOLE monthly difference. That is a
@@ -946,9 +1018,9 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
    *
    * ── DELIBERATELY NOT GATED ON THE MIRROR FENCE ───────────────────────────────────────────
    *
-   * `disableExcessMailboxes` above runs only when the fenced upsert let the write through,
-   * because acting on a STALE limit would disable a paying customer's mailboxes. This grant is
-   * the opposite kind of fact. The fence protects the mirror ROW's current state; "this account
+   * The retired retention disabler acted only when the fenced upsert let the write through,
+   * because acting on a STALE limit would have disabled a paying customer's mailboxes. This
+   * grant is the opposite kind of fact. The fence protects the mirror ROW's current state; "this account
    * had a trial" is a statement about its history, and a late-arriving `trialing` event is
    * truthful evidence of it even when a newer `active` snapshot has already landed. Gating on
    * `applied` would silently skip the bounty for exactly the accounts whose events arrived out of
@@ -1035,10 +1107,10 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
         // Created and updated are ONE code path on purpose: the mirror upsert is idempotent and
         // fenced, so which of the two arrived first is not information the handler needs — and
         // two near-identical branches is how the fence ends up on only one of them.
-        const applied = await mirrorSubscription(tx, accountId, sub, event);
-        // The disabler runs only when the fence LET THE WRITE THROUGH. A stale event must not
-        // disable mailboxes against a limit the account no longer has.
-        if (applied) await disableExcessMailboxes(tx, accountId, applied.mailboxLimit);
+        // No disabler follows the mirror: since the 2026-08-21 ruling a downgrade disables
+        // nothing — the limit gates NEW connects only (see the ruling note above
+        // `mirrorSubscription`'s callers, where `disableExcessMailboxes` used to live).
+        await mirrorSubscription(tx, accountId, sub, event);
         // THE TRIAL BOUNTY — see `applyTrialGrant`, and note that it is deliberately NOT gated on
         // `applied`.
         if (sub.status === "trialing") await applyTrialGrant(tx, accountId, sub);
@@ -1152,11 +1224,19 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
   // ── the public surface ──────────────────────────────────────────────────────────────────
 
   return {
-    async checkoutPreflight(ctx, plan) {
+    async checkoutPreflight(ctx, plan, interval) {
       if (!Object.prototype.hasOwnProperty.call(PLAN_LIMITS, plan)) {
         throw new ServiceError("validation_failed", 400, "plan must be one of solo, plus, pro");
       }
       const chosen = plan as Plan;
+      // MONTHLY IS THE DEFAULT — the pricing page preselects it, and an absent field must mean
+      // what the page showed. Anything but the two known words is a 400, not a guess.
+      const cadence = interval === undefined || interval === "" || interval === "month" ? "month"
+        : interval === "year" ? "year"
+        : null;
+      if (cadence === null) {
+        throw new ServiceError("validation_failed", 400, "interval must be month or year");
+      }
 
       // THE FRONT DOOR. Two racing checkouts is the scenario that costs a customer two
       // subscriptions, and this 409 is what makes it an against-the-odds double-pay a human
@@ -1251,6 +1331,7 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
       return {
         accountId: ctx.accountId,
         plan: chosen,
+        interval: cadence,
         trialEligible,
         stripeCustomerId: existing[0]?.stripeCustomerId ?? null,
       };
@@ -1273,6 +1354,44 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
         );
       }
       return { stripeCustomerId: customer };
+    },
+
+    async addonPreflight(ctx, addon, quantity) {
+      if (addon !== "storage" && addon !== "mailbox") {
+        throw new ServiceError("validation_failed", 400, "addon must be storage or mailbox");
+      }
+      // A QUANTITY, not a delta — the operation is declarative so a retried request is
+      // idempotent at Stripe rather than a second purchase. Small integer bounds: an add-on
+      // count outside them is a typo or an attack, and either way not a subscription update.
+      if (typeof quantity !== "number" || !Number.isInteger(quantity)
+        || quantity < 0 || quantity > MAX_ADDON_QUANTITY) {
+        throw new ServiceError(
+          "validation_failed", 400,
+          `quantity must be an integer between 0 and ${MAX_ADDON_QUANTITY}`,
+        );
+      }
+      // LIVE and ACTIVE, not merely live: `trialing` has no card on file (the no-card trial is
+      // the point), so an add-on there would create an unpayable invoice and park the
+      // subscription in past_due — a dunning journey nobody chose. The portal is where a trial
+      // adds a card and converts; add-ons come after.
+      const sub = await liveSubscriptionOf(ctx.db, ctx.accountId);
+      if (!sub) {
+        throw new ServiceError(
+          "no_subscription", 409, "add-ons need a live subscription — start one first",
+        );
+      }
+      if (sub.status !== "active") {
+        throw new ServiceError(
+          "subscription_not_active", 409,
+          "add-ons can be changed once the subscription is active (a trial has no card on file)",
+        );
+      }
+      const rows = await ctx.db
+        .select({ stripeSubscriptionId: billingSubscriptions.stripeSubscriptionId })
+        .from(billingSubscriptions)
+        .where(eq(billingSubscriptions.id, sub.id))
+        .limit(1);
+      return { stripeSubscriptionId: rows[0]!.stripeSubscriptionId, addon, quantity };
     },
 
     async subscriptionStatus(ctx) {
@@ -1320,6 +1439,8 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
       // counter the ingest reserve moves, so the Settings row and the gate cannot disagree
       // about one account. A missing row is 0: nothing stored, nothing owed.
       const storageUsedBytes = await storageUsageOf(ctx.db as unknown as Tx, ctx.accountId);
+      // The live setup pool — two indexed reads on the same route that already reads four rows.
+      const setupPool = await setupPoolOf(ctx.db as unknown as Tx, ctx.accountId, ctx.now());
       // COMPOSED, never re-decided: every policy question — trial semantics, grace, the export
       // window, `paused`, fail-closed nulls — is already answered by `entitlementsFor`, and an
       // `if (status === …)` here would be a second copy of it that drifts.
@@ -1338,6 +1459,9 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
             mailboxLimit: sub.mailboxLimit,
             monthlyCredits: sub.monthlyCredits,
             storageBytesLimit: sub.storageBytesLimit,
+            billingInterval: sub.billingInterval ?? "month",
+            addonStorageUnits: sub.addonStorageUnits ?? 0,
+            addonMailboxes: sub.addonMailboxes ?? 0,
             currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null,
             cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
             graceUntil: sub.graceUntil?.toISOString() ?? null,
@@ -1347,6 +1471,11 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
         storageUsedBytes,
         entitlements,
         plans: PLAN_LIMITS,
+        addons: ADDON_CARD,
+        setupCredits: {
+          remaining: setupPool.remaining,
+          expiresAt: setupPool.expiresAt?.toISOString() ?? null,
+        },
         trialCredits: TRIAL_GRANT_CREDITS,
         invoiceGranted,
       };
