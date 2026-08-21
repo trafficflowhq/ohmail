@@ -59,6 +59,14 @@ function DesktopIcon() {
     </svg>
   );
 }
+/** The managed band's machine is the one that is ours, not yours: a cloud. */
+function CloudIcon() {
+  return (
+    <svg className="ic l-sh-ic" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M11.9 6.7h-.8A5.3 5.3 0 1 0 6 13.2h5.9a3.25 3.25 0 0 0 0-6.5Z" />
+    </svg>
+  );
+}
 
 /**
  * The three self-host ways: card → its one link. Flagship first: the full stack on a
@@ -182,6 +190,9 @@ export function GetOhmail() {
       {/* the managed option: honestly convenient, honestly paid, honestly the same
           product — and one register quieter than the cards above it */}
       <Reveal as="div" className="l-get-managed" delay={120}>
+        <span className="l-get-disc">
+          <CloudIcon />
+        </span>
         <p className="l-get-way is-managed">{t("wayManaged")}</p>
         <p className="l-get-q">{t("managedLead")}</p>
         <p className="l-get-mbody">{t("managedBody")}</p>
