@@ -238,10 +238,11 @@ export const BACKOFF_CAP_MS = 60_000;
  * safer: it buys a slightly larger class of suppressed false positives and charges a genuinely
  * revoked user that much longer before the one action that works.
  *
- * ── AND WHY THIS IS NOT THE TIMER `U-AUTHLATCH-BRIEF.md:70-71` FORBIDS ──────────────────
+ * ── AND WHY THIS IS NOT THE TIMER THIS MODULE'S OWN RULE FORBIDS ────────────────────────
  *
- * That ban is on a timer that runs WHILE `terminal` and recurs — it would re-open the
- * abandoned-visible-tab hole the latch exists to close. This one is PRE-terminal and arms at
+ * The rule this module holds is that once `terminal` latches, no timer runs and none recurs — a
+ * recurring timer in that state would re-open the abandoned-visible-tab hole the latch exists to
+ * close. This one is PRE-terminal and arms at
  * most once per refusal episode: it either recovers into the ordinary poll or latches `terminal`,
  * after which there is no timer at all. The cost of a genuine revocation goes from one request to
  * two, once, and then to zero.
@@ -252,7 +253,7 @@ export const REFUSAL_CONFIRM_MS = BACKOFF_CAP_MS;
  * How long a coded refusal must be SUSTAINED — re-made on every confirm ask — before it is
  * believed to be a revocation and `terminal` latches.
  *
- * ── THE INCIDENT THAT SET THE NUMBER (owner report, 2026-08-21) ───────────────────────────
+ * ── THE INCIDENT THAT SET THE NUMBER (reported from a live install, 2026-08-21) ───────────
  *
  * During a ~6-minute deploy window the API answered coded 401s. {@link REFUSAL_CONFIRM_MS} is
  * sixty seconds, so the single confirm ask landed INSIDE the window, was refused the same way,

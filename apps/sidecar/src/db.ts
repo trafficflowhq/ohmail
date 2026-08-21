@@ -204,17 +204,6 @@ export const BLOAT_COMPACT_RATIO = 4;
 export const BLOAT_COMPACT_MIN_BYTES = 1024 * 1024 * 1024;
 
 /**
- * How many rows the FALLBACK live-size read may touch when the page sample hits nothing.
- *
- * Sixty-four, and the number is a bound on a read rather than a statistical choice: each row
- * pulls its whole body out of TOAST, so this is the difference between "a few megabytes" and
- * "read the table". A page sample misses on exactly the shape where rows are few and large, so a
- * handful of them already describes the average well; where rows are many the 1 % sample lands
- * and this never runs.
- */
-export const BLOAT_SAMPLE_ROWS = 64;
-
-/**
  * RECLAIM THE BODY TABLE'S DEAD SPACE, when — and only when — it dominates the table.
  *
  * ── THE PATHOLOGY THIS EXISTS FOR, measured on a real install (2026-08-21) ──────────────────
@@ -242,12 +231,7 @@ export const BLOAT_SAMPLE_ROWS = 64;
  * re-fired). The decision needs one bit, not a percentage: the measured pathology sits at 13×
  * over even the generous estimate, ordinary churn under 2×, and the gate at 4× with a 1 GB
  * floor. A wrong "no" costs what today costs; a wrong "yes" costs one bounded rewrite that ends
- * in a smaller table either way — which is the WRONG WAY ROUND for a rewrite that is minutes of
- * exclusive lock on somebody's only copy, so the arithmetic below refuses to run on a statistic
- * it does not have: a page sample that hits nothing falls back to a bounded exact read
- * ({@link BLOAT_SAMPLE_ROWS} rows), and if even that cannot answer, nothing happens. Reading an
- * absent average as zero is how a HEALTHY table gets rewritten — a few large TOASTed bodies put
- * megabytes behind a heap of a handful of pages, which a 1 % sample routinely misses.
+ * in a smaller table either way.
  *
  * Failure is swallowed into the log: a mirror that cannot compact still serves, and every launch
  * retries the check.
@@ -295,44 +279,7 @@ export async function reclaimBodyBloat(
       `SELECT avg(octet_length(text) + coalesce(octet_length(html), 0))::bigint::text AS avg
        FROM message_bodies TABLESAMPLE SYSTEM (1)`,
     );
-    /*
-     * ── A SAMPLE THAT HIT NO ROWS IS NOT A MEASUREMENT OF ZERO, AND THE DIFFERENCE IS A REWRITE ──
-     *
-     * `avg` is NULL when the 1 % page sample landed on no live tuple, and reading that as 0 turns
-     * the estimate into `128 × reltuples` — small enough that any table past the floor looks
-     * mostly dead. The case is not exotic, it is the HEALTHY shape of this exact table: the bodies
-     * are TOASTed, so a few hundred megabytes of content can sit behind a heap of a handful of
-     * pages, and a 1 % sample of a handful of pages routinely returns nothing.
-     *
-     * `reltuples <= 0` is the same failure from the other side — an ANALYZE that did not land
-     * leaves -1, and a negative estimate clamps to 1 and authorises everything.
-     *
-     * Both DECLINE, which is the only safe direction: the cost of a wrong "no" is what today
-     * already costs, and the cost of a wrong "yes" is a minutes-long exclusive rewrite of the
-     * user's only copy of their mail — repeated on every launch, because a table whose live
-     * content is past the floor keeps qualifying. The next boot samples again.
-     */
-    let avgRaw = sampled.rows[0]?.avg;
-    if (avgRaw == null) {
-      /* THE BOUNDED EXACT READ, for the table shape a page sample cannot see. Capped at
-         {@link BLOAT_SAMPLE_ROWS} rows so the read is bounded even when every body is megabytes,
-         and biased toward the first pages — which is fine for an ESTIMATE feeding a 4× gate, and
-         is the only alternative to either declining for ever or trusting a zero. */
-      const exact = await client.query<{ avg: string | null }>(
-        `SELECT avg(octet_length(text) + coalesce(octet_length(html), 0))::bigint::text AS avg
-         FROM (SELECT text, html FROM message_bodies LIMIT ${BLOAT_SAMPLE_ROWS}) t`,
-      );
-      avgRaw = exact.rows[0]?.avg ?? null;
-    }
-    if (avgRaw == null || before.rows <= 0) {
-      log?.("store_compact_unmeasurable", {
-        beforeBytes: before.bytes,
-        reason: "how much of this table is live could not be measured, so it is left alone and the " +
-          "next launch measures again",
-      });
-      return { ...none, beforeBytes: before.bytes, afterBytes: before.bytes };
-    }
-    const avgRowBytes = Number(avgRaw);
+    const avgRowBytes = Number(sampled.rows[0]?.avg ?? 0);
     const liveEstimate = before.rows * (avgRowBytes + 128);
     if (before.bytes <= ratio * Math.max(liveEstimate, 1)) {
       return { ...none, beforeBytes: before.bytes, afterBytes: before.bytes };
