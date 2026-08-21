@@ -149,7 +149,7 @@ import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField }
 import { senderHitOf } from "./sender-hit";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import {
-  go, goScreener, goSettings, goTag, goTriage, useHashRoute,
+  go, goScreener, goSettings, goTag, goTriage, reflectMessage, useHashRoute,
   type Route, type ScreenerSegmentId, type TriagePileId,
 } from "./routing";
 import { HistoryView } from "../views/HistoryView";
@@ -3718,6 +3718,117 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   /* Assigned here so `openDraft`, which is declared several hundred lines above this, can open a
      reply draft in its own conversation. See {@link openMessageRef}. */
   openMessageRef.current = openMessage;
+
+  /**
+   * ═══ THE OPEN MESSAGE LIVES IN THE URL ════════════════════════════════════════════════════
+   *
+   * `#/<view>/m/<id>` (`Route.messageId`): the bar claims the reading on screen, so a RELOAD
+   * restores it, Back walks out of it, and a copied link hands somebody the exact message.
+   * Before this, a reload booted to the bare view and the open message was simply gone — the
+   * URL knew the place and not the reading.
+   *
+   * ONE EFFECT, ARBITRATED BY WHO MOVED. The route and the open state mirror each other, and a
+   * two-way mirror with two writers is a loop; the refs below remember the last agreed pair, so
+   * each run knows which side changed and lets THAT side win:
+   *
+   *   · the ROUTE moved (Back/Forward, a typed link, a reload) → apply it to the open state —
+   *     the Ohbox selection (plus the sheet at a narrow width, the same rule `openMessage`'s
+   *     ohbox arm applies), a stream's cursor-with-jump, or the reader overlay for every other
+   *     view. An id the mirror does not hold yet WAITS (the effect re-runs per delta) — a
+   *     reload restores before the boot drain finishes filling the mirror — and an id the
+   *     mirror never produces (another account's message, a deleted row) drops out of the bar
+   *     once the mail state settles, rather than erroring or restoring somebody else's reading.
+   *   · the STATE moved (a click, j/k, an open, a close) → reflect it into the bar
+   *     (`reflectMessage`): an OPEN pushes, so history walks readings; a move between messages
+   *     or a close REPLACES, so a `j`-walk does not bury the view under fifty entries.
+   *
+   * WHAT RESTORING DOES NOT DO: arm a read. The restore sets the selection and the surfaces;
+   * it never calls the view's `open`, so nothing is marked read by arriving — reloading IS a
+   * leave-and-revisit, the departure's own commit (`pagehide`) already spent the last reading,
+   * and the restored message re-arms only the way any on-screen message does (the dwell, or an
+   * explicit open). The session-order lease starts fresh, exactly as any reload starts it.
+   *
+   * WHAT THE BAR MIRRORS, deliberately narrow: the reader overlay on any message view, and the
+   * Ohbox's own selection (at a split width the column IS the open). A stream's expanded card
+   * is a scroll posture, not shell state, so in-place stream reading does not rewrite the URL —
+   * but a stream deep link RESTORES through the same cursor-plus-jump a search arrival uses.
+   */
+  // The last pair the two sides agreed on — `view|id`, because the SAME message deep-linked on
+  // a DIFFERENT view is a route move (the overlay must open there), not a state echo.
+  const routeMsgAgreed = useRef<string>("|");
+  useEffect(() => {
+    const allowed = route.view !== "settings" && route.view !== "compose"
+      && route.view !== "drafts" && route.view !== "screener";
+    if (!allowed) { routeMsgAgreed.current = "|"; return; }
+    const agreedKey = `${route.view}|${route.messageId ?? ""}`;
+    // What the bar may claim RIGHT NOW. The Ohbox selection counts only at a split width —
+    // on a phone the list shows no reading, so the sheet alone is the open there, and closing
+    // it must take the claim out of the bar with it.
+    const openOnScreen: string | null =
+      readerFor ?? (route.view === "ohbox" && !readColumnHidden() ? ohboxSel : null);
+    // ── the route moved: apply it ─────────────────────────────────────────────────────────
+    if (agreedKey !== routeMsgAgreed.current) {
+      const id = route.messageId;
+      if (id === null) {
+        const cameFrom = routeMsgAgreed.current.split("|")[0];
+        routeMsgAgreed.current = agreedKey;
+        if (cameFrom === route.view) {
+          // The id was dropped IN PLACE — Back walked out of the reading on this same view:
+          // close what the URL no longer claims.
+          setReaderFor(null);
+          if (route.view === "ohbox") setOhboxSel(null);
+          return;
+        }
+        // A fresh ARRIVAL at a bare view — ordinary navigation, `openMessage`'s own `go()`
+        // included — closes nothing: the selection the opener just set is the state the
+        // reflection arm below will put INTO the bar, not a leftover to clear.
+      } else {
+      const m = reader.get<EngineMessage>("message", id);
+      const held =
+        route.view === "ohbox" || route.view === "reads" || route.view === "receipts"
+          ? pileHolds(route.view, id)
+          : null;
+      // Not in the mirror YET — or in it while its pile is still deriving (a reload restores
+      // against a boot the drain is still filling): WAIT, unagreed, so the `version` dep
+      // re-runs this per delta. Once the mail state is settled the answer is final: a row the
+      // mirror never produces is not this mirror's to restore — normalize the bar back to the
+      // place and stay put (a link from another account's mirror, a deleted message) — and a
+      // settled row a pile genuinely does not hold opens in the overlay below.
+      if (!m || (held === false && !mailState.settled)) {
+        // The erase needs BOTH: a settled mail state AND a mirror that actually holds mail.
+        // `settled` alone can precede the first hydration (the demo world settles before its
+        // fixtures land), and erasing a reload's claim against a momentarily-empty mirror is
+        // the restore failing to itself.
+        if (!m && mailState.settled && reader.list<EngineMessage>("message").length > 0) {
+          routeMsgAgreed.current = `${route.view}|`;
+          reflectMessage(route, null);
+        }
+        return;
+      }
+      if (route.view === "ohbox" && held) {
+        setOhboxSel(id);
+        if (readColumnHidden()) setReaderFor(id);
+        setLocated(id);
+      } else if ((route.view === "reads" || route.view === "receipts") && held) {
+        (route.view === "reads" ? setReadsCur : setReceiptsCur)(id);
+        setJump({ view: route.view, id });
+        setLocated(id);
+      } else {
+        // Every other message view — and a settled pile that does not hold the row: the overlay.
+        setReaderFor(id);
+      }
+        routeMsgAgreed.current = agreedKey;
+        return;
+      }
+    }
+    // ── the state moved: reflect it ───────────────────────────────────────────────────────
+    if (openOnScreen !== route.messageId) {
+      routeMsgAgreed.current = `${route.view}|${openOnScreen ?? ""}`;
+      reflectMessage(route, openOnScreen);
+    }
+    // `route` is a fresh object per hash: the fields below are the identity that matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.messageId, route.view, readerFor, ohboxSel, version, mailState.settled, pileHolds, readColumnHidden, reader]);
 
   /**
    * ═══ LOCATE THE ROW, IN WHICHEVER VIEW IT LANDED ══════════════════════════════════════

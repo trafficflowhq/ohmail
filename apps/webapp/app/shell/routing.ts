@@ -76,11 +76,46 @@ export const PANE_IDS = [
 ] as const;
 export type PaneId = (typeof PANE_IDS)[number];
 
+/**
+ * THE VIEWS WHOSE URL MAY NAME AN OPEN MESSAGE — everything that can show one. Settings and
+ * Compose have no message to open; Drafts opens a COMPOSE (its rows are the account's own
+ * unsent mail), and the Screener's rows are SENDERS, not messages, so a message id says
+ * nothing its list can locate. A `m/<id>` tail on any of the excluded views normalizes away.
+ */
+const MESSAGE_VIEWS: readonly string[] = ["ohbox", "reads", "receipts", "history", "search", "tag", "triage"];
+
+/**
+ * Split a raw hash path from its `m/<id>` tail — the OPEN MESSAGE, when the URL names one.
+ * The marker segment is what keeps a message id from ever colliding with a named segment
+ * (`#/screener/screened`, `#/settings/devices`, a tag named "m" notwithstanding — a tag path
+ * is `tag/<id>` with exactly one segment, so `tag/m/x` reads as tag "m/x"? No: the tail is
+ * split FIRST, so `#/tag/pottery/m/<id>` is the tag "pottery" with a message open, and a bare
+ * `#/tag/m` stays the tag named "m". Two segments, always at the end, always `m` then the id.)
+ */
+function splitMessageTail(raw: string): { path: string; messageId: string | null } {
+  const parts = raw.split("/");
+  if (parts.length >= 3 && parts[parts.length - 2] === "m" && parts[parts.length - 1]) {
+    return { path: parts.slice(0, -2).join("/"), messageId: parts[parts.length - 1]! };
+  }
+  return { path: raw, messageId: null };
+}
+
 export interface Route {
   view: ViewId;
   tagId: string | null;
   screenerSegment: ScreenerSegmentId;
   triagePile: TriagePileId;
+  /**
+   * THE OPEN MESSAGE, when the URL names one — `#/<view>/m/<messageId>`, on the views that can
+   * show a message (see {@link MESSAGE_VIEWS}). `null` is a URL about a place, not a reading.
+   *
+   * What the id means is the SHELL's to apply (`AppShell`'s route↔open-state mirror): the URL
+   * is a claim about what is on screen, so a reload restores the open message, Back walks out
+   * of it, and a link hands somebody the exact reading. The router only carries it — an id the
+   * mirror does not hold falls back in the shell, never 404s here, exactly as every other
+   * unknown segment falls back.
+   */
+  messageId: string | null;
   /**
    * WHICH SETTINGS PANE THE URL NAMES — or `null`, and `null` is load-bearing: it means the hash
    * did not say. A bare `#/settings` (every pre-existing link, and the `go("settings")` every
@@ -93,9 +128,16 @@ export interface Route {
 }
 
 export function parseHash(hash: string): Route {
-  const raw = hash.replace(/^#\/?/, "");
+  const rawWithTail = hash.replace(/^#\/?/, "");
+  // The open-message tail comes off FIRST, so every branch below reads the same place-path it
+  // always did. Whether the view may CARRY the id is decided at the end — a tail on a
+  // message-less view (settings, compose, drafts, the Screener's sender rows) drops, and
+  // `normalizedHash` rewrites the bar to match.
+  const { path: raw, messageId } = splitMessageTail(rawWithTail);
+  const withMsg = (route: Route): Route =>
+    messageId !== null && MESSAGE_VIEWS.includes(route.view) ? { ...route, messageId } : route;
   if (raw.startsWith("tag/") && raw.slice(4)) {
-    return { view: "tag", tagId: raw.slice(4), screenerSegment: "waiting", triagePile: "reply", settingsPane: null };
+    return withMsg({ view: "tag", tagId: raw.slice(4), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null });
   }
   if (raw === "screener" || raw.startsWith("screener/")) {
     const sub = raw.split("/")[1];
@@ -105,13 +147,14 @@ export function parseHash(hash: string): Route {
       screenerSegment: sub === "screened" || sub === "spam" ? sub : "waiting",
       triagePile: "reply",
       settingsPane: null,
+      messageId: null,
     };
   }
   // `#/triage`, `#/triage/aside`, `#/triage/resurface`. An unknown sub-path falls to the first
   // pile rather than 404ing, exactly as an unknown screener segment falls to `waiting`.
   if (raw === "triage" || raw.startsWith("triage/")) {
     const sub = raw.split("/")[1];
-    return {
+    return withMsg({
       view: "triage",
       tagId: null,
       screenerSegment: "waiting",
@@ -119,7 +162,8 @@ export function parseHash(hash: string): Route {
         ? (sub as TriagePileId)
         : "reply",
       settingsPane: null,
-    };
+      messageId: null,
+    });
   }
   // `#/settings`, `#/settings/devices`, … A named pane is validated against `PANE_IDS`; an
   // unknown sub-path falls back to the BARE form (`settingsPane: null`, the view's own
@@ -133,10 +177,11 @@ export function parseHash(hash: string): Route {
       screenerSegment: "waiting",
       triagePile: "reply",
       settingsPane: (PANE_IDS as readonly string[]).includes(sub ?? "") ? (sub as PaneId) : null,
+      messageId: null,
     };
   }
   const view = (VIEWS as readonly string[]).includes(raw) ? (raw as ViewId) : "ohbox";
-  return { view, tagId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null };
+  return withMsg({ view, tagId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null });
 }
 
 /**
@@ -145,16 +190,20 @@ export function parseHash(hash: string): Route {
  * mint a form navigation itself would not produce.
  */
 export function canonicalHash(route: Route): string {
-  if (route.view === "tag") return `#/tag/${route.tagId}`;
+  // The open-message tail rides any place-path whose view can show one — `parseHash` already
+  // refused it everywhere else, so the guard here is for routes built by hand.
+  const tail =
+    route.messageId !== null && MESSAGE_VIEWS.includes(route.view) ? `/m/${route.messageId}` : "";
+  if (route.view === "tag") return `#/tag/${route.tagId}${tail}`;
   if (route.view === "screener")
     return route.screenerSegment === "waiting" ? "#/screener" : `#/screener/${route.screenerSegment}`;
   if (route.view === "triage")
-    return route.triagePile === "reply" ? "#/triage" : `#/triage/${route.triagePile}`;
+    return (route.triagePile === "reply" ? "#/triage" : `#/triage/${route.triagePile}`) + tail;
   // BOTH spellings are canonical for settings: bare (`settingsPane: null` — the pane is the
   // view's deep-link logic's to decide) and named. Only an UNKNOWN sub-path normalizes, to bare.
   if (route.view === "settings")
     return route.settingsPane === null ? "#/settings" : `#/settings/${route.settingsPane}`;
-  return `#/${route.view}`;
+  return `#/${route.view}${tail}`;
 }
 
 /**
@@ -225,4 +274,30 @@ export function goTriage(pile: TriagePileId): void {
  */
 export function goSettings(pane: PaneId): void {
   window.location.hash = `#/settings/${pane}`;
+}
+
+/**
+ * MIRROR THE OPEN MESSAGE INTO THE BAR — the shell's one writer for the `m/<id>` tail.
+ *
+ * Two verbs on purpose, because history is the product surface here:
+ *   · OPENING a message PUSHES (`location.hash` assignment), so Back walks out of the reading
+ *     and Forward walks back into it — the reader's actual history;
+ *   · MOVING between messages, and CLOSING, REPLACE — a `j`-walk down a pile must not bury the
+ *     view under fifty entries, and Back from a closed reading returns to before the reading
+ *     rather than to the reading it just closed.
+ *
+ * `replaceState` fires no `hashchange`, so the replace arm also notifies the route store the
+ * way `useHashRoute`'s normalize pass does not need to: the rendered state ALREADY matches (the
+ * shell only mirrors what is on screen), so nothing re-renders from it; the event is for the
+ * store's own snapshot.
+ */
+export function reflectMessage(route: Route, messageId: string | null): void {
+  const next = canonicalHash({ ...route, messageId });
+  if (`#${window.location.hash.replace(/^#/, "")}` === next) return;
+  if (messageId !== null && route.messageId === null) {
+    window.location.hash = next; // an OPEN pushes
+    return;
+  }
+  window.history.replaceState(window.history.state, "", next);
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
 }
