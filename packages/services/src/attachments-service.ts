@@ -163,6 +163,36 @@ export function downloadAllOpenFailure(err: unknown): string {
  * The engine's `toAttachmentItem` mirrors BOTH fallbacks deliberately, so the tile, the single
  * download and a zip entry all name one file; its comment points here.
  */
+/**
+ * A ZIP ENTRY NAME IS A PATH, AND THE SENDER WROTE IT.
+ *
+ * `filename` on a MIME part is attacker-controlled text that reaches this service verbatim (the
+ * parser preserves what the sender sent, deliberately — see `packages/core/src/mime.ts`). JSZip's
+ * `file()` treats `/` as a FOLDER SEPARATOR, and its documented traversal sanitisation is on
+ * `loadAsync` — reading an archive — not on writing one. So a part named `../../.ssh/authorized_keys`
+ * became an entry at exactly that path, and any extractor that honours relative components writes
+ * outside the directory the user picked. The single-attachment download never had the same hole:
+ * it leaves as a `Content-Disposition` header, where the browser keeps the basename.
+ *
+ * The name is therefore reduced to a BASENAME: the last component of either separator, with
+ * control bytes removed, trimmed, and length-capped. `.` and `..` reduce to nothing and fall back
+ * to the generated part name, because an entry called `..` is a directory reference and not a
+ * file. Returning `""` for anything unusable is deliberate — the caller's `||` then reaches
+ * {@link partFallbackName}, so the user still gets the bytes under a name they can open.
+ *
+ * DE-DUPLICATION RUNS ON THE SANITISED NAME (see {@link AttachmentsService.uniqueName}), or two
+ * hostile parts that differ only in their stripped bytes would collide into one entry and one of
+ * the two files would silently vanish from the archive.
+ */
+function zipEntryName(filename: string | null | undefined): string {
+  if (!filename) return "";
+  const lastComponent = filename.split(/[/\\]/).pop() ?? "";
+  /* eslint-disable-next-line no-control-regex -- the point is to remove exactly these */
+  const cleaned = lastComponent.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (cleaned === "" || cleaned === "." || cleaned === "..") return "";
+  return cleaned.slice(0, 200);
+}
+
 function partFallbackName(part: { id: string; contentType: string }): string {
   return isCalendarMime(part.contentType) ? CALENDAR_FALLBACK_FILENAME : `attachment-${part.id}.bin`;
 }
@@ -476,7 +506,7 @@ export class AttachmentsService {
 
   /** De-duplicate zip entry names (Apple-Mail behavior on same-named parts). */
   private uniqueName(part: ResolvedPart, used: Set<string>): string {
-    const base = part.filename?.trim() || partFallbackName(part);
+    const base = zipEntryName(part.filename) || partFallbackName(part);
     if (!used.has(base)) { used.add(base); return base; }
     const dot = base.lastIndexOf(".");
     const stem = dot > 0 ? base.slice(0, dot) : base;
