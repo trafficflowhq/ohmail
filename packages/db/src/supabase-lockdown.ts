@@ -59,6 +59,12 @@ const PROBE_TABLES = [
   "users",
   "accounts",
   "credit_ledger",
+  // Mail 0062 — the stored-body byte counter behind the managed storage cap. Usage data, not
+  // content, and probed anyway: the standing rule is that any table a migration CREATES joins
+  // this list, because a stock project served ALL tables over PostgREST while two internal
+  // checks read clean, and per-account byte counts are still an account-level fact nobody
+  // anonymous may enumerate.
+  "account_storage",
 ];
 
 type Sql = ReturnType<typeof postgres>;
