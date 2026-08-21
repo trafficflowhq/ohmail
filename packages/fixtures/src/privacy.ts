@@ -235,8 +235,8 @@ export const fictionalNames: FictionalName[] = [
 /**
  * Substrings that must never appear anywhere in the FIXTURE CORPUS: the real
  * identity of the person behind this project, the real company, and every real
- * brand identified in review — including the nine this registry once certified
- * as coined.
+ * brand this audit has turned up — including the nine this registry once
+ * certified as coined.
  *
  * SCOPE — stated precisely, because an overstated scope is how the last grep
  * got waved through. This list governs the DEMO WORLD and nothing else:

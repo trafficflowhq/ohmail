@@ -485,6 +485,13 @@
  * multi-recipient message Tag stands in no row at any width this bar is given, and lives behind
  * More with `mm-tag`. On every 1:1 message it stands exactly where it did.
  *
+ * "REPLY ALL STANDS WHEREVER MAIL IS READ" IS TRUE OF THOSE THREE WIDTHS AND NOT OF ALL FIVE.
+ * Its group has a rung like any other, so below that rung it folds — the 242px split column in
+ * both locales, and the 350px phone reader in German, where the label needs 478. Stated because
+ * the first draft of this section said "every width a message is read at", which those two are.
+ * Nothing narrower than the rung can be promised: the row's floor plus this group is simply
+ * wider than the container, and the alternative to folding is painting it outside the paper.
+ *
  * That is a deliberate reversal of the ordering this file used to carry, which put Tag first
  * because tagging has no other entry point since the `+ Tag` chip was deleted. Tag still has `t`
  * and still has its menu row; what it does not have is a reason to occupy the row at the expense

@@ -2532,12 +2532,15 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       // derives. EDITED, the user's strings are the envelope: To/Cc/Bcc parsed by the compose
       // form's own parser, a typo emptying the whole set so `canSend` refuses it (the same
       // rule `composePlan` enforces, arriving on the same predicate).
-      const plan = replyEnvelopePlan(
-        parent,
-        fromOptions.map((o) => o.address),
-        replyAll,
-        replyEnvelope,
-      );
+      // `ownAddresses`, and NOT `fromOptions` — which is what this line used to pass, and the
+      // sentence above ("the same call that let the button render") was true of the call and
+      // false of its argument. `fromOptions` answers "what may this account send AS": it falls
+      // back to the MIRROR's mailbox rows where `GET /mailboxes` is absent, which is exactly the
+      // demo and the desktop shell. `ownAddresses` falls back to `[]` there. So on those two
+      // surfaces the bar's predicate computed with an unknown reader while this line computed
+      // with a known one, and a self-authored message could show Reply all over an envelope the
+      // send then resolved to the plain reply. One question, one source.
+      const plan = replyEnvelopePlan(parent, ownAddresses, replyAll, replyEnvelope);
       mailSend.send({
         kind: "mail_send",
         inReplyTo: messageId,
@@ -2566,7 +2569,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         ...replyEnvelopeOnWire(plan),
       });
     },
-    [mailSend, replyTo, replyAll, replyMode, replyBody, replyEnvelope, replyFromId, replyAttachments, reader, version, fromOptions],
+    // `ownAddresses` joins the list because the envelope now reads it (above). A memoised
+    // callback that closed over it without declaring it would answer with the identity the
+    // account had at the last shape change — which on a cold tab is the empty one, i.e. the
+    // unknown-reader envelope, for as long as the closure lived.
+    [mailSend, replyTo, replyAll, replyMode, replyBody, replyEnvelope, replyFromId, replyAttachments, reader, version, fromOptions, ownAddresses],
   );
 
   /**

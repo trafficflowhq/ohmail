@@ -595,11 +595,13 @@ function ActionBar({
         {/* REPLY ALL — the same question as Reply, answered to everyone, so it stands beside
             the accent verb and NOT inside it: a segment would dilute the one primary capsule.
             Rendered only when `canReplyAll` (see above), and its own `.abar-g` so the row gap
-            applies. `.abar-rall` is the ladder's FIRST rung — the two reply verbs stand
-            together at every width a message is READ at (572, 576, 628); only the narrow
-            surfaces fold this one into More, where `mm-rall` is the other half of "in the row
-            or in the menu, never both". Which surfaces those are depends on the locale, since
-            the label's width does — see `action-bar.css`. */}
+            applies. `.abar-rall` is the ladder's FIRST rung, which is not the same claim as
+            "always": the two reply verbs stand together at the three widths a message is read
+            at on a DESKTOP — reading column 572, stream card 576, conversation 628 — and this
+            group still folds into More below its rung: the 242px split column in both
+            locales, and the 350px phone reader in German, where `Allen antworten` needs 478.
+            `mm-rall` is the other half of "in the row or in the menu, never both". The exact
+            widths are per-locale because the label's width is; see `action-bar.css`. */}
         {canReplyAll ? (
           <div className="abar-g abar-rall">
             <button

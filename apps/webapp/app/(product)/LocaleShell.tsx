@@ -33,7 +33,7 @@
  * these controls with the account write, inside the shell where a session is proven.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { NextIntlClientProvider } from "next-intl";
 import { LocaleContext, type LocaleControls } from "../shell/LocaleContext";
 import { LOCALES, rememberLocale, setActiveCatalog, type AppLocale } from "../shell/locale";
@@ -75,12 +75,28 @@ export function LocaleShell({
     setActiveCatalog(state.locale, state.messages);
   }
 
-  /* `<html lang>` was stamped by the server for the locale it rendered; a client switch has to
-     move it, because it is what a screen reader picks a voice from and what the browser offers to
-     translate against. The server render already agrees, so this is a no-op on first paint. */
-  useEffect(() => {
+  /**
+   * `<html lang>` MOVES ON THE SAME PASS AS THE CATALOGUE, for the reason stated above and one
+   * more that arrived later.
+   *
+   * It is what a screen reader picks a voice from and what the browser offers to translate
+   * against — and it is now also a LAYOUT INPUT: the action bar's density ladder
+   * (`shell/action-bar.css`) carries one set of breakpoints per measured locale and selects
+   * between them on `:root[lang]`, because the German labels are 30-45% wider than the English
+   * ones. In a passive effect this attribute lands one commit AFTER the labels it describes, so
+   * a switch into German painted German words against the English rungs for a frame — a row far
+   * wider than the capsule that holds it. The desktop shell has no server render to make the
+   * first paint agree, so there it was the launch frame, not just the switch.
+   *
+   * Same discipline as the register above: written during render, idempotent, derived entirely
+   * from the rendered state, guarded so it touches the DOM only when the value changes. Guarded
+   * on `document` too — this component renders on the server, where there is none.
+   */
+  const lastLang = useRef<string | null>(null);
+  if (typeof document !== "undefined" && lastLang.current !== state.locale) {
+    lastLang.current = state.locale;
     document.documentElement.lang = state.locale;
-  }, [state.locale]);
+  }
 
   const apply = useCallback(async (next: AppLocale): Promise<void> => {
     const messages = await loadCatalog(next);

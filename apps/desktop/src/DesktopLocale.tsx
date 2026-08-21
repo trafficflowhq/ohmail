@@ -26,7 +26,7 @@
  * released binary is built from — so `fillFrom`'s rule lives in `app/shell/locale.ts`, which IS
  * published, and both hosts call it.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { IntlProvider } from "use-intl";
 
 import { LocaleContext, type LocaleControls } from "../../webapp/app/shell/LocaleContext.js";
@@ -74,9 +74,16 @@ export function DesktopLocale({ children }: { children: ReactNode }) {
     setActiveCatalog(locale, messages);
   }
 
-  useEffect(() => {
+  /* `<html lang>` on the same pass, not in an effect — see `LocaleShell`'s note for the whole
+     argument. It matters more here than there: the attribute selects the action bar's per-locale
+     breakpoints (`shell/action-bar.css`), and this shell has no server render to make the first
+     paint agree, so an effect meant a German launch painted German labels against the English
+     rungs for a frame. Idempotent and guarded, exactly like the register above. */
+  const lastLang = useRef<string | null>(null);
+  if (lastLang.current !== locale) {
+    lastLang.current = locale;
     document.documentElement.lang = locale;
-  }, [locale]);
+  }
 
   const apply = useCallback(async (next: AppLocale): Promise<void> => {
     rememberLocale(next);

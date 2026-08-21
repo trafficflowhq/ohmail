@@ -479,6 +479,13 @@ export interface ReplyAllRecipients {
  * mail is exactly the noise the `null` exists to prevent. The reader may then appear among the
  * recipients (there is no way to know which one they are); that is the standard degradation,
  * not a defect, and it disappears the moment the facts are readable.
+ *
+ * TWO DISTINCT PEOPLE, NOT TWO HEADER SLOTS. The count used to be `to.length + cc.length`, and
+ * one address standing on BOTH lines — a mail sent to a list with the sender copied in, the most
+ * ordinary shape there is — filled the quota by itself: two slots, one person. Reply all was
+ * offered on a message that is 1:1 to this reader, and the envelope it built was the sender plus
+ * that single other name, which is what plain Reply already sends. So the gate counts the folded
+ * set across both lines, the same fold the envelope applies.
  */
 export function replyAllRecipients(
   parent: { from: EmailAddress; to: readonly EmailAddress[]; cc?: readonly EmailAddress[] },
@@ -512,8 +519,10 @@ export function replyAllRecipients(
   const toOthers = others(parent.to);
   const ccOthers = others(cc);
   if (toOthers.length === 0 && ccOthers.length === 0) return null;
-  // Reader unknown: one listed recipient is (almost always) the reader — see the header.
-  if (mine.size === 0 && parent.to.length + cc.length < 2) return null;
+  // Reader unknown: one listed PERSON is (almost always) the reader — see the header. Folded
+  // across both lines, so one address in To and Cc counts once instead of filling the quota.
+  const listed = new Set([...parent.to, ...cc].map((r) => fold(r.address)));
+  if (mine.size === 0 && listed.size < 2) return null;
   return { to: [parent.from, ...toOthers], cc: ccOthers };
 }
 
