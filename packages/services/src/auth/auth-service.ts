@@ -1727,7 +1727,20 @@ export class AuthService extends SessionLifecycle {
       await this.twofaFail(db, user, ctx);
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
-    const ch = await this.consumeChallenge(db, ctx, { userId: user.id, type: "authentication", challenge: submitted });
+    // A claim that finds no row — a selector naming no open ceremony, an expired row, an
+    // origin mismatch — is a FAILED FACTOR at this door and is finalized as one
+    // (`twofaFail`: the `2fa_failed` audit and the lockout upgrade at the threshold).
+    // The verification pass caught the escape: `consumeChallenge`'s own throw used to leave
+    // the reserved attempt unfinalized, so the max-th bad assertion answered 401 with no
+    // lock, and waiting out the failure window could skip the lockout entirely. The refusal
+    // is re-spoken in the wrong-code sentence — the caller must not learn WHICH part failed.
+    let ch;
+    try {
+      ch = await this.consumeChallenge(db, ctx, { userId: user.id, type: "authentication", challenge: submitted });
+    } catch {
+      await this.twofaFail(db, user, ctx);
+      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+    }
     const credId = b.credential?.id as string | undefined;
     const stored = (await this.webauthnCreds(db, user.id)).find((c) => c.credentialId === credId);
     if (!stored) {

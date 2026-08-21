@@ -328,34 +328,41 @@ export class SessionLifecycle {
     ];
     if (ctx.sessionId) preds.push(ne(sessions.id, ctx.sessionId));
     if (current) preds.push(ne(sessions.familyId, current.familyId));
-    // SET-BASED, deliberately — the review caught the loop shape (`revokeFamily` per family:
-    // two awaited UPDATEs each, serially). On exactly the accounts this verb exists for
-    // (hundreds of legacy web sessions), that is 400+ round trips inside a hosted request
-    // with a 60-second ceiling — a "Sign out all" that times out having revoked only a
-    // PREFIX, reporting failure while leaving the rest alive. One guarded claim takes the
-    // whole scope; the refresh families die in bounded IN-chunks off the claim's own
-    // RETURNING, so the statement count is O(1 + n/500) and the verb is all-or-converging,
-    // never silently partial. Families are 1:1 with sessions by construction (`establish`
-    // mints a fresh familyId per session), so sweeping tokens by the claimed familyIds is
-    // `revokeFamily`'s exact reach.
-    const claimed = await db.update(sessions)
-      .set({ revokedAt: now })
-      .where(and(...preds))
-      .returning({ familyId: sessions.familyId });
-    const families = [...new Set(claimed.map((r) => r.familyId))];
-    for (let i = 0; i < families.length; i += 500) {
-      await db.update(refreshTokens)
+    // SET-BASED AND ATOMIC — both properties review-bought, one per pass. Set-based: the loop
+    // shape (`revokeFamily` per family — two awaited UPDATEs each, serially) was 400+ round
+    // trips on exactly the accounts this verb exists for, inside a hosted request with a
+    // 60-second ceiling: a "Sign out all" that times out having revoked only a PREFIX. One
+    // guarded claim takes the whole scope; the refresh families die in bounded IN-chunks off
+    // the claim's own RETURNING — O(1 + n/500) statements. Atomic: with the claim committing
+    // separately, a chunk that failed left every session revoked and some refresh rows live,
+    // and the RETRY claimed zero rows (`revoked_at IS NULL`) — it could never revisit those
+    // families. (The rotation orphan-guard made such leftovers unusable at presentation, but
+    // a security verb whose bookkeeping cannot converge is still the defect.) One
+    // transaction holds claim, sweeps and audit: a mid-sweep death rolls the claim back and
+    // the retry does the whole job. Families are 1:1 with sessions by construction
+    // (`establish` mints a fresh familyId per session), so sweeping tokens by the claimed
+    // familyIds is `revokeFamily`'s exact reach.
+    return this.inTransaction(ctx, async (txCtx) => {
+      const tx = asTx(txCtx);
+      const claimed = await tx.update(sessions)
         .set({ revokedAt: now })
-        .where(and(
-          inArray(refreshTokens.familyId, families.slice(i, i + 500)),
-          isNull(refreshTokens.revokedAt),
-        ));
-    }
-    if (claimed.length > 0) {
-      const u = await this.loadUser(db, userId);
-      await this.audit(db, u, "device_revoked", undefined, ctx);
-    }
-    return { revoked: claimed.length };
+        .where(and(...preds))
+        .returning({ familyId: sessions.familyId });
+      const families = [...new Set(claimed.map((r) => r.familyId))];
+      for (let i = 0; i < families.length; i += 500) {
+        await tx.update(refreshTokens)
+          .set({ revokedAt: now })
+          .where(and(
+            inArray(refreshTokens.familyId, families.slice(i, i + 500)),
+            isNull(refreshTokens.revokedAt),
+          ));
+      }
+      if (claimed.length > 0) {
+        const u = await this.loadUser(tx, userId);
+        await this.audit(tx, u, "device_revoked", undefined, txCtx);
+      }
+      return { revoked: claimed.length };
+    });
   }
 
   /** Throws `step_up_required` unless the current session had a 2FA assertion
