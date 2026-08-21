@@ -23,7 +23,6 @@ import {
   addressBook,
   bodyOf,
   consentPartition,
-  forwardSubject,
   ohboxView,
   physicalFolderOf,
   presentationReader,
@@ -101,7 +100,7 @@ import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from "./ProfileImportCard";
-import { COMPOSE_SEND_KEY, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
+import { COMPOSE_SEND_KEY, inlineForwardKey, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
 import {
   clearComposeDraft,
   composePlan,
@@ -148,6 +147,7 @@ import {
 import { SubjectRuleSheet, type SubjectRuleState } from "./SubjectRuleSheet";
 import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "./subject-rule";
 import { senderHitOf } from "./sender-hit";
+import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import {
   go, goScreener, goSettings, goTag, goTriage, useHashRoute,
   type Route, type ScreenerSegmentId, type TriagePileId,
@@ -1535,6 +1535,14 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * keeps the claim on screen and the envelope on the wire one decision.
    */
   const [replyAll, setReplyAll] = useState(false);
+  /**
+   * WHAT THE OPEN EDITOR IS — a reply, or the inline forward. Set by every open (`openReply`,
+   * `openForward`), read only while `replyTo` is non-null (the `replyAll` discipline), and it
+   * decides the editor's face (`InlineReply.mode`), the scratch-buffer key (`replyDraftKey` —
+   * a half-written reply and a forward note on the SAME message are different texts), and
+   * which mutation `sendReply` builds.
+   */
+  const [replyMode, setReplyMode] = useState<"reply" | "forward">("reply");
   const [replyBody, setReplyBody] = useState<RichValue>(EMPTY_RICH);
   /**
    * THE REPLY'S AUDIENCE AS EDITED — `null` while the computed envelope stands, which is
@@ -1547,8 +1555,12 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    */
   const [replyEnvelope, setReplyEnvelope] = useState<ReplyEnvelopeEdit | null>(null);
   useEffect(() => {
-    setReplyEnvelope(null);
-  }, [replyTo, replyAll]);
+    // A FORWARD OPENS WITH THE ROWS ALREADY SHOWING, EMPTY — its audience is the user's to
+    // pick and never derived (`forwardEnvelopePlan`), so a collapsed head would name nobody
+    // and hide the one thing Send is waiting for. A reply keeps `null`: the computed audience
+    // stands until the head is pressed, exactly as before.
+    setReplyEnvelope(replyMode === "forward" ? { to: "", cc: "", bcc: "" } : null);
+  }, [replyTo, replyAll, replyMode]);
   /**
    * THE REPLY'S PICKED SENDER and THE FILES IT WILL CARRY — both PER-MESSAGE and both stored
    * nowhere. The From pick overrides the mailbox the message arrived in (`resolveReplyFrom`); the
@@ -1564,7 +1576,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   useEffect(() => {
     setReplyFromId(null);
     setReplyAttachments([]);
-  }, [replyTo]);
+  }, [replyTo, replyMode]);
   /**
    * THE COMPOSE FORM, and why it lives up here rather than in `ComposeView`.
    *
@@ -2071,10 +2083,23 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * complaint. The draft is restored from `localStorage` on open, so a reload lands you
    * back in the same half-written sentence.
    */
+  /**
+   * The scratch-buffer key for the OPEN editor. A forward's note and a half-written reply to
+   * the same message are different texts with different fates, so they must not share a
+   * `localStorage` slot — the prefix is the whole of the separation, and both sides of it
+   * (the open's read, `onReplyBody`'s write) derive it from here.
+   */
+  const replyDraftKey = useCallback(
+    (mode: "reply" | "forward", messageId: string): string =>
+      mode === "forward" ? inlineForwardKey(messageId) : messageId,
+    [],
+  );
+
   const openReply = useCallback((messageId: string, all = false) => {
     // The mode travels with the open, never separately: a Reply press while a reply-all
     // editor is up on the same message is an explicit narrowing, and vice versa.
     setReplyAll(all);
+    setReplyMode("reply");
     setReplyTo(messageId);
     setReplyBody(readReplyDraft(messageId));
     // MOBILE. Under 900px the reading column is `display:none` (app.css), so an inline
@@ -2082,6 +2107,35 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     // the shipped build at 390px. There, the reader IS the open message, so open it.
     if (readColumnHidden()) setReaderFor(messageId);
   }, [readColumnHidden]);
+
+  /**
+   * THE INLINE FORWARD — the reply dock in forward mode, inside the thread.
+   *
+   * This REPLACES the navigation `forwardMessage` used to make: forwarding one message of a
+   * conversation meant leaving the conversation for the compose screen (reported from real
+   * use). The compose machinery's semantics are unchanged — the wire is the same
+   * `mail_send { forwardOf }` the compose form sends, the server still builds the quote and
+   * streams the original's attachments, recipients are still the user's to pick — only the
+   * SURFACE moved: the same editor the reply uses, docked at the thread's foot, bound to the
+   * panel whose ⋯ menu asked.
+   *
+   * The `no_forward` refusal stays client-side courtesy AND server-side law, exactly as the
+   * compose entry states: the user who presses Forward on an OTP learns why immediately.
+   */
+  const openForward = useCallback((messageId: string) => {
+    const m = engine.read().get<EngineMessage>("message", messageId);
+    if (!m) return;
+    if (m.sensitivity?.no_forward) {
+      toast(t("compose.forwardRefused"));
+      return;
+    }
+    setReplyAll(false);
+    setReplyMode("forward");
+    setReplyTo(messageId);
+    setReplyBody(readReplyDraft(replyDraftKey("forward", messageId)));
+    // The same mobile rule `openReply` states: below 900px the dock lives in the reader.
+    if (readColumnHidden()) setReaderFor(messageId);
+  }, [engine, toast, t, readColumnHidden, replyDraftKey]);
 
   const closeReply = useCallback(() => setReplyTo(null), []);
 
@@ -2107,9 +2161,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   const onReplyBody = useCallback(
     (next: RichValue) => {
       setReplyBody(next);
-      if (replyTo) writeReplyDraft(replyTo, next);
+      // The mode-aware key — a forward note must never overwrite a reply draft. See
+      // `replyDraftKey`.
+      if (replyTo) writeReplyDraft(replyDraftKey(replyMode, replyTo), next);
     },
-    [replyTo],
+    [replyTo, replyMode, replyDraftKey],
   );
 
   /* ── buying a drafted reply ───────────────────────────────────────────────────────────── */
@@ -2316,6 +2372,18 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       go("ohbox");
       return;
     }
+    /**
+     * AN INLINE FORWARD SETTLED — close the dock and nothing else. A forward is NOT an answer:
+     * it marks nothing read, discharges no triage debt (`settle`'s discharge lives in the
+     * reply branch), and hands the Ohbox no `replyDone` gesture — forwarding a message to a
+     * colleague is not being done with it. The scratch note is already cleared by `settle`
+     * (the lane doubles as the suffix).
+     */
+    if (key.startsWith("fwd:")) {
+      const forwarded = key.slice(4);
+      setReplyTo((cur) => (cur === forwarded ? null : cur));
+      return;
+    }
     // A reply seeded from a draft row settled: the row's message has been delivered (the send
     // wrote its own row), so the seed is a phantom draft now — see `replySeedDrafts`.
     const seeded = replySeedDrafts.current.get(key);
@@ -2408,6 +2476,31 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       const parent = reader.get<EngineMessage>("message", messageId) ?? null;
       const parentMailbox = parent?.mailboxId ?? null;
       const from = resolveReplyFrom(fromOptions, parentMailbox, replyFromId);
+      /**
+       * THE INLINE FORWARD'S ARM — the same builder the editor's lock judged
+       * (`forwardSend`/`forwardEnvelopePlan`, one derivation), sent on the INLINE surface so
+       * the outcome lands on the dock's own lane (`inlineForwardKey`) rather than the compose
+       * form's. Recipients are the user's edit alone; the server quotes the original and
+       * streams its attachments (`mail_send.forwardOf`). Nothing below this block changes for
+       * a reply.
+       */
+      if (replyMode === "forward") {
+        if (!parent) return;
+        mailSend.send(
+          forwardSend(parent, {
+            body: replyBody.text,
+            ...(replyBody.html ? { html: replyBody.html } : {}),
+            // The resolved sender, or the receiving mailbox — the editor's lock judged the
+            // same fallback (`InlineReply`), so the button and the wire agree everywhere the
+            // facts are unreadable.
+            mailboxId: from.mailboxId ?? parent.mailboxId,
+            ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
+            plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
+          }),
+          { surface: "inline" },
+        );
+        return;
+      }
       // WHO IT IS ADDRESSED TO — `replyEnvelopePlan`, ONE derivation for the head, the lock
       // and this wire. Untouched (`replyEnvelope === null`) it is exactly the old inline
       // resolution: `replyAllRecipients` for a reply-all (the same call that let the button
@@ -2450,7 +2543,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         ...replyEnvelopeOnWire(plan),
       });
     },
-    [mailSend, replyTo, replyAll, replyBody, replyEnvelope, replyFromId, replyAttachments, reader, version, fromOptions],
+    [mailSend, replyTo, replyAll, replyMode, replyBody, replyEnvelope, replyFromId, replyAttachments, reader, version, fromOptions],
   );
 
   /**
@@ -2678,68 +2771,21 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   }, [autosave, go]);
 
   /**
-   * FORWARDING A MESSAGE — the compose surface's entry, and the client half of the sensitive gate.
-   *
-   * ── IT SEEDS THE ORDINARY COMPOSE FORM, IT DOES NOT BUILD A MESSAGE ─────────────────────
-   *
-   * All this puts on screen is a `Fwd: …` subject, no recipients, an empty body and the original's
-   * id in `forwardOf`. The quoted original, its attachments and the `no_forward` refusal are all
-   * the server's (`send-service.ts`), so nothing here reads the original's BODY — which is the
-   * point: a client that assembled the quote itself would be the one seam a redacted sensitive body
-   * could leave the account through, and this shell never holds the unredacted bytes anyway.
-   *
-   * Recipients are deliberately EMPTY rather than pre-filled from the original: a forward goes to
-   * somebody the user picks, and seeding the original's sender is how a "forward this to my
-   * colleague" turns into a reply nobody meant to send.
-   *
-   * ── THE `no_forward` CHECK IS HERE AND ALSO ON THE SERVER, AND BOTH ARE NEEDED ──────────
-   *
-   * The server's is the authoritative one — a client's silence is not a guarantee. This one exists
-   * so the refusal is legible: a user who presses Forward on an OTP learns why immediately, rather
-   * than writing a message, picking a recipient, pressing Send and collecting a 403 on a draft that
-   * can never be sent. The reason is the same in both places and the flag is the same flag.
-   *
-   * ── IT RELEASES THE AUTOSAVE FIRST ─────────────────────────────────────────────────────
-   *
-   * A forward is a NEW message. Without the release, `composePlan` would still carry the
-   * `draftId` of whatever the form last held — an unrelated draft, possibly one opened from the
-   * drafts list — so the forward would overwrite that row and send from it. `openDraft` adopts for
-   * exactly the opposite reason; this is the same rule read the other way round.
-   */
-  const forwardMessage = useCallback(
-    (messageId: string) => {
-      const m = engine.read().get<EngineMessage>("message", messageId);
-      if (!m) return;
-      if (m.sensitivity?.no_forward) {
-        toast(t("compose.forwardRefused"));
-        return;
-      }
-      const seeded: ComposeFields = {
-        ...EMPTY_COMPOSE,
-        subject: forwardSubject(m.subject),
-        forwardOf: messageId,
-      };
-      autosave.release();
-      recoverySeed.current = null; // a forward replaces whatever the form held, a recovery included
-      setCompose(seeded);
-      writeComposeDraft(seeded);
-      // The inline editor may be open on the message being forwarded; leaving it open would put a
-      // reply box and a forward on screen for the same message. The route change closes the reader
-      // by itself (the view-transition effect above), so only this needs saying.
-      setReplyTo(null);
-      go("compose");
-    },
-    [engine, toast, t, autosave, go],
-  );
-
-  /**
    * WRITE TO ONE PERSON — the contact popover's Write verb (viewer redesign).
    *
    * A NEW message with the To line prefilled, in the same `Name <address>` shape `openDraft`'s
    * `line()` writes and `parseRecipients` reads back. The ADDRESS is the stored wire form —
    * the chip decodes only its face — so what reaches the envelope is what the mirror holds.
-   * The release-first rule is `forwardMessage`'s, for the same reason: without it the compose
-   * would adopt whatever draft row the form last held and send over it.
+   *
+   * ── IT RELEASES THE AUTOSAVE FIRST ─────────────────────────────────────────────────────
+   *
+   * This seeds a NEW message. Without the release, `composePlan` would still carry the
+   * `draftId` of whatever the form last held — an unrelated draft, possibly one opened from
+   * the drafts list — so this send would overwrite that row and send from it. `openDraft`
+   * adopts for exactly the opposite reason; this is the same rule read the other way round.
+   * (The rule used to be stated on `forwardMessage`, the compose-seeding forward this shell
+   * no longer has — Forward is the thread's inline dock now, `openForward`, and never touches
+   * the compose form at all.)
    */
   const writeTo = useCallback(
     (address: string, name?: string) => {
@@ -2750,11 +2796,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         to: formatRecipientChips([{ name: name ?? null, address }]),
       };
       autosave.release();
-      recoverySeed.current = null; // same as `forwardMessage`: the form's contents are replaced
+      recoverySeed.current = null; // the form's contents are replaced, a recovery included
       setCompose(seeded);
       writeComposeDraft(seeded);
       // An open inline reply would otherwise sit under the compose the route change opens —
-      // the same two-editors rule `forwardMessage` states.
+      // one editor at a time.
       setReplyTo(null);
       go("compose");
     },
@@ -4439,7 +4485,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       ownAddresses,
       absoluteTime,
       onToggleAbsoluteTime: toggleAbsoluteTime,
-      replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply,
+      replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply,
       // The audience edit and its book — held here for the mounted-twice reason the reply
       // body is, applied by `InlineReply`, sent by `sendReply` above from the same state.
       replyEnvelope,
@@ -4470,7 +4516,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
        * second implementation here would be a copy of that rule waiting to drift.
        */
       openReply,
-      forward: forwardMessage,
+      forward: openForward,
       replySendState: mailSend.stateOf,
       // The offer and the draft waiting to be placed travel with the reply draft, and for the
       // same reason: `MessagePane` is mounted TWICE while the reader is open, and an offer
@@ -4494,9 +4540,9 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       bodyOf: bodyOfMessage, hydrateBody, hydrateThread,
       attachments, remoteImages,
     }),
-    [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
+    [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       replyEnvelope, replyFromId, replyAttachments, sendSurfaceMaxTotalBytes, replyBook,
-      openSenderMenu, ownNameOf, writeTo, openReply, forwardMessage, openSubjectRule,
+      openSenderMenu, ownNameOf, writeTo, openReply, openForward, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
   );
 

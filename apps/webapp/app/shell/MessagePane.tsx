@@ -18,6 +18,7 @@ import { MessageHeader } from "./MessageCard";
 import { PLACE_LABEL, dayNine, dayValue, hueOf, nextWeekNine, tagsOfMessage, tomorrowNine } from "./format";
 import { replyAllRecipients } from "./compose-from";
 import { InlineReply } from "./InlineReply";
+import { inlineForwardKey } from "./mail-send";
 import { chordKeys, useBinding, useKeyPress } from "./keymap";
 import { useBodyStalled, useMessageChrome } from "./message-chrome";
 import { subscribeSessionRevival, useSessionDead } from "./session-truth";
@@ -837,7 +838,23 @@ export function MessagePane({
    * the first time a delta landed.
    */
   const conversation = chrome.conversationOf(message.id);
-  const replying = chrome.replyTo === message.id;
+  /**
+   * THE MESSAGE THE OPEN EDITOR ANSWERS (or forwards) — resolved against the WHOLE
+   * conversation, not the focused id alone. Every panel's ⋯ menu dispatches its OWN id
+   * (`MessageHeader`), and `chrome.replyTo` faithfully held it — but the dock below mounted
+   * only when the id was the FOCUSED message's, so Reply on any sibling set state that
+   * nothing anywhere rendered: the menu pressed, the editor absent, the dispatch swallowed
+   * (reported from real use as a dead menu). The dock is ONE editor at the thread's foot;
+   * which member it is bound to is this resolution, and every prop below — the head's
+   * audience, the send's id, the send-state lane — follows the TARGET, so answering an older
+   * message from its own panel is exactly answering it.
+   */
+  const replyTarget = conversation.length > 0
+    ? conversation.find((m) => m.id === chrome.replyTo) ?? null
+    : chrome.replyTo === message.id
+      ? message
+      : null;
+  const replying = replyTarget !== null;
   /**
    * ONE COPY OF THE CONVERSATION ON SCREEN, EVER — AND IT IS THIS ONE.
    *
@@ -1406,23 +1423,28 @@ export function MessagePane({
     />
   );
 
-  const replyEditor = replying ? (
+  const replyEditor = replyTarget ? (
     <InlineReply
-      /* NO `context` AND NO `now` ANY MORE. The editor was handed the whole
-         conversation (or `[message]`) to render in its own scroller; the pane above
-         owns that job now, so the editor takes the message it is answering and
-         nothing else — the `to` line, the draft key and `canSend` are all it needs
-         a message FOR. */
-      message={message}
+      /* THE TARGET, not the focused message — see `replyTarget`. The editor takes the
+         message it is answering and nothing else: the `to` line, the draft key, `canSend`
+         and the send-state lane all follow the member the ⋯ menu named. */
+      message={replyTarget}
+      /* A reply, or the inline forward — the chrome's one mode field. */
+      mode={chrome.replyMode ?? "reply"}
       /* Whether this editor answers EVERYONE on the message — set by the open
          (`openReply(id, true)`), read here so the head names the same audience the
          send will carry. Absent chrome field means a plain reply. */
       replyAll={chrome.replyAll === true}
       value={chrome.replyBody}
-      send={chrome.replySendState(message.id)}
+      /* The dock's own lane: a forward's outcome lands on `fwd:<id>` (see `sendKeyOf`), so the
+         button's "Sending…" and the failure it may show are THIS editor's and never the compose
+         form's. */
+      send={chrome.replySendState(
+        (chrome.replyMode ?? "reply") === "forward" ? inlineForwardKey(replyTarget.id) : replyTarget.id,
+      )}
       onChange={chrome.onReplyBody}
       onClose={chrome.closeReply}
-      onSend={() => chrome.sendReply(message.id)}
+      onSend={() => chrome.sendReply(replyTarget.id)}
       /* The audience, editable: the edit strings and their reporter live on the chrome
          beside the body (mounted-twice — `message-chrome.tsx`), and the book feeds the
          rows' suggestions. `onEnvelope` absent on the inert chrome keeps the head a

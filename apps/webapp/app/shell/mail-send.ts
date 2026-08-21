@@ -84,8 +84,12 @@ export interface SendState {
 
 export interface MailSendApi {
   stateOf: (key: string) => SendState;
-  /** Press Send. A no-op while that surface's send is already in flight or queued. */
-  send: (m: MailSend) => void;
+  /**
+   * Press Send. A no-op while that surface's send is already in flight or queued.
+   * `surface: "inline"` names the thread's dock as the sender — see {@link sendKeyOf} for why
+   * a forward needs the surface said and a reply never does.
+   */
+  send: (m: MailSend, opts?: { surface?: "inline" }) => void;
 }
 
 const IDLE: SendState = { phase: "idle" };
@@ -94,14 +98,28 @@ const IDLE: SendState = { phase: "idle" };
 export const COMPOSE_SEND_KEY = "compose";
 
 /**
- * Which send state a mutation belongs to — derived, never passed.
- *
- * `send(m)` takes only the mutation, so there is no way for a caller to hand in a key that
- * disagrees with what it is sending: a reply's outcome always lands on the message it answers,
- * and a compose's always lands on the compose surface.
+ * THE INLINE FORWARD'S LANE — namespaced so it can never collide with a reply lane (a bare
+ * message id) or the compose surface's one key. The same string is the forward's scratch-buffer
+ * suffix (`AppShell.openForward` reads the note back through `readReplyDraft(inlineForwardKey(id))`),
+ * which is what lets `settle` clear it by the lane alone.
  */
-export function sendKeyOf(m: MailSend): string {
-  return m.inReplyTo ?? COMPOSE_SEND_KEY;
+export const inlineForwardKey = (messageId: string): string => `fwd:${messageId}`;
+
+/**
+ * Which send state a mutation belongs to — derived, never passed as a key.
+ *
+ * `send(m)` takes only the mutation plus, at most, WHICH SURFACE is sending: a reply's outcome
+ * always lands on the message it answers, and a compose's on the compose surface. The surface
+ * argument exists because a FORWARD is one mutation shape sent from two surfaces — the compose
+ * form (`ComposeFields.forwardOf`) and the thread's inline dock — and the mutation alone cannot
+ * say which editor's button should show "Sending…" and which scratch a confirmation should
+ * clear. A surface is a fact the caller alone holds and cannot usefully lie about; the KEY is
+ * still derived here, in one place.
+ */
+export function sendKeyOf(m: MailSend, surface: "compose" | "inline" = "compose"): string {
+  if (m.inReplyTo !== null) return m.inReplyTo;
+  if (surface === "inline" && m.forwardOf != null) return inlineForwardKey(m.forwardOf);
+  return COMPOSE_SEND_KEY;
 }
 
 /* ── the per-message reply scratch buffer ─────────────────────────────────────────────── */
@@ -282,7 +300,19 @@ export function useMailSend(
   const settle = useCallback(
     (key: string, m: MailSend) => {
       if (m.inReplyTo === null) {
-        clearComposeDraft();
+        if (key === COMPOSE_SEND_KEY) {
+          clearComposeDraft();
+        } else {
+          // The INLINE forward settled — the lane doubles as the scratch suffix, so the note
+          // clears here exactly as a reply's draft does below. The compose form's autosave is
+          // deliberately untouched: this send never used the form, and a half-written compose
+          // must survive somebody forwarding a message mid-sentence.
+          try {
+            window.localStorage.removeItem(replyDraftKey(key));
+          } catch {
+            /* private mode refuses writes and therefore holds nothing to remove */
+          }
+        }
       } else {
         try {
           window.localStorage.removeItem(replyDraftKey(m.inReplyTo));
@@ -303,7 +333,10 @@ export function useMailSend(
 
       setPhase(key, IDLE);
       settledRef.current(key, m);
-      toast(m.inReplyTo === null ? t("compose.toastSent") : t("reply.toastSent"));
+      // The compose surface's sentence for the compose surface; the inline dock's — reply and
+      // forward alike — for the inline lanes. Keyed on the LANE, not the mutation shape, for
+      // the same reason the cleanup above is.
+      toast(key === COMPOSE_SEND_KEY ? t("compose.toastSent") : t("reply.toastSent"));
     },
     [engine, setPhase, toast, t],
   );
@@ -379,8 +412,8 @@ export function useMailSend(
   }, [flush]);
 
   const send = useCallback(
-    (m: MailSend) => {
-      const key = sendKeyOf(m);
+    (m: MailSend, opts?: { surface?: "inline" }) => {
+      const key = sendKeyOf(m, opts?.surface ?? "compose");
       // THE LOCK FIRST, off the ref, because it is the only check that is correct within one
       // tick. `canSend` then applies the SAME rule the button's `disabled` uses, so a caller
       // that is not the button (a keyboard shortcut, a future Reply Run step) cannot get past

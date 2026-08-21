@@ -81,6 +81,19 @@ function middle(s: string, keep: number): string {
 }
 
 /**
+ * WHETHER THE CC/BCC ROWS SHOW — one derivation for every composer instance (fresh compose,
+ * mailto-seeded compose, reply, reply-all, the inline forward). Editing To is the main act,
+ * so the two rows wait behind the "Kopie/Blindkopie" toggle while BOTH are empty — and they
+ * open THEMSELVES the moment either carries text, because a prefilled reply-all Cc hidden
+ * behind a toggle is recipients the user cannot see they have. `revealed` is the instance's
+ * own toggle press; the values outrank it in one direction only (they can force the rows
+ * open, never closed).
+ */
+export function ccBccOpen(cc: string, bcc: string, revealed: boolean): boolean {
+  return revealed || cc.trim() !== "" || bcc.trim() !== "";
+}
+
+/**
  * One address, shortened for the list but with its DOMAIN kept whole.
  *
  * "verylong…name@company.com": the local part loses its middle, the domain stays. A recipient in

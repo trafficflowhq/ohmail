@@ -69,6 +69,16 @@ export interface MessageChrome {
    */
   replyAll?: boolean;
   /**
+   * WHAT THE OPEN EDITOR IS — a reply, or a forward. Set by the open (`AppShell.openReply` /
+   * `openForward`), meaningful only while `replyTo` is non-null, and OPTIONAL with absent
+   * meaning `"reply"` for the same compatibility reason `replyAll` is. One editor, two modes,
+   * because a forward is the reply's sibling inside the thread now (it used to leave for the
+   * compose screen): the same dock, the same body, the same From and attachments machinery —
+   * only the audience (user-picked, never derived) and the wire (`forwardOf`, no `inReplyTo`)
+   * differ, and both differences derive from this one field.
+   */
+  replyMode?: "reply" | "forward";
+  /**
    * OPEN THE REPLY EDITOR ON A SPECIFIC MESSAGE — the seam every panel's ⋯ menu answers with.
    *
    * The focused message's own Reply travels the pane's `onAction("reply")` prop, which the shell
@@ -90,9 +100,12 @@ export interface MessageChrome {
    */
   openReply?: (messageId: string, all?: boolean) => void;
   /**
-   * FORWARD `messageId` — the entry each panel's ⋯ menu calls, filled by the shell's forward
-   * model. OPTIONAL for the same reason `openReply` is: absent where there is no compose seam,
-   * and an absent verb is an absent menu item rather than a dead one.
+   * FORWARD `messageId` — the entry each panel's ⋯ menu calls. The shell answers it with the
+   * INLINE forward now (`AppShell.openForward`: the reply dock in forward mode, inside the
+   * thread), not with a navigation to the compose screen — leaving the conversation to forward
+   * one of its messages was the reported defect. OPTIONAL for the same reason `openReply` is:
+   * absent where there is no compose seam, and an absent verb is an absent menu item rather
+   * than a dead one.
    */
   forward?: (messageId: string) => void;
   /**

@@ -55,6 +55,7 @@ import { rowAddress, senderName } from "./format";
 import { displayAddress } from "./idn";
 import { canSend, type SendState } from "./mail-send";
 import { parseRecipients } from "./compose";
+import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import { RichEditor } from "./RichEditor";
 import type { RichValue } from "./rich-text";
 import type { DraftReplyControl, DraftedReply } from "./draft-reply";
@@ -72,6 +73,7 @@ import {
 } from "./compose-from";
 import {
   RecipientField,
+  ccBccOpen,
   focusMovedChip,
   gatedInvalid,
   moveRecipient,
@@ -152,6 +154,7 @@ function storeReplyHeight(px: number): void {
 
 export function InlineReply({
   message,
+  mode = "reply",
   replyAll = false,
   value,
   send = { phase: "idle" },
@@ -169,6 +172,15 @@ export function InlineReply({
   sendSurfaceMaxTotalBytes,
 }: {
   message: EngineMessage;
+  /**
+   * A REPLY, OR A FORWARD — the chrome's `replyMode`, defaulted so every existing mount is a
+   * plain reply. Forward mode changes exactly two things, both stated where they happen: the
+   * audience is the user's to pick (the recipient rows open at once, empty, and Send stays
+   * locked until one parses — see `forwardEnvelopePlan`), and the lock judges the forward
+   * mutation (`forwardSend`: `forwardOf`, no `inReplyTo`) instead of the reply's. The body,
+   * the From resolution, the attachments and the send machinery are the same editor.
+   */
+  mode?: "reply" | "forward";
   /**
    * ANSWER EVERYONE ON THE MESSAGE, not the sender alone. The head then names the reply-all
    * envelope — `replyAllRecipients`, the same pure call `AppShell.sendReply` resolves for the
@@ -255,6 +267,14 @@ export function InlineReply({
   sendSurfaceMaxTotalBytes?: number | null;
 }) {
   const t = useTranslations("reply");
+  /** `compose` owns the forwarding honesty line — one sentence, both surfaces. */
+  const tc = useTranslations("compose");
+  /**
+   * A label whose key may not be in `messages/*.json` yet — the same shim, with the same one
+   * exit, as `MessagePane.copy`: `t.has` hands the line to the locale files the moment the key
+   * lands there, so this can never become a second source of copy.
+   */
+  const line = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
   const box = useRef<HTMLDivElement>(null);
 
   /**
@@ -388,6 +408,12 @@ export function InlineReply({
   const expand = onEnvelope === undefined
     ? undefined
     : (): void => {
+        // A forward derives NO audience — its rows open empty (the shell seeds them on open;
+        // this is the bare-mount way in, and it must not smuggle the reply's derivation in).
+        if (mode === "forward") {
+          onEnvelope({ to: "", cc: "", bcc: "" });
+          return;
+        }
         const to = all ? all.to : recipients ?? [message.from];
         // The trailing separator is what makes every prefilled entry a CHIP rather than text
         // sitting in the input — see `formatRecipientChips`, which is the shared rule for
@@ -433,6 +459,7 @@ export function InlineReply({
     box.current?.scrollIntoView?.({ block: "end" });
   }, [message.id]);
 
+
   const inFlight = send.phase === "sending" || send.phase === "queued";
   // LOCKED, not merely styled: `disabled` is what stops a second key being minted. Shared
   // with the state machine — see `canSend`. The mutation it judges carries the SAME envelope
@@ -444,13 +471,32 @@ export function InlineReply({
   // ProseMirror document is `<p></p>` — four characters that would light Send up on a reply
   // nobody has written. The plain rendering is the only half that answers "is there anything
   // here", which is the same rule `isRichEmpty` states.
-  const envPlan = replyEnvelopePlan(message, options.map((o) => o.address), replyAll, envelope);
-  const locked = !canSend(send, {
-    kind: "mail_send",
-    inReplyTo: message.id,
-    body: value.text,
-    ...replyEnvelopeOnWire(envPlan),
-  });
+  const envPlan =
+    mode === "forward"
+      ? forwardEnvelopePlan(envelope, options.map((o) => o.address))
+      : replyEnvelopePlan(message, options.map((o) => o.address), replyAll, envelope);
+  const locked = !canSend(
+    send,
+    mode === "forward"
+      ? // The forward mutation, via the same builder `AppShell.sendReply`'s forward arm uses —
+        // one derivation, so the lock and the wire cannot disagree. `canSend`'s non-reply
+        // branch is the gate that keeps Send locked until a recipient parses AND a sending
+        // mailbox resolves.
+        forwardSend(message, {
+          body: value.text,
+          // The resolved sender, or the mailbox the message ARRIVED in — the same default
+          // `enrich` derives for a reply. Facts can be unreadable (the demo, the desktop's
+          // bare panes), and a forward that can never send there would be a dead control.
+          mailboxId: from.mailboxId ?? message.mailboxId,
+          plan: envPlan,
+        })
+      : {
+          kind: "mail_send",
+          inReplyTo: message.id,
+          body: value.text,
+          ...replyEnvelopeOnWire(envPlan),
+        },
+  );
 
   /**
    * THE FROM CONTROL, BUILT ONCE — the same `<select>` whether it stands in the collapsed
@@ -507,7 +553,11 @@ export function InlineReply({
   ) : null;
 
   /** The head's own sentence — shared by the static head and the button that opens the edit. */
-  const headContent = all ? (
+  const headContent = mode === "forward" ? (
+    // A forward names NO audience until the user picks one — a head that claimed a recipient
+    // here would be inventing the exact default `forwardEnvelopePlan` refuses to derive.
+    <b>{line("forwardHead", "Forward — you pick who receives it")}</b>
+  ) : all ? (
     <>
       <b>{t("toAll", { names: all.to.map(nameOf).join(", ") })}</b>
       {/* The Cc line, only when the envelope carries one — an empty "Cc" is a claim. */}
@@ -580,6 +630,14 @@ export function InlineReply({
       ) : (
         <div className="reply-head">{headContent}</div>
       )}
+
+      {/* THE FORWARDING HONESTY LINE — `compose.forwardingNote`, the compose surface's own
+          sentence, because the fact is the same fact: the body here is the user's note, and
+          the quoted original plus its attachments are added by the SERVER at send. Without
+          it the editor shows an empty body and reasonably reads as forwarding nothing. */}
+      {mode === "forward" ? (
+        <p className="reply-forwarding">{tc("forwardingNote")}</p>
+      ) : null}
 
       {/* FROM — a CONTROL when there is a choice, otherwise the sentence. This used to be static
           text on the premise that a reply's sender is a fact and not a choice; it is now editable
@@ -790,10 +848,10 @@ function ReplyRecipients({
   const [focused, setFocused] = useState<Record<RecipientRow, boolean>>({
     to: false, cc: false, bcc: false,
   });
-  // Revealed by the toggle, and revealed AUTOMATICALLY when the row holds text — a prefilled
-  // reply-all Cc must never hide recipients the user cannot see they have. Same derivation
-  // as Compose's `ccBccOpen`.
-  const open = showCcBcc || envelope.cc.trim() !== "" || envelope.bcc.trim() !== "";
+  // The shared derivation — `ccBccOpen` in `RecipientField.tsx`: revealed by the toggle, and
+  // revealed AUTOMATICALLY when either row holds text, because a prefilled reply-all Cc must
+  // never hide recipients the user cannot see they have.
+  const open = ccBccOpen(envelope.cc, envelope.bcc, showCcBcc);
 
   const move = (mv: RecipientMove): void => {
     const next = moveRecipient(envelope, mv);

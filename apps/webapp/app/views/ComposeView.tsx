@@ -56,6 +56,7 @@ import { RichEditor } from "../shell/RichEditor";
 import { SendStatus } from "../shell/SendStatus";
 import {
   RecipientField,
+  ccBccOpen,
   focusMovedChip,
   gatedInvalid,
   moveRecipient,
@@ -185,7 +186,9 @@ export function ComposeView({
   const [showCcBcc, setShowCcBcc] = useState(false);
   const [ccFocused, setCcFocused] = useState(false);
   const [bccFocused, setBccFocused] = useState(false);
-  const ccBccOpen = showCcBcc || fields.cc.trim() !== "" || fields.bcc.trim() !== "";
+  // The shared derivation — see `ccBccOpen` in `RecipientField.tsx`; the reply editor and
+  // the inline forward read the same rule, so no composer instance can fold differently.
+  const ccBccShown = ccBccOpen(fields.cc, fields.bcc, showCcBcc);
   const ccShownInvalid = gatedInvalid(fields.cc, ccFocused, plan.cc.invalid);
   const bccShownInvalid = gatedInvalid(fields.bcc, bccFocused, plan.bcc.invalid);
 
@@ -471,7 +474,7 @@ export function ComposeView({
                   CONTAINMENT (`#compose-to`'s `.c-field` holds the button), not merely that a
                   Cc/Bcc button exists somewhere — the weaker assertion passes against the
                   layout this replaces. */}
-              {!ccBccOpen ? (
+              {!ccBccShown ? (
                 <button
                   type="button"
                   className="c-ccbcc-toggle"
@@ -489,7 +492,7 @@ export function ComposeView({
               </p>
             ) : null}
 
-            {ccBccOpen ? (
+            {ccBccShown ? (
               <>
                 <div className="c-field">
                   <label htmlFor="compose-cc">{t("cc")}</label>
