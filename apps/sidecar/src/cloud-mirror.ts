@@ -1553,16 +1553,49 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
 
     let written = 0;
     for (let i = 0; i < wanted.length; i += BODIES_IDS_MAX) {
-      if (aborted) return written;
-      const batch = wanted.slice(i, i + BODIES_IDS_MAX);
-      const res = await cfg.auth.authedFetch(`/messages/bodies?ids=${batch.join(",")}`);
-      if (!res.ok) throw new Error(`the hosted /messages/bodies answered HTTP ${res.status}`);
-      const page = (await res.json()) as Page<MessageBodyBatchItem>;
-      written += await storeBodies(page.items);
-      // A short answer is the contract, not an error: the ids mode omits a message this account no
-      // longer owns rather than 404ing, so the honest response is to stop asking for it.
-      const answered = new Set(page.items.map((item) => item.messageId));
-      for (const id of batch) if (!answered.has(id)) unanswered.add(id);
+      /*
+       * ── AN ABSENT ID HAS TWO MEANINGS, AND ONLY ONE OF THEM IS "STOP ASKING" ────────────────
+       *
+       * The ids mode drops an id from its answer for two reasons the wire cannot distinguish:
+       * the account does not own it (deliberate — a 404 would be an existence oracle), and
+       * `BODIES_BYTE_BUDGET` was crossed before the id's uuid-ordered row was reached, whose
+       * documented contract is the OPPOSITE instruction ("What is left out is asked for per
+       * message by the client" — `message-service.ts#getBodiesByIds`). This loop used to read
+       * every absence as the first meaning and park the id in `unanswered` for the launch's
+       * lifetime — so one message that sorted after a budget's worth of catch-up neighbours in a
+       * single batch mirrored as a row with NO body, permanently on a long-running install:
+       * rendered on webmail, blank on the desktop (owner report, 2026-08-21). The webmail engine
+       * reads the same answer correctly (`hydrateThread`: ids the answer did not carry are
+       * fetched singly); this was the one consumer that conflated the two meanings.
+       *
+       * The discriminator is in the answer's own shape. An OWNED message always yields an item —
+       * the service LEFT-JOINs the body row and answers empty text rather than omitting the row —
+       * so absence from a NON-EMPTY answer can only be the budget, and an EMPTY answer to a
+       * non-empty ask can only be "none of these ids are owned". So: re-ask the leftovers in
+       * their own request, and mark `unanswered` only from an empty answer.
+       *
+       * It terminates without a round cap doing the work: the budget rule includes the row that
+       * CROSSES the budget, so every non-empty answer carries the batch's first outstanding id
+       * and the leftover set strictly shrinks. The cap is pure defence against a server that
+       * stops honouring that shape — leftovers it strands are NOT marked, so the gap query
+       * simply re-offers them on the next pull rather than never again.
+       */
+      let batch = wanted.slice(i, i + BODIES_IDS_MAX);
+      for (let round = 0; batch.length > 0 && round < BODIES_IDS_MAX; round++) {
+        if (aborted) return written;
+        const res = await cfg.auth.authedFetch(`/messages/bodies?ids=${batch.join(",")}`);
+        if (!res.ok) throw new Error(`the hosted /messages/bodies answered HTTP ${res.status}`);
+        const page = (await res.json()) as Page<MessageBodyBatchItem>;
+        written += await storeBodies(page.items);
+        const answered = new Set(page.items.map((item) => item.messageId));
+        const leftover = batch.filter((id) => !answered.has(id));
+        if (page.items.length === 0) {
+          // The whole ask went unanswered: this account owns none of these ids any more.
+          for (const id of leftover) unanswered.add(id);
+          break;
+        }
+        batch = leftover;
+      }
     }
     return written;
   };

@@ -89,6 +89,8 @@ export interface OpenTimings {
   adoptBaselineMs: number;
   /** The migrator. Zero new migrations still costs a read of the journal and of the ledger table. */
   migrateMs: number;
+  /** {@link reclaimBodyBloat} — ~a millisecond of ANALYZE on a healthy store, minutes ONCE on a bloated one. */
+  compactMs: number;
 }
 
 export interface OpenLocalDb {
@@ -124,7 +126,14 @@ export interface OpenLocalDb {
  *  · `migrating`       — the schema ledger is being brought up to date. Sub-second except on the
  *    first launch after an upgrade that ships new migrations.
  */
-export type LocalDbOpenPhase = "creating_store" | "replaying_wal" | "opening_store" | "migrating";
+export type LocalDbOpenPhase =
+  | "creating_store" | "replaying_wal" | "opening_store" | "migrating"
+  /**
+   * `compacting_store` — {@link reclaimBodyBloat} decided the body table's dead space is worth a
+   * rewrite and is running one. Minutes on the store that needs it, ONCE; never announced on a
+   * healthy launch, whose bloat check is a millisecond of `ANALYZE` arithmetic.
+   */
+  | "compacting_store";
 
 /**
  * A write-ahead log at least this large announces itself as `replaying_wal` rather than
@@ -180,6 +189,175 @@ export const LOCK_FILE = "sidecar.lock";
  * that would have honoured it, so it keeps its number rather than inventing one.
  */
 export const CHECKPOINT_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * The bloat gate: `message_bodies` is rewritten when its on-disk size exceeds this many times the
+ * estimated live bytes AND the absolute floor below. Four is far above anything ordinary churn
+ * produces and far below the measured pathology (see {@link reclaimBodyBloat}), so the check
+ * cannot flap on estimation noise.
+ */
+export const BLOAT_COMPACT_RATIO = 4;
+/**
+ * …and never for less than a gigabyte of table. Below this the rewrite saves seconds of I/O per
+ * year and costs a boot-time pause; above it the dead space is the reason the app feels slow.
+ */
+export const BLOAT_COMPACT_MIN_BYTES = 1024 * 1024 * 1024;
+
+/**
+ * How many rows the FALLBACK live-size read may touch when the page sample hits nothing.
+ *
+ * Sixty-four, and the number is a bound on a read rather than a statistical choice: each row
+ * pulls its whole body out of TOAST, so this is the difference between "a few megabytes" and
+ * "read the table". A page sample misses on exactly the shape where rows are few and large, so a
+ * handful of them already describes the average well; where rows are many the 1 % sample lands
+ * and this never runs.
+ */
+export const BLOAT_SAMPLE_ROWS = 64;
+
+/**
+ * RECLAIM THE BODY TABLE'S DEAD SPACE, when — and only when — it dominates the table.
+ *
+ * ── THE PATHOLOGY THIS EXISTS FOR, measured on a real install (2026-08-21) ──────────────────
+ *
+ * A long-running desktop mirror held tens of thousands of message bodies whose actual content
+ * summed to ~1.6 GB (204 MB text + 1,438 MB html) — and `message_bodies` occupied **21 GB** on
+ * disk, thirteen times its data. The dead tuples were the residue of a since-fixed defect (the
+ * body walk once re-upserted every body per poll, and each upsert of a TOASTed row is a whole
+ * new row version), and PGlite runs as a single-user backend: no autovacuum daemon ever ran, so
+ * the space was never reclaimed and never reused at that scale. The user-visible cost was a
+ * mirror that answered like molasses — one measured launch spent **80.8 seconds** inside
+ * `new PGlite()` alone (`boot_phases`, 2026-08-12) — on a mailbox whose data would fit in RAM.
+ *
+ * Plain `VACUUM` cannot give the space back (it frees tuples for reuse; the files keep their
+ * high-water mark), so the repair is `VACUUM FULL`: a table rewrite, exclusive-locked, minutes
+ * for gigabytes — which is why it runs at BOOT, behind its own phase sentence, and only when the
+ * gate above says the table is mostly dead space. A healthy launch pays one `ANALYZE` of the
+ * table (a sampled scan, milliseconds) and a catalog read.
+ *
+ * ── WHY THE ESTIMATE IS SOUND ENOUGH FOR A 4× GATE ──────────────────────────────────────────
+ *
+ * Live bytes are estimated as `reltuples × (sampled avg octet_length of the content + header)`
+ * — an UPPER bound of the live disk bytes, since compression only shrinks what the sample
+ * measured (the in-function comment records why `pg_stats.avg_width` was tried first and
+ * re-fired). The decision needs one bit, not a percentage: the measured pathology sits at 13×
+ * over even the generous estimate, ordinary churn under 2×, and the gate at 4× with a 1 GB
+ * floor. A wrong "no" costs what today costs; a wrong "yes" costs one bounded rewrite that ends
+ * in a smaller table either way — which is the WRONG WAY ROUND for a rewrite that is minutes of
+ * exclusive lock on somebody's only copy, so the arithmetic below refuses to run on a statistic
+ * it does not have: a page sample that hits nothing falls back to a bounded exact read
+ * ({@link BLOAT_SAMPLE_ROWS} rows), and if even that cannot answer, nothing happens. Reading an
+ * absent average as zero is how a HEALTHY table gets rewritten — a few large TOASTed bodies put
+ * megabytes behind a heap of a handful of pages, which a 1 % sample routinely misses.
+ *
+ * Failure is swallowed into the log: a mirror that cannot compact still serves, and every launch
+ * retries the check.
+ */
+export async function reclaimBodyBloat(
+  client: PGlite,
+  log?: Diagnostic,
+  onPhase?: (phase: LocalDbOpenPhase) => void,
+  /** Test seam. The shipped paths never pass it, so the two constants are what every install runs. */
+  gate: { minBytes?: number; ratio?: number } = {},
+): Promise<{ ran: boolean; beforeBytes: number; afterBytes: number }> {
+  const minBytes = gate.minBytes ?? BLOAT_COMPACT_MIN_BYTES;
+  const ratio = gate.ratio ?? BLOAT_COMPACT_RATIO;
+  const none = { ran: false, beforeBytes: 0, afterBytes: 0 };
+  try {
+    await client.exec(`ANALYZE message_bodies`);
+    const measure = async (): Promise<{ bytes: number; rows: number }> => {
+      const r = await client.query<{ bytes: string; rows: string }>(
+        `SELECT pg_total_relation_size(c.oid)::text AS bytes, greatest(c.reltuples, 0)::bigint::text AS rows
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+         WHERE c.relname = 'message_bodies'`,
+      );
+      const row = r.rows[0];
+      return row ? { bytes: Number(row.bytes), rows: Number(row.rows) } : { bytes: 0, rows: 0 };
+    };
+    const before = await measure();
+    // The cheap short-circuit FIRST: below the floor no estimate is worth computing, and this is
+    // what keeps a healthy launch at one ANALYZE plus one catalog read.
+    if (before.bytes < minBytes) return { ...none, beforeBytes: before.bytes, afterBytes: before.bytes };
+    /*
+     * ── THE LIVE ESTIMATE IS A SAMPLED `octet_length`, NOT `pg_stats.avg_width` ──────────────
+     *
+     * `avg_width` was the first implementation and it RE-FIRED: on the measured store it
+     * answered 72.9 MB for 1.6 GB of TOASTed content (the statistic reflects the datum header,
+     * not the out-of-line bytes), so the freshly compacted ~1.0 GiB table still read as 14×
+     * "bloated" and the rewrite would have run again on every launch — a one-time repair turned
+     * into a sixty-second boot tax. A 1 % page sample of the actual `octet_length` sums is the
+     * UNCOMPRESSED content per row; disk-after-compression is at or below it, so
+     * `reltuples × avg` is an upper bound of the live bytes and the ratio gate compares dead
+     * space against something that cannot undercount. Verified against the pathological copy:
+     * 21.0 GiB → fires (21 GiB > 4 × ~1.7 GiB); its 0.96 GiB rewrite → never fires again.
+     */
+    const sampled = await client.query<{ avg: string | null }>(
+      `SELECT avg(octet_length(text) + coalesce(octet_length(html), 0))::bigint::text AS avg
+       FROM message_bodies TABLESAMPLE SYSTEM (1)`,
+    );
+    /*
+     * ── A SAMPLE THAT HIT NO ROWS IS NOT A MEASUREMENT OF ZERO, AND THE DIFFERENCE IS A REWRITE ──
+     *
+     * `avg` is NULL when the 1 % page sample landed on no live tuple, and reading that as 0 turns
+     * the estimate into `128 × reltuples` — small enough that any table past the floor looks
+     * mostly dead. The case is not exotic, it is the HEALTHY shape of this exact table: the bodies
+     * are TOASTed, so a few hundred megabytes of content can sit behind a heap of a handful of
+     * pages, and a 1 % sample of a handful of pages routinely returns nothing.
+     *
+     * `reltuples <= 0` is the same failure from the other side — an ANALYZE that did not land
+     * leaves -1, and a negative estimate clamps to 1 and authorises everything.
+     *
+     * Both DECLINE, which is the only safe direction: the cost of a wrong "no" is what today
+     * already costs, and the cost of a wrong "yes" is a minutes-long exclusive rewrite of the
+     * user's only copy of their mail — repeated on every launch, because a table whose live
+     * content is past the floor keeps qualifying. The next boot samples again.
+     */
+    let avgRaw = sampled.rows[0]?.avg;
+    if (avgRaw == null) {
+      /* THE BOUNDED EXACT READ, for the table shape a page sample cannot see. Capped at
+         {@link BLOAT_SAMPLE_ROWS} rows so the read is bounded even when every body is megabytes,
+         and biased toward the first pages — which is fine for an ESTIMATE feeding a 4× gate, and
+         is the only alternative to either declining for ever or trusting a zero. */
+      const exact = await client.query<{ avg: string | null }>(
+        `SELECT avg(octet_length(text) + coalesce(octet_length(html), 0))::bigint::text AS avg
+         FROM (SELECT text, html FROM message_bodies LIMIT ${BLOAT_SAMPLE_ROWS}) t`,
+      );
+      avgRaw = exact.rows[0]?.avg ?? null;
+    }
+    if (avgRaw == null || before.rows <= 0) {
+      log?.("store_compact_unmeasurable", {
+        beforeBytes: before.bytes,
+        reason: "how much of this table is live could not be measured, so it is left alone and the " +
+          "next launch measures again",
+      });
+      return { ...none, beforeBytes: before.bytes, afterBytes: before.bytes };
+    }
+    const avgRowBytes = Number(avgRaw);
+    const liveEstimate = before.rows * (avgRowBytes + 128);
+    if (before.bytes <= ratio * Math.max(liveEstimate, 1)) {
+      return { ...none, beforeBytes: before.bytes, afterBytes: before.bytes };
+    }
+    onPhase?.("compacting_store");
+    // WHICH table is in the reason sentence, fixed — the census keeps free identifiers off lines.
+    log?.("store_compacting", {
+      beforeBytes: before.bytes, liveEstimateBytes: liveEstimate,
+      reason: "message_bodies is mostly dead space; rewriting it once so every later read stops paying for it",
+    });
+    const t = Date.now();
+    await client.exec(`VACUUM FULL message_bodies`);
+    const after = await measure();
+    log?.("store_compacted", {
+      beforeBytes: before.bytes, afterBytes: after.bytes, totalMs: Date.now() - t,
+    });
+    return { ran: true, beforeBytes: before.bytes, afterBytes: after.bytes };
+  } catch (err) {
+    log?.("store_compact_failed", {
+      err,
+      reason: "the bloat check or rewrite failed; the mirror keeps serving and the next launch retries",
+    });
+    return none;
+  }
+}
 
 /** WAL segment files in a data directory. `pg_wal` also holds `archive_status/`, which is not one. */
 function walSegments(pgDataDir: string): number {
@@ -376,6 +554,13 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       migrationsSchema: MAIL_JOURNAL.migrationsSchema,
     });
     const migrateMs = Date.now() - tMigrate;
+    // AFTER the migrator (the table must exist on a first launch) and BEFORE serving: a rewrite
+    // holds an exclusive lock, and the one place that lock collides with nothing is here, where
+    // no reader has the handle yet. See {@link reclaimBodyBloat} for the measured pathology and
+    // the gate that keeps a healthy launch's cost at one ANALYZE.
+    const tCompact = Date.now();
+    await reclaimBodyBloat(client, log, opts.onPhase);
+    const compactMs = Date.now() - tCompact;
     let closed = false;
     const checkpoint = async (): Promise<number> =>
       (closed ? 0 : checkpointWal(client, pgDataDir, log, () => !closed));
@@ -398,7 +583,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       db,
       dataDir,
       pgDataDir,
-      timings: { pgliteOpenMs, adoptBaselineMs, migrateMs },
+      timings: { pgliteOpenMs, adoptBaselineMs, migrateMs, compactMs },
       checkpoint,
       close: async () => {
         if (closed) return;

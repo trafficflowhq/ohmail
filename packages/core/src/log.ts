@@ -223,6 +223,20 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // sites (`bubbleUpPass` → worker cycle + sidecar drain), per the paragraph above: the first
   // live line must not read `droppedFields=["rescued"]` on the event that exists to report it.
   "rescued",
+  // ── The local store's bloat-compaction line (`store_compacting`/`store_compacted`), added WITH
+  // the call site (`apps/sidecar/src/db.ts#reclaimBodyBloat`) ──
+  //
+  // `beforeBytes`/`afterBytes` are `pg_total_relation_size()` reads and `liveEstimateBytes` is
+  // arithmetic over `reltuples` and `pg_stats.avg_width` — integers from the catalog, naming no
+  // mailbox and no message. They are the whole evidence for a once-per-install table rewrite
+  // (measured: 21 GB on disk over ~1.6 GB of data), so a line reading only `droppedFields` would
+  // hide exactly the numbers the event exists to report. NAMED rather than folded into `count`,
+  // per this file's own rule: three different quantities under one key is not a claim a reviewer
+  // can check.
+  "beforeBytes", "afterBytes", "liveEstimateBytes",
+  // …and `compactMs` rides `boot_phases` beside the other phase timings — a `Date.now()` delta
+  // over the same pass, named for the same reason the attach-phase timings are.
+  "compactMs",
   // ── The sender-name / recipients backfill's three counters, added WITH the call sites ──
   //
   // `scanned` (candidate rows read), `fillable` (rows whose stored headers can supply a value) and

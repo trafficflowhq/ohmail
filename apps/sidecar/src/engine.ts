@@ -1888,6 +1888,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       pgliteOpenMs: opened.timings.pgliteOpenMs,
       adoptBaselineMs: opened.timings.adoptBaselineMs,
       migrateMs: opened.timings.migrateMs,
+      compactMs: opened.timings.compactMs,
       worldMs,
       totalReadyMs: Date.now() - tBoot,
     });

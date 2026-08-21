@@ -38,6 +38,11 @@ export function bootSentence(phase: string | null | undefined): string {
       return "Replaying recent changes…";
     case "migrating":
       return "Updating your local mail store…";
+    case "compacting_store":
+      // The one phase measured in minutes rather than seconds: a once-per-install rewrite of a
+      // body table that had grown mostly dead space (see `reclaimBodyBloat`). The sentence says
+      // work is being saved, because it is — every later launch and read is what gets faster.
+      return "Compacting your local mail store — one-time maintenance…";
     default:
       // No phase yet, an engine that predates the narration, or a phase this build does not
       // know. The sentence that is true in all three.

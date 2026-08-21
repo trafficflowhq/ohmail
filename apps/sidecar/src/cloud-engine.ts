@@ -712,6 +712,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       pgliteOpenMs: opened.timings.pgliteOpenMs,
       adoptBaselineMs: opened.timings.adoptBaselineMs,
       migrateMs: opened.timings.migrateMs,
+      compactMs: opened.timings.compactMs,
       worldMs,
       totalReadyMs: Date.now() - tBoot,
     });
