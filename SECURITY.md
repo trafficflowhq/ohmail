@@ -86,22 +86,25 @@ to, to ohmail Cloud):**
   organises a given mailbox at a time, arbitrated through a claim in the mailbox
   itself, not through any server.
 
-**Windows and Linux — the interface preview — connect to nothing:**
+**The desktop window itself reaches nothing — networking belongs to the
+processes around it:**
 
-- They **make no network connection at all**, enforced three times over and each
-  worth attacking separately: the webview's CSP is `connect-src 'none'`; the page
+- The **webview makes no network connection at all**, enforced three times over
+  and each worth attacking separately: its CSP is `connect-src 'none'`; the page
   replaces `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` and
-  `navigator.sendBeacon` with functions that throw; and the Cloud sync client is
-  aliased out of the bundle at build time. The main window's Tauri capability
-  list is empty, so the interface can invoke no command, read no file and spawn
-  no process. One other window has a grant — the transient one shown while an
-  update downloads — and it is a single receive-only event permission
+  `navigator.sendBeacon` with functions that throw (proven on the built bundle
+  by the render check's offline audit); and its whole reach is a small named
+  list of shell commands (`WINDOW_COMMANDS` in
+  `apps/desktop/src-tauri/build.rs`), none of which takes a URL or a filesystem
+  path. What connects is the mail **engine** — to your own mail server, and on
+  the hosted door to your account — and the Rust shell's updater, to its one
+  pinned signed feed. One other window has a grant — the transient one shown
+  while an update downloads — and it is a single receive-only event permission
   (`core:event:allow-listen`) so that it can hear the local download-progress
   event: no emit back, no command, no filesystem, and the same `connect-src
   'none'` as everything else.
 - Because the interface is embedded **uncompressed**, you can audit a downloaded
   binary directly: `strings -a <binary> | grep -oE 'https?://[^ ]+' | sort -u`.
-- There are **no credentials** and no account — there is nothing to sign into.
 
 **Both:** the CI-built artifacts are **unsigned** — ad-hoc signature only on macOS,
 no Authenticode on Windows, nothing on Linux. That is a distribution weakness we name

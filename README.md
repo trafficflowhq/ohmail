@@ -18,7 +18,7 @@ source, AGPL-3.0, no account.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
 [![GitHub stars](https://img.shields.io/github/stars/trafficflowhq/ohmail?style=flat&label=%E2%98%85&color=a3461c)](https://github.com/trafficflowhq/ohmail/stargazers)
-[![latest release](https://img.shields.io/badge/download-v0.10.0-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
+[![latest release](https://img.shields.io/badge/download-v0.11.0-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
 [![licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -88,9 +88,10 @@ with the sender's original one click away.
 
 <img src="docs/assets/feature-wall/07-dark-mode.gif" alt="The same conversation flipping between the light and dark themes" width="100%">
 
-<sub>Every frame above is the shipped interface over the built-in demo mailbox
-— fictional people, fictional brands, zero network. It is the same demo you can
-open at [ohmail.app/demo](https://ohmail.app/demo).</sub>
+<sub>Every frame above is the shipped interface over a demo mailbox —
+fictional people, fictional brands, zero network. It is the same demo you can
+open at [ohmail.app/demo](https://ohmail.app/demo); the app itself carries no
+demo mail and opens empty until you connect a mailbox.</sub>
 
 ## Your settings live in your mailbox, and move with it
 
@@ -140,6 +141,11 @@ them.
 
 ## Also in the box
 
+- **Your computer's mail app.** ohmail registers as a mail app on all three
+  platforms, so an email address clicked anywhere opens a new message here,
+  prefilled. It asks once, after you connect — the way each platform sanctions
+  (macOS shows its own confirmation; Windows opens the Default-apps page;
+  Linux goes through `xdg-settings`) — and never writes the choice itself.
 - **Triage that comes back.** Answer Later, Parked, and Resurface — mail parked
   until a day you pick, when it returns on its own.
 - **Tags, not folder trees.** One tag reaches across every mailbox; the folder a
@@ -366,17 +372,20 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
 
 On Windows, the MSVC build tools and WebView2.
 
-### The interface, on its own
+### The interface, checked before anything native
 
-The quickest build, and the one that needs nothing but the repository: the app
-around the small fictional mailbox that ships inside it, no engine, no network.
+The quickest verification, and it needs nothing but the repository and Node:
+build the app's UI bundle and render it headlessly — the render check draws the
+whole client against a stub engine channel and proves, on the built bundle, that
+the page itself opens no connection. (An earlier "interface preview" built a
+fictional mailbox here; it is retired — the app has no demo surface, it opens
+empty and you connect. The demo lives at ohmail.app/demo.)
 
 ```bash
 cd apps/desktop
 npm install
-npm run ui:build      # → dist/, the bundle the app embeds
-npm run smoke         # → SMOKE OK — renders, and proves it is offline
-npx tauri build       # → src-tauri/target/release/bundle/…
+npm run ui:build:engine  # → dist/, the bundle the app embeds
+npm run smoke            # → SMOKE OK — renders, offline audit included
 ```
 
 ### The real thing, with the mail engine in it

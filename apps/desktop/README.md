@@ -4,22 +4,28 @@ The **Tauri v2 shell**, and the only desktop client there is — a native Rust
 window, a locked-down webview, and a static bundle of the *same* client the web
 app renders. There is no desktop fork of the interface.
 
-**Two artifacts come out of this one directory, and the difference is the whole
-of the reading below.**
+**Two artifacts come out of this one directory.**
 
-- **The interface preview.** The shell over a fictional mailbox that ships inside
-  it, with no engine, the sync client aliased to a stub and the webview granted
-  nothing. This is the artifact "it opens no connection" is asserted against, and
-  every lock in the next section is literally true of it.
-- **The engine-bearing app**, which is what the releases ship on all three
-  platforms. It carries the mail engine and its own Node runtime as resources,
-  speaks IMAP to your own server, and grants the window a small, named set of
-  commands over a bridge — the engine, one notification, the badge, a fixed
-  table of pages it may hand to your browser, opening a clicked link or an
-  attachment outside the app, and host mode's shell controls (state, the
-  Tailscale probe and serve, start-at-login). The full list is
+- **The app** — what the releases ship on all three platforms. It carries the
+  mail engine and its own Node runtime as resources, speaks IMAP to your own
+  server, and grants the window a small, named set of commands over a bridge —
+  the engine, one notification, the badge, a fixed table of pages it may hand
+  to your browser, opening a clicked link or an attachment outside the app,
+  host mode's shell controls (state, the Tailscale probe and serve,
+  start-at-login), claiming a `mailto:` click the shell is holding, and the two
+  default-mail-app commands (a read of the OS's current choice, and a request
+  that takes each platform's own sanctioned path). The full list is
   `WINDOW_COMMANDS` in `src-tauri/build.rs`. The webview still reaches the
   network through nothing of its own.
+- **The served host client** (`dist-host/`) — the browser bundle host mode
+  hands to a phone on your own network. Same shared shell, `fetch` transport,
+  no shell channel.
+
+There used to be a third, and it was this README's headline: a fixtures-only
+"interface preview". It is retired — the app has no demo surface; it opens
+empty and you connect a mailbox (the one demo lives on ohmail.app's landing
+page) — and its offline audit moved onto the artifact that ships, where it is
+strictly more of a claim (see lock 3).
 
 Set the halves together or they disagree; `npm run app:build:engine` is the one
 command that selects all three (the Cargo feature, the UI flag and the resource
@@ -27,8 +33,8 @@ config) and is what CI runs.
 
 ```bash
 npm install                 # in apps/desktop (pnpm install at the monorepo root works too)
-npm run ui:build            # → dist/  (the bundle Tauri embeds)
-npm run smoke               # → SMOKE OK (33 checks)
+npm run ui:build:engine     # → dist/  (the bundle Tauri embeds)
+npm run smoke               # → SMOKE OK (39 checks, engine)
 npx tauri build --debug     # → src-tauri/target/debug/bundle/…
 ```
 
@@ -40,12 +46,12 @@ build log. CI does the same, in the same order.
 
 ## How the UI gets in: the decision
 
-**There is no desktop fork of the interface.** `src/main.tsx` imports
+**There is no desktop fork of the interface.** `src/DesktopGate.tsx` mounts
 `apps/webapp/app/shell/AppShell` — the same file app.ohmail.app renders — and Vite
-compiles it, `@ohmail/ui`, `@ohmail/tokens`, `@ohmail/fixtures` and
-`@ohmail/client-engine` into one self-contained folder. Three lines of that file
-are the whole desktop-specific layer: the providers Next would otherwise supply,
-the pre-paint theme stamp, and the offline guard.
+compiles it, `@ohmail/ui`, `@ohmail/tokens` and `@ohmail/client-engine` into one
+self-contained folder. What is desktop-specific is the thin layer around it: the
+providers Next would otherwise supply, the pre-paint theme stamp, the offline
+guard, and the gate that asks the native shell what the engine is doing.
 
 Two options were on the table and both were tried:
 
@@ -60,7 +66,13 @@ The Vite config aliases exactly four seams, and nothing else:
    plumbing (both 3.26.5 here), and the thirteen shell/view files that import it
    only ever call `useTranslations`. Aliasing the wrapper away keeps ICU plurals
    byte-identical instead of re-implementing them in a shim that would drift.
-2. **`…/adapters/http-adapter.js` → `src/no-http-adapter.ts`.** See below.
+2. **`…/adapters/fixtures-adapter.js` → `src/no-fixtures-adapter.ts`.** The
+   shared shell keeps a demo arm for the landing page's demo, and the module
+   behind it is the whole fixtures corpus — invented people and sample mail —
+   one static import away from every `AppShell` build. The app opens empty and
+   shows nothing but your own mailbox, so the module resolves to a refusing
+   stub in both artifacts and the corpus never enters the graph.
+   `scripts/scan-artifact.mjs` greps the emitted bytes for it, both directions.
 3. **`…/api-client` → `src/no-api-client.ts`**, in both builds. Neither desktop
    build has a Cloud account or a server to reach — both talk to a local engine
    over a pipe — and every value the stub exports refuses. The ten shell and view
@@ -86,27 +98,21 @@ softened here.
 Three of the four are about the running app. The fourth is about the installer,
 because an installer that phones home makes the other three beside the point.
 
-**1 · The sync client is not in the PREVIEW's module graph.**
+**1 · The sync client is real, and the sample world is not in the module graph.**
 `@ohmail/client-engine`'s barrel re-exports `HttpAdapter`, the `/sync` protocol
-client. In the preview build Vite aliases that module to
-[`src/no-http-adapter.ts`](src/no-http-adapter.ts), whose constructor throws, and
-in that bundle `x-csrf-token`, `idempotency-key`, `X-Sync-Seq` and `/sync?` all
-return **zero** matches.
-
-That count holds because of seam 3 as much as seam 2. The Cloud client is a stub
-whose `apiConfigured()` is `false` at compile time, so every caller's
-`if (!apiConfigured())` guard folds and the request paths behind them — the
-draft-reply POST and its `Idempotency-Key` among them — are removed as dead code
-rather than merely never run.
-
-**In the engine-bearing build the real adapter is there, deliberately**, and it
-is what the window speaks to its own engine over: `src/bridge-fetch.ts` hands it
-a transport that goes to the local process rather than to a socket. That is why
+client, and the app constructs it deliberately — it is what the window speaks to
+its own engine over: `src/bridge-fetch.ts` hands it a transport that goes to the
+local process rather than to a socket. That is why
 `packages/client-engine/src/adapters/http-adapter.ts` is published in this
 repository whole — the shipped binary conveys it, so it has to be offerable.
-Publishing a throwing stub at its path instead is exactly what once blanked every
-engine build's window the moment a mailbox was ready, and the alias above is now
-scoped to the artifact whose claim it belongs to.
+(A retired build once aliased a throwing stub at that path, and the public
+mirror once substituted the same stub — which blanked every window the moment a
+mailbox was ready. `scripts/scan-artifact.mjs` still asserts that stub's refusal
+sentence absent, and the real client's own strings present, in every bundle.)
+
+What is aliased OUT instead is the fixtures corpus (seam 2 above): grep either
+emitted bundle for the sample world's invented people and there is nothing to
+find, which is the no-demo rule as bytes rather than as intent.
 
 **2 · The CSP forbids connections, including to itself.**
 
@@ -134,49 +140,30 @@ This is not belt-and-braces for its own sake — it is what makes the promise
 bundle loads, and fails if any of them is called or if the guard leaves one
 alone.
 
-**4 · The PREVIEW's Windows installers do not fetch the WebView2 runtime, and the
-RELEASED ones deliberately do.** This is the one lock where the two artifacts were
-argued to opposite answers, so read the reversal before the reasoning below it.
+**4 · The Windows installer fetches exactly one thing, and says so.** The
+released installer is built with `tauri.engine.conf.json`, which sets
+`webviewInstallMode` to `downloadBootstrapper`: on a machine without the
+WebView2 runtime, the installer downloads it from Microsoft — because a mail
+client whose window cannot render is not degraded, it is broken. With WebView2
+present (Windows 11, and any Windows 10 that has taken updates since 2021, via
+Edge) the installer opens no connection. CI's Windows job asserts the
+bootstrapper **is** present in the shipped `-setup.exe`, and the README's claim
+changed the day the mode did.
 
-`tauri.conf.json` — the preview — sets `webviewInstallMode` to `{ "type": "skip" }`,
-and everything from here to the end of this section is about that artifact.
-`tauri.engine.conf.json`, which is the config the released installers are built
-with, sets `downloadBootstrapper` instead, and CI's Windows job asserts the
-bootstrapper **is** present in the shipped `-setup.exe`. The argument for the
-reversal is short: an interface preview whose window cannot render is a demo that
-did not run, and a mail client whose window cannot render is not degraded, it is
-broken. The zero-network promise belongs to the artifact that makes it.
+The installer also **registers** — it writes the mail-client capability keys
+(`windows/hooks.nsh`: a ProgId, `Capabilities\URLAssociations`, and a
+`RegisteredApplications` pointer, all in HKCU) so ohmail appears under Settings →
+Apps → Default apps → Email. Registration is not the choice: the default lives in
+`UserChoice`, whose hash exists precisely so a program cannot write it, and
+nothing in this repository touches it. See "The default mail app" below.
 
-`bundle.windows.webviewInstallMode` is `{ "type": "skip" }` there. Tauri's default is
-`downloadBootstrapper`, which compiles a WiX custom action into the `.msi` —
-`DownloadAndInvokeBootstrapper`, a hidden `powershell.exe` running
-`Invoke-WebRequest` against `go.microsoft.com/fwlink/p/?LinkId=2124703` whenever
-`INSTALLED_WEBVIEW2_VERSION` is empty — and the equivalent NSISdl step into the
-`-setup.exe`. Standard, and Microsoft, but still an outbound connection made by a
-product whose claim is *cannot*, not *does not*. `skip` removes both.
+(A retired artifact — the fixtures-only interface preview — used
+`{ "type": "skip" }` and CI once proved the downloader ABSENT from it, because an
+app that claimed to reach nothing had to not ship an installer that reaches
+something. `skip` survives in the base `tauri.conf.json`, which no shipped
+artifact is built from alone.)
 
-The cost is real and it is stated on the download page: **the installers do not
-provide WebView2.** Windows 11 and any Windows 10 that has taken updates since
-2021 already have the Evergreen runtime, because Edge installs it. On a machine
-that does not, the app will not start, and Tauri's own dialog says so with a link
-to Microsoft's installer page — that link, and only that link, is why
-`developer.microsoft.com` appears in the Windows binary's string table. Install
-it once, from Microsoft, deliberately:
-<https://developer.microsoft.com/microsoft-edge/webview2/>
-
-`skip` drops Tauri's whole `install_webview` section, not just the download step,
-so the shipped `.msi` has no `INSTALLED_WEBVIEW2_VERSION` property and no
-registry probe either — it does not even look. CI asserts that rather than
-trusting the config: six greps over the built `.msi`
-(`DownloadAndInvokeBootstrapper`, `fwlink`, `go.microsoft.com`,
-`MicrosoftEdgeWebview2Setup`, `Invoke-WebRequest`, `INSTALLED_WEBVIEW2_VERSION`),
-then `7z` over the `-setup.exe` to check that `NSISdl.dll` is not in
-`$PLUGINSDIR` and that no embedded WebView2 installer was `File`d into the
-payload. All eight were run against the last pre-fix installers and all eight
-fired. `desktop-shell.test.ts` asserts the config key itself, so a future edit
-that restores the default is red in the monorepo suite too.
-
-## Capabilities: none for the window you use
+## Capabilities: a named list, and nothing else
 
 `capabilities/` holds two files, and every build carries both.
 
@@ -184,10 +171,16 @@ that restores the default is red in the monorepo suite too.
 { "identifier": "main", "windows": ["main"], "permissions": [] }
 ```
 
-The main window's permission list is **empty**. Not `core:default`, not a trimmed
-subset — empty. The frontend calls no `invoke`, `withGlobalTauri` is `false`, so
-the webview has no Tauri API to reach for and would be refused if it tried. On the
-Rust side there is no `invoke_handler`, no `std::net` and no socket of any kind.
+The main window's FILE grant is **empty** — not `core:default`, not a trimmed
+subset. What the shipped app grants it is added at runtime instead
+(`LOCAL_ENGINE_CAPABILITY` in `src-tauri/src/engine.rs`): exactly the commands
+`WINDOW_COMMANDS` in `build.rs` declares, each with a one-line reason, plus one
+receive-only event permission (`core:event:allow-listen`, no `allow-emit` — the
+window may hear the shell and cannot make the shell hear anything). The grant is
+a Rust string in a module only the `local-engine` feature compiles, so a binary
+built without the feature grants nothing at all — a property of the binary
+rather than of a file somebody could edit. `withGlobalTauri` is `false`, and
+nothing the window may call takes a URL or a filesystem path.
 
 ```json
 { "identifier": "updater", "windows": ["updater"], "permissions": ["core:event:allow-listen"] }
@@ -206,21 +199,18 @@ back; no command; no filesystem permission; and it inherits the app-wide
 does. The asymmetry is the design: the download is driven Rust-side, and the page
 that watches it is granted one direction of one event.
 
-The one file this binary can open is behind a compile-time feature that is
-**off** in every published build: `src/engine.rs` — the shell's ownership of a
-local mail engine's lifetime — writes that engine's diagnostics to a log file,
-because a double-clicked app has no readable stderr. It is compiled by
-`cargo build --features local-engine` and by nothing else, so in the binary you
-downloaded that module, its keystore access, its two commands and its log are
-not present at all rather than merely unused. There *are* two plugins —
-`tauri-plugin-updater` and
-`tauri-plugin-dialog`, both for the auto-updater — but they are registered
-Rust-side and no capability grants the webview access to either, so the page
-still cannot call them. `assetProtocol` is disabled, `freezePrototype` is on, and
+The published binaries are built **with** `--features local-engine` — that is
+what compiles the engine's lifecycle, the keystore access, the engine log
+(a double-clicked app has no readable stderr) and the command modules in. The
+plugins are registered Rust-side (`updater` and `dialog` for the auto-updater;
+`single-instance`, `deep-link`, `notification` and `autostart` under the
+feature) and no capability grants the webview any plugin's own permissions — the
+page reaches everything through the named commands and nothing else.
+`assetProtocol` is disabled, `freezePrototype` is on, and
 `dangerousDisableAssetCspModification` is off.
 
 `src-tauri/Cargo.toml` takes Tauri's default features **minus `compression`**,
-plus those two plugins and nothing more. Dropping brotli costs about a quarter of
+plus those plugins and nothing more. Dropping brotli costs about a quarter of
 a megabyte and buys the audit:
 
 ```bash
@@ -353,6 +343,41 @@ against the shipped public key, and the downgrade gate is exercised across the
 boundary cases. The missing-pubkey packaging gate has its negative control in
 `test/desktop-shell.test.ts`.
 
+## The default mail app, and mailto
+
+The app can be this computer's mail app: click an email address anywhere and a
+new message opens here, prefilled. Three pieces, each with a stated boundary:
+
+**Registration** is declarative. `plugins.deep-link.desktop.schemes` in
+`tauri.engine.conf.json` names `ohmail` and `mailto`, which the bundler turns
+into `CFBundleURLTypes` on macOS, a `MimeType=x-scheme-handler/mailto;` line in
+the Linux `.desktop` entry, and per-scheme registry keys on Windows — where the
+installer additionally writes the capability keys (`windows/hooks.nsh`) that put
+ohmail on the Default-apps page. Registration makes the app a **candidate**; the
+choice stays the user's, on every platform.
+
+**Becoming the default** takes each platform's own sanctioned path, and never a
+registry write. Two shell commands (`src-tauri/src/default_mail.rs`) carry it:
+`default_mail_status` reads the current state into three words — `default`,
+`not-default`, `unknown` — and `default_mail_request` asks. On macOS that is
+`LSSetDefaultHandlerForURLScheme`, which makes **macOS itself** show the consent
+dialog; on Windows it opens `ms-settings:defaultapps` (a constant address, the
+window still naming no URL) where the person picks ohmail; on Linux it is
+`xdg-settings set default-url-scheme-handler mailto ohmail.desktop`. The app asks
+**once**, after a mailbox is connected, and never again — either answer persists,
+and Settings → General keeps the row with the live-detected state for whoever
+changes their mind.
+
+**A mailto click** is parsed by exactly one parser (`src/mailto.ts` — RFC 6068,
+read defensively: plain bounded strings, no control characters in single-line
+fields, every header a link author invents dropped) and seeds the same compose
+form every other entry point uses. The shell HOLDS the link and the window claims
+it take-once (`mailto_claim`), which is what makes the click that *starts* the
+app deliverable — an event emitted before the page's scripts run is an event
+nobody hears. Clicked before a mailbox is connected, the draft waits; connecting
+is the thing that has to happen first, and the compose opens once it has. The
+link's content is never logged: who you write to is yours.
+
 ## Identifiers, names and version
 
 **`io.ohmail.desktop`** — the same identifier the SwiftUI client carries in
@@ -364,7 +389,7 @@ verification; the cost was a second data directory for the same mailbox and an
 update path that could never hand over between them, which is a permanent fork in
 every path the app touches in exchange for a convenience while testing.
 
-The version is **`0.10.0`**, bare, in every place it is written: `tauri.conf.json`,
+The version is **`0.11.0`**, bare, in every place it is written: `tauri.conf.json`,
 `Cargo.toml`, `Cargo.lock`, `package.json`, and the macOS `Info.plist`. The
 `-preview` suffix earlier builds carried is retired — it marked "this build
 cannot update itself yet", and this build ships the auto-updater, so the claim is
@@ -383,17 +408,16 @@ identifier and updated through Sparkle, which compares a feed's version against
 the installed `CFBundleVersion` — so a bundle announcing `0.8.0` there would be
 read as a downgrade from a four-digit build number, and every installed copy
 would report itself up to date for ever. Nothing a person sees uses it:
-`CFBundleShortVersionString` is `0.10.0` and is what the app and every download
+`CFBundleShortVersionString` is `0.11.0` and is what the app and every download
 page show. The floor is asserted in `release-feeds.yml`, so a plist that loses
 the key fails the release instead of stranding the installs it protects.
 
-**The bundle's own description is per-artifact, and has to be.** `tauri.conf.json`
-still says "interface preview", because that file alone is what `npx tauri build`
-produces and that build genuinely has no engine in it. The engine-bearing artifact
-overrides `shortDescription` and `longDescription` in
-`src-tauri/tauri.engine.conf.json`, where they describe an app that connects to a
-mailbox. One sentence stretched to cover two different programs would be false of
-one of them, and the installers show it to people.
+**The bundle's description lives in the base config now.** It used to be
+per-artifact — the base said "interface preview" and the engine overlay
+overrode it — because two different programs came out of this directory. The
+preview is retired, one description is true of the one app, and
+`tauri.engine.conf.json` keeps only what genuinely differs: the resources, the
+schemes, the Windows installer's bootstrapper mode and hooks.
 
 **One word on Linux, everywhere.** The bundler derives the `.deb`'s `Package:`
 field by kebab-casing `productName`, and `productName` is `ohmail`, so the
@@ -412,63 +436,71 @@ slug this paragraph goes red instead of quietly going stale.
 
 ```bash
 npm run ui:typecheck                       # tsc over the shell, the views and the shim
-npm run ui:build && npm run smoke          # the render + offline audit, on the built bundle
+npm run ui:build:engine && npm run smoke   # the render + offline audit, on the built bundle
+npm run scan:engine                        # what the bytes contain, both directions
 cd ../.. && CI=true npx vitest run apps/desktop/test   # the config assertions
 cd apps/desktop/src-tauri && cargo test    # the signature + downgrade proofs
 ```
 
 `test/desktop-shell.test.ts` is the drift guard: it asserts the identifier, the
 one bare version across five files, the CSP directive by directive, the main
-window's empty capability list and the updater window's single listen-only grant,
-the absent `invoke_handler`, the absent `compression` feature,
-the exact two-plugin allow-list, the pinned update feed, a valid updater pubkey
-(with a negative control for the packaging gate), the http-adapter alias, and
-that `index.html`'s CSP still matches the webview's. Those files are read by
+window's empty capability FILE and the updater window's single listen-only grant,
+the nineteen-command census (declared in `build.rs`, defined, registered, and
+granted — the three places a half-added command is missing from), the absent
+`compression` feature, the pinned update feed, a valid updater pubkey (with a
+negative control for the packaging gate), the fixtures-adapter alias, the
+default-mail identities against the installers that register them, and that
+`index.html`'s CSP still matches the webview's. Those files are read by
 nothing else in the repository, so without it an edit to any of them would keep
 every other test green. The Rust-side signature and downgrade proofs run under
 `cargo test` (`src-tauri/src/updater_tests.rs`).
 
-`scripts/smoke.mjs` is mutation-tested by hand the way the Swift harness is:
-deleting the `installOfflineGuard()` call fails 5 of its 33 checks, and replacing
-`<AppShell/>` with an empty `<div>` fails 19. Both were watched failing at this
-release rather than carried over.
+`scripts/smoke.mjs` is mutation-tested by hand: deleting the
+`installOfflineGuard()` call fails the offline audit's checks, and replacing the
+mount with an empty `<div>` fails the render section. Both were watched failing
+rather than carried over, and the audit runs on the bundle the installers carry.
 
 ## Layout
 
 ```
 apps/desktop/
-├── index.html            document CSP, favicon, #root
+├── index.html            document CSP, favicon, #root (the window)
+├── host.html             the served host client's own document
 ├── vite.config.ts        the aliases, base "./", modulePreload off, the two artifacts
 ├── src/
-│   ├── main.tsx          providers + theme stamp + mount AppShell
+│   ├── main.tsx          providers + theme stamp + mount the gate
+│   ├── DesktopGate.tsx   chooser / notice / the mail client, from the shell's answer
+│   ├── mailto.ts         the one mailto parser (RFC 6068, read defensively)
+│   ├── DesktopDefaultMail.tsx  the ask-once card + the Settings → General row
 │   ├── offline-guard.ts  fetch/XHR/WebSocket/EventSource/sendBeacon → throw
-│   ├── bridge-fetch.ts   the local engine's transport (local-engine builds only)
-│   ├── build-flags.d.ts  the one flag that picks which artifact this is
-│   └── no-http-adapter.ts the Cloud sync client, absent
+│   ├── bridge-fetch.ts   the local engine's transport
+│   ├── no-fixtures-adapter.ts  the sample world, absent
+│   └── host-client/      the served bundle's entry, bearer manager, pair landing
 ├── scripts/smoke.mjs     the render + offline audit over dist/
+├── scripts/scan-artifact.mjs  what the emitted bytes contain, both directions
 ├── test/                 the config drift guard (runs in the monorepo suite)
 └── src-tauri/
-    ├── Cargo.toml        tauri (defaults minus compression) + updater + dialog
+    ├── Cargo.toml        tauri (defaults minus compression) + the plugins
     ├── tauri.conf.json   window, CSP, bundle targets, icons, updater feed + pubkey
+    ├── tauri.engine.conf.json  resources, schemes, Windows bootstrapper + hooks
+    ├── windows/hooks.nsh the mail-client capability registration (never the choice)
     ├── build.rs          command manifest + the missing-pubkey packaging gate
     ├── capabilities/     main.json (no permissions) + updater.json (listen only)
     ├── icons/            the "oh." family (.ico, .icns, .png ladder)
     └── src/
-        ├── main.rs           the window, and the updater hook-up
-        ├── engine.rs         the local engine's lifetime, bridge and log (feature-gated)
-        ├── engine_tests.rs   the lifecycle and the bridge, against real processes
+        ├── main.rs           the window, the engine's lifetime, the updater hook-up
+        ├── engine.rs         the engine's lifecycle, the bridge, the commands
+        ├── default_mail.rs   the OS's default-mail read + request, per platform
+        ├── host.rs           host mode: tray, tailscale serve, autostart
+        ├── config.rs         the settings files (never a secret)
+        ├── menu.rs           the one menu bar
         ├── updater.rs        the menu item, the feed check, notify-and-install
-        └── updater_tests.rs  tampered-payload and downgrade proofs (cargo test)
+        └── *_tests.rs        each module's proofs (cargo test)
 ```
 
 ## What is not here yet
 
-The engine. This Tauri build has no IMAP client, no accounts and no AI: it renders
-the interface on Mila's fixture world. The auto-updater is now in (see above); what
-is still absent is the mail engine, which shipped in the macOS build first and is
-being ported to this shell next — it lands behind `AppState`/`OhmailEngine`, the
-seam both platforms share. Signed *installers* still need a certificate
-(Authenticode for Windows) that does not exist yet; until then the installers are
-unsigned — which is exactly why the update payloads are minisign-verified
-independently of any OS code-signing certificate. The README says so on every
-platform.
+Signed *installers* still need a certificate (Authenticode for Windows) that does
+not exist yet; until then the installers are unsigned — which is exactly why the
+update payloads are minisign-verified independently of any OS code-signing
+certificate. The README says so on every platform.

@@ -16,6 +16,55 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.11.0] — 2026-08-21
+
+ohmail can be your computer's mail app now — and the app carries no demo mail
+any more: it opens empty, and you connect a mailbox.
+
+### Your default mail app
+
+**Click an email address anywhere and a new message opens here, prefilled.**
+ohmail registers as a mail-app candidate on all three platforms (macOS
+`CFBundleURLTypes`, the Linux desktop entry's scheme handler, and on Windows the
+installer's capability keys, which put ohmail on Settings → Default apps →
+Email). Becoming the default stays your choice, made the way each platform
+sanctions: macOS shows its own confirmation dialog, Windows opens the
+Default-apps page for you to pick, Linux goes through `xdg-settings`. Nothing
+writes the choice behind the platform's back — on Windows in particular, the
+app never touches `UserChoice`.
+
+**The app asks once.** After a mailbox is connected, one card offers to make
+ohmail the default; either answer is remembered and the question never
+reappears. Settings → General keeps the row — the live-detected state and the
+same action — for whoever changes their mind later.
+
+**mailto links become the compose form, safely.** The link is parsed by one
+parser (RFC 6068 — recipients, cc, bcc, subject, body), read defensively: every
+field is plain bounded text, control characters cannot ride into single-line
+fields, and any other header a link author invents is dropped rather than
+honored. A click that *starts* the app still lands: the shell holds the link
+until the window is ready to claim it, exactly once. Clicked before a mailbox
+is connected, the draft waits until one is. Who you write to is never logged.
+
+### No demo mail in the app
+
+The app used to carry a small fictional mailbox for the case where its bundle
+ran with no native shell, and a separate fixtures-only "interface preview"
+artifact was built and smoked (never shipped). Both are retired: the app has
+two states — not connected, and your own mail — and the one demo lives at
+[ohmail.app/demo](https://ohmail.app/demo). The sample-mail corpus is aliased
+out of both built bundles and the artifact scan proves its absence from the
+emitted bytes, in both directions. The render check's offline audit —
+fetch/XHR/WebSocket/EventSource/sendBeacon all sealed — moved onto the bundle
+the installers actually carry, which is a strictly stronger claim than the
+preview could make.
+
+### Version alignment
+
+Desktop, web and mobile share one main version from this release: the web
+app's Settings → About reports the same `0.11` this desktop release carries,
+from one source the release bumps.
+
 ## [0.10.0] — 2026-08-20
 
 Two additions with one idea between them: what's yours stays with you. Your other
@@ -2085,7 +2134,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.11.0
 [0.10.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.10.0
 [0.9.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.8
 [0.9.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.7

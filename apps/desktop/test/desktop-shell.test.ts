@@ -68,7 +68,7 @@ describe("tauri.conf.json", () => {
     // preview, and reusing the number would leave the two sets of checksums
     // ambiguous about which artifact they describe. A version is how a
     // downloader names what they have.
-    expect(conf.version).toBe("0.10.0");
+    expect(conf.version).toBe("0.11.0");
     expect(conf.identifier).toBe("io.ohmail.desktop");
   });
 
@@ -393,14 +393,20 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these eleven files and no others", () => {
+  it("is these thirteen files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // Which door this install came in by, and the environment each one composes. Compiled only
-      // under `local-engine`, like `engine.rs` — asserted below, because the published preview
+      // under `local-engine`, like `engine.rs` — asserted below, because a feature-off shell
       // configures nothing and must carry no way to.
       "config.rs",
       "config_tests.rs",
+      // The OS's default mail app: a read of the current handler and a request that takes each
+      // platform's own sanctioned path (macOS consent dialog, the Windows Settings page, Linux
+      // xdg-settings) — never a registry write; the module states the rule and its tests pin
+      // the argv tables and the closed vocabulary. Compiled only under `local-engine`.
+      "default_mail.rs",
+      "default_mail_tests.rs",
       "engine.rs",
       "engine_tests.rs",
       // Host mode: publishing the engine's loopback door to the user's own tailnet — the
@@ -524,12 +530,14 @@ describe("the Rust side", () => {
    * naming its `allow-…` permission cannot be resolved — so neither `cargo check` nor `cargo test`
    * can see it. The set equality below is the only thing that does.
    */
-  it("declares and registers its sixteen commands only in the local build", () => {
+  it("declares and registers its nineteen commands only in the local build", () => {
     const build = read("src-tauri/build.rs");
     const engine = read("src-tauri/src/engine.rs");
-    // Host mode's commands are DEFINED in host.rs; registration and the grant stay in engine.rs
-    // (the one invoke_handler, the one capability), so the per-command sweep below reads both.
+    // Host mode's and the default-mail commands are DEFINED in their own modules; registration
+    // and the grant stay in engine.rs (the one invoke_handler, the one capability), so the
+    // per-command sweep below reads all three.
     const hostModule = read("src-tauri/src/host.rs");
+    const defaultMailModule = read("src-tauri/src/default_mail.rs");
     const COMMANDS = [
       "engine_status",
       "engine_request",
@@ -566,6 +574,16 @@ describe("the Rust side", () => {
       "autostart_get",
       "autostart_set",
       "open_tailscale_download",
+      // A mailto: activation, TAKEN rather than pushed — the shell holds the link and the window
+      // claims it exactly once, which is what makes the click that STARTS the app deliverable
+      // (an event emitted before the page's scripts run is an event nobody hears).
+      "mailto_claim",
+      // The OS's default mail app: a read in a closed three-word vocabulary, and a request that
+      // takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings
+      // page (one more CONSTANT address the shell owns), xdg-settings on Linux — and never a
+      // registry write. `default_mail.rs` states the rule; its tests pin the argv tables.
+      "default_mail_status",
+      "default_mail_request",
     ];
 
     expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
@@ -595,11 +613,12 @@ describe("the Rust side", () => {
 
     for (const command of COMMANDS) {
       // Defined, registered, and granted — the three places a name has to appear, and the ones a
-      // half-added command is missing from. Definitions live in engine.rs or host.rs; the
-      // registration and the grant are engine.rs's alone (one invoke_handler, one capability).
+      // half-added command is missing from. Definitions live in engine.rs, host.rs or
+      // default_mail.rs; the registration and the grant are engine.rs's alone (one
+      // invoke_handler, one capability).
       // `[<(]` because several are generic over the runtime: a command taking an `AppHandle`
       // has to name the runtime it belongs to, or the handler cannot be built for one.
-      expect(engine + hostModule, `${command} is not defined`).toMatch(
+      expect(engine + hostModule + defaultMailModule, `${command} is not defined`).toMatch(
         new RegExp(`fn ${command}[<(]`),
       );
       expect(engine, `${command} is not registered`).toMatch(
@@ -709,19 +728,26 @@ describe("the Rust side", () => {
   });
 
   /**
-   * THE `ohmail://` SCHEME BELONGS TO THE ENGINE BUILD AND TO NOTHING ELSE.
+   * THE URL SCHEMES BELONG TO THE ENGINE BUILD AND TO NOTHING ELSE.
    *
    * Registering a URL scheme is a claim on a machine-wide namespace: from that moment every
    * `ohmail://…` on the computer — from a mail body, a chat message, a web page — is delivered to
-   * whichever program registered it. The interface preview has no account, no sign-in and no
-   * engine, so a preview that registered it would take the name and answer nothing on it, on
-   * machines that may also have the real app installed.
+   * whichever program registered it. A feature-off shell has no account, no sign-in and no
+   * engine, so a binary built that way must take no name and answer nothing on one, on machines
+   * that may also have the real app installed.
    *
-   * The split is DECLARATIVE and therefore checkable without a Rust toolchain: the scheme is in the
-   * engine build's config overlay and must not be in the base config, and both plugins that
-   * implement it are compiled only under `local-engine`.
+   * TWO schemes now, and the second is not ours: `mailto` is the shared, standard name every mail
+   * client claims — claiming it is what makes this app a CANDIDATE for the OS's default-mail
+   * choice (macOS's picker, the Windows Default-apps page via the installer's Capabilities keys,
+   * the .desktop MimeType on Linux), and the deep-link config is ALSO the runtime delivery filter:
+   * the plugin only forwards activations whose scheme is configured, so a mailto absent from this
+   * list is a mailto the window never hears about.
+   *
+   * The split is DECLARATIVE and therefore checkable without a Rust toolchain: the schemes are in
+   * the engine build's config overlay and must not be in the base config, and both plugins that
+   * implement them are compiled only under `local-engine`.
    */
-  it("registers its URL scheme in the engine build only", () => {
+  it("registers its URL schemes in the engine build only", () => {
     const base = readJson("src-tauri/tauri.conf.json") as never as {
       plugins?: Record<string, unknown>;
     };
@@ -729,17 +755,18 @@ describe("the Rust side", () => {
       plugins?: { "deep-link"?: { desktop?: { schemes?: string[] } } };
     };
 
-    // The preview claims nothing. Asserted on the KEY rather than on the whole `plugins` object,
-    // because the updater's entry legitimately lives there and must stay.
+    // The base config claims nothing. Asserted on the KEY rather than on the whole `plugins`
+    // object, because the updater's entry legitimately lives there and must stay.
     expect(Object.keys(base.plugins ?? {})).toEqual(["updater"]);
 
-    // The engine build claims exactly one scheme, and it is the product's own name.
-    expect(overlay.plugins?.["deep-link"]?.desktop?.schemes).toEqual(["ohmail"]);
+    // The engine build claims exactly two schemes: the product's own name, and the mail scheme
+    // it is a candidate handler for.
+    expect(overlay.plugins?.["deep-link"]?.desktop?.schemes).toEqual(["ohmail", "mailto"]);
 
-    /* AND THE HANDLING IS BEHIND THE SAME FEATURE. `engine.rs` is the module the preview does not
-       compile, so both plugin registrations being in it is what makes the split a property of the
-       binary rather than of a config file somebody could copy. `main.rs` is compiled into every
-       build and must name neither. */
+    /* AND THE HANDLING IS BEHIND THE SAME FEATURE. `engine.rs` is a module the feature-off shell
+       does not compile, so both plugin registrations being in it is what makes the split a
+       property of the binary rather than of a config file somebody could copy. `main.rs` is
+       compiled into every build and must name neither. */
     const engine = read("src-tauri/src/engine.rs");
     expect(engine).toMatch(/tauri_plugin_deep_link::init\(\)/);
     expect(engine).toMatch(/tauri_plugin_single_instance::init\(/);
@@ -787,6 +814,81 @@ describe("the Rust side", () => {
        outlives that by a great deal, so the line that records an activation says only that one
        happened. Asserted as "no `log_line` in this module interpolates the code binding". */
     expect(engine).not.toMatch(/log_line\(format_args!\([^)]*\{code\}/);
+  });
+
+  /**
+   * THE MAILTO CHANNEL'S TWO LANGUAGES AGREE, the rule the test above states for the handoff code
+   * — with the extra half the claim model adds: the event is a POKE and the LINK travels over the
+   * claiming command, so the command name has to agree too, or the window is poked toward a claim
+   * that resolves to nothing.
+   */
+  it("the shell and the window agree on the mailto channel, and the shell never logs the link", () => {
+    const engine = read("src-tauri/src/engine.rs");
+    const native = read("src/native.ts");
+    const rust = /pub const MAILTO_EVENT: &str = "([^"]+)";/.exec(engine)?.[1];
+    const js = /export const MAILTO_EVENT = "([^"]+)";/.exec(native)?.[1];
+    expect(rust, "MAILTO_EVENT has stopped matching in engine.rs").toBeDefined();
+    expect(js, "MAILTO_EVENT has stopped matching in native.ts").toBeDefined();
+    expect(js).toBe(rust);
+    // A fourth channel: not the menu's two, not the handoff code's.
+    for (const other of ["MENU_NAVIGATE_EVENT", "MENU_COMMAND_EVENT", "LINK_CODE_EVENT"]) {
+      expect(new RegExp(`export const ${other} = "([^"]+)";`).exec(native)?.[1]).not.toBe(js);
+    }
+    // The claiming command exists under the same name on both sides.
+    expect(engine).toMatch(/fn mailto_claim[<(]/);
+    expect(native).toContain('const MAILTO_CLAIM_COMMAND = "mailto_claim";');
+    // And the shell never logs the link: who somebody writes to is theirs. The handler binds the
+    // held link as `link`; no log line may interpolate it.
+    expect(engine).not.toMatch(/log_line\(format_args!\([^)]*\{link\}/);
+  });
+
+  /**
+   * THE DEFAULT-MAIL IDENTITIES ARE THE REGISTERED ONES — the three spellings the OS knows this
+   * app by, held together across the four files that state them, because each pair drifting is a
+   * detector that answers "not default" forever with nothing on screen able to say why.
+   *
+   * And the WINDOWS RULE, as bytes: the request arm may open the Settings page and may not write
+   * the choice. `UserChoice` is hashed against programmatic defaulting; an app that fought that
+   * would deserve the distrust. The installer hook REGISTERS (ProgId + Capabilities +
+   * RegisteredApplications — the capability model, in HKCU) and equally never touches UserChoice.
+   */
+  it("detects default-mail against the identities the installers register, and never writes the choice", () => {
+    const defaultMail = read("src-tauri/src/default_mail.rs");
+    const hooks = read("src-tauri/windows/hooks.nsh");
+    const conf = readJson("src-tauri/tauri.conf.json") as never as { identifier: string };
+    const overlay = readJson("src-tauri/tauri.engine.conf.json") as never as {
+      bundle?: { windows?: { nsis?: { installerHooks?: string } } };
+    };
+
+    // macOS: the bundle id Launch Services answers with is the one tauri.conf.json declares.
+    const bundleId = /const MACOS_BUNDLE_ID: &str = "([^"]+)";/.exec(defaultMail)?.[1];
+    expect(bundleId, "MACOS_BUNDLE_ID has stopped matching").toBe(conf.identifier);
+
+    // Windows: the ProgId the detector compares against is the one the installer hook registers,
+    // and the hook is actually wired into the NSIS build.
+    const progId = /const WINDOWS_PROG_ID: &str = "([^"]+)";/.exec(defaultMail)?.[1];
+    expect(progId, "WINDOWS_PROG_ID has stopped matching").toBeDefined();
+    expect(hooks).toContain(`Software\\Classes\\${progId}`);
+    expect(hooks).toContain(`"mailto" "${progId}"`);
+    expect(hooks).toContain("Software\\RegisteredApplications");
+    expect(overlay.bundle?.windows?.nsis?.installerHooks).toBe("./windows/hooks.nsh");
+
+    // Neither the module nor the hook touches UserChoice's value: the module's ONE reg.exe argv
+    // table is the query (asserted as "exactly one reg args function, and it is the query"), no
+    // registry API is called directly, and the hook never names UserChoice at all. (`"set"` does
+    // appear in the module — it is Linux's `xdg-settings set`, the platform's own sanctioned
+    // write, which is exactly the boundary the module states.)
+    const regArgFns = [...defaultMail.matchAll(/fn (reg_[a-z_]*args)\(/g)].map((m) => m[1]);
+    expect(regArgFns).toEqual(["reg_query_args"]);
+    expect(defaultMail).toContain('"query".into()');
+    expect(defaultMail).not.toMatch(/RegSetValue|RegCreateKey|windows_registry/);
+    // Mentions in prose are fine (the header EXPLAINS UserChoice); a registry VERB naming it is not.
+    expect(hooks).not.toMatch(/(WriteRegStr|WriteRegDWORD|DeleteRegKey|DeleteRegValue)[^\n]*UserChoice/);
+
+    // Linux: the desktop entry the detector and the setter name is the bundler's own
+    // `{product_name}.desktop`.
+    const desktopId = /const LINUX_DESKTOP_ID: &str = "([^"]+)";/.exec(defaultMail)?.[1];
+    expect(desktopId).toBe("ohmail.desktop");
   });
 
   /**
@@ -1386,10 +1488,28 @@ describe("the menu bar", () => {
 describe("the UI bundle's build config", () => {
   const vite = read("vite.config.ts");
 
-  it("aliases the Cloud sync client out of the module graph", () => {
-    expect(vite).toMatch(/adapters\\\/http-adapter\\\.js\$\/,\s*replacement: r\("\.\/src\/no-http-adapter\.ts"\)/);
+  /**
+   * THE SAMPLE WORLD IS ALIASED OUT OF BOTH ARTIFACTS — the no-demo rule, at the module graph.
+   *
+   * The shared shell keeps a demo arm for the landing page, so `engine-config.ts` names
+   * `FixturesAdapter` in a branch a desktop build can never take — and a branch never taken
+   * still puts its import in the bundle, which is the whole fixtures corpus. So the module
+   * resolves to a refusing stub, unconditionally: the window bundle and the served host client
+   * alike. The SYNC client, by contrast, is aliased in NEITHER — both remaining artifacts are
+   * engine-bearing and construct the real `HttpAdapter` (a stub once stood in for it in the
+   * published tree and blanked the window the moment a mailbox served; `scan-artifact.mjs`
+   * still asserts its refusal sentence absent from every bundle).
+   */
+  it("aliases the sample world out of the module graph, and the sync client out of nothing", () => {
+    expect(vite).toMatch(/adapters\\\/fixtures-adapter\\\.js\$\/,\s*replacement: r\("\.\/src\/no-fixtures-adapter\.ts"\)/);
+    // Unconditional: not inside any spread, so neither artifact can re-grow the corpus.
+    expect(vite).not.toMatch(/\?\s*\[\][\s\S]{0,120}fixtures-adapter/);
     // …and the stub it points at refuses rather than degrades.
-    expect(read("src/no-http-adapter.ts")).toMatch(/throw new Error\(REFUSAL\)/);
+    expect(read("src/no-fixtures-adapter.ts")).toMatch(/constructor\(\) \{\s*\n\s*throw new Error\(/);
+    // The sync client resolves REAL, everywhere: no alias ENTRY touches its path (prose may
+    // still explain the history), and the retired stub file is gone rather than dormant.
+    expect(vite).not.toMatch(/find:[^\n]*http-adapter/);
+    expect(fs.existsSync(path.join(APP, "src/no-http-adapter.ts"))).toBe(false);
   });
 
   /**
@@ -1404,23 +1524,21 @@ describe("the UI bundle's build config", () => {
    * `scan-artifact.mjs` read that header correctly and failed on bytes that ship nowhere.
    *
    * TWO THINGS ARE ASSERTED AND THE SECOND IS THE ONE THAT WILL BE GOT WRONG. The alias has to
-   * exist, and it has to be UNCONDITIONAL — copying the shape of the http-adapter entry directly
-   * above would tuck it inside `LOCAL_ENGINE ? [] : […]`, which re-diverges the engine build in
-   * silence: every positive marker `scan:engine` looks for comes from the http-adapter, so that
-   * guard would stay green through the whole regression. The check is therefore that the alias
-   * appears OUTSIDE the conditional spread, not merely that it appears.
+   * exist, and it has to be UNCONDITIONAL — a conditional spread around it would re-diverge one
+   * artifact in silence. The alias list holds NO conditional spread at all any more (the one
+   * that existed carried the retired preview's sync-client stub), and that absence is asserted
+   * too, so a future arm cannot quietly reintroduce a per-artifact module identity.
    */
   it("aliases the Cloud API client out of BOTH artifacts, unconditionally", () => {
     const ALIAS = /\{ find: \/\^\(\?:\.\*\\\/\)\?api-client\$\/, replacement: r\("\.\/src\/no-api-client\.ts"\) \}/;
     expect(vite, "the api-client alias is missing from vite.config.ts").toMatch(ALIAS);
 
-    // Not inside `...(LOCAL_ENGINE ? [] : [ … ])`: the spread's brackets must close before it.
-    const conditional = /\.\.\.\(LOCAL_ENGINE[\s\S]*?\]\),/.exec(vite)?.[0] ?? "";
-    expect(conditional, "the LOCAL_ENGINE spread was not found — this guard is not reading it")
-      .toContain("no-http-adapter.ts");
-    expect(conditional, "the api-client alias is inside the LOCAL_ENGINE conditional — the engine " +
-      "build would compile the real Cloud client, which the published tree does not have")
-      .not.toMatch(/no-api-client/);
+    // No conditional spread anywhere in the alias list: every module resolves to the same file
+    // in every artifact, which is what makes the scans' identity questions answerable at all.
+    const aliasList = /alias: \[([\s\S]*?)\n    \],/.exec(vite)?.[1] ?? "";
+    expect(aliasList, "the alias list was not found — this guard is not reading it").toContain("no-api-client");
+    expect(aliasList, "a conditional spread is back in the alias list — a module now has a " +
+      "per-artifact identity, which is the shape that shipped a blank window").not.toMatch(/\.\.\.\(/);
 
     // The stub refuses rather than degrades, and answers the question every caller asks first.
     const stub = read("src/no-api-client.ts");
@@ -1431,34 +1549,32 @@ describe("the UI bundle's build config", () => {
   /**
    * TWO ARTIFACTS FROM ONE DIRECTORY, AND ONE FLAG THAT DECIDES WHICH.
    *
-   * The preview is what has shipped: fixtures, no engine, the sync client aliased to a stub. The
-   * other carries a mail engine and the bridge the client talks to it through. What must not exist
-   * is a third state — a preview that carries the bridge, or an engine build that carries the stub
-   * — so the alias and the flag the frontend branches on are read from the SAME constant, and this
-   * asserts that rather than trusting it.
-   *
-   * The artifacts themselves are the real evidence and they are checked where they are built: the
-   * preview's bundle contains no `engine_request` and the engine build's does.
+   * The WINDOW bundle is the default arm — the app, over the bridge — and the HOST CLIENT is the
+   * served phone bundle. A third arm used to be the default (the fixtures-only preview, retired
+   * under the no-demo rule) and must not quietly return: `build-ui.mjs` refuses a bare
+   * invocation, the config derives the window arm from the ONE remaining variable, and the
+   * `__OHMAIL_LOCAL_ENGINE__` define is gone with its last consumer — a window entry that no
+   * longer branches, because there is nothing to branch to.
    */
   it("builds its two artifacts from one flag", () => {
-    expect(vite).toMatch(/const LOCAL_ENGINE = process\.env\.OHMAIL_LOCAL_ENGINE === "1"/);
-    // The stub is aliased in when BOTH engine-bearing flags are off, and only then. The host
-    // client (the third artifact, the served phone bundle) needs the real adapter for the
-    // plainest reason of the three: it IS the socket client. The two flags are mutually
-    // exclusive (the config throws on both), so "off and off" is still exactly the preview.
-    expect(vite).toMatch(/\.\.\.\(LOCAL_ENGINE \|\| HOST_CLIENT\s*\n?\s*\?\s*\[\]/);
-    // The same constant reaches the frontend as a compile-time literal, so the branch the build
-    // did not take is removed rather than skipped.
-    expect(vite).toMatch(/__OHMAIL_LOCAL_ENGINE__: JSON\.stringify\(LOCAL_ENGINE\)/);
+    expect(vite).toMatch(/const LOCAL_ENGINE = process\.env\.OHMAIL_HOST_CLIENT !== "1"/);
+    // The retired define stays retired: a knob nothing reads looks load-bearing and is not.
+    // (Prose may name it; a DEFINE key may not.)
+    expect(vite).not.toMatch(/__OHMAIL_LOCAL_ENGINE__:/);
 
     const main = read("src/main.tsx");
-    // The boot check is behind the same literal, so the preview carries neither the check nor the
-    // bridge it would call. It reads as an early return now that its failure has to reach the
-    // screen rather than a log line, but the branch is the same one.
-    expect(main).toMatch(/if \(!__OHMAIL_LOCAL_ENGINE__\) return null;/);
-    // The preview still installs the offline guard, and so does the other one: `invoke` is not
-    // `fetch`, so the bridge does not need the network APIs back.
+    expect(main).not.toMatch(/__OHMAIL_LOCAL_ENGINE__/);
+    // The window entry installs the offline guard unconditionally: `invoke` is not `fetch`, so
+    // the bridge does not need the network APIs back.
     expect(main).toMatch(/installOfflineGuard\(\)/);
+    // …and the boot check runs only where there is a shell to check against, `readShell`'s rule.
+    expect(main).toMatch(/if \(!bridgeAvailable\(\)\) return null;/);
+
+    // A bare build names no artifact and is refused — the retired preview was the default, and a
+    // stale caller should learn that rather than get the window bundle under an old name.
+    const buildUi = read("scripts/build-ui.mjs");
+    expect(buildUi).toMatch(/if \(!engine && !hostClient\) \{/);
+    expect(buildUi).toMatch(/retired/);
   });
 
   /**
@@ -1482,107 +1598,49 @@ describe("the UI bundle's build config", () => {
     expect(bridge).toMatch(/new HttpAdapter\(\{ baseUrl: "", fetch: bridgeFetch \}\)/);
   });
 
-  it("the stub declares EVERY method EngineAdapter requires — the preview compiles it as the adapter", () => {
+  it("the no-fixtures stub declares every SYMBOL the barrel re-exports from fixtures-adapter", () => {
     /**
-     * THE GAP THIS CLOSES, found when `fetchBody` was added to `EngineAdapter`.
+     * A STUB THAT STANDS AT A MODULE'S PATH MUST EXPORT THAT MODULE'S NAMES — the lesson two
+     * retired sync-client stub tests carried, kept alive on the stub that remains.
      *
-     * In the PREVIEW build `vite.config.ts` aliases `./adapters/http-adapter.js` to
-     * `no-http-adapter.ts`, so in that bundle the stub IS `HttpAdapter` — and a method the real
-     * interface requires and the stub omits is a failure in that artifact alone, while
-     * `pnpm typecheck` here stays green, because `tsc` reads no Vite aliases and resolves the
-     * real file. The stub's own header claimed the interface changing "would still fail if this
-     * could not satisfy it"; that was true of a build nothing here compiles, which is the worst
-     * combination.
+     * The client-engine barrel re-exports named symbols from `./adapters/fixtures-adapter.js`,
+     * and in both desktop artifacts that path resolves to `src/no-fixtures-adapter.ts`. A name
+     * the barrel takes and the stub lacks is a `vite build` failure in this directory alone —
+     * `tsc` reads no Vite aliases and resolves the real file, so the typecheck stays green while
+     * the bundle cannot be built. That exact shape shipped a red public CI once, on the retired
+     * stub (`TS2305: Module … has no exported member`), which is why the oracle here is the
+     * barrel's own re-export list rather than a remembered set of names.
      *
-     * The justification used to be the MIRROR rather than the preview — the stub was published
-     * over the real module's path, so the public repository's `tsc` read it as `HttpAdapter`.
-     * That substitution is gone: the real adapter publishes at its own path now, because the
-     * engine-bearing artifact constructs it and a stub there blanked the window. The assertion
-     * survives the change of reason unaltered, and is still worth having for the artifact that
-     * still does alias.
-     *
-     * So the method set is compared against the interface's own declaration rather than
-     * remembered. Red by deleting `fetchBody` from the stub, or by adding a method to
-     * `EngineAdapter` without mirroring it.
-     */
-    const iface = fs.readFileSync(
-      path.resolve(APP, "../../packages/client-engine/src/adapters/adapter.ts"),
-      "utf8",
-    );
-    const body = iface.slice(iface.indexOf("export interface EngineAdapter"));
-    const required = [...body.matchAll(/^\s{2}(\w+)\(/gm)].map((m) => m[1]);
-    // The harness bites only if it found something to compare.
-    expect(required.length).toBeGreaterThanOrEqual(3);
-    expect(required).toContain("fetchBody");
-
-    const stub = read("src/no-http-adapter.ts");
-    for (const method of required) {
-      expect(stub, `no-http-adapter.ts is missing EngineAdapter.${method}`)
-        .toMatch(new RegExp(`^\\s{2}(?:async )?${method}\\(`, "m"));
-    }
-  });
-
-  it("the stub declares every SYMBOL the barrel re-exports from http-adapter", () => {
-    /**
-     * THE SAME GAP AS THE TEST ABOVE, ONE LEVEL OUT — and it shipped a red CI before this existed.
-     *
-     * The test above compares METHODS against `EngineAdapter`. It says nothing about the other
-     * things the module exports, and the package barrel re-exports several of them by name. When
-     * `SERVER_VIEW_OF` and `ServerMessageView` were added to the real adapter and re-exported, the
-     * stub did not gain them — so in the mirror the barrel named two symbols its
-     * `http-adapter.ts` did not have, and all three platform build jobs failed on
-     * `TS2305: Module … has no exported member`.
-     *
-     * Nothing here could see it. `pnpm typecheck` resolves the REAL file; the publisher's import
-     * gate resolves MODULES and has no opinion about symbols; and the desktop bundle never touches
-     * the module at all, because Vite aliases it away. The first honest signal was a public CI run.
-     *
-     * So the barrel's own re-export list is the oracle: every name it takes from
-     * `./adapters/http-adapter.js` must be exported by this file. Red by deleting either symbol
-     * from the stub, or by adding a re-export to the barrel without mirroring it.
-     *
-     * ── AND THE PARSE STRIPS COMMENTS BEFORE IT SPLITS, WHICH IT DID NOT USED TO ────────────
-     *
-     * This test was GREEN while the preview bundle could not be built. The barrel documents each
-     * name it re-exports with a `//` comment above it, and one of those comments contains a COMMA
-     * — "a spinner is only honest for as long as a request can still be in the air, and this is
-     * how long that is." Splitting on commas first cut that sentence in two, so the fragment
-     * carrying `BODY_FETCH_TIMEOUT_MS` began with prose rather than with a `//`, survived the
-     * comment strip as prose, failed the identifier filter, and was DROPPED. A name the oracle
-     * never saw is a name this loop never checked, and the stub went a whole release without it:
-     * `vite build` failed with `"BODY_FETCH_TIMEOUT_MS" is not exported`, on a tree where every
-     * test passed.
-     *
-     * The filter that hid it is the same one that makes the parse tolerant, so it stays — what
-     * changed is the order. Comments are removed from the WHOLE block first, and then the split
-     * sees only the export list. The `toContain` below pins a name that only the new order can
-     * see, so reverting the order is red rather than merely lenient.
+     * Comments are stripped from the WHOLE block before the split, the ordering the retired test
+     * paid to learn: a comma inside a documenting comment once cut the list mid-sentence and
+     * dropped a name the loop then never checked.
      */
     const barrel = fs.readFileSync(
       path.resolve(APP, "../../packages/client-engine/src/index.ts"),
       "utf8",
     );
-    const block = /export\s*\{([^}]*)\}\s*from\s*"\.\/adapters\/http-adapter\.js";/.exec(barrel);
-    expect(block, "could not find the barrel's http-adapter re-export block").not.toBeNull();
+    const block = /export\s*\{([^}]*)\}\s*from\s*"\.\/adapters\/fixtures-adapter\.js";/.exec(barrel);
+    expect(block, "could not find the barrel's fixtures-adapter re-export block").not.toBeNull();
     const names = block![1]
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\/\/.*$/gm, "")
       .split(",")
       .map((x) => x.trim())
       .filter(Boolean)
-      .map((x) => x.replace(/^type\s+/, "").trim())
+      .filter((x) => !/^type\s/.test(x)) // type-only re-exports are erased by the bundler
       .filter((x) => /^[A-Za-z_$][\w$]*$/.test(x));
     // The harness bites only if it found something to compare.
-    expect(names.length).toBeGreaterThanOrEqual(4);
-    expect(names).toContain("SERVER_VIEW_OF");
-    // The name the old parse could not see. Pinned so the ordering above cannot quietly go back.
-    expect(names).toContain("BODY_FETCH_TIMEOUT_MS");
+    expect(names.length).toBeGreaterThanOrEqual(3);
+    expect(names).toContain("FixturesAdapter");
 
-    const stub = read("src/no-http-adapter.ts");
+    const stub = read("src/no-fixtures-adapter.ts");
     for (const name of names) {
-      expect(stub, `no-http-adapter.ts does not export ${name}, which the barrel re-exports`)
+      expect(stub, `no-fixtures-adapter.ts does not export ${name}, which the barrel re-exports`)
         .toMatch(new RegExp(`^export (?:type |const |class |interface |function )?${name}\\b`, "m"));
     }
+    // And the class REFUSES at construction: a future arm that somehow reaches the demo branch
+    // must fail on its first frame rather than quietly show invented mail as somebody's own.
+    expect(stub).toMatch(/export class FixturesAdapter \{\s*\n\s*constructor\(\) \{\s*\n\s*throw new Error\(/);
   });
 
   it("emits origin-agnostic relative URLs", () => {
@@ -1616,24 +1674,28 @@ describe("the UI bundle's build config", () => {
     expect(defineBlock).not.toMatch(/LOCAL_ENGINE\s*\?/);
   });
 
-  it("renders the same shell the web client does — no desktop fork", () => {
+  it("renders the same shell the web client does — no desktop fork, and no demo mount", () => {
     const main = read("src/main.tsx");
-    expect(main).toMatch(/from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell"/);
-    // The preview's mount, unchanged. The engine build wraps the SAME shell in `DesktopGate`,
-    // which is a gate around it rather than a fork of it — the branch is on the build-time
-    // literal, so the preview's bundle contains neither the gate nor anything it reaches.
-    expect(main).toMatch(/<AppShell demo \/>/);
-    expect(main).toMatch(
-      /__OHMAIL_LOCAL_ENGINE__ \? \(\s*<DesktopGate \/>\s*\) : \(\s*<AppShell demo \/>\s*\)/,
-    );
+    // ONE mount: the gate, which asks the shell what the engine is doing and shows the chooser,
+    // a notice, or the mail client. There used to be a second — `<AppShell demo />`, the retired
+    // preview's — and its absence is the no-demo rule at the entry point: the app opens EMPTY
+    // and one connects; the only demo lives on ohmail.app's landing page.
+    expect(main).toMatch(/<DesktopGate \/>/);
+    expect(main).not.toMatch(/<AppShell/);
+    expect(main).not.toMatch(/demo=/);
     /* …AND THE WHOLE MOUNT IS INSIDE THE BOUNDARY. Not decoration: `DesktopGate` builds the
        client engine during a render, and a released build shipped with a constructor that threw
        there — which unmounted the tree and drew an empty window, on machines that had signed in
        successfully. A boundary cannot catch its own render, so this has to be OUTSIDE the gate,
        which means here. See `GateBoundary.tsx`. */
     expect(main).toMatch(/<GateBoundary>/);
-    // …and the gate mounts the shared shell too, rather than a screen of its own.
-    expect(read("src/DesktopGate.tsx")).toMatch(/from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell"/);
+    // The gate mounts the SHARED shell rather than a screen of its own — that is the no-fork
+    // claim — and hands it `demo={false}` structurally: the line is only reached with a real
+    // engine behind the window.
+    const gate = read("src/DesktopGate.tsx");
+    expect(gate).toMatch(/from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell"/);
+    expect(gate).toMatch(/demo=\{false\}/);
+    expect(gate).not.toMatch(/demo=\{engine === null\}/);
   });
 
   /**

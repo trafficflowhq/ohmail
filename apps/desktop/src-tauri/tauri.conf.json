@@ -1,6 +1,6 @@
 {
   "productName": "ohmail",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "identifier": "io.ohmail.desktop",
   "build": {
     "frontendDist": "../dist"
@@ -38,8 +38,8 @@
     "category": "Productivity",
     "copyright": "Copyright (c) 2026 TrafficFlow GmbH",
     "publisher": "TrafficFlow GmbH",
-    "shortDescription": "Consent-first email — interface preview",
-    "longDescription": "ohmail is consent-first email on the mailboxes you already have. This preview renders the complete interface on a small fictional mailbox that ships inside the app: there is no IMAP client, no HTTP client and no telemetry in this build.",
+    "shortDescription": "Consent-first email on the mailbox you already have",
+    "longDescription": "ohmail is consent-first email on the mailboxes you already have. It connects to your own IMAP mail server over TLS, mirrors your mailbox to a database on this computer, and organises new mail into ohmail/ folders on the server itself, where every other mail app you own can see it. First-time senders wait in the Screener until you say where they belong. The app carries its own mail engine and its own Node runtime; nothing but your mail server and the signed update check is contacted.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
