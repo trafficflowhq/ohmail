@@ -249,6 +249,38 @@ export const BACKOFF_CAP_MS = 60_000;
 export const REFUSAL_CONFIRM_MS = BACKOFF_CAP_MS;
 
 /**
+ * How long a coded refusal must be SUSTAINED — re-made on every confirm ask — before it is
+ * believed to be a revocation and `terminal` latches.
+ *
+ * ── THE INCIDENT THAT SET THE NUMBER (owner report, 2026-08-21) ───────────────────────────
+ *
+ * During a ~6-minute deploy window the API answered coded 401s. {@link REFUSAL_CONFIRM_MS} is
+ * sixty seconds, so the single confirm ask landed INSIDE the window, was refused the same way,
+ * and the second refusal was read as the server re-making a revocation claim: `terminal`
+ * latched, every timer stopped, the wake stream was already dead — and a window nobody
+ * hides/shows never emits a wake event, so nothing ever probed again. A real subscriber sat
+ * behind "Sync stopped. Quit and reopen ohmail to reconnect." for a session that was perfectly
+ * valid six minutes later, and the relaunch the banner demanded was the only exit.
+ *
+ * A minute of corroboration cannot distinguish "revoked" from "mid-deploy", because a deploy
+ * window is longer than a minute. Ten minutes is comfortably past every deploy blip measured
+ * here (5–6 minutes) while keeping the genuine-revocation cost bounded and small.
+ *
+ * ── THE COST ACCOUNTING, AGAINST THE OBJECTION THAT SET THE OLD SHAPE ─────────────────────
+ *
+ * The single-confirm shape existed because a retry ladder "buys N−1 invocations" against an
+ * account with no entitlement — the argument that once rejected confirming more than once. That objection was to an UNBOUNDED ladder. This one is bounded
+ * and priced: a genuinely revoked, visible tab now asks 1 + sustain/confirm = 11 times over ten
+ * minutes — once, per episode — and then zero for ever, with no timer held. A healthy tab asks
+ * ~450 times an hour; the one-time cost of not telling a signed-in user to relaunch is eleven.
+ *
+ * What is deliberately NOT changed: `terminal` itself still holds no timer (the abandoned-tab
+ * ban stands), the wake probe still disproves a stale latch, and non-coded failures (5xx,
+ * network) never enter this path at all — they ride the ordinary backoff, which never gives up.
+ */
+export const REFUSAL_SUSTAIN_MS = 10 * 60_000;
+
+/**
  * The smallest delay any retry may draw, whatever the jitter says. See {@link backoffDelay}.
  */
 export const BACKOFF_MIN_MS = 250;
@@ -765,6 +797,14 @@ export function startSyncScheduler(
    */
   let refusedAt: number | null = null;
   /**
+   * WHEN the next confirm ask is due, while a refusal episode is open. A wake may re-arm what is
+   * LEFT of the current window and never shorten it (#10); with the confirm now a cadence rather
+   * than a single ask, "what is left" has to be tracked here — computing it from `refusedAt`
+   * (the EPISODE's start) goes negative after the first confirm, and `Math.max(0, …)` of a
+   * negative is an immediate ask, i.e. a wake that buys an invocation per window-flip.
+   */
+  let confirmDueAt = 0;
+  /**
    * A single probe drain, permitted while `terminal`, to test whether the refusal still holds.
    *
    * A wake may ask once more, floored at one probe per {@link BACKOFF_CAP_MS}. Distinct from
@@ -1009,6 +1049,14 @@ export function startSyncScheduler(
       failures = 0;
       bootstrapping = false;
       arm(steadyDelay());
+      // THE EAGER BODY PASS, kicked from the one place that knows a drain just SETTLED cleanly.
+      // Fire-and-forget: the settle must publish and re-arm without waiting on background
+      // fetches, and the engine's pass never rejects (failures become per-id records). It lives
+      // here and not inside `drain()` so a bare `syncOnce()` — a test, an embedder's own loop, a
+      // discarded engine settling after teardown — never issues requests nobody asked for; and
+      // it is a no-op on any engine that did not opt in (`eagerBodies`), which is every demo and
+      // every embedder that has not adopted it.
+      if (!stopped) void engine.prefetchRecentBodies();
     } catch (err) {
       if (stopped) return;
       if (isAborted(err)) {
@@ -1020,13 +1068,14 @@ export function startSyncScheduler(
       }
       failures += 1;
       if (isTerminalRefusal(err)) {
-        if (terminal || refusedAt !== null) {
-          // CONFIRMED. We asked again — either the confirm drain `refusedAt` armed, or the wake
-          // probe — and the server made the same refusal. No amount of waiting fixes a revoked
-          // session or a deleted account, so stop, hold no timer, and SAY so: `terminal` is what
-          // lets the shell tell the difference between "your mailbox is having a bad minute" and
-          // "this tab can no longer be served". `role="alert"` re-announcing on a re-latch is
-          // correct — the claim was re-made by the server, not repeated by us.
+        if (terminal || (refusedAt !== null && Date.now() - refusedAt >= REFUSAL_SUSTAIN_MS)) {
+          // SUSTAINED (or a terminal-mode probe re-refused). The server has re-made this claim
+          // on every confirm ask across {@link REFUSAL_SUSTAIN_MS} — longer than any deploy
+          // window measured here — so it is believed: stop, hold no timer, and SAY so.
+          // `terminal` is what lets the shell tell the difference between "your mailbox is
+          // having a bad minute" and "this tab can no longer be served". `role="alert"`
+          // re-announcing on a re-latch is correct — the claim was re-made by the server, not
+          // repeated by us.
           terminal = true;
           refusedAt = null;
           revalidating = false;
@@ -1034,15 +1083,28 @@ export function startSyncScheduler(
           report("ohmail: this session can no longer sync — sign in again", err);
           return;
         }
+        if (refusedAt !== null) {
+          // RE-MADE, NOT YET SUSTAINED. A minute of corroboration cannot tell "revoked" from
+          // "mid-deploy" — see {@link REFUSAL_SUSTAIN_MS} for the incident where it could not —
+          // so the confirm cadence continues, bounded by the sustain window, and the strip keeps
+          // saying "Sync failed. Retrying.", which stays true of every one of these asks.
+          // Deliberately NOT re-reported: it is the same episode the first report named, and a
+          // console line per confirm would be ten copies of one fact.
+          confirmDueAt = Date.now() + REFUSAL_CONFIRM_MS;
+          arm(REFUSAL_CONFIRM_MS);
+          return;
+        }
         // THE FIRST ONE — believed enough to stop polling, NOT enough to tell a signed-in user
-        // that they are signed out. One further ask is armed at `REFUSAL_CONFIRM_MS`; the
-        // published status carries `refused`, so the strip says "Sync failed. Retrying.", which is
-        // true — that retry is the timer on the next line. It must NOT fall through to the
-        // ordinary backoff below: at `failures === 1` that is a ~1 s retry, and a ladder of them
-        // inside the confirm window is exactly the "buys N−1 invocations" objection once used
-        // to reject confirming at all.
+        // that they are signed out. Confirm asks are armed at `REFUSAL_CONFIRM_MS` cadence until
+        // the refusal has been sustained; the published status carries `refused`, so the strip
+        // says "Sync failed. Retrying.", which is true — that retry is the timer below. It must
+        // NOT fall through to the ordinary backoff: at `failures === 1` that is a ~1 s retry,
+        // and a ladder of sub-minute asks inside the window is the unbounded-cost shape the
+        // latch design rejected — every ask would be an invocation billed against an account
+        // that may have no entitlement. The bounded cadence is priced in `REFUSAL_SUSTAIN_MS`'s doc.
         refusedAt = Date.now();
-        report("ohmail: the server refused this session — asking once more before saying so", err);
+        confirmDueAt = Date.now() + REFUSAL_CONFIRM_MS;
+        report("ohmail: the server refused this session — asking again before saying so", err);
         arm(REFUSAL_CONFIRM_MS);
         return;
       }
@@ -1100,16 +1162,18 @@ export function startSyncScheduler(
     }
     if (refusedAt !== null) {
       // A coded refusal is waiting to be confirmed, and a wake does not get to ask early. The
-      // confirmation is a SECOND ask, spaced by `REFUSAL_CONFIRM_MS`; a tab somebody flips away
-      // from and back must not be able to shorten it, or a two-second transient latches whenever
-      // the user happens to switch windows — and it must not be able to buy invocations either
-      // (#10), which a wake-triggered drain per flip is exactly.
+      // confirmation is a cadence of asks spaced by `REFUSAL_CONFIRM_MS`; a tab somebody flips
+      // away from and back must not be able to shorten the current window, or a two-second
+      // transient latches whenever the user happens to switch windows — and it must not be able
+      // to buy invocations either (#10), which a wake-triggered drain per flip is exactly.
       //
-      // So this only RE-ARMS what is left of the window (the timer now survives a hide — the
-      // hidden state holds timers — but a stream `open` or an `online` flap still lands here
-      // and must not move the ask). Clamped at zero so a window that has already elapsed asks
-      // immediately.
-      arm(Math.max(0, refusedAt + REFUSAL_CONFIRM_MS - Date.now()));
+      // So this only RE-ARMS what is left of the CURRENT window — `confirmDueAt`, not
+      // `refusedAt + REFUSAL_CONFIRM_MS`, which names only the FIRST window and goes negative
+      // after it, turning every later wake into an immediate ask. (The timer normally survives
+      // a hide — the hidden state holds timers — but a stream `open` or an `online` flap still
+      // lands here and must not move the ask.) Clamped at zero so a window that has already
+      // elapsed asks immediately.
+      arm(Math.max(0, confirmDueAt - Date.now()));
       return;
     }
     if (!visible()) {
@@ -1156,6 +1220,11 @@ export function startSyncScheduler(
     stopped = true;
     disarm();
     closeStream();
+    // The eager body pass is fire-and-forget behind the drain and NOT gated (fetchBodies is a
+    // deliberately ungated capability), so teardown has to stop it explicitly — a live→demo
+    // navigation discards this engine, and a discarded engine prefetching a thousand bodies on
+    // behalf of nobody is exactly the cost shape the gate exists to prevent on the sync side.
+    engine.stopEagerBodies();
     visibility?.removeEventListener("visibilitychange", onVisibility);
     online?.removeEventListener("online", wake);
   };
