@@ -343,8 +343,8 @@ fn run_reg(args: &[String]) -> Option<String> {
             // query against a key every user hive has: if the registry answers THAT, the first
             // failure meant "no such key" (an answer: nothing is set); if even the control
             // query fails, reg or the hive is broken and the honest state is `Unknown`, not
-            // "not-default" (an external review caught the old conflation claiming "Another
-            // app" over an access error).
+            // "not-default": conflating the two claims "Another app" over what is really an
+            // access error.
             let control: Vec<String> = vec!["query".into(), r"HKCU\Software".into()];
             match run_reg_raw(&control) {
                 Some((true, _)) => Some(stdout),

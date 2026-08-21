@@ -333,10 +333,17 @@ export function useMailSend(
 
       setPhase(key, IDLE);
       settledRef.current(key, m);
-      // The compose surface's sentence for the compose surface; the inline dock's — reply and
-      // forward alike — for the inline lanes. Keyed on the LANE, not the mutation shape, for
-      // the same reason the cleanup above is.
-      toast(key === COMPOSE_SEND_KEY ? t("compose.toastSent") : t("reply.toastSent"));
+      // Each lane's own sentence — keyed on the LANE, not the mutation shape, for the same
+      // reason the cleanup above is. A forward is not a reply, and a toast that said "Reply
+      // sent." over a forward was measured live; the key shim keeps the sentence honest until
+      // the locale files carry it (`t.has` hands over the moment they do).
+      toast(
+        key === COMPOSE_SEND_KEY
+          ? t("compose.toastSent")
+          : key.startsWith("fwd:")
+            ? (t.has("reply.toastForwarded") ? t("reply.toastForwarded") : "Forwarded.")
+            : t("reply.toastSent"),
+      );
     },
     [engine, setPhase, toast, t],
   );

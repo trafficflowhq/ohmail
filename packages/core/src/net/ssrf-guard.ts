@@ -236,7 +236,7 @@ export interface PublicUrlOptions {
    * it was a behaviour change to every existing caller: this gate has always accepted both schemes,
    * and `privacy-service`'s image proxy passes no options, so plain-`http:` images in real mail
    * stopped loading — silently, because a refusal there is indistinguishable from an image that
-   * would not load anyway. Found in review, and it is the exact failure the docblock on this
+   * would not load anyway. It is the exact failure the docblock on this
    * interface warns about, committed in the other direction: an added option must not change what
    * an existing call site does, and TIGHTENING one is as much a change as loosening it.
    *

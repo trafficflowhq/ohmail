@@ -153,8 +153,9 @@ describe("parseMailto", () => {
   it("splits recipients on semicolons exactly as the send path will — no smuggled second recipient", () => {
     // The compose send path splits its To text on /[,;]/ (`parseRecipients`). If this parser
     // admits `a@x;b@y` as ONE entry, the count and every per-entry check here are run against
-    // one recipient while the send mails two — an external review demonstrated the smuggle
-    // with `mailto:shown@x.test%3Bevil@y.test`. Same separators on both sides, by construction.
+    // one recipient while the send mails two: `mailto:shown@x.test%3Bevil@y.test` is one entry
+    // to the parser and two addresses on the wire. Same separators on both sides, by
+    // construction.
     const d = parseMailto("mailto:shown@x.test%3Bevil@y.test");
     expect(d?.to).toEqual(["shown@x.test", "evil@y.test"]);
     // And the recipient CAP counts what the send path will actually mail: 200 semicolon-joined

@@ -20,7 +20,7 @@ import {
  *
  * ── WHY THIS IS A PROVIDER AND NOT A HOOK THE SETTINGS SCREEN CALLS ───────────────────────────
  *
- * It WAS a hook, and that was a real defect found in review. The `onWake` subscription — the one
+ * It WAS a hook, and that was a real defect. The `onWake` subscription — the one
  * that turns a delivered wake into a `/sync` — lived inside it, so it existed only while the
  * pushed Settings screen was mounted. A launch that never opened Settings had no listener at all,
  * and pressing Back after enabling wakes tore down the one there was. The app's own copy says a
@@ -99,7 +99,7 @@ export function WakeProvider({ children }: { children: ReactNode }) {
    * has a fifteen-second ceiling, and a profile switch inside that window used to let A's late
    * result overwrite B's state and, worse, B's `subscriptionId`. Turning wakes off then sent A's
    * subscription id to B's server (a 404) and left A's row live, sending wakes to a phone that had
-   * moved on. Found in review; it is the cost of the fix above and it is paid here.
+   * moved on. That is the cost of the fix above, and it is paid here.
    *
    * One counter, bumped every time the live session changes, plus the session object itself so a
    * delivered wake can be checked against the session it was subscribed for. Refs rather than state

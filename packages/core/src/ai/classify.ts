@@ -14,10 +14,10 @@ import {
  *
  * ── THIS FILE NOW HAS A SENSITIVITY FLAG OF ITS OWN ──────────────────────────────────────────
  *
- * An external review's disposition of this file was: clean for the question
- * *under a correct upstream decision* — "it has no sensitivity flag or runtime snippet cap and
- * therefore cannot contain an upstream false negative", and the `never echo secrets` line in the
- * system prompt "is not enforcement". Both true, and both are the reason real sensitive content
+ * This file is clean for the question only *under a correct upstream decision*: it has no
+ * sensitivity flag and no runtime snippet cap of its own, so it cannot contain an upstream false
+ * negative — and the `never echo secrets` line in the system prompt is a request, not
+ * enforcement. Both true, and both are the reason real sensitive content
  * reached the wire: the only thing between a credential and `messages.create` was one boolean
  * computed one module away.
  *

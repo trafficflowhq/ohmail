@@ -50,9 +50,9 @@ export interface FictionalName {
   /** Why this name is safe to ship in a public demo. */
   note: string;
   /**
-   * For `near-collision` only: the real entity/entities found in review, named
-   * explicitly. Required for that verdict so an entry can never imply "nothing
-   * matched" when something did.
+   * For `near-collision` only: the real entity/entities the name came close to,
+   * named explicitly. Required for that verdict so an entry can never imply
+   * "nothing matched" when something did.
    */
   collision?: string;
 }

@@ -51,11 +51,11 @@ export function AiSection() {
               instrument, and it is what balances this column against it */}
           <p className="l-ai-bridge">{t("toggleBody")}</p>
 
-          {/* Claim-accuracy guard, from an external review: the ports, the credit
-              ledger and the spend gates are real and tested, but no model is
-              constructed in either production composition root. Delete this line the
-              day a classifier/drafter is injected in apps/api-vercel/src/deps.ts and
-              apps/worker/src/index.ts — not before. */}
+          {/* Claim-accuracy guard: the ports, the credit ledger and the spend gates
+              are real and tested, but no model is constructed in either production
+              composition root. Delete this line the day a classifier/drafter is
+              injected in apps/api-vercel/src/deps.ts and apps/worker/src/index.ts —
+              not before. */}
           <p className="l-ai-status">{t("status")}</p>
         </Reveal>
 

@@ -253,7 +253,7 @@ export interface RunningPushWake {
  * a multi-account server that is any authenticated account, and "the endpoint I registered points
  * at a server I wrote" is the ordinary case rather than the exotic one. So the response is not a
  * message, it is an attack surface, and the first version of this function got two things wrong
- * about it — both found in review, both reachable from any account:
+ * about it, both reachable from any account:
  *
  *  · **`clearTimeout` ran in a `finally` that fires when the HEADERS arrive.** `pinnedHttpRequest`
  *    resolves at the response head, not at its end, so the abort that was supposed to bound this
