@@ -73,17 +73,7 @@ export interface ChangeWakeFanout {
   end(): Promise<void>;
 }
 
-/**
- * `retryAfterMs` overrides {@link RETRY_AFTER_MS} for ONE hub, and it exists for exactly one
- * reason: the all-accounts subscriber's retry (see `subscribeAll`) cannot be driven in a test at
- * the shipped thirty seconds, and fake timers cannot drive it either — the dial's failure is real
- * socket I/O, not a timer, so advancing fake time proves nothing. A guard nobody can watch fail is
- * not a guard, so the cadence is a parameter. Nothing in production passes it.
- */
-export function makeChangeWakeHub(
-  url: string, log?: HubLog, opts: { retryAfterMs?: number } = {},
-): ChangeWakeFanout {
-  const retryAfterMs = opts.retryAfterMs ?? RETRY_AFTER_MS;
+export function makeChangeWakeHub(url: string, log?: HubLog): ChangeWakeFanout {
   const subs = new Map<string, Set<(seq: bigint) => void>>();
   const allSubs = new Set<(accountId: string, seq: bigint) => void>();
   let total = 0;
@@ -91,12 +81,6 @@ export function makeChangeWakeHub(
   let sql: ReturnType<typeof postgres> | null = null;
   let listening: Promise<void> | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  /**
-   * The armed `subscribeAll` retry intervals, so {@link ChangeWakeFanout.end} can disarm them.
-   * A Set rather than a single handle because nothing forbids two all-accounts subscribers on one
-   * hub, and a shutdown has to silence all of them, not the most recent one.
-   */
-  const retryTimers = new Set<ReturnType<typeof setInterval>>();
   let retryAt = 0;
 
   const dispatch = (payload: string): void => {
@@ -147,7 +131,7 @@ export function makeChangeWakeHub(
       .listen(CHANGE_LOG_CHANNEL, dispatch)
       .then(() => undefined)
       .catch(async (err: unknown) => {
-        retryAt = Date.now() + retryAfterMs;
+        retryAt = Date.now() + RETRY_AFTER_MS;
         await teardown();
         // Degradation, not an outage: every open stream still has its poll. Said once per
         // failed attempt so a permanently broken LISTEN is visible in the logs, not silent.
@@ -203,73 +187,22 @@ export function makeChangeWakeHub(
       }
       ensureListening();
 
-      /**
-       * ── THIS SUBSCRIBER NEEDS ITS OWN RETRY, AND THAT IS A REAL ASYMMETRY WITH `subscribe` ────
-       *
-       * The retry this module documents — "keeps trying to dial on later subscribes, one attempt
-       * per RETRY_AFTER_MS" — is driven entirely by NEW SUBSCRIBERS calling `ensureListening`. For
-       * `/events` that is self-driving: streams come and go constantly, and every reconnect is
-       * another attempt. `subscribeAll` has exactly one consumer, which subscribes ONCE at process
-       * start and never again. So a LISTEN that failed at boot — a pooler at its limit during a
-       * rolling deploy is the ordinary way — stayed failed for the life of the process, and the
-       * startup path's claim that it retries was false for precisely this subscriber.
-       *
-       * A timer rather than a hook on the failed dial, because `ensureListening` is already
-       * idempotent and already respects `retryAt`: an attempt that is not due is free, and one that
-       * is due is exactly the retry that was missing. Unref'd, so it never keeps a process alive,
-       * and cleared on unsubscribe so a stopped sender leaves nothing behind.
-       */
-      const retry = setInterval(() => { ensureListening(); }, retryAfterMs);
-      (retry as { unref?: () => void }).unref?.();
-      // TRACKED, so `end()` can disarm it. See {@link ChangeWakeFanout.end}: a shutdown that
-      // released the connection and then had a timer re-open it is not a release.
-      retryTimers.add(retry);
-
       let gone = false;
       return () => {
         if (gone) return;                       // idempotent, exactly as subscribe()'s
         gone = true;
-        clearInterval(retry);
-        retryTimers.delete(retry);
         allSubs.delete(onWake);
         total = Math.max(0, total - 1);
         if (total === 0) scheduleIdleClose();
       };
     },
-    /**
-     * The prompt release for a long-running host's shutdown. Idempotent: `teardown` nulls the
-     * handle, so a second call awaits nothing.
-     *
-     * ── EVERY AUTOMATIC RE-DIAL IS DISARMED FIRST, AND THE RETRY MADE THAT LOAD-BEARING ───────
-     *
-     * `teardown` nulls `listening` and does NOT touch `total` — correctly, because `total` counts
-     * subscribers and shutting the socket does not unsubscribe anyone. But that combination is
-     * exactly what `ensureListening` reads as "no LISTEN and someone wants one", so the
-     * `subscribeAll` retry interval's next tick opened a FRESH connection moments after this
-     * method had closed one. `end()` then meant "release the LISTEN for up to one retry interval",
-     * which is not what a SIGTERM path is asking for.
-     *
-     * Note it is not limited to the failure path, which is how it reads at first: `retryAt` is
-     * only set when a dial FAILS, so on a healthy hub it is in the past and the re-dial happens on
-     * the very next tick. A perfectly working hub that was told to shut down re-opened a socket.
-     *
-     * The worker's own shutdown happens to be safe today because `clearTimers()` stops the sender
-     * (which unsubscribes, clearing its interval) BEFORE calling `end()`. That ordering is worth
-     * keeping and is a bad thing to depend on: this is a property of the hub, and a caller should
-     * not have to know the order to get a release that lasts. Disarming here makes it one.
-     *
-     * `idleTimer` was already cleared for the same reason. What is deliberately NOT done is
-     * poisoning the hub: a later `subscribe`/`subscribeAll` may re-dial and re-arm, exactly as the
-     * interface's docblock says, because "a subscribe arriving after `end()` is harmless" stays
-     * true. Only the AUTOMATIC paths are stopped.
-     */
+    // The prompt release for a long-running host's shutdown. Idempotent: `teardown` nulls the
+    // handle, so a second call awaits nothing.
     async end() {
       if (idleTimer) {
         clearTimeout(idleTimer);
         idleTimer = null;
       }
-      for (const t of retryTimers) clearInterval(t);
-      retryTimers.clear();
       await teardown();
     },
   };
