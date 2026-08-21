@@ -2173,6 +2173,7 @@ fn every_command_the_window_calls_is_granted_to_it() {
     for command in [
         "engine-status", "engine-request", "engine-configure", "engine-logout",
         "notify", "set-badge", "open-link", "open-external", "open-attachment",
+        "mailto-claim", "default-mail-status", "default-mail-request",
     ] {
         let permission = format!("allow-{command}");
         assert!(
@@ -2304,6 +2305,57 @@ fn only_one_shape_of_link_carries_a_handoff_code() {
         code_from_link(&format!("ohmail://link?code={at_bound}")).as_deref(),
         Some(at_bound.as_str()),
     );
+}
+
+/// A MAILTO IS HELD, NOT PARSED — the shell's gate is scheme, bound and control characters only.
+///
+/// The grammar of a mailto (headers, recipients, encodings) lives in the window's parser,
+/// `src/mailto.ts`, where it is tested field by field. What this process decides is only whether
+/// the string is worth HOLDING at all — and the cases below are that boundary, both directions.
+#[test]
+fn a_mailto_is_held_by_scheme_and_bound_never_interpreted() {
+    // The shapes real launchers hand over, scheme case included — launchers do not normalise.
+    for accepted in [
+        "mailto:someone@example.test",
+        "MAILTO:someone@example.test",
+        "mailto:a@x.example?subject=hi&body=one%0D%0Atwo",
+        "mailto:", // a bare click still means "compose"
+    ] {
+        assert_eq!(mailto_link(accepted).as_deref(), Some(accepted), "refused {accepted:?}");
+    }
+    for refused in [
+        "",
+        "ohmail://link?code=abc",         // the other scheme this process answers
+        "https://example.test/mailto:x",  // a scheme hidden mid-string
+        "mailt:someone@example.test",     // not the scheme
+        "mailto\u{0}:x@example.test",     // a control character anywhere refuses the whole link
+        "mailto:a@x.example?body=a\rb",   // a raw CR is nobody's mail link (encoded %0D is fine)
+    ] {
+        assert!(mailto_link(refused).is_none(), "held {refused:?}");
+    }
+    // Bounded: what may cross the bridge at all. The window's parser has its own per-field caps.
+    let long = format!("mailto:a@x.example?body={}", "x".repeat(MAILTO_MAX));
+    assert!(mailto_link(&long).is_none());
+}
+
+/// THE SLOT DELIVERS A LINK EXACTLY ONCE, AND THE NEWEST LINK WINS.
+///
+/// Take-semantics is what makes the cold start safe (the window claims after mount, whenever
+/// that is) without making a warm double-delivery possible: a second claim answers nothing.
+/// One slot rather than a queue, because two mailto clicks are two compose forms this window
+/// cannot show at once — the person's intent is the link they clicked last.
+#[test]
+fn the_mailto_slot_is_take_once_and_newest_wins() {
+    let pending = MailtoPending(std::sync::Mutex::new(None));
+    assert_eq!(pending.0.lock().unwrap().take(), None, "an empty slot answers nothing");
+    *pending.0.lock().unwrap() = Some("mailto:first@example.test".into());
+    *pending.0.lock().unwrap() = Some("mailto:second@example.test".into());
+    assert_eq!(
+        pending.0.lock().unwrap().take().as_deref(),
+        Some("mailto:second@example.test"),
+        "the newest link is the one delivered",
+    );
+    assert_eq!(pending.0.lock().unwrap().take(), None, "a claimed link is never answered twice");
 }
 
 // ═══ AN ATTACHMENT BECOMES A FILE THIS COMPUTER CAN OPEN ═════════════════════════════════════

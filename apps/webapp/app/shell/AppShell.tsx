@@ -109,6 +109,7 @@ import {
   writeComposeDraft,
   EMPTY_COMPOSE,
   type ComposeFields,
+  type ComposePrefill,
   type MailSend as MailSendMutation,
 } from "./compose";
 import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text";
@@ -578,6 +579,7 @@ export function AppShell({
   aboutSection,
   desktopSection,
   devicesSection,
+  defaultMailSection,
   screeningSection,
   screenerSuggest,
   awayTransport,
@@ -585,6 +587,8 @@ export function AppShell({
   consentTransport,
   suggestWire,
   aiCredits,
+  mailtoDraft,
+  onMailtoDraftSeeded,
   onUnread,
 }: {
   demo: boolean;
@@ -695,6 +699,15 @@ export function AppShell({
    * real credential.
    */
   devicesSection?: ReactNode;
+  /**
+   * ONE ROW AT THE FOOT OF SETTINGS → GENERAL, WHEN THE HOST IS AN APP THE OS CAN PREFER — the
+   * desktop's, and nobody else's. "Which app opens mailto links" is a question about a COMPUTER,
+   * so a browser tab passes nothing and the row does not exist there; the desktop supplies its
+   * detect-and-request row (`DesktopDefaultMail.tsx`), whose every read and verb is a shell
+   * command. On General rather than the Desktop pane because it is where somebody thinking
+   * "mail links open the wrong app" would look — beside language and appearance.
+   */
+  defaultMailSection?: ReactNode;
   /**
    * THE SCREENER PANE'S OWN CONTROLS, WHEN THE HOST HAS ITS OWN — the desktop's, and nobody else's.
    *
@@ -862,6 +875,23 @@ export function AppShell({
    */
   aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
   /**
+   * A COMPOSE THE HOST WAS HANDED FROM OUTSIDE — the desktop's mailto seam, and nobody else's.
+   *
+   * When the operating system delivers a `mailto:` click to the desktop shell, the parsed
+   * fields arrive here and the shell below seeds the compose form with them, exactly the way
+   * `writeTo` and `openDraft` seed it — same release-first rule, same chip formatting — and
+   * then navigates to compose. `onMailtoDraftSeeded` is called once the form holds the fields,
+   * so the host can drop its copy; a draft left in this prop would otherwise re-seed on every
+   * remount, over whatever the person had typed since.
+   *
+   * The FIELDS are already plain bounded text (the desktop's `mailto.ts` parser is the one
+   * place a mailto is read, and its contract is stated there); this shell treats them as what
+   * they are — text for text inputs. The body is PLAIN text and is seeded as such (`html: ""`),
+   * `openDraft`'s rule.
+   */
+  mailtoDraft?: ComposePrefill | null;
+  onMailtoDraftSeeded?: () => void;
+  /**
    * HOW MANY PIECES OF MAIL ARE WAITING FOR YOU — published, for a surface outside the page.
    *
    * The number the Ohbox's rail row already shows, handed out so a shell that has a dock icon
@@ -893,6 +923,7 @@ export function AppShell({
             aboutSection={aboutSection}
             desktopSection={desktopSection}
             devicesSection={devicesSection}
+            defaultMailSection={defaultMailSection}
             screeningSection={screeningSection}
             screenerSuggest={screenerSuggest}
             awayTransport={awayTransport}
@@ -900,6 +931,8 @@ export function AppShell({
             consentTransport={consentTransport}
             suggestWire={suggestWire}
             aiCredits={aiCredits}
+            mailtoDraft={mailtoDraft}
+            onMailtoDraftSeeded={onMailtoDraftSeeded}
             onUnread={onUnread}
           />
         </MailStateHost>
@@ -944,7 +977,7 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, suggestWire, aiCredits, onUnread }: {
+function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, suggestWire, aiCredits, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
@@ -955,6 +988,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   aboutSection?: ReactNode;
   desktopSection?: { label: string; node: ReactNode };
   devicesSection?: ReactNode;
+  defaultMailSection?: ReactNode;
   screeningSection?: ReactNode;
   screenerSuggest?: (ctx: {
     senders: string[];
@@ -966,6 +1000,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   consentTransport?: ConsentTransport;
   suggestWire?: SuggestWire;
   aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
+  mailtoDraft?: ComposePrefill | null;
+  onMailtoDraftSeeded?: () => void;
   onUnread?: (unread: number) => void;
 }) {
   const demo = useDemoMode();
@@ -2724,6 +2760,41 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     },
     [autosave, go],
   );
+
+  /**
+   * A MAILTO CLICK, DELIVERED — the host's `mailtoDraft` prop becoming the compose form.
+   *
+   * The same five steps as `writeTo`, for the same reasons, one field at a time: release first
+   * (or the plan still carries an unrelated draft's id and the send overwrites that row), drop
+   * any recovery, seed, persist, close an open inline reply, navigate. Recipients go through the
+   * chip formatter so a prefilled address opens settled rather than as raw text; the body is
+   * plain text and `html` stays empty, `openDraft`'s rule for a body with no stored HTML.
+   *
+   * An EFFECT rather than a handler because the trigger is a prop from outside this tree — the
+   * OS handed the host a link, the host handed the fields down. `onMailtoDraftSeeded` tells the
+   * host to drop its copy, so a remount cannot seed the same click twice over whatever the
+   * person typed since.
+   */
+  useEffect(() => {
+    if (!mailtoDraft) return;
+    const chips = (list: string[]): string =>
+      formatRecipientChips(list.map((address) => ({ name: null, address })));
+    const seeded: ComposeFields = {
+      ...EMPTY_COMPOSE,
+      to: chips(mailtoDraft.to),
+      cc: chips(mailtoDraft.cc),
+      bcc: chips(mailtoDraft.bcc),
+      subject: mailtoDraft.subject,
+      body: mailtoDraft.body,
+    };
+    autosave.release();
+    recoverySeed.current = null;
+    setCompose(seeded);
+    writeComposeDraft(seeded);
+    setReplyTo(null);
+    go("compose");
+    onMailtoDraftSeeded?.();
+  }, [mailtoDraft, autosave, go, onMailtoDraftSeeded]);
 
   /**
    * SCREENING FROM ANYWHERE — one call site for every surface.
@@ -5030,6 +5101,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    above are gated would remove the pane from the only surface that has one. A
                    browser tab passes nothing, so `?demo=1` on the web still has no such pane. */
                 desktopSection={desktopSection}
+                /* The desktop's default-mail row on General — `desktopSection`'s rule: only the
+                   desktop supplies one, a browser tab passes nothing, so there is nothing for
+                   `?demo=1` to leak. */
+                defaultMailSection={defaultMailSection}
                 /* DEMO-MASKED, unlike `desktopSection` directly above — and this line used to
                    read `devicesSection={devicesSection}` with a comment whose premise ("a
                    browser tab passes nothing") the Cloud Devices pane retired. With the seam

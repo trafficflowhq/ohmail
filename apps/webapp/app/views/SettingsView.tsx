@@ -393,6 +393,7 @@ export function SettingsView({
   awaySection,
   desktopSection,
   devicesSection,
+  defaultMailSection,
   initialPane,
   pane: routePane,
   onSelectPane,
@@ -639,6 +640,15 @@ export function SettingsView({
    */
   desktopSection?: { label: string; node: ReactNode };
   /**
+   * ONE ROW AT THE FOOT OF GENERAL — which app this COMPUTER opens mail links with, and the
+   * platform's own way to change it. Only a host that is an app the OS can prefer supplies one
+   * (the desktop's `DesktopDefaultMail.tsx`; every read and verb in it is a shell command), so a
+   * browser tab passes nothing and General simply ends at the row above. On General rather than
+   * a pane of its own because it is one row about the computer, beside language and appearance —
+   * where somebody thinking "mail links open the wrong app" would look first.
+   */
+  defaultMailSection?: ReactNode;
+  /**
    * THE DEVICES PANE — pairing this account's mail onto other devices, in whichever shape the
    * surface behind it has: on the desktop it is host mode (serve THIS install's mail over the
    * user's own network — tailscale probes, the arm/disarm ceremony, the stdio mint), and on the
@@ -846,6 +856,11 @@ export function SettingsView({
                   it, which is why it is here and not in the Screener pane. Absent on the demo and
                   on a standalone install; see {@link remoteImagesSection}. */}
               {remoteImagesSection}
+              {/* WHICH APP THIS COMPUTER OPENS MAIL LINKS WITH — the desktop's row, injected
+                  because every read and verb in it is a shell command (see `AppShell`'s
+                  `defaultMailSection`). A browser tab passes nothing and no row exists. Last,
+                  because it is about the computer around the app rather than the app itself. */}
+              {defaultMailSection}
             </SettingsSection>
           ) : null}
 

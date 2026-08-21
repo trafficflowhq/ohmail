@@ -55,6 +55,16 @@ const WINDOW_COMMANDS: &[&str] = &[
     "autostart_get",
     "autostart_set",
     "open_tailscale_download",
+    // The mailto activation the shell is holding, taken exactly once — a cold-start click
+    // launches the app before the window can hear any event, so the window ASKS instead of
+    // listening. The answer is the raw link; `src/mailto.ts` in the window is its one parser.
+    "mailto_claim",
+    // THE OS'S DEFAULT MAIL APP (`src/default_mail.rs`). A read of the current handler's state
+    // in a three-word vocabulary, and a request that takes each platform's own sanctioned path
+    // — macOS's consent dialog, the Windows Settings page (a constant address, the window still
+    // naming no URL), `xdg-settings set` on Linux — and never writes a registry value.
+    "default_mail_status",
+    "default_mail_request",
 ];
 
 fn main() {

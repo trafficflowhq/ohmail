@@ -68,6 +68,8 @@
 #[cfg(feature = "local-engine")]
 mod config;
 #[cfg(feature = "local-engine")]
+mod default_mail;
+#[cfg(feature = "local-engine")]
 mod engine;
 #[cfg(feature = "local-engine")]
 mod host;

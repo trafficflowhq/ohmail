@@ -3772,12 +3772,67 @@ pub fn code_from_link(raw: &str) -> Option<String> {
     found
 }
 
+/// The event the shell emits when a MAILTO activation arrived — a poke, deliberately empty.
+///
+/// A fourth channel beside the three above, for the reason those are separate from each other —
+/// and unlike `link:code` it carries NOTHING: the link itself waits in [`MailtoPending`] until the
+/// window asks for it over `mailto_claim`. That claim shape exists for the activation that STARTS
+/// the app: an event emitted before the page's script runs is an event nobody hears, and a mailto
+/// click is precisely the click that launches a closed mail client. Held state plus a claiming
+/// command delivers the same link exactly once on both paths, warm and cold.
+#[cfg(feature = "local-engine")]
+pub const MAILTO_EVENT: &str = "link:mailto";
+
+/// Longer than any real mailto link by orders of magnitude, and short enough that a hostile page
+/// cannot push megabytes through a scheme activation. The window's parser applies its own,
+/// tighter, per-field caps; this bound is only what may cross the bridge at all.
+#[cfg(feature = "local-engine")]
+const MAILTO_MAX: usize = 128 * 1024;
+
+/// The mailto link an activation carried, or `None` for everything that is not one this process
+/// will hold.
+///
+/// The same posture as [`code_from_link`], one layer looser on purpose: the GRAMMAR of a mailto —
+/// which headers exist, what a recipient is — belongs to the window's parser, which is the one
+/// place it is defined and tested (`src/mailto.ts`). What is enforced here is only what must be
+/// true before the string is worth holding in this process at all: the scheme (case-insensitive,
+/// because launchers do not normalise it), a length bound, and no control characters — a raw CR
+/// or NUL in an OS-delivered URL is nobody's mail link.
+#[cfg(feature = "local-engine")]
+pub fn mailto_link(raw: &str) -> Option<String> {
+    if raw.len() < "mailto:".len() || !raw[.."mailto:".len()].eq_ignore_ascii_case("mailto:") {
+        return None;
+    }
+    if raw.len() > MAILTO_MAX || raw.chars().any(|c| c.is_control()) {
+        return None;
+    }
+    Some(raw.to_string())
+}
+
+/// Where a mailto activation waits for the window — one slot, newest wins.
+///
+/// One slot rather than a queue, deliberately: two mailto clicks before the window is ready are
+/// two compose forms this app cannot show at once, and the person's intent is the link they
+/// clicked LAST. The slot is taken (not read) by `mailto_claim`, so a link is consumed exactly
+/// once, and nothing about it — addresses are somebody's personal data — is ever logged.
+#[cfg(feature = "local-engine")]
+pub struct MailtoPending(pub std::sync::Mutex<Option<String>>);
+
+/// The window claims the held mailto link, if one is waiting. Take-semantics: the same link is
+/// never answered twice, so a re-mounting window cannot seed the same compose again.
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn mailto_claim(pending: tauri::State<'_, MailtoPending>) -> Option<String> {
+    pending.0.lock().ok()?.take()
+}
+
 /// Hand a scheme activation to the window, and bring the window to the front.
 ///
 /// The order is deliberate. The window is raised whatever the link said — somebody has just pressed
 /// a button in their browser and expects this app, and a link this process refuses is still a
 /// reason to show the screen that explains what to do instead. The EVENT is only emitted for a link
-/// this app answers.
+/// this app answers, and there are exactly two of those: an `ohmail://link` carrying a handoff
+/// code, and a `mailto:` for the compose form.
 ///
 /// A failed emit is not worth taking a mail client down for: the window may be closing, and the
 /// cost is a handoff that has to be retried by hand — which is the fallback the screen is already
@@ -3789,6 +3844,17 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+    }
+    if let Some(link) = mailto_link(raw) {
+        // NEVER the link's content in a log line: who somebody writes to is theirs.
+        log_line(format_args!("a mailto link arrived and is held for the window"));
+        if let Some(pending) = app.try_state::<MailtoPending>() {
+            if let Ok(mut slot) = pending.0.lock() {
+                *slot = Some(link);
+            }
+        }
+        let _ = app.emit(MAILTO_EVENT, ());
+        return;
     }
     match code_from_link(raw) {
         // NEVER the code itself, here or in any other line this process writes: it is worth a
@@ -3823,9 +3889,9 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "core:event:allow-listen"]
 }"#;
 
 /// The commands `build.rs` declared to the ACL manifest, baked in at compile time.
@@ -3960,7 +4026,14 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             crate::host::tailscale_serve_disarm,
             crate::host::autostart_get,
             crate::host::autostart_set,
-            crate::host::open_tailscale_download
+            crate::host::open_tailscale_download,
+            // A mailto activation waits in MailtoPending until the window takes it — the cold
+            // launch is the whole reason this is a command rather than event payload.
+            mailto_claim,
+            // The OS's default mail app — a read, and a request that only ever takes the
+            // platform's own sanctioned path. `default_mail.rs` carries the reasoning.
+            crate::default_mail::default_mail_status,
+            crate::default_mail::default_mail_request
         ])
 }
 
@@ -3976,6 +4049,10 @@ pub fn manage(app: &tauri::App, shell: Arc<Shell>) {
     use tauri::Manager;
     use tauri_plugin_deep_link::DeepLinkExt;
 
+    // The mailto slot goes in FIRST, before any path that could announce a link, so an
+    // activation can never race a slot that does not exist yet.
+    app.manage(MailtoPending(std::sync::Mutex::new(None)));
+
     // EVERY url the activation carried, each judged on its own. The platform may deliver more than
     // one, and "the first one wins" would be a rule an attacker could aim by prepending a link this
     // app refuses. `announce_link` answers each independently and emits only for the ones it
@@ -3986,6 +4063,19 @@ pub fn manage(app: &tauri::App, shell: Arc<Shell>) {
             announce_link(&handle, url.as_str());
         }
     });
+
+    // THE ACTIVATION THAT STARTED THE APP. On Windows and Linux a scheme click launches this
+    // process with the link as its one argument, and the plugin records it at init — which is
+    // BEFORE the listener above existed, so the recorded copy is the only copy. Announcing it
+    // here puts a cold-start mailto into the pending slot the window will claim once it mounts.
+    // On macOS this reads None (the Opened event arrives through the run loop, after this), so
+    // nothing is announced twice.
+    let handle = app.handle().clone();
+    if let Ok(Some(urls)) = app.deep_link().get_current() {
+        for url in urls {
+            announce_link(&handle, url.as_str());
+        }
+    }
 
     app.manage(shell);
     // The grant, checked before tauri sees it — and this is the ONE startup step that must never

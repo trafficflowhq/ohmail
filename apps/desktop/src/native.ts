@@ -77,10 +77,25 @@ export const MENU_COMMANDS = ["compose", "settings", "search", "palette", "short
 
 export type MenuCommand = (typeof MENU_COMMANDS)[number];
 
+/**
+ * The event the shell emits when a `mailto:` activation arrives — and it carries NOTHING.
+ *
+ * A fourth channel, and a different shape from the third: the link itself waits in the shell
+ * until this window CLAIMS it over {@link claimMailto}, take-once. The claim shape exists for
+ * the activation that STARTS the app — an event emitted before this bundle's scripts run is an
+ * event nobody hears, and a mailto click is precisely the click that launches a closed mail
+ * client. The window claims on this poke and once at mount, and the same link can never seed
+ * two compose forms.
+ */
+export const MAILTO_EVENT = "link:mailto";
+
 /** The commands the shell registers for this file. Named once so a typo is one place. */
 const NOTIFY_COMMAND = "notify";
 const BADGE_COMMAND = "set_badge";
 const OPEN_COMMAND = "open_link";
+const MAILTO_CLAIM_COMMAND = "mailto_claim";
+const DEFAULT_MAIL_STATUS_COMMAND = "default_mail_status";
+const DEFAULT_MAIL_REQUEST_COMMAND = "default_mail_request";
 
 /**
  * The places on the web this app can open, named as PLACES and never as addresses.
@@ -329,4 +344,86 @@ export async function setBadge(unread: number): Promise<void> {
   const shell = internals();
   if (!shell) return;
   await shell.invoke(BADGE_COMMAND, { count: badgeCount(unread) });
+}
+
+/**
+ * Run `poke` whenever the shell announces a held mailto link. The payload is deliberately
+ * ignored — whatever a stale or future shell put in it, the LINK travels only over the claim,
+ * where it is parsed by `mailto.ts` under that parser's own contract.
+ *
+ * A plain registration, `onMenuNavigate`'s shape rather than `onLinkCode`'s: `DesktopGate`
+ * registers this once and mounts once.
+ */
+export async function onMailto(poke: () => void): Promise<void> {
+  await listen(MAILTO_EVENT, () => true, () => poke());
+}
+
+/**
+ * Take the mailto link the shell is holding, if any — once. A second claim answers null, which
+ * is what makes the warm path (poke → claim) and the cold path (mount → claim) safe to run
+ * together: whichever asks first gets the link, the other gets nothing.
+ */
+export async function claimMailto(): Promise<string | null> {
+  const shell = internals();
+  if (!shell) return null;
+  const raw = await shell.invoke(MAILTO_CLAIM_COMMAND);
+  return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
+
+/**
+ * What the OS says about its default mail app, in the shell's three-word vocabulary — and a
+ * CLOSED union here, `viewOfMenuPayload`'s rule: a shell one version ahead answering a fourth
+ * word must read as "unknown", never as a state this bundle invents a rendering for.
+ */
+export const DEFAULT_MAIL_STATES = ["default", "not-default", "unknown"] as const;
+export type DefaultMailState = (typeof DEFAULT_MAIL_STATES)[number];
+
+/** The shape a request took — which sentence the screen owes the person next. Closed, as above. */
+export const DEFAULT_MAIL_HOWS = ["system-dialog", "settings-opened", "set"] as const;
+export type DefaultMailHow = (typeof DEFAULT_MAIL_HOWS)[number];
+
+function defaultMailStateOf(payload: unknown): DefaultMailState {
+  const raw = (payload as { state?: unknown } | null)?.state;
+  return typeof raw === "string" && (DEFAULT_MAIL_STATES as readonly string[]).includes(raw)
+    ? (raw as DefaultMailState)
+    : "unknown";
+}
+
+/**
+ * Is ohmail this computer's mail app for mailto links? "unknown" covers every way of not
+ * knowing — no shell, a command this shell does not have, a platform tool that would not
+ * answer — because a surface that guessed either way would be lying to exactly the person
+ * about to act on it.
+ */
+export async function defaultMailStatus(): Promise<DefaultMailState> {
+  const shell = internals();
+  if (!shell) return "unknown";
+  try {
+    return defaultMailStateOf(await shell.invoke(DEFAULT_MAIL_STATUS_COMMAND));
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * Ask the platform to make ohmail the default mail app, the way the platform allows — the
+ * shell decides which that is (macOS's own consent dialog, the Windows Settings page,
+ * `xdg-settings` on Linux) and answers with which it did (`how`) plus a fresh read.
+ *
+ * REJECTS with the shell's sentence when the platform refused; the caller shows it beside the
+ * control, `DoorResult.problem`'s rule.
+ */
+export async function requestDefaultMail(): Promise<{
+  how: DefaultMailHow | null;
+  state: DefaultMailState;
+}> {
+  const shell = internals();
+  if (!shell) throw new Error("There is no app shell to ask.");
+  const answer = await shell.invoke(DEFAULT_MAIL_REQUEST_COMMAND);
+  const rawHow = (answer as { how?: unknown } | null)?.how;
+  const how =
+    typeof rawHow === "string" && (DEFAULT_MAIL_HOWS as readonly string[]).includes(rawHow)
+      ? (rawHow as DefaultMailHow)
+      : null;
+  return { how, state: defaultMailStateOf(answer) };
 }

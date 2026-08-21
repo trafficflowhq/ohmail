@@ -104,6 +104,24 @@ export const EMPTY_COMPOSE: ComposeFields = {
   forwardOf: null,
 };
 
+/**
+ * A compose handed to the shell from OUTSIDE — the shape a host passes when the operating
+ * system delivered it a `mailto:` click (`AppShell`'s `mailtoDraft` prop; the desktop's
+ * `mailto.ts` is the one parser that produces it).
+ *
+ * Recipients are ARRAYS of plain addresses here, unlike {@link ComposeFields}' comma-separated
+ * text, because the producer has already split them and the seeder formats them into chips —
+ * handing a pre-joined string across the seam would mean two places knowing the separator
+ * convention. The body is PLAIN text; the seeder sets `html: ""`, `openDraft`'s rule.
+ */
+export interface ComposePrefill {
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  body: string;
+}
+
 /** `localStorage` key for the compose scratch buffer — one, because there is one compose. */
 export const COMPOSE_DRAFT_KEY = "ohmail.ui.compose";
 
