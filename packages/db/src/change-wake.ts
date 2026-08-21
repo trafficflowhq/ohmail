@@ -91,6 +91,12 @@ export function makeChangeWakeHub(
   let sql: ReturnType<typeof postgres> | null = null;
   let listening: Promise<void> | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * The armed `subscribeAll` retry intervals, so {@link ChangeWakeFanout.end} can disarm them.
+   * A Set rather than a single handle because nothing forbids two all-accounts subscribers on one
+   * hub, and a shutdown has to silence all of them, not the most recent one.
+   */
+  const retryTimers = new Set<ReturnType<typeof setInterval>>();
   let retryAt = 0;
 
   const dispatch = (payload: string): void => {
@@ -215,24 +221,55 @@ export function makeChangeWakeHub(
        */
       const retry = setInterval(() => { ensureListening(); }, retryAfterMs);
       (retry as { unref?: () => void }).unref?.();
+      // TRACKED, so `end()` can disarm it. See {@link ChangeWakeFanout.end}: a shutdown that
+      // released the connection and then had a timer re-open it is not a release.
+      retryTimers.add(retry);
 
       let gone = false;
       return () => {
         if (gone) return;                       // idempotent, exactly as subscribe()'s
         gone = true;
         clearInterval(retry);
+        retryTimers.delete(retry);
         allSubs.delete(onWake);
         total = Math.max(0, total - 1);
         if (total === 0) scheduleIdleClose();
       };
     },
-    // The prompt release for a long-running host's shutdown. Idempotent: `teardown` nulls the
-    // handle, so a second call awaits nothing.
+    /**
+     * The prompt release for a long-running host's shutdown. Idempotent: `teardown` nulls the
+     * handle, so a second call awaits nothing.
+     *
+     * ── EVERY AUTOMATIC RE-DIAL IS DISARMED FIRST, AND THE RETRY MADE THAT LOAD-BEARING ───────
+     *
+     * `teardown` nulls `listening` and does NOT touch `total` — correctly, because `total` counts
+     * subscribers and shutting the socket does not unsubscribe anyone. But that combination is
+     * exactly what `ensureListening` reads as "no LISTEN and someone wants one", so the
+     * `subscribeAll` retry interval's next tick opened a FRESH connection moments after this
+     * method had closed one. `end()` then meant "release the LISTEN for up to one retry interval",
+     * which is not what a SIGTERM path is asking for.
+     *
+     * Note it is not limited to the failure path, which is how it reads at first: `retryAt` is
+     * only set when a dial FAILS, so on a healthy hub it is in the past and the re-dial happens on
+     * the very next tick. A perfectly working hub that was told to shut down re-opened a socket.
+     *
+     * The worker's own shutdown happens to be safe today because `clearTimers()` stops the sender
+     * (which unsubscribes, clearing its interval) BEFORE calling `end()`. That ordering is worth
+     * keeping and is a bad thing to depend on: this is a property of the hub, and a caller should
+     * not have to know the order to get a release that lasts. Disarming here makes it one.
+     *
+     * `idleTimer` was already cleared for the same reason. What is deliberately NOT done is
+     * poisoning the hub: a later `subscribe`/`subscribeAll` may re-dial and re-arm, exactly as the
+     * interface's docblock says, because "a subscribe arriving after `end()` is harmless" stays
+     * true. Only the AUTOMATIC paths are stopped.
+     */
     async end() {
       if (idleTimer) {
         clearTimeout(idleTimer);
         idleTimer = null;
       }
+      for (const t of retryTimers) clearInterval(t);
+      retryTimers.clear();
       await teardown();
     },
   };
