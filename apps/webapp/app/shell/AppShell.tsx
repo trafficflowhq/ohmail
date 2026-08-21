@@ -4549,18 +4549,24 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * re-announce the same failure on every keystroke.
    */
   const frPhase = frSend?.phase ?? "idle";
-  const frReason = frSend?.reason;
+  const frCode = frSend?.code;
   useEffect(() => {
     if (frPhase === "idle" || frPhase === "sending") return;
+    // The failed arm never quotes the wire — `SendStatus.tsx` carries the whole argument (a
+    // real subscriber read "Nicht gesendet: authentication required", which is the API's own
+    // 401 envelope text). Same catalog keys, same code-not-text branching, one contract on
+    // both send surfaces.
     toast(
       frPhase === "queued"
         ? t("reply.statusQueued")
         : frPhase === "unverified"
           ? t("reply.statusUnverified")
-          : t("reply.statusFailed", { reason: frReason ?? t("reply.reasonUnknown") }),
+          : frCode === "mailbox_disabled"
+            ? t("reply.statusMailboxDisabled")
+            : t("reply.statusFailed"),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frPhase, frReason]);
+  }, [frPhase, frCode]);
 
   /**
    * THE CONVERSATION, for whichever message a pane is rendering.
