@@ -10,12 +10,12 @@
  *
  * ── WHAT "MAKE DEFAULT" ACTUALLY DOES IS THE PLATFORM'S, AND THE COPY SAYS WHICH ────────────
  *
- * The shell answers `how` the request went — macOS shows its own consent dialog, Windows opens
- * the Settings page (this app never writes the choice; see `default_mail.rs`), Linux writes it
- * through `xdg-settings` — and the sentence on screen is derived from that answer rather than
- * from sniffing the platform here. On the two platforms where the person still has a dialog or
- * a page in front of them, the state flips only when they act, so the hook re-reads for a while
- * instead of pretending.
+ * The shell answers `how` the request went — macOS takes the change and may confirm with its
+ * own dialog or apply it directly (see `default_mail.rs`), Windows opens the Settings page
+ * (this app never writes the choice), Linux writes it through `xdg-settings` — and the sentence
+ * on screen is derived from that answer rather than from sniffing the platform here. Where the
+ * person may still have a dialog or a page in front of them, the state flips only when the OS
+ * says so, so the hook re-reads for a while instead of pretending.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -45,7 +45,10 @@ const REREAD_TRIES = 20;
 export function afterRequestSentence(how: DefaultMailHow | null, state: DefaultMailState): string {
   switch (how) {
     case "system-dialog":
-      return "macOS is asking for your confirmation.";
+      // Launch Services is documented as SETTING the handler; macOS interposes its own
+      // confirmation for some scheme changes and not for others, so this sentence promises
+      // neither — the re-read below announces the outcome either way.
+      return "macOS is applying the change — confirm its dialog if one appears.";
     case "settings-opened":
       return "Windows Settings is open — choose ohmail under Default apps.";
     case "set":

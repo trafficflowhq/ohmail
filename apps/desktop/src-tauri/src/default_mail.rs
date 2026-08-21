@@ -6,10 +6,14 @@
 //! the shell's two commands about that setting, and the boundary each platform draws is respected
 //! rather than worked around:
 //!
-//!  · **macOS** answers a Launch Services question and, on request, ASKS THE USER with the
-//!    system's own consent dialog — `LSSetDefaultHandlerForURLScheme` does not change anything
-//!    by itself; macOS puts up "Do you want to change your default email reader?" and the person
-//!    decides. Two symbols from frameworks this process already links; no third-party code.
+//!  · **macOS** answers a Launch Services question and, on request, hands the change to the
+//!    system — `LSSetDefaultHandlerForURLScheme`, which Apple documents as SETTING the handler.
+//!    macOS interposes its own consent dialog for some scheme changes and not for others (a
+//!    verified headless set-and-restore on this scheme went through with nobody answering any
+//!    dialog), so nothing here claims a dialog exists: the person pressed this app's own "Make
+//!    default", the request is that consent, and the row re-reads the state and reports what
+//!    actually happened. Two symbols from frameworks this process already links; no third-party
+//!    code.
 //!  · **Windows** is read-only by design. The default lives in `UserChoice`, whose `Hash` value
 //!    exists precisely so a program cannot write it, so the honest request is to OPEN the
 //!    Settings page where the person makes the choice — `ms-settings:defaultapps`, a constant
@@ -81,8 +85,9 @@ impl MailDefault {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)] // each variant is constructed on exactly one platform; tests name all three
 pub enum RequestOutcome {
-    /// macOS: the system is showing its own consent dialog; the answer arrives as a changed
-    /// status on a later read, or not at all.
+    /// macOS: the change is in the system's hands — it may confirm with its own dialog or apply
+    /// directly (see the module doc); the answer arrives as a changed status on a later read,
+    /// or not at all.
     SystemDialog,
     /// Windows: the Settings page is open; the person picks ohmail under Email there.
     SettingsOpened,
@@ -297,7 +302,8 @@ mod launch_services {
     }
 
     /// Ask macOS to make `bundle_id` the mailto handler. `0` means the request was accepted —
-    /// which on modern macOS means the consent dialog is on screen, not that anything changed.
+    /// macOS may confirm with its own dialog or apply the change directly (Apple documents the
+    /// call as setting the handler); only a later read answers what it did.
     pub fn request_mailto_handler(bundle_id: &str) -> i32 {
         unsafe {
             let scheme = cf("mailto");
@@ -319,12 +325,39 @@ mod launch_services {
     }
 }
 
-/// Windows: one `reg.exe query`, from its own directory rather than `PATH`, no console window.
-/// `None` when the tool could not run at all; `Some(stdout)` otherwise — a non-zero exit with
-/// "unable to find the specified registry key" is `reg.exe` ANSWERING (no UserChoice is set),
-/// not failing, so its empty stdout still counts as an answer.
+/// Windows: `reg.exe query`, from its own directory rather than `PATH`, no console window.
+/// `None` when the tool could not run OR the registry could not be read; `Some(stdout)` for an
+/// ANSWER. A non-zero exit with "unable to find the specified registry key" is `reg.exe`
+/// answering (no UserChoice is set) and stays `Some("")` — but only after the control query
+/// below confirms the registry itself is readable, because an access failure exits the same way
+/// and must surface as `Unknown` rather than as "not default".
 #[cfg(windows)]
 fn run_reg(args: &[String]) -> Option<String> {
+    match run_reg_raw(args) {
+        None => None,
+        Some((true, stdout)) => Some(stdout),
+        Some((false, stdout)) => {
+            // Non-zero exit. Key-absent and registry-failure BOTH look like this (empty stdout,
+            // a localized stderr sentence), and only the first is an answer. `reg.exe`'s error
+            // text cannot be matched — it is localized — so the discriminator is a control
+            // query against a key every user hive has: if the registry answers THAT, the first
+            // failure meant "no such key" (an answer: nothing is set); if even the control
+            // query fails, reg or the hive is broken and the honest state is `Unknown`, not
+            // "not-default" (an external review caught the old conflation claiming "Another
+            // app" over an access error).
+            let control: Vec<String> = vec!["query".into(), r"HKCU\Software".into()];
+            match run_reg_raw(&control) {
+                Some((true, _)) => Some(stdout),
+                _ => None,
+            }
+        }
+    }
+}
+
+/// One `reg.exe` spawn: `None` when it could not run at all; otherwise whether it exited zero,
+/// and its stdout. The reading of a non-zero exit belongs to [`run_reg`], not here.
+#[cfg(windows)]
+fn run_reg_raw(args: &[String]) -> Option<(bool, String)> {
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     let reg = std::path::Path::new(&system_root).join("System32").join("reg.exe");
     let mut command = std::process::Command::new(reg);
@@ -333,7 +366,7 @@ fn run_reg(args: &[String]) -> Option<String> {
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     match command.args(args).output() {
-        Ok(out) => Some(String::from_utf8_lossy(&out.stdout).into_owned()),
+        Ok(out) => Some((out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned())),
         Err(_) => None,
     }
 }

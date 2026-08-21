@@ -149,7 +149,15 @@ function bodyText(text: string): string {
 }
 
 /**
- * Comma-separated addr-specs into `into`, filtered rather than trusted.
+ * Separator-delimited addr-specs into `into`, filtered rather than trusted.
+ *
+ * Split on COMMA AND SEMICOLON, and the semicolon is load-bearing: the compose send path
+ * (`parseRecipients`) splits its To text on `/[,;]/`, so an entry this parser admitted whole —
+ * `a@x;b@y`, reachable as `%3B` in a link — would count as ONE recipient here and mail TWO
+ * there, hiding the second from `MAX_RECIPIENTS` and from every per-entry check. The same
+ * separators on both sides keep "what was counted" and "what is mailed" the same list. (RFC 6068
+ * delimits with commas; a semicolon inside an addr-spec is legal only in a quoted local part,
+ * a shape the send path's validator refuses anyway — dropping it costs no deliverable address.)
  *
  * An entry must contain `@` and fit an address's length to join; everything else — empty
  * segments, decorative text, an entry that is only a display name — is dropped. What joins is
@@ -157,7 +165,7 @@ function bodyText(text: string): string {
  * whether it is a deliverable address.
  */
 function addAddresses(into: string[], list: string): void {
-  for (const part of list.split(",")) {
+  for (const part of list.split(/[,;]/)) {
     const entry = oneLine(part);
     if (!entry || !entry.includes("@") || entry.length > MAX_ADDRESS) continue;
     if (into.length >= MAX_RECIPIENTS) return;

@@ -150,6 +150,19 @@ describe("parseMailto", () => {
     expect(d?.to).toEqual(["real@x.example"]);
   });
 
+  it("splits recipients on semicolons exactly as the send path will — no smuggled second recipient", () => {
+    // The compose send path splits its To text on /[,;]/ (`parseRecipients`). If this parser
+    // admits `a@x;b@y` as ONE entry, the count and every per-entry check here are run against
+    // one recipient while the send mails two — an external review demonstrated the smuggle
+    // with `mailto:shown@x.test%3Bevil@y.test`. Same separators on both sides, by construction.
+    const d = parseMailto("mailto:shown@x.test%3Bevil@y.test");
+    expect(d?.to).toEqual(["shown@x.test", "evil@y.test"]);
+    // And the recipient CAP counts what the send path will actually mail: 200 semicolon-joined
+    // pairs is 200 recipients pre-split — the cap must clamp the post-split count.
+    const pairs = Array.from({ length: 100 }, (_, i) => `a${i}@x.example%3Bb${i}@x.example`).join(",");
+    expect(parseMailto(`mailto:${pairs}`)?.to).toHaveLength(64);
+  });
+
   it("caps recipients, subject and body instead of carrying a hostile payload", () => {
     const many = Array.from({ length: 200 }, (_, i) => `p${i}@x.example`).join(",");
     const d = parseMailto(`mailto:${many}?subject=${"s".repeat(5_000)}&body=${"b".repeat(150_000)}`);

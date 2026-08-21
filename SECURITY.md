@@ -95,8 +95,12 @@ processes around it:**
   `navigator.sendBeacon` with functions that throw (proven on the built bundle
   by the render check's offline audit); and its whole reach is a small named
   list of shell commands (`WINDOW_COMMANDS` in
-  `apps/desktop/src-tauri/build.rs`), none of which takes a URL or a filesystem
-  path. What connects is the mail **engine** — to your own mail server, and on
+  `apps/desktop/src-tauri/build.rs`). None of those commands takes a filesystem
+  path, and exactly one takes a URL: `open_external`, which hands a link found
+  in a message to your browser only after the shell's own vetting
+  (`external_url` in `engine.rs`) accepts it — every other outbound address the
+  shell can open is a named constant. What connects is the mail **engine** — to
+  your own mail server, and on
   the hosted door to your account — and the Rust shell's updater, to its one
   pinned signed feed. One other window has a grant — the transient one shown
   while an update downloads — and it is a single receive-only event permission

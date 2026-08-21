@@ -28,10 +28,12 @@ ohmail registers as a mail-app candidate on all three platforms (macOS
 `CFBundleURLTypes`, the Linux desktop entry's scheme handler, and on Windows the
 installer's capability keys, which put ohmail on Settings → Default apps →
 Email). Becoming the default stays your choice, made the way each platform
-sanctions: macOS shows its own confirmation dialog, Windows opens the
-Default-apps page for you to pick, Linux goes through `xdg-settings`. Nothing
-writes the choice behind the platform's back — on Windows in particular, the
-app never touches `UserChoice`.
+sanctions: you press the app's own "Make default", then macOS confirms with
+its own dialog or applies the change directly, Windows opens the Default-apps
+page for you to pick, Linux goes through `xdg-settings`. Nothing writes the
+choice behind the platform's back — on Windows in particular, the app never
+writes `UserChoice` (it reads it, to show you which app currently has the
+job).
 
 **The app asks once.** After a mailbox is connected, one card offers to make
 ohmail the default; either answer is remembered and the question never
