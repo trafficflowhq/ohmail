@@ -826,9 +826,8 @@ export async function claimBillingEvent(tx: LedgerTx, ev: BillingEventClaim): Pr
  * to do, so the row is written `applied` — suppressing every retry — with the WHY on the row.
  *
  * Born from one production event (2026-08-19): a `customer.subscription.deleted` whose
- * subscription metadata named an account that had been removed outright. The transaction
- * failed the `accounts` FK (the claim's own insert hits it first; the mirror write would hit
- * the same key), the row landed `failed`, and it could never succeed by retrying —
+ * subscription metadata named an account that had been removed outright. The mirror upsert
+ * failed the `accounts` FK, the row landed `failed`, and it could never succeed by retrying —
  * the account was not coming back and the subscription was already canceled at Stripe, which
  * is what the event said. A permanently-failed row is not an operator queue item; it is a
  * stuck `billing_events_failed` alert, paging hourly about nothing anyone can do.
