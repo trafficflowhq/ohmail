@@ -1421,8 +1421,9 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
         //
         // The DELETED phase alone, and only when the `accounts` row is GONE. The measured case
         // (2026-08-19, a live-mode event): the subscription's metadata names an account that
-        // has been removed outright, so the mirror upsert can only ever fail the `accounts`
-        // FK — and a `failed` row that can never succeed is not an operator queue item, it is
+        // has been removed outright, so the transaction can only ever fail the `accounts` FK
+        // (the claim's own insert hits it first; the mirror write would hit the same key) —
+        // and a `failed` row that can never succeed is not an operator queue item, it is
         // a stuck `billing_events_failed` alert, paging hourly about a cancellation that has
         // already happened. There is nothing to mirror (the row the mirror would write is
         // FK-anchored to the missing account) and nothing to revoke (the event IS the
@@ -1440,18 +1441,60 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
         // `claim.accountId` is dropped for the record: `billing_events.account_id` FKs
         // `accounts` too (the same reason the failure fallback drops attribution), so the
         // orphaned id survives in the disposition text instead.
-        if (event.kind === "subscription" && event.phase === "deleted" && accountId != null) {
+        if (
+          event.kind === "subscription" && event.phase === "deleted"
+          // The plane CONSTRUCTS kind/phase from `type`, so on a well-formed DTO this third
+          // literal is redundant — and that is the point: the DTO crosses an HTTP boundary
+          // whose client validates only "an object with an event", so a version-skewed or
+          // malformed delivery where the discriminants disagree must read as a protocol
+          // fault (the loud path below), never as an acknowledgement.
+          && event.type === "customer.subscription.deleted"
+          && accountId != null
+        ) {
           const alive = await (db as unknown as Tx)
             .select({ id: accounts.id })
             .from(accounts)
             .where(eq(accounts.id, accountId))
             .limit(1);
           if (alive.length === 0) {
+            // ── IDENTITY CORROBORATION ──────────────────────────────────────────────────
+            //
+            // The metadata uuid is ONE witness to who this subscription belonged to. If the
+            // SUBSCRIPTION MIRROR still holds a row for this `sub_…`, or the event's customer
+            // id resolves through `billing_customers` to a live account, then a real account
+            // owns this cancellation and the missing-metadata reading is the corrupt one —
+            // and acknowledging on it would preserve that account's entitlements forever,
+            // because deletion is terminal and no later event re-delivers it. Contradictory
+            // identities are a human's call: fail loudly, stay claimable, alert by name.
+            const mirror = await (db as unknown as Tx)
+              .select({ accountId: billingSubscriptions.accountId })
+              .from(billingSubscriptions)
+              .where(eq(billingSubscriptions.stripeSubscriptionId, event.subscription.id))
+              .limit(1);
+            const linked = await accountOfCustomer(db as unknown as Tx, event.subscription.customerId);
+            if (mirror.length > 0 || linked != null) {
+              throw new BillingApplyError(
+                "orphan_identity_contradiction",
+                `${event.type}: the subscription metadata names a missing account, but ` +
+                  (mirror.length > 0
+                    ? "a subscription mirror row still exists for this subscription"
+                    : "the customer link resolves to a live account") +
+                  " — contradictory identities need a human; refusing to acknowledge",
+              );
+            }
             const disposition =
               `noop: ${event.type} for account ${accountId}, which no longer exists — ` +
               `nothing to mirror or revoke; recorded as applied with no effect`;
-            const recorded = await attempt(() =>
-              recordBillingEventNoop(db as unknown as Tx, { ...claim, accountId: null }, disposition));
+            // NOT `attempt()`: that helper reports only settle-vs-throw, and this recorder
+            // RESOLVES `false` for the one race it cannot repair (its conflict upsert matched
+            // nothing and the row was gone again by the follow-up read). The boolean is the
+            // audit-trail verdict, so it must survive to the 500 below.
+            let recorded = false;
+            try {
+              recorded = await recordBillingEventNoop(
+                db as unknown as Tx, { ...claim, accountId: null }, disposition,
+              );
+            } catch { recorded = false; }
             if (!recorded) {
               // Unlike the replay path, a 200 here without the row would erase the event from
               // every audit surface — there is no ledger row testifying it existed. No money
