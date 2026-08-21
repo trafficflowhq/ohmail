@@ -148,7 +148,7 @@ import { SubjectRuleSheet, type SubjectRuleState } from "./SubjectRuleSheet";
 import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "./subject-rule";
 import { senderHitOf } from "./sender-hit";
 import {
-  go, goScreener, goTag, goTriage, useHashRoute,
+  go, goScreener, goSettings, goTag, goTriage, useHashRoute,
   type Route, type ScreenerSegmentId, type TriagePileId,
 } from "./routing";
 import { HistoryView } from "../views/HistoryView";
@@ -1424,40 +1424,18 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   });
   const [screenerFull, setScreenerFull] = useState(false);
   /**
-   * A ONE-SHOT REQUEST FOR WHICH SETTINGS PANE TO OPEN ON, set by a link that promises one.
-   *
-   * The Screener's AI-credit line offers "start a plan", and an offer that lands on Settings →
-   * General is an offer that has not been kept. `SettingsView` reads this once, at ITS mount, so
-   * it decides where the person starts and never where they stay.
-   *
-   * It has to be CLEARED, and WHEN is the whole difficulty. The settings view unmounts when the
-   * user navigates away (`effectiveView === "settings" ? … : null`), so a value left set would
-   * re-select Subscription on every later visit to Settings — a link pressed once quietly
-   * becoming a preference.
-   *
-   * **Clearing "whenever the route is not settings" is the version that does not work**, and it
-   * fails in the one direction that matters. `openSettingsPane` sets the request and then calls
-   * `go()`, which writes `location.hash`; the hashchange is asynchronous, so the very next render
-   * still has the OLD route. That effect would fire with `route.view === "screener"`, clear the
-   * request, and the settings view would mount a moment later with nothing to read — the offer
-   * silently landing on General, which is exactly the broken promise it exists to prevent.
-   *
-   * So the clear is on the way OUT, tracked by a ref: arm while the settings view is up, clear on
-   * the first render after it goes. `null` hands the choice back to the deep-link parameter,
-   * which is what every other mount uses.
+   * OPEN SETTINGS ON A NAMED PANE — the Screener's "start a plan" offer, and any later link that
+   * promises a section. It is the ROUTE now: `#/settings/<pane>` names the pane, so the request
+   * needs no state, no one-shot clear, and no ref tracking when the view went away — the whole
+   * apparatus that used to live here existed because the pane could not be said in the URL.
+   * (Its subtlest failure is gone with it: the request was read once at the view's MOUNT, so an
+   * offer pressed while Settings was already open changed nothing. A hash assignment reaches a
+   * mounted view the same as an unmounted one.) The bare `#/settings` stays reserved for the
+   * `?settings=` deep link — see `Route.settingsPane`.
    */
-  const [settingsPane, setSettingsPane] = useState<PaneId | null>(null);
-  const settingsWasOpen = useRef(false);
   const openSettingsPane = useCallback((pane: PaneId): void => {
-    setSettingsPane(pane);
-    go("settings");
+    goSettings(pane);
   }, []);
-  useEffect(() => {
-    if (route.view === "settings") { settingsWasOpen.current = true; return; }
-    if (!settingsWasOpen.current) return;
-    settingsWasOpen.current = false;
-    setSettingsPane(null);
-  }, [route.view]);
   /**
    * THE READER IS A MESSAGE NOW, NOT A BOOLEAN.
    *
@@ -5216,10 +5194,13 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                     aboutSection
                   )
                 }
-                /* WHERE THE SCREENER'S OFFER LANDS. Read once at THIS view's mount and cleared
-                   when the view goes away — see `settingsPane` above — so it decides the pane
-                   exactly once and the person is free to click elsewhere afterwards. */
-                initialPane={settingsPane ?? undefined}
+                /* THE ROUTE'S PANE — `#/settings/<pane>` controls the section; the bare hash
+                   leaves the view's own deep-link logic (`?settings=`) in charge. A nav click
+                   writes the hash (`goSettings`), so sections stack in history and Back/Forward
+                   walk them. The Screener's offer travels the same road now — see
+                   `openSettingsPane`. */
+                pane={route.settingsPane ?? undefined}
+                onSelectPane={goSettings}
               />
             ) : null}
             </ViewBoundary>

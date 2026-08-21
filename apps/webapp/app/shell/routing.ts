@@ -58,17 +58,44 @@ export type ScreenerSegmentId = "waiting" | "screened" | "spam";
 export const TRIAGE_PILES = ["reply", "aside", "resurface"] as const;
 export type TriagePileId = (typeof TRIAGE_PILES)[number];
 
+/**
+ * THE SETTINGS PANES, and why the ROUTER owns the list now.
+ *
+ * `#/settings/<pane>` is a route segment: a settings section is a place — loadable directly,
+ * walkable with Back/Forward — and the router must validate it the way it validates a
+ * screener segment or a triage pile: an unknown sub-path falls back rather than 404ing, and
+ * `normalizedHash` then rewrites the bar to the spelling that reproduces what is on screen. The
+ * list lived in `SettingsView` (it predates the segment; `?settings=<pane>` was its one
+ * consumer), but a copy in each file is two lists one new pane apart from disagreeing — so the
+ * view re-exports THIS one. Which panes EXIST on a given surface is still the view's per-surface
+ * clamp; this list is only "what may a URL say".
+ */
+export const PANE_IDS = [
+  "general", "notifications", "mailboxes", "screener", "away", "billing", "invites", "tags", "rules",
+  "about", "security", "account", "desktop", "devices",
+] as const;
+export type PaneId = (typeof PANE_IDS)[number];
+
 export interface Route {
   view: ViewId;
   tagId: string | null;
   screenerSegment: ScreenerSegmentId;
   triagePile: TriagePileId;
+  /**
+   * WHICH SETTINGS PANE THE URL NAMES — or `null`, and `null` is load-bearing: it means the hash
+   * did not say. A bare `#/settings` (every pre-existing link, and the `go("settings")` every
+   * rail click makes) leaves the pane to the view's own deep-link logic — the `?settings=<pane>`
+   * query the OAuth return uses — where an explicit `#/settings/devices` overrides it. Folding
+   * both into one default here would make clicking "General" indistinguishable from never having
+   * chosen, and the query would win an argument the user just settled.
+   */
+  settingsPane: PaneId | null;
 }
 
 export function parseHash(hash: string): Route {
   const raw = hash.replace(/^#\/?/, "");
   if (raw.startsWith("tag/") && raw.slice(4)) {
-    return { view: "tag", tagId: raw.slice(4), screenerSegment: "waiting", triagePile: "reply" };
+    return { view: "tag", tagId: raw.slice(4), screenerSegment: "waiting", triagePile: "reply", settingsPane: null };
   }
   if (raw === "screener" || raw.startsWith("screener/")) {
     const sub = raw.split("/")[1];
@@ -77,6 +104,7 @@ export function parseHash(hash: string): Route {
       tagId: null,
       screenerSegment: sub === "screened" || sub === "spam" ? sub : "waiting",
       triagePile: "reply",
+      settingsPane: null,
     };
   }
   // `#/triage`, `#/triage/aside`, `#/triage/resurface`. An unknown sub-path falls to the first
@@ -90,10 +118,25 @@ export function parseHash(hash: string): Route {
       triagePile: (TRIAGE_PILES as readonly string[]).includes(sub ?? "")
         ? (sub as TriagePileId)
         : "reply",
+      settingsPane: null,
+    };
+  }
+  // `#/settings`, `#/settings/devices`, … A named pane is validated against `PANE_IDS`; an
+  // unknown sub-path falls back to the BARE form (`settingsPane: null`, the view's own
+  // deep-link logic), exactly as an unknown screener segment falls to `waiting` — and
+  // `normalizedHash` then rewrites `#/settings/bogus` to `#/settings` so the bar stays honest.
+  if (raw === "settings" || raw.startsWith("settings/")) {
+    const sub = raw.split("/")[1];
+    return {
+      view: "settings",
+      tagId: null,
+      screenerSegment: "waiting",
+      triagePile: "reply",
+      settingsPane: (PANE_IDS as readonly string[]).includes(sub ?? "") ? (sub as PaneId) : null,
     };
   }
   const view = (VIEWS as readonly string[]).includes(raw) ? (raw as ViewId) : "ohbox";
-  return { view, tagId: null, screenerSegment: "waiting", triagePile: "reply" };
+  return { view, tagId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null };
 }
 
 /**
@@ -107,6 +150,10 @@ export function canonicalHash(route: Route): string {
     return route.screenerSegment === "waiting" ? "#/screener" : `#/screener/${route.screenerSegment}`;
   if (route.view === "triage")
     return route.triagePile === "reply" ? "#/triage" : `#/triage/${route.triagePile}`;
+  // BOTH spellings are canonical for settings: bare (`settingsPane: null` — the pane is the
+  // view's deep-link logic's to decide) and named. Only an UNKNOWN sub-path normalizes, to bare.
+  if (route.view === "settings")
+    return route.settingsPane === null ? "#/settings" : `#/settings/${route.settingsPane}`;
   return `#/${route.view}`;
 }
 
@@ -166,4 +213,16 @@ export function goScreener(segment: ScreenerSegmentId): void {
 /** The first pile keeps the bare `#/triage`, so every link that already exists still lands. */
 export function goTriage(pile: TriagePileId): void {
   window.location.hash = pile === "reply" ? "#/triage" : `#/triage/${pile}`;
+}
+
+/**
+ * ALWAYS the named form — `#/settings/general`, never bare — because this is what a CHOICE
+ * writes. The bare form means "the pane is the deep-link logic's to decide" (see
+ * {@link Route.settingsPane}), and a person who just clicked General has decided: spelling
+ * their click as the bare hash would hand the decision straight back to a `?settings=` query
+ * that may still be in the address bar. Each call is a hash ASSIGNMENT, so sections stack in
+ * history and Back/Forward walk them.
+ */
+export function goSettings(pane: PaneId): void {
+  window.location.hash = `#/settings/${pane}`;
 }

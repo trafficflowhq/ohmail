@@ -48,12 +48,15 @@ import {
 import { hueOf } from "../shell/format";
 import { LanguageRow } from "../shell/LanguageRow";
 import { ImageShrinkRow } from "../shell/ImageShrinkRow";
+import { PANE_IDS, type PaneId } from "../shell/routing";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
-/* Exported so a caller that LINKS to a pane can name one — `AppShell`'s `openSettingsPane`, and
- * through it the Screener's "start a plan" offer. A string union rather than a free `string`:
- * `pane` selects a render branch, so a name nothing matches is an empty settings screen. */
-export type PaneId = "general" | "notifications" | "mailboxes" | "screener" | "away" | "billing" | "invites" | "tags" | "rules" | "about" | "security" | "account" | "desktop" | "devices";
+/* Re-exported so every caller that LINKS to a pane keeps its import — `AppShell`, and through it
+ * the Screener's "start a plan" offer. The list itself is the ROUTER's now: `#/settings/<pane>`
+ * is a route segment, and two copies of what a URL may say is two lists one new pane apart from
+ * disagreeing. A string union rather than a free `string`: `pane` selects a render branch, so a
+ * name nothing matches is an empty settings screen. */
+export { PANE_IDS, type PaneId } from "../shell/routing";
 
 /**
  * The notification channels, and why this list is here rather than in the fixtures.
@@ -346,9 +349,11 @@ function TagCreateRow({
  * pane inside it, so the redirect landed on General and the sentence explaining what happened was
  * one click away and invisible.
  *
- * A QUERY PARAMETER rather than a second hash segment, deliberately: `parseHash` matches the view
- * name exactly, so `#/settings/mailboxes` would fall through to `ohbox` — making this a change to
- * the shared router as well as to this file, for a link with one consumer.
+ * A hash segment exists NOW — `#/settings/<pane>` (`shell/routing.ts`), added when sections became
+ * places of their own — and it OUTRANKS this parameter: an explicit segment controls the pane from
+ * the shell, and this function only decides the BARE `#/settings` mounts. The parameter stays for
+ * its one consumer (the ceremony's redirect predates the segment and keeps working), not as a
+ * second spelling to hand out; new links say `#/settings/<pane>`.
  *
  * It is read ONCE, as the initial state, and never watched — which is the whole of why the parameter
  * is allowed to stay in the address bar. `MailboxSection` strips the CEREMONY parameters (`oauth`,
@@ -361,11 +366,6 @@ function TagCreateRow({
  * the reason this validates against {@link PANE_IDS} rather than casting: `pane` selects a render
  * branch, and a value from a URL that matched none of them would render an empty settings screen.
  */
-export const PANE_IDS: readonly PaneId[] = [
-  "general", "notifications", "mailboxes", "screener", "away", "billing", "invites", "tags", "rules",
-  "about", "security", "account", "desktop", "devices",
-];
-
 export function initialPaneFromUrl(): PaneId {
   if (typeof window === "undefined") return "general";
   const asked = new URLSearchParams(window.location.search).get("settings");
@@ -394,6 +394,8 @@ export function SettingsView({
   desktopSection,
   devicesSection,
   initialPane,
+  pane: routePane,
+  onSelectPane,
 }: {
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
   notifications: NotificationsMeta | null;
@@ -664,6 +666,17 @@ export function SettingsView({
    * prop would drag them back.
    */
   initialPane?: PaneId;
+  /**
+   * THE ROUTE'S PANE — `#/settings/<pane>` resolved by the shell, or absent for the bare hash.
+   * Present, it CONTROLS which pane shows (a section is a place now: loadable directly, walkable
+   * with Back/Forward), and {@link onSelectPane} is where a nav click goes — the shell writes the
+   * hash and the hash comes back around as this prop. Absent — the bare `#/settings`, every
+   * pre-existing link, and any harness that mounts this view without a router — the view falls
+   * back to its own deep-link logic exactly as before.
+   */
+  pane?: PaneId;
+  /** Where a nav click goes when the route controls the pane — `goSettings` behind the shell. */
+  onSelectPane?: (pane: PaneId) => void;
 }) {
   const t = useTranslations("settings");
   /** The `tag` namespace owns what a tag IS; `settings` owns this pane's chrome. */
@@ -672,7 +685,9 @@ export function SettingsView({
   const { preference, setTheme } = useTheme();
   // The caller's request wins over the URL's, and both are read ONCE. A caller that says nothing
   // leaves the deep link in charge, which is every mount but the one the Screener's offer causes.
-  const [pane, setPane] = useState<PaneId>(() => initialPane ?? initialPaneFromUrl());
+  // The ROUTE outranks both — but only when it actually names a pane (see the `pane` prop).
+  const [localPane, setPane] = useState<PaneId>(() => initialPane ?? initialPaneFromUrl());
+  const pane = routePane ?? localPane;
   const [channels, setChannels] = useState(NOTIFICATION_CHANNELS);
   const [vips, setVips] = useState<string[] | null>(null);
   const [learned, setLearned] = useState<"open" | "accepted" | "dismissed">("open");
@@ -768,7 +783,10 @@ export function SettingsView({
                 key={id}
                 type="button"
                 className={shown === id ? "on" : undefined}
-                onClick={() => setPane(id)}
+                /* Route-controlled, a click WRITES THE HASH (`goSettings` behind `onSelectPane`)
+                   and the pane follows the route back down — one source, and each section lands
+                   in history so Back walks them. Uncontrolled, the local state it always was. */
+                onClick={() => (onSelectPane ? onSelectPane(id) : setPane(id))}
               >
                 {label}
               </button>
