@@ -118,6 +118,31 @@ check_absent "the embedded UnifiedPush FCM distributor" 'Lorg/unifiedpush/androi
 check_absent "Play Services messaging" 'Lcom/google/android/gms/cloudmessaging/'
 check_absent "Firebase Installations" 'Lcom/google/firebase/installations/'
 
+# ── AND THE THING THAT MUST BE PRESENT: the silent payload renderer ──────────────────────────
+#
+# `expo-unified-push`'s native service renders a notification from ANY decrypted payload carrying
+# an `id`, using that payload's own title, body, image and a tap URL. The actor who could do that
+# is the SERVER the phone paired with — it holds the device's push keys by design — so on a product
+# built around pairing with anybody's server, that is a phishing primitive.
+#
+# It is closed by naming a no-op renderer in an AndroidManifest meta-data entry, which the service
+# resolves reflectively. Both halves have to be in the binary: the meta-data AND the class it names.
+# If the class is missing or does not implement the interface, `resolvePayloadRenderer` returns null
+# and the service falls back to the DEFAULT renderer — a silent no-op that looks configured, which
+# is exactly why this is asserted against the artifact rather than against `app.json`.
+RENDERER='Lapp/ohmail/push/SilentPushPayloadRenderer;'
+n=$(/usr/bin/grep -a -c -F "$RENDERER" "$WORK/all.dex" || true)
+if [ "${n:-0}" -gt 0 ]; then
+  echo "assert-no-fcm: present — the silent push renderer is compiled in"
+else
+  echo "assert-no-fcm: MISSING the silent push renderer class ($RENDERER)." >&2
+  echo "  Without it the connector's DEFAULT renderer is in force, and the server this phone" >&2
+  echo "  pairs with can draw a notification with its own text and its own tap URL." >&2
+  echo "  Check that app.json lists the expo-unified-push plugin with payloadRendererClass AND" >&2
+  echo "  that plugins/silent-push-renderer.js wrote the class into the generated project." >&2
+  fail=1
+fi
+
 test "$fail" -eq 0 || {
   echo "" >&2
   echo "Do not ship this APK. The app's copy and its privacy census both state that no Google" >&2

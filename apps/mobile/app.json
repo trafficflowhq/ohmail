@@ -44,7 +44,14 @@
         }
       ],
       "expo-secure-store",
-      "./plugins/without-embedded-fcm"
+      "./plugins/without-embedded-fcm",
+      [
+        "expo-unified-push",
+        {
+          "payloadRendererClass": "app.ohmail.push.SilentPushPayloadRenderer"
+        }
+      ],
+      "./plugins/silent-push-renderer"
     ]
   }
 }
