@@ -444,9 +444,20 @@ export const nodePostJson: PostJson = async (url, body, headers) => {
   const ac = new AbortController();
   const timer = setTimeout(() => { ac.abort(); }, 8000);
   try {
+    // The JSON media type is this seam's CONTRACT (`PostJson` — one JSON POST), so a caller
+    // cannot move it: caller headers first, the fixed content-type last, and any caller copy
+    // stripped case-insensitively — header names are case-insensitive at the wire, so a
+    // `Content-Type` beside our `content-type` would have combined into an invalid
+    // `application/json, text/plain` rather than overriding cleanly.
+    const merged: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers ?? {})) {
+      if (k.toLowerCase() === "content-type") continue;
+      merged[k] = v;
+    }
+    merged["content-type"] = "application/json";
     const res = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json", ...headers },
+      headers: merged,
       body,
       signal: ac.signal,
     });

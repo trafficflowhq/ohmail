@@ -75,21 +75,76 @@ export interface ResendAlertSinkConfig {
 }
 
 /**
+ * How long one notification's Idempotency-Key stays stable across delivery retries.
+ *
+ * The failure this closes: a POST the provider ACCEPTED whose response was lost
+ * looks like a failure to this sink, `runAlertPass` releases its claim, and the worker's 60 s
+ * cadence sends another mail — per minute, for as long as the response path is broken. The
+ * design direction stands (a duplicate page beats a swallowed one — the pass's own header),
+ * so the key is BUCKETED rather than per-notification-forever: retries inside one window
+ * dedupe on the provider, and the inverse hazard — a stored key blocking a page that never
+ * actually sent — is bounded to one bucket before a fresh key retries cleanly. Ten minutes:
+ * an order larger than the retry cadence, an order smaller than the one-hour repeat, so
+ * neither the storm nor the block can reach the interval a human perceives.
+ */
+export const ALERT_IDEMPOTENCY_BUCKET_MS = 10 * 60 * 1000;
+
+/**
+ * What redaction scrubs BEYOND the one key this sink holds.
+ *
+ * Review finding: exact-string replacement misses every variant the sink did not configure —
+ * a rotated old key the provider echoes back, or a whole Authorization line quoted in an
+ * error body. Anything SHAPED like a Resend key or a bearer value goes, whether or not it is
+ * ours; the message's prose survives, which is the whole reason this sink reports bodies.
+ */
+const SECRET_SHAPES: readonly RegExp[] = [
+  /\bre_[A-Za-z0-9_]{8,}\b/g,                       // any Resend-shaped key, not just ours
+  /\b(?:Bearer|Basic)\s+[A-Za-z0-9+/=_.-]{8,}/gi,   // an echoed Authorization value
+];
+
+/**
  * Make a failure sentence safe to log when the secret is a HEADER credential, not a URL.
  *
  * The sibling of `redactEndpoint`: the endpoint here is a fixed public URL and diagnostic,
  * but the API key rides in `Authorization`, and a thrown transport error or an echoing error
- * body could quote the request. Same 200-character bound, same reason — this lands in every
- * `alert_notified` line.
+ * body could quote the request. Exact key first, then the {@link SECRET_SHAPES} patterns.
+ * Same 200-character bound, same reason — this lands in every `alert_notified` line.
  */
 function redactCredential(raw: string, secret: string): string {
   let out = raw.replace(/\s+/g, " ").trim();
   if (secret) out = out.split(secret).join("<redacted>");
+  for (const shape of SECRET_SHAPES) out = out.replace(shape, "<redacted>");
   return out.length > 200 ? `${out.slice(0, 200)}…` : out;
 }
 
-/** One plain address: has an `@`, and none of the characters a quoted value or a list has. */
-const SINGLE_ADDRESS = /^[^\s,"'<>]+@[^\s,"'<>]+$/;
+/**
+ * Stringify a value that came out of a `catch`, without the formatter itself throwing.
+ *
+ * Review finding: template interpolation of a Symbol throws, so a transport rejecting with
+ * `{ message: Symbol(...) }` made the FORMATTER the thing that threw — `deliver()`'s belt
+ * caught it, but this sink's own never-reject contract was violated. `String()` handles
+ * symbols explicitly; a toString that itself throws falls through to the tag.
+ */
+function asText(v: unknown): string {
+  try { return String(v); } catch {
+    try { return Object.prototype.toString.call(v); } catch { return "unprintable"; }
+  }
+}
+
+/**
+ * One plain address, structurally: exactly one `@` (both classes exclude it), a dotted
+ * domain, and none of the characters a quoted env value, a display-name form, or a list has.
+ *
+ * Two review findings shaped this, pulling in opposite directions. An APOSTROPHE inside the
+ * local part is legal mail (`o'connor@…`) and the first validator's blanket quote-ban built a
+ * permanently-refusing sink from a valid address — with the webhook arm already dead, a pager
+ * that never pages, reached through correct configuration. Meanwhile two `@`s, a dotless
+ * domain, separators and escapes all PASSED it, surfacing as endless provider refusals
+ * instead of a named `TF_ALERT_EMAIL` fault. So: apostrophes allowed inside the local part
+ * only (surrounding ones are still the env trap, checked separately), and the structure is
+ * pinned here at build time, like the webhook URL's parse.
+ */
+const SINGLE_ADDRESS = /^[^\s@,;<>"\\]+@[^\s@,;<>"'\\]+\.[^\s@,;<>"'\\.]+$/;
 
 /** See the module header for the whole design; the states are ruled there. */
 export function resendAlertSink(
@@ -106,7 +161,7 @@ export function resendAlertSink(
   ];
   const configError = missing.length > 0
     ? `TF_ALERT_EMAIL is set but the mailer is not: missing ${missing.join(", ")}`
-    : !SINGLE_ADDRESS.test(to)
+    : (/^'/.test(to) || /'$/.test(to) || !SINGLE_ADDRESS.test(to))
       ? "TF_ALERT_EMAIL is set but is not a single plain address (surrounding quotes, a " +
         "display name, or a comma list in the value?)"
       : null;
@@ -124,7 +179,15 @@ export function resendAlertSink(
           subject: `ohmail ${ctx.environment}: ${alerts.length} alert(s) firing`,
           text: renderAlertText(alerts, ctx),
         });
-        const res = await post(RESEND_EMAILS_URL, body, { authorization: `Bearer ${apiKey}` });
+        // The Idempotency-Key makes a lost RESPONSE distinguishable from a lost SEND on the
+        // provider's side: retries inside one bucket replay the stored result instead of
+        // mailing again. Sorted keys, so evaluation order cannot split one page into two.
+        const bucket = Math.floor(ctx.now.getTime() / ALERT_IDEMPOTENCY_BUCKET_MS);
+        const idem = `tf-alert/${ctx.source}/${bucket}/${alerts.map((a) => a.key).sort().join("+")}`;
+        const res = await post(RESEND_EMAILS_URL, body, {
+          authorization: `Bearer ${apiKey}`,
+          "Idempotency-Key": idem,
+        });
         if (res.status >= 200 && res.status < 300) return { ok: true };
         return {
           ok: false,
@@ -135,10 +198,14 @@ export function resendAlertSink(
       } catch (err) {
         // Never throws — the other sink must still get its chance — and it says what
         // happened, because "the mail arm refused" with no reason attached is the state the
-        // webhook arm spent months in.
-        const e = err as { name?: string; message?: string; cause?: { message?: string; code?: string } };
-        const cause = e?.cause?.code ?? e?.cause?.message ?? "";
-        const text = `${e?.name ?? "Error"}: ${e?.message ?? String(err)}${cause ? ` (${cause})` : ""}`;
+        // webhook arm spent months in. Every property goes through {@link asText}: a thrown
+        // value owes this formatter nothing, least of all string-typed fields.
+        const e = err as { name?: unknown; message?: unknown; cause?: { message?: unknown; code?: unknown } };
+        const causeRaw = e?.cause?.code ?? e?.cause?.message;
+        const cause = causeRaw === undefined || causeRaw === "" ? "" : asText(causeRaw);
+        const name = e?.name === undefined ? "Error" : asText(e.name);
+        const message = e?.message === undefined ? asText(err) : asText(e.message);
+        const text = `${name}: ${message}${cause ? ` (${cause})` : ""}`;
         return { ok: false, error: redactCredential(text, apiKey) };
       }
     },
