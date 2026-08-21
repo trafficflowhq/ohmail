@@ -1215,22 +1215,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * the mirror was already reading.
    */
   let sawBacklog = false;
-  /**
-   * DID ANYTHING GET DELETED SINCE THE COUNTS WERE READ? — the one direction that makes a held
-   * count a LIE rather than merely old.
-   *
-   * The counts are refreshed on a cadence measured in minutes, and inside that window the mirror
-   * keeps draining. A drain that ADDS mail moves the local number toward the held total, which
-   * biases the comparison toward silence and is harmless. A drain that applies TOMBSTONES moves
-   * the local number DOWN while the held total stays where it was — and a shortfall computed
-   * against it is a sentence about mail that no longer exists on either side. Mail deleted from
-   * another device is the ordinary way that happens.
-   *
-   * So a delete does two things: it drops the held counts on the spot (the strip then says
-   * nothing, which is the honest answer to "we do not know"), and it makes the next refresh ask.
-   * A phantom sweep counts as a delete for the same reason — it also removes local rows.
-   */
-  let sawDeletes = false;
 
   /** The cloud seq the cursor encodes — the inverse of `SyncService.encodeCursor`. */
   const cloudSeq = (): bigint => {
@@ -1275,8 +1259,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    *    only thing that makes the count on screen mean anything.
    *  · the last drain saw `hasMore` — the hosted account said there was more; a shortfall is not
    *    hypothetical here.
-   *  · the last drain applied a DELETE — the held total is now too high by construction, and the
-   *    map has already been dropped for that reason; this is the ask that replaces it.
    *  · the numbers are older than {@link HOSTED_COUNTS_TTL_MS}.
    *
    * The floor is checked FIRST and applies to every reason, so no combination of them can put two
@@ -1288,7 +1270,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     if (countsAskedAt === Number.NEGATIVE_INFINITY) return true;
     if (cursor.bootstrapping) return true;
     if (sawBacklog) return true;
-    if (sawDeletes) return true;
     return t - countsAskedAt >= HOSTED_COUNTS_TTL_MS;
   };
 
@@ -1299,14 +1280,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
        surface must never compute a count of its OWN: a mirror's aggregate under a hosted field
        name would read "N of N" for ever, which is worse than saying nothing. */
     const wantCounts = countsWanted();
-    if (wantCounts) {
-      /* STAMPED WHEN THE REQUEST IS ISSUED, and this is not a detail. Stamping after a successful
-         apply looks tidier and re-opens the storm from the failure side: a malformed answer or a
-         failed local apply THROWS out of this function, the stamp never lands, and the reconnect
-         backoff (1 s, 2 s, 4 s, …) re-asks for the full-table aggregate on every retry. What the
-         floor is protecting is the ACCOUNT's database, so what has to be recorded is the ASK. */
-      countsAskedAt = now().getTime();
-    }
     const res = await cfg.auth.authedFetch(wantCounts ? "/mailboxes?counts=1" : "/mailboxes");
     if (!res.ok) throw new Error(`the hosted /mailboxes answered HTTP ${res.status}`);
     const body = (await res.json()) as { items?: unknown };
@@ -1320,13 +1293,12 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     knownMailboxes = out.known;
     hostedMailboxIds = hosted.map((m) => m.id);
     if (wantCounts) {
-      /* The ask is already stamped (above, at issue time) — what lands here is the ANSWER. Both
-         reasons that bought this request are spent whether or not it carried numbers: a hosted
-         build that serves no `messageCount` must not re-trigger on the next refresh for ever,
-         which was the request storm this cadence exists to prevent, reached through its own
-         failure case. */
+      /* THE ASK IS STAMPED WHETHER OR NOT THE ANSWER CARRIED NUMBERS. A hosted build that does not
+         serve `messageCount` would otherwise leave the map empty, `countsWanted()` would say yes on
+         the next refresh for ever, and the opt-in aggregate would be requested three times a minute
+         — the exact cost this cadence exists to avoid, arrived at through the failure case. */
+      countsAskedAt = now().getTime();
       sawBacklog = false;
-      sawDeletes = false;
       /* REBUILT, NOT MERGED: a mailbox the account no longer names must not keep a stale count in
          a map the strip sums. Rows that carry no number are simply absent, and an absent number
          withdraws the whole denominator downstream — which is the correct answer to "one of your
@@ -1464,13 +1436,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           reason: "the feed carried mail for a mailbox the account did not list, so it is skipped " +
             "rather than filed under a different address; a later refresh picks it up",
         });
-      }
-      /* A TOMBSTONE IN THIS PAGE INVALIDATES THE HELD COUNTS — see `sawDeletes`. Noted BEFORE the
-         apply, so a crash between the two leaves the counts dropped rather than believed: the
-         safe error is forgetting a number, never keeping one that is too high. */
-      if (body.changes.deletes.length > 0) {
-        sawDeletes = true;
-        hostedCounts = new Map();
       }
       applied += await applyPage(cfg.db, cfg.world, body, now(), sweep, knownMailboxes);
       // AFTER the commit: a crash before this line re-applies the page next launch, which converges.
@@ -1900,10 +1865,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         const swept = await sweepPhantoms(cfg.db, cfg.world, sweep, now());
         if (swept > 0) {
           cfg.log?.("cloud_mirror_swept", { count: swept, reason: "bootstrap phantoms removed after a since=0 re-pull" });
-          // Rows left the mirror without a tombstone in the feed, which is the same arithmetic
-          // problem a delete is: the held total is now above what either side holds.
-          sawDeletes = true;
-          hostedCounts = new Map();
         }
         // The bootstrap AND its sweep have completed: clear the flag so the next drain resumes
         // incrementally instead of re-bootstrapping. The format version rides the same write —
