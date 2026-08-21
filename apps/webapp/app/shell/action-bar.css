@@ -406,13 +406,19 @@
  * is the way to everything else.
  *
  * EVERY NUMBER BELOW IS A MEASUREMENT, not a round number picked to look tidy. Each is the
- * natural width of the row that tier admits, read off the built page in Chrome at the WORST
+ * natural width of the row that rung admits, read off the built page in Chrome at the WORST
  * case — a read message, whose switch says "Mark unread", the longer of the two labels:
  *
  *   Reply 68.2 · defer 221.7 · file 139.5 · read+More 153.3 · gaps 6
  *     base            = 68.2 + 153.3 + 6           = 227.5
  *     base + defer    = 227.5 + 221.7 + 6          = 455.2  → admit at 456
  *     + file          = 455.2 + 139.5 + 6          = 601.7  → admit at 601
+ *
+ * THIS PAIR IS THE SELECTION BAR'S LADDER AND NOTHING ELSE NOW, and the two sections after
+ * the next one are why: the row this chain describes is English, and a message bar's row also
+ * has to pay the 12px its capsule takes out of the queried container. `.pick-bar` owes neither
+ * — it has no padding of its own and its verbs are a different label set — so 456 and 601 are
+ * still exactly true THERE and are left alone.
  *
  * ── THESE ARE THE SECOND MEASUREMENT, AND THE FIRST ONE HAD GONE STALE ────────────────
  *
@@ -435,50 +441,92 @@
  * The lesson is in the numbers rather than in the fix: **a measured breakpoint is only true for
  * the labels it was measured against.** Re-measure this when a label changes, when the read
  * switch's vocabulary changes, or when a locale other than `en` is added — all three change the
- * intrinsic width and none of them touches this file.
+ * intrinsic width and none of them touches this file. That last clause went unheeded for as long
+ * as it stood here; the section on locales below is what it cost.
  *
- * ── AND TAG JOINED THE ROW, WHICH MOVED ONE TIER ──────────────────────────────────────
+ * ── TAG, REPLY ALL, AND WHY THIS IS NOW FOUR LADDERS ──────────────────────────────────
  *
  * `Tag` with its `t` keycap measures 56.9 by the same method (a `.abar-b.abar-solo` capsule, read
  * off Chrome at 11.5px/550 — the harness reproduces `Reply all` at 95.69 and `Reply` at 68.16,
- * which is how it is known to be measuring the same thing this file already measured):
+ * which is how it is known to be measuring the same thing this file already measured). The row a
+ * rung admits depends on two things this file used to ignore, so the numbers come in fours:
  *
- *     base + defer            = 455.2                → defer admits at 456, UNCHANGED
- *     + Tag                   = 455.2 + 56.9 + 6     = 518.1  → admit at 519
- *     + Reply all             = 518.1 + 95.7 + 6     = 619.8  → admit at 620, MOVED FROM 557
+ *   1 · WHETHER THE BAR CARRIES THE REPLY-ALL GROUP. `replyAllRecipients` returns nothing on a
+ *       message whose "all" is the sender alone, so 95.7px of the row is present on some messages
+ *       and absent on others. `[data-rall]` on the pill is the predicate a container query cannot
+ *       compute for itself.
+ *   2 · WHICH LOCALE IS RENDERED. Every label is 30–45% wider in German, so every chain is:
  *
- * **TAG OUTRANKS REPLY ALL, and that is the one judgement in this ladder rather than an
- * arithmetic consequence.** A message's bar is capped by the mail measure at ≤576px, so exactly
- * one of the two can stand at the width a reading pane actually has, and something had to give.
- * Reply all VARIES a verb that is standing two capsules away, keeps `⇧R`, and keeps its row in
- * More; Tag is the ONLY entry point tagging has, now that the `+ Tag` chip under the title is
- * gone. A verb with no other door outranks a verb with two — a Tag folded into More at 572px
- * would put the sole way to tag an open message behind a disclosure at the one width every
- * desktop reader has.
+ *                       en        de
+ *     Reply           68.2     95.5   `Antworten`
+ *     Reply all       95.7    136.8   `Allen antworten`
+ *     defer          221.7    293.3   `Später` · `Parken` · `Wieder auftauchen`
+ *     Tag             56.9     56.9   the word is the same
+ *     read + More    153.3    221.2   `Als ungelesen markieren`
+ *     base           227.5    322.8
+ *
+ * The header above named the second one as a risk — *"re-measure this … when a locale other than
+ * `en` is added"* — and `de` shipped long ago with nothing re-measured. These are the four chains,
+ * as intrinsic row widths; the rung each one wants is the width plus the 12px the pill costs (see
+ * the geometry note at the rules themselves):
+ *
+ *                        1:1 message                carrying Reply all
+ *     en          base+defer            455.2      base+rall             329.2
+ *                 +Tag                  518.2      +defer                556.9
+ *                                                  +Tag                  619.8
+ *     de          base+defer            622.1      base+rall             465.6
+ *                 +Tag                  685.0      +defer                764.9
+ *                                                  +Tag                  827.9
+ *
+ * ── REPLY ALL AND TAG CANNOT BOTH STAND WHERE A MESSAGE IS READ, AND REPLY ALL WINS ────
+ *
+ * A message's bar is capped by the mail measure: 572 in the reading column, 576 on a stream card,
+ * 628 on a conversation — and 619.8 + 12 does not fit in 628, let alone in 576. So on a
+ * multi-recipient message Tag stands in no row at any width this bar is given, and lives behind
+ * More with `mm-tag`. On every 1:1 message it stands exactly where it did.
+ *
+ * That is a deliberate reversal of the ordering this file used to carry, which put Tag first
+ * because tagging has no other entry point since the `+ Tag` chip was deleted. Tag still has `t`
+ * and still has its menu row; what it does not have is a reason to occupy the row at the expense
+ * of the second reply verb, because a reader looking at a message addressed to four people can
+ * SEE that "Reply" is not the whole answer, and cannot see that the rest of it is behind a
+ * disclosure. The two reply verbs read as one choice with two answers only when they are next to
+ * each other.
  *
  * `.abar-file` was "deliberately NOT re-derived" here, on the claim that no message bar reaches
- * 601 — and the conversation surface made that claim false and the ladder overflow real. Its
- * tier is now split by surface: 601 for the selection bar (whose chain it was measured against),
- * the cumulative 766 for a message row. The full account is at the file tier below.
+ * 601 — and the conversation surface made that claim false and the ladder overflow real. Its rung
+ * is split by surface: 601 for the selection bar, whose chain it was measured against and whose
+ * geometry has no pill, and one conservative figure for a message row. The full account is at the
+ * file rung below.
  *
  * ── AND THE LADDER WAS THEN WATCHED, NOT ONLY CALCULATED ──────────────────────────────
  *
  * Arithmetic on measured parts is still arithmetic. The rules below were rendered in Chrome
- * against containers stepped through every tier, reading which groups stood and the row's own
- * `scrollWidth` — the number that tells you whether the pill has put a control outside the mail:
+ * against containers stepped through every rung, in both locales, with and without the Reply-all
+ * group, reading which groups stood and the row's own `scrollWidth` against the space the pill
+ * actually leaves it — the number that tells you whether a control has been put outside the mail.
+ * On a bar that CARRIES the group:
  *
- *     container   groups standing in the row                row width
- *      242        reply · read+More                          229
- *      350        reply · read+More                          229
- *      455        reply · read+More                          229
- *      456        reply · DEFER · read+More                  455
- *      518        reply · defer · read+More                  455
- *      519        reply · defer · TAG · read+More            517
- *      572        reply · defer · TAG · read+More            517   ← the reading measure
- *      576        reply · defer · TAG · read+More            517   ← the widest a message bar gets
+ *     container   en: standing in the row / row      de: standing in the row / row
+ *      242        reply·read              227.5      reply·read              322.8  ← see below
+ *      342        reply·REPLY ALL         329.2      reply·read              322.8
+ *      478        reply·reply all         329.2      reply·REPLY ALL         465.6
+ *      569        reply·reply all·DEFER   556.9      reply·reply all         465.6
+ *      572        reply·reply all·defer   556.9      reply·reply all         465.6  ← the measure
+ *      576        reply·reply all·defer   556.9      reply·reply all         465.6  ← widest msg
+ *      628        reply·reply all·defer   556.9      reply·reply all         465.6  ← conversation
  *
- * No row exceeds its container at any tier a message bar can reach, and Tag is standing at both
- * of the two widths a message is actually read at. That is the claim this change is making.
+ * and on a 1:1 bar the two chains reach reply·defer·Tag (518.2) at 531 in English and reply·defer
+ * (622.1) at 635 in German. No row exceeds the space the pill leaves it at any rung a message bar
+ * can reach, in either locale, on either chain. That is the claim this change is making, and it is
+ * the first time the file can make it: the rungs it replaces were each 12px too low.
+ *
+ * ── THE ONE THING NO RUNG CAN FIX ─────────────────────────────────────────────────────
+ *
+ * `base` always stands — Reply, the read switch and More are the row's floor — and in German it is
+ * 322.8 against the 242px the split reading column gives at a 1000px window. Nothing in a density
+ * ladder can help a floor that is too wide; it wants a shorter read-switch label or a narrower
+ * floor, and it is a measurement about `Als ungelesen markieren`, not about this change.
  */
 .abar-defer,
 .abar-file,
@@ -491,7 +539,8 @@
  * TWO PLACES ARE SWITCHED OFF, and they are two different surfaces rather than a duplication.
  * `.abar-panel` is the SELECTION bar's More row, which is still a row (a bulk verb over eleven
  * messages is a different control from a single message's disclosure and keeps its own strip);
- * `.mmenu` is the message bar's menu. One set of numbers governs both.
+ * `.mmenu` is the message bar's menu. They no longer share one set of numbers — see the geometry
+ * note immediately below, which is why every rung is scoped to the surface it was derived for.
  *
  * THE MEASURE MAKES THIS LADDER MATTER MORE, NOT LESS. The bar's container is bound to the mail
  * measure (`--msg-measure`, `packages/ui/.../message.css`), so the ladder reads a narrower width
@@ -499,107 +548,150 @@
  * them are behind More — which is the ladder working, not a regression, and the reason it is a
  * container query rather than a viewport one.
  *
- * WHAT THE QUERIES MEASURE IS UNCHANGED BY THE PILL, and this is worth stating because it looks
- * like it should have changed. The container moved from `.abar` to `.msg-actions`, but
- * `.msg-actions` is the box `.abar` was filling at `width:100%` — same content box, same ≤572px,
- * same tiers. The pill's own fit-content width is measured by nothing. */
-@container abar (min-width: 456px) {
-  .abar-defer { display: flex; }
-  .abar-panel .abar-p-defer { display: none; }
-  .mmenu .mm-defer { display: none; }
+ * ── THE PILL COSTS 12px, AND THIS FILE USED TO SAY IT COST NOTHING ─────────────────────
+ *
+ * The sentence that stood here read: *"WHAT THE QUERIES MEASURE IS UNCHANGED BY THE PILL … the
+ * container moved from `.abar` to `.msg-actions`, but `.msg-actions` is the box `.abar` was
+ * filling at `width:100%` — same content box, same tiers."* The first half is true and the
+ * conclusion does not follow. `.msg-actions > .abar` also gained `padding: 6px`, so on a MESSAGE
+ * bar the row's available width is the queried container **minus 12**, and every rung derived as
+ * "intrinsic row width, admit one above it" fired 12px too early — leaving a 12px band above each
+ * rung in which the row genuinely overflowed the paper. One of those bands contained a real
+ * surface: the conversation's 628 sits inside [620, 631], so a multi-recipient English thread was
+ * putting 4px of the More button outside the pill.
+ *
+ * So a rung is `intrinsic + 12` on a message bar, and `intrinsic` on the selection bar, whose
+ * `.abar` is `flex: 1 1 100%` with no padding and is its OWN query container. That is the second
+ * time this ladder has been split by surface rather than by number (the first was `.abar-file`),
+ * and for the same reason both times: one figure was true of one surface.
+ *
+ * ── AND EVERY RUNG COMES IN TWO, ONE PER MEASURED LOCALE ───────────────────────────────
+ *
+ * The unscoped rung is the widest measured locale; `:root[lang="en"]` overrides it with the
+ * narrower English one. A locale added to `LOCALES` (`app/shell/locale.ts`) without being measured
+ * therefore folds a group into More earlier than it strictly must — the ladder's own failure mode
+ * — instead of painting controls over the mail, which is the defect the ladder exists to prevent.
+ * `LocaleShell` keeps `<html lang>` in step with the active catalogue on a client switch as well
+ * as on the server render, so the predicate is live and not just an SSR artefact. */
+
+/* ── THE REPLY-ALL RUNG — the first group admitted, and the one this change adds ─────────
+ *
+ * 342 in English (329.2 + 12) and 478 otherwise (465.6 + 12), both argued in the header. The
+ * group only exists on a message whose "all" is more people than "reply" (`replyAllRecipients`),
+ * so on most mail these rules match nothing — which is why the rungs below are conditional on the
+ * group being in the row at all. `mm-rall` is switched off in the same block as the row group: a
+ * verb is in the row or behind More, never in both. */
+@container abar (min-width: 478px) {
+  .msg-actions .abar-rall { display: flex; }
+  .msg-actions .mmenu .mm-rall { display: none; }
+}
+@container abar (min-width: 342px) {
+  :root[lang="en"] .msg-actions .abar-rall { display: flex; }
+  :root[lang="en"] .msg-actions .mmenu .mm-rall { display: none; }
 }
 
-/* ── TAG'S TIER: THE FIRST GROUP ADMITTED AFTER THE THREE HORIZONS ──────────────────────
+/* ── THE THREE HORIZONS ─────────────────────────────────────────────────────────────────
  *
- *     base + defer + tag = 455.2 + 56.9 + 6 = 518.1  → admit at 519
+ * Four rungs on a message bar, one per (chain × locale), each `intrinsic + 12`:
+ *
+ *                 1:1 message        carrying Reply all
+ *     en          468  (455.2)       569  (556.9)
+ *     otherwise   635  (622.1)       777  (764.9)
+ *
+ * The `[data-rall]` predicate is React's — `ActionBar` puts the attribute on the pill from the
+ * same `canReplyAll` that decides whether the group renders — because a container query cannot
+ * ask what is in the DOM, and `:has()` would match the group while it is `display: none`. */
+@container abar (min-width: 635px) {
+  .msg-actions .abar:not([data-rall]) .abar-defer { display: flex; }
+  .msg-actions .abar:not([data-rall]) .mmenu .mm-defer { display: none; }
+}
+@container abar (min-width: 468px) {
+  :root[lang="en"] .msg-actions .abar:not([data-rall]) .abar-defer { display: flex; }
+  :root[lang="en"] .msg-actions .abar:not([data-rall]) .mmenu .mm-defer { display: none; }
+}
+@container abar (min-width: 777px) {
+  .msg-actions .abar[data-rall] .abar-defer { display: flex; }
+  .msg-actions .abar[data-rall] .mmenu .mm-defer { display: none; }
+}
+@container abar (min-width: 569px) {
+  :root[lang="en"] .msg-actions .abar[data-rall] .abar-defer { display: flex; }
+  :root[lang="en"] .msg-actions .abar[data-rall] .mmenu .mm-defer { display: none; }
+}
+
+/* ── TAG ────────────────────────────────────────────────────────────────────────────────
  *
  * 56.9 is a MEASUREMENT: a `.abar-b.abar-solo` capsule labelled "Tag" with its `t` keycap, read
  * in Chrome at 11.5px/550 against the same stack `.mo-canvas` sets. The same harness returns
- * 95.69 for "Reply all" and 68.16 for "Reply" — the two figures this file already carries — which
- * is what makes it a re-measurement of the shipped ladder rather than a fresh guess beside it.
+ * 95.69 for "Reply all" and 68.16 for "Reply" — two figures this file already carried — which is
+ * what makes it a re-measurement of the shipped ladder rather than a fresh guess beside it.
  *
- * 519 is the number that matters: it fires at the 572px desktop reading measure and at the 576px
- * a stream card allows, which are the two widths an open message is read at — so Tag stands in
- * the bar wherever mail is actually read. Below it — the 242px split column at a 1000px window,
- * the 350px phone reader — Tag folds into More with defer, which is the ladder doing its job
- * rather than an exception to it.
+ *                 1:1 message        carrying Reply all
+ *     en          531  (518.2)       632  (619.8)
+ *     otherwise   698  (685.0)       840  (827.9)
  *
- * Re-measure it under the same rule as every other tier: a changed label (including a locale
- * whose word for "Tag" is longer) changes the intrinsic width and nothing here would notice.
- */
-@container abar (min-width: 519px) {
-  .abar-tag { display: flex; }
-  .mmenu .mm-tag { display: none; }
+ * 531 is the number that matters: it fires at the 572px desktop reading measure and at the 576px
+ * a stream card allows, so Tag stands in the row wherever a message with a single counterpart is
+ * read. On a bar CARRYING Reply all it does not fire anywhere — 632 against a conversation's 628
+ * is the widest container this bar ever gets — so on multi-recipient mail Tag lives behind More,
+ * with `mm-tag` as the other half of "in the row or in the menu, never both". That is the cost of
+ * the two reply verbs standing together and it is the deliberate half of this change: Tag keeps
+ * `t` and keeps its menu row, while a reader who cannot see "Reply all" has no way to learn it
+ * exists. The rungs above 628 are kept rather than deleted so the arithmetic stays complete and a
+ * wider surface would admit the group without a fresh derivation. */
+@container abar (min-width: 698px) {
+  .msg-actions .abar:not([data-rall]) .abar-tag { display: flex; }
+  .msg-actions .abar:not([data-rall]) .mmenu .mm-tag { display: none; }
+}
+@container abar (min-width: 531px) {
+  :root[lang="en"] .msg-actions .abar:not([data-rall]) .abar-tag { display: flex; }
+  :root[lang="en"] .msg-actions .abar:not([data-rall]) .mmenu .mm-tag { display: none; }
+}
+@container abar (min-width: 840px) {
+  .msg-actions .abar[data-rall] .abar-tag { display: flex; }
+  .msg-actions .abar[data-rall] .mmenu .mm-tag { display: none; }
+}
+@container abar (min-width: 632px) {
+  :root[lang="en"] .msg-actions .abar[data-rall] .abar-tag { display: flex; }
+  :root[lang="en"] .msg-actions .abar[data-rall] .mmenu .mm-tag { display: none; }
 }
 
-/* ── REPLY ALL'S OWN TIER, ABOVE TAG AND BELOW NOTHING A MESSAGE BAR CAN REACH ──────────
+/* ── THE SELECTION BAR KEEPS ITS OWN GEOMETRY AND ITS OWN NUMBERS ───────────────────────
  *
- * The group exists only on a multi-recipient message (`replyAllRecipients`), so unlike defer
- * and file its width is sometimes simply absent — but the tier must be set for the row that
- * CARRIES it, or the one message that shows it is the one message that overflows. It is
- * admitted only after the full defer row AND Tag stand (518.1px, the ladder above), plus its own
- * measured width, plus one 6px gap:
- *
- *     base + defer + tag + reply-all = 518.1 + 95.7 + 6 = 619.8  → admit at 620
- *
- * 95.7 is a MEASUREMENT — a `.abar-b.abar-solo` capsule labelled "Reply all" with its `⇧ r`
- * keycap (27.2px), read off the built page in Chrome at the 572px reading measure (see the
- * header's rule: re-measure when a label or the font stack changes).
- *
- * ── IT WAS 557, AND MOVING IT IS THE COST OF THE TAG TIER ─────────────────────────────
- *
- * At 557 this group stood at the 572px reading measure. With Tag in the row it cannot: 619.8
- * against a container of at most 576 is a 47.8px overflow, and the row is `nowrap` by
- * construction, so it would not wrap — it would put More outside the message, over scrolling
- * text, which is precisely the defect the 456/601 re-measurement was written to remove. So on a
- * message bar Reply all now folds into More, where `mm-rall` already carries it. That ordering is
- * argued in the header: Tag has no other entry point, Reply all has `⇧R` and a menu row.
- *
- * WHY NOTHING OUTRANKS IT: on a SINGLE message the container is capped by the mail measure at
- * ≤576px (`.msg` 640 − 68 padding; a stream card's `.scast` 620 − 44), and the one surface wider
- * than that — the conversation's 628 (below) — admits this group with 8.2px to spare. The file
- * group stands only above both, at its own cumulative tier.
- */
-@container abar (min-width: 620px) {
-  .abar-rall { display: flex; }
-  .mmenu .mm-rall { display: none; }
+ * 456 and 601 are `intrinsic` with no `+ 12`, because `.pick-bar > .abar` carries no pill padding
+ * and is its own query container (see the geometry note above). They are also English-only, like
+ * the rest of this bar's derivation, and they are left exactly as they were: a selection's verbs
+ * are `BulkAction`, a different label set from a message's, so re-deriving them is a measurement
+ * of a different row and not this change's to make. */
+@container abar (min-width: 456px) {
+  .pick-bar .abar-defer { display: flex; }
+  .abar-panel .abar-p-defer { display: none; }
 }
-
-/* ── THE FILE TIER IS SPLIT BY SURFACE, because its one number was true of one surface ────────
- *
- * 601 was derived for the chain base+defer+file (455.2 + 139.5 + 6 = 601.7) and guarded by the
- * claim "no message bar reaches 601". THE CONVERSATION SURFACE ENDED THAT CLAIM: `.conv >
- * .msg-actions` (app.css) hands the container 688 − 2·30 = 628px, so on a thread the 456, 519,
- * 601 and 620 tiers all fired at once — two chains that were derived as mutually exclusive,
- * standing together. The row they admit is
- *
- *     base + defer + tag + reply-all + file = 619.8 + 139.5 + 6 = 765.3
- *
- * in a pill capped at 628. The row is `nowrap` by construction, so it did not wrap — it put
- * "Mark unread" and the More disclosure OUTSIDE the pill, on the canvas, on exactly the
- * messages whose action set was widest (a multi-recipient message that can be tagged). Reported
- * from real use, varying by message, which is that admission arithmetic read back verbatim.
- *
- * So the tier is two rules now, each true of the surface it names:
- *
- *   · THE SELECTION BAR keeps 601. Its chain is the one 601 was measured against — a selection
- *     carries no reply verbs (`BulkAction`), and its Tag button is a plain `.abar-g` outside
- *     this ladder. Its More ROW (`.abar-panel .abar-p-file`) switches in the same block.
- *   · A MESSAGE ROW admits file at the CUMULATIVE figure, the same arithmetic every tier above
- *     follows: 619.8 + 139.5 + one 6px gap = 765.3 → admit at 766. No message container reaches
- *     it today (the conversation's 628 is the widest), so on a message the group stays behind
- *     More — which is the ladder doing its job, not a group lost: `.mmenu .mm-file` switches in
- *     the same block, so the verb is in the row or behind More, never both, PER SURFACE.
- *
- * The cumulative arithmetic — every tier against its own standing row, and the standing row at
- * 628 against the conversation's pill — is asserted by `test/action-bar.test.ts`, from these same
- * measured widths. Re-measure the widths when a label changes; the tiers must then follow. */
 @container abar (min-width: 601px) {
   .pick-bar .abar-file { display: flex; }
   .abar-panel .abar-p-file { display: none; }
 }
 
-@container abar (min-width: 766px) {
+/* ── FILING, ON A MESSAGE BAR: ONE CONSERVATIVE RUNG NOBODY REACHES ─────────────────────
+ *
+ * 601 was derived for the chain base+defer+file (455.2 + 139.5 + 6 = 601.7) and guarded by the
+ * claim "no message bar reaches 601". THE CONVERSATION SURFACE ENDED THAT CLAIM: `.conv >
+ * .msg-actions` (app.css) is `max-width: 688px` with `padding: 0 30px`, so the queried container
+ * is 628 and every rung below it fired at once — chains that were derived as mutually exclusive,
+ * standing together. The row that admitted put "Mark unread" and the More disclosure OUTSIDE the
+ * pill, on the canvas, on exactly the messages whose action set was widest. Reported from real
+ * use, varying by message, which is that admission arithmetic read back verbatim.
+ *
+ * The widest chain this group can join is base + Reply all + defer + Tag + file, which is 1013.1
+ * in the widest measured locale; +12 for the pill is 1026. NO container reaches it and none
+ * reaches the English 778 either (628 is the most a message bar is ever given), so filing stays
+ * behind More on every message, in every locale, and a per-locale split here would be decoration.
+ * One rung, set at the figure that is safe everywhere: `.mmenu .mm-file` switches in the same
+ * block, so the verb is in the row or behind More, never both.
+ *
+ * The cumulative arithmetic — every rung against its own standing row, the +12 the pill costs, and
+ * both locales — is asserted by `test/action-bar.test.ts` from these same measured widths.
+ * Re-measure the widths when a label changes; the rungs must then follow. */
+@container abar (min-width: 1026px) {
   .msg-actions .abar-file { display: flex; }
-  .mmenu .mm-file { display: none; }
+  .msg-actions .mmenu .mm-file { display: none; }
 }

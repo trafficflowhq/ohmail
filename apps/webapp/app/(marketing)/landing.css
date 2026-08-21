@@ -389,7 +389,7 @@ a.btn {
    canvas (L .152) lifts it by ~.09, which sounds comparable and is not:
    next to a rule drawn at FULL accent (L .75) on a near-black surface, a
    field that faint disappears and the device degrades into a plain
-   underline — the exact failure a reviewer caught in dark mode.
+   underline, which is what one number in both themes actually produced.
    So the mix is a variable, set per theme, following the token file's own
    mechanics (explicit data-theme first, system preference only while no
    theme is set). 30% puts the dark wash at ~L .33: unmistakably a marked

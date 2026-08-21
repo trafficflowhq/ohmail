@@ -1992,7 +1992,9 @@
     "statusFailed": "Sending didn't work — your draft is kept. Try again.",
     "statusMailboxDisabled": "Not sent. That address is disconnected and cannot send.",
     "reasonUnknown": "the server refused it.",
-    "toastSent": "Reply sent."
+    "toastSent": "Reply sent.",
+    "toastForwarded": "Forwarded.",
+    "forwardHead": "Forward — you pick who receives it"
   },
   "rules": {
     "intro": "Every Screener decision writes a rule. These are yours.",

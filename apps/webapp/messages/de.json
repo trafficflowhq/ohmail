@@ -1992,7 +1992,9 @@
     "statusFailed": "Senden hat nicht geklappt — dein Entwurf ist gesichert. Versuch es nochmal.",
     "statusMailboxDisabled": "Nicht gesendet. Diese Adresse ist getrennt und kann nicht senden.",
     "reasonUnknown": "der Server hat es abgelehnt.",
-    "toastSent": "Antwort gesendet."
+    "toastSent": "Antwort gesendet.",
+    "toastForwarded": "Weitergeleitet.",
+    "forwardHead": "Weiterleiten — du wählst, wer sie bekommt"
   },
   "rules": {
     "intro": "Jede Screener-Entscheidung schreibt eine Regel. Das sind deine.",
