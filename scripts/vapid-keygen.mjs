@@ -48,7 +48,7 @@
  * path, including its failures.**
  */
 import { createECDH, generateKeyPairSync, timingSafeEqual } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const b64u = (b) => Buffer.from(b).toString("base64url");
@@ -170,9 +170,26 @@ function main(argv) {
     const at = resolve(dir);
     mkdirSync(at, { recursive: true, mode: 0o700 });
     writeFileSync(`${at}/public.key`, `${publicKey}\n`, { mode: 0o644 });
-    // 0600 and written with the mode in the same call: a create-then-chmod leaves a window in
-    // which the private key is world-readable, and on a shared box that window is the whole bug.
-    writeFileSync(`${at}/private.key`, `${privateKey}\n`, { mode: 0o600 });
+    /**
+     * ── THE PRIVATE KEY: WRITTEN 0600, AND THEN MADE 0600 AGAIN ────────────────────────────────
+     *
+     * `mode` on `writeFileSync` applies only when the file is CREATED. Node ignores it for an
+     * existing inode, so re-running `--out` over a `private.key` that was already 0644 replaced the
+     * contents with a fresh private key and kept the permissive mode — while printing "0600" and
+     * telling the operator it was fine. Reproduced before fixing: `chmod 0644` on an existing
+     * `private.key`, re-run, still `-rw-r--r--`.
+     *
+     * Written with the mode FIRST so a newly created file is never briefly world-readable (a
+     * create-then-chmod has exactly that window, and on a shared box that window is the bug), and
+     * then `chmodSync` unconditionally so the existing-file path converges too. Both are needed:
+     * neither one alone covers both cases.
+     */
+    const privPath = `${at}/private.key`;
+    writeFileSync(privPath, `${privateKey}\n`, { mode: 0o600 });
+    chmodSync(privPath, 0o600);
+    // The directory is the second half of the same story: `mkdirSync`'s mode is also
+    // creation-only, so a pre-existing 0755 `vapid/` stayed group- and world-traversable.
+    chmodSync(at, 0o700);
     writeFileSync(`${at}/README.md`, README(publicKey), { mode: 0o644 });
     console.log(`wrote the keypair to ${at}`);
     console.log(`  public.key   ${publicKey}`);

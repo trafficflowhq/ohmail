@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode,
+} from "react";
 import { useConnection } from "../net/connection";
 import { forgetWake, registerWake, NO_DISTRIBUTOR, type WakeState } from "../net/push";
 import {
@@ -8,28 +10,39 @@ import {
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE WAKE, AS THE SETTINGS PANE SEES IT
+ *  THE WAKE LIFECYCLE — MOUNTED AT THE ROOT, because that is what the copy promises
  * ══════════════════════════════════════════════════════════════════════════════════════════
  *
- * One hook, because the pane needs three things that are only meaningful together: which
- * distributors this phone has, which one is chosen, and what happened when we tried to register
- * with the server. Splitting them would let the screen render a chosen distributor beside a
- * registration made against a different one.
+ * One provider owning three things that are only meaningful together: which distributors this
+ * phone has, which one is chosen, and what happened when we registered with the server. Splitting
+ * them would let the screen render a chosen distributor beside a registration made against a
+ * different one.
  *
- * ── WHAT LIVES HERE AND WHAT DELIBERATELY DOES NOT ────────────────────────────────────────────
+ * ── WHY THIS IS A PROVIDER AND NOT A HOOK THE SETTINGS SCREEN CALLS ───────────────────────────
  *
- * NO transport. Every request goes through `net/push.ts`, which is the file the app's privacy
- * census admits to the network seam and which holds no origin of its own; this module holds React
- * state and calls it. That is why this file is in `state/` and not in `net/`: the census's rule is
- * that a file outside the seam may not make a request, and this one does not.
+ * It WAS a hook, and that was a real defect found in review. The `onWake` subscription — the one
+ * that turns a delivered wake into a `/sync` — lived inside it, so it existed only while the
+ * pushed Settings screen was mounted. A launch that never opened Settings had no listener at all,
+ * and pressing Back after enabling wakes tore down the one there was. The app's own copy says a
+ * wake arrives "while ohmail is running — open or in the background", and that sentence was false
+ * for every user who was not sitting on the Settings screen.
+ *
+ * So the lifetime of this is the APP's, mounted beside the connection provider in `_layout.tsx`.
+ * Settings consumes it through {@link useWake} and renders; it no longer owns anything.
+ *
+ * ── WHAT IS DELIBERATELY NOT HERE ─────────────────────────────────────────────────────────────
+ *
+ * NO transport. Every request goes through `net/push.ts`, which is the file the privacy census
+ * admits to the network seam and which holds no origin of its own; this module holds React state
+ * and calls it. That is why it lives in `state/` — the census forbids a file outside the seam from
+ * making a request, and this one does not.
  *
  * ── THE REGISTRATION IS RE-MADE ON EVERY ATTEMPT, NOT CACHED ──────────────────────────────────
  *
- * The connector's own guidance is to call register on every app start, because that is also how it
- * confirms the distributor connection is alive. The server side deduplicates: one endpoint is one
- * row, and a re-registration re-stamps the device and the keys rather than accumulating. So there
- * is nothing to be clever about here — asking again is cheap and is the thing that heals a stale
- * registration.
+ * The connector's own guidance is to register on every app start, because that is also how it
+ * confirms the distributor connection is alive. The server deduplicates: one endpoint is one row,
+ * and a re-registration re-stamps the device and the keys rather than accumulating. So there is
+ * nothing to be clever about — asking again is cheap and is what heals a stale registration.
  */
 
 export interface Wake {
@@ -47,7 +60,20 @@ export interface Wake {
   turnOff(): void;
 }
 
+const WakeContext = createContext<Wake | null>(null);
+
+/**
+ * Read the wake state. Throws outside the provider rather than answering a plausible default:
+ * a silent "no distributor" would look exactly like a phone that has none, which is the bug this
+ * whole file exists to stop being invisible.
+ */
 export function useWake(): Wake {
+  const w = useContext(WakeContext);
+  if (w === null) throw new Error("useWake outside WakeProvider");
+  return w;
+}
+
+export function WakeProvider({ children }: { children: ReactNode }) {
   const conn = useConnection();
   const session = conn.state.k === "live" ? conn.state.session : null;
 
@@ -73,9 +99,9 @@ export function useWake(): Wake {
   /**
    * Attempt a registration and land on whatever it answers.
    *
-   * `mounted` guards the state writes, because a Settings pane can be closed mid-request and the
-   * connector's register has a fifteen-second ceiling — a setState after unmount is a warning
-   * nobody can act on and, worse, a value written into a screen that no longer exists.
+   * `mounted` guards the state writes: the connector's register has a fifteen-second ceiling, and a
+   * setState after unmount is a warning nobody can act on and a value written into a tree that no
+   * longer exists.
    */
   const attempt = useCallback(async (mounted: () => boolean): Promise<void> => {
     if (!session) return;
@@ -85,6 +111,20 @@ export function useWake(): Wake {
       if (!mounted()) return;
       subscriptionId.current = next.k === "on" ? next.id : null;
       setState(next);
+    } catch {
+      /**
+       * A TERMINAL CATCH, even though `registerWake` now maps every failure to a state.
+       *
+       * This is invoked as `void attempt(…)`, so anything that escapes is an unhandled rejection —
+       * and the pane would keep its previous state, which after a successful registration means it
+       * says "on" about nothing. `registerWake`'s contract is that it does not throw; this is here
+       * so that the contract being wrong is a visible "off" rather than a silent lie plus a console
+       * warning. A contract worth having is worth not depending on.
+       */
+      if (mounted()) {
+        subscriptionId.current = null;
+        setState({ k: "off", reason: "server_unavailable" });
+      }
     } finally {
       if (mounted()) setBusy(false);
     }
@@ -112,12 +152,15 @@ export function useWake(): Wake {
   }, [session, attempt, readDevice]);
 
   /**
-   * A DELIVERED wake means one thing: pull. Subscribed here rather than in the pane because it must
-   * hold for as long as the app is running, not for as long as Settings is open.
+   * A DELIVERED WAKE MEANS ONE THING: PULL.
    *
-   * `conn.syncNow()` is the same call pull-to-refresh makes — the wake is a trigger for the sync
-   * the app already knows how to do, never a source of data. That is what makes a wake carrying a
-   * closed constant sufficient.
+   * This subscription is the reason the whole module is a root provider. It has to outlive every
+   * screen — a wake arriving while the user is reading their inbox must sync, and before this it
+   * only did if they happened to have Settings open.
+   *
+   * `conn.syncNow()` is the same call pull-to-refresh makes: the wake is a TRIGGER for the sync the
+   * app already knows how to do, never a source of data. That is what makes a closed fifteen-byte
+   * constant sufficient.
    */
   useEffect(() => {
     if (!session) return;
@@ -145,5 +188,9 @@ export function useWake(): Wake {
     setState({ k: "no_distributor" });
   }, [session, readDevice]);
 
-  return { state, choices, chosen, busy, choose, turnOff };
+  return (
+    <WakeContext.Provider value={{ state, choices, chosen, busy, choose, turnOff }}>
+      {children}
+    </WakeContext.Provider>
+  );
 }

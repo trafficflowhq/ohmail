@@ -201,18 +201,47 @@ export async function registerWake(
   }
   if (!reg || reg.endpoint === "") return { k: "off", reason: "distributor_refused" };
 
-  const res = await session.bearer.fetch(`${session.profile.origin}/push/subscriptions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      transport: "unifiedpush",
-      endpoint: reg.endpoint,
-      ...(reg.keys ? { p256dh: reg.keys.p256dh, auth: reg.keys.auth } : {}),
-    }),
-  });
+  /**
+   * ── EVERY OUTCOME OF THIS FUNCTION IS A `WakeState`. THAT INCLUDES THE TRANSPORT FAILING. ────
+   *
+   * The key fetch and the distributor call were already wrapped; this POST was not, so a phone that
+   * lost signal between registering with its distributor and telling the server about it got a
+   * REJECTED PROMISE out of `registerWake`. Both callers invoke it as `void attempt(…)`, which makes
+   * that an unhandled rejection and leaves the Settings pane on its previous state — it would still
+   * say "on" while nothing was registered.
+   *
+   * A `catch` around the request rather than around the whole function, so a bug in the branching
+   * below still surfaces instead of being flattened into "server unavailable".
+   */
+  let res: Response;
+  try {
+    res = await session.bearer.fetch(`${session.profile.origin}/push/subscriptions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        transport: "unifiedpush",
+        endpoint: reg.endpoint,
+        ...(reg.keys ? { p256dh: reg.keys.p256dh, auth: reg.keys.auth } : {}),
+      }),
+    });
+  } catch {
+    return { k: "off", reason: "server_unavailable" };
+  }
 
   if (res.status === 201 || res.status === 200) {
-    const body = (await res.json()) as { id?: unknown };
+    /**
+     * A 2xx whose body will not parse is the server answering something this build does not
+     * understand — a proxy's HTML error page under a 200 is the ordinary way that happens. It is
+     * `server_unavailable` and not `server_answer_unrecognised`, because the latter is for a
+     * well-formed answer with no usable `id`: one means "we could not talk to it", the other means
+     * "we talked to it and it said something else", and the copy for the two differs.
+     */
+    let body: { id?: unknown };
+    try {
+      body = (await res.json()) as { id?: unknown };
+    } catch {
+      return { k: "off", reason: "server_unavailable" };
+    }
     if (typeof body.id === "string") return { k: "on", id: body.id };
     return { k: "off", reason: "server_answer_unrecognised" };
   }

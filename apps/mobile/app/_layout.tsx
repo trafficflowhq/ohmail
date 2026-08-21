@@ -11,6 +11,7 @@ import { ThemeProvider, useTheme } from "../src/theme";
 import { ConnectionProvider } from "../src/net/connection";
 import { PrefsProvider, usePrefs } from "../src/state/store";
 import { WorldProvider } from "../src/state/world";
+import { WakeProvider } from "../src/state/wake";
 import { Toast } from "../src/ui/chrome";
 
 export default function RootLayout() {
@@ -22,7 +23,14 @@ export default function RootLayout() {
             the tabs gate hands the screen to the connect flow instead. */}
         <ConnectionProvider>
           <WorldProvider>
-            <Shell />
+            {/* The wake lifecycle sits HERE, not in Settings. It owns the one subscription that
+                turns a delivered wake into a sync, and the app's copy promises that works
+                "while ohmail is running — open or in the background". Mounted on a screen, it
+                existed only while that screen did: a launch that never opened Settings had no
+                listener, and pressing Back tore down the one there was. */}
+            <WakeProvider>
+              <Shell />
+            </WakeProvider>
           </WorldProvider>
         </ConnectionProvider>
       </PrefsProvider>
