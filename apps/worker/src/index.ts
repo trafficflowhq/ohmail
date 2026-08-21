@@ -4280,13 +4280,20 @@ export async function startWorkerWithLock(
         vapid,
         log,
       });
-      // Said at BOOT rather than left to the first wake, because "are encrypted wakes on" is a
-      // fact an operator wants when the process starts — and because both the `absent` and
-      // `configured` arms are deliberately silent from then on.
+      /**
+       * Said at BOOT rather than left to the first wake, because "are encrypted wakes on" is a fact
+       * an operator wants when the process starts — and because both the `absent` and `configured`
+       * arms are deliberately silent from then on.
+       *
+       * `state` and `reason`, and NOT `vapid`/`encryptedWakes`: the logger allow-lists field NAMES
+       * and drops the rest. The first managed deploy of this line logged
+       * `droppedFields=["vapid","encryptedWakes"]` and therefore said nothing at all — the exact
+       * failure the allow-list reports rather than hides. `state` carries the three-valued answer
+       * (`configured` / `absent` / `invalid`), which is the whole fact.
+       */
       log.info("push_wake_started", {
-        vapid: vapid.kind,
-        encryptedWakes: vapid.kind === "configured",
-        ...(vapid.kind === "configured" ? {} : { why: vapid.why }),
+        state: vapid.kind,
+        ...(vapid.kind === "configured" ? {} : { reason: vapid.why }),
       });
     } catch (err) {
       log.warn("push_wake_unavailable", {

@@ -412,11 +412,25 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
    * reason is in the log with no key material in it.
    */
   if (deps.vapid.kind === "invalid") {
+    /**
+     * ONE `reason` STRING, with the specific cause folded into it — not a second `why` field.
+     *
+     * The logger applies an allow-list to field NAMES and silently drops anything not on it,
+     * reporting the omission as `droppedFields`. `why` is not on that list, so a `{ why, reason }`
+     * pair loses exactly the half that says WHICH misconfiguration this is. Measured on the first
+     * managed deploy of this module: `push_wake_started` shipped `vapid` and `encryptedWakes` and
+     * logged `droppedFields=["vapid","encryptedWakes"]` — a line whose entire purpose was to state
+     * whether encrypted wakes were on, conveying nothing.
+     *
+     * Folding rather than widening the allow-list is deliberate: `log.ts` argues that a per-caller
+     * widening is how that list stops being enumerable, and `reason` already exists for precisely
+     * this — a sentence an operator can act on.
+     */
     log?.warn("push_wake_vapid_invalid", {
-      why: deps.vapid.why,
-      reason: "this deployment configured a VAPID keypair that cannot be used, so NO wakes are "
-        + "sent — including the unencrypted ones, deliberately, so a broken configuration is not "
-        + "hidden by the arm that still works. Devices still sync on foreground and pull-to-refresh.",
+      state: deps.vapid.kind,
+      reason: `${deps.vapid.why} — so NO wakes are sent, including the unencrypted ones. That is `
+        + "deliberate: a broken configuration must not be hidden by the arm that still works. "
+        + "Devices still sync on foreground and pull-to-refresh.",
     });
     return { stop(): void { /* nothing was ever started */ }, sent: () => 0, skipped: () => 0 };
   }
