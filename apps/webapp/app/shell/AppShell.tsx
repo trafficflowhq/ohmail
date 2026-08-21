@@ -1751,6 +1751,21 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   );
 
   /**
+   * THE OHBOX'S ARMED READ — reported by `OhboxView.onReadArmed`, held here for ONE consumer:
+   * the reader sheet's `MessagePane`, whose read-state verb derives from `message.unread`. The
+   * Ohbox commits reading on departure, so while a message is open the store still says unread —
+   * and the sheet went on offering "Mark read" over a message the reader was reading. The view
+   * flips its own column and rows; the sheet is mounted HERE, so the fact travels up. A report
+   * of view-local presentation state, never a second writer of read-state: nothing else may
+   * read it.
+   */
+  const [ohboxArmedRead, setOhboxArmedRead] = useState<string | null>(null);
+  const sheetMessage: EngineMessage | null =
+    readerMessage != null && readerMessage.unread && readerMessage.id === ohboxArmedRead
+      ? { ...readerMessage, unread: false }
+      : readerMessage;
+
+  /**
    * Is the reading column absent? Under 900px `app.css` sets `display:none` on it, so a
    * split-pane selection shows the user nothing and "opened" has to mean the reader sheet.
    * One predicate, used by `openReply` (which had it inline) and by `openMessage`.
@@ -4705,6 +4720,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    It is `enterReader` and no longer `setReaderFor` — see the gate above. */
                 onEnterReader={enterReader}
                 onMarkSeen={markSeen}
+                /* The view's armed read, held for the reader sheet's verb — see `ohboxArmedRead`. */
+                onReadArmed={setOhboxArmedRead}
                 /* WHICH MESSAGE THE SHEET IS SHOWING, so the view can tell when it CLOSES.
                    Reading is committed on the way out of a message, and at a width with no
                    reading column dismissing the sheet is the way out — often the only one, since
@@ -5230,12 +5247,15 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
            does not read as tappable. The component's own default is English. */
         closeLabel={t("reader.back")}
       >
-        {readerMessage ? (
+        {sheetMessage ? (
           <MessagePane
-            message={readerMessage}
+            /* Presented state, not stored state — see `ohboxArmedRead`. The ACTIONS still act on
+               the real message: `sheetMessage` differs only in the `unread` the verb derives
+               from, and `onMessageAction` receives the same id either way. */
+            message={sheetMessage}
             tags={tags}
             now={now}
-            onAction={(a) => onMessageAction(a, readerMessage)}
+            onAction={(a) => onMessageAction(a, sheetMessage)}
             onAddTag={openTagPicker}
           />
         ) : (

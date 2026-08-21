@@ -290,11 +290,12 @@ function ActionBar({
    *
    * The bar used to render nothing at all on an unread message: the argument was that opening a
    * message reads it, so a "Mark read" arm acts on a state the message is about to be in anyway.
-   * That is true of the DWELL and false of the CONTROL — reading is committed on the way OUT
-   * (`OhboxView`), so a message opened and put back to unread with `u`, or opened on a surface with
-   * no dwell, sits under the reader's eyes as unread with no way to say "I am done with this"
-   * except to leave. And a slot that holds a verb in one state and nothing in the other reads as a
-   * control that has disappeared rather than as a state with no verb.
+   * That is true of an ARMED read — and the Ohbox now presents one as read, so `message.unread`
+   * here is presented state and this arm never renders over a message being read — but false of
+   * the message `u` just put back to unread: it sits under the reader's eyes as unread with no way
+   * to say "I am done with this" except to leave. And a slot that holds a verb in one state and
+   * nothing in the other reads as a control that has disappeared rather than as a state with no
+   * verb.
    *
    * IT PRESSES `⇧I`, NOT A TOGGLED `u`. The keyboard here is two DIRECTIONS and not one flip —
    * `u` marks unread, `⇧I` marks read, argued out in `OhboxView`'s own binding table — and a

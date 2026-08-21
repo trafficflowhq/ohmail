@@ -119,6 +119,7 @@ export function OhboxView({
   onSelect,
   onEnterReader,
   onMarkSeen,
+  onReadArmed,
   readerId,
   doorbellInitials,
   doorbellHues,
@@ -210,6 +211,20 @@ export function OhboxView({
    * which is what every other caller here is.
    */
   onMarkSeen: (ids: string[], unread: boolean, via?: "glance") => void;
+  /**
+   * THE ARMED READ, REPORTED UPWARD — `id` while a message's read is armed but not yet written,
+   * `null` the moment the debt is spent or torn up.
+   *
+   * An armed read PRESENTS as read (see {@link commitPendingRead} and `effUnread` below): the row
+   * loses its dot and the read-state verb flips, while the write still waits for departure. This
+   * view can only flip the surfaces it renders — and the mobile reader sheet is the SHELL's
+   * `MessagePane`, mounted over `readerMessage` in `AppShell`, so the sheet's verb would go on
+   * deriving from the not-yet-written store flag without this channel. The shell holds the id and
+   * presents the sheet's message with the same effective state; it is a REPORT of view-local
+   * fact, never a second writer of read-state. Optional: a harness mounted without it simply has
+   * no sheet to inform.
+   */
+  onReadArmed?: (id: string | null) => void;
   /**
    * WHICH MESSAGE THE READER SHEET IS SHOWING, or `null` when it is closed.
    *
@@ -821,16 +836,52 @@ export function OhboxView({
    * their eyes. Which is enough, and is where the protection belonged all along: the list moves at
    * the moment attention has already left the message, never while it is being looked at.
    *
-   * A ref rather than state, for the same two reasons `pinnedUnread` is one: the commit paths run
+   * A ref rather than state, for the same reason `pinnedUnread` is one: the commit paths run
    * outside React's render (a timer, a document event, an unmount cleanup) and must see the value
-   * as it is at that instant, and arming must not cost a render of the list it is trying not to
-   * disturb.
+   * as it is at that instant.
    *
    * At most ONE message is ever owed. Reading is a cursor, not a set: arriving somewhere new is
    * itself a departure from the last place, so the previous debt is settled before a new one is
    * taken on and this can never become a queue that a reload would drop.
    */
   const pendingRead = useRef<string | null>(null);
+
+  /**
+   * ═══ AN ARMED READ PRESENTS AS READ ══════════════════════════════════════════════════════
+   *
+   * The renderable twin of {@link pendingRead}, and the fix for the two surfaces that leaked the
+   * deferral (owner-reported). Committing on departure is invisible by design — except that the
+   * open message's read-state verb went on offering "Mark read" (deriving from a store flag the
+   * departure had not written yet), and its row sat at full unread weight under "New for you" for
+   * as long as it was being read. Both surfaces now derive from the ARMED state: the moment a
+   * read is armed — an explicit open, or the split pane's two-second dwell — the row loses its
+   * dot and its weight, and the verb flips to "Mark unread", the only honest action on a message
+   * that is being read.
+   *
+   * WHAT DOES NOT MOVE WITH IT, deliberately:
+   *   · THE WRITE. Departure still commits, on the one path every read-state write takes. This
+   *     is presentation of a fact this view already holds, never a second writer.
+   *   · THE PLACE. The row keeps its slot under "New for you" until departure — the session
+   *     lease is untouched, and the arming render can restyle a row but never moves one.
+   *   · THE COUNTS. The header's "N unread" and mark-all-read keep counting TRULY unread mail
+   *     (`unreadIds`), so they can sit one above the dots on screen while a message is open.
+   *     A count that followed the presentation would claim a write that has not happened — and
+   *     the commit's own re-judgement reads true state through `allRef`, which is what keeps
+   *     the departure write firing at all.
+   *
+   * Arming used to be free of renders on purpose; the render is now the point — it is what draws
+   * the unbold. One writer for the pair: {@link armRead} moves the ref and the state together
+   * (plus the upward report — see the `onReadArmed` prop), so the two can never disagree, and
+   * `commitPendingRead` stays callable from cleanups because `armRead` is memoised on nothing.
+   */
+  const [armedRead, setArmedRead] = useState<string | null>(null);
+  const onReadArmedRef = useRef(onReadArmed);
+  onReadArmedRef.current = onReadArmed;
+  const armRead = useCallback((id: string | null) => {
+    pendingRead.current = id;
+    setArmedRead(id);
+    onReadArmedRef.current?.(id);
+  }, []);
 
   /**
    * SPEND THE DEBT — and re-judge it at the moment of spending, never at the moment of arming.
@@ -854,7 +905,9 @@ export function OhboxView({
    */
   const commitPendingRead = useCallback(() => {
     const id = pendingRead.current;
-    pendingRead.current = null;
+    // Through `armRead`, so the armed presentation ends with the debt — whatever the departure,
+    // and whether or not the re-judgement below decides to write.
+    if (id != null) armRead(null);
     if (id == null) return;
     if (pinnedUnread.current === id) return;
     if (!allRef.current.find((m) => m.id === id)?.unread) return;
@@ -863,7 +916,7 @@ export function OhboxView({
     // drops it from the batch (`OhmailEngine.enrich`) — so "open it and leave" no longer answers
     // a resurface the reader never dealt with. Every deliberate reader below omits the flag.
     markSeenRef.current([id], false, "glance");
-  }, []);
+  }, [armRead]);
 
   /**
    * THE CURSOR THE USER PUT HERE — and the only value in this file that can arm the dwell.
@@ -935,10 +988,10 @@ export function OhboxView({
     onSelect(m.id);
     if (m.unread) {
       if (pendingRead.current !== m.id) commitPendingRead();
-      pendingRead.current = m.id;
+      armRead(m.id);
     }
     onEnterReader(m.id);
-  }, [onSelect, onEnterReader, commitPendingRead]);
+  }, [onSelect, onEnterReader, commitPendingRead, armRead]);
 
   /**
    * RELEASE THE `u` PIN WHEN THE CURSOR MOVES — the second half of `pinnedUnread`, declared
@@ -997,10 +1050,12 @@ export function OhboxView({
    */
   const markUnread = useCallback((m: EngineMessage) => {
     pinnedUnread.current = m.id;
-    if (pendingRead.current === m.id) pendingRead.current = null;
+    // Through `armRead`, so tearing up the debt also re-bolds the row and puts the verb back —
+    // the presentation half of "the later explicit act wins" (see `armedRead`).
+    if (pendingRead.current === m.id) armRead(null);
     promote([m.id]);
     onMarkSeen([m.id], true);
-  }, [onMarkSeen, promote]);
+  }, [onMarkSeen, promote, armRead]);
 
   const markRead = useCallback((m: EngineMessage) => {
     // Reading it is consent for the dwell to have been right, so the pin is released. The debt
@@ -1059,10 +1114,14 @@ export function OhboxView({
     if (typeof window === "undefined" || !window.matchMedia) return;
     if (window.matchMedia("(max-width: 900px)").matches) return;
     const timer = window.setTimeout(() => {
-      pendingRead.current = id;
+      // Through `armRead`, so the row's ink and the verb flip with the debt (see `armedRead`).
+      // The render this costs restyles the one row; placement is the session order's and does
+      // not move. `armRead` is memoised on nothing, so the dependency array below still re-runs
+      // this effect on `dwellOn` and on nothing else.
+      armRead(id);
     }, DWELL_MS);
     return () => window.clearTimeout(timer);
-  }, [dwellOn]);
+  }, [dwellOn, armRead]);
 
   /**
    * ═══ DEPARTURES #2, #3 AND #4 ═════════════════════════════════════════════════════════════
@@ -1544,6 +1603,14 @@ export function OhboxView({
     ) : null;
 
   /**
+   * READ-STATE AS PRESENTED — the store's flag minus the armed read (see `armedRead`). Used by
+   * exactly the surfaces that SHOW read-state: the row's dot/ink and the open message's verb.
+   * Everything that acts on or counts read-state (`unreadIds`, mark-all-read, the dwell's and the
+   * commit's re-judgements, the slide) keeps reading the store's own flag.
+   */
+  const effUnread = (m: EngineMessage): boolean => m.unread && m.id !== armedRead;
+
+  /**
    * `actions` is threaded only by the pin group's own mapper below — `row` itself stays unary
    * because it is passed straight to `.map(row)` in two places, where a second parameter would
    * silently receive the INDEX.
@@ -1566,8 +1633,11 @@ export function OhboxView({
       {...rowStamp(m, now, absoluteTime, onToggleTime)}
       subject={m.subject}
       preview={m.protected ? t("protectedPreview") : m.snippet}
-      unread={m.unread}
-      seen={!m.unread}
+      /* As PRESENTED, not as stored: a row whose read is armed drops its dot and its weight the
+         moment the reading is established, while the write waits for departure and the row keeps
+         its slot. See `armedRead`. */
+      unread={effUnread(m)}
+      seen={!effUnread(m)}
       selected={selected?.id === m.id}
       // the settling class rides the row for the 280 ms it takes to slide down to "Earlier" —
       // read here, answered, or read on another mail client. See `slideOut`.
@@ -1725,8 +1795,11 @@ export function OhboxView({
               ? `${sent.label}: ${shown.snippet}`
               : shown.snippet
         }
-        unread={g.unreadCount > 0}
-        seen={g.unreadCount === 0}
+        /* The fold's own count is true unread (it also picks `openTarget`); the DOT is presented
+           state — a conversation whose one unread member is being read right now reads as read.
+           See `armedRead`. */
+        unread={g.members.some(effUnread)}
+        seen={!g.members.some(effUnread)}
         selected={selected != null && g.members.some((m) => m.id === selected.id)}
         threadCount={g.members.length}
         /* the Me → recipient rule wins the LEAD circle and the sender line — not the strip,
@@ -2061,10 +2134,27 @@ export function OhboxView({
       <ReadColumn>
         {selected ? (
           <MessagePane
-            message={selected}
+            /* The pane derives its read-state verb from `message.unread`, so the open message
+               travels with its PRESENTED state: an armed read offers "Mark unread" — the only
+               honest action on a message that is being read — while the store's flag waits for
+               the departure write. See `armedRead`; the shell does the same for the reader
+               sheet via `onReadArmed`. */
+            message={selected.unread && !effUnread(selected) ? { ...selected, unread: false } : selected}
             tags={tags}
             now={now}
-            onAction={(a) => onAction(a, selected)}
+            onAction={(a) => {
+              /* The pane's read-state buttons press `u`/`⇧I` and fall back to `onAction("unread")`
+                 — a FLIP — only where no keymap answers. A flip resolved ABOVE this view would
+                 derive from the store's flag and invert the verb on an armed message, and it
+                 would skip the pin/promote/armed machinery either way. So the fallback is routed
+                 through the same two directions the keys take; everything else passes through. */
+              if (a === "unread") {
+                if (effUnread(selected)) markRead(selected);
+                else markUnread(selected);
+                return;
+              }
+              onAction(a, selected);
+            }}
             onAddTag={onAddTag}
           />
         ) : all.length > 0 ? (
