@@ -277,7 +277,10 @@
     "webGroupAction": "Sign out all",
     "webGroupAsk": "Sign out {count, plural, one {# web session} other {# web sessions}}?",
     "webGroupWhat": "Each loses access with its next request. This browser and your paired devices stay signed in.",
-    "webGroupDone": "Signed out {count, plural, one {# web session} other {# web sessions}}."
+    "webGroupDone": "Signed out {count, plural, one {# web session} other {# web sessions}}.",
+    "loading": "Loading your devices…",
+    "loadFailed": "Your devices could not be loaded.",
+    "retry": "Try again"
   },
   "host": {
     "title": "Devices",

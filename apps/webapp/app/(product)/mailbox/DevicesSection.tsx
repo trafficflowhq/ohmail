@@ -107,6 +107,15 @@ export function DevicesSection() {
   const t = useTranslations("devices");
   const format = useFormatter();
   const toast = useToast();
+  /**
+   * A label whose key may not be in `messages/*.json` yet — the same shim, with the same one
+   * exit, as `MessagePane.copy` (named `line` here — this pane already has a clipboard verb
+   * called `copy`): `t.has` hands the line to the locale files the moment the key
+   * lands there, so this can never become a second source of copy. It exists because the
+   * messages files are a shared, frequently-touched surface and this pane's states should not
+   * wait on them to be editable.
+   */
+  const line = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
 
   /** Live sessions (`GET /devices`). `null` = not read yet. */
   const [items, setItems] = useState<DeviceDTO[] | null>(null);
@@ -400,7 +409,34 @@ export function DevicesSection() {
         </>
       ) : null}
 
-      {items && items.length > 0 ? (
+      {items == null ? (
+        /* NOT READ YET — the pane used to render NOTHING here until `GET /devices` answered,
+           and on a slow answer that was a long blank where the list belongs (owner-reported).
+           The subhead renders in both waiting states and stays when the rows arrive, so the
+           surrounding layout never jumps; only the sentence under it swaps. `role="status"` so
+           a screen reader hears the wait end. A fetch that FAILED with nothing loaded gets the
+           plain sentence and a retry — the top-of-pane `acct-warn` already names the error. */
+        <>
+          <SettingsSubhead>{t("devicesTitle")}</SettingsSubhead>
+          {error == null ? (
+            <p className="set-note-inline" role="status">{line("loading", "Loading your devices…")}</p>
+          ) : (
+            <>
+              <p className="set-note-inline">{line("loadFailed", "Your devices could not be loaded.")}</p>
+              <div className="acct-actions">
+                <Button
+                  onClick={() => {
+                    setError(null);
+                    void refresh();
+                  }}
+                >
+                  {line("retry", "Try again")}
+                </Button>
+              </div>
+            </>
+          )}
+        </>
+      ) : items.length > 0 ? (
         <>
           <SettingsSubhead>{t("devicesTitle")}</SettingsSubhead>
           {/* Current session pinned first, NAMED devices individually, and — where the server

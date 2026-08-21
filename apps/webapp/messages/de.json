@@ -277,7 +277,10 @@
     "webGroupAction": "Alle abmelden",
     "webGroupAsk": "{count, plural, one {# Web-Sitzung} other {# Web-Sitzungen}} abmelden?",
     "webGroupWhat": "Jede verliert den Zugriff mit ihrer nächsten Anfrage. Dieser Browser und deine gekoppelten Geräte bleiben angemeldet.",
-    "webGroupDone": "{count, plural, one {# Web-Sitzung abgemeldet} other {# Web-Sitzungen abgemeldet}}."
+    "webGroupDone": "{count, plural, one {# Web-Sitzung abgemeldet} other {# Web-Sitzungen abgemeldet}}.",
+    "loading": "Deine Geräte werden geladen …",
+    "loadFailed": "Deine Geräte konnten nicht geladen werden.",
+    "retry": "Nochmal versuchen"
   },
   "host": {
     "title": "Geräte",
