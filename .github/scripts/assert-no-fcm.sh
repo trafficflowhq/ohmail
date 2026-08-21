@@ -138,24 +138,35 @@ check_absent() {
 # The push-specific packages are ALSO checked individually below, so they fail twice: once here as
 # unlisted, once by name with a message that says what they are. Belt and braces on the one thing
 # this script exists for.
-FIREBASE_ALLOWED='annotations components dynamicloading encoders events inject'
-FIREBASE_ALLOWED_TOPLEVEL='FirebaseException FirebaseApiNotAvailableException FirebaseExceptionMapper'
-fb_unexpected=""
-for seg in $(/usr/bin/grep -a -o 'Lcom/google/firebase/[A-Za-z0-9_]*' "$WORK/all.dex" \
-             | sed 's|Lcom/google/firebase/||' | sort -u); do
-  case " $FIREBASE_ALLOWED $FIREBASE_ALLOWED_TOPLEVEL " in
-    *" $seg "*) continue ;;
-  esac
-  fb_unexpected="$fb_unexpected $seg"
-done
+# ── EXACT CLASSES, NOT PACKAGES ──────────────────────────────────────────────────────────────
+#
+# The first version of this allow-list permitted whole PACKAGES, and review caught that it was
+# weaker than the blanket ban it replaced in the one direction that matters: a new executable class
+# inside an allowed package — `com/google/firebase/components/PushClient` — would have been waved
+# through as inert. So the permitted set is the exact descriptor list measured from a real build,
+# and anything outside it is red with its own name printed.
+ALLOWLIST="$(dirname "$0")/firebase-inert-allowlist.txt"
+test -f "$ALLOWLIST" || { echo "assert-no-fcm: missing $ALLOWLIST" >&2; exit 1; }
+/usr/bin/grep '^Lcom/google/firebase/' "$ALLOWLIST" | sort -u > "$WORK/fb-allowed"
+ALLOWED_N=$(wc -l < "$WORK/fb-allowed" | tr -d ' ')
+# A floor, so a truncated or empty allow-list cannot silently permit nothing (which would be red
+# on a clean APK and get "fixed" the wrong way) or, worse, be mistaken for a permissive one.
+test "${ALLOWED_N:-0}" -ge 50 \
+  || { echo "assert-no-fcm: the allow-list holds only $ALLOWED_N descriptors — it looks truncated" >&2; exit 1; }
+
+/usr/bin/grep -a -o 'Lcom/google/firebase/[A-Za-z0-9_/$]*;' "$WORK/all.dex" | sort -u > "$WORK/fb-found"
+fb_unexpected=$(comm -23 "$WORK/fb-found" "$WORK/fb-allowed")
 if [ -n "$fb_unexpected" ]; then
-  echo "assert-no-fcm: UNEXPECTED Firebase package(s) in the dex:$fb_unexpected" >&2
-  echo "  The allow-list holds only inert infrastructure (a DI container, encoders, exception" >&2
-  echo "  types) that is reachable from nothing because FirebaseApp is not in the binary. Anything" >&2
-  echo "  else has to be justified or removed — start by finding which dependency added it." >&2
+  echo "assert-no-fcm: UNEXPECTED Firebase class(es) in the dex:" >&2
+  printf '    %s\n' $fb_unexpected >&2
+  echo "  The allow-list holds ${ALLOWED_N} exact descriptors, all inert: a DI container, encoders," >&2
+  echo "  injection interfaces and exception types, reachable from nothing because FirebaseApp is" >&2
+  echo "  absent. Anything else must be justified or removed. If a dependency bump merely renamed" >&2
+  echo "  or added an equally inert class, read what arrived, satisfy yourself, and add the line to" >&2
+  echo "  firebase-inert-allowlist.txt. Do NOT replace that file with a prefix." >&2
   fail=1
 else
-  echo "assert-no-fcm: the Firebase namespace holds only the allow-listed inert packages"
+  echo "assert-no-fcm: the Firebase namespace matches the ${ALLOWED_N} allow-listed inert classes exactly"
 fi
 
 # And `FirebaseApp` itself: the class that initialises Firebase. Its ABSENCE is what makes the
@@ -182,17 +193,51 @@ check_absent "Firebase Installations" 'Lcom/google/firebase/installations/'
 # If the class is missing or does not implement the interface, `resolvePayloadRenderer` returns null
 # and the service falls back to the DEFAULT renderer — a silent no-op that looks configured, which
 # is exactly why this is asserted against the artifact rather than against `app.json`.
-RENDERER='Lapp/ohmail/push/SilentPushPayloadRenderer;'
-n=$(/usr/bin/grep -a -c -F "$RENDERER" "$WORK/all.dex" || true)
+# BOTH HALVES ARE ASSERTED, and the first version of this check only did one of them — review
+# caught it. The class being compiled in proves nothing on its own: the connector only looks the
+# class up if the manifest carries the meta-data pointing at it, so an `app.json` that lost the
+# `expo-unified-push` plugin entry would leave the class present, this check green, and the DEFAULT
+# renderer quietly in force. That is the exact silent-fallback path the renderer exists to close.
+RENDERER_FQCN='app.ohmail.push.SilentPushPayloadRenderer'
+RENDERER_DESC='Lapp/ohmail/push/SilentPushPayloadRenderer;'
+META_NAME='dev.djara.expounifiedpush.PAYLOAD_RENDERER'
+
+n=$(/usr/bin/grep -a -c -F "$RENDERER_DESC" "$WORK/all.dex" || true)
 if [ "${n:-0}" -gt 0 ]; then
-  echo "assert-no-fcm: present — the silent push renderer is compiled in"
+  echo "assert-no-fcm: present — the silent push renderer class is compiled in"
 else
-  echo "assert-no-fcm: MISSING the silent push renderer class ($RENDERER)." >&2
-  echo "  Without it the connector's DEFAULT renderer is in force, and the server this phone" >&2
-  echo "  pairs with can draw a notification with its own text and its own tap URL." >&2
-  echo "  Check that app.json lists the expo-unified-push plugin with payloadRendererClass AND" >&2
-  echo "  that plugins/silent-push-renderer.js wrote the class into the generated project." >&2
+  echo "assert-no-fcm: MISSING the silent push renderer class ($RENDERER_DESC)." >&2
+  echo "  Check that plugins/silent-push-renderer.js wrote the class into the generated project." >&2
   fail=1
+fi
+
+# The manifest half. The binary AXML keeps its strings in a pool, so the name and the value are
+# searched for as bytes in BOTH encodings the format uses — a UTF-8 pool and a UTF-16LE one are
+# both legal and which one aapt emits is not ours to depend on. Verified against the shipped
+# android-v0.10.1 APK, where both strings appear exactly once.
+unzip -o -q "$APK" AndroidManifest.xml -d "$WORK" || true
+if [ ! -f "$WORK/AndroidManifest.xml" ]; then
+  echo "assert-no-fcm: no AndroidManifest.xml in the APK — cannot prove the renderer is wired" >&2
+  fail=1
+else
+  for want in "$META_NAME" "$RENDERER_FQCN"; do
+    hits=$(WANT="$want" python3 - "$WORK/AndroidManifest.xml" <<'PY'
+import os, sys
+data = open(sys.argv[1], "rb").read()
+t = os.environ["WANT"]
+print(data.count(t.encode("utf-8")) + data.count(t.encode("utf-16-le")))
+PY
+)
+    if [ "${hits:-0}" -gt 0 ]; then
+      echo "assert-no-fcm: manifest carries \"$want\""
+    else
+      echo "assert-no-fcm: the manifest does NOT carry \"$want\"." >&2
+      echo "  The renderer class can be compiled in and still never be used: the connector reads" >&2
+      echo "  this meta-data to find it, and falls back to its DEFAULT renderer when it is absent." >&2
+      echo "  Check that app.json applies the expo-unified-push plugin with payloadRendererClass." >&2
+      fail=1
+    fi
+  done
 fi
 
 test "$fail" -eq 0 || {

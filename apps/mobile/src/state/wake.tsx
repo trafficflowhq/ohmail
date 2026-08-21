@@ -90,6 +90,24 @@ export function WakeProvider({ children }: { children: ReactNode }) {
    */
   const subscriptionId = useRef<string | null>(null);
 
+  /**
+   * ── THE GENERATION, AND WHY MAKING THIS A PROVIDER CREATED THE NEED FOR IT ────────────────────
+   *
+   * While this lived in the Settings screen, leaving the screen unmounted everything, so a
+   * registration for profile A could not outlive a switch to profile B. Now that it survives every
+   * screen — which is the whole point — an in-flight registration CAN: the connector's `register`
+   * has a fifteen-second ceiling, and a profile switch inside that window used to let A's late
+   * result overwrite B's state and, worse, B's `subscriptionId`. Turning wakes off then sent A's
+   * subscription id to B's server (a 404) and left A's row live, sending wakes to a phone that had
+   * moved on. Found in review; it is the cost of the fix above and it is paid here.
+   *
+   * One counter, bumped every time the live session changes, plus the session object itself so a
+   * delivered wake can be checked against the session it was subscribed for. Refs rather than state
+   * because every reader is a callback, and a re-render would be a wasted one.
+   */
+  const generation = useRef(0);
+  const liveSession = useRef<typeof session>(null);
+
   /** Re-read the device's own answer. Cheap, synchronous, and the source of truth for the list. */
   const readDevice = useCallback((): void => {
     setChoices(listDistributors());
@@ -105,10 +123,14 @@ export function WakeProvider({ children }: { children: ReactNode }) {
    */
   const attempt = useCallback(async (mounted: () => boolean): Promise<void> => {
     if (!session) return;
+    // The generation this attempt belongs to, captured BEFORE the await. Anything that lands after
+    // the session changed is a superseded completion and is dropped, state and id together.
+    const mine = generation.current;
+    const fresh = (): boolean => mounted() && generation.current === mine;
     setBusy(true);
     try {
       const next = await registerWake(session, unifiedPushDistributor());
-      if (!mounted()) return;
+      if (!fresh()) return;
       subscriptionId.current = next.k === "on" ? next.id : null;
       setState(next);
     } catch {
@@ -121,12 +143,12 @@ export function WakeProvider({ children }: { children: ReactNode }) {
        * so that the contract being wrong is a visible "off" rather than a silent lie plus a console
        * warning. A contract worth having is worth not depending on.
        */
-      if (mounted()) {
+      if (fresh()) {
         subscriptionId.current = null;
         setState({ k: "off", reason: "server_unavailable" });
       }
     } finally {
-      if (mounted()) setBusy(false);
+      if (fresh()) setBusy(false);
     }
   }, [session]);
 
@@ -141,6 +163,10 @@ export function WakeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let alive = true;
     const mounted = (): boolean => alive;
+    // A NEW GENERATION. Every attempt still in the air for the previous session is now superseded
+    // and will discard its own result rather than writing it over this one's.
+    generation.current += 1;
+    liveSession.current = session;
     readDevice();
     if (!session) {
       setState({ k: "no_distributor" });
@@ -164,15 +190,29 @@ export function WakeProvider({ children }: { children: ReactNode }) {
    */
   useEffect(() => {
     if (!session) return;
-    return onWake(() => { conn.syncNow(); });
+    const subscribedFor = session;
+    return onWake(() => {
+      /**
+       * THE SESSION THIS WAKE WAS SUBSCRIBED FOR MUST STILL BE THE LIVE ONE.
+       *
+       * `conn.syncNow()` reads the connection's own live ref, and during a profile switch there is a
+       * window where teardown has begun and that ref has not caught up — a wake landing in it would
+       * start a drain on a session whose store is already scheduled to close. Comparing against the
+       * session captured at subscribe time closes this module's half of that without reaching into
+       * the connection layer, whose own guard is the other half.
+       */
+      if (liveSession.current !== subscribedFor) return;
+      conn.syncNow();
+    });
   }, [session, conn]);
 
   const choose = useCallback((id: string): void => {
     chooseDistributor(id);
     readDevice();
-    // `() => true`: a choice made by a tap is one the user is waiting on, so its result is worth
-    // writing even if the pane re-renders underneath it. The unmount case is covered by the effect
-    // above, whose own attempt is guarded.
+    // `() => true` for the MOUNT question only: a choice made by a tap is one the user is waiting
+    // on, so its result is worth writing even if the pane re-rendered underneath it. The generation
+    // check inside `attempt` is what still discards it if the SESSION changed — those are different
+    // questions and conflating them is what let a superseded registration land.
     void attempt(() => true);
   }, [attempt, readDevice]);
 

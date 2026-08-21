@@ -48,7 +48,7 @@
  * path, including its failures.**
  */
 import { createECDH, generateKeyPairSync, timingSafeEqual } from "node:crypto";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const b64u = (b) => Buffer.from(b).toString("base64url");
@@ -168,28 +168,42 @@ function main(argv) {
       process.exit(1);
     }
     const at = resolve(dir);
-    mkdirSync(at, { recursive: true, mode: 0o700 });
-    writeFileSync(`${at}/public.key`, `${publicKey}\n`, { mode: 0o644 });
     /**
-     * ── THE PRIVATE KEY: WRITTEN 0600, AND THEN MADE 0600 AGAIN ────────────────────────────────
+     * ── THE PRIVATE KEY IS NEVER WRITTEN WHERE ANYTHING ELSE CAN SEE IT, AT ANY INSTANT ────────
      *
-     * `mode` on `writeFileSync` applies only when the file is CREATED. Node ignores it for an
-     * existing inode, so re-running `--out` over a `private.key` that was already 0644 replaced the
-     * contents with a fresh private key and kept the permissive mode — while printing "0600" and
-     * telling the operator it was fine. Reproduced before fixing: `chmod 0644` on an existing
-     * `private.key`, re-run, still `-rw-r--r--`.
+     * Three attempts at this, and the first two were wrong in ways worth recording because each
+     * looked finished:
      *
-     * Written with the mode FIRST so a newly created file is never briefly world-readable (a
-     * create-then-chmod has exactly that window, and on a shared box that window is the bug), and
-     * then `chmodSync` unconditionally so the existing-file path converges too. Both are needed:
-     * neither one alone covers both cases.
+     *  1. `writeFileSync(path, key, { mode: 0o600 })`. `mode` applies only when the file is
+     *     CREATED — Node ignores it for an existing inode. So re-running `--out` over a
+     *     `private.key` that was already 0644 wrote a fresh secret and KEPT the permissive mode,
+     *     while printing "0600". Reproduced: chmod 0644, re-run, still `-rw-r--r--`.
+     *  2. write, then `chmodSync`. That converges, but the secret is on disk world-readable for
+     *     the interval between the two calls, and chmod-ing the DIRECTORY afterwards leaves a
+     *     pre-existing group-writable directory open to a symlink swap in the same window. Review
+     *     caught both.
+     *
+     * So the order is: TIGHTEN THE DIRECTORY FIRST, then create a fresh temporary file with
+     * `wx` (O_CREAT|O_EXCL — it refuses to follow or clobber anything, including a planted
+     * symlink) at 0600, then `rename` it over the destination. Rename within one directory is
+     * atomic, so a reader sees either the old file or the new one and never a partial or a
+     * momentarily-loose one. The mode travels with the inode, so there is no window to lose.
      */
-    const privPath = `${at}/private.key`;
-    writeFileSync(privPath, `${privateKey}\n`, { mode: 0o600 });
-    chmodSync(privPath, 0o600);
-    // The directory is the second half of the same story: `mkdirSync`'s mode is also
-    // creation-only, so a pre-existing 0755 `vapid/` stayed group- and world-traversable.
+    mkdirSync(at, { recursive: true, mode: 0o700 });
+    // `mkdirSync`'s mode is creation-only too, so an existing 0755 `vapid/` stayed traversable.
+    // Tightened BEFORE anything secret is written into it, which is the half that was wrong.
     chmodSync(at, 0o700);
+
+    writeFileSync(`${at}/public.key`, `${publicKey}\n`, { mode: 0o644 });
+
+    const privPath = `${at}/private.key`;
+    const tmpPath = `${at}/.private.key.${process.pid}.tmp`;
+    // `flag: "wx"` fails outright if the path exists — so this cannot follow a symlink an attacker
+    // planted, and cannot land on somebody else's inode.
+    writeFileSync(tmpPath, `${privateKey}\n`, { mode: 0o600, flag: "wx" });
+    chmodSync(tmpPath, 0o600);
+    renameSync(tmpPath, privPath);
+
     writeFileSync(`${at}/README.md`, README(publicKey), { mode: 0o644 });
     console.log(`wrote the keypair to ${at}`);
     console.log(`  public.key   ${publicKey}`);

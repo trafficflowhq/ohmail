@@ -236,13 +236,26 @@ export async function registerWake(
      * well-formed answer with no usable `id`: one means "we could not talk to it", the other means
      * "we talked to it and it said something else", and the copy for the two differs.
      */
-    let body: { id?: unknown };
+    /**
+     * PARSED AS `unknown`, AND THE SHAPE CHECKED BEFORE ANYTHING IS READ OFF IT.
+     *
+     * The obvious version — `(await res.json()) as { id?: unknown }` — is a lie the compiler
+     * believes: `null` is valid JSON, so a 200 whose body is literally `null` resolves the promise
+     * and then `body.id` throws a TypeError. The `catch` above covers the PARSE, not the property
+     * access, so this function rejected after all — the exact defect the wrapping was added to fix,
+     * one line further down. A cast is not a check.
+     */
+    let parsed: unknown;
     try {
-      body = (await res.json()) as { id?: unknown };
+      parsed = await res.json();
     } catch {
       return { k: "off", reason: "server_unavailable" };
     }
-    if (typeof body.id === "string") return { k: "on", id: body.id };
+    if (typeof parsed !== "object" || parsed === null) {
+      return { k: "off", reason: "server_answer_unrecognised" };
+    }
+    const id = (parsed as { id?: unknown }).id;
+    if (typeof id === "string" && id !== "") return { k: "on", id };
     return { k: "off", reason: "server_answer_unrecognised" };
   }
   /**

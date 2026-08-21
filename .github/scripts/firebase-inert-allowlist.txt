@@ -1,0 +1,103 @@
+# The EXACT Firebase class descriptors present in the release APK, measured from the built
+# artifact of android-v0.10.1 (dex, 6 files, 54,404,248 bytes) and pinned here.
+#
+# WHY EXACT CLASSES AND NOT PACKAGES. The first version of this allow-list permitted whole
+# packages — `components`, `encoders`, `events`, `inject` — which meant a new executable class
+# added inside one of them, say `com/google/firebase/components/PushClient`, would have been
+# waved through as "inert" while FirebaseApp stayed absent. Review caught that: a package-level
+# allow-list is a weaker guard than the blanket ban it replaced, in the one direction that
+# matters. So the set is exact, and anything not in it is red.
+#
+# WHAT THIS SET IS. Google's generic dependency-injection container (Component, ComponentRuntime,
+# ComponentDiscovery, CycleDetector, Lazy, EventBus), its value/JSON encoder library, two
+# injection interfaces, one marker annotation, and three exception types. The `Registrar` names
+# are the container's own component discovery, not push registration. There is no push client, no
+# network client, and no FirebaseApp — the class that initialises Firebase at all — which is
+# asserted separately and is the premise that makes any of this inert.
+#
+# WHEN THIS GOES RED. A transitive dependency bump that adds or renames a class will fail the
+# release check with the new descriptor named. That is correct: re-read what arrived, satisfy
+# yourself it is still inert, and add the line. Do not replace this file with a prefix.
+Lcom/google/firebase/annotations/DeferredApi;
+Lcom/google/firebase/components/AbstractComponentContainer;
+Lcom/google/firebase/components/BuildConfig;
+Lcom/google/firebase/components/Component;
+Lcom/google/firebase/components/Component$$Lambda$1;
+Lcom/google/firebase/components/Component$$Lambda$2;
+Lcom/google/firebase/components/Component$$Lambda$3;
+Lcom/google/firebase/components/Component$1;
+Lcom/google/firebase/components/Component$Builder;
+Lcom/google/firebase/components/ComponentContainer;
+Lcom/google/firebase/components/ComponentDiscovery;
+Lcom/google/firebase/components/ComponentDiscovery$$Lambda$1;
+Lcom/google/firebase/components/ComponentDiscovery$1;
+Lcom/google/firebase/components/ComponentDiscovery$MetadataRegistrarNameRetriever;
+Lcom/google/firebase/components/ComponentDiscovery$RegistrarNameRetriever;
+Lcom/google/firebase/components/ComponentFactory;
+Lcom/google/firebase/components/ComponentRegistrar;
+Lcom/google/firebase/components/ComponentRuntime;
+Lcom/google/firebase/components/ComponentRuntime$$Lambda$1;
+Lcom/google/firebase/components/ComponentRuntime$$Lambda$2;
+Lcom/google/firebase/components/ComponentRuntime$$Lambda$3;
+Lcom/google/firebase/components/ComponentRuntime$$Lambda$4;
+Lcom/google/firebase/components/ComponentRuntime$$Lambda$5;
+Lcom/google/firebase/components/ComponentRuntime$1;
+Lcom/google/firebase/components/ComponentRuntime$Builder;
+Lcom/google/firebase/components/ComponentRuntime$Builder$$Lambda$1;
+Lcom/google/firebase/components/CycleDetector;
+Lcom/google/firebase/components/CycleDetector$1;
+Lcom/google/firebase/components/CycleDetector$ComponentNode;
+Lcom/google/firebase/components/CycleDetector$Dep;
+Lcom/google/firebase/components/Dependency;
+Lcom/google/firebase/components/DependencyCycleException;
+Lcom/google/firebase/components/DependencyException;
+Lcom/google/firebase/components/EventBus;
+Lcom/google/firebase/components/EventBus$$Lambda$1;
+Lcom/google/firebase/components/InvalidRegistrarException;
+Lcom/google/firebase/components/Lazy;
+Lcom/google/firebase/components/LazySet;
+Lcom/google/firebase/components/MissingDependencyException;
+Lcom/google/firebase/components/OptionalProvider;
+Lcom/google/firebase/components/OptionalProvider$$Lambda$1;
+Lcom/google/firebase/components/OptionalProvider$$Lambda$4;
+Lcom/google/firebase/components/OptionalProvider$$Lambda$5;
+Lcom/google/firebase/components/Preconditions;
+Lcom/google/firebase/components/R;
+Lcom/google/firebase/components/RestrictedComponentContainer;
+Lcom/google/firebase/components/RestrictedComponentContainer$RestrictedPublisher;
+Lcom/google/firebase/dynamicloading/ComponentLoader;
+Lcom/google/firebase/encoders/annotations/Encodable;
+Lcom/google/firebase/encoders/annotations/Encodable$Field;
+Lcom/google/firebase/encoders/annotations/Encodable$Ignore;
+Lcom/google/firebase/encoders/annotations/ExtraProperty;
+Lcom/google/firebase/encoders/config/Configurator;
+Lcom/google/firebase/encoders/config/EncoderConfig;
+Lcom/google/firebase/encoders/DataEncoder;
+Lcom/google/firebase/encoders/Encoder;
+Lcom/google/firebase/encoders/EncodingException;
+Lcom/google/firebase/encoders/FieldDescriptor;
+Lcom/google/firebase/encoders/FieldDescriptor$1;
+Lcom/google/firebase/encoders/FieldDescriptor$Builder;
+Lcom/google/firebase/encoders/json/BuildConfig;
+Lcom/google/firebase/encoders/json/JsonDataEncoderBuilder;
+Lcom/google/firebase/encoders/json/JsonDataEncoderBuilder$$Lambda$1;
+Lcom/google/firebase/encoders/json/JsonDataEncoderBuilder$$Lambda$4;
+Lcom/google/firebase/encoders/json/JsonDataEncoderBuilder$$Lambda$5;
+Lcom/google/firebase/encoders/json/JsonDataEncoderBuilder$1;
+Lcom/google/firebase/encoders/json/JsonDataEncoderBuilder$TimestampEncoder;
+Lcom/google/firebase/encoders/json/JsonValueObjectEncoderContext;
+Lcom/google/firebase/encoders/json/R;
+Lcom/google/firebase/encoders/ObjectEncoder;
+Lcom/google/firebase/encoders/ObjectEncoderContext;
+Lcom/google/firebase/encoders/ValueEncoder;
+Lcom/google/firebase/encoders/ValueEncoderContext;
+Lcom/google/firebase/events/Event;
+Lcom/google/firebase/events/EventHandler;
+Lcom/google/firebase/events/Publisher;
+Lcom/google/firebase/events/Subscriber;
+Lcom/google/firebase/FirebaseApiNotAvailableException;
+Lcom/google/firebase/FirebaseException;
+Lcom/google/firebase/FirebaseExceptionMapper;
+Lcom/google/firebase/inject/Deferred;
+Lcom/google/firebase/inject/Deferred$DeferredHandler;
+Lcom/google/firebase/inject/Provider;
