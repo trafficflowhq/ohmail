@@ -733,11 +733,11 @@ export interface MailState {
    * `null` is the common case and must stay cheap to reach: the hosted browser client never
    * learns this number (see {@link MailboxFacts.hostedMessageCount}), one mailbox failing to
    * report withdraws it for the whole account, and — the arithmetic guard — it is withheld
-   * whenever it is not STRICTLY greater than {@link count}. That last clause is what makes
-   * "1,600 of 1,541" unreachable rather than merely unlikely: a denominator the numerator has
+   * whenever it is not STRICTLY greater than {@link count}. That last clause is what makes a
+   * fraction whose top exceeds its bottom unreachable rather than merely unlikely: a denominator the numerator has
    * already passed is a stale reading, and the honest response to a stale reading is to stop
-   * quoting it, not to clamp it to the numerator and render "1,541 of 1,541" as though the two
-   * numbers had been measured together.
+   * quoting it, not to clamp it to the numerator and render the two as equal, as though they had
+   * been measured together.
    *
    * Carried by `importing` (progress, while the mirror moves) and `behind` (a still mirror that
    * is short). Every other state leaves it `null`, including the failure arms: once the loop is

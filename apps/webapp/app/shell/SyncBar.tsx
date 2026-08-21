@@ -315,7 +315,7 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
         // Never a percentage, and that rule is untouched by the arrival of a denominator: what
         // `state.total` carries is the ACCOUNT's message count, measured by the server on its own
         // clock, not a share of a drain `/sync` could report. When it is present the pair is
-        // quoted as two numbers ("1,114 of 1,541"); when it is absent — every hosted browser tab,
+        // quoted as two numbers, "N of M"; when it is absent — every hosted browser tab,
         // by design — the moving count alone is what distinguishes working from hung, exactly as
         // before. `mail-state.ts` withholds the total unless it is strictly above the count, so
         // this line can never render a fraction that has already been passed.
@@ -378,7 +378,7 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
  * `hasMore` as a boolean, so the SHAPE OF THE DRAIN is still unknowable from the loop itself;
  * what {@link MailState.total} adds is a count of the account's mail, which is a different fact
  * measured at a different moment. Two numbers read seconds apart may be quoted side by side —
- * "1,114 of 1,541" is two measurements and reads as two — but they may not be turned into one
+ * "N of M" is two measurements and reads as two — but they may not be turned into one
  * percentage or one filled track, which claims a single continuous progression the client cannot
  * see. So the spinner still carries exactly the knowledge available, and the numbers sit beside
  * it as text.
