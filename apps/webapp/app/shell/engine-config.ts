@@ -271,6 +271,16 @@ export function createEngine(
       adapter: gate.guard(new HttpAdapter({ baseUrl: apiBase, stageAttachments: true })),
       ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),
       storePolicy: BROWSER_WINDOW,
+      /**
+       * EAGER RECENT-WINDOW HYDRATION — the live browser client opts in (ruling 2026-08-21).
+       * After each settled drain the engine prefetches bodies for the mirror's newest messages,
+       * so opening recent mail costs no round trip at the moment of intent — measured at
+       * ~100 ms warm and seconds on a serverless cold start per body before this. Bounded and
+       * admission-gated in the engine (`EAGER_BODIES_MAX`, `bodyPlan`); ready bodies persist in
+       * the IndexedDB mirror above, which is what makes re-opens instant across sessions. The
+       * demo returns above and never prefetches: its fixture rows already carry their bodies.
+       */
+      eagerBodies: true,
     }),
     gate,
   );

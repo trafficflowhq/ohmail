@@ -224,6 +224,9 @@ export {
   // for the same reason the two above are — the guards must read the shipped values, not copies.
   STALE_RESUME_MS,
   LAST_DRAIN_AT_META,
+  // The eager recent-window hydration bounds. Exported so the guards read the shipped numbers.
+  EAGER_BODIES_MAX,
+  EAGER_BODIES_SLICE,
   type EngineOptions,
   type MutationResult,
   type MutationStatus,

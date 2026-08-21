@@ -638,9 +638,45 @@ export interface EngineOptions {
    * number above is the one every client uses.
    */
   staleResumeMs?: number;
+  /**
+   * EAGER RECENT-WINDOW HYDRATION (owner ruling, 2026-08-21). Arms
+   * {@link OhmailEngine.prefetchRecentBodies}: hydrate the bodies of the mirror's newest
+   * {@link EAGER_BODIES_MAX} messages in the background, so opening any recent message finds its
+   * body already local instead of paying a round trip (~100 ms warm, seconds on a serverless
+   * cold start) at the moment of intent. The mirror IS the recent window every list surface
+   * renders; the archive tail is not in it and stays fetch-on-open. The shell's sync scheduler
+   * calls the pass after each settled drain — the engine never fires it on its own.
+   *
+   * OPT-IN, deliberately: the webapp shell and the desktop window pass `true`; an embedder that
+   * never asked — apps/mobile with its windowed bootstrap semantics — changes nothing by
+   * upgrading this package, and even a driver that calls the pass gets a no-op until the
+   * embedder means it.
+   */
+  eagerBodies?: boolean;
   now?: () => Date;
   uuid?: () => string;
 }
+
+/**
+ * How many of the mirror's newest messages one eager pass offers a body fetch.
+ *
+ * Sized to cover what the list surfaces actually present — the Ohbox's groups, Reads, Receipts
+ * are each windows of hundreds — while keeping the worst-case pass bounded: a thousand bodies at
+ * the hosted average is tens of megabytes ONCE, and every later pass costs nothing because a
+ * `ready` record is never re-fetched ({@link OhmailEngine.bodyPlan}). A whole mailbox would be
+ * hundreds of megabytes, which is why the tail deliberately never enters the pass.
+ */
+export const EAGER_BODIES_MAX = 1000;
+
+/**
+ * How many ids one eager step hands the batch machinery before re-checking its generation.
+ *
+ * Two server batches' worth. The step boundary is what makes the pass abortable (a navigation
+ * or teardown bumps the generation and the next step sees it) and what keeps the four-slot
+ * queue shared: a single 1,000-id call would enqueue fifty chunks ahead of every Screener
+ * preview, while urgent opens always bypass the queue either way.
+ */
+export const EAGER_BODIES_SLICE = 2 * BODIES_IDS_MAX;
 
 /** Minimal EventSource-shaped surface (an attach point, not a dependency). */
 export interface WakeSignalSource {
@@ -759,6 +795,13 @@ export class OhmailEngine {
   private syncing: Promise<void> | null = null;
   /** The in-flight mirror read, so concurrent callers coalesce. See {@link OhmailEngine.hydrate}. */
   private hydrating: Promise<void> | null = null;
+  /** {@link EngineOptions.eagerBodies}, resolved once. */
+  private readonly eagerBodiesOn: boolean;
+  /** The in-flight eager pass — single-flight; a kick during a pass queues exactly one more. */
+  private eagerRun: Promise<void> | null = null;
+  private eagerAgain = false;
+  /** Bumped by {@link OhmailEngine.stopEagerBodies}; a running pass checks it between steps. */
+  private eagerGen = 0;
   /** In-flight body fetches by message id — see {@link OhmailEngine.hydrateBody}. */
   private readonly bodyRequests = new Map<string, Promise<void>>();
   /**
@@ -870,6 +913,7 @@ export class OhmailEngine {
     // THE ABSENT BRANCH IS `full`. See {@link StorePolicy} — a host that configures nothing gets
     // today's behaviour, and no mirror is ever pruned by omission.
     this.storePolicy = opts.storePolicy ?? { mode: "full" };
+    this.eagerBodiesOn = opts.eagerBodies === true;
     this.store = opts.store ?? new MemoryMirrorStore();
     this.types = opts.types;
     this.syncLimit = opts.syncLimit;
@@ -1048,6 +1092,89 @@ export class OhmailEngine {
       // resume and freshens again (idempotent: the seq guard absorbs the repeat).
       await this.store.setMeta(LAST_DRAIN_AT_META, this.now().toISOString());
       return;
+    }
+  }
+
+  // ── eager recent-window hydration ──────────────────────────────────────────
+
+  /**
+   * Start (or queue) one eager pass. See {@link EngineOptions.eagerBodies} for what it is for
+   * and {@link EAGER_BODIES_MAX}/{@link EAGER_BODIES_SLICE} for the bounds.
+   *
+   * CALLED BY THE SHELL'S SCHEDULER after a settled drain — deliberately NOT by `drain()`
+   * itself. The engine owns the MECHANISM (bounded, admission-gated, abortable); WHEN background
+   * work is welcome is the driver's knowledge, exactly the split the sync gate already draws.
+   * The first wiring had `drain()` fire it, and what that shipped was a transport nothing could
+   * reason about: every bare `syncOnce()` in a test — and every discarded engine whose drain
+   * settled after teardown — issued body fetches from behind the caller's back, which is the
+   * same "requests on behalf of nobody" shape the gate exists to refuse. An engine an embedder
+   * drives by hand (apps/mobile's loop, a bare `engine.start()`) prefetches exactly when and if
+   * it is asked to, and the OPT-IN flag makes even that ask a no-op until the embedder means it.
+   *
+   * SINGLE-FLIGHT WITH ONE QUEUED RE-RUN: every settled drain kicks, and a kick during a pass
+   * must not stack passes — but it must not be LOST either, because the drain that kicked may
+   * have applied new mail the running pass's snapshot of the mirror predates. One boolean is
+   * exactly "run once more with fresh eyes", and a settled mailbox's re-run costs nothing —
+   * every id plans to `skip`.
+   *
+   * NEVER REJECTS: failures land as per-id `failed` records exactly as an explicit open's would.
+   * The returned promise settles when the pass this call joined (or started) is done.
+   */
+  prefetchRecentBodies(): Promise<void> {
+    if (!this.eagerBodiesOn) return Promise.resolve();
+    if (this.eagerRun) {
+      this.eagerAgain = true;
+      return this.eagerRun;
+    }
+    const gen = this.eagerGen;
+    this.eagerRun = this.runEagerBodies(gen)
+      .catch(() => {
+        /* per-id failures are records the surfaces render; the pass has nothing to throw AT */
+      })
+      .finally(() => {
+        this.eagerRun = null;
+        if (this.eagerAgain) {
+          this.eagerAgain = false;
+          void this.prefetchRecentBodies();
+        }
+      });
+    return this.eagerRun;
+  }
+
+  /**
+   * ABORT the background pass between steps — a teardown's call (a live→demo navigation swaps
+   * the engine; the discarded one must not keep fetching on behalf of nobody). Bodies already
+   * in the air complete into the store; no new step starts. The next drain's kick resumes from
+   * whatever is still missing, because the pass re-derives its want-list from the mirror.
+   */
+  stopEagerBodies(): void {
+    this.eagerGen++;
+  }
+
+  /** Settles when no eager pass is in flight — the deterministic seam a test (or teardown) awaits. */
+  async eagerBodiesIdle(): Promise<void> {
+    while (this.eagerRun) await this.eagerRun;
+  }
+
+  /**
+   * One pass: the mirror's newest {@link EAGER_BODIES_MAX} messages, offered to the SAME
+   * admission and transport every explicit hydration uses ({@link bodyPlan} through
+   * {@link hydrateMany}) — a ready body is never re-fetched, a failed one is never re-asked
+   * within the session, protected and fixture-bodied rows issue nothing, and the four-wide
+   * non-urgent slot queue is shared so an OPEN always jumps ahead. `rendered: false` is the one
+   * divergence from a thread open, and it is load-bearing: a thousand prefetched ids must not
+   * flush the {@link RENDERED_PINS} LRU that keeps the windowed prune off a message someone is
+   * actually reading.
+   */
+  private async runEagerBodies(gen: number): Promise<void> {
+    const entries = this.read().entries<EngineMessage>("message");
+    const ids = entries
+      .sort((a, b) => (b.entity.date ?? "").localeCompare(a.entity.date ?? ""))
+      .slice(0, EAGER_BODIES_MAX)
+      .map((e) => e.id);
+    for (let i = 0; i < ids.length; i += EAGER_BODIES_SLICE) {
+      if (gen !== this.eagerGen) return;
+      await this.hydrateMany(ids.slice(i, i + EAGER_BODIES_SLICE), { rendered: false });
     }
   }
 
@@ -1761,16 +1888,42 @@ export class OhmailEngine {
    * ignores the parameter merely slower: ids the answer did not carry are fetched singly below.
    */
   hydrateThread(messageIds: string[]): Promise<void> {
+    return this.hydrateMany(messageIds, { rendered: true });
+  }
+
+  /**
+   * The shared batch core behind {@link hydrateThread} and the eager pass. `rendered` is the
+   * one difference between the two callers, and it is a fact only the caller knows: a thread
+   * open means every one of these ids is ON SCREEN and must be pinned against the windowed
+   * prune; a background prefetch means none of them is, and pinning them would flush the
+   * {@link RENDERED_PINS} LRU of the ids that genuinely are.
+   */
+  private hydrateMany(messageIds: string[], opts: { rendered: boolean }): Promise<void> {
     const fetchBodies = this.fetchBodiesFn;
     const ids = [...new Set(messageIds)];
     if (!fetchBodies) {
-      return Promise.all(ids.map((id) => this.hydrateBody(id))).then(() => undefined);
+      if (opts.rendered) {
+        return Promise.all(ids.map((id) => this.hydrateBody(id))).then(() => undefined);
+      }
+      // The per-id fallback WITHOUT the pin write `hydrateBody` opens with — same admission,
+      // same single-flight registration, no claim that a surface is rendering anything.
+      const runs = ids.map((id) => {
+        const inFlight = this.bodyRequests.get(id);
+        if (inFlight) return inFlight;
+        const plan = this.bodyPlan(id, false);
+        if (plan.kind === "purge") return this.putBody(id, null);
+        if (plan.kind === "skip") return Promise.resolve();
+        const request = this.startBody(id, plan.held, false);
+        this.bodyRequests.set(id, request);
+        return request;
+      });
+      return Promise.all(runs).then(() => undefined);
     }
 
     const take: Array<{ id: string; held: MessageBodyRecord | undefined }> = [];
     const writes: Array<Promise<void>> = [];
     for (const id of ids) {
-      this.noteRendered(id);
+      if (opts.rendered) this.noteRendered(id);
       // Already in the air, alone or in another batch — join it rather than ask twice.
       if (this.bodyRequests.has(id)) continue;
       const plan = this.bodyPlan(id, false);

@@ -419,7 +419,14 @@ export function createEngineAdapter(): HttpAdapter {
  * there is one sequence per door and the capability is simply passed through.
  */
 export function createLocalEngine(): OhmailEngine {
-  return new OhmailEngine({ adapter: createEngineAdapter() });
+  /**
+   * `eagerBodies: true` — the desktop window opts in to the eager recent-window hydration
+   * (ruling 2026-08-21). The bodies live in the sidecar's store on this same machine, so the
+   * pass costs local IPC rather than network; what it buys is that every recent message's body
+   * is already in the window's in-memory mirror before anyone opens it — the same "open is
+   * instant" the hosted client gets, without even a loopback round trip at the moment of intent.
+   */
+  return new OhmailEngine({ adapter: createEngineAdapter(), eagerBodies: true });
 }
 
 /**
