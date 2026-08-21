@@ -129,6 +129,35 @@ export class PushService implements PushServicePort {
       // On conflict the coalesced unique index deduped the row → fetch the existing id.
       const rowId = inserted[0]?.id ?? (await this.existingId(tx, ctx.accountId, transport, body));
 
+      /**
+       * ── A DEDUPED RE-REGISTRATION MUST RE-STAMP THE DEVICE, OR THE REVOKE LOSES ITS HANDLE ────
+       *
+       * `onConflictDoNothing` above is right about the ROW — one endpoint, one registration — and
+       * it was wrong about the device, which is a hole in the take-back rather than a tidiness
+       * point. A UnifiedPush endpoint is stable for the life of an app install, so the second
+       * registration of the same endpoint is the ORDINARY case: the phone was revoked and paired
+       * again, or simply relaunched after a re-pair. The distributor hands back the same URL, the
+       * insert conflicts, and the row keeps pointing at the OLD device id — a device row that a
+       * revoke has already removed. From then on nothing can take that registration down: the
+       * current device's revoke does not match it, and the old device's revoke has already
+       * happened. The endpoint keeps receiving wakes with no surface that can stop it.
+       *
+       * So the stamp is refreshed, in the same transaction, scoped to the row and the account. The
+       * keys travel with it for the same reason — a re-registration is the connector's latest word
+       * on both, and a stale `p256dh` beside a fresh endpoint is a registration that could not be
+       * encrypted to even once there is something to encrypt.
+       */
+      if (transport === "unifiedpush" && inserted[0] === undefined) {
+        await tx.update(pushSubscriptions).set({
+          deviceId,
+          p256dh: body.p256dh ?? null,
+          auth: body.auth ?? null,
+        }).where(and(
+          eq(pushSubscriptions.id, rowId),
+          eq(pushSubscriptions.accountId, ctx.accountId),
+        ));
+      }
+
       // Store the verbatim response (201 { id }) in the SAME tx. Push emits no
       // change_log, so seq is null. On replay the middleware returns this untouched.
       // A LOST claim means a concurrent same-key request committed first → throw so this

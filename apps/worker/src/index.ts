@@ -74,7 +74,7 @@ import {
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, mailboxErrorDetail,
   stampMailboxSync, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
-  accountsOf, loadServedAccounts,
+  accountsOf, loadServedAccounts, accountInShard,
   type EnabledMailbox, type MailboxErrorPhase, type MailboxSyncBlockReason,
 } from "./mailboxes.js";
 import { OrganizerProfileSync } from "./profile.js";
@@ -4250,6 +4250,15 @@ export async function startWorkerWithLock(
         // The env-read policy, and the SAME variable `apps/server` reads — the process that
         // validates a registration and the process that dials it must not disagree.
         guard: pushEndpointGuardFromEnv(),
+        /**
+         * THE SHARD FILTER. `subscribeAll` hears every account on the deployment, which is what
+         * the sender needs and also what makes a sharded fleet duplicate: each shard runs its own
+         * leader under its own lock key, and every one of them would reach every registration.
+         * The predicate is the one the cron backstops already use to refuse out-of-shard work, so
+         * "which accounts are mine" has one answer in this app rather than two. On the shipped
+         * single-shard configuration it returns true without a query.
+         */
+        ownsAccount: (accountId) => accountInShard(db, accountId, selection),
         log,
       });
     } catch (err) {

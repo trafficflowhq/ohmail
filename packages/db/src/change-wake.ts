@@ -73,7 +73,17 @@ export interface ChangeWakeFanout {
   end(): Promise<void>;
 }
 
-export function makeChangeWakeHub(url: string, log?: HubLog): ChangeWakeFanout {
+/**
+ * `retryAfterMs` overrides {@link RETRY_AFTER_MS} for ONE hub, and it exists for exactly one
+ * reason: the all-accounts subscriber's retry (see `subscribeAll`) cannot be driven in a test at
+ * the shipped thirty seconds, and fake timers cannot drive it either — the dial's failure is real
+ * socket I/O, not a timer, so advancing fake time proves nothing. A guard nobody can watch fail is
+ * not a guard, so the cadence is a parameter. Nothing in production passes it.
+ */
+export function makeChangeWakeHub(
+  url: string, log?: HubLog, opts: { retryAfterMs?: number } = {},
+): ChangeWakeFanout {
+  const retryAfterMs = opts.retryAfterMs ?? RETRY_AFTER_MS;
   const subs = new Map<string, Set<(seq: bigint) => void>>();
   const allSubs = new Set<(accountId: string, seq: bigint) => void>();
   let total = 0;
@@ -131,7 +141,7 @@ export function makeChangeWakeHub(url: string, log?: HubLog): ChangeWakeFanout {
       .listen(CHANGE_LOG_CHANNEL, dispatch)
       .then(() => undefined)
       .catch(async (err: unknown) => {
-        retryAt = Date.now() + RETRY_AFTER_MS;
+        retryAt = Date.now() + retryAfterMs;
         await teardown();
         // Degradation, not an outage: every open stream still has its poll. Said once per
         // failed attempt so a permanently broken LISTEN is visible in the logs, not silent.
@@ -187,10 +197,30 @@ export function makeChangeWakeHub(url: string, log?: HubLog): ChangeWakeFanout {
       }
       ensureListening();
 
+      /**
+       * ── THIS SUBSCRIBER NEEDS ITS OWN RETRY, AND THAT IS A REAL ASYMMETRY WITH `subscribe` ────
+       *
+       * The retry this module documents — "keeps trying to dial on later subscribes, one attempt
+       * per RETRY_AFTER_MS" — is driven entirely by NEW SUBSCRIBERS calling `ensureListening`. For
+       * `/events` that is self-driving: streams come and go constantly, and every reconnect is
+       * another attempt. `subscribeAll` has exactly one consumer, which subscribes ONCE at process
+       * start and never again. So a LISTEN that failed at boot — a pooler at its limit during a
+       * rolling deploy is the ordinary way — stayed failed for the life of the process, and the
+       * startup path's claim that it retries was false for precisely this subscriber.
+       *
+       * A timer rather than a hook on the failed dial, because `ensureListening` is already
+       * idempotent and already respects `retryAt`: an attempt that is not due is free, and one that
+       * is due is exactly the retry that was missing. Unref'd, so it never keeps a process alive,
+       * and cleared on unsubscribe so a stopped sender leaves nothing behind.
+       */
+      const retry = setInterval(() => { ensureListening(); }, retryAfterMs);
+      (retry as { unref?: () => void }).unref?.();
+
       let gone = false;
       return () => {
         if (gone) return;                       // idempotent, exactly as subscribe()'s
         gone = true;
+        clearInterval(retry);
         allSubs.delete(onWake);
         total = Math.max(0, total - 1);
         if (total === 0) scheduleIdleClose();
