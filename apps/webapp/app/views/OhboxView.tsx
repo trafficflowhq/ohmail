@@ -458,22 +458,39 @@ export function OhboxView({
     const have = new Set(keep);
     const rank = new Map(current.map((m, i) => [m.id, i]));
     const lead: string[] = [];
+    const fresh: string[] = [];
     for (const m of current) {
       if (dropped(m.id) || have.has(m.id)) continue;
       have.add(m.id);
-      if (front?.has(m.id)) {
-        lead.push(m.id);
-        continue;
-      }
-      const r = rank.get(m.id)!;
-      let at = keep.length;
-      for (let i = 0; i < keep.length; i++) {
-        const kr = rank.get(keep[i]!);
-        if (kr !== undefined && kr > r) { at = i; break; }
-      }
-      keep.splice(at, 0, m.id);
+      (front?.has(m.id) ? lead : fresh).push(m.id);
     }
-    return lead.length > 0 ? [...lead, ...keep] : keep;
+    if (fresh.length === 0) return lead.length > 0 ? [...lead, ...keep] : keep;
+    /**
+     * ONE PASS, NOT ONE SCAN PER FRESH ID. The naive form — scan `keep` from the top for each
+     * fresh id and splice — is O(kept × fresh), and the case that maximises it is the most
+     * ordinary one there is: a cold mount, where EVERY id is fresh and a large unread group costs
+     * millions of rank lookups inside a render. A two-pointer merge is equivalent because the
+     * anchor is MONOTONIC: `fresh` is in `current` order, i.e. ascending rank, and the anchor
+     * ("the first kept row with rank > r") can only move DOWN the list as r grows — the set
+     * {rank > r} shrinks as r rises, so its first member's index never decreases, and a kept row
+     * skipped for one fresh id (unranked, or ranked at or above it) is skipped for every later
+     * one. So kept rows are emitted up to each fresh id's anchor, the fresh id before it, and
+     * nothing is ever revisited.
+     */
+    const merged: string[] = [];
+    let ki = 0;
+    for (const id of fresh) {
+      const r = rank.get(id)!;
+      while (ki < keep.length) {
+        const kr = rank.get(keep[ki]!);
+        if (kr !== undefined && kr > r) break;
+        merged.push(keep[ki]!);
+        ki += 1;
+      }
+      merged.push(id);
+    }
+    for (; ki < keep.length; ki += 1) merged.push(keep[ki]!);
+    return lead.length > 0 ? [...lead, ...merged] : merged;
   };
   // Resurfaced takes no promote set: that group is the worker's pin, not a reading order, and a
   // `u` on a resurfaced row leaves it exactly where the pin put it.
