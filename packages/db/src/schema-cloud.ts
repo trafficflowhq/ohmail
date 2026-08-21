@@ -155,17 +155,26 @@ export const authThrottle = pgTable("auth_throttle", {
 
 //
 // `push_subscriptions` — shaped for both Web Push and APNs from day one. `transport`
-// selects which identity column is live (endpoint for webpush, device_token for
-// apns); the coalesced UNIQUE(account_id, transport, COALESCE(endpoint,
+// selects which identity column is live (endpoint for webpush AND unifiedpush,
+// device_token for apns); the coalesced UNIQUE(account_id, transport, COALESCE(endpoint,
 // device_token)) is added by hand in the migration SQL (an expression index
 // Drizzle's schema DSL cannot express). Payloads are wake-signals only.
+//
+// 'unifiedpush' reuses the ENDPOINT column: the device's own distributor mints a URL and the
+// organizer POSTs a content-free constant to it. `p256dh`/`auth` are OPTIONAL on that transport
+// and stored when a connector offers them — UnifiedPush 3.x endpoints are Web Push endpoints, so
+// a connector hands back exactly the three values webpush already uses. Nothing reads the two
+// key columns for this transport yet (the wake that ships is unencrypted); accepting them costs
+// one column each and means an encrypting sender needs no migration and no re-registration on
+// every device. `device_id` is stamped from the REGISTERING SESSION rather than trusted from the
+// request body, which is what lets revoking a device take its wake registration down with it.
 
 
 export const pushSubscriptions = pgTable("push_subscriptions", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),
-  transport: text("transport").notNull(),               // 'webpush' | 'apns'
-  endpoint: text("endpoint"),                            // webpush
+  transport: text("transport").notNull(),               // 'webpush' | 'apns' | 'unifiedpush'
+  endpoint: text("endpoint"),                            // webpush, unifiedpush
   p256dh: text("p256dh"),                                // webpush
   auth: text("auth"),                                    // webpush
   deviceToken: text("device_token"),                    // apns

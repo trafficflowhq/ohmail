@@ -176,6 +176,36 @@ export const Copy = {
   aboutLive: (origin: string) =>
     `Paired with ${origin}. Mail syncs into an on-device mirror; reading and triage are live. Compose, search and tags arrive with later updates.`,
 
+  /* ------------------------------------------------------------- new mail */
+
+  wake: "New mail",
+  /**
+   * THE NO-DISTRIBUTOR SENTENCE — the state this build is actually in, said plainly.
+   *
+   * It is a sentence and not a disabled switch, because a switch that cannot move is a worse
+   * answer than a paragraph that tells you why. It says what a distributor IS (people have not
+   * heard of UnifiedPush), that it is the user's choice, and — the part that keeps the claim
+   * honest — that the app still gets mail without one. Nothing here promises a future version.
+   */
+  wakeNoDistributor:
+    "Your phone has no push distributor installed, so nothing wakes this app between visits. "
+    + "UnifiedPush distributors are separate apps you choose yourself — no Google or Apple push "
+    + "service is involved either way. Mail arrives when you open the app or pull to refresh.",
+  /** The desktop-host arm. Same shape: what happens instead, not what is missing. */
+  wakeDesktopHost:
+    "Wake notifications need a hosted server. Paired with a desktop, this app syncs when you open "
+    + "it and when you pull to refresh.",
+  /** Registered. Says exactly what leaves the building, because that is the interesting part. */
+  wakeOn:
+    "Your server tells this phone that something changed — a signal with no subject, no sender and "
+    + "no count in it. The app then fetches your mail directly, as it does when you open it.",
+  /** The distributor exists and the registration did not land. One sentence per real cause. */
+  wakeOff: (reason: string): string => reason === "endpoint_refused"
+    ? "Your distributor's address was refused by the server, so wake notifications are off. Mail "
+      + "still arrives when you open the app or pull to refresh."
+    : "Wake notifications could not be set up. Mail still arrives when you open the app or pull to "
+      + "refresh.",
+
   /* ------------------------------------------------- world (phone-specific) */
 
   /** The Ohbox pin group — resurfaced mail, above everything. */

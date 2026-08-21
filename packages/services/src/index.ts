@@ -101,7 +101,7 @@ import { setDefaultMailboxAllowance } from "./mailbox-allowance-registry.js";
 setDefaultMailboxAllowance(paidMailboxGate);
 export { setDefaultMailboxAllowance } from "./mailbox-allowance-registry.js";
 export {
-  PushService, pushService,
+  PushService, pushService, makePushService,
   type PushSubscribeBody, type PushSubscribeResult, type PushIdempotency, type PushTransport,
 } from "./push-service.js";
 export {

@@ -15,6 +15,7 @@ import {
   authThrottle,
   invites,
   waitlist,
+  pushSubscriptions,
 } from "@trafficflow/db/cloud";
 import type { ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
@@ -2296,6 +2297,27 @@ export class AuthService extends SessionLifecycle {
       accountId: user?.accountId ?? null, userId: user?.id ?? null,
       event, method: method ?? null, ip: ctx.ip ?? null, device: ctx.userAgent ?? null,
     });
+  }
+
+  /**
+   * The hosted revoke takes the device's WAKE REGISTRATIONS down with its sessions.
+   *
+   * `push_subscriptions` rows are stamped with the registering session's `device_id`
+   * (push-service.ts), so revoking a paired phone from the Devices pane must also stop the
+   * worker POSTing wakes to that phone's UnifiedPush endpoint — a revoked device that keeps
+   * receiving "something changed" signals is a credential take-back that did not take
+   * everything back. The prune runs AFTER the base revoke so a step-up refusal never deletes
+   * anything, and it lives HERE rather than in `SessionLifecycle` because the base class also
+   * serves the desktop engine, whose mail-only database has no push table to prune.
+   */
+  override async revokeDevice(
+    ctx: ServiceContext, deviceId: string, opts: { requireStepUp?: boolean } = {},
+  ): Promise<void> {
+    await super.revokeDevice(ctx, deviceId, opts);
+    await asTx(ctx).delete(pushSubscriptions).where(and(
+      eq(pushSubscriptions.accountId, ctx.accountId),
+      eq(pushSubscriptions.deviceId, deviceId),
+    ));
   }
 
 }

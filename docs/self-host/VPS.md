@@ -87,6 +87,16 @@ Two optional blocks worth deciding now:
   private-network targets by default. If that server also has no TLS, you
   will additionally confirm the connection-security notice when you add the
   mailbox; plaintext IMAP is never used without that explicit consent.
+- **Push distributor on your own LAN?** The mobile app can register a
+  UnifiedPush endpoint so this server wakes the phone when mail arrives — a
+  signal with no subject, no sender and no count in it. By default the
+  endpoint must be `https` and must resolve to a public address, because the
+  organizer POSTs to it unattended for as long as the registration lives. If
+  your distributor is on the LAN (an `ntfy` beside this server), set
+  `TF_PUSH_ALLOW_PRIVATE=1`. It is a **separate** switch from
+  `TF_PROBE_ALLOW_PRIVATE` on purpose, and it has to be set on **both** the
+  `api` and the `organizer` — the first accepts the registration, the second
+  dials it.
 
 ## 5. Start it
 

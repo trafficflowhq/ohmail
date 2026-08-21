@@ -16,11 +16,12 @@ import {
   type Logger, type FetchLike, type UpdateSecretPort,
 } from "@trafficflow/core";
 import { mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
+import { makePushEndpointGuard } from "@trafficflow/core/net";
 import {
   makeAuthService, makeMailboxService, makeScreenerService, makeApprovalService,
   makePrivacyService, makeUnsubscribeService, nodeOneClickPost,
   nodeRemoteFetch, nodeHostResolver, scryptHasher,
-  syncService, pushService, rulesService, messageService, threadService, triageService,
+  syncService, makePushService, rulesService, messageService, threadService, triageService,
   searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
   attachmentsService, kbService, tagsService, draftsService, draftingService, sendService,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES,
@@ -134,7 +135,14 @@ function buildServices(cfg: HostConfig): ApiServices {
   // The stateless singletons: naming them is free, so they are plain properties.
   const bag: Record<string, unknown> = {
     sync: syncService,
-    push: pushService,
+    // UnifiedPush wake registrations are accepted here because this root states the endpoint
+    // policy, and the policy is STRICT with no env escape: an endpoint on this host is dialled by
+    // the managed worker inside the managed network, so https-only and public-addresses-only are
+    // not negotiable and there is deliberately no `TF_PUSH_ALLOW_PRIVATE` read on this arm. Same
+    // required-resolver rule as `probeHostGuard` below — the DNS port can never quietly default.
+    push: makePushService({
+      endpointGuard: makePushEndpointGuard(nodeHostResolver, { allowPrivate: false }),
+    }),
     // The hosted deployment IS the thing the admission cap protects: many tenants, one connection
     // budget per upstream account, two processes (this one and the worker) that share no lock.
     imapAdmission: { acquire: acquireImapSlot, release: releaseImapSlot },

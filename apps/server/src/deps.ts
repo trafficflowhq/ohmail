@@ -11,11 +11,12 @@ import {
   type FetchLike, type Logger, type UpdateSecretPort,
 } from "@trafficflow/core";
 import { mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
+import { makePushEndpointGuard } from "@trafficflow/core/net";
 import {
   makeAuthService, makeMailboxService, makeScreenerService, makeApprovalService,
   makePrivacyService, makeUnsubscribeService, nodeOneClickPost,
   nodeRemoteFetch, nodeHostResolver, scryptHasher,
-  syncService, pushService, rulesService, messageService, threadService, triageService,
+  syncService, makePushService, rulesService, messageService, threadService, triageService,
   searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
   attachmentsService, kbService, tagsService, draftsService, draftingService, sendService,
   workflowsService, proposalsService, redeemInviteGrant,
@@ -199,7 +200,14 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
   const stagingStorage = cfg.storage ? stagingStorageFor(cfg.storage) : null;
   const bag: Record<string, unknown> = {
     sync: syncService,
-    push: pushService,
+    // UnifiedPush wake registrations, with THIS install's endpoint policy. Strict by default; the
+    // operator's explicit TF_PUSH_ALLOW_PRIVATE=1 relaxes it for a distributor on their own LAN.
+    // A SEPARATE variable from `TF_PROBE_ALLOW_PRIVATE` on purpose — see config.ts for why one
+    // value must not decide both. The organizer reads the same variable, so the two processes
+    // cannot disagree about whether a registered endpoint is dialable.
+    push: makePushService({
+      endpointGuard: makePushEndpointGuard(nodeHostResolver, { allowPrivate: cfg.pushAllowPrivate }),
+    }),
     // This deployment is in the admission cap's exact position: several users, one connection
     // budget per upstream account, TWO processes (this one and the organizer) that share no
     // lock. The counter's table exists here — this host runs both journals.

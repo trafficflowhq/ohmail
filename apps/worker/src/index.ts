@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { pruneIdempotencyKeys, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials } from "@trafficflow/db";
-import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
+import { makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
 import {
   makeAiCreditGate,
   runAlertPass,
@@ -65,6 +65,7 @@ import { syncKickPass } from "./sync-kick.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
 import { awayResponderPass } from "./away-responder.js";
 import { isCliEntry, flushExit, installCrashHandlers } from "./entry.js";
+import { startPushWake, pushEndpointGuardFromEnv, type RunningPushWake } from "./push-wake.js";
 import { driverWriteRaceReason } from "./driver-write-race.js";
 import type { Tx } from "@trafficflow/db";
 import {
@@ -4065,6 +4066,17 @@ export async function startWorkerWithLock(
     let rosterTimer: ReturnType<typeof setInterval> | null = null;
     let alertTimer: ReturnType<typeof setInterval> | null = null;
     let syncKickTimer: ReturnType<typeof setInterval> | null = null;
+    /**
+     * The UnifiedPush wake sender and the LISTEN it feeds from. Not timers, but they belong to
+     * `clearTimers` for the reason that function actually serves: it is "stop doing work NOW",
+     * and it is what `handleLockLoss` and the startup-failure path both call. A deposed leader
+     * that kept POSTing wakes would have a successor doing the same thing beside it — two wakes
+     * per message, and a device that cannot tell which instance is authoritative. The hub's
+     * `end()` is awaited nowhere here on purpose: it closes a socket, `clearTimers` is called
+     * from synchronous paths, and a LISTEN left to the idle close is bounded.
+     */
+    let pushWake: RunningPushWake | null = null;
+    let wakeHub: ChangeWakeFanout | null = null;
     function clearTimers(): void {
       if (pollTimer) clearInterval(pollTimer);
       if (rosterTimer) clearInterval(rosterTimer);
@@ -4072,6 +4084,11 @@ export async function startWorkerWithLock(
       if (syncKickTimer) clearInterval(syncKickTimer);
       if (hbTimer) clearInterval(hbTimer);
       pollTimer = rosterTimer = alertTimer = syncKickTimer = hbTimer = null;
+      pushWake?.stop();
+      pushWake = null;
+      const hub = wakeHub;
+      wakeHub = null;
+      if (hub) void hub.end().catch(() => { /* a LISTEN that will not close politely is closed by the socket */ });
     }
     stopTimers = clearTimers;
     function handleLockLoss(err: LockLostError): void {
@@ -4199,6 +4216,51 @@ export async function startWorkerWithLock(
         }
       })();
     }, SYNC_KICK_EVERY_MS);
+
+    /**
+     * ── THE UNIFIEDPUSH WAKE SENDER ───────────────────────────────────────────────────────────
+     *
+     * Here rather than in the API for the reason `push_subscriptions` had no sender for months:
+     * the thing that knows mail arrived is whatever ingested it, and on both the managed host and
+     * a self-host compose that is THIS process. The serverless API has no place to keep a LISTEN
+     * or a debounce window.
+     *
+     * It is fed by the change-wake hub rather than called from the ingest path, and that is a
+     * decision worth stating: `change_log` is the one place every writer converges — this worker's
+     * sync loop, an API mutation, a cron pass — so subscribing to the channel means a wake fires
+     * for anything a device would want to pull, not only for the arrivals this file happens to
+     * know about. It costs ONE session-mode connection for the whole process (the hub's invariant
+     * is streams : connections = N : 1), lazily dialled and released on `end()`.
+     *
+     * ONLY THE LEADER SENDS. This whole body runs with the shard's advisory lock held; a standby
+     * is still waiting for it and reaches none of this, and `clearTimers` takes the sender down
+     * the instant the lock is lost. Two instances POSTing to one endpoint is the duplicate-wake
+     * shape, and it is the same argument the organizer lease makes about IMAP.
+     *
+     * The construction cannot fail the boot: a hub whose LISTEN will not establish registers the
+     * callback anyway and retries, and the device's own foreground sync is the reliability floor
+     * under all of it. Wrapped anyway, because a boot that dies here would take mail syncing with
+     * it for a latency feature.
+     */
+    try {
+      wakeHub = makeChangeWakeHub(config.databaseUrl, log);
+      pushWake = startPushWake({
+        db: db as unknown as Tx,
+        source: wakeHub,
+        // The env-read policy, and the SAME variable `apps/server` reads — the process that
+        // validates a registration and the process that dials it must not disagree.
+        guard: pushEndpointGuardFromEnv(),
+        log,
+      });
+    } catch (err) {
+      log.warn("push_wake_unavailable", {
+        err,
+        reason: "new-mail wake POSTs are off for this instance; devices still sync on foreground "
+          + "and pull-to-refresh, which is the floor this feature sits on",
+      });
+      pushWake = null;
+      wakeHub = null;
+    }
 
     let teardown: Promise<void> | null = null;
     return {

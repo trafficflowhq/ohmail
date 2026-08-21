@@ -177,6 +177,8 @@ export interface ServerConfig {
   msOAuth: MsOAuthBootstrap;
   /** `TF_PROBE_ALLOW_PRIVATE=1` — see {@link loadServerConfig}. Absent means ENFORCE. */
   probeAllowPrivate: boolean;
+  /** `TF_PUSH_ALLOW_PRIVATE=1` — see {@link loadServerConfig}. Absent means ENFORCE. */
+  pushAllowPrivate: boolean;
   environment: string;
   bodyMaxBytes: number;
   headersTimeoutMs: number;
@@ -461,6 +463,20 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
      * decision, because the absent value must select the strict branch.
      */
     probeAllowPrivate: trimmed(env, "TF_PROBE_ALLOW_PRIVATE") === "1",
+    /**
+     * The UnifiedPush wake endpoint's SSRF gate — `TF_PROBE_ALLOW_PRIVATE`'s sibling, and a
+     * SEPARATE variable rather than a reuse of it, deliberately. The two answer different
+     * questions: "may an interactive probe dial my LAN mail server, once, behind a step-up
+     * session" and "may a background process POST to my LAN, unattended, for as long as a
+     * registration lives". An operator who said yes to the first has not said yes to the second,
+     * and one variable would have decided both.
+     *
+     * ENFORCING by default (https-only, public addresses only). `TF_PUSH_ALLOW_PRIVATE=1` — the
+     * exact string — relaxes it for the install whose distributor is genuinely on the LAN (an
+     * `ntfy` beside the server), which is the shape self-hosting is for. Absent selects strict,
+     * because a security default nobody chose is not a default.
+     */
+    pushAllowPrivate: trimmed(env, "TF_PUSH_ALLOW_PRIVATE") === "1",
     environment: trimmed(env, "TF_ENV") || "production",
     bodyMaxBytes: BODY_MAX_BYTES,
     headersTimeoutMs: SERVER_HEADERS_TIMEOUT_MS,

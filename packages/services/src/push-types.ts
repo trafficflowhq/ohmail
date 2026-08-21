@@ -16,11 +16,15 @@ import type { ServiceContext } from "./context.js";
  * source, which is the disclosure this split removes.
  */
 
-export type PushTransport = "webpush" | "apns";
+export type PushTransport = "webpush" | "apns" | "unifiedpush";
 
 /**
  * Flat push-subscription body. Web Push needs `endpoint` plus the `p256dh`/`auth` keys; APNs
- * needs `deviceToken`, optionally with a bundle id and environment.
+ * needs `deviceToken`, optionally with a bundle id and environment. UnifiedPush needs `endpoint`
+ * ALONE — no keys, deliberately: the wake the worker POSTs to that endpoint is a closed constant
+ * (`{"type":"wake"}`), so there is no content to encrypt and no key whose loss could matter. The
+ * device's UnifiedPush distributor hands the app the endpoint URL; registering it here is the
+ * whole ceremony.
  *
  * Payloads are content-free wake signals only — a push tells a device that something changed and
  * never what changed, so a notification cannot carry mail through a third party's servers.

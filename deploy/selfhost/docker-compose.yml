@@ -124,6 +124,15 @@ services:
       # refuses private-network targets, no alert webhook is armed, no Microsoft 365 OAuth.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       TF_PROBE_ALLOW_PRIVATE: ${TF_PROBE_ALLOW_PRIVATE:-}
+      # A UnifiedPush distributor on your own LAN (an `ntfy` beside this server). Empty means
+      # the endpoint a phone registers must be https and must resolve to a public address —
+      # the organizer POSTs a content-free wake to it unattended, so the default refuses
+      # private targets. DELIBERATELY NOT the same variable as TF_PROBE_ALLOW_PRIVATE: that one
+      # permits ONE interactive dial behind a step-up session, this one permits a background
+      # process to keep POSTing for as long as a registration lives. Set on BOTH services or
+      # neither — the api validates the registration and the organizer dials it, and a value on
+      # only one of them is a phone with a registration nothing ever rings.
+      TF_PUSH_ALLOW_PRIVATE: ${TF_PUSH_ALLOW_PRIVATE:-}
       TF_ALERT_SECRET: ${TF_ALERT_SECRET:-}
       TF_ALERT_WEBHOOK_URL: ${TF_ALERT_WEBHOOK_URL:-}
       MS_OAUTH_CLIENT_ID: ${MS_OAUTH_CLIENT_ID:-}
@@ -166,6 +175,11 @@ services:
       S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
       S3_BUCKET: ${S3_BUCKET:-ohmail-staging}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # THE SAME VALUE THE api GETS, and for the same reason the storage block above is
+      # duplicated rather than shared: this process is the one that actually POSTs the wake, so a
+      # value set on only one service produces a registration the api accepted and the organizer
+      # refuses (logged as `push_wake_endpoint_refused`, invisible from the phone).
+      TF_PUSH_ALLOW_PRIVATE: ${TF_PUSH_ALLOW_PRIVATE:-}
       TF_ALERT_WEBHOOK_URL: ${TF_ALERT_WEBHOOK_URL:-}
       MS_OAUTH_CLIENT_ID: ${MS_OAUTH_CLIENT_ID:-}
       MS_OAUTH_CLIENT_SECRET: ${MS_OAUTH_CLIENT_SECRET:-}
