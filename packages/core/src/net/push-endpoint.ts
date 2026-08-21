@@ -75,12 +75,9 @@ export function makePushEndpointGuard(
     async check(endpoint: string): Promise<string[]> {
       if (endpoint === "") throw new SsrfRefusal("endpoint is empty");
       if (endpoint.length > PUSH_ENDPOINT_MAX_LEN) throw new SsrfRefusal("endpoint is too long");
-      // `httpsOnly` is passed EXPLICITLY on the strict arm rather than relied on as a default —
-      // the gate's default is both schemes, because that is what every other caller has always
-      // had, and a scheme rule this transport wants is this transport's to state.
       return opts.allowPrivate
         ? resolvePinUnchecked(endpoint, resolver)
-        : assertPublicHttpUrl(endpoint, resolver, { allowExplicitPort: true, httpsOnly: true });
+        : assertPublicHttpUrl(endpoint, resolver, { allowExplicitPort: true });
     },
   };
 }

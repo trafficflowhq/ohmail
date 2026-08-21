@@ -131,31 +131,11 @@ export interface PushWakeDeps {
    * that actually dials would ship having never executed.
    */
   guard: PushEndpointGuard;
-  /**
-   * DOES THIS PROCESS OWN THIS ACCOUNT? REQUIRED, with no default.
-   *
-   * The hub's `subscribeAll` hears EVERY account, which is what the sender needs (it cannot
-   * enumerate the accounts with a registered device up front — the set changes without it being
-   * told). But a sharded deployment runs one leader PER SHARD, each under its own advisory lock,
-   * and each of those leaders reaches this module. Without a filter every shard leader would POST
-   * to every registration: N duplicate wakes per message, and a device with no way to tell which
-   * instance is authoritative.
-   *
-   * `apps/worker/src/mailboxes.ts`'s `accountInShard` is the predicate, and it is the same one the
-   * cron backstops already use to refuse work outside their own shard. It is INJECTED rather than
-   * imported so this module keeps its narrow db surface, and it is REQUIRED rather than defaulted
-   * because "own everything" is the wrong answer to get by forgetting: the shipped configuration
-   * is one shard, so a default would be correct today and silently duplicating on the day sharding
-   * is turned on.
-   */
-  ownsAccount: (accountId: string) => Promise<boolean>;
   log?: WakeLog;
   /** The POST, injectable so the e2e can watch a real request without a real distributor. */
   post?: PushWakePost;
   debounceMs?: number;
   minIntervalMs?: number;
-  /** How long ONE POST may take, headers AND body. Injectable so a hostile-peer test is fast. */
-  timeoutMs?: number;
   now?: () => number;
 }
 
@@ -177,8 +157,8 @@ export interface RunningPushWake {
 }
 
 /**
- * The default POST: pinned to the addresses the guard cleared, redirects NOT followed, and the
- * response body DESTROYED rather than read.
+ * The default POST: pinned to the addresses the guard cleared, redirects NOT followed, response
+ * body drained and discarded.
  *
  * Redirects matter more here than in most places. A distributor that answers `302 Location:
  * http://169.254.169.254/` would, under a following client, turn a cleared endpoint into a dial
@@ -186,77 +166,33 @@ export interface RunningPushWake {
  * is built on `http(s).request`, which follows nothing, so this holds by construction rather than
  * by remembering to pass an option.
  *
- * ── THE RESPONSE IS A HOSTILE INPUT, AND THE FIRST VERSION OF THIS FUNCTION TREATED IT AS DATA ──
- *
- * The distributor at the other end of this socket was chosen by whoever registered the endpoint. On
- * a multi-account server that is any authenticated account, and "the endpoint I registered points
- * at a server I wrote" is the ordinary case rather than the exotic one. So the response is not a
- * message, it is an attack surface, and the first version of this function got two things wrong
- * about it — both found in review, both reachable from any account:
- *
- *  · **`clearTimeout` ran in a `finally` that fires when the HEADERS arrive.** `pinnedHttpRequest`
- *    resolves at the response head, not at its end, so the abort that was supposed to bound this
- *    request stopped covering it exactly when the body began. A server that answered `200` and then
- *    dripped one byte every few seconds held a socket open for ever, and every later wake added
- *    another. The timer now lives until the response is DONE — and since nothing here ever reads a
- *    body, "done" means destroyed immediately.
- *  · **`resume()` with no `'error'` listener.** The review that found the timer also called this a
- *    process death: a mid-body RST emits `'error'` on an `IncomingMessage` nobody is listening to,
- *    which in Node is an unhandled error, and it arrives after this function has resolved so the
- *    caller's `try/catch` cannot see it. **MEASURED, AND THAT SECOND HALF IS NOT REACHABLE HERE** —
- *    a standalone reproduction of exactly this shape (headers, one byte, `socket.destroy()`, an
- *    error listener on the REQUEST and none on the response, which is `pinnedHttpRequest`'s shape
- *    verbatim) reports `req 'error' fired` and NO uncaught exception. Node routes a mid-body socket
- *    fault to the `ClientRequest`, and `pinnedHttpRequest` has a listener there, so it is absorbed.
- *    The listener below stays anyway, and the reason is worth stating rather than leaving it as
- *    cargo: without it, this function's safety is a property of a DIFFERENT module's `reject`
- *    continuing to exist. That is a fine thing to rely on and a bad thing to depend on silently.
- *    It costs one no-op closure to make the property local.
- *
- * `destroy()` rather than `resume()` because we categorically do not want the bytes: it releases the
- * socket at once instead of waiting out however long the peer takes to finish talking. The cost is
- * that the connection is not reused, which for a per-account-debounced wake is not a cost worth
- * measuring. Nothing about the response is logged except its status.
+ * The body is drained rather than read: we have no use for whatever a distributor says, and an
+ * undrained response holds the socket. Nothing about the response is logged except its status.
  */
-function makeDefaultPost(opts: { signal: AbortSignal; timeoutMs: number }): PushWakePost {
-  return async function post(url: string, pin: readonly string[]): Promise<{ status: number }> {
-    // TWO reasons to abort, one signal: this request's own deadline, and the sender being stopped
-    // (a lost leader lock must not leave a POST in flight that its successor is also making).
-    const ac = new AbortController();
-    const onStop = (): void => { ac.abort(); };
-    if (opts.signal.aborted) ac.abort();
-    else opts.signal.addEventListener("abort", onStop, { once: true });
-    const timer = setTimeout(() => { ac.abort(); }, opts.timeoutMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
-    try {
-      const res = await pinnedHttpRequest(url, {
-        method: "POST",
-        pin,
-        headers: {
-          "content-type": "application/json",
-          "content-length": String(WAKE_BODY_BYTES),
-          // RFC 8030's TTL. Four minutes: a wake that could not be delivered while the phone was
-          // offline is worth nothing once the phone comes back and syncs on its own. A constant,
-          // like everything else on this request.
-          "ttl": "240",
-        },
-        body: WAKE_BODY,
-        signal: ac.signal,
-      });
-      // ORDER IS LOAD-BEARING. The listener goes on before the destroy, because `destroy()` can
-      // itself surface a pending socket error, and an `IncomingMessage` that emits `'error'` with
-      // no listener takes the process down.
-      res.stream.on("error", () => {
-        // A body we are not reading faulted. There is nothing to report and nothing to retry: the
-        // status line was already the whole answer.
-      });
-      res.stream.destroy();
-      return { status: res.status };
-    } finally {
-      clearTimeout(timer);
-      opts.signal.removeEventListener("abort", onStop);
-    }
-  };
+async function defaultPost(url: string, pin: readonly string[]): Promise<{ status: number }> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => { ac.abort(); }, WAKE_TIMEOUT_MS);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  try {
+    const res = await pinnedHttpRequest(url, {
+      method: "POST",
+      pin,
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(WAKE_BODY_BYTES),
+        // RFC 8030's TTL. Four minutes: a wake that could not be delivered while the phone was
+        // offline is worth nothing once the phone comes back and syncs on its own. A constant,
+        // like everything else on this request.
+        "ttl": "240",
+      },
+      body: WAKE_BODY,
+      signal: ac.signal,
+    });
+    res.stream.resume();          // drain and release the socket; the body is of no interest
+    return { status: res.status };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -287,22 +223,11 @@ export function pushEndpointGuardFromEnv(env: NodeJS.ProcessEnv = process.env): 
  * wake nobody notices; a worker that dies takes everybody's mail with it.
  */
 export function startPushWake(deps: PushWakeDeps): RunningPushWake {
-  const { db, source, guard, ownsAccount, log } = deps;
+  const { db, source, guard, log } = deps;
+  const post = deps.post ?? defaultPost;
   const debounceMs = deps.debounceMs ?? WAKE_DEBOUNCE_MS;
   const minIntervalMs = deps.minIntervalMs ?? WAKE_MIN_INTERVAL_MS;
-  const timeoutMs = deps.timeoutMs ?? WAKE_TIMEOUT_MS;
   const now = deps.now ?? Date.now;
-
-  /**
-   * ONE ABORT FOR THE WHOLE SENDER, aborted by {@link stop}.
-   *
-   * It exists so that losing the leader lock actually stops the traffic rather than only stopping
-   * the scheduling of it. Without it, a `stop()` that arrived while a POST was on the wire left
-   * that POST to finish beside the successor's own — and, worse, left the REST of that account's
-   * rows to be dialled one by one by a worker that is no longer the leader.
-   */
-  const stopping = new AbortController();
-  const post = deps.post ?? makeDefaultPost({ signal: stopping.signal, timeoutMs });
 
   /** One pending debounce per account. The VALUE is a timer and nothing else — no payload. */
   const pending = new Map<string, ReturnType<typeof setTimeout>>();
@@ -319,18 +244,6 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
    * edit which wants a message-derived value has to widen the SELECT, which the census sees.
    */
   const fire = async (accountId: string): Promise<void> => {
-    /**
-     * IS THIS ACCOUNT OURS? Asked before the query, not after.
-     *
-     * `subscribeAll` is deliberately global — the sender cannot know in advance which accounts
-     * have a device registered. A SHARDED deployment therefore has every shard leader hearing
-     * every account, and without this check each of them would POST to the same registrations:
-     * one duplicate wake per shard. On the shipped single-shard configuration this answers `true`
-     * without touching the database, so it costs nothing today and is correct the day it matters.
-     */
-    if (!await ownsAccount(accountId)) return;
-    if (stopped) return;
-
     const rows = await db.select({
       id: pushSubscriptions.id,
       endpoint: pushSubscriptions.endpoint,
@@ -340,16 +253,6 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
     ));
 
     for (const row of rows) {
-      /**
-       * RE-CHECKED EVERY ROW, and this is the half a `stop()` used to miss.
-       *
-       * Losing the leader lock mid-pass used to cancel only the pending timers. An account with
-       * three registrations was then dialled row by row by a worker whose successor was doing the
-       * same thing — the duplicate-wake shape, arrived at from the other direction. The loop asks
-       * again before each dial, and the shared abort above cuts the one already on the wire.
-       */
-      if (stopped) return;
-
       const url = row.endpoint;
       if (!url) continue;                        // a unifiedpush row with no endpoint is unusable
 
@@ -442,9 +345,6 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
       unsubscribe();
       for (const t of pending.values()) clearTimeout(t);
       pending.clear();
-      // The socket, not just the schedule. A POST already on the wire is cut here; `fire`'s
-      // per-row check stops the ones that had not started.
-      stopping.abort();
     },
     sent(): number {
       return sentCount;

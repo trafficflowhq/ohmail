@@ -228,25 +228,14 @@ export interface PublicUrlOptions {
    */
   allowExplicitPort?: boolean;
   /**
-   * Refuse `http:`, permitting `https:` only.
+   * Permit `http:` as well as `https:`.
    *
-   * ── THE FLAG IS PHRASED THIS WAY ROUND BECAUSE THE OTHER WAY ROUND WAS A LIVE REGRESSION ──
-   *
-   * It was first written as `allowHttp`, defaulting to `false`. That reads like the safe choice and
-   * it was a behaviour change to every existing caller: this gate has always accepted both schemes,
-   * and `privacy-service`'s image proxy passes no options, so plain-`http:` images in real mail
-   * stopped loading — silently, because a refusal there is indistinguishable from an image that
-   * would not load anyway. Found in review, and it is the exact failure the docblock on this
-   * interface warns about, committed in the other direction: an added option must not change what
-   * an existing call site does, and TIGHTENING one is as much a change as loosening it.
-   *
-   * So the default is the historical behaviour — both schemes — and the caller that wants
-   * https-only says so. The UnifiedPush wake sender's strict arm does: a wake to a plaintext
-   * endpoint tells anyone on the path that this account just received mail, which is exactly the
-   * metadata the content-free payload exists to withhold. Its relaxed arm (an operator's own LAN)
-   * leaves this off.
+   * OFF by default. The wake sender leaves it off on the managed host: a wake to a plaintext
+   * endpoint tells a network observer that this account just received mail, which is exactly the
+   * metadata the content-free payload exists to withhold. It is on only under an operator's
+   * explicit private-endpoint allowance, where the traffic does not leave their own network.
    */
-  httpsOnly?: boolean;
+  allowHttp?: boolean;
 }
 
 /**
@@ -291,8 +280,11 @@ export async function assertPublicHttpUrl(
     refuse("unparseable");
   }
 
-  if (u!.protocol !== "https:" && u!.protocol !== "http:") refuse("scheme must be http or https");
-  if (opts.httpsOnly === true && u!.protocol !== "https:") refuse("scheme must be https");
+  if (u!.protocol === "http:") {
+    if (opts.allowHttp !== true) refuse("scheme must be https");
+  } else if (u!.protocol !== "https:") {
+    refuse("scheme must be http or https");
+  }
   if (u!.username !== "" || u!.password !== "") refuse("userinfo is not allowed");
 
   if (opts.allowExplicitPort !== true) {
