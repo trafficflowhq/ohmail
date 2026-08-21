@@ -168,6 +168,51 @@ export interface CloudSidecar {
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+/**
+ * ADD THE HOSTED MESSAGE COUNT TO A LOCAL `GET /mailboxes` ANSWER, per mailbox that has one.
+ *
+ * The window's status strip needs two numbers to say how much of the account this device is
+ * holding, and in Cloud mode only ONE of them is here: `cloud-read.ts` serves this list out of the mirror,
+ * so everything on those rows is a fact about the copy. The other number is what the mirror is
+ * draining toward, and `cloud-mirror.ts` learns it from the hosted `?counts=1` on a cadence of its
+ * own (see `HOSTED_COUNTS_TTL_MS` — this function costs nothing and asks for nothing).
+ *
+ * `hostedMessageCount`, NOT `messageCount`. The latter is the shared DTO's field and means "how
+ * much mail is in this mailbox" as answered by whoever was asked — so filling it from here would
+ * make the strip compare the mirror against itself and read "N of N" for ever, and would put a
+ * number about the hosted account into the field Settings renders as this install's own count. A
+ * separate name is what keeps those two facts from being spent as one.
+ *
+ * ABSENT, NEVER ZERO. A mailbox the map has nothing for — the launch before the first counted
+ * refresh, an account that answers no counts, a mailbox added since — is left exactly as the read
+ * surface produced it. `0` would assert an empty account, which is the shape of lie the shell's
+ * ladder is built to refuse: it would read as "this device is ahead of your account" and go
+ * silent, or, with the comparison written the other way, announce a negative shortfall.
+ *
+ * A non-JSON or non-list body is passed through untouched: this is a decoration, and a decoration
+ * that can fail a response is worse than one that quietly does nothing.
+ */
+async function decorateHostedCounts(
+  res: Response,
+  counts: ReadonlyMap<string, number>,
+): Promise<Response> {
+  if (counts.size === 0) return res;
+  let body: unknown;
+  try {
+    body = await res.clone().json();
+  } catch {
+    return res;
+  }
+  const items = (body as { items?: unknown })?.items;
+  if (!Array.isArray(items)) return res;
+  const decorated = items.map((row) => {
+    const id = (row as { id?: unknown })?.id;
+    const n = typeof id === "string" ? counts.get(id) : undefined;
+    return typeof n === "number" ? { ...(row as object), hostedMessageCount: n } : row;
+  });
+  return json({ ...(body as object), items: decorated }, res.status);
+}
+
 /** The file recording which hosted address this cloud mirror was bootstrapped for. */
 export const MIRROR_OWNER_FILE = "mirror-owner";
 
@@ -656,7 +701,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       }
       // Captured, not re-read: `authed` is written by `activate`, so TypeScript cannot keep a
       // narrowing across the awaits below and neither should a reader.
-      const { proxy } = authed;
+      const { proxy, mirror: liveMirror } = authed;
 
       if (req.method === "GET" && path === "/sync") {
         const since = url.searchParams.get("since") ?? undefined;
@@ -688,7 +733,17 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       const read = matchReadRoute(req.method, path);
       if (read) {
         try {
-          return await read.route.handler(req, ctxFor(core.accountId, core.userId, core.sessionId), read.params);
+          const answer = await read.route.handler(req, ctxFor(core.accountId, core.userId, core.sessionId), read.params);
+          // THE ONE FACT THE MIRROR ADDS ABOUT SOMEWHERE ELSE. `GET /mailboxes` is served from
+          // this database, so every number on those rows is a number about the COPY; a strip cannot
+          // say how much of the account is here from a list whose halves both come from the same
+          // store. `hostedCounts()` is what the mirror is draining toward, learned on
+          // its own cadence (`cloud-mirror.ts`), and it travels under a field whose name says so.
+          // Absent when the map has nothing for a row — never 0, which would claim an empty account.
+          if (req.method === "GET" && path === "/mailboxes") {
+            return await decorateHostedCounts(answer, liveMirror.hostedCounts());
+          }
+          return answer;
         } catch (err) {
           if (err instanceof ServiceError) {
             return json({ error: { code: err.code, message: err.message } }, err.httpStatus);

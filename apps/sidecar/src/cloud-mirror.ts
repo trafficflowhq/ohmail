@@ -294,9 +294,54 @@ export interface CloudMirror {
    * already contains its own write.
    */
   awaitCloudSeq(target: bigint, deadlineMs: number): Promise<boolean>;
+  /**
+   * HOW MANY MESSAGES THE HOSTED ACCOUNT HOLDS, per hosted mailbox id — the numbers this mirror
+   * is draining TOWARD, not the ones it holds.
+   *
+   * Empty until the first counted refresh (see {@link HOSTED_COUNTS_TTL_MS}), and empty for ever
+   * on an install whose account answers no counts. An empty map means "this process cannot tell",
+   * and every consumer must render that as an ABSENT number rather than a zero: `0` here would
+   * assert that somebody's account is empty, which is the one thing a mirror may never say about
+   * the master copy.
+   *
+   * In memory on purpose. It is not a mirrored row: the `mailboxes` table is the shared mail
+   * schema, running on hosted Postgres and on this PGlite from one journal, and a column that
+   * means something only inside a mirror would be dead and misnamed on the hosted side. It also
+   * SHOULD die with the process — a count is a measurement with a timestamp, and the honest
+   * lifetime of an unrefreshed one is short.
+   */
+  hostedCounts(): ReadonlyMap<string, number>;
 }
 
 export const DEFAULT_CLOUD_POLL_MS = 20_000;
+
+/**
+ * HOW OLD THE HOSTED MESSAGE COUNTS MAY GET before the next refresh asks for them again.
+ *
+ * `GET /mailboxes?counts=1` is one grouped aggregate over the account's whole `messages` table,
+ * and `packages/api/src/routes/mailboxes.ts` makes it opt-in precisely so that a POLLED route
+ * cannot put that scan behind a heartbeat. This mirror polls every {@link DEFAULT_CLOUD_POLL_MS},
+ * which is three times a minute — so asking for counts on every refresh would be exactly the
+ * thing that doc-block refuses, from a client instead of a tab.
+ *
+ * Fifteen minutes, with {@link HOSTED_COUNTS_MIN_GAP_MS} as a hard floor beneath it, puts a steady
+ * install at four counted reads an hour. The number the counts feed is a sentence about a
+ * shortfall of dozens of messages or more; it does not need to be fresher than this, and the
+ * cases where it DOES need to be fresh — a process that has just started, a bootstrap, a drain
+ * that reported a backlog — are asked for by name rather than by shortening this.
+ */
+export const HOSTED_COUNTS_TTL_MS = 15 * 60_000;
+
+/**
+ * The floor under every reason to ask for counts, including the by-name ones.
+ *
+ * `refreshMailboxes` runs at the top of every pull AND once more mid-drain when a page names a
+ * mailbox the list did not (a real sequence on a fresh install). Without a floor, "the map is
+ * empty" and "the drain saw a backlog" would both re-trigger inside one pull and a bootstrap
+ * would ask for the aggregate repeatedly while it was doing the most work. One a minute at the
+ * very most, whatever the reason.
+ */
+export const HOSTED_COUNTS_MIN_GAP_MS = 60_000;
 
 /**
  * Reconnect backoff. A pull that fails (dropped network, spent token) retries soon and then backs
@@ -1140,6 +1185,22 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   let knownMailboxes: ReadonlySet<string> = EMPTY_MAILBOXES;
   /** The ids the hosted account named last, for the post-drain prune. */
   let hostedMailboxIds: string[] = [];
+  /**
+   * The hosted account's own message count per mailbox — see {@link CloudMirror.hostedCounts}.
+   * Empty until a counted refresh lands, and an empty map is served as "no number", never as 0.
+   */
+  let hostedCounts = new Map<string, number>();
+  /** When counts were last ASKED for (not when they last changed). `-Infinity` ⇒ never. */
+  let countsAskedAt = Number.NEGATIVE_INFINITY;
+  /**
+   * Did the last drain leave the hosted account with more to give? Set from `/sync`'s `hasMore`,
+   * cleared by the counted ask it triggers.
+   *
+   * This is the signal that matters: a mirror that is behind is exactly the case where the
+   * denominator is worth a request, and `hasMore` is the hosted account saying so in the answer
+   * the mirror was already reading.
+   */
+  let sawBacklog = false;
 
   /** The cloud seq the cursor encodes — the inverse of `SyncService.encodeCursor`. */
   const cloudSeq = (): bigint => {
@@ -1168,8 +1229,44 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * `503 offline_read_only` rather than forwarding into a void, and the poll retries on the same
    * backoff a failed `/sync` uses.
    */
+  /**
+   * MAY THIS REFRESH ASK FOR THE COUNTS?
+   *
+   * Four reasons to say yes, one floor under all of them, and the reasons are named rather than
+   * folded into a shorter interval because each is a different question:
+   *
+   *  · this process has never ASKED — the launch that follows an install being closed for days,
+   *    which is the one moment a shortfall is most likely and least visible. "Never asked" and
+   *    not "holds no numbers": an account whose build does not serve counts would answer the
+   *    second condition for ever, and past the floor below that is one full-table aggregate a
+   *    minute, indefinitely — the storm this cadence exists to prevent, re-entered through its
+   *    own failure case. Such an account is asked again on the TTL, like any other.
+   *  · a BOOTSTRAP is running — the mirror is rebuilding from zero, so the denominator is the
+   *    only thing that makes the count on screen mean anything.
+   *  · the last drain saw `hasMore` — the hosted account said there was more; a shortfall is not
+   *    hypothetical here.
+   *  · the numbers are older than {@link HOSTED_COUNTS_TTL_MS}.
+   *
+   * The floor is checked FIRST and applies to every reason, so no combination of them can put two
+   * aggregates within a minute of each other.
+   */
+  const countsWanted = (): boolean => {
+    const t = now().getTime();
+    if (t - countsAskedAt < HOSTED_COUNTS_MIN_GAP_MS) return false;
+    if (countsAskedAt === Number.NEGATIVE_INFINITY) return true;
+    if (cursor.bootstrapping) return true;
+    if (sawBacklog) return true;
+    return t - countsAskedAt >= HOSTED_COUNTS_TTL_MS;
+  };
+
   const refreshMailboxes = async (): Promise<MailboxRefreshOutcome> => {
-    const res = await cfg.auth.authedFetch("/mailboxes");
+    /* THE ONE PLACE COUNTS ARE ASKED FOR. `packages/api`'s route computes them only for
+       `?counts=1`, so the ordinary refresh — three a minute — stays the cheap read it has always
+       been, and the aggregate happens on the cadence above and nowhere else. The local read
+       surface must never compute a count of its OWN: a mirror's aggregate under a hosted field
+       name would read "N of N" for ever, which is worse than saying nothing. */
+    const wantCounts = countsWanted();
+    const res = await cfg.auth.authedFetch(wantCounts ? "/mailboxes?counts=1" : "/mailboxes");
     if (!res.ok) throw new Error(`the hosted /mailboxes answered HTTP ${res.status}`);
     const body = (await res.json()) as { items?: unknown };
     // A wire boundary, so the shape is checked rather than assumed — an answer that is not a list
@@ -1181,6 +1278,27 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     const out = await applyMailboxRefresh(cfg.db, cfg.world, hosted, now());
     knownMailboxes = out.known;
     hostedMailboxIds = hosted.map((m) => m.id);
+    if (wantCounts) {
+      /* THE ASK IS STAMPED WHETHER OR NOT THE ANSWER CARRIED NUMBERS. A hosted build that does not
+         serve `messageCount` would otherwise leave the map empty, `countsWanted()` would say yes on
+         the next refresh for ever, and the opt-in aggregate would be requested three times a minute
+         — the exact cost this cadence exists to avoid, arrived at through the failure case. */
+      countsAskedAt = now().getTime();
+      sawBacklog = false;
+      /* REBUILT, NOT MERGED: a mailbox the account no longer names must not keep a stale count in
+         a map the strip sums. Rows that carry no number are simply absent, and an absent number
+         withdraws the whole denominator downstream — which is the correct answer to "one of your
+         mailboxes did not report". */
+      const next = new Map<string, number>();
+      for (const m of hosted) {
+        // `typeof`-guarded even though the DTO types it as `number | undefined`: this is a wire
+        // boundary, and a hosted build that answers a string or a null here must leave the entry
+        // ABSENT rather than put a non-number into a sum.
+        const n = m.messageCount;
+        if (typeof n === "number" && Number.isFinite(n) && n >= 0) next.set(m.id, n);
+      }
+      hostedCounts = next;
+    }
     if (out.retired.length > 0 || out.dropped.length > 0) {
       /* THREE COUNTS AND NO ADDRESS. `count` is how many mailboxes the account has, `pruned` how
          many local rows it no longer names (retired to tombstones, because mail still points at
@@ -1309,6 +1427,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // AFTER the commit: a crash before this line re-applies the page next launch, which converges.
       cursor.sync = body.cursor;
       writeCursor(cfg.cursorPath, cursor);
+      // The hosted account has more to give, which is the one cheap signal that this mirror is
+      // BEHIND. Read at the top of the next pull to decide whether the denominator is worth an
+      // aggregate; nothing else reads it, and it changes no drain decision here.
+      if (body.hasMore) sawBacklog = true;
       if (!body.hasMore) break;
     }
     return { applied, sweep, cut: false };
@@ -1788,6 +1910,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     },
     cloudSeq,
     awaitCloudSeq,
+    // The live map, not a copy: the only caller reads it synchronously to decorate one response,
+    // and the map is REPLACED rather than mutated on each counted refresh, so a reader can never
+    // observe a half-built one.
+    hostedCounts: () => hostedCounts,
     async start() {
       // A first pull that fails is a bad network or an expired token, not a launch failure: the
       // mirror serves what it holds and the poll retries (on backoff). Scheduling regardless is what

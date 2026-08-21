@@ -95,6 +95,14 @@ interface MailboxWire {
   lastSyncAt: string | null;
   initialImportCompletedAt?: string | null;
   smtpMaxSizeBytes?: number | null;
+  /**
+   * How many messages the ACCOUNT holds for this mailbox, as the local engine learned it from
+   * the hosted mailbox list. Absent on a local-only install (there is no other copy to be
+   * behind), absent before the engine's first counted refresh, and absent from any engine that
+   * predates the field — all three are "cannot tell", which is what the shell's ladder does with
+   * an absent number. Never confused with a count of the mirror: see `MailboxFacts`.
+   */
+  hostedMessageCount?: number;
   createdAt?: string;
 }
 
@@ -145,6 +153,12 @@ export async function readMailboxFactsVia(
     // standalone door's attach cap can follow the user's own server instead of the hosted
     // constant; the engine has served it all along, and this narrowing used to drop it.
     ...("smtpMaxSizeBytes" in m ? { smtpMaxSizeBytes: m.smtpMaxSizeBytes } : {}),
+    // THE ACCOUNT'S OWN COUNT, forwarded by the same `in` spread and for a sharper version of the
+    // same reason: this is the denominator of the sentence "this device holds N of M", so a `?? 0`
+    // here would not merely lose a field, it would assert that the account is empty and turn the
+    // strip's comparison upside down. Absent must arrive absent. This seam has dropped a field
+    // exactly once before — `smtpMaxSizeBytes`, on the line above — and it did so silently.
+    ...("hostedMessageCount" in m ? { hostedMessageCount: m.hostedMessageCount } : {}),
     createdAt: m.createdAt ?? new Date().toISOString(),
   }));
 }

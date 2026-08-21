@@ -312,11 +312,35 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
         // it cannot see a worker, so a sentence that claims one is asserting something this
         // code does not know. The count is the largest TRUE thing here.
         title: t("importing"),
-        // Never a percentage: `/sync` answers `hasMore` as a boolean, so the TOTAL is unknowable
-        // until the drain ends. A count is available, and it MOVES, which is the part that
-        // distinguishes working from hung.
-        detail: t("importingCount", { count: state.count }),
+        // Never a percentage, and that rule is untouched by the arrival of a denominator: what
+        // `state.total` carries is the ACCOUNT's message count, measured by the server on its own
+        // clock, not a share of a drain `/sync` could report. When it is present the pair is
+        // quoted as two numbers ("1,114 of 1,541"); when it is absent — every hosted browser tab,
+        // by design — the moving count alone is what distinguishes working from hung, exactly as
+        // before. `mail-state.ts` withholds the total unless it is strictly above the count, so
+        // this line can never render a fraction that has already been passed.
+        detail: state.total !== null
+          ? t("importingOf", { count: state.count, total: state.total })
+          : t("importingCount", { count: state.count }),
         link: null,
+      };
+
+    case "behind":
+      return {
+        // WARN, not busy. Nothing is in flight — that is the whole point of this state: the
+        // mirror is still, the loop is healthy, and the device is short of the account. A
+        // spinner would say work is happening; silence is what the user already had.
+        tone: "warn", role: "status", warn: true, busy: false,
+        // The two numbers, and no advice this surface cannot stand behind. The strip does not
+        // know WHY the copy stopped short — that is what the mailbox pane and its resync are
+        // for — so it states the fact and points at the place where something can be done.
+        // `state.total` is non-null on this key by construction (`mail-state.ts` cannot enter
+        // it otherwise); the `?? state.count` is a render-time floor that keeps a future
+        // refactor from printing the word "null" at somebody, and would show an even fraction
+        // rather than a wrong one.
+        title: t("behind", { count: state.count, total: state.total ?? state.count }),
+        detail: null,
+        link: settings,
       };
 
     default:
@@ -350,9 +374,14 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
  * nothing on the strip moves at all. The spinner is the one element here that is continuously
  * true: it says a process is running without claiming to know how far along it is.
  *
- * INDETERMINATE ON PURPOSE. `/sync` answers `hasMore` as a boolean, so the TOTAL is unknowable
- * until the drain ends; a percentage or a filled track would be invented, and this strip does
- * not invent. A spinner is the affordance that carries exactly the knowledge available.
+ * INDETERMINATE ON PURPOSE, AND IT STAYS THAT WAY NOW THAT A TOTAL EXISTS. `/sync` answers
+ * `hasMore` as a boolean, so the SHAPE OF THE DRAIN is still unknowable from the loop itself;
+ * what {@link MailState.total} adds is a count of the account's mail, which is a different fact
+ * measured at a different moment. Two numbers read seconds apart may be quoted side by side —
+ * "1,114 of 1,541" is two measurements and reads as two — but they may not be turned into one
+ * percentage or one filled track, which claims a single continuous progression the client cannot
+ * see. So the spinner still carries exactly the knowledge available, and the numbers sit beside
+ * it as text.
  *
  * ── WHY `mbx-spin`, A CLASS THE SETTINGS ROWS OWN ───────────────────────────────────────
  *
