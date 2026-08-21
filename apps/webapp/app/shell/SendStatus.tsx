@@ -38,18 +38,27 @@ export function SendStatus({
           ? { tone: "warn", text: t("statusUnverified") }
           : send.phase === "failed"
             /**
-             * A REFUSAL THE PRODUCT HAS ITS OWN WORDS FOR.
+             * EVERY REFUSAL GETS THE PRODUCT'S OWN WORDS — the wire never renders.
              *
-             * `statusFailed` quotes the server, which is right for the long tail of SMTP
-             * refusals and wrong here: `mailbox_disabled` is a state with a control on the same
-             * screen, and "Not sent: This mailbox is disconnected and cannot send. Reconnect it,
-             * or pick another sender." is an API sentence read out to somebody already looking
-             * at the picker it describes. The branch is on the CODE, not on the text, so a
-             * reworded server message cannot silently fall back to the quotation.
+             * `statusFailed` used to quote the server ("Not sent: {reason}"), on the theory that
+             * the long tail of SMTP refusals is best relayed verbatim. What that shipped, to a
+             * real subscriber, was "Nicht gesendet: authentication required" — the API
+             * middleware's own 401 envelope text, in English, inside a German UI, during a
+             * deploy blip (owner report 2026-08-21). A protocol sentence names the machine's
+             * state, not the reader's next move. So the failed line now says the one thing that
+             * is true of every refusal this component cannot name — the draft is kept
+             * (`mail-send.ts`: "Text kept, Send live again") and the Send control beside this
+             * line is the retry — and the server's text stays in `send.reason` for diagnostics.
+             *
+             * `mailbox_disabled` keeps its own sentence: a state with a control on the same
+             * screen. The branch is on the CODE, not on the text, so a reworded server message
+             * cannot silently change which sentence renders. And "sign in" is deliberately NOT
+             * said here: a single send's 401 cannot tell a deploy blip from a revocation —
+             * the SyncBar owns that claim, after `REFUSAL_SUSTAIN_MS` of re-made refusals.
              */
             ? send.code === "mailbox_disabled"
               ? { tone: "error", text: t("statusMailboxDisabled") }
-              : { tone: "error", text: t("statusFailed", { reason: send.reason ?? t("reasonUnknown") }) }
+              : { tone: "error", text: t("statusFailed") }
             : null;
 
   if (!line) return null;

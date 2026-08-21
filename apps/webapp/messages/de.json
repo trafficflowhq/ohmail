@@ -818,7 +818,7 @@
     "statusSending": "Deine Nachricht wird gesendet.",
     "statusQueued": "Noch nicht gesendet. ohmail versucht es weiter.",
     "statusUnverified": "Wir konnten diesen Versand nicht bestätigen. Schau in deinen Gesendet-Ordner, bevor du nochmal sendest.",
-    "statusFailed": "Nicht gesendet: {reason}",
+    "statusFailed": "Senden hat nicht geklappt — dein Entwurf ist gesichert. Versuch es nochmal.",
     "statusMailboxDisabled": "Nicht gesendet. Diese Adresse ist getrennt und kann nicht senden.",
     "reasonUnknown": "der Server hat es abgelehnt.",
     "toastSent": "Nachricht gesendet.",
@@ -1987,7 +1987,7 @@
     "statusSending": "Deine Antwort wird gesendet.",
     "statusQueued": "Noch nicht gesendet. ohmail versucht es weiter.",
     "statusUnverified": "Wir konnten diesen Versand nicht bestätigen. Schau in deinen Gesendet-Ordner, bevor du nochmal sendest.",
-    "statusFailed": "Nicht gesendet: {reason}",
+    "statusFailed": "Senden hat nicht geklappt — dein Entwurf ist gesichert. Versuch es nochmal.",
     "statusMailboxDisabled": "Nicht gesendet. Diese Adresse ist getrennt und kann nicht senden.",
     "reasonUnknown": "der Server hat es abgelehnt.",
     "toastSent": "Antwort gesendet."

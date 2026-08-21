@@ -818,7 +818,7 @@
     "statusSending": "Sending your message.",
     "statusQueued": "Not sent yet. ohmail is still trying.",
     "statusUnverified": "We couldn't confirm this send. Check your Sent folder before sending it again.",
-    "statusFailed": "Not sent: {reason}",
+    "statusFailed": "Sending didn't work — your draft is kept. Try again.",
     "statusMailboxDisabled": "Not sent. That address is disconnected and cannot send.",
     "reasonUnknown": "the server refused it.",
     "toastSent": "Message sent.",
@@ -1987,7 +1987,7 @@
     "statusSending": "Sending your reply.",
     "statusQueued": "Not sent yet. ohmail is still trying.",
     "statusUnverified": "We couldn't confirm this send. Check your Sent folder before sending it again.",
-    "statusFailed": "Not sent: {reason}",
+    "statusFailed": "Sending didn't work — your draft is kept. Try again.",
     "statusMailboxDisabled": "Not sent. That address is disconnected and cannot send.",
     "reasonUnknown": "the server refused it.",
     "toastSent": "Reply sent."
