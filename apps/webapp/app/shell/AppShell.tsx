@@ -2151,12 +2151,15 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * "reply to THIS message" is not a toggle.
    */
   const toggleReply = useCallback((messageId: string, all = false) => {
-    if (replyTo === messageId && replyAll === all) {
+    // The MODE is part of the editor's identity: Reply pressed while the FORWARD dock is up on
+    // the same message is a switch to the reply, not a close — only the same verb on the same
+    // message in the same mode toggles.
+    if (replyTo === messageId && replyAll === all && replyMode === "reply") {
       setReplyTo(null);
       return;
     }
     openReply(messageId, all);
-  }, [replyTo, replyAll, openReply]);
+  }, [replyTo, replyAll, replyMode, openReply]);
 
   const onReplyBody = useCallback(
     (next: RichValue) => {
@@ -2184,6 +2187,9 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   replyBodyRef.current = replyBody;
   const replyToRef = useRef(replyTo);
   replyToRef.current = replyTo;
+  /** The mode, readable from settle handlers and draft arrivals — same idiom as `replyToRef`. */
+  const replyModeRef = useRef(replyMode);
+  replyModeRef.current = replyMode;
 
   /**
    * A DRAFT THAT ARRIVED ON TOP OF SOMETHING ALREADY WRITTEN, and has not been placed yet.
@@ -2204,6 +2210,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       // reply-all someone bought a draft for must not silently narrow to the sender alone —
       // and resets to a plain reply when it opens the editor on a different message.
       setReplyAll((prev) => replyToRef.current === messageId && prev);
+      // A drafted REPLY places into a REPLY editor, whatever the dock is doing right now: with
+      // the forward dock up on the same message, placing into `replyBody` without flipping the
+      // mode would put generated reply text into the forward's note and send it as one. The
+      // forward's own note is safe in its `fwd:` scratch.
+      setReplyMode("reply");
       setReplyTo(messageId);
       setReplyBody(next);
       writeReplyDraft(messageId, next);
@@ -2227,8 +2238,12 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    */
   const onDraft = useCallback(
     (draft: DraftedReply, messageId: string) => {
+      // The FORWARD dock's body is not "existing reply text": when the open editor is the
+      // forward on this message, the reply's own scratch is the honest source.
       const existing =
-        replyToRef.current === messageId ? replyBodyRef.current : readReplyDraft(messageId);
+        replyToRef.current === messageId && replyModeRef.current === "reply"
+          ? replyBodyRef.current
+          : readReplyDraft(messageId);
       if (isRichEmpty(existing)) {
         placeDraft(messageId, draft);
         return;
@@ -2248,7 +2263,9 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       if (!pendingDraft) return;
       const { draft, messageId } = pendingDraft;
       const existing =
-        replyToRef.current === messageId ? replyBodyRef.current : readReplyDraft(messageId);
+        replyToRef.current === messageId && replyModeRef.current === "reply"
+          ? replyBodyRef.current
+          : readReplyDraft(messageId);
       placeDraft(messageId, mode === "replace" ? draft : appendRich(existing, draft));
       setPendingDraft(null);
     },
@@ -2381,7 +2398,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
      */
     if (key.startsWith("fwd:")) {
       const forwarded = key.slice(4);
-      setReplyTo((cur) => (cur === forwarded ? null : cur));
+      // Close ONLY the editor this settlement is about: a late forward confirmation must not
+      // take down a REPLY the user has since opened on the same message.
+      setReplyTo((cur) =>
+        cur === forwarded && replyModeRef.current === "forward" ? null : cur,
+      );
       return;
     }
     // A reply seeded from a draft row settled: the row's message has been delivered (the send
@@ -2394,7 +2415,9 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     // A reply settled. `key` is the answered message's id (`sendKeyOf`), which is exactly the row
     // that should move from "New for you" to "Earlier" — so hand it to the Ohbox for the gesture.
     setReplyDone({ messageId: key, at: new Date().toISOString() });
-    setReplyTo((cur) => (cur === key ? null : cur));
+    // The mirror-image of the fwd: guard above: a late REPLY confirmation must not close a
+    // FORWARD newly opened on the same message.
+    setReplyTo((cur) => (cur === key && replyModeRef.current === "reply" ? null : cur));
     // A reply to this message has been delivered, so a drafted alternative to it is moot.
     // This is the ONLY thing that discards an unplaced draft other than answering the
     // question, because the AI action behind it has already been spent.
@@ -3756,7 +3779,15 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   // The last pair the two sides agreed on — `view|id`, because the SAME message deep-linked on
   // a DIFFERENT view is a route move (the overlay must open there), not a state echo.
   const routeMsgAgreed = useRef<string>("|");
+  const lastMirroredView = useRef<Route["view"] | null>(null);
   useEffect(() => {
+    // A VIEW CHANGE is the one commit where `readerFor` may be a value already condemned: the
+    // transition effect above queues `setReaderFor(null)` in this same commit, and reflecting
+    // the closure's stale reader into the NEW view's bare route would push `m/<old>` and then
+    // restore the old reading over the destination. One pass of silence for the reader on a
+    // view change; the next run reads the settled value.
+    const viewChanged = lastMirroredView.current !== route.view;
+    lastMirroredView.current = route.view;
     const allowed = route.view !== "settings" && route.view !== "compose"
       && route.view !== "drafts" && route.view !== "screener";
     if (!allowed) { routeMsgAgreed.current = "|"; return; }
@@ -3765,7 +3796,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     // on a phone the list shows no reading, so the sheet alone is the open there, and closing
     // it must take the claim out of the bar with it.
     const openOnScreen: string | null =
-      readerFor ?? (route.view === "ohbox" && !readColumnHidden() ? ohboxSel : null);
+      (viewChanged ? null : readerFor)
+      ?? (route.view === "ohbox" && !readColumnHidden() ? ohboxSel : null);
     // ── the route moved: apply it ─────────────────────────────────────────────────────────
     if (agreedKey !== routeMsgAgreed.current) {
       const id = route.messageId;
@@ -3774,9 +3806,14 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         routeMsgAgreed.current = agreedKey;
         if (cameFrom === route.view) {
           // The id was dropped IN PLACE — Back walked out of the reading on this same view:
-          // close what the URL no longer claims.
+          // close what the URL no longer claims. The stream cursor goes with it; the card a
+          // one-shot jump expanded is the VIEW's own state and stays until the reader closes
+          // it — a bar that under-claims, recorded as the known residue of this arm until the
+          // stream grows a controlled close.
           setReaderFor(null);
           if (route.view === "ohbox") setOhboxSel(null);
+          if (route.view === "reads") setReadsCur(null);
+          if (route.view === "receipts") setReceiptsCur(null);
           return;
         }
         // A fresh ARRIVAL at a bare view — ordinary navigation, `openMessage`'s own `go()`
@@ -3807,11 +3844,15 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       }
       if (route.view === "ohbox" && held) {
         setOhboxSel(id);
-        if (readColumnHidden()) setReaderFor(id);
+        // The overlay either IS this reading (narrow) or must not stand over it: at a split
+        // width a stale reader left by an earlier off-pile route would sit over the column
+        // and re-claim the bar on a later pass.
+        setReaderFor(readColumnHidden() ? id : null);
         setLocated(id);
       } else if ((route.view === "reads" || route.view === "receipts") && held) {
         (route.view === "reads" ? setReadsCur : setReceiptsCur)(id);
         setJump({ view: route.view, id });
+        setReaderFor(null); // same stale-overlay rule as the ohbox arm
         setLocated(id);
       } else {
         // Every other message view — and a settled pile that does not hold the row: the overlay.
@@ -4553,9 +4594,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   useEffect(() => {
     if (frPhase === "idle" || frPhase === "sending") return;
     // The failed arm never quotes the wire — `SendStatus.tsx` carries the whole argument (a
-    // real subscriber read "Nicht gesendet: authentication required", which is the API's own
-    // 401 envelope text). Same catalog keys, same code-not-text branching, one contract on
-    // both send surfaces.
+    // real subscriber read "Nicht gesendet: authentication required", the API middleware's own
+    // 401 text). Same catalog keys, same code-not-text branching, one contract on both surfaces.
     toast(
       frPhase === "queued"
         ? t("reply.statusQueued")

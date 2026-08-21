@@ -573,7 +573,13 @@ function ActionBar({
   ];
 
   return (
-    <div className="abar">
+    /* `data-rall` IS THE DENSITY LADDER'S ONE PREDICATE IT CANNOT MEASURE — see the rungs in
+       `action-bar.css`. A container query knows the pill's width and nothing about what is in
+       it, and the Reply-all group's 95.7px is present on some messages and absent on others,
+       so defer and Tag are admitted at two different widths depending on whether this bar
+       carries it. The attribute is set from the SAME `canReplyAll` that renders the group, so
+       the row the ladder is measuring and the row on screen are the same row. */
+    <div className="abar" data-rall={canReplyAll ? "" : undefined}>
       <div className="abar-row">
         <div className="abar-g">
           <button
@@ -589,9 +595,11 @@ function ActionBar({
         {/* REPLY ALL — the same question as Reply, answered to everyone, so it stands beside
             the accent verb and NOT inside it: a segment would dilute the one primary capsule.
             Rendered only when `canReplyAll` (see above), and its own `.abar-g` so the row gap
-            applies. `.abar-rall` is a density-ladder group like defer/file — below its tier it
-            folds into More, where `mm-rall` is the other half of "in the row or in the menu,
-            never both". */}
+            applies. `.abar-rall` is the ladder's FIRST rung — the two reply verbs stand
+            together at every width a message is READ at (572, 576, 628); only the narrow
+            surfaces fold this one into More, where `mm-rall` is the other half of "in the row
+            or in the menu, never both". Which surfaces those are depends on the locale, since
+            the label's width does — see `action-bar.css`. */}
         {canReplyAll ? (
           <div className="abar-g abar-rall">
             <button
@@ -1469,7 +1477,10 @@ export function MessagePane({
       /* The AI drafter's offer renders inside the editor the draft lands in — see
          `InlineReply`. Absent where there is no drafter: the desktop shell, and any
          harness that mounts a pane without the shell. */
-      draftReply={chrome.draftReply}
+      /* Never in FORWARD mode: the drafter writes replies, so its card in the forward dock
+         would place generated reply text into the forward's note. The offer returns with the
+         reply editor; `placeDraft` flips the mode back for an arriving draft. */
+      draftReply={(chrome.replyMode ?? "reply") === "forward" ? undefined : chrome.draftReply}
     />
   ) : undefined;
 

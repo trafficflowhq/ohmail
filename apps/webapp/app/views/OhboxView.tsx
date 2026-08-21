@@ -994,6 +994,33 @@ export function OhboxView({
   }, [onSelect, onEnterReader, commitPendingRead, armRead]);
 
   /**
+   * THE SELECTION TAKEN AWAY FROM OUTSIDE IS A DEPARTURE — the Back button's half of the
+   * commit-on-leave rule. The URL carries the open message now, so Back on `#/ohbox/m/A`
+   * clears the SHELL's selection while this view stays mounted — a way of
+   * leaving message A that none of the four departures below can see. Without this, the dwell
+   * timer armed on A kept running with A no longer selected (Back inside the two seconds:
+   * A armed OFF-screen and a later cursor move wrote it read), and a debt already armed was
+   * spent only at the NEXT departure instead of at this one.
+   *
+   * So: the cursor prop going null while this view holds a dwell or a debt cancels the dwell
+   * (leaving before the two seconds elapsed is not reading) and COMMITS the debt (leaving after
+   * they elapsed is exactly the departure the commit waits for) — the same two halves
+   * `selectByUser` applies when the cursor moves to another row.
+   */
+  const prevSelectedId = useRef(selectedId);
+  useEffect(() => {
+    const prev = prevSelectedId.current;
+    prevSelectedId.current = selectedId;
+    // A TRANSITION to null, not the resting state: only a selection that existed and was taken
+    // away is a departure. (A parent may re-render this view with the cursor prop one commit
+    // behind its own click handling; a bare null must not spend a dwell that same commit.)
+    if (selectedId !== null || prev === null) return;
+    if (dwellOn === null && pendingRead.current === null) return;
+    setDwellOn(null);
+    commitPendingRead();
+  }, [selectedId, dwellOn, commitPendingRead]);
+
+  /**
    * RELEASE THE `u` PIN WHEN THE CURSOR MOVES — the second half of `pinnedUnread`, declared
    * above with the argument for it. It lives here because `dwellOn` is what "the cursor" means
    * and `dwellOn` does not exist further up.
