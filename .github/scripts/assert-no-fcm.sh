@@ -108,8 +108,60 @@ check_absent() {
   fi
 }
 
-# The decisive one: firebase-messaging is what the embedded distributor pulls in.
-check_absent "Firebase" 'Lcom/google/firebase/'
+# ── THE FIREBASE NAMESPACE, BY ALLOW-LIST ────────────────────────────────────────────────────
+#
+# This was a blanket ban on `Lcom/google/firebase/`, and its first run against a real APK reported
+# three matches. Naming them (the reason this script prints descriptors) showed what they are:
+#
+#   com/google/firebase/annotations     @DeferredApi — a marker annotation
+#   com/google/firebase/components      the dependency-injection container: Component,
+#                                       ComponentRuntime, ComponentDiscovery, CycleDetector, Lazy
+#   com/google/firebase/dynamicloading  the ComponentLoader interface
+#   com/google/firebase/encoders        the value/JSON encoder library
+#   com/google/firebase/events          the in-process publisher/subscriber the container uses
+#   com/google/firebase/inject          the Provider / Deferred interfaces
+#   plus three exception types: FirebaseException, FirebaseApiNotAvailableException,
+#   FirebaseExceptionMapper
+#
+# That is a DI container and a serialiser. There is no push client in it, no network client, and —
+# the fact that settles it — **no `FirebaseApp`**, which is the class that initialises Firebase at
+# all. Verified absent in the same scan. Without it these classes are never wired to anything; they
+# are unreachable library code that an AndroidX/Expo transitive drags along. (Which artifact
+# exactly is not pinned here, and the allow-list below is what makes that not matter.)
+#
+# So the ban is narrowed to an ALLOW-LIST rather than deleted, and the difference is the whole
+# point: every `com/google/firebase/<package>` found in the dex must be one of the inert ones named
+# above. A NEW Firebase package arriving — messaging, installations, iid, analytics, crashlytics,
+# anything — is a failure, whatever it is called. That keeps this red on "Firebase grew" while not
+# being permanently red on infrastructure that does nothing.
+#
+# The push-specific packages are ALSO checked individually below, so they fail twice: once here as
+# unlisted, once by name with a message that says what they are. Belt and braces on the one thing
+# this script exists for.
+FIREBASE_ALLOWED='annotations components dynamicloading encoders events inject'
+FIREBASE_ALLOWED_TOPLEVEL='FirebaseException FirebaseApiNotAvailableException FirebaseExceptionMapper'
+fb_unexpected=""
+for seg in $(/usr/bin/grep -a -o 'Lcom/google/firebase/[A-Za-z0-9_]*' "$WORK/all.dex" \
+             | sed 's|Lcom/google/firebase/||' | sort -u); do
+  case " $FIREBASE_ALLOWED $FIREBASE_ALLOWED_TOPLEVEL " in
+    *" $seg "*) continue ;;
+  esac
+  fb_unexpected="$fb_unexpected $seg"
+done
+if [ -n "$fb_unexpected" ]; then
+  echo "assert-no-fcm: UNEXPECTED Firebase package(s) in the dex:$fb_unexpected" >&2
+  echo "  The allow-list holds only inert infrastructure (a DI container, encoders, exception" >&2
+  echo "  types) that is reachable from nothing because FirebaseApp is not in the binary. Anything" >&2
+  echo "  else has to be justified or removed — start by finding which dependency added it." >&2
+  fail=1
+else
+  echo "assert-no-fcm: the Firebase namespace holds only the allow-listed inert packages"
+fi
+
+# And `FirebaseApp` itself: the class that initialises Firebase. Its ABSENCE is what makes the
+# allow-list above safe, so it is asserted rather than assumed — if it ever appears, the inert
+# infrastructure stops being inert and this script's reasoning no longer holds.
+check_absent "FirebaseApp (Firebase initialisation)" 'Lcom/google/firebase/FirebaseApp;'
 # The embedded distributor itself.
 check_absent "the embedded UnifiedPush FCM distributor" 'Lorg/unifiedpush/android/embedded_fcm_distributor/'
 # Play Services messaging, which firebase-messaging depends on. Scoped to the messaging package
