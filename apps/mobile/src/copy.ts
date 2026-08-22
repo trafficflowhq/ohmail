@@ -343,6 +343,7 @@ export const Copy = {
   replyPlaceholder: "Write your reply…",
   replySend: "Send",
   replyCancel: "Cancel",
+  replySending: "Sending…",
   replySent: "Reply sent.",
   replyQueued: "Not sent yet. ohmail is still trying.",
   replyFailed: "Sending didn't work. Try again.",

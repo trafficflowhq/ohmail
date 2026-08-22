@@ -141,7 +141,13 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         // the queue retries HERE, with the same keys, which is what makes the retry unable
         // to double-deliver. Failures go back on the queue; the next drain tries again.
         if (session.engine.pendingMutations().length > 0) {
-          await session.engine.flushPending().catch(() => undefined);
+          const flushed = await session.engine.flushPending().catch(() => []);
+          // A terminal rollback here is a queued intent that will never send — silence would
+          // be a loss the reader was told was "still trying". One visible sentence; the
+          // sync-status line is the surface a background outcome owns.
+          if (flushed.some((r) => r.status === "rolled_back")) {
+            setSyncError("A change made offline could not be saved. If it was a reply, check your server's Sent folder before sending it again.");
+          }
         }
       } catch (err) {
         setSyncError(String(err));

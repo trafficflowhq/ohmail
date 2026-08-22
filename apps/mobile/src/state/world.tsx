@@ -146,9 +146,9 @@ const NO_ACTIONS: WorldActions = {
   resurfaceDone: () => undefined,
   markSeen: () => undefined,
   move: () => undefined,
-  // The empty world cannot send; the composer treats `false` as the refusal it is.
-  sendReply: () => Promise.resolve(false),
-  sendForward: () => Promise.resolve(false),
+  // The empty world cannot send; the composer treats `failed` as the refusal it is.
+  sendReply: () => Promise.resolve("failed" as const),
+  sendForward: () => Promise.resolve("failed" as const),
   tagToggle: () => undefined,
   tagCreate: () => undefined,
   screenSender: () => undefined,

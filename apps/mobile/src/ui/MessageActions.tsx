@@ -34,6 +34,7 @@ import {
   moveTargetsFor,
   moveTargetLabel,
   nextWeekNine,
+  parseRecipients,
   tomorrowNine,
   type WorldMail,
   type WorldTag,
@@ -76,8 +77,12 @@ export function MessageActions({ m }: { m: WorldMail }) {
             borderTopLeftRadius: t.radius.panel,
             borderTopRightRadius: t.radius.panel,
             paddingHorizontal: 12,
-            paddingTop: 10,
-            paddingBottom: 8 + insets.bottom,
+            // Six points of each vertical pad live INSIDE the scroller (below), not here: RN
+            // clips `hitSlop` at parent bounds, and a content-sized horizontal ScrollView
+            // measuring exactly the capsules' 38pt would cut their touch targets under the
+            // 44pt contract `Tap` documents. Same visual bar, uncut hit rectangles.
+            paddingTop: 4,
+            paddingBottom: 2 + insets.bottom,
             flexDirection: "row",
             alignItems: "center",
             gap: 7,
@@ -94,7 +99,7 @@ export function MessageActions({ m }: { m: WorldMail }) {
           horizontal
           showsHorizontalScrollIndicator={false}
           style={{ flexGrow: 1, flexShrink: 1 }}
-          contentContainerStyle={{ flexDirection: "row", alignItems: "center", gap: 7, paddingRight: 4 }}
+          contentContainerStyle={{ flexDirection: "row", alignItems: "center", gap: 7, paddingRight: 4, paddingVertical: 6 }}
         >
           <Button
             label={Copy.actionReply}
@@ -338,25 +343,34 @@ function ComposeSheet({
   const w = useWorld();
   const [body, setBody] = useState("");
   const [to, setTo] = useState("");
-  const [sending, setSending] = useState(false);
+  /**
+   * The composer's send phase. `queued` is TERMINAL for this composer: the text stands on
+   * the engine's retry queue under its Idempotency-Key (the reconnect flush retries it, the
+   * same key every time), so Send stays locked — a second press would be a second key, which
+   * is the double-delivery the send contract forbids. The sentence under the editor says
+   * what is true; closing discards only this screen's copy of text the queue already holds.
+   */
+  const [phase, setPhase] = useState<"idle" | "sending" | "queued">("idle");
   const forward = mode === "forward";
   // EVERY typed entry must parse, or nothing sends. A filter that dropped the malformed
   // entry silently narrowed the audience — "alice@x, bob.x" sent to Alice alone with nobody
-  // told — so an invalid token LOCKS Send rather than shrinking the list.
-  const typedTo = to.split(/[,\s]+/).filter((x) => x !== "");
-  const invalidTo = forward ? typedTo.filter((x) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)) : [];
-  const recipients = forward && invalidTo.length === 0
-    ? typedTo.map((address) => ({ name: null, address }))
-    : [];
-  const canSend = !sending && (forward ? recipients.length > 0 : body.trim() !== "");
+  // told — so an invalid entry LOCKS Send rather than shrinking the list. Entries split on
+  // commas/semicolons (never bare spaces: `Alice <alice@x.org>` is ONE entry), and a
+  // display-named entry is validated on the address its angle brackets carry.
+  const recipients = forward ? parseRecipients(to) : [];
+  const canSend =
+    phase === "idle" && (forward ? recipients !== null && recipients.length > 0 : body.trim() !== "");
 
   const send = async () => {
-    setSending(true);
-    const ok = forward
-      ? await w.actions.sendForward(m.id, recipients, body)
+    setPhase("sending");
+    const outcome = forward
+      ? await w.actions.sendForward(m.id, recipients ?? [], body)
       : await w.actions.sendReply(m.id, body, mode === "replyAll");
-    setSending(false);
-    if (ok) onClose();
+    if (outcome === "sent") {
+      onClose();
+      return;
+    }
+    setPhase(outcome === "queued" ? "queued" : "idle");
   };
 
   return (
@@ -442,10 +456,15 @@ function ComposeSheet({
               },
             ]}
           />
+          {phase === "queued" ? (
+            <Txt variant="caption" tone="ink3">
+              {Copy.replyQueued}
+            </Txt>
+          ) : null}
           <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
             <Button label={Copy.replyCancel} variant="quiet" onPress={onClose} />
             <Button
-              label={Copy.replySend}
+              label={phase === "sending" ? Copy.replySending : Copy.replySend}
               variant={canSend ? "solid" : "plain"}
               onPress={canSend ? send : undefined}
             />

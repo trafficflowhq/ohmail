@@ -622,6 +622,42 @@ function watched(p: Promise<MutationResult>): Promise<boolean> {
   return p.then((r) => r.status !== "rolled_back", () => false);
 }
 
+/**
+ * The forward field's entries, parsed — or `null` when ANY entry refuses.
+ *
+ * Entries are comma/semicolon-delimited (a bare-space split broke `Alice <alice@x.org>` into
+ * an "invalid" name and an address). A display-named entry sends the ADDRESS inside its
+ * angle brackets, with the name carried on the envelope as typed. `null`, not a narrowed
+ * list: one bad entry locks Send, because a send to fewer people than the field names is a
+ * wrong delivery nobody is told about. Lives here, not in the sheet, so the node suite can
+ * hold it — the screens stay logic-free (this module's own charter).
+ */
+export function parseRecipients(typed: string): { name: string | null; address: string }[] | null {
+  const entries = typed.split(/[,;]+/).map((e) => e.trim()).filter((e) => e !== "");
+  const out: { name: string | null; address: string }[] = [];
+  for (const entry of entries) {
+    const angled = /^(.*)<([^<>\s]+@[^<>\s]+\.[^<>\s]+)>$/.exec(entry);
+    if (angled) {
+      const name = angled[1]!.trim().replace(/^"(.*)"$/, "$1");
+      out.push({ name: name === "" ? null : name, address: angled[2]! });
+      continue;
+    }
+    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(entry)) {
+      out.push({ name: null, address: entry });
+      continue;
+    }
+    return null;
+  }
+  return out;
+}
+
+/**
+ * What became of a send: `sent` closes the composer; `failed` re-arms it (the rollback took
+ * the queued copy with it, so a re-send cannot double); `queued` LOCKS it — the intent
+ * stands on the engine's queue under its key, and a second Send would be a second key.
+ */
+export type SendOutcome = "sent" | "queued" | "failed";
+
 export interface LiveDeps {
   engine: OhmailEngine;
   /** One plain sentence to the reader — the screens' toast. */
@@ -676,9 +712,9 @@ export interface LiveWorldActions {
   /** Move THIS message to a view — `POST /messages/:id/move`, the same verb every list uses. */
   move(messageId: string, dest: MoveTarget): Promise<boolean>;
   /** Reply (or reply all) — `mail_send` with `inReplyTo`; the engine derives the envelope. */
-  sendReply(messageId: string, body: string, all: boolean): Promise<boolean>;
+  sendReply(messageId: string, body: string, all: boolean): Promise<SendOutcome>;
   /** Forward — `mail_send` with `forwardOf`, recipients the USER typed, the user's note as body. */
-  sendForward(messageId: string, to: EmailAddress[], body: string): Promise<boolean>;
+  sendForward(messageId: string, to: EmailAddress[], body: string): Promise<SendOutcome>;
   /** Put a tag on / take it off — `tag_assign`. */
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean>;
   /** Tag-or-create: a name that does not exist yet, minted and put on this message in one act. */
@@ -1039,23 +1075,31 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * A SEND'S THREE HONEST OUTCOMES — narrower than {@link watched}, deliberately.
    *
    * For triage and moves, `queued` leaving the optimistic view standing is truthful. For a
-   * SEND it is not the same sentence: "Reply sent." on a queued send claims a delivery that
-   * has not happened. So `confirmed` alone says sent; `queued` says the true thing — the
-   * intent stands on the retry queue under its Idempotency-Key, and the reconnect path
-   * (`connection.tsx`'s drain, which flushes pending after every successful sync) retries it
-   * with the SAME key, so it cannot double-deliver. The composer closes on both (the text is
-   * on the queue, not lost) and stays open only on a rollback.
+   * SEND it is not: "Reply sent." on a queued send claims a delivery that has not happened.
+   * So `confirmed` alone says sent. `queued` first retries ONCE, right here (a transport
+   * blip is the common case, and `flushPending` re-dispatches under the SAME
+   * Idempotency-Key, so the retry cannot double-deliver); still queued after that, the
+   * caller keeps its composer OPEN in a locked queued state — the engine's queue is
+   * memory-only, so the text on screen and the queued intent live and die together (an app
+   * kill loses both halves at once: nothing sends that the reader was not shown), and the
+   * locked Send is what keeps a fresh-key duplicate impossible while the reconnect flush
+   * (`connection.tsx`'s drain) keeps retrying the original.
    */
-  const sent = async (p: Promise<MutationResult>, sentToast: string): Promise<boolean> => {
-    const status = await p.then((r) => r.status, () => "rolled_back" as const);
+  const sent = async (p: Promise<MutationResult>, sentToast: string): Promise<SendOutcome> => {
+    let status = await p.then((r) => r.status, () => "rolled_back" as const);
+    if (status === "queued") {
+      const flushed = await engine.flushPending().catch(() => []);
+      if (flushed.some((r) => r.status === "confirmed")) status = "confirmed";
+      else if (flushed.length > 0 && flushed.every((r) => r.status === "rolled_back")) status = "rolled_back";
+    }
     toast(status === "confirmed" ? sentToast : status === "queued" ? Copy.replyQueued : Copy.replyFailed);
-    return status !== "rolled_back";
+    return status === "confirmed" ? "sent" : status === "queued" ? "queued" : "failed";
   };
 
-  const sendReply = async (messageId: string, body: string, all: boolean): Promise<boolean> => {
+  const sendReply = async (messageId: string, body: string, all: boolean): Promise<SendOutcome> => {
     const m = messageOf(messageId);
     const text = body.trim();
-    if (!m || text === "") return false;
+    if (!m || text === "") return "failed";
     // A plain reply leaves the envelope to `Engine.enrich` (to = the sender, the parent's
     // mailbox, thread and subject); reply-all carries the SAME envelope the sheet offered.
     const env = all ? replyAllRecipients(m, NO_OWN_ADDRESSES) : null;
@@ -1070,11 +1114,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     );
   };
 
-  const sendForward = async (messageId: string, to: EmailAddress[], body: string): Promise<boolean> => {
+  const sendForward = async (messageId: string, to: EmailAddress[], body: string): Promise<SendOutcome> => {
     const m = messageOf(messageId);
     // The `no_forward` refusal is client-side courtesy AND server-side law — the sheet never
     // offers the verb on such a message, and this arm refuses it too rather than trusting the UI.
-    if (!m || to.length === 0 || m.sensitivity?.no_forward) return false;
+    if (!m || to.length === 0 || m.sensitivity?.no_forward) return "failed";
     return sent(
       engine.mutate({
         kind: "mail_send",
@@ -1229,9 +1273,9 @@ export interface WorldActions {
   resurfaceDone(messageId: string): void;
   markSeen(messageId: string, unread: boolean): void;
   move(messageId: string, dest: MoveTarget): void;
-  /** Resolves to the send's outcome so the composer can close on success and stay on a refusal. */
-  sendReply(messageId: string, body: string, all: boolean): Promise<boolean>;
-  sendForward(messageId: string, to: EmailAddress[], body: string): Promise<boolean>;
+  /** Resolves to the send's outcome: `sent` closes, `failed` re-arms, `queued` locks the composer. */
+  sendReply(messageId: string, body: string, all: boolean): Promise<SendOutcome>;
+  sendForward(messageId: string, to: EmailAddress[], body: string): Promise<SendOutcome>;
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
   tagCreate(messageId: string, name: string): void;
   screenSender(messageId: string, dest: Destination, scope: Scope): void;
