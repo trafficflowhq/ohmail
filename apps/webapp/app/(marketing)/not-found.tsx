@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
+import { DEFAULT_LOCALE } from "../shell/locale";
 import { DotLabel, Wordmark } from "./components/Wordmark";
 
 /**
@@ -16,7 +17,9 @@ import { DotLabel, Wordmark } from "./components/Wordmark";
  * a session gets the app (`session-gate.ts`).
  */
 export default async function NotFound() {
-  const t = await getTranslations("notFound");
+  /* English explicitly — this boundary renders inside the English root layout, and naming the
+     locale keeps it off the request config's `headers()` fallback. */
+  const t = await getTranslations({ locale: DEFAULT_LOCALE, namespace: "notFound" });
   return (
     <main className="nf">
       <Link href="/" className="nf-brand">

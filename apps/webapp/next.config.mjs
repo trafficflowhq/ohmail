@@ -211,6 +211,11 @@ export const REFRESH_PATH = "/auth/refresh";
  *   MARKETING (route group `(marketing)`, root layout #1, landing.css)
  *     /                      the landing — and, after `middleware.ts` rewrites it for a
  *                            validated session, the mail client. One URL, two renders.
+ *     /de                    the same landing in German (route group `(marketing-de)`, root
+ *                            layout #3, the same landing.css). Marketing only: the session
+ *                            gate runs on `/` and nowhere else, so a signed-in reader who
+ *                            opens `/de` gets the German page, exactly as `/privacy` stays
+ *                            `/privacy` for them.
  *     /privacy /imprint /subprocessors
  *
  *   PRODUCT (route group `(product)`, root layout #2, app.css)
@@ -258,6 +263,14 @@ export const REFRESH_PATH = "/auth/refresh";
  */
 export const OWN_PATHS = Object.freeze([
   "/", "/privacy", "/imprint", "/subprocessors",
+  // `/de` is the GERMAN landing — the same composition `/` renders, under a second marketing
+  // root layout that pins the German `lang` attribute (`app/(marketing-de)`). A path rather than
+  // a negotiated body on `/`: one URL with two bodies needs `Vary: Accept-Language` to be
+  // cacheable at all, and Next overwrites `Vary` on an App Router response (`middleware.ts`
+  // records that, measured against a real `next start`). The legal pages
+  // have no German twin on purpose — their text is binding and deliberately outside the
+  // catalogue — so this is one path, not a mirrored tree.
+  "/de",
   // `/resume` is INTERNAL like `/mailbox`: the rewrite target for a browser holding the
   // `tf_resume` marker but no usable access cookie. Middleware 308s a direct request back
   // to `/`, so it never appears in the address bar — but it is a path this deployment

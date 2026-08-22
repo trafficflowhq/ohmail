@@ -39,7 +39,11 @@ const ICONS: Metadata["icons"] = {
 };
 
 export async function generateMetadata(): Promise<Metadata> {
-  const t = await getTranslations("meta");
+  /* The app shell's head is English, as it has always been: `generateMetadata` runs
+     independently of the layout body below, so it cannot use the cookie locale that body
+     resolves, and an implicit lookup would fall through to the request config's `headers()`
+     read for the same answer. Naming it makes today's behaviour the stated one. */
+  const t = await getTranslations({ locale: DEFAULT_LOCALE, namespace: "meta" });
   return {
     metadataBase: new URL("https://ohmail.app"),
     title: t("title"),

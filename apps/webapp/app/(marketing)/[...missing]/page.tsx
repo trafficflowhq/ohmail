@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
+import { DEFAULT_LOCALE } from "../../shell/locale";
 
 /**
  * ── THE CATCH-ALL THAT MAKES A BRANDED 404 POSSIBLE AT ALL ──────────────────────────────
@@ -22,7 +23,11 @@ import { getTranslations } from "next-intl/server";
  */
 
 export async function generateMetadata(): Promise<Metadata> {
-  const t = await getTranslations("notFound");
+  /* The locale is passed rather than resolved: `getTranslations()` with no locale reads the
+     request config, which since the bilingual slice resolves `requestLocale` — and on a route
+     no layout has pinned that means a `headers()` read. This catch-all is English by design
+     (its sibling `not-found.tsx` renders inside the English root layout), so it says so. */
+  const t = await getTranslations({ locale: DEFAULT_LOCALE, namespace: "notFound" });
   return { title: `${t("title")} · ohmail`, robots: { index: false, follow: false } };
 }
 

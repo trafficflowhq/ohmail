@@ -6,6 +6,7 @@ import { Icon, useTheme } from "@ohmail/ui";
 import { Wordmark, DotLabel } from "./Wordmark";
 import { useSessionPresence } from "./session-presence";
 import { GITHUB_REPO_URL, starLabel } from "../github";
+import { LangSwitch } from "./LangSwitch";
 
 /* Inlined at build (`env` in next.config.mjs), so the reference must stay the
    full literal — Next's compiler substitutes the exact string, not a lookup. */
@@ -50,6 +51,13 @@ export function Nav() {
           <a href="#faq">{t("faq")}</a>
         </nav>
         <div className="l-nav-actions">
+          {/* The other language, at the head of the action cluster and one weight quieter
+              than everything in it: a reader who needs it is looking for their own word for
+              their language, and a reader who does not must be able to skip past it. It is
+              the only control here that changes the ADDRESS rather than the page, which is
+              why it is a link with an hreflang rather than a toggle. Hidden below 480px,
+              where the bar is stripped to the ask — the footer's copy carries it there. */}
+          <LangSwitch className="l-nav-lang" />
           {/* The source, in the bar — the one outbound link the menu carries. The star
               count is a build-time constant (see ../github.ts); when the build had no
               usable count the number is simply absent, never guessed. */}

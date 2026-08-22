@@ -209,6 +209,21 @@ a.btn {
   height: 11px;
 }
 
+/* the other language. Same 13.5px quiet weight as the demo and sign-in links —
+   it is a utility, not an offer — and `white-space: nowrap` because "Deutsch"
+   next to a capsule is exactly the width where a bar starts wrapping. */
+.l-nav-lang {
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--ink2);
+  text-decoration: none;
+  padding: 6px 4px;
+  transition: color 0.15s;
+  white-space: nowrap;
+}
+.l-nav-lang:hover {
+  color: var(--ink);
+}
 /* sign in — the returning customer's door. Same quiet weight as the demo
    link: it must be findable next to the capsule without competing with it. */
 .l-nav-signin {
@@ -3143,6 +3158,19 @@ a.btn {
 .l-footer-nav a:hover {
   color: var(--ink);
 }
+/* the footer's language link. It sits in its own `.l-footer-nav` row, so it
+   inherits that row's type and colour; only the underline is its own, because a
+   single link in a row of one reads as a label without it. */
+.l-footer-lang {
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--ink2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.l-footer-lang:hover {
+  color: var(--ink);
+}
 .l-footer-copy {
   font-size: 12.5px;
   color: var(--ink3);
@@ -3498,6 +3526,10 @@ a.btn {
   .l-nav-stars {
     display: none; /* the octocat alone at this width — the ask must not wrap */
   }
+  .l-nav-lang {
+    display: none; /* the footer's copy is the one that survives this width */
+  }
+
   .l-hero-ctas {
     width: 100%;
   }

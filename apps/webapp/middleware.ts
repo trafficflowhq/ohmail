@@ -34,7 +34,7 @@ import { APP_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, resolveSurface 
  *    rewrite, so the internal hop is unaffected by this rule — which is precisely why
  *    the guard can be unconditional.
  *  - **every other HTML path this deployment answers** (`/login`, `/join`, `/verify-email`,
- *    `/privacy`,
+ *    `/de`, `/privacy`,
  *    `/imprint`, `/subprocessors`) — added for the two rules that are
  *    about the ORIGIN rather than about `/`: the canonical-host redirect below, and the
  *    nonce CSP on the credential screens. They cost one edge invocation and NOT a fetch:
@@ -361,10 +361,20 @@ function withPathname(request: NextRequest, pathname: string): URL {
  * again as literals. A drift guard asserts they never drift from
  * `OWN_PATHS` in `next.config.mjs`, because a silent divergence would leave the rewrite
  * target publicly reachable or a legacy host serving the product.
+ *
+ * `/de` — the German landing — sits with the other MARKETING documents rather than beside `/`,
+ * because that is what it is: a static page this origin answers, matched for the canonical-host
+ * redirect and for nothing else. The gate's `pathname` early return above fires before it, so it
+ * costs one edge invocation and no fetch, exactly like `/privacy`.
+ *
+ * NOTHING BUT PATH LITERALS BELONGS INSIDE THE ARRAY, comments included. Both drift guards read
+ * this list by pulling every double-quoted string out of the bracket span, so a note containing
+ * `"/"` reads as a duplicate matcher entry and fails the comparison against `OWN_PATHS` — which
+ * is a guard failure that looks exactly like a routing mistake. Measured while adding `/de`.
  */
 export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
-    "/link-desktop", "/privacy", "/imprint", "/subprocessors",
+    "/link-desktop", "/de", "/privacy", "/imprint", "/subprocessors",
   ],
 };

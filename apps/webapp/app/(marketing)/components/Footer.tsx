@@ -1,8 +1,13 @@
 import { useTranslations } from "next-intl";
+import { LangSwitch } from "./LangSwitch";
 import { Wordmark } from "./Wordmark";
 
 export function Footer() {
   const t = useTranslations("footer");
+  /* The switch's own label comes from `settings.languageName`; this namespace supplies the
+     landmark's name, so a reader listing the page's regions hears "Sprache" rather than a
+     second unnamed navigation. */
+  const tSettings = useTranslations("settings");
   return (
     <footer className="l-footer">
       <div className="l-footer-inner">
@@ -21,6 +26,12 @@ export function Footer() {
           <a href="/imprint">{t("imprint")}</a>
           <a href="/privacy">{t("privacy")}</a>
           <a href="/subprocessors">{t("subprocessors")}</a>
+        </nav>
+        {/* The durable half of the language switch. The nav's copy disappears with the rest of
+            the bar on a narrow screen; this one is always here, and it is the link a crawler
+            following the footer finds. */}
+        <nav className="l-footer-nav" aria-label={tSettings("language")}>
+          <LangSwitch className="l-footer-lang" />
         </nav>
         <p className="l-footer-copy num">{t("copyright")}</p>
       </div>

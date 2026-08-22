@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
+import { DEFAULT_LOCALE } from "../../shell/locale";
 import { CloudShell } from "./CloudShell";
 import { isDemoBuild, isDemoRequested, type SearchParamsLike } from "../../demo-mode";
 
@@ -41,7 +42,9 @@ export default async function Page({
   // names the persistent mirror, and the shell refuses to render one without it.
   if (serverDemo || apiConfigured) return <CloudShell demo={serverDemo} />;
 
-  const t = await getTranslations("gate");
+  /* English explicitly — the request config resolves `requestLocale` since the bilingual
+     marketing slice, and no layout pins one for this route. Same string as before. */
+  const t = await getTranslations({ locale: DEFAULT_LOCALE, namespace: "gate" });
   return (
     <div className="gate">
       <div className="gate-card">
