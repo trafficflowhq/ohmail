@@ -168,6 +168,10 @@ export function Toast() {
   const { toast, dismiss } = useWorldToast();
   const anim = useRef(new Animated.Value(0)).current;
   const message = toast?.message;
+  // The ID, not the text: the queue can hold two ADJACENT identical sentences (two replies
+  // confirmed by one flush), and an effect keyed on the string would never re-arm the
+  // dismiss timer for the second — a toast that stands forever and blocks the queue.
+  const toastId = toast?.id;
 
   useEffect(() => {
     if (!message) return;
@@ -182,7 +186,9 @@ export function Toast() {
       clearTimeout(timer);
       anim.setValue(0);
     };
-  }, [message, anim, dismiss, t]);
+    // `message` is rendered; `toastId` is what re-arms the timer per queue entry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toastId, anim, dismiss, t]);
 
   if (!message) return null;
 

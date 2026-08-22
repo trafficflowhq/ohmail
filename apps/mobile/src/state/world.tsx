@@ -286,6 +286,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const pending = engine.pendingMutations();
     if (pending.length === 0) return;
     // Everything pending was already retried since the last drain: wait for the next one.
+    // (A NEW intent arriving beside a stuck key does flush the whole queue — the engine's
+    // flush has no key filter — so a stuck key is replayed at most once per genuinely new
+    // arrival, under its unchanged Idempotency-Key. Bounded by user acts, never a loop; a
+    // keyed flush is an engine seam change and deliberately not made from this app.)
     if (pending.every((m) => tried.current.has(m.key))) return;
     for (const m of pending) tried.current.add(m.key);
     const flushed = engine;
