@@ -11,11 +11,13 @@ import { message, drafting, drafter, readBody } from "./shared.js";
 
 /**
  * §5.2 — messages. `GET /messages?view=…` is the view-partitioned list (400
- * on a missing/unknown view). `PATCH` (unread/folder) and `POST …/move` are the
- * mutations: each echoes `X-Sync-Seq` from the emitted change (§3.4). `move` is
+ * on a missing/unknown view). `PATCH` (unread/folder), `POST …/move` and
+ * `DELETE /messages/:id` are the
+ * mutations: each echoes `X-Sync-Seq` from the emitted change (§3.4). `move` and `delete` are
  * idempotent (Idempotency-Key) — the service writes the idempotency row IN its tx,
  * so `deps.idempotency` is threaded through. Every read/write is
- * account-scoped in the service (404 cross-account). NO IMAP here: a move only
+ * account-scoped in the service (404 cross-account). NO IMAP here: a move (a delete included —
+ * it is a move to the provider's Trash, never an expunge) only
  * writes DESIRED state; the worker performs the physical IMAP move.
  */
 export const messageRoutes: Route[] = [
@@ -179,6 +181,21 @@ export const messageRoutes: Route[] = [
     handler: async (req, deps, params) => {
       const body = await readBody<MoveBody>(req);
       const { dto, seq } = await message(deps).move(serviceContext(deps, req), params.id!, body, {
+        idempotency: deps.idempotency ?? null,
+      });
+      return jsonResponse(dto, { status: 200, seq });
+    },
+  },
+  {
+    // §5.2 DELETE — the message rides to the provider's native \Trash (worker-drained desired
+    // state, NEVER an expunge) and the emitted `delete` change tombstones it in every client's
+    // mirror. 422 `no_trash_folder` when the mailbox has none — the service carries the rule.
+    method: "DELETE",
+    pattern: "/messages/:id",
+    cost: "work",
+    options: { idempotent: true },
+    handler: async (req, deps, params) => {
+      const { dto, seq } = await message(deps).delete(serviceContext(deps, req), params.id!, {
         idempotency: deps.idempotency ?? null,
       });
       return jsonResponse(dto, { status: 200, seq });

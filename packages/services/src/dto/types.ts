@@ -152,6 +152,22 @@ export interface TagDTO {
   updatedAt: ISODateTime;
 }
 
+/**
+ * WHY a stored body holds no content, when that is POLICY rather than an empty message — the
+ * client-facing projection of `message_bodies.withheld_reason`, verbatim, closed set:
+ *
+ *  · `"storage_cap"` — the account's managed storage cap (mail 0062): declined at ingest or
+ *    evicted by the rolling window. The mail is untouched on the user's own server.
+ *  · `"junk_filed"` — the spam verdict filed this message to the provider's native \Junk
+ *    (mail 0065): the durable artifact of the verdict is the sender rule, and the bytes live
+ *    on in the Junk folder, which is the master.
+ *  · `"expunged"` — every watched copy of this message is gone from the server (mail 0065):
+ *    the row is tombstoned and the husk exists so the account stops paying for its bytes.
+ *
+ * Absent for every ordinarily stored body, including a genuinely empty one.
+ */
+export type WithheldMarker = "storage_cap" | "junk_filed" | "expunged";
+
 // ── Message body. The 1:1 `message_bodies` row.
 // `text` is the sensitivity-REDACTED body when the message is sensitive (never an
 // OTP/secret) — the API returns it as-is and NEVER re-derives a secret. ──
@@ -184,8 +200,11 @@ export interface MessageBodyDTO {
    * from "we are not holding what it says" — the two used to collapse into one blank pane
    * claiming to be complete. Served AS STORED, on the same no-rehydrate contract as everything
    * else here: nothing on this surface re-fetches a body on demand.
+   *
+   * Mail 0065 widens the closed set — see {@link WithheldMarker} for the two new members and
+   * the sentence each one owes the reader.
    */
-  withheld?: "storage_cap";
+  withheld?: WithheldMarker;
 }
 
 /**
@@ -228,7 +247,7 @@ export interface MessageBodyBatchItem {
    * sentence. It extends the no-rehydrate pin rather than weakening it — a withheld row is
    * served exactly as stored, and nothing here gains a fetch.
    */
-  withheld?: "storage_cap";
+  withheld?: WithheldMarker;
 }
 
 export interface ThreadDTO {

@@ -176,6 +176,38 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<void>;
   /**
+   * The mailbox's discovered native `\Junk`/`\Trash` paths (mail 0065) — what the reconciler
+   * reads to know where a spam verdict physically files. OPTIONAL on {@link scanSentRecipients}'
+   * rule: a repo that does not answer reads as "neither exists", which is the documented
+   * fallback (Quarantine / refusal) and never a destructive write.
+   */
+  getMailboxSpecialFolders?(mailboxId: string): Promise<{ junkFolder: string | null; trashFolder: string | null }>;
+  /**
+   * Persist the connect-time discovery ({@link MailboxAdapter.findSpecialFolders} → these two
+   * columns), re-written on every attach so a renamed folder heals. OPTIONAL, as above.
+   */
+  setMailboxSpecialFolders?(mailboxId: string, f: { junkFolder: string | null; trashFolder: string | null }): Promise<void>;
+  /**
+   * Empty one stored body the way the storage cap does — real headers kept, `text=''`,
+   * `html=NULL`, the closed marker, bytes released — for the two 0065 reasons. A row already
+   * withheld keeps its first reason (see the column's doc). Returns whether content was freed.
+   * OPTIONAL so every fake keeps compiling; the caller treats absence as "cannot husk here".
+   */
+  huskBody?(accountId: string, messageId: string, reason: "junk_filed" | "expunged"): Promise<boolean>;
+  /**
+   * THE REAPER the `forgetInstanceAt` doc promised: tombstone messages whose every watched
+   * instance is gone (mail 0065). Bounded by `limit`; each victim gets `deleted_at`, the
+   * `'expunged'` husk, and a `change_log` `delete` in the caller's transaction — so every
+   * client tombstones the row and the mirror stops describing mail the server no longer holds.
+   *
+   * SKIPPED, deliberately: rows already tombstoned; rows that never had an instance
+   * (`native_locator IS NULL` — a fixture, a seeded backlog); and rows whose `folder_state` is
+   * RECONCILED-WHILE-DIVERGENT — the junk-parked signature only the `satisfiedBy` completion
+   * writes, where "no watched instance" is the design and not a disappearance.
+   * OPTIONAL, as above. Returns how many rows were tombstoned.
+   */
+  tombstoneInstanceless?(accountId: string, mailboxId: string, limit: number): Promise<number>;
+  /**
    * Every UID of this mailbox that is still owed — failed, and neither ingested nor written off as
    * void. Read at the top of every cycle and merged into the adapter's known-set, which is what
    * stops the poison body being re-fetched on every pass.
@@ -343,7 +375,11 @@ function parseUidValidity(ref: string): string {
 
 /** desired === observed → we are converged; otherwise a move is still owed. */
 function reconcileStatusFor(s: FolderStateRow): "pending" | "reconciled" {
-  return s.desiredFolder === s.observedFolder ? "reconciled" : "pending";
+  if (s.desiredFolder === s.observedFolder) return "reconciled";
+  // The spam verdict's completion: the pile stays `ohmail/Quarantine` (what views project), the
+  // server's truth is the native junk path, and `satisfiedBy` — set ONLY by that completion
+  // write — says the difference is fulfilment, not divergence. See `FolderStateRow.satisfiedBy`.
+  return s.satisfiedBy != null && s.satisfiedBy === s.observedFolder ? "reconciled" : "pending";
 }
 
 /** The same derivation for read-state: never set by hand, so a row cannot lie about converging. */
@@ -769,6 +805,87 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         ref: `${String(survivor.uidvalidity)}:${survivor.uid}`,
       },
     }).where(eq(messages.id, orphaned.messageId));
+  }
+
+  /** Mail 0065 — the two discovery columns, read as one pair. See the interface doc. */
+  async getMailboxSpecialFolders(mailboxId: string): Promise<{ junkFolder: string | null; trashFolder: string | null }> {
+    const [row] = await this.db.select({ junkFolder: mailboxes.junkFolder, trashFolder: mailboxes.trashFolder })
+      .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
+    return { junkFolder: row?.junkFolder ?? null, trashFolder: row?.trashFolder ?? null };
+  }
+
+  /** Mail 0065 — persist the connect-time discovery, both columns every time (re-written on attach). */
+  async setMailboxSpecialFolders(
+    mailboxId: string, f: { junkFolder: string | null; trashFolder: string | null },
+  ): Promise<void> {
+    await this.db.update(mailboxes)
+      .set({ junkFolder: f.junkFolder, trashFolder: f.trashFolder })
+      .where(eq(mailboxes.id, mailboxId));
+  }
+
+  /**
+   * Mail 0065 — empty one stored body under a closed marker, the storage cap's exact husk shape
+   * (`storage.ts#evictOldestBodies`): SELECT the octets first — `RETURNING` reports the NEW row,
+   * which is the zero we are about to write — then update, then release the counter under the
+   * same rules every other movement uses. `withheld_reason IS NULL` in both statements keeps a
+   * row's FIRST reason and makes the pair idempotent: a husk is never re-husked, its bytes are
+   * never released twice.
+   */
+  async huskBody(accountId: string, messageId: string, reason: "junk_filed" | "expunged"): Promise<boolean> {
+    const [victim] = await this.db.select({
+      id: messageBodies.id,
+      freed: sql<string>`octet_length(${messageBodies.text}) + coalesce(octet_length(${messageBodies.html}), 0)`,
+    }).from(messageBodies).where(and(
+      eq(messageBodies.messageId, messageId),
+      isNull(messageBodies.withheldReason),
+    )).limit(1);
+    if (!victim) return false;
+    await this.db.update(messageBodies)
+      .set({ text: "", html: null, withheldReason: reason })
+      .where(and(eq(messageBodies.id, victim.id), isNull(messageBodies.withheldReason)));
+    const freed = Number(victim.freed);
+    if (freed > 0) await releaseBodyBytes(this.db, accountId, freed);
+    return true;
+  }
+
+  /**
+   * Mail 0065 — the reaper `forgetInstanceAt`'s doc promised. See the interface doc for the
+   * predicate and each exclusion; the husk runs BEFORE the `change_log` row on the lock-order
+   * rule (`insertMessageBody` step 1 — counter row, then seq row, in that order everywhere).
+   */
+  async tombstoneInstanceless(accountId: string, mailboxId: string, limit: number): Promise<number> {
+    const victims = await this.db.select({ id: messages.id }).from(messages)
+      .where(and(
+        eq(messages.mailboxId, mailboxId),
+        eq(messages.accountId, accountId),
+        isNull(messages.deletedAt),
+        sql`${messages.nativeLocator} is not null`,
+        sql`not exists (select 1 from ${messageInstances}
+              where ${messageInstances.messageId} = ${messages.id})`,
+        // The junk-parked signature — reconciled while divergent — which only the `satisfiedBy`
+        // completion writes: there, "no watched instance" is the design, not a disappearance.
+        sql`not exists (select 1 from ${folderState}
+              where ${folderState.messageId} = ${messages.id}
+                and ${folderState.reconcileStatus} = 'reconciled'
+                and ${folderState.desiredFolder} <> ${folderState.observedFolder})`,
+      ))
+      .orderBy(asc(messages.id))
+      .limit(limit);
+    for (const v of victims) {
+      await this.db.update(messages).set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(eq(messages.id, v.id));
+      await this.huskBody(accountId, v.id, "expunged");
+      await this.recordChange({ accountId, entityType: "message", entityId: v.id, op: "delete", meta: null });
+    }
+    return victims.length;
+  }
+
+  /** Mail 0065 — a re-appearance un-deletes: the adopt path's half of "a LATER create resurrects". */
+  async clearDeletedOnAdopt(messageId: string): Promise<boolean> {
+    const rows = await this.db.update(messages).set({ deletedAt: null, updatedAt: new Date() })
+      .where(and(eq(messages.id, messageId), sql`${messages.deletedAt} is not null`))
+      .returning({ id: messages.id });
+    return rows.length > 0;
   }
 
   /**

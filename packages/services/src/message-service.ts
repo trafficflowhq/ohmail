@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import {
-  messages, folderState, messageBodies, messageStates, claimIdempotencyKey, recordChange,
+  mailboxes, messages, folderState, messageBodies, messageStates, claimIdempotencyKey, recordChange,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
@@ -10,7 +10,19 @@ import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { upsertDesiredSeen } from "./flag-intent.js";
 import { materializeMessage } from "./dto/materialize.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
-import type { Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page } from "./dto/types.js";
+import type { Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, WithheldMarker } from "./dto/types.js";
+
+/**
+ * The stored row's withheld marker as the wire carries it — the CLOSED set, projected verbatim
+ * (mail 0062, widened by mail 0065). One function for the three body surfaces so they cannot
+ * disagree about which markers exist; an unknown stored value is dropped rather than invented
+ * into the union, which keeps a future migration's new reason a code deploy here first.
+ */
+function withheldOf(reason: string | null | undefined): { withheld: WithheldMarker } | Record<string, never> {
+  return reason === "storage_cap" || reason === "junk_filed" || reason === "expunged"
+    ? { withheld: reason }
+    : {};
+}
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
@@ -259,9 +271,9 @@ export class MessageService {
       loadedRemoteContent: body?.loadedRemoteContent ?? false,
       unsubscribe,
       unsubscribeUrl: unsubscribe === "not_one_click" ? httpsUnsubscribeUri(headers) : null,
-      // The row's own marker, verbatim (mail 0062): present ONLY when ingest declined the
-      // content at the storage cap, so an ordinary empty body stays exactly the wire it was.
-      ...(body?.withheldReason === "storage_cap" ? { withheld: "storage_cap" as const } : {}),
+      // The row's own marker, verbatim (mail 0062/0065): present ONLY when policy emptied the
+      // content, so an ordinary empty body stays exactly the wire it was.
+      ...withheldOf(body?.withheldReason),
     };
   }
 
@@ -312,7 +324,7 @@ export class MessageService {
         // The marker rides the MIRROR mode deliberately: without it a withheld body mirrors as
         // an empty complete one, the gap query never re-asks, and the desktop tells the same
         // lie the web used to. A fact about the stored row, not a rehydrate.
-        ...(r.withheldReason === "storage_cap" ? { withheld: "storage_cap" as const } : {}),
+        ...withheldOf(r.withheldReason),
       });
       bytes += Buffer.byteLength(text, "utf8") + (html ? Buffer.byteLength(html, "utf8") : 0);
       // Stop AFTER including the row that crossed the budget, so at least one row always makes
@@ -406,7 +418,7 @@ export class MessageService {
         loadedRemoteContent: r.loadedRemoteContent ?? false,
         unsubscribe,
         unsubscribeUrl: unsubscribe === "not_one_click" ? httpsUnsubscribeUri(headers) : null,
-        ...(r.withheldReason === "storage_cap" ? { withheld: "storage_cap" as const } : {}),
+        ...withheldOf(r.withheldReason),
       });
       bytes += Buffer.byteLength(text, "utf8") + (html ? Buffer.byteLength(html, "utf8") : 0);
       // Stop AFTER the row that crossed the budget, so one oversized body cannot starve the
@@ -612,6 +624,92 @@ export class MessageService {
         });
         // A LOST claim = a concurrent same-key request committed first. Throwing rolls THIS
         // transaction back (effect included) and the caller replays the winner's response.
+        if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
+      }
+
+      return { dto, seq };
+    });
+  }
+
+  /**
+   * DELETE — the third user-commanded write of the 2026-08-22 amendment (imap-types.ts): the
+   * message rides to the provider's native `\Trash` and leaves the mirror's living views.
+   *
+   * ── NEVER AN EXPUNGE, AND REFUSED WHEN TRASH DOES NOT EXIST ────────────────────────────────
+   *
+   * The physical move is `folder_state.desired_folder = <the mailbox's trash path>` — the same
+   * desired-state seam every move rides, drained by the worker (the API never opens IMAP). The
+   * trash path comes from the connect-time discovery (`mailboxes.trash_folder`); a mailbox with
+   * NONE gets a 422 `no_trash_folder` UP FRONT and nothing is written, because the only other
+   * ways to "delete" — expunging, or hiding mail that stays in the Imbox on the server — are
+   * respectively the destructive write the product rule forbids and the mirror lying about the
+   * mailbox.
+   *
+   * ── THE MIRROR SIDE IS ONE `delete` CHANGE ────────────────────────────────────────────────
+   *
+   * `deleted_at` stamps the row (kept — it is the message's identity) and every living view
+   * excludes it; the `change_log` `delete` rides the same seam every client already applies, so
+   * web, desktop and mobile tombstone on their next drain with no new code. A restore performed
+   * in the user's own client re-appears through the adopt path, which clears the stamp and
+   * re-emits the entity — "a LATER create resurrects", end to end.
+   *
+   * A message with NO server copy (`native_locator` null — a fixture, a seeded row) is
+   * tombstoned without a folder_state write: there is nothing to move, and a pending move at a
+   * locator that never existed would hang the "Filing N messages…" count for ever.
+   */
+  async delete(
+    ctx: ServiceContext, id: string,
+    opts: { idempotency?: MoveIdempotency | null } = {},
+  ): Promise<MoveResult> {
+    return asTx(ctx).transaction(async (tx) => {
+      const [msg] = await tx.select({
+        id: messages.id, nativeLocator: messages.nativeLocator, mailboxId: messages.mailboxId,
+      }).from(messages)
+        .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
+      if (!msg) throw new ServiceError("not_found", 404, "message not found");
+
+      const hasCopy = (msg.nativeLocator as NativeLocator | null) !== null;
+      let trash: string | null = null;
+      if (hasCopy) {
+        const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
+          .where(eq(mailboxes.id, msg.mailboxId)).limit(1);
+        trash = mb?.trashFolder ?? null;
+        if (trash === null) {
+          throw new ServiceError(
+            "no_trash_folder", 422,
+            "this mailbox has no Trash folder, and ohmail never expunges — delete the message in your own mail client instead",
+          );
+        }
+      }
+
+      const now = ctx.now();
+      if (hasCopy && trash !== null) {
+        const observed = await this.observedFolder(tx, id, msg.nativeLocator);
+        await this.upsertDesired(tx, id, observed, trash as Folder, now);
+      }
+      await tx.update(messages).set({ deletedAt: now, updatedAt: now })
+        .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
+      let seqBig = await recordChange(tx, {
+        accountId: ctx.accountId, entityType: "message", entityId: id, op: "delete", meta: null,
+      });
+      // Deleting is dealing with a resurfaced row, exactly as re-filing is.
+      const spent = await this.spendResurface(tx, ctx, [id]);
+      if (spent !== null) seqBig = spent;
+      const seq = Number(seqBig);
+
+      const dto = await materializeMessage(asDb(tx), ctx.accountId, id);
+      if (!dto) throw new ServiceError("internal", 500, "message vanished after write");
+
+      if (opts.idempotency) {
+        const claimed = await claimIdempotencyKey(tx, {
+          accountId: ctx.accountId,
+          key: opts.idempotency.key,
+          requestHash: opts.idempotency.requestHash,
+          responseStatus: 200,
+          responseJson: dto,
+          seq: seq,
+          now: ctx.now(),
+        });
         if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
       }
 

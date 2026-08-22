@@ -802,6 +802,23 @@ export class HttpAdapter implements EngineAdapter {
         };
       }
 
+      case "message_delete": {
+        const res = await this.request("DELETE", `/messages/${m.messageId}`, {
+          idempotencyKey: opts.idempotencyKey,
+        });
+        if (!res.ok) throw await this.rejectionOf(res);
+        const seq = this.noteSeq(res);
+        const dto = (await res.json()) as EngineMessage;
+        // The echo is the tombstone, at the echoed seq — op:"delete" carries no entity (§3.4),
+        // and the apply core turns it into `entity: null` for every selector.
+        return {
+          changes: seq !== null
+            ? [{ type: "message", op: "delete", id: dto.id, seq, updatedAt: dto.updatedAt }]
+            : [],
+          seq,
+        };
+      }
+
       case "triage_set": {
         const res = await this.request("POST", `/messages/${m.messageId}/triage`, {
           body: { state: m.state, ...(m.bubbleUpAt ? { bubbleUpAt: m.bubbleUpAt } : {}) },

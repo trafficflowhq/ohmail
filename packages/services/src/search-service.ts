@@ -357,7 +357,9 @@ export class SearchService {
   // ── filter → WHERE (account scope always first) ───────────────────────
 
   private whereSql(accountId: string, f: SearchFilters): SQL {
-    const preds: SQL[] = [sql`m.account_id = ${accountId}`];
+    // `deleted_at is null` unconditionally (mail 0065): search is a living view, and a deleted
+    // or fully-expunged message must not come back as a hit over its stored (husked) headers.
+    const preds: SQL[] = [sql`m.account_id = ${accountId}`, sql`m.deleted_at is null`];
     if (f.folder !== undefined) preds.push(sql`${this.folderExpr} = ${f.folder}`);
     if (f.sender !== undefined) preds.push(sql`lower(m.from_address) = lower(${f.sender})`);
     if (f.unread !== undefined) preds.push(sql`m.unread = ${f.unread}`);

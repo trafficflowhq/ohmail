@@ -271,7 +271,28 @@ export interface InsertMessageInput {
   authVerdict?: AuthVerdict;
 }
 
-export interface FolderStateRow { desiredFolder: string; observedFolder: string; lastSetBy: "us" | "external"; }
+export interface FolderStateRow {
+  desiredFolder: string;
+  observedFolder: string;
+  lastSetBy: "us" | "external";
+  /**
+   * The PHYSICAL folder that SATISFIES `desiredFolder` for this row, when the two legitimately
+   * differ — the spam verdict's shape (imap-types.ts, the 2026-08-22 amendment): the user's
+   * verdict names the pile (`ohmail/Quarantine`, which is what every view and DTO projects) and
+   * the reconciler files the message into the provider's native `\Junk`. The completion write
+   * then carries `observedFolder = <junk path>` — the server's truth, never rewritten — and this
+   * field says that truth is the desire FULFILLED, not a divergence still owed a move.
+   *
+   * `reconcileStatusFor` answers `reconciled` only when `observedFolder` EQUALS this value, so
+   * the derived-never-hand-set rule stands: a row still cannot claim a convergence it does not
+   * have, and any later write that omits the field (every other writer does) recomputes the
+   * status from the plain pair — a user's re-file goes `pending` exactly as before.
+   *
+   * Optional so every existing caller and fake keeps compiling; omitted ⇒ the historical
+   * derivation, byte-for-byte.
+   */
+  satisfiedBy?: string | null;
+}
 
 /**
  * The `\Seen` analogue of {@link FolderStateRow} — the read-state desired state (mail 0024).
@@ -454,6 +475,17 @@ export interface RepoPort {
    * exists as known and never fetch the one that replaced it.
    */
   updateLocator(messageId: string, locator: NativeLocator): Promise<void>;
+  /**
+   * Clear `messages.deleted_at` because the message RE-APPEARED in a watched folder (mail 0065)
+   * — a restore from the provider's Trash or Junk in the user's own client, arriving as the
+   * adopt path's evidence-checked create. The other half of "delete ⇒ tombstone; a LATER create
+   * resurrects": the adopt already emits the `move` change carrying the live entity, so clearing
+   * the stamp is all the resurrection the server side owes.
+   *
+   * Returns whether anything was cleared. OPTIONAL so every fake repo keeps compiling; a repo
+   * without it simply predates tombstones and has nothing to clear.
+   */
+  clearDeletedOnAdopt?(messageId: string): Promise<boolean>;
 
   // ── Physical identity: `message_instances` ──
   //

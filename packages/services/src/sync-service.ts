@@ -480,6 +480,11 @@ export class SyncService {
 
     const where = and(
       eq(messages.accountId, accountId),
+      // Mail 0065: a tombstoned message (user delete, or every watched copy expunged) is not in
+      // the mirror's living views, so a FRESH mirror must not be handed it. The delta path needs
+      // no twin predicate — the tombstone IS the delta (`op: "delete"`), and a getChanges row for
+      // a deleted entity already tombstones.
+      isNull(messages.deletedAt),
       ...(keyset ? [keyset] : []),
       ...(labeled ? [labeled] : []),
     );

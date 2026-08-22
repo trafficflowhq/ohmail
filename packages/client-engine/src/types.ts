@@ -944,6 +944,14 @@ export const VIEW_OF_FOLDER: Record<Folder, OhmailView> = {
 export type EngineMutation =
   | { kind: "move"; messageId: string; folder: Folder }
   /**
+   * DELETE — the message rides to the provider's native `\Trash` on the server (never an
+   * expunge) and leaves the mirror's living views everywhere (`DELETE /messages/:id`, mail
+   * 0065). The optimistic effect is the tombstone itself; a mailbox with no Trash folder is
+   * refused by the server (422 `no_trash_folder`) and the overlay rolls back, which is the
+   * honest screen for a delete that cannot happen.
+   */
+  | { kind: "message_delete"; messageId: string }
+  /**
    * `state: "resurfaced"` is the "Now" horizon and takes no `bubbleUpAt` — the server forces it
    * null, and so does the optimistic effect, so the two halves agree. See
    * {@link TriageWireState}.

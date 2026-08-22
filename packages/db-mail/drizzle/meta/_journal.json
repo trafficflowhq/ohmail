@@ -456,6 +456,13 @@
       "when": 1790982140528,
       "tag": "0064_device_sync_stamp",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1790982140529,
+      "tag": "0065_junk_trash_delete",
+      "breakpoints": true
     }
   ]
 }

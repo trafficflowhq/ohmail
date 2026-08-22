@@ -36,6 +36,7 @@ import {
   type FetchRawOptions, type NetTimeouts, type FetchByUidOptions, type TargetedFetch,
   type ImapAuth, type ImapOAuthAuth, type ResolvedImapAuth,
   FILING_BATCH_MAX, type MoveManyResult,
+  JUNK_BY_NAME, TRASH_BY_NAME, type SpecialFolders,
 } from "./imap-types.js";
 import {
   makeLeaseIo, makeLeasePeekIo,
@@ -770,6 +771,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * on the next process restart.
    */
   private scanSentFolder: string | null = null;
+  /** {@link findSpecialFolders}' memo — positive answers only, a null is re-asked. */
+  private specialJunk: string | null = null;
+  private specialTrash: string | null = null;
   /**
    * The customer's OWN folders, canonical, sorted, capped — see {@link PASSIVE_EXCLUDED_SPECIAL_USE}
    * for what this set is and what it excludes.
@@ -1191,6 +1195,47 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // Positive answers only (see {@link scanSentFolder}): a null is re-asked next cycle.
     this.scanSentFolder = byName ? this.toCanonical(byName.path) : null;
     return this.scanSentFolder;
+  }
+
+  /**
+   * The provider's native `\Junk` and `\Trash`, resolved without creating anything — the
+   * discovery behind the three user-commanded writes ({@link MailboxAdapter.findSpecialFolders}).
+   *
+   * SPECIAL-USE first, then {@link JUNK_BY_NAME}/{@link TRASH_BY_NAME} on the canonical leaf —
+   * the same two-step `findSentForScan` runs, for the same measured reason: plenty of live
+   * servers advertise no SPECIAL-USE (GreenMail among them), and imapflow's own `specialUse`
+   * field is a localized-name guess on those, so the belt is ours to own rather than a caret
+   * range's to withdraw. `\Noselect` entries and anything in the `ohmail` namespace are excluded;
+   * a folder that cannot be selected cannot receive a MOVE, and the ohmail folders are ours.
+   *
+   * Positive answers are memoised for the life of the connection; a null is re-asked on the next
+   * call, so a mailbox that GAINS a Junk folder is picked up on the next connect without a
+   * restart. Read-only: one LIST, no other command, nothing created — see {@link SpecialFolders}
+   * for why null is the honest answer and what each caller does with it.
+   */
+  async findSpecialFolders(): Promise<SpecialFolders> {
+    if (this.specialJunk !== null && this.specialTrash !== null) {
+      return { junk: this.specialJunk, trash: this.specialTrash };
+    }
+    const list = await this.client.list();
+    const resolve = (use: string, belt: RegExp): string | null => {
+      const selectable = (f: ListResponse): boolean => !(f.flags?.has("\\Noselect") ?? false);
+      const outsideOhmail = (path: string): boolean => !/(?:^|\/)ohmail(?:\/|$)/i.test(path);
+      const special = list.find((f) =>
+        selectable(f) && (f.specialUse ?? "").toLowerCase() === use
+        && outsideOhmail(this.toCanonical(f.path)));
+      if (special) return this.toCanonical(special.path);
+      const byName = list.find((f) => {
+        if (!selectable(f)) return false;
+        const path = this.toCanonical(f.path);
+        if (!outsideOhmail(path)) return false;
+        return belt.test(path.split("/").pop() ?? path);
+      });
+      return byName ? this.toCanonical(byName.path) : null;
+    };
+    this.specialJunk = this.specialJunk ?? resolve("\\junk", JUNK_BY_NAME);
+    this.specialTrash = this.specialTrash ?? resolve("\\trash", TRASH_BY_NAME);
+    return { junk: this.specialJunk, trash: this.specialTrash };
   }
 
   /**

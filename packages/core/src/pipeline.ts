@@ -91,6 +91,9 @@ export async function applyReconcileAction(
         lastSetBy: "external",
       };
       await repo.upsertFolderState(messageId, next);
+      // A tombstoned message that re-appears is being RESTORED by its user (mail 0065) — the
+      // adopt evidence is the same evidence, so the un-delete rides the same arm.
+      await repo.clearDeletedOnAdopt?.(messageId);
       await repo.recordAudit(
         accountId,
         "adopt_external",
@@ -1460,6 +1463,11 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     case "adopt_external": {
       const to = e.action.newDesired;
       await repo.upsertFolderState(e.messageId, { desiredFolder: to, observedFolder: to, lastSetBy: "external" });
+      // Mail 0065: a tombstoned message re-appearing in a watched folder is its user restoring
+      // it (from the provider's Trash or Junk, in their own client). The adopt evidence IS the
+      // restore evidence; clearing the stamp before the `move` change below means the entity
+      // that change carries is already live, so every client resurrects on this one delta.
+      await repo.clearDeletedOnAdopt?.(e.messageId);
       await repo.recordAudit(
         accountId,
         "adopt_external",

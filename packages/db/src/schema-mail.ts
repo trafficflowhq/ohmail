@@ -125,6 +125,21 @@ export const mailboxes = pgTable("mailboxes", {
   // or a lapse-then-resubscribe would silently seize a mailbox back from a deliberate local
   // choice (the lease's "No seize-back" rule).
   takeoverAuthorizedAt: timestamp("takeover_authorized_at", { withTimezone: true }),
+  // ── Mail 0065 — the provider's OWN Junk and Trash folders, as discovered at connect ──
+  //
+  // Canonical (`/`-delimited) paths, resolved by the worker's connect-time discovery
+  // (`ImapAdapter.findSpecialFolders`: SPECIAL-USE first, then the name belts) and re-written on
+  // every connect, so a mailbox that gains or renames the folder heals on its next attach. NULL
+  // means the mailbox genuinely has neither the flag nor a recognisable name — never "not yet
+  // asked" for a mailbox the worker has attached since this column landed.
+  //
+  // They exist because the API may never open IMAP: a delete must be refused UP FRONT when the
+  // mailbox has no Trash (`no_trash_folder`), and the reconciler must know where a spam verdict
+  // physically files without a LIST per pending row. EVIDENCE for those two decisions only;
+  // nothing else reads them, and the folders they name are never watched (imap-types.ts carries
+  // the product rule and its 2026-08-22 amendment).
+  junkFolder: text("junk_folder"),
+  trashFolder: text("trash_folder"),
   // ── Mail 0029 — WHY A `connected` MAILBOX IS NOT BEING SYNCED ──
   //
   // The other half of that outage. The adoption bug (a `FETCH 1:*` against an empty
@@ -402,6 +417,27 @@ export const messages = pgTable("messages", {
    * window it already holds, and the server's keyset stays `(date, id)`.
    */
   lastReadAt: timestamp("last_read_at", { withTimezone: true }),
+  /**
+   * ── Mail 0065 — WHEN THIS MESSAGE LEFT THE MIRROR'S LIVING VIEWS ──
+   *
+   * Two writers, one meaning: the user DELETED it (`MessageService.delete` — the message rides to
+   * the provider's `\Trash` and the mirror stops presenting it), or the worker observed it
+   * EXPUNGED from every folder we watch (`tombstoneInstanceless` — the server no longer holds it,
+   * and a mirror that kept showing it would be describing a mailbox that does not exist). Both
+   * emit a `change_log` `delete`, so every client tombstones the row.
+   *
+   * A TIMESTAMP AND NOT A ROW DELETE, deliberately: the row is the message's identity —
+   * `dedup_key` is what recognises the same message if it re-appears (a restore from Trash in the
+   * user's own client), and `change_log`/`message_instances`/threads all reference it. The
+   * re-appearance path (`commitChange`'s adopt) CLEARS this and re-emits the entity, which is the
+   * "a LATER create resurrects" rule the client apply contract already carries.
+   *
+   * Every living-view read excludes `deleted_at IS NOT NULL`: the snapshot bootstrap, search, and
+   * the folder views (those exclude it structurally — a deleted row's `folder_state` names the
+   * Trash path, which no view filters on). GET-by-id deliberately still answers, for idempotent
+   * replay and honest inspection.
+   */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   snippet: text("snippet").notNull().default(""),          // sensitivity-redacted preview (never an OTP)
   toAddresses: jsonb("to_addresses").notNull().default(sql`'[]'::jsonb`),   // EmailAddress[]
   ccAddresses: jsonb("cc_addresses").notNull().default(sql`'[]'::jsonb`),   // EmailAddress[]
@@ -943,6 +979,23 @@ export const messageBodies = pgTable("message_bodies", {
    * `WHERE withheld_reason = 'storage_cap'` as its predicate. The repair passes that re-fetch
    * bodies from IMAP must SKIP rows where this is non-null — they repair damage, and a withheld
    * row is policy, not damage.
+   *
+   * ── Mail 0065 adds two more members to the closed set, same shape, different sentences ──
+   *
+   *  · `'junk_filed'` — the spam verdict filed this message to the provider's native `\Junk`
+   *    (imap-types.ts, the 2026-08-22 amendment). The durable artifact of a spam verdict is the
+   *    SENDER RULE, never the body: the bytes live on in the provider's Junk folder, which is
+   *    the master, and holding a hosted copy of mail the user judged spam is storage against no
+   *    product surface. Written ONLY after the IMAP move landed — a husk claiming Junk while the
+   *    message still sits in a watched folder would be the mirror lying about the mailbox.
+   *  · `'expunged'` — the worker observed every watched instance of this message gone from the
+   *    server (`tombstoneInstanceless`). The row is tombstoned (`messages.deleted_at`) in the
+   *    same transaction; the husk exists so the account stops paying for bytes of a message the
+   *    mailbox no longer holds.
+   *
+   * Both keep real headers and release their bytes exactly as `'storage_cap'` does. A row that
+   * is ALREADY withheld keeps its first reason — the content is already gone, and rewriting the
+   * marker would erase which policy took it.
    */
   withheldReason: text("withheld_reason"),
   // ── Migration 0008: the body-text lexical index lives HERE

@@ -1726,6 +1726,26 @@ export async function startWorkerWithLock(
         const tFolders = Date.now();
         await adapter.ensureFolders();
         const foldersMs = Date.now() - tFolders;
+        // ── Mail 0065: DISCOVER THE PROVIDER'S OWN \Junk AND \Trash, AND WRITE THEM DOWN ──
+        //
+        // Read-only (one LIST) and re-written on EVERY attach, so a folder the user creates or
+        // renames heals on the next connect with no operator action. The columns are what lets
+        // the API refuse a delete up front (`no_trash_folder`) and the reconciler file a spam
+        // verdict into native Junk without a LIST per pending row — the API may never open
+        // IMAP. Best-effort: a discovery failure leaves the stored answer as it was, and the
+        // fallbacks (Quarantine / refusal) are never destructive. See imap-types.ts for the
+        // product rule this serves.
+        if (typeof adapter.findSpecialFolders === "function"
+          && typeof repo.setMailboxSpecialFolders === "function") {
+          try {
+            const found = await adapter.findSpecialFolders();
+            await repo.setMailboxSpecialFolders(mb.mailboxId, {
+              junkFolder: found.junk, trashFolder: found.trash,
+            });
+          } catch (err) {
+            log.warn("special_folder_discovery_failed", { mailboxId: mb.mailboxId, err });
+          }
+        }
         // accountId comes from the MAILBOX ROW, not from config: one process, many accounts.
         // The spend gate is built from that same accountId for exactly that reason.
         const deps: SyncDeps = {

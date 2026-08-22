@@ -363,6 +363,19 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       return effects;
     }
 
+    case "message_delete": {
+      const msg = reader.get<EngineMessage>("message", m.messageId);
+      if (!msg) return [];
+      // The tombstone IS the optimistic view: `entity: null` drops the row from every selector
+      // the instant the user presses delete, exactly what the server's `delete` change will do
+      // authoritatively on the next drain. Nothing else moves — the physical ride to \Trash is
+      // the worker's, and a rejection (422 no_trash_folder) rolls the overlay back whole.
+      const spent = spentResurface(msg, iso);
+      const effects: MutationEffect[] = [{ type: "message", id: msg.id, entity: null }];
+      if (spent) effects.push({ type: "message_state", id: stateRecordIdOf(reader, msg.id), entity: spent });
+      return effects;
+    }
+
     case "triage_set": {
       const msg = reader.get<EngineMessage>("message", m.messageId);
       if (!msg) return [];

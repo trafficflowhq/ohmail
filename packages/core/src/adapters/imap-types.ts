@@ -79,11 +79,42 @@ export const WATCHED_FOLDERS_ARE_THE_DESTINATIONS: boolean =
  *
  * ── WHAT IS EXCLUDED, AND WHY EACH ONE ─────────────────────────────────────────────────────────
  *
- * `\Junk` / `\Trash` / `\Drafts` are excluded on a product rule that predates this — the provider's
- * own Junk/Spam folder is never watched and never written to — and on one shared argument: none of
- * the three holds mail the customer FILED. Junk is the provider's verdict, Trash is mail they
- * deleted, Drafts is mail they have not finished writing; putting any of it into their history and
- * their search results would be inventing a decision rather than reading one.
+ * `\Junk` / `\Trash` / `\Drafts` are excluded from READING on one shared argument: none of the
+ * three holds mail the customer FILED. Junk is the provider's verdict, Trash is mail they deleted,
+ * Drafts is mail they have not finished writing; putting any of it into their history and their
+ * search results would be inventing a decision rather than reading one. The organizer therefore
+ * never watches these folders and never acts there ON ITS OWN INITIATIVE — no rule, no retro pass,
+ * no AI proposal and no reconcile may name them as a destination or enumerate them as a source.
+ *
+ * WRITING is governed by a narrower rule than it used to be (amended 2026-08-22, owner-ratified).
+ * The old sentence — "never watched and never written to" — treated the write side as one case,
+ * and it is two. A write on OUR initiative into somebody's Junk or Trash invents a decision,
+ * exactly as reading one out would; that stays forbidden. A write that EXECUTES the user's own
+ * explicit verdict is the opposite of inventing a decision — refusing it would mean overriding
+ * the user in their own mailbox, which is the deeper rule this file exists to protect. Three
+ * user-commanded writes are allowed, and only these:
+ *
+ *  1. A SPAM VERDICT (the screener's spam press, or the rule that press promoted) files the
+ *     message to the provider's native `\Junk` folder — where their other clients and the
+ *     provider's own filter expect spam to live — instead of parking it in `ohmail/Quarantine`.
+ *  2. A NOT-JUNK RESCUE moves a message OUT of `\Junk`, back to INBOX. Same authorship: the user
+ *     is reversing their own verdict (or the provider's), and both directions belong to them.
+ *  3. A DELETE moves a message to the provider's native `\Trash`. NEVER an expunge: Trash is the
+ *     provider's own undo surface, and leave-anytime means the mail stays recoverable by the
+ *     user's other clients for as long as the provider keeps it.
+ *
+ * The destination is discovered per mailbox — SPECIAL-USE first, then the {@link JUNK_BY_NAME} /
+ * {@link TRASH_BY_NAME} belts, never created (see {@link MailboxAdapter.findSpecialFolders}). A
+ * mailbox with NO native `\Junk` keeps the prior behaviour byte-for-byte: the verdict files to
+ * `ohmail/Quarantine` and the fallback is recorded under a closed code (`no_junk_folder`). A
+ * mailbox with no `\Trash` refuses the delete the same way (`no_trash_folder`) — falling back to
+ * an expunge is exactly the destructive write this rule forbids.
+ *
+ * The reading rule is unchanged by all of this, and one residual follows from it, stated rather
+ * than hidden: a message we filed into `\Junk`/`\Trash` is in a folder we never enumerate, so a
+ * later change made there by another client (a restore, a provider purge) is observed only when
+ * its copy next appears in a folder we do watch — see `forgetInstanceAt`'s evidence rule for how
+ * that re-appearance is adopted.
  *
  * `\All` and `\Flagged` (Gmail's *All Mail* and *Starred*) are excluded because they are VIRTUAL:
  * every message in the account appears in `\All` a second time, so ingesting it would double the
@@ -113,6 +144,44 @@ export const PASSIVE_EXCLUDED_SPECIAL_USE: ReadonlySet<string> = new Set([
  */
 export const PASSIVE_EXCLUDED_LEAF =
   /^(drafts?|entw(?:ü|ue)rfe|junk[ -]?(?:e-?mail)?|spam|bulk[ -]?mail|unerw(?:ü|ue)nscht|trash|bin|recycle[ -]?bin|deleted[ -](?:items|messages)|gel(?:ö|oe)schte[ -](?:objekte|elemente|nachrichten)|papierkorb|all[ -]mail|alle[ -]nachrichten|starred|important|outbox|postausgang)$/i;
+
+/**
+ * Leaf names that mean the provider's Junk folder on a server that names no SPECIAL-USE — the
+ * WRITE-side belt for the three user-commanded writes (see the product rule above).
+ *
+ * The vocabulary is the junk subset of {@link PASSIVE_EXCLUDED_LEAF}, split out rather than
+ * derived because the two belts fail in opposite directions and must be tuned separately: the
+ * passive belt errs toward NOT READING (a false positive hides a customer folder), this one errs
+ * toward NOT WRITING (a false positive would file the user's spam verdict into a folder that
+ * merely happens to be named `Spam`, which is why the alternation here is narrower — no `bin`,
+ * no `deleted`, nothing that could be a customer's own archive). A miss costs nothing destructive:
+ * the verdict falls back to `ohmail/Quarantine` under the closed code.
+ */
+export const JUNK_BY_NAME = /^(junk[ -]?(?:e-?mail)?|spam|bulk[ -]?mail|unerw(?:ü|ue)nscht)$/i;
+
+/**
+ * {@link JUNK_BY_NAME}'s pair for the provider's Trash. Narrower than the passive belt's trash
+ * class for the same reason — `bin` alone is admitted only in its compound forms, because a
+ * customer folder literally named `Bin` is plausible and a delete filed into it is a write into
+ * somebody's own filing. A miss refuses the delete (closed code `no_trash_folder`); it never
+ * expunges.
+ */
+export const TRASH_BY_NAME =
+  /^(trash|recycle[ -]?bin|deleted[ -](?:items|messages)|gel(?:ö|oe)schte[ -](?:objekte|elemente|nachrichten)|papierkorb)$/i;
+
+/**
+ * The two write-side special folders one mailbox resolved, canonical paths or null.
+ *
+ * `null` is a fact, not an error: the mailbox genuinely has no such folder and the caller takes
+ * the documented fallback (Quarantine for a spam verdict, refusal for a delete). Discovery NEVER
+ * creates a folder — the Sent path's create-as-last-resort exists because a send has nowhere
+ * else to put the copy; a verdict and a delete both have an honest fallback, so creating a
+ * directory in somebody's mailbox is a write we have no reason to make.
+ */
+export interface SpecialFolders {
+  junk: string | null;
+  trash: string | null;
+}
 
 /** The `ohmail` namespace, in canonical (`/`-delimited) form, at any depth. */
 const OHMAIL_SEGMENT = /(?:^|\/)ohmail(?:\/|$)/i;
@@ -1043,6 +1112,19 @@ export interface MailboxAdapter {
   fetchByUid?(
     folder: string, uids: readonly number[], opts?: FetchByUidOptions,
   ): Promise<TargetedFetch>;
+  /**
+   * Resolve the provider's native `\Junk` and `\Trash` folders for the three user-commanded
+   * writes — see the product rule above {@link PASSIVE_EXCLUDED_SPECIAL_USE}.
+   *
+   * SPECIAL-USE first, then the {@link JUNK_BY_NAME}/{@link TRASH_BY_NAME} belts on the canonical
+   * leaf, `\Noselect` and the `ohmail` namespace excluded, and NOTHING IS EVER CREATED — see
+   * {@link SpecialFolders} for why a null answer is the honest one. Read-only: one LIST and no
+   * other command.
+   *
+   * OPTIONAL on the interface, on {@link scanSentRecipients}' rule: every existing fake adapter
+   * keeps compiling, and a caller treats its absence as "both null" — the documented fallbacks.
+   */
+  findSpecialFolders?(): Promise<SpecialFolders>;
   watch(onSignal: () => void): Promise<() => Promise<void>>;
   send(msg: OutboundMessage): Promise<SendResult>;
   /**

@@ -20,6 +20,10 @@ import { KnownSetCache, watchKnownSet } from "./known-set.js";
 // `@trafficflow/worker/sync`. Naming config here would put the classifier and the drafter into the
 // shipped desktop engine's import closure from three modules away.
 import { buildVersionOf } from "./build-version.js";
+import {
+  completeFiling, junkAuditCode, physicalDestination, specialFoldersOf,
+  TOMBSTONE_MAX_PER_CYCLE, type SpecialFolderMap,
+} from "./junk-filing.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -675,6 +679,33 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     await fencedWrite(deps, (r) => r.forgetInstanceAt(mailboxId, ch.locator));
   }
 
+  // ── THE REAPER (mail 0065): A MESSAGE WHOSE EVERY WATCHED INSTANCE IS GONE LEAVES THE MIRROR ─
+  //
+  // `forgetInstanceAt` above removes instances and promotes survivors, and until this pass that
+  // was the END of the story: the `messages` row stayed live in every view and every client, for
+  // ever, describing mail the server no longer holds — `forgetInstanceAt`'s own doc left "the
+  // last known locator on the row FOR THE REAPER TO FIND", and no reaper existed. This is it:
+  // bounded per cycle, it stamps `deleted_at`, husks the body (the account stops paying for
+  // bytes of a message that is gone), and emits the `change_log` `delete` every client
+  // tombstones on. A cross-batch external move — delete this cycle, create the next — is
+  // tombstoned here and RESURRECTED by the adopt path (`clearDeletedOnAdopt` + the `move`
+  // change carrying the live entity), which is the client contract's "a LATER create
+  // resurrects" running end to end. Junk-parked rows are excluded in the query itself — see
+  // `tombstoneInstanceless`. Optional-guarded so every fake repo keeps working.
+  if (typeof repo.tombstoneInstanceless === "function") {
+    const reaped = await fencedGroup(deps, (r) =>
+      typeof r.tombstoneInstanceless === "function"
+        ? r.tombstoneInstanceless(accountId, mailboxId, TOMBSTONE_MAX_PER_CYCLE)
+        : Promise.resolve(0));
+    if (reaped > 0) {
+      log?.info("sync_tombstoned_expunged", {
+        mailboxId, accountId, reaped,
+        reason: "every watched instance of these messages is gone from the server — the mirror " +
+          "rows are tombstoned so clients stop presenting mail the mailbox no longer holds",
+      });
+    }
+  }
+
   // Two-phase, transaction-safe ingest. PLAN performs the reads +
   // optional classifier network call OUTSIDE any transaction; COMMIT persists the
   // entity rows + change_log inside ONE short transaction (tx-scoped repo, no
@@ -1200,11 +1231,15 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
     if (bucket) bucket.push(p); else groups.set(key, [p]);
   }
 
+  // Mail 0065 — where a spam verdict physically files. Read once per pass; a repo without the
+  // discovery answers "neither exists", which keeps the pre-0065 behaviour byte-for-byte.
+  const special = await specialFoldersOf(repo, mailboxId);
+
   for (const group of groups.values()) {
     for (let i = 0; i < group.length; i += FILING_BATCH_MAX) {
       const chunk = group.slice(i, i + FILING_BATCH_MAX);
-      if (await fileChunk(deps, chunk)) continue;
-      for (const p of chunk) await fileOne(deps, p);
+      if (await fileChunk(deps, chunk, special)) continue;
+      for (const p of chunk) await fileOne(deps, p, special);
     }
   }
   return owesMore;
@@ -1219,12 +1254,14 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
  * leaves the row pending for `changesSince` to adopt — which is the same convergence the
  * per-message path has always relied on for a crash between the IMAP move and the DB write.
  */
-async function fileChunk(deps: SyncDeps, chunk: PendingFolderState[]): Promise<boolean> {
+async function fileChunk(deps: SyncDeps, chunk: PendingFolderState[], special: SpecialFolderMap): Promise<boolean> {
   const { adapter, accountId, mailboxId, log } = deps;
   if (typeof adapter.moveMany !== "function") return false;
   const first = chunk[0]!;
   const srcFolder = first.nativeLocator!.folder;
-  const toFolder = first.desiredFolder;
+  // Mail 0065: the spam pile files into the provider's native Junk when the mailbox has one —
+  // the group shares one desiredFolder, so it shares one physical destination.
+  const toFolder = physicalDestination(first.desiredFolder, special);
   // A locator already sitting at its destination is the per-message path's problem to reason
   // about, not a batch's: `moveMany` refuses a same-folder group outright.
   if (srcFolder === toFolder) return false;
@@ -1269,14 +1306,21 @@ async function fileChunk(deps: SyncDeps, chunk: PendingFolderState[]): Promise<b
         // `result.gone` as well would be a second reading of one fact, with a branch no test can
         // redden.
         if (!newLoc) { await voidGoneFiling(r, accountId, p); continue; }
-        await r.updateLocator(p.messageId, newLoc);
-        await r.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
+        // Mail 0065: ONE completion writer for every path that lands a move — the ordinary
+        // converge, the junk filing's satisfied/parked/husked shape, and the delete's park.
+        // Written ONLY here, after `moveMany` reported the batch whole: the claim follows the
+        // move (see junk-filing.ts's header, and the guard that reddens the other ordering).
+        await completeFiling(r, accountId, mailboxId, p, newLoc, special);
         // The audit rows are written together, AFTER the state they describe. One INSERT instead of
         // fifty, and the same rows a per-message pass would have written — the admin surface and the
         // inverse both read this table and neither can tell which path filed the mail.
+        const junk = junkAuditCode(p.desiredFolder, newLoc.folder, special);
         audits.push({
           action: "reconcile.move",
-          payload: { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
+          payload: {
+            messageId: p.messageId, from: p.nativeLocator, to: newLoc.folder, newLocator: newLoc,
+            ...(junk ? { junk } : {}),
+          },
           inverse: { action: "move", locator: newLoc, toFolder: p.nativeLocator!.folder },
         });
       }
@@ -1374,15 +1418,18 @@ async function voidGoneFiling(repo: WorkerRepo, accountId: string, p: PendingFol
  * `reconcile.move.failed` audit row asserting that a move which HAD succeeded was refused, and put
  * the correction to sleep behind it.
  */
-async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
+async function fileOne(deps: SyncDeps, p: PendingFolderState, special: SpecialFolderMap): Promise<void> {
   const { adapter, accountId, mailboxId, log } = deps;
+  // Mail 0065: the same physical mapping `fileChunk` applies — a spam verdict files into the
+  // provider's native Junk when the mailbox has one, and everything else is already physical.
+  const physical = physicalDestination(p.desiredFolder, special);
   // Typed off the adapter's own signature rather than by importing `NativeLocator`: this module
   // reaches core through `/mail` and `/adapters/imap` only, and neither exports that name — see the
   // import block's note on what naming the bare barrel here would drag into the desktop engine.
   let newLoc: Awaited<ReturnType<MailboxAdapter["move"]>>;
   try {
     await fenceImapMutation(deps);
-    newLoc = await adapter.move(p.nativeLocator!, p.desiredFolder);
+    newLoc = await adapter.move(p.nativeLocator!, physical);
   } catch (err) {
     // A fence refusal must not be recorded as this message's failure — it is the process's.
     rethrowFenced(err);
@@ -1406,7 +1453,7 @@ async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
       // round trip per pending row for the length of the outage — bounded by the cycle's own
       // budget, and self-clearing the moment the host answers.
       log?.warn("reconcile_move_transport_failure", {
-        mailboxId, accountId, messageId: p.messageId, to: p.desiredFolder, err,
+        mailboxId, accountId, messageId: p.messageId, to: physical, err,
       });
       return;
     }
@@ -1440,7 +1487,10 @@ async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
         {
           messageId: p.messageId,
           from: p.nativeLocator,
-          to: p.desiredFolder,
+          // The PHYSICAL destination the server refused — under the junk mapping that is the
+          // native Junk path, and recording the pile instead would blame a folder the command
+          // never named.
+          to: physical,
           error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
           attempts, nextAttemptAt: nextAttemptAt.toISOString(),
         },
@@ -1456,11 +1506,16 @@ async function fileOne(deps: SyncDeps, p: PendingFolderState): Promise<void> {
   // in the seam a transaction cannot cover (the server's, always).
   try {
     await fencedGroup(deps, async (r) => {
-      await r.updateLocator(p.messageId, newLoc);
-      await r.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" });
+      // Mail 0065: the shared completion writer — see junk-filing.ts and fileChunk's note. The
+      // claim ("this message is in Junk") is written only here, after the move returned.
+      await completeFiling(r, accountId, mailboxId, p, newLoc, special);
+      const junk = junkAuditCode(p.desiredFolder, newLoc.folder, special);
       await r.recordAudit(
         accountId, "reconcile.move",
-        { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, newLocator: newLoc },
+        {
+          messageId: p.messageId, from: p.nativeLocator, to: newLoc.folder, newLocator: newLoc,
+          ...(junk ? { junk } : {}),
+        },
         { action: "move", locator: newLoc, toFolder: p.nativeLocator!.folder },
       );
     });
