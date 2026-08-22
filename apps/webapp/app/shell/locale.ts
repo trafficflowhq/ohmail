@@ -273,9 +273,10 @@ export function setActiveFormatZone(zone: string | null): void {
    THE FALLBACK MERGE — declared HERE rather than beside the loader, because both hosts need it and
    only one of them has the loader.
 
-   `apps/webapp/i18n` is DENIED by `scripts/publish-desktop.mjs`, so `i18n/catalog.ts` does not exist
-   in the public mirror a released desktop binary is built from. `apps/webapp/app/shell` IS published.
-   Putting the rule in the shared half keeps ONE definition of "a key German is missing renders the
+   Both `apps/webapp/i18n` and `apps/webapp/app/shell` are published (this paragraph once claimed
+   the i18n directory was denied; `scripts/publish-desktop.mjs` maps it, and the claim was stale, not
+   the mapping). The rule lives HERE because both hosts need it and only one of them has the loader:
+   putting it in the shared half keeps ONE definition of "a key German is missing renders the
    English sentence" instead of two that can drift — and drifting here does not produce a worse
    sentence, it produces `screener.toastFiled` on somebody's screen, which is the intl library's
    default fallback for an absent key and the single failure this whole slice is built to prevent.
