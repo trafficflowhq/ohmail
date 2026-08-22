@@ -780,12 +780,16 @@ function apiCronFrom(env: NodeJS.ProcessEnv): { baseUrl: string; secret: string 
   }
   // The bearer is a privileged credential and must not cross a public network unencrypted.
   // Plain http is allowed only where TLS is genuinely absent by design: loopback, and
-  // single-label hosts (a compose-internal service name like `api` has no dot; a public host
-  // does). Everything else presents the secret to every network hop in cleartext — refused.
+  // single-label DNS hosts (a compose-internal service name like `api` has no dot; a public
+  // host does). The IP-literal check comes FIRST, because "no dot" alone would wave a global
+  // IPv6 literal through — `[2606:4700:4700::1111]` contains no dot and is not local (review
+  // finding, watched red). An IPv6 literal is local only as the loopback itself; any IPv4
+  // literal other than 127.0.0.1 carries dots and falls to the refusal below anyway.
   if (parsed.protocol === "http:") {
     const h = parsed.hostname;
+    const ipv6Literal = h.includes(":");
     const local = h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1"
-      || !h.includes(".");
+      || (!ipv6Literal && !h.includes("."));
     if (!local) {
       throw new WorkerConfigError("TF_API_CRON_URL",
         "TF_API_CRON_URL over plain http is allowed only for loopback or single-label " +
