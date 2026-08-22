@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, exists, isNull, lte, or, sql } from "drizzle-orm";
 import { mailboxes, mailboxCredentials, type SmtpSizeProbeCode } from "@trafficflow/db";
 import {
   buildImapAuth, learnSmtpMaxSize, oauthSmtpEndpoint, verifySmtpLogin,
@@ -269,6 +269,12 @@ export interface SmtpSizePassResult {
 /**
  * RECORD ONE ATTEMPT — the stamp, and the announcement when there is one, in a single statement.
  *
+ * BUILT WITH `exists()` AND TYPED `eq`, not a hand-written `EXISTS (SELECT 1 …)` fragment, and that
+ * is a correctness requirement rather than a preference: the credential stamp is a `Date`, and a
+ * `Date` interpolated into a raw `sql` template reaches postgres-js unmapped, where the bind path
+ * calls `Buffer.byteLength` on it and throws `ERR_INVALID_ARG_TYPE`. PGlite maps it silently, so
+ * the in-process suites cannot see the difference. See the selection above for the full note.
+ *
  * Returns whether the row was actually written, because "the probe happened" and "the row now
  * remembers it" are different facts and the second is the one that bounds the next pass.
  *
@@ -313,12 +319,11 @@ async function stampProbe(
       eq(mailboxes.id, mailboxId),
       isNull(mailboxes.smtpMaxSizeBytes),
       ...(target
-        ? [sql`EXISTS (
-            SELECT 1 FROM mailbox_credentials mc
-            WHERE mc.mailbox_id = ${mailboxId}
-              AND mc.transport = ${target.credentialsTransport}
-              AND mc.updated_at = ${target.credentialsUpdatedAt}
-          )`]
+        ? [exists(deps.db.select({ one: sql`1` }).from(mailboxCredentials).where(and(
+            eq(mailboxCredentials.mailboxId, mailboxId),
+            eq(mailboxCredentials.transport, target.credentialsTransport),
+            eq(mailboxCredentials.updatedAt, target.credentialsUpdatedAt),
+          )))]
         : []),
     ))
     // `.returning()` rather than a row count, because the handle this pass runs on is typed as the
@@ -381,6 +386,22 @@ export async function learnMissingSmtpSizes(
   // `COALESCE` on the code, not `= 'silent'` bare: a stamped row whose code was somehow NULL would
   // otherwise satisfy neither arm and never be due again, turning a backoff into the terminal state
   // this design refuses to have.
+  //
+  // ── AND THE TIMESTAMPS GO THROUGH `lte`, NEVER INTO A `sql` TEMPLATE ────────────────────────
+  //
+  // This is not style. A value interpolated into a raw `sql` fragment has no COLUMN to be mapped
+  // by, so drizzle hands the JS object to the driver as-is — and postgres-js's bind path calls
+  // `Buffer.byteLength` on it, which for a `Date` throws
+  // `TypeError [ERR_INVALID_ARG_TYPE]: The "string" argument must be … Received an instance of
+  // Date`. The whole pass then 503s before it dials anything.
+  //
+  // PGLITE ACCEPTS THE DATE HAPPILY, so every in-process test is green and the failure appears
+  // only against real Postgres — which is exactly where it appeared: the first production run of
+  // this selection answered `smtp_size_pass_failed`. `lte`/`eq` on a typed column route the value
+  // through that column's `mapToDriverValue`, which is what makes it an ISO string on the wire.
+  // The same trap took the credential predicate on the write — see {@link stampProbe} — and it was
+  // ALREADY THERE before this slice, latent, because the only statement that carried a `Date` was
+  // the one that runs when a server answers with a usable ceiling.
   const silentCutoff = new Date(started - SMTP_SIZE_RETRY_SILENT_MS);
   const failedCutoff = new Date(started - SMTP_SIZE_RETRY_FAILED_MS);
   const rows = await deps.db.select({ id: mailboxes.id })
@@ -388,13 +409,13 @@ export async function learnMissingSmtpSizes(
     .where(and(
       isNull(mailboxes.smtpMaxSizeBytes),
       sql`${mailboxes.status} <> 'disabled'`,
-      sql`(
-        ${mailboxes.smtpSizeProbedAt} IS NULL
-        OR (COALESCE(${mailboxes.smtpSizeProbeCode}, 'unknown') = 'silent'
-              AND ${mailboxes.smtpSizeProbedAt} <= ${silentCutoff})
-        OR (COALESCE(${mailboxes.smtpSizeProbeCode}, 'unknown') <> 'silent'
-              AND ${mailboxes.smtpSizeProbedAt} <= ${failedCutoff})
-      )`,
+      or(
+        isNull(mailboxes.smtpSizeProbedAt),
+        and(sql`COALESCE(${mailboxes.smtpSizeProbeCode}, 'unknown') = 'silent'`,
+          lte(mailboxes.smtpSizeProbedAt, silentCutoff)),
+        and(sql`COALESCE(${mailboxes.smtpSizeProbeCode}, 'unknown') <> 'silent'`,
+          lte(mailboxes.smtpSizeProbedAt, failedCutoff)),
+      ),
     ))
     .orderBy(sql`random()`)
     .limit(SMTP_SIZE_BATCH);
