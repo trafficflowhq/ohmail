@@ -116,7 +116,9 @@ interface ProbeTarget {
    * the submission host rewrites it; a token rotation does not.
    */
   credentialsTransport: "imap" | "smtp";
-  credentialsGuard: { kind: "stamp"; updatedAt: Date } | { kind: "meta"; meta: unknown };
+  credentialsGuard:
+    | { kind: "stamp"; updatedAt: Date }
+    | { kind: "meta"; meta: unknown; secretEnc: string };
 }
 
 /**
@@ -178,7 +180,7 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
       credentialsTransport: "imap",
       // META, not `updated_at`: the token refresh this dial performs moves the row's stamp. See
       // {@link ProbeTarget.credentialsGuard}.
-      credentialsGuard: { kind: "meta", meta: imapRow.meta },
+      credentialsGuard: { kind: "meta", meta: imapRow.meta, secretEnc: imapRow.secretEnc },
     };
   }
   if (authType !== undefined && authType !== "password") return undefined;
@@ -355,6 +357,25 @@ async function stampProbe(
               // `jsonb = jsonb`, which is key-order-insensitive and so survives a round trip
               // through the driver. The captured value came out of this very column.
               : eq(mailboxCredentials.meta, target.credentialsGuard.meta),
+            // ── AND FOR ONE CODE, THE SECRET TOO ────────────────────────────────────────────
+            //
+            // `token_unavailable` is the only outcome that is a statement ABOUT THE CREDENTIAL
+            // rather than about the server: no token could be minted from the refresh token this
+            // pass read. A CONCURRENT rotation — the sync host or a send refreshing the same
+            // mailbox — is a plausible cause of exactly that, because a rotated refresh token
+            // invalidates the one already read into this closure. Stamping then backs the mailbox
+            // off for a week over a token that has since been replaced, and the replacement may
+            // work perfectly.
+            //
+            // Every OTHER outcome followed a SUCCESSFUL mint, which proves the credential this pass
+            // held was live; whatever the server then did (announced nothing, refused the AUTH,
+            // never answered) is a fact about the server and earns its stamp even though this
+            // probe's own refresh has since moved the row. That asymmetry is the whole point: it
+            // keeps the common Microsoft case — a tenant with SMTP AUTH disabled — bounded to one
+            // login a week instead of one a day.
+            ...(target.credentialsGuard.kind === "meta" && code === "token_unavailable"
+              ? [eq(mailboxCredentials.secretEnc, target.credentialsGuard.secretEnc)]
+              : []),
           )))]
         : []),
     ))
