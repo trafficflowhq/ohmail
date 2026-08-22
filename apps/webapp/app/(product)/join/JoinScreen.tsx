@@ -173,6 +173,14 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
 
   // ── The form state, kept across steps so a refusal never loses typed input ────────────
   const [code, setCode] = useState(initialCode);
+  // The billing cadence for the Checkout this wizard will start. MONTHLY PRESELECTED (the
+  // ratified default); `?interval=year` — the landing toggle's hint — preselects annual the
+  // same way `?plan=` preselects nothing binding: the press below is the decision, and the
+  // server prices it either way.
+  const [interval, setIntervalChoice] = useState<"month" | "year">(() => {
+    if (typeof window === "undefined") return "month";
+    return new URL(window.location.href).searchParams.get("interval") === "year" ? "year" : "month";
+  });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -499,7 +507,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   };
 
   const startCheckout = (plan: Plan) => void run(async () => {
-    const { url } = await billing.checkout(plan);
+    const { url } = await billing.checkout(plan, interval);
     window.location.assign(url);
   });
 
@@ -814,6 +822,21 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
                   exactly how a signup page ends up advertising a plan the database will
                   not sell. No card yet ⇒ no buttons, rather than plausible wrong ones. */}
               {sub ? (
+                <>
+                <div className="l-interval-toggle join-interval" role="group" aria-label={t("intervalLabel")}>
+                  <button
+                    type="button" className="l-interval-btn" aria-pressed={interval === "month"}
+                    onClick={() => setIntervalChoice("month")}
+                  >
+                    {t("intervalMonthly")}
+                  </button>
+                  <button
+                    type="button" className="l-interval-btn" aria-pressed={interval === "year"}
+                    onClick={() => setIntervalChoice("year")}
+                  >
+                    {t("intervalAnnual")}
+                  </button>
+                </div>
                 <div className="join-plans">
                   {PLANS.map((p) => {
                     const card = sub.plans[p];
@@ -830,7 +853,11 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
                             "$9/mo" reads as a purchase, so the visitor arrives at a Checkout that
                             does not charge them and cannot tell what just happened. `after` says
                             what the number actually is; the action line says what the click does. */}
-                        <span className="num">{t("planPrice", { price: card.priceUsd })}</span>
+                        <span className="num">
+                          {interval === "year"
+                            ? t("planPriceAnnual", { price: card.priceUsd * 10 })
+                            : t("planPrice", { price: card.priceUsd })}
+                        </span>
                         <span className="join-plan-after">{t("planAfter")}</span>
                         <span className="join-plan-sub">
                           {t("planSub", {
@@ -843,6 +870,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
                     );
                   })}
                 </div>
+                </>
               ) : (
                 <p className="join-hint">{t("planLoading")}</p>
               )}

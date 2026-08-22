@@ -41,9 +41,14 @@ export function storageState(status: SubscriptionStatus | null): StorageState {
 
 /**
  * Bytes for a sentence, in DECIMAL units — the same convention the plan card enforces
- * (`storageBytes` is 5/15/50 × 10⁹ precisely so "5 GB" is the enforced number, with no binary
+ * (`storageBytes` is 2/5/10 × 10⁹ precisely so "2 GB" is the enforced number, with no binary
  * gap to explain). One decimal under 10 GB, whole numbers above; sub-GB values step down so a
- * fresh account reads "12 MB of 5 GB" rather than "0 GB of 5 GB", which would look broken.
+ * fresh account reads "12 MB of 2 GB" rather than "0 GB of 2 GB", which would look broken.
+ *
+ * BYTES are what this renders, deliberately, even though the pricing page advertises an EMAIL
+ * COUNT (~80 000 on Solo). The card sells an estimate because nobody knows how many emails fit
+ * in a gigabyte; a settings screen reports the real figure, because this is the one place the
+ * account's own number is knowable and an estimate would be a worse answer than the truth.
  */
 export function formatStorageBytes(bytes: number): string {
   if (bytes >= 1_000_000_000) {
@@ -53,4 +58,18 @@ export function formatStorageBytes(bytes: number): string {
   if (bytes >= 1_000_000) return `${Math.round(bytes / 1_000_000)} MB`;
   if (bytes >= 1_000) return `${Math.round(bytes / 1_000)} KB`;
   return `${bytes} B`;
+}
+
+/**
+ * THE ESTIMATE THAT TURNS BYTES INTO AN EMAIL COUNT — the client-side copy of
+ * `BYTES_PER_STORED_EMAIL_ESTIMATE` (`packages/db/src/billing.ts`, where the measurement and
+ * the round-against-us argument live). Restated because the webapp cannot import
+ * `@trafficflow/db`; `test/landing-pricing-matches-plan-card.test.ts` compares the two
+ * literals, so they cannot drift silently.
+ */
+export const BYTES_PER_STORED_EMAIL_ESTIMATE = 25_000;
+
+/** Bytes → the advertised email count, floored — every step moves the number DOWN. */
+export function estimatedEmails(bytes: number): number {
+  return Math.floor(bytes / BYTES_PER_STORED_EMAIL_ESTIMATE);
 }

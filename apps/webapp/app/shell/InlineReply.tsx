@@ -737,8 +737,13 @@ export function InlineReply({
  *
  * ── IT SAYS WHAT IT COSTS, IN THE UNIT THE PLAN IS SOLD IN ───────────────────────────────
  *
- * "1 AI action", never credits: credits are an internal ledger unit nobody is quoted a plan in.
- * The number is `DRAFT_REPLY_COST_ACTIONS`, which is what the route charges per accepted
+ * "15 credits" — and credits ARE the unit the plan is sold in, which is the reverse of what this
+ * paragraph used to say. It read "'1 AI action', never credits: credits are an internal ledger
+ * unit nobody is quoted a plan in", and that was right while every action cost one credit and
+ * the card advertised actions. Weighted debits ended both: the card sells credits, and a draft
+ * is fifteen of them against a classification's one, so quoting "1 action" here would name a
+ * number the server does not charge.
+ * The number is `DRAFT_REPLY_COST_CREDITS`, which is what the route charges per accepted
  * request — not a figure derived from a balance this tab happens to be holding. Whether the
  * account can afford it is the server's decision and nothing here second-guesses it; a refusal
  * arrives as the server's own sentence and is rendered verbatim (`draft-reply.ts`).

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Reveal } from "./Reveal";
 import { useSignup, type SignupTier } from "./Signup";
@@ -29,6 +30,10 @@ import { useSignup, type SignupTier } from "./Signup";
 export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
   const t = useTranslations("pricing");
   const { open } = useSignup();
+  // MONTHLY PRESELECTED — the ratified default. The toggle changes the price a card SHOWS and
+  // the interval the CTA carries into `/join`; the server prices the actual Checkout either
+  // way, so this state is presentation plus a hint, never the authority on money.
+  const [interval, setInterval] = useState<"month" | "year">("month");
 
   return (
     <section className="l-pricing" id="pricing" aria-labelledby="pricing-title">
@@ -85,14 +90,39 @@ export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
             </h3>
             <p>{t("cloudShared")}</p>
           </header>
+          {/* Monthly first and preselected; annual is the same plans with two months free.
+              Buttons rather than a switch: two visible prices with a pressed state read
+              faster than an abstract toggle, and `aria-pressed` says which one is live. */}
+          <div className="l-interval-toggle" role="group" aria-label={t("intervalLabel")}>
+            <button
+              type="button" className="l-interval-btn" aria-pressed={interval === "month"}
+              onClick={() => setInterval("month")}
+            >
+              {t("intervalMonthly")}
+            </button>
+            <button
+              type="button" className="l-interval-btn" aria-pressed={interval === "year"}
+              onClick={() => setInterval("year")}
+            >
+              {t("intervalAnnual")}
+            </button>
+          </div>
           <div className="l-tiers">
-            <CloudTier id="solo" featured={false} onPick={open} publicSignup={publicSignup} />
-            <CloudTier id="plus" featured onPick={open} publicSignup={publicSignup} />
-            <CloudTier id="pro" featured={false} onPick={open} publicSignup={publicSignup} />
+            <CloudTier id="solo" featured={false} onPick={open} publicSignup={publicSignup} interval={interval} />
+            <CloudTier id="plus" featured onPick={open} publicSignup={publicSignup} interval={interval} />
+            <CloudTier id="pro" featured={false} onPick={open} publicSignup={publicSignup} interval={interval} />
           </div>
           {/* the trial, stated with its one real limit rather than as a
               badge that hides it — a standing decision, not a styling choice */}
           <p className="l-trial-note">{t("trialNote")}</p>
+          {/* The email counts on each tier are an ESTIMATE and must read as one, so the basis
+              travels with them rather than living in a footnote nobody scrolls to: ~25 KB of
+              stored message text per email (measured, `BYTES_PER_STORED_EMAIL_ESTIMATE`), the GB
+              figure once for anyone who wants it, and the attachment fact — attachment bytes are
+              never stored server-side, so they never count. Said ONCE under the three tiers
+              rather than three times inside them: it is the same sentence for every tier, and
+              repeating it in each card would push the price off the first screen. */}
+          <p className="l-storage-note">{t("storageNote")}</p>
           <p className="l-annual">{t("annualNote")}</p>
         </Reveal>
       </div>
@@ -109,30 +139,34 @@ function CloudTier({
   featured,
   onPick,
   publicSignup,
+  interval,
 }: {
   id: "solo" | "plus" | "pro";
   featured: boolean;
   onPick: (tier: SignupTier) => void;
   publicSignup: boolean;
+  interval: "month" | "year";
 }) {
   const t = useTranslations("pricing");
   const name = t(`${id}Name`);
   const cls = featured ? "btn primary l-tier-cta" : "btn l-tier-cta";
+  const annual = interval === "year";
   return (
     <div className="l-tier" data-featured={featured || undefined}>
       <h4 className="l-tier-name">{name}</h4>
       <p className="l-tier-fig">
-        <b className="num">{t(`${id}Price`)}</b>
-        <span>{t("perMonth")}</span>
+        <b className="num">{annual ? t(`${id}PriceAnnual`) : t(`${id}Price`)}</b>
+        <span>{annual ? t("perYear") : t("perMonth")}</span>
       </p>
       <p className="l-tier-line num">{t(`${id}Mailboxes`)}</p>
       <p className="l-tier-line num">{t(`${id}Actions`)}</p>
+      <p className="l-tier-line num">{t(`${id}Storage`)}</p>
       <p className="l-tier-trial">{t("trialBadge")}</p>
       {publicSignup ? (
         // `?plan=` is a HINT the wizard may use to preselect; it is never the authority on
         // what gets bought. `billing.checkout(plan)` is called from the plan step with the
         // plan the person clicked there, and Stripe prices it from `PLAN_LIMITS` server-side.
-        <a className={cls} href={`/join?plan=${id}`}>
+        <a className={cls} href={`/join?plan=${id}${annual ? "&interval=year" : ""}`}>
           {t("cloudCta", { tier: name })}
         </a>
       ) : (

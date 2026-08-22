@@ -20,7 +20,8 @@
  *    is owned by `onSendSettled`, keyed on a SEND settling, and this module dispatches no
  *    mutation at all. There is deliberately nothing here to get wrong, which is the point.
  *  · **The cost is stated before it is taken** — no paid API call without the revenue for it
- *    behind it, and none without the person knowing the price. One draft is one AI action. The
+ *    behind it, and none without the person knowing the price. One draft is 15 credits — see
+ *    {@link DRAFT_REPLY_COST_CREDITS}, and why it is no longer "one action". The
  *    figure is not computed from a balance this client happens to be holding — it is what the
  *    route charges, once per accepted request, and the sentence a person consents to says
  *    exactly that.
@@ -32,7 +33,7 @@
  * still held, whose mail is withheld from the model, whose answer has already been bought. A
  * price computed in the browser would be a second implementation of that eligibility rule.
  *
- * There is no such rule here. One press is one message and one action; there is no set to
+ * There is no such rule here. One press is one message and one draft; there is no set to
  * price and no eligibility to re-derive, so a dry run would be a network round trip that
  * always returns the same number. What the client must NOT do — and does not — is decide
  * whether the action is affordable or permitted. That stays entirely with the server, and its
@@ -63,7 +64,7 @@ export interface DraftReplyControl {
   phase: DraftReplyPhase;
   /** The message the offer is about, so a stale offer cannot be confirmed against another. */
   messageId: string | null;
-  /** What one press costs, in AI actions. Stated before {@link confirm} is reachable. */
+  /** What one press costs, in CREDITS. Stated before {@link confirm} is reachable. */
   cost: number;
   /** One sentence about the current state, already translated, or null. */
   notice: string | null;
@@ -78,13 +79,25 @@ export interface DraftReplyControl {
 export type DraftedReply = RichValue;
 
 /**
- * ONE DRAFT IS ONE AI ACTION.
+ * WHAT ONE DRAFT COSTS: 15 CREDITS.
  *
- * `AI_ACTION_COST` on the server is 1 and `DraftingService` spends exactly once per accepted
- * request. This is the same fact said in the unit a person's plan is sold in — "~2 000 AI
- * actions" — rather than in credits, which is an internal ledger unit nobody is quoted.
+ * This used to be `DRAFT_REPLY_COST_ACTIONS = 1`, and its comment argued that quoting the price
+ * in AI ACTIONS rather than credits was the honest choice, because "credits are an internal
+ * ledger unit nobody is quoted a plan in". Weighted debits inverted both halves of that: the plan
+ * is sold in CREDITS now (1,000 / 2,000 / 4,000 on the card), and an action no longer has one
+ * price — `AI_ACTION_WEIGHTS.debit_draft` is 15 against a classification's 1. The unit a person is
+ * quoted and the unit the server charges are the same unit again, which is the only thing that
+ * makes a client-side literal safe to state at all.
+ *
+ * A literal and not an import, because the webapp deliberately takes no dependency on
+ * `@trafficflow/db` (`connect-gate-order.test.ts` asserts this source never names `PLAN_LIMITS`).
+ * The drift that opens is closed the way the mailbox count is:
+ * `test/landing-pricing-matches-plan-card.test.ts` reads this literal out of the source and
+ * compares it to the server's `AI_ACTION_WEIGHTS.debit_draft`.
+ *
+ * `DraftingService` still spends exactly once per accepted request; only the size changed.
  */
-export const DRAFT_REPLY_COST_ACTIONS = 1;
+export const DRAFT_REPLY_COST_CREDITS = 15;
 
 export function useDraftReply(opts: {
   /**
@@ -178,7 +191,7 @@ export function useDraftReply(opts: {
   return {
     phase,
     messageId,
-    cost: DRAFT_REPLY_COST_ACTIONS,
+    cost: DRAFT_REPLY_COST_CREDITS,
     notice,
     open,
     cancel,

@@ -2936,6 +2936,38 @@ textarea.c-input:read-only {
   font-size: 12.5px;
   color: var(--ink2);
 }
+/* The two add-on buttons sit as one control cluster in the settings row's control slot. */
+.bill-addon-ctl {
+  display: inline-flex;
+  gap: 6px;
+}
+/* Monthly/annual, the same two-button idiom as the landing's toggle (this tree does not load
+   landing.css, so the classes are restated here rather than shared across bundles). */
+.join-interval {
+  display: inline-flex;
+  gap: 4px;
+  margin: 0 0 10px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--tint);
+}
+.join-interval .l-interval-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 5px 13px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink2);
+  cursor: pointer;
+}
+.join-interval .l-interval-btn[aria-pressed="true"] {
+  background: var(--float);
+  color: var(--ink);
+  box-shadow: var(--lift-1);
+}
 .join-plans {
   display: grid;
   gap: 8px;

@@ -409,7 +409,7 @@ const HYDRATE_LIMIT = 200;
  *
  * Ten, not the endpoint's cap of fifty and not the largest size the manual control offers. The
  * automatic path spends without a press, so its bound has to be a number somebody can live with
- * being wrong about: at `AI_ACTION_COST` per sender, ten is a rounding error against the smallest
+ * being wrong about: at one credit per screened sender, ten is a rounding error against the smallest
  * tier's monthly allowance, and a person who wants the other forty presses the manual control and
  * sees a quote first. A backlog is drained ten at a time across visits rather than in one
  * four-figure purchase nobody authorised individually — the reason the endpoint demands an
@@ -1111,7 +1111,7 @@ export function useScreenerSuggestions(opts: {
           // restated here rather than shared because this is the flow that authorises EVERY
           // later batch rather than one. A server too old to carry `quotedCredits` leaves the
           // cost unknown, and the confirm stays disabled because `quote` is null. Multiplying
-          // the count by an assumed `AI_ACTION_COST` is the guess the field exists to remove.
+          // the count by an assumed per-sender price is the guess the field exists to remove.
           if (typeof res.quotedCredits !== "number") {
             setOptIn({ phase: "ready", quote: null, notice: t("suggest.failed") });
             return;

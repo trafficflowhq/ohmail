@@ -2827,6 +2827,41 @@ a.btn {
   font-size: 13px;
   color: var(--ink3);
 }
+/* The storage estimate's basis, one sentence for all three tiers — quieter than the trial note
+   because it qualifies numbers already shown rather than stating a new limit. */
+.l-storage-note {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink3);
+  max-width: 74ch;
+}
+/* Monthly/annual — two visible prices with a pressed state, in the Blanc idiom: white ground,
+   shadow depth for the live choice, no fills and no gradients. */
+.l-interval-toggle {
+  display: inline-flex;
+  gap: 4px;
+  margin: 2px 0 12px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--tint);
+}
+.l-interval-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 5px 13px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink2);
+  cursor: pointer;
+}
+.l-interval-btn[aria-pressed="true"] {
+  background: var(--float);
+  color: var(--ink);
+  box-shadow: var(--lift-1);
+}
 .l-price-footer {
   max-width: 1060px;
   margin: clamp(22px, 3vw, 30px) auto 0;

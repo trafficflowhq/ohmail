@@ -46,7 +46,7 @@ import {
   type TwofaChallenge,
 } from "../../api-client";
 import { aiCreditMessageKey, aiCreditState } from "./ai-credit-state";
-import { formatStorageBytes, storageState } from "./storage-state";
+import { formatStorageBytes, storageState, estimatedEmails } from "./storage-state";
 
 type Plan = "solo" | "plus" | "pro";
 type Factor = "webauthn" | "totp" | "recovery_code";
@@ -144,6 +144,32 @@ export function BillingSection() {
         if (!alive.current) return;
         setError(messageOf(err));
         setBusy(false);
+      }
+    })();
+  };
+
+  /**
+   * SET an add-on's quantity — declarative on the server, so the press is idempotent. The new
+   * limits arrive through Stripe's webhook, not this response, so the pane re-reads after a
+   * short beat instead of inventing an echo; until then the row shows the old number, which is
+   * the honest number.
+   */
+  const [addonBusy, setAddonBusy] = useState(false);
+  const setAddon = (kind: "storage" | "mailbox", quantity: number): void => {
+    if (quantity < 0) return;
+    setAddonBusy(true);
+    setError(null);
+    void (async () => {
+      try {
+        await billing.setAddon(kind, quantity);
+        // The webhook mirror usually lands within a couple of seconds; one delayed re-read
+        // covers it, and the next natural load covers the stragglers.
+        setTimeout(() => { if (alive.current) void load(); }, 2_500);
+      } catch (err) {
+        if (!alive.current) return;
+        setError(messageOf(err));
+      } finally {
+        if (alive.current) setAddonBusy(false);
       }
     })();
   };
@@ -308,7 +334,8 @@ export function BillingSection() {
         <>
           <SettingsRow
             label={t(`plan_${s.plan}`)}
-            description={t(`status_${s.status}`, { default: s.status })}
+            description={`${t(`status_${s.status}`, { default: s.status })}${
+              s.billingInterval === "year" ? ` ${t("billedAnnually")}` : ""}`}
             value={s.currentPeriodEnd
               /* A TRIAL DOES NOT RENEW, and saying it does contradicted `trialNote` below
                  ("no charge until then"). `trialing` is judged before `cancelAtPeriodEnd`
@@ -336,6 +363,20 @@ export function BillingSection() {
             description={creditState ? tc(creditNote as never) : t("creditsSub")}
             value={String(sub?.balance ?? 0)}
           />
+          {/* THE SETUP POOL — the screening-only credits each connected mailbox brings, spent
+              before the balance above. Rendered only while something remains: a row that said
+              "0" would demand an explanation of a pool most accounts have already drained. */}
+          {sub?.setupCredits && sub.setupCredits.remaining > 0 ? (
+            <SettingsRow
+              label={t("setupCredits")}
+              description={t("setupCreditsSub", {
+                when: sub.setupCredits.expiresAt
+                  ? new Date(sub.setupCredits.expiresAt).toLocaleDateString(undefined, { dateStyle: "medium" })
+                  : "",
+              })}
+              value={String(sub.setupCredits.remaining)}
+            />
+          ) : null}
           {/* ── STORAGE: the numbers, and — from ninety percent — the sentence. ──────────
               Rendered only when the server sent BOTH figures (an older server sends neither,
               and "0 GB of 0 GB" would be a broken claim). The sublabel is scoped to message
@@ -345,9 +386,12 @@ export function BillingSection() {
             <SettingsRow
               label={t("storage")}
               description={
-                storState
+                `${storState
                   ? t(storState.kind === "at_cap" ? "storageFull" : "storageNear")
-                  : t("storageSub")
+                  : t("storageSub")} ${t("storageEmails", {
+                  used: estimatedEmails(sub!.storageUsedBytes!).toLocaleString("en-US"),
+                  cap: estimatedEmails(ent!.storageBytesLimit!).toLocaleString("en-US"),
+                })}`
               }
               value={t("storageOf", {
                 used: formatStorageBytes(sub!.storageUsedBytes!),
@@ -435,6 +479,60 @@ export function BillingSection() {
               );
             })}
           </div>
+
+          {/* ── Add-ons: +10 GB storage and +1 mailbox, each its own line item. ────────
+              Only rendered with a subscription on screen; the ACTIVE requirement is stated
+              (and enforced server-side — a trial has no card to charge). Quantities come from
+              the mirror, so a press updates them when the webhook lands, not optimistically. */}
+          {s ? (
+            <>
+              <h3 className="acct-sub">{t("addonsTitle")}</h3>
+              {s.status !== "active" ? <p className="acct-fine">{t("addonNeedsActive")}</p> : null}
+              <SettingsRow
+                label={t("addonStorage")}
+                description={t("addonStorageSub", { price: sub?.addons?.storage.priceUsd ?? 10 })}
+                value={String(s.addonStorageUnits ?? 0)}
+                control={
+                  <span className="bill-addon-ctl">
+                    <Button
+                      disabled={addonBusy || s.status !== "active" || (s.addonStorageUnits ?? 0) <= 0}
+                      onClick={() => setAddon("storage", (s.addonStorageUnits ?? 0) - 1)}
+                    >
+                      {t("addonRemove")}
+                    </Button>
+                    <Button
+                      disabled={addonBusy || s.status !== "active"}
+                      onClick={() => setAddon("storage", (s.addonStorageUnits ?? 0) + 1)}
+                    >
+                      {t("addonAdd")}
+                    </Button>
+                  </span>
+                }
+              />
+              <SettingsRow
+                label={t("addonMailbox")}
+                description={t("addonMailboxSub", { price: sub?.addons?.mailbox.priceUsd ?? 3 })}
+                value={String(s.addonMailboxes ?? 0)}
+                control={
+                  <span className="bill-addon-ctl">
+                    <Button
+                      disabled={addonBusy || s.status !== "active" || (s.addonMailboxes ?? 0) <= 0}
+                      onClick={() => setAddon("mailbox", (s.addonMailboxes ?? 0) - 1)}
+                    >
+                      {t("addonRemove")}
+                    </Button>
+                    <Button
+                      disabled={addonBusy || s.status !== "active"}
+                      onClick={() => setAddon("mailbox", (s.addonMailboxes ?? 0) + 1)}
+                    >
+                      {t("addonAdd")}
+                    </Button>
+                  </span>
+                }
+              />
+              <p className="acct-fine">{t("addonNote")}</p>
+            </>
+          ) : null}
 
           {/* ── Invoices + payment method: Stripe's portal, not a rebuild. ───────────── */}
           <h3 className="acct-sub">{t("invoicesTitle")}</h3>

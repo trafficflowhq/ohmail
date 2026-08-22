@@ -383,6 +383,11 @@ export interface SubscriptionStatus {
     monthlyCredits: number;
     /** The sold-at stored-body cap in bytes. Optional: an older server omits it. */
     storageBytesLimit?: number;
+    /** 'year' ⇒ the cycle grants twelve months of credits at once. Optional: older server. */
+    billingInterval?: "month" | "year";
+    /** Add-on quantities riding the subscription. Optional: an older server omits them. */
+    addonStorageUnits?: number;
+    addonMailboxes?: number;
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
     graceUntil: string | null;
@@ -410,6 +415,17 @@ export interface SubscriptionStatus {
    * ends up advertising a plan the database will not sell.
    */
   plans: Record<string, { priceUsd: number; mailboxes: number; monthlyCredits: number }>;
+  /** The add-on card (+10 GB storage, +1 mailbox), shipped for the no-hardcoding reason `plans` is. */
+  addons?: {
+    storage: { priceUsd: number; unitBytes: number };
+    mailbox: { priceUsd: number; unitMailboxes: number };
+  };
+  /**
+   * The account's live SETUP pool — the screening-only credits each connected mailbox brings,
+   * spent by the Screener before the paid balance. Optional: an older server omits it, and an
+   * absent value means "say nothing", never 0.
+   */
+  setupCredits?: { remaining: number; expiresAt: string | null };
   /**
    * What a TRIAL is granted — the same constant for every account, straight from the policy
    * module, for the same reason `plans` is shipped rather than restated.
@@ -953,8 +969,16 @@ export const billing = {
    */
   portal: () => api<{ url: string }>("/billing/portal", { method: "POST", body: {} }),
   /** Answers a Stripe-hosted Checkout URL; the caller navigates. */
-  checkout: (plan: "solo" | "plus" | "pro") =>
-    api<{ url: string }>("/billing/checkout", { method: "POST", body: { plan } }),
+  checkout: (plan: "solo" | "plus" | "pro", interval: "month" | "year" = "month") =>
+    api<{ url: string }>("/billing/checkout", { method: "POST", body: { plan, interval } }),
+  /**
+   * SET an add-on's quantity — declarative, so a double-press sets the same number twice
+   * instead of buying twice. The new limits arrive via the webhook mirror; re-read
+   * `subscription()` after a short beat rather than trusting an invented echo.
+   */
+  setAddon: (addon: "storage" | "mailbox", quantity: number) =>
+    api<{ ok: true; addon: string; quantity: number }>(
+      "/billing/addons", { method: "POST", body: { addon, quantity } }),
 };
 
 // ── The account itself ───────────────────────────────────────────────────────────────────
