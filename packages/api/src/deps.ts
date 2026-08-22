@@ -404,13 +404,21 @@ export interface AlertSinkSummary {
    */
   arms: AlertArmHealth[];
   /**
-   * How many alert passes THIS INSTANCE has completed.
+   * How many alert passes THIS INSTANCE has RUN.
    *
    * The per-arm counters in {@link AlertSinkSummary.arms} are the delivery streak of one warm
    * instance, so a cold one reports `attempts: 0` for an arm that has been delivering for
    * months. That is the difference between "never exercised" and "never exercised HERE", and
    * without this number the first reading is the one an operator would take. `passes: 0` says
    * the counters beside it are cold rather than that the pager is dead.
+   *
+   * RUN, not "completed", and the distinction is load-bearing in one direction only: a pass
+   * counts from the moment it could mutate the streak, so a pass that mutated the arms and then
+   * failed is counted. Counting completions instead let a supported failure — the notification
+   * claim's settle UPDATE failing after delivery — publish fresh per-arm counters beside
+   * `passes: 0`, i.e. the qualifier declaring its own neighbours cold. The residual looseness
+   * runs the harmless way: a pass that died before it reached the arms is also counted, so
+   * `passes` can over-report activity but can never under-report it.
    */
   passes: number;
 }

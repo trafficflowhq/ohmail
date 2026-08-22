@@ -207,7 +207,9 @@ const apiDeliveryStreak = newDeliveryStreak();
  * the qualifier: `passes: 0` says the counters are cold, `passes: 40` with `attempts: 0` says
  * this instance ran forty passes and had nothing to page about.
  *
- * Incremented on a COMPLETED pass only. A pass that threw evaluated nothing.
+ * Incremented the moment a pass CAN mutate the streak — see the comment at the increment for why
+ * "completed" was the wrong line to draw and how a post-delivery database failure would otherwise
+ * leave warm counters labelled cold.
  */
 let apiAlertPasses = 0;
 
@@ -251,7 +253,28 @@ async function alertPass(
   cfg: AlertsConfig, log: Logger, now: () => Date, staffDb: () => Promise<AdminDb>,
 ): Promise<Response> {
   try {
-    const result = await runAlertPass(await staffDb(), {
+    const staff = await staffDb();
+    // COUNTED THE INSTANT THE PASS CAN TOUCH THE STREAK, and the placement is the whole
+    // correctness of the field.
+    //
+    // It used to be counted after `runAlertPass` RETURNED, on the reasoning that a pass which
+    // threw evaluated nothing. That reasoning is false in a state the design explicitly
+    // supports: the streak is mutated by `deliver()` and only then are the notification claims
+    // settled, so a settle UPDATE that fails throws AFTER the per-arm counters have already
+    // advanced. On that path the arms would publish fresh attempts and outcomes beside
+    // `passes: 0` — the qualifier claiming its own neighbours are cold, and permanently so on an
+    // instance where that keeps happening. Counting on entry makes the two inseparable: every
+    // invocation that CAN mutate the streak is counted, and one that cannot (no staff handle:
+    // `await staffDb()` above rejects before this line) is not.
+    //
+    // What the number therefore means is "alert passes this instance has RUN", not "completed".
+    // A pass that died before `evaluateAlerts` returned is still counted and still left the arms
+    // at zero, so `passes: 40` with `attempts: 0` reads either as forty quiet passes or as forty
+    // failing ones. That ambiguity is deliberate and is not this field's job: a failing pass
+    // answers 503 to its scheduler and logs `alert_pass_failed`, which is where it is diagnosed.
+    // The one thing the field must never do is call warm counters cold.
+    apiAlertPasses++;
+    const result = await runAlertPass(staff, {
       now: now(),
       sinks: cfg.sinks ?? [],
       shards: cfg.shards,
@@ -261,10 +284,6 @@ async function alertPass(
       environment: cfg.environment ?? "production",
       deliveryStreak: apiDeliveryStreak,
     });
-    // A COMPLETED pass. Counted here and not at entry: `runAlertPass` throwing means nothing was
-    // evaluated, and this number's only job is to say whether the per-arm counters beside it on
-    // `/health` are cold. See `apiAlertPasses`.
-    apiAlertPasses++;
 
     for (const alert of result.firing) {
       log.warn("alert_firing", {
