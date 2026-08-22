@@ -19,9 +19,12 @@
  * through the engine (the optimistic overlay; a rejection rolls back with a
  * sentence), asks for the full body — the pane says honestly when it is still
  * showing the preview — and the attachment strip carries the engine's own
- * names, nameless-ICS fallback included. The triage buttons file through
- * `engine.mutate`. Compose/reply and tags arrive with later updates, so no
- * control for them renders — a screen offers no control it cannot perform.
+ * names, nameless-ICS fallback included.
+ *
+ * THE VERBS ARE THE WEBAPP'S — see `src/ui/MessageActions.tsx` (the bar and its sheets) and
+ * `test/action-parity.test.ts` (the guard that derives the verb list from the webapp's own
+ * source). Every action files through `engine.mutate`; the one webapp verb with no engine
+ * path (the AI drafter) renders no control — a screen offers no control it cannot perform.
  */
 import { useEffect } from "react";
 import { View } from "react-native";
@@ -29,10 +32,11 @@ import { useLocalSearchParams } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
 import { useWorld, type WorldMail } from "../../src/state/world";
-import { Button, Chip, Panel, Screen, Scroller, Txt } from "../../src/ui/base";
+import { Chip, Panel, Screen, Scroller, Txt } from "../../src/ui/base";
 import { DetailBar } from "../../src/ui/chrome";
 import { Gated } from "../../src/ui/Gated";
 import { Icon } from "../../src/ui/Icon";
+import { MessageActions } from "../../src/ui/MessageActions";
 
 /**
  * Gated like the tabs: a deep link (`ohmail://message/<id>`) can mount this route with the
@@ -165,42 +169,11 @@ function MessageBody() {
             </View>
           ) : null}
 
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 34 }}>
-            <Button
-              label={Copy.replyLater}
-              icon="clock"
-              onPress={() =>
-                w.actions.addToPile("replyLater", {
-                  id: m.id,
-                  messageId: m.id,
-                  title: m.from.name,
-                  subtitle: m.subject,
-                  preview: m.snippet,
-                })
-              }
-            />
-            <Button
-              label={Copy.park}
-              icon="pause"
-              onPress={() =>
-                w.actions.addToPile("setAside", { id: m.id, messageId: m.id, title: m.from.name, subtitle: m.subject })
-              }
-            />
-            <Button
-              label={Copy.resurface}
-              icon="up"
-              onPress={() =>
-                w.actions.addToPile("resurface", {
-                  id: m.id,
-                  messageId: m.id,
-                  title: m.subject,
-                  resurfaceAt: "Fri 09:00",
-                })
-              }
-            />
-          </View>
         </View>
       </Scroller>
+      {/* The action bar pins to the bottom — where the thumb is, like the Screener's decision
+          bar — and carries the webapp's verbs; the rest stand one press away in its sheets. */}
+      <MessageActions m={m} />
     </Screen>
   );
 }

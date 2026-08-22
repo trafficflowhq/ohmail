@@ -38,6 +38,7 @@ import {
 } from "react";
 import { Copy } from "../copy";
 import { useConnection } from "../net/connection";
+import * as Crypto from "expo-crypto";
 import {
   liveActions,
   liveMessage,
@@ -46,6 +47,7 @@ import {
   liveReads,
   liveReceipts,
   liveScreener,
+  liveTags,
   presentedOf,
   readerZone,
   stableActions,
@@ -53,11 +55,12 @@ import {
   type WorldActions,
   type WorldMail,
   type WorldPile,
+  type WorldTag,
   type WorldView,
 } from "./live";
 import type { Scope } from "./model";
 
-export type { ScreenerRow, WorldActions, WorldMail, WorldPile } from "./live";
+export type { MoveTarget, ScreenerRow, WorldActions, WorldMail, WorldPile, WorldTag } from "./live";
 
 export interface World {
   live: boolean;
@@ -96,6 +99,8 @@ export interface World {
   screener: { waiting: ScreenerRow[]; screened: ScreenerRow[]; spam: ScreenerRow[]; meta: string };
   piles: WorldPile[];
   pilesMeta: string;
+  /** The account's tags, for the message screen's tag sheet — the mirror's `tag` entities. */
+  tags: WorldTag[];
   message(id: string): WorldMail | undefined;
   actions: WorldActions;
 }
@@ -134,6 +139,19 @@ const NO_ACTIONS: WorldActions = {
   allow: () => undefined,
   notSpam: () => undefined,
   addToPile: () => undefined,
+  pileToggle: () => undefined,
+  resurfaceToggle: () => undefined,
+  resurfaceAt: () => undefined,
+  resurfaceNow: () => undefined,
+  resurfaceDone: () => undefined,
+  markSeen: () => undefined,
+  move: () => undefined,
+  // The empty world cannot send; the composer treats `false` as the refusal it is.
+  sendReply: () => Promise.resolve(false),
+  sendForward: () => Promise.resolve(false),
+  tagToggle: () => undefined,
+  tagCreate: () => undefined,
+  screenSender: () => undefined,
 };
 
 function emptyWorld(actions: WorldActions): World {
@@ -148,6 +166,7 @@ function emptyWorld(actions: WorldActions): World {
     screener: { waiting: [], screened: [], spam: [], meta: "" },
     piles: [],
     pilesMeta: "",
+    tags: [],
     message: () => undefined,
     actions,
   };
@@ -196,8 +215,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   const zone = useMemo(readerZone, []);
   const acts = useMemo(
-    () => (engine ? liveActions({ engine, toast: showToast }) : null),
-    [engine, showToast],
+    // expo-crypto's v4 — the same generator the engine composition injects (`native.ts`), taken
+    // from the library directly rather than through `engine/native`: the privacy suite's
+    // confinement holds that no state module imports the engine composition (the connection
+    // layer is the one door), and a uuid is randomness, not network. See `LiveDeps.uuid` for
+    // why a created tag's row id needs the real thing.
+    () => (engine ? liveActions({ engine, toast: showToast, uuid: () => Crypto.randomUUID(), zone }) : null),
+    [engine, showToast, zone],
   );
 
   /* The CURRENT backend, refreshed per render; the stable facade delegates per call. */
@@ -217,6 +241,18 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           addToPile: (kind, item) => {
             if (item.messageId) void acts.setPile(item.messageId, kind);
           },
+          pileToggle: (id, kind) => void acts.pileToggle(id, kind),
+          resurfaceToggle: (id) => void acts.resurfaceToggle(id),
+          resurfaceAt: (id, iso) => void acts.resurfaceAt(id, iso),
+          resurfaceNow: (id) => void acts.resurfaceNow(id),
+          resurfaceDone: (id) => void acts.resurfaceDone(id),
+          markSeen: (id, unread) => void acts.markSeen(id, unread),
+          move: (id, dest) => void acts.move(id, dest),
+          sendReply: (id, body, all) => acts.sendReply(id, body, all),
+          sendForward: (id, to, body) => acts.sendForward(id, to, body),
+          tagToggle: (id, tag, assigned) => void acts.tagToggle(id, tag, assigned),
+          tagCreate: (id, name) => void acts.tagCreate(id, name),
+          screenSender: (id, dest, scope) => void acts.screenSender(id, dest, scope),
         }
       : NO_ACTIONS;
   /* One identity for the app's life — see the header for what per-version identity cost. */
@@ -259,6 +295,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       },
       piles,
       pilesMeta: `${pileTotal} item${pileTotal === 1 ? "" : "s"}`,
+      // The RAW mirror, like the webapp's `reader.list<TagDTO>("tag")` — tags are not projected.
+      tags: liveTags(engine.read()),
       message: (id) => liveMessage(engine, id, { now: new Date(), zone }),
       actions,
     };

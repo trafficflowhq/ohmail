@@ -174,7 +174,7 @@ export const Copy = {
   about: "About this build",
   /** The About block — states what is real on this build, no more. */
   aboutLive: (origin: string) =>
-    `Paired with ${origin}. Mail syncs into an on-device mirror; reading and triage are live. Compose, search and tags arrive with later updates.`,
+    `Paired with ${origin}. Mail syncs into an on-device mirror; reading, triage, reply, forward and tags are live. Compose from scratch and search arrive with later updates.`,
 
   /* ------------------------------------------------------------- new mail */
 
@@ -286,4 +286,80 @@ export const Copy = {
   earlierInThread: (n: number) => `Earlier in this conversation — all ${n} shown`,
   openMessage: "Open",
   back: "Back",
+
+  /*
+   * THE MESSAGE VERBS — the webapp's action bar, word for word.
+   *
+   * Every label below is the webapp catalogue's own string (`apps/webapp/messages/en.json`:
+   * `ohbox.action*`, `ohbox.resurface*`, `ohbox.move*`, `screening.action`,
+   * `message.menuForward`, `reply.*`, `tag.*`), so an open message is named the same on the
+   * phone as in the browser and on the desktop. `test/action-parity.test.ts` derives the verb
+   * list from the webapp's source and holds the equality — a wording change there is a red
+   * test here, never a silent drift. (The desktop composes the same shell; the phone is the
+   * one surface that can diverge, and it is the one this deck keeps in step.)
+   */
+  actionReply: "Reply",
+  actionReplyAll: "Reply all",
+  actionForward: "Forward",
+  actionLater: "Later",
+  actionSetAside: "Park",
+  actionResurface: "Resurface",
+  actionTag: "Tag",
+  actionScreening: "Screening",
+  actionMove: "Move",
+  actionMarkRead: "Mark as read",
+  actionMarkUnread: "Mark unread",
+  actionDone: "Done",
+  actionMore: "More",
+  /** The resurface horizon chooser (`ohbox.resurface*`). */
+  resurfaceWhen: "Resurface when?",
+  resurfaceNow: "Now",
+  resurfaceTomorrow: "Tomorrow",
+  resurfaceNextWeek: "Next week",
+  resurfacePick: "Pick a date",
+  /** The move panel (`ohbox.moveLabel` / `ohbox.moveCancel`); destinations are `place*`. */
+  moveLabel: "move to",
+  moveCancel: "Cancel",
+  /** The place names the move panel files to — the webapp's `PLACE_LABEL` (format.ts PLACE_EN). */
+  placeOhbox: "Ohbox",
+  placeReads: "Reads",
+  placeReceipts: "Receipts",
+  placeScreened: "Screened",
+  placeSpam: "Spam",
+  /** The verbs' toasts — `ohbox.toast*`, each one sentence. */
+  toastQueued: "Queued in Answer Later",
+  toastUnqueued: "Out of Answer Later",
+  toastAside: "Parked",
+  toastUnparked: "Out of Parked",
+  toastResurface: (when: string) => `Resurfaces ${when}`,
+  toastResurfaceCleared: "Resurface cancelled",
+  toastResurfaceNow: "Back at the top",
+  toastResurfaceDone: "Done — filed under Earlier",
+  toastMoved: (place: string) => `Moved to ${place}.`,
+  /** The reply / forward composer (`reply.*`). */
+  replyTo: (name: string) => `Reply to ${name}`,
+  replyToAll: (names: string) => `Reply to ${names}`,
+  replyCcLine: (names: string) => `Cc ${names}`,
+  replyPlaceholder: "Write your reply…",
+  replySend: "Send",
+  replyCancel: "Cancel",
+  replySent: "Reply sent.",
+  replyFailed: "Sending didn't work. Try again.",
+  forwardHead: "Forward — you pick who receives it",
+  forwardTo: "To",
+  forwardToPlaceholder: "name@example.org, …",
+  forwardNotePlaceholder: "Add a note (optional)",
+  forwarded: "Forwarded.",
+  /** The tag picker (`tag.*`). */
+  tagPlaceholder: "Tag this message…",
+  tagNone: "No tags yet. Type a name to create your first.",
+  tagCreate: (name: string) => `Create “${name}”`,
+  tagTagged: (name: string) => `Tagged “${name}”.`,
+  tagUntagged: (name: string) => `Untagged “${name}”.`,
+  tagNotOnServer:
+    "Tags are stored by ohmail, not in your mailbox. Your folders are real IMAP folders and survive if you leave; tags don’t — erasing your account erases them.",
+  /** The screening sheet: where THIS SENDER's mail goes, from the open message. */
+  screeningFor: (sender: string) => `Mail from ${sender} goes to`,
+  screeningNote: (target: string) =>
+    `Becomes a rule — future mail from ${target} files there automatically, and what is already here moves.`,
 } as const;

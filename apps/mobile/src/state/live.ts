@@ -41,6 +41,8 @@ import {
   VIEW_OF_FOLDER,
   bodyOf,
   consentPartition,
+  forwardSubject,
+  isResurfaced,
   messageDisplayTime,
   feedPartition,
   ohboxView,
@@ -53,7 +55,9 @@ import {
   senderKey,
   threadOf,
   triagePiles,
+  winningStates,
   type BodyState,
+  type EmailAddress,
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
@@ -64,6 +68,7 @@ import {
   type RuleDTO,
   type ScreenDest,
   type ScreenerSenderDTO,
+  type TagDTO,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import {
@@ -119,12 +124,33 @@ export interface WorldAttachment {
 }
 
 /**
- * The screens' row type: the mail row plus an attachment strip and the body's
- * honest state, so the reading pane never presents a snippet as the whole mail.
+ * THE MESSAGE'S TRIAGE STATE as the action bar reads it — which pile it sits in, or the pin.
+ * The webapp bar's `aria-pressed` face and its Done slot are decided from exactly this.
+ */
+export type WorldPileState = "reply_later" | "set_aside" | "bubbled_up" | "resurfaced" | null;
+
+/**
+ * The screens' row type: the mail row plus an attachment strip, the body's honest state, and
+ * the facts the ACTION BAR decides from — so the message screen never re-derives a predicate
+ * the webapp resolves in one place (reply-all visibility, the forward refusal, the pressed
+ * pile, the folder the move panel excludes).
  */
 export type WorldMail = Mail & {
   attachments?: WorldAttachment[];
   bodyState?: BodyState;
+  /** Where the message physically is — what the move panel leaves out of its list. */
+  folder: Folder;
+  /** The pile the bar shows as pressed, or the resurface pin the Done slot answers to. */
+  pile: WorldPileState;
+  /**
+   * Whether "Reply all" is offered — `replyAllRecipients(m, ownAddresses) !== null`, the same
+   * predicate the webapp bar and its send path resolve, so a 1:1 message offers no second reply.
+   */
+  canReplyAll: boolean;
+  /** `sensitivity.no_forward` — the forward entry is ABSENT on such a message, never dead. */
+  noForward: boolean;
+  /** The tag ids on this message — what the tag sheet shows as checked. */
+  labels: string[];
 };
 
 function placeOfFolder(folder: Folder): Place {
@@ -132,11 +158,31 @@ function placeOfFolder(folder: Folder): Place {
   return view === "reads" || view === "receipts" ? view : "ohbox";
 }
 
+/**
+ * THE MESSAGE'S CURRENT TRIAGE CLAIM — the winning `message_state` row, falling back to the
+ * DTO's own `triage`. Reading `m.triage` alone was measured to miss a just-dispatched
+ * `triage_set` entirely (the optimistic effect and the live server both write `message_state`
+ * records, not the message row), which turned every toggle into a re-file: press Later twice
+ * and the wire carried `reply_later` twice, never `none`. `winningStates` is the same
+ * dedup-by-newest-claim the pile lister and the Ohbox hold-out derive from, so the bar's
+ * pressed face, the toggles and the piles cannot disagree about where a message stands.
+ */
+function triageStateOf(reader: EntityReader, m: EngineMessage): string | null {
+  return winningStates(reader).get(m.id)?.state ?? m.triage?.state ?? null;
+}
+
+function pileOf(reader: EntityReader, m: EngineMessage): WorldPileState {
+  const s = triageStateOf(reader, m);
+  if (s === "resurfaced" || isResurfaced(m)) return "resurfaced";
+  return s === "reply_later" || s === "set_aside" || s === "bubbled_up" ? s : null;
+}
+
 function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail {
   const body = bodyOf(reader, m);
   return {
     id: m.id,
     place: placeOfFolder(m.folder),
+    folder: m.folder,
     // The wire's `name` is nullable; the row shape's is not — a nameless sender reads as
     // their address, exactly as every list row already renders one.
     from: { name: m.from.name || m.from.address, address: m.from.address },
@@ -146,12 +192,117 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
     bodyState: body.state,
     snippet: m.snippet,
     unread: m.unread,
+    pile: pileOf(reader, m),
+    // The phone holds no `GET /mailboxes` facts, so the reader cannot be told apart — the
+    // predicate's documented degradation: offered from two listed people, withheld at one.
+    canReplyAll: replyAllRecipients(m, NO_OWN_ADDRESSES) !== null,
+    noForward: m.sensitivity?.no_forward === true,
+    labels: [...(m.labels ?? [])],
     ...(m.rationale ? { rationale: m.rationale } : {}),
     ...(m.trackerNote ? { trackerNote: m.trackerNote } : {}),
     ...(m.amount ? { amount: m.amount } : {}),
     ...(m.protected ? { protected: m.protected as Mail["protected"] } : {}),
     earlier: [],
   };
+}
+
+/**
+ * THE PHONE KNOWS NONE OF THE READER'S OWN ADDRESSES. The webapp resolves them from
+ * `GET /mailboxes` once in `AppShell`; this client has no mailbox read yet, and the honest
+ * posture is the one the webapp documents for a surface without the facts (`message-chrome.tsx`
+ * `ownAddresses`): recognise the reader nowhere. Every predicate below takes this constant so
+ * the day a mailbox read lands there is one place to feed it.
+ */
+const NO_OWN_ADDRESSES: readonly string[] = [];
+
+/** The reply-all envelope: who stands on the To line, and who rides Cc. */
+export interface ReplyAllRecipients {
+  to: EmailAddress[];
+  cc: EmailAddress[];
+}
+
+/**
+ * WHO A REPLY TO ALL IS ADDRESSED TO — or `null` when "all" is nobody beyond the plain reply.
+ *
+ * Mirrored from `apps/webapp/app/shell/compose-from.ts#replyAllRecipients` (the reference; the
+ * webapp shell is not an importable package from React Native). The `null` is the visibility
+ * rule as well as the degenerate case: the bar offers Reply all exactly when this returns an
+ * envelope, and the send path asks the SAME call, so what the sheet promised and what leaves
+ * the account are one decision. With no own addresses the self-filter has nothing to filter
+ * with, so the envelope is offered from two listed people and withheld at one — a lone
+ * recipient is almost always the reader. Counted across BOTH lines, folded, one person once.
+ */
+export function replyAllRecipients(
+  parent: { from: EmailAddress; to: readonly EmailAddress[]; cc?: readonly EmailAddress[] },
+  ownAddresses: readonly string[],
+): ReplyAllRecipients | null {
+  const fold = (a: string): string => a.trim().toLowerCase();
+  const mine = new Set(ownAddresses.map(fold));
+  const sender = fold(parent.from.address);
+  const cc = parent.cc ?? [];
+  const seen = new Set<string>();
+  const others = (list: readonly EmailAddress[]): EmailAddress[] =>
+    list.filter((r) => {
+      const a = fold(r.address);
+      if (mine.has(a) || seen.has(a)) return false;
+      seen.add(a);
+      return true;
+    });
+
+  if (mine.size > 0 && mine.has(sender)) {
+    const toOthers = others(parent.to);
+    const ccOthers = others(cc);
+    if (ccOthers.length === 0) return null;
+    return { to: toOthers.length > 0 ? toOthers : [parent.from], cc: ccOthers };
+  }
+
+  seen.add(sender);
+  const toOthers = others(parent.to);
+  const ccOthers = others(cc);
+  if (toOthers.length === 0 && ccOthers.length === 0) return null;
+  const listed = new Set([...parent.to, ...cc].map((r) => fold(r.address)));
+  if (mine.size === 0 && listed.size < 2) return null;
+  return { to: [parent.from, ...toOthers], cc: ccOthers };
+}
+
+/**
+ * WHERE A MESSAGE CAN BE MOVED — the webapp's `MOVE_TARGETS` (MessagePane.tsx), the same
+ * vocabulary in the same order; `test/action-parity.test.ts` compares the two.
+ */
+export type MoveTarget = "ohbox" | "reads" | "receipts" | "screened" | "spam";
+export const MOVE_TARGETS: readonly MoveTarget[] = ["ohbox", "reads", "receipts", "screened", "spam"];
+
+/**
+ * The destinations the move panel offers for a message — every target except where the
+ * message already is (the webapp panel's own filter: `FOLDER_OF_VIEW[v] !== message.folder`).
+ */
+export function moveTargetsFor(folder: Folder): MoveTarget[] {
+  return MOVE_TARGETS.filter((t) => FOLDER_OF_VIEW[t] !== folder);
+}
+
+/** The move panel's label for a destination — the webapp's `PLACE_LABEL`. */
+export function moveTargetLabel(target: MoveTarget): string {
+  switch (target) {
+    case "ohbox": return Copy.placeOhbox;
+    case "reads": return Copy.placeReads;
+    case "receipts": return Copy.placeReceipts;
+    case "screened": return Copy.placeScreened;
+    case "spam": return Copy.placeSpam;
+  }
+}
+
+/** The account's tags, from the mirror — the `tag` entity every mobile drain carries. */
+export interface WorldTag {
+  id: string;
+  name: string;
+  hue: string;
+}
+
+export function liveTags(reader: EntityReader): WorldTag[] {
+  return reader
+    .list<TagDTO>("tag")
+    .map((t) => ({ id: t.id, name: t.name, hue: t.hue }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /* ──────────────────────────────────────────────────────────── the surfaces */
@@ -453,6 +604,15 @@ export interface LiveDeps {
   /** One plain sentence to the reader — the screens' toast. */
   toast: (sentence: string) => void;
   now?: () => Date;
+  /**
+   * RFC 4122 v4 — the id a NEW tag is minted under (`tag_assign.createName`: the server uses the
+   * client's id as the row's id, so the optimistic chip and the stored row agree). The app hands
+   * in expo-crypto's; the node suite hands in its counter. Absent ⇒ tag creation is refused
+   * rather than minted weakly.
+   */
+  uuid?: () => string;
+  /** The reader's zone for the resurface horizons — 09:00 where the reader is. Defaults to the device's. */
+  zone?: string;
 }
 
 export interface LiveWorldActions {
@@ -472,6 +632,39 @@ export interface LiveWorldActions {
   release(row: ScreenerRow, dest: Place, segment: "screened" | "spam"): Promise<boolean>;
   /** The message screen's triage: Answer Later / Park / Resurface. */
   setPile(messageId: string, kind: PileKind): Promise<boolean>;
+
+  /* ── the open message's verbs — the webapp action bar's arms (`AppShell.onMessageAction`) ── */
+
+  /**
+   * LATER / PARK AS TOGGLES: the verb that put a message in a pile takes it out again
+   * (`triage_set: none`), exactly as the webapp's `later`/`aside` arms do.
+   */
+  pileToggle(messageId: string, kind: "replyLater" | "setAside"): Promise<boolean>;
+  /** The horizon-less Resurface — tomorrow 09:00, or CLEARS a booking that already stands. */
+  resurfaceToggle(messageId: string): Promise<boolean>;
+  /** Resurface AT a chosen instant (the chooser's Tomorrow / Next week / a picked day). */
+  resurfaceAt(messageId: string, iso: string): Promise<boolean>;
+  /** Resurface NOW — the `resurfaced` state, not a date; pinned by the time the request returns. */
+  resurfaceNow(messageId: string): Promise<boolean>;
+  /** DONE with a resurface: clear a standing booking, then the deliberate read that spends the pin. */
+  resurfaceDone(messageId: string): Promise<boolean>;
+  /** Mark read / Mark unread — the DELIBERATE `mark_seen` (no `via`), so a read spends a pin. */
+  markSeen(messageId: string, unread: boolean): Promise<boolean>;
+  /** Move THIS message to a view — `POST /messages/:id/move`, the same verb every list uses. */
+  move(messageId: string, dest: MoveTarget): Promise<boolean>;
+  /** Reply (or reply all) — `mail_send` with `inReplyTo`; the engine derives the envelope. */
+  sendReply(messageId: string, body: string, all: boolean): Promise<boolean>;
+  /** Forward — `mail_send` with `forwardOf`, recipients the USER typed, the user's note as body. */
+  sendForward(messageId: string, to: EmailAddress[], body: string): Promise<boolean>;
+  /** Put a tag on / take it off — `tag_assign`. */
+  tagToggle(messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean>;
+  /** Tag-or-create: a name that does not exist yet, minted and put on this message in one act. */
+  tagCreate(messageId: string, name: string): Promise<boolean>;
+  /**
+   * SCREENING from the open message: where THIS SENDER's mail goes — the webapp sender sheet's
+   * rule ladder (`sender-screening.ts#planScreeningChange`), in the phone's idiom.
+   */
+  screenSender(messageId: string, dest: Destination, scope: Scope): Promise<boolean>;
 }
 
 export function liveActions(deps: LiveDeps): LiveWorldActions {
@@ -723,7 +916,235 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return ok;
   };
 
-  return { openMessage, hydrateMessage, hydrateHeld, sweepFeed, leaveFeed, decide, release, setPile };
+  /* ── the open message's verbs ──────────────────────────────────────────────────────────── */
+
+  const zone = deps.zone ?? readerZone();
+  const messageOf = (id: string): EngineMessage | undefined =>
+    engine.read().get<EngineMessage>("message", id);
+
+  /**
+   * One triage write, stated in the webapp's own sentence. The toast is spoken on the
+   * OPTIMISTIC apply (the webapp's shape — the sentence is the act), and a rollback overrides
+   * it with the one failure sentence.
+   */
+  const triage = async (
+    messageId: string,
+    state: "none" | "reply_later" | "set_aside" | "bubbled_up" | "resurfaced",
+    sentence: string,
+    bubbleUpAt?: string,
+  ): Promise<boolean> => {
+    toast(sentence);
+    const ok = await watched(
+      engine.mutate({ kind: "triage_set", messageId, state, ...(bubbleUpAt ? { bubbleUpAt } : {}) }),
+    );
+    if (!ok) toast(Copy.liveSaveFailed);
+    return ok;
+  };
+
+  const pileToggle = async (messageId: string, kind: "replyLater" | "setAside"): Promise<boolean> => {
+    const m = messageOf(messageId);
+    if (!m) return false;
+    const held = triageStateOf(engine.read(), m);
+    if (kind === "replyLater") {
+      return held === "reply_later"
+        ? triage(messageId, "none", Copy.toastUnqueued)
+        : triage(messageId, "reply_later", Copy.toastQueued);
+    }
+    return held === "set_aside"
+      ? triage(messageId, "none", Copy.toastUnparked)
+      : triage(messageId, "set_aside", Copy.toastAside);
+  };
+
+  const resurfaceAt = (messageId: string, iso: string): Promise<boolean> =>
+    triage(messageId, "bubbled_up", Copy.toastResurface(whenLabel(iso, zone)), iso);
+
+  const resurfaceToggle = async (messageId: string): Promise<boolean> => {
+    const m = messageOf(messageId);
+    if (!m) return false;
+    // A message already scheduled: the horizon-less verb CLEARS the booking rather than
+    // silently re-dating it — the webapp's `resurface` arm, verbatim in intent.
+    if (triageStateOf(engine.read(), m) === "bubbled_up") return triage(messageId, "none", Copy.toastResurfaceCleared);
+    return resurfaceAt(messageId, tomorrowNine(now()).toISOString());
+  };
+
+  const resurfaceNow = (messageId: string): Promise<boolean> =>
+    triage(messageId, "resurfaced", Copy.toastResurfaceNow);
+
+  const markSeen = async (messageId: string, unread: boolean): Promise<boolean> => {
+    // No `via`: this is the deliberate read, the one that spends a resurface pin on both sides
+    // of the wire — the opposite of the open's glance and the streams' sweep.
+    const ok = await watched(engine.mutate({ kind: "mark_seen", messageIds: [messageId], unread }));
+    if (!ok) toast(Copy.liveSaveFailed);
+    return ok;
+  };
+
+  const resurfaceDone = async (messageId: string): Promise<boolean> => {
+    const m = messageOf(messageId);
+    if (!m) return false;
+    // A SCHEDULED message's release has an extra half: the booking is cleared first (the same
+    // un-triage the toggles use), then the same deliberate read files it under Earlier.
+    const parts: Promise<boolean>[] = [];
+    if (triageStateOf(engine.read(), m) === "bubbled_up") {
+      parts.push(watched(engine.mutate({ kind: "triage_set", messageId, state: "none" })));
+    }
+    parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: [messageId], unread: false })));
+    toast(Copy.toastResurfaceDone);
+    const ok = (await Promise.all(parts)).every(Boolean);
+    if (!ok) toast(Copy.liveSaveFailed);
+    return ok;
+  };
+
+  const move = async (messageId: string, dest: MoveTarget): Promise<boolean> => {
+    const m = messageOf(messageId);
+    const folder = FOLDER_OF_VIEW[dest];
+    if (!m || !folder || folder === m.folder) return false;
+    toast(Copy.toastMoved(moveTargetLabel(dest)));
+    const ok = await watched(engine.mutate({ kind: "move", messageId, folder }));
+    if (!ok) toast(Copy.liveSaveFailed);
+    return ok;
+  };
+
+  const sendReply = async (messageId: string, body: string, all: boolean): Promise<boolean> => {
+    const m = messageOf(messageId);
+    const text = body.trim();
+    if (!m || text === "") return false;
+    // A plain reply leaves the envelope to `Engine.enrich` (to = the sender, the parent's
+    // mailbox, thread and subject); reply-all carries the SAME envelope the sheet offered.
+    const env = all ? replyAllRecipients(m, NO_OWN_ADDRESSES) : null;
+    const ok = await watched(
+      engine.mutate({
+        kind: "mail_send",
+        inReplyTo: messageId,
+        body: text,
+        ...(env ? { to: env.to, cc: env.cc } : {}),
+      }),
+    );
+    toast(ok ? Copy.replySent : Copy.replyFailed);
+    return ok;
+  };
+
+  const sendForward = async (messageId: string, to: EmailAddress[], body: string): Promise<boolean> => {
+    const m = messageOf(messageId);
+    // The `no_forward` refusal is client-side courtesy AND server-side law — the sheet never
+    // offers the verb on such a message, and this arm refuses it too rather than trusting the UI.
+    if (!m || to.length === 0 || m.sensitivity?.no_forward) return false;
+    const ok = await watched(
+      engine.mutate({
+        kind: "mail_send",
+        inReplyTo: null,
+        forwardOf: messageId,
+        subject: forwardSubject(m.subject),
+        // The mailbox the original arrived in — the same sender a reply gets from `enrich`.
+        // A forward has no parent-derived From of its own, and the send refuses without one.
+        mailboxId: m.mailboxId,
+        body,
+        to,
+      }),
+    );
+    toast(ok ? Copy.forwarded : Copy.replyFailed);
+    return ok;
+  };
+
+  const tagToggle = async (messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean> => {
+    toast(assigned ? Copy.tagTagged(tag.name) : Copy.tagUntagged(tag.name));
+    const ok = await watched(engine.mutate({ kind: "tag_assign", messageId, tagId: tag.id, assigned }));
+    if (!ok) toast(Copy.liveSaveFailed);
+    return ok;
+  };
+
+  const tagCreate = async (messageId: string, name: string): Promise<boolean> => {
+    const typed = name.trim();
+    if (typed === "" || !deps.uuid) return false;
+    // Case-insensitive against the whole tag set — the unique index is on `lower(name)`, so
+    // "Invoices" beside "invoices" is the existing tag, toggled on, not a 409.
+    const existing = liveTags(engine.read()).find((t) => t.name.toLowerCase() === typed.toLowerCase());
+    if (existing) return tagToggle(messageId, existing, true);
+    toast(Copy.tagTagged(typed));
+    const ok = await watched(
+      engine.mutate({ kind: "tag_assign", messageId, tagId: deps.uuid(), assigned: true, createName: typed }),
+    );
+    if (!ok) toast(Copy.liveSaveFailed);
+    return ok;
+  };
+
+  /**
+   * SCREENING FROM THE OPEN MESSAGE — the rule ladder, mirrored from
+   * `apps/webapp/app/shell/sender-screening.ts#planScreeningChange` (the reference):
+   *
+   *   1. a subject still WAITING at the gate is decided with `screener_decide` on its newest
+   *      held message — the server promotes the rule inside the decision's own transaction, so
+   *      no `rule_create` is written beside it;
+   *   2. past the gate, an enabled term-free rule of the SAME kind for exactly this subject that
+   *      already points at the destination means nothing to write;
+   *   3. one (or several — every one of them, never just the first) pointing somewhere else is
+   *      RETARGETED with `rule_update`, not duplicated;
+   *   4. otherwise one is written, with `applyRetro` so the server's pass files the whole bag.
+   *
+   * The moves are the optimistic half — the rows the reader can see move at once, capped at the
+   * webapp's `RETRO_VISIBLE_MOVES` (50); the server's pass does the rest. The rule is awaited and
+   * reported; the moves are not — they are `move`s, the verb every list uses, and each rolls its
+   * own row back. The mutations read the RAW mirror: rules and physical folders are locations.
+   */
+  const screenSender = async (messageId: string, dest: Destination, scope: Scope): Promise<boolean> => {
+    const raw = engine.read();
+    const m = raw.get<EngineMessage>("message", messageId);
+    if (!m) return false;
+    const address = m.from.address.trim().toLowerCase();
+    const domain = domainOf(address).toLowerCase();
+    if (scope === "domain" && (domain === "" || !address.includes("@"))) return false;
+    const match = scope === "domain" ? domain : address;
+    const wanted = FOLDER_OF_VIEW[dest as ScreenDest];
+    const target = scope === "domain" ? `@${domain}` : m.from.address;
+    const ofSubject = (x: EngineMessage): boolean =>
+      scope === "domain"
+        ? domainOf(x.from.address.trim().toLowerCase()).toLowerCase() === match
+        : x.from.address.trim().toLowerCase() === match;
+    const subject = raw.list<EngineMessage>("message").filter(ofSubject);
+
+    const waiting = subject
+      .filter((x) => physicalFolderOf(x) === FOLDER_OF_VIEW.screener)
+      .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""))[0];
+    const decision: "yes" | "no" = dest === "screened" || dest === "spam" ? "no" : "yes";
+
+    let ruled: Promise<boolean>;
+    if (waiting) {
+      ruled = watched(
+        engine.mutate({ kind: "screener_decide", senderId: waiting.id, decision, dest: dest as ScreenDest, scope }),
+      );
+    } else {
+      const standing = rulesList(raw).filter(
+        (r) =>
+          r.enabled &&
+          r.kind === scope &&
+          (r.subjectContains ?? "").trim() === "" &&
+          (r.bodyContains ?? "").trim() === "" &&
+          r.match.trim().toLowerCase() === match,
+      );
+      const retargets: EngineMutation[] = standing
+        .filter((r) => r.destination !== wanted)
+        .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted }));
+      const writes: EngineMutation[] =
+        standing.length === 0
+          ? [{ kind: "rule_create", ruleKind: scope, match, destination: wanted, applyRetro: true }]
+          : retargets;
+      ruled = Promise.all(writes.map((w) => watched(engine.mutate(w)))).then((rs) => rs.every(Boolean));
+      // The optimistic half: what the reader can see moves now; the server's pass does the rest.
+      subject
+        .filter((x) => x.folder !== wanted)
+        .slice(0, 50)
+        .forEach((x) => void engine.mutate({ kind: "move", messageId: x.id, folder: wanted }));
+    }
+    toast(Copy.liveDecided(destDone(dest), target));
+    const ok = await ruled;
+    if (!ok) toast(Copy.liveDecideFailed(m.from.address));
+    return ok;
+  };
+
+  return {
+    openMessage, hydrateMessage, hydrateHeld, sweepFeed, leaveFeed, decide, release, setPile,
+    pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, move,
+    sendReply, sendForward, tagToggle, tagCreate, screenSender,
+  };
 }
 
 /* ─────────────────────────────────────────────────────── the stable facade */
@@ -746,6 +1167,20 @@ export interface WorldActions {
   allow(row: ScreenerRow, dest: Place): void;
   notSpam(row: ScreenerRow, dest: Place): void;
   addToPile(kind: PileKind, item: PileItem): void;
+  /* The open message's verbs — see {@link LiveWorldActions} for each arm's contract. */
+  pileToggle(messageId: string, kind: "replyLater" | "setAside"): void;
+  resurfaceToggle(messageId: string): void;
+  resurfaceAt(messageId: string, iso: string): void;
+  resurfaceNow(messageId: string): void;
+  resurfaceDone(messageId: string): void;
+  markSeen(messageId: string, unread: boolean): void;
+  move(messageId: string, dest: MoveTarget): void;
+  /** Resolves to the send's outcome so the composer can close on success and stay on a refusal. */
+  sendReply(messageId: string, body: string, all: boolean): Promise<boolean>;
+  sendForward(messageId: string, to: EmailAddress[], body: string): Promise<boolean>;
+  tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
+  tagCreate(messageId: string, name: string): void;
+  screenSender(messageId: string, dest: Destination, scope: Scope): void;
 }
 
 /**
@@ -772,6 +1207,18 @@ export function stableActions(current: () => WorldActions): WorldActions {
     allow: (row, dest) => current().allow(row, dest),
     notSpam: (row, dest) => current().notSpam(row, dest),
     addToPile: (kind, item) => current().addToPile(kind, item),
+    pileToggle: (id, kind) => void current().pileToggle(id, kind),
+    resurfaceToggle: (id) => void current().resurfaceToggle(id),
+    resurfaceAt: (id, iso) => void current().resurfaceAt(id, iso),
+    resurfaceNow: (id) => void current().resurfaceNow(id),
+    resurfaceDone: (id) => void current().resurfaceDone(id),
+    markSeen: (id, unread) => void current().markSeen(id, unread),
+    move: (id, dest) => void current().move(id, dest),
+    sendReply: (id, body, all) => current().sendReply(id, body, all),
+    sendForward: (id, to, body) => current().sendForward(id, to, body),
+    tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),
+    tagCreate: (id, name) => void current().tagCreate(id, name),
+    screenSender: (id, dest, scope) => void current().screenSender(id, dest, scope),
   };
 }
 
@@ -781,6 +1228,58 @@ function nextMorning(from: Date): Date {
   d.setDate(d.getDate() + 1);
   d.setHours(9, 0, 0, 0);
   return d;
+}
+
+/*
+ * ═══ THE RESURFACE HORIZONS ═══════════════════════════════════════════════════════════════
+ *
+ * The webapp's presets (format.ts): all land at 09:00 IN THE READER'S ZONE — the wall clock is
+ * what is fixed, the instant is what varies. On the phone the reader's zone IS the device's
+ * zone, so `Date`'s local setters are that arithmetic without a zone library: `setHours(9)`
+ * asks the platform what 09:00 local means on that calendar day, DST included.
+ */
+
+/** Tomorrow, 09:00 where the reader is — the chooser's first dated preset and the `b`-key default. */
+export function tomorrowNine(from: Date): Date {
+  return nextMorning(from);
+}
+
+/** The coming Monday, 09:00 — and never "later today": a Monday resolves to the next one. */
+export function nextWeekNine(from: Date): Date {
+  const d = new Date(from);
+  const diff = (1 - d.getDay() + 7) % 7 || 7;
+  d.setDate(d.getDate() + diff);
+  d.setHours(9, 0, 0, 0);
+  return d;
+}
+
+/** A calendar day `n` days ahead, 09:00 local — the phone's "Pick a date" rows. */
+export function dayNine(from: Date, daysAhead: number): Date {
+  const d = new Date(from);
+  d.setDate(d.getDate() + daysAhead);
+  d.setHours(9, 0, 0, 0);
+  return d;
+}
+
+/**
+ * "Fri 09:00" from an ISO instant, read where the reader is — the webapp's `resurfaceLabel`,
+ * so the toast reads back the same wall clock the preset fixed. Not-ISO input echoes through,
+ * exactly as the reference does.
+ */
+export function whenLabel(iso: string, zone: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(iso)) return iso;
+  const d = new Date(iso);
+  try {
+    const parts = new Intl.DateTimeFormat("en", {
+      weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: zone,
+    }).formatToParts(d);
+    const get = (t: string) => parts.find((x) => x.type === t)?.value ?? "";
+    // `hour12:false` may render midnight as "24" on some ICU builds; normalise like the webapp's pad.
+    const hour = get("hour") === "24" ? "00" : get("hour");
+    return `${get("weekday")} ${hour}:${get("minute")}`;
+  } catch {
+    return iso;
+  }
 }
 
 /* Re-exported so the world layer and the suite spell the vocabulary identically. */

@@ -14,7 +14,11 @@ app to the welcome screen.
 
 Honest edges, stated here and on the screens themselves:
 
-- **Compose/reply, search, tags and attachment-open are not built yet.** No
+- **Reply, forward and tags are live on an open message** — the same verbs the
+  web and desktop clients offer (reply, reply all, forward, the three triage
+  horizons with the resurface chooser, tag, screening, move, the read switch),
+  named the same and dispatched through the same engine mutations.
+- **Compose from scratch, search and attachment-open are not built yet.** No
   control for them renders; the More screen and the About block say they
   arrive with later updates.
 - **ohmail.app (the managed service) does not offer device pairing yet.** The
