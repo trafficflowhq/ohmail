@@ -669,8 +669,20 @@ export function parseRecipients(typed: string): { name: string | null; address: 
  * What became of a send: `sent` closes the composer; `failed` re-arms it (the rollback took
  * the queued copy with it, so a re-send cannot double); `queued` LOCKS it — the intent
  * stands on the engine's queue under its key, and a second Send would be a second key.
+ * `unverified` ALSO locks it, for the opposite reason: the server could not say whether the
+ * message left (`send_unverified` — the 409 whose answer is "check your Sent folder"), so a
+ * fresh-key retry is exactly the duplicate delivery the send contract forbids. The composer
+ * shows the check-Sent sentence and offers no re-send; Cancel is the way out.
  */
-export type SendOutcome = "sent" | "queued" | "failed";
+export type SendOutcome = "sent" | "queued" | "failed" | "unverified";
+
+/** One classifier for a send's MutationResult — the composer and the flush ledger agree by construction. */
+export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
+  if (!r) return "failed";
+  if (r.status === "confirmed") return "sent";
+  if (r.status === "queued") return "queued";
+  return r.error?.code === "send_unverified" ? "unverified" : "failed";
+}
 
 /**
  * A send's result: the outcome, plus — for `queued` alone — the Idempotency-Key the queued
@@ -682,18 +694,41 @@ export interface SendResult {
   key?: string;
 }
 
+/** One settled entry of {@link flushQueued}'s ledger: what happened, to which KIND of intent. */
+export interface FlushedOutcome {
+  status: "confirmed" | "rolled_back" | "unverified";
+  kind: EngineMutation["kind"];
+  /** mail_send only: whether the intent was a forward — the confirmation sentence differs. */
+  forward: boolean;
+}
+
 /**
  * DRAIN THE RETRY QUEUE, remembering what became of each intent — the reconnect path's one
  * flush, called by the world layer after every successful sync. Terminal outcomes land in
- * the returned map (key → status) so a composer holding a queued key can settle, and the
- * caller can say the one visible sentence for an intent that will never send. Failures that
- * are still retryable re-queue inside the engine and simply stay pending.
+ * the returned map (key → status + the mutation's kind, captured BEFORE the flush so a
+ * confirmed background send can be announced as the send it was) so a composer holding a
+ * queued key can settle, and the caller can say the one visible sentence for an intent that
+ * will never send. `send_unverified` is kept apart from an ordinary rollback: it means
+ * "maybe delivered — check Sent", never "try again". Failures that are still retryable
+ * re-queue inside the engine and simply stay pending.
  */
-export async function flushQueued(engine: OhmailEngine): Promise<Map<string, "confirmed" | "rolled_back">> {
-  const outcomes = new Map<string, "confirmed" | "rolled_back">();
+export async function flushQueued(engine: OhmailEngine): Promise<Map<string, FlushedOutcome>> {
+  const kinds = new Map(
+    engine.pendingMutations().map((p) => [
+      p.key,
+      { kind: p.mutation.kind, forward: p.mutation.kind === "mail_send" && !!p.mutation.forwardOf },
+    ]),
+  );
+  const outcomes = new Map<string, FlushedOutcome>();
   const results = await engine.flushPending().catch(() => []);
   for (const r of results) {
-    if (r.status === "confirmed" || r.status === "rolled_back") outcomes.set(r.key, r.status);
+    if (r.status === "queued") continue;
+    const meta = kinds.get(r.key) ?? { kind: "mark_seen" as const, forward: false };
+    const status =
+      r.status === "confirmed" ? ("confirmed" as const)
+        : r.error?.code === "send_unverified" ? ("unverified" as const)
+          : ("rolled_back" as const);
+    outcomes.set(r.key, { status, kind: meta.kind, forward: meta.forward });
   }
   return outcomes;
 }
@@ -1127,20 +1162,22 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    */
   const sent = async (p: Promise<MutationResult>, sentToast: string): Promise<SendResult> => {
     const first = await p.then((r) => r, () => null);
-    let status = first?.status ?? ("rolled_back" as const);
-    if (first && status === "queued") {
+    let settled: MutationResult | null = first;
+    if (first && first.status === "queued") {
       // The flush replays the WHOLE queue; only THIS send's own result — matched by the
       // Idempotency-Key the first dispatch minted — may settle this send. An unrelated
       // mutation confirming is not this message delivering.
       const flushed = await engine.flushPending().catch(() => []);
-      const mine = flushed.find((r) => r.key === first.key);
-      if (mine) status = mine.status;
+      settled = flushed.find((r) => r.key === first.key) ?? first;
     }
-    toast(status === "confirmed" ? sentToast : status === "queued" ? Copy.replyQueued : Copy.replyFailed);
-    return {
-      outcome: status === "confirmed" ? "sent" : status === "queued" ? "queued" : "failed",
-      ...(status === "queued" && first ? { key: first.key } : {}),
-    };
+    const outcome = sendOutcomeOfResult(settled);
+    toast(
+      outcome === "sent" ? sentToast
+        : outcome === "queued" ? Copy.replyQueued
+          : outcome === "unverified" ? Copy.replyUnverified
+            : Copy.replyFailed,
+    );
+    return { outcome, ...(outcome === "queued" && first ? { key: first.key } : {}) };
   };
 
   const sendReply = async (messageId: string, body: string, all: boolean): Promise<SendResult> => {
@@ -1324,7 +1361,7 @@ export interface WorldActions {
   sendReply(messageId: string, body: string, all: boolean): Promise<SendResult>;
   sendForward(messageId: string, to: EmailAddress[], body: string): Promise<SendResult>;
   /** What became of a queued send's key — how a locked composer settles. See `World.sendOutcome`. */
-  sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unknown";
+  sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
   tagCreate(messageId: string, name: string): void;
   screenSender(messageId: string, dest: Destination, scope: Scope): void;

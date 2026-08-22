@@ -350,7 +350,7 @@ function ComposeSheet({
    * is the double-delivery the send contract forbids. The sentence under the editor says
    * what is true; closing discards only this screen's copy of text the queue already holds.
    */
-  const [phase, setPhase] = useState<"idle" | "sending" | "queued">("idle");
+  const [phase, setPhase] = useState<"idle" | "sending" | "queued" | "unverified">("idle");
   /** The queued send's Idempotency-Key — what the settle effect follows through the ledger. */
   const [queuedKey, setQueuedKey] = useState<string | null>(null);
   const forward = mode === "forward";
@@ -365,11 +365,16 @@ function ComposeSheet({
   useEffect(() => {
     if (phase !== "queued" || queuedKey === null) return;
     const settled = w.sendOutcome(queuedKey);
+    // Confirmed: the flush already announced the send (kind-aware toast); this just closes.
     if (settled === "confirmed") onClose();
     else if (settled === "rolled_back") {
+      // The queued copy is gone with the rollback — a fresh Send cannot double-deliver.
       setQueuedKey(null);
       setPhase("idle");
     }
+    else if (settled === "unverified") setPhase("unverified");
+    // `unverified` stays locked: the server could not say whether the message left, so the
+    // only honest controls are the check-Sent sentence (in place and toasted) and Cancel.
   }, [phase, queuedKey, w, onClose]);
   // EVERY typed entry must parse, or nothing sends. A filter that dropped the malformed
   // entry silently narrowed the audience — "alice@x, bob.x" sent to Alice alone with nobody
@@ -394,7 +399,10 @@ function ComposeSheet({
       setPhase("queued");
       return;
     }
-    setPhase("idle");
+    // `unverified` LOCKS the composer exactly like queued, for the opposite reason: the
+    // server could not say whether the message left, so a fresh-key re-send is the
+    // duplicate-delivery door. Only a plain failure re-arms Send.
+    setPhase(result.outcome === "unverified" ? "unverified" : "idle");
   };
 
   return (
@@ -440,7 +448,7 @@ function ComposeSheet({
               <TextInput
                 value={to}
                 onChangeText={setTo}
-                editable={phase !== "queued"}
+                editable={phase === "idle"}
                 placeholder={Copy.forwardToPlaceholder}
                 placeholderTextColor={t.c.ink3}
                 autoCapitalize="none"
@@ -460,12 +468,13 @@ function ComposeSheet({
               />
             </View>
           ) : null}
-          {/* Frozen while queued: the queue holds the SUBMITTED text under its key, and an
-              editable field above "still trying" would display words the retry will not send. */}
+          {/* Frozen the moment Send is pressed: the dispatch captured the fields at the
+              press, and an editable field over a sending/queued/unverified state would
+              display words the wire will not carry. */}
           <TextInput
             value={body}
             onChangeText={setBody}
-            editable={phase !== "queued"}
+            editable={phase === "idle"}
             placeholder={forward ? Copy.forwardNotePlaceholder : Copy.replyPlaceholder}
             placeholderTextColor={t.c.ink3}
             multiline
@@ -484,9 +493,9 @@ function ComposeSheet({
               },
             ]}
           />
-          {phase === "queued" ? (
+          {phase === "queued" || phase === "unverified" ? (
             <Txt variant="caption" tone="ink3">
-              {Copy.replyQueued}
+              {phase === "queued" ? Copy.replyQueued : Copy.replyUnverified}
             </Txt>
           ) : null}
           <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>

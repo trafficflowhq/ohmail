@@ -109,7 +109,7 @@ export interface World {
    * resolved it (the ledger below); `unknown` for a key this session never queued (or after
    * a session swap — the queue is memory-only and died with its composer).
    */
-  sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unknown";
+  sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   actions: WorldActions;
 }
 
@@ -246,11 +246,17 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * two things a terminal outcome owes are both here: the TOAST (an intent that will never
    * send must say so out loud) and the LEDGER a locked composer settles from.
    */
-  const outcomes = useRef(new Map<string, "confirmed" | "rolled_back">());
+  const outcomes = useRef(new Map<string, "confirmed" | "rolled_back" | "unverified">());
   const [outcomeSeq, setOutcomeSeq] = useState(0);
-  const flushing = useRef(false);
+  /** The engine mid-flush (held by identity alone — the engine type stays behind the seam,
+   *  which is why this is `object`), or null. SESSION-SCOPED: profile A's in-flight flush
+   *  must neither block B's first one nor write A's outcomes into B's ledger after the switch. */
+  const flushing = useRef<object | null>(null);
+  /** The engine the ledger reads — a ref, so `outcomeOf` has one identity. */
+  const backendEngineRef = useRef(engine);
+  backendEngineRef.current = engine;
   const outcomeOf = useCallback(
-    (key: string): "pending" | "confirmed" | "rolled_back" | "unknown" => {
+    (key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown" => {
       const settled = outcomes.current.get(key);
       if (settled) return settled;
       const eng = backendEngineRef.current;
@@ -258,28 +264,39 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
-  /** The engine the flush and the ledger read — a ref, so `outcomeOf` has one identity. */
-  const backendEngineRef = useRef(engine);
-  backendEngineRef.current = engine;
   useEffect(() => {
-    if (conn.syncing || engine === null || flushing.current) return;
+    if (conn.syncing || engine === null || flushing.current === engine) return;
     if (engine.pendingMutations().length === 0) return;
-    flushing.current = true;
-    void flushQueued(engine)
+    const flushed = engine;
+    flushing.current = flushed;
+    void flushQueued(flushed)
       .then((settled) => {
-        let failedSends = 0;
-        for (const [key, status] of settled) {
-          outcomes.current.set(key, status);
-          if (status === "rolled_back") failedSends += 1;
+        // A flush that outlived its session says nothing: the ledger and the toasts belong
+        // to the session on screen, and this one's is gone.
+        if (backendEngineRef.current !== flushed) return;
+        for (const [key, o] of settled) {
+          outcomes.current.set(key, o.status);
+          // The one visible sentence per terminal outcome — a background send confirming
+          // announces itself (the queued toast promised it would keep trying), an
+          // unverified one says check-Sent, and any other rollback says it plainly.
+          if (o.kind === "mail_send") {
+            if (o.status === "confirmed") showToast(o.forward ? Copy.forwarded : Copy.replySent);
+            else if (o.status === "unverified") showToast(Copy.replyUnverified);
+            else showToast(Copy.replyFailed);
+          } else if (o.status === "rolled_back") {
+            showToast(Copy.liveSaveFailed);
+          }
         }
-        if (failedSends > 0) showToast(Copy.liveSaveFailed);
         if (settled.size > 0) setOutcomeSeq((n) => n + 1);
       })
       .finally(() => {
-        flushing.current = false;
+        if (flushing.current === flushed) flushing.current = null;
+        // Re-run the effect: intents queued DURING this flush (or on a session that switched
+        // in under it) get their turn instead of waiting for the next wake.
+        setOutcomeSeq((n) => n + 1);
       });
-    // `conn.syncing` falling is the drain-completed signal this effect keys on.
-  }, [conn.syncing, engine, showToast]);
+    // `conn.syncing` falling is the drain-completed signal; `outcomeSeq` re-checks after a flush.
+  }, [conn.syncing, engine, showToast, outcomeSeq]);
   // The outgoing session's ledger must not answer for the next session's keys.
   useEffect(() => {
     outcomes.current = new Map();

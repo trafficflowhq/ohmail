@@ -346,6 +346,7 @@ export const Copy = {
   replySending: "Sending…",
   replySent: "Reply sent.",
   replyQueued: "Not sent yet. ohmail is still trying.",
+  replyUnverified: "We couldn't confirm this send. Check your Sent folder before sending it again.",
   replyFailed: "Sending didn't work. Try again.",
   forwardHead: "Forward — you pick who receives it",
   forwardTo: "To",
