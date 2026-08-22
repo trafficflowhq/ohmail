@@ -84,6 +84,17 @@ export const AI_PATH = "/account/ai";
 /** The engine answers this before it forwards anything, while the account is out of reach. */
 const OFFLINE = 503;
 
+/**
+ * `setTimeout`'s ceiling. A delay above this is CLAMPED and the timer fires immediately rather
+ * than late, which is the opposite of the failure mode people expect from a long timeout.
+ */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+/**
+ * How far PAST the period boundary the one wake-up lands, so the re-render's own clock read
+ * cannot fall on the same millisecond and conclude the deadline is still ahead.
+ */
+const PERIOD_SETTLE_MS = 1_000;
+
 type Read =
   | { state: "loading" }
   | { state: "ready"; sub: SubscriptionStatus }
@@ -168,6 +179,33 @@ export function DesktopBilling() {
   }, []);
 
   /**
+   * THE PERIOD BOUNDARY IS SCHEDULED, NOT MERELY SAMPLED — the same rule the browser tab's
+   * billing pane keeps, because both panes pick the plan line's TENSE from `Date.now()` during
+   * a render. A pane opened before the period ends and left mounted past it would keep the
+   * future-tense sentence it was rendered with, in the one case where the transition happens
+   * while somebody is watching it. One timer, set for that instant, re-renders the row once.
+   * Not a poll: the pane re-reads on every mount, and nothing else here depends on the clock.
+   * The dependency does not change when the beat lands, so the effect does not re-arm.
+   *
+   * The ceiling is checked against what is actually scheduled, margin included: `setTimeout`
+   * clamps a delay above {@link MAX_TIMEOUT_MS} and fires IMMEDIATELY, which would spend the one
+   * wake-up twenty-five days early the moment an annual plan's pane opened. Beyond it nothing is
+   * scheduled; the next mount evaluates the deadline again. And a deadline already gone still
+   * gets its beat — `Math.max`, not an early return: the render sampled the clock a moment
+   * before this effect does, so a non-positive delay here can mean the row went up in the future
+   * tense microseconds before the boundary crossed. One unseen re-render removes that window.
+   */
+  const [, setPeriodBeat] = useState(0);
+  const periodEndAt = read.state === "ready" ? read.sub.subscription?.currentPeriodEnd ?? null : null;
+  useEffect(() => {
+    if (periodEndAt == null) return;
+    const delay = new Date(periodEndAt).getTime() - Date.now();
+    if (delay > MAX_TIMEOUT_MS - PERIOD_SETTLE_MS) return;
+    const id = setTimeout(() => setPeriodBeat((n) => n + 1), Math.max(delay, 0) + PERIOD_SETTLE_MS);
+    return () => clearTimeout(id);
+  }, [periodEndAt]);
+
+  /**
    * Flip managed AI and render what the account answered.
    *
    * Not optimistic, unlike the web pane's copy of this switch, and the difference is the transport
@@ -213,6 +251,25 @@ export function DesktopBilling() {
   const planLine = row
     ? `${PLAN_NAME[row.plan] ?? row.plan} · ${isKnownStatus(row.status) ? ts(`webStatus_${row.status}` as never) : row.status}`
     : "—";
+  /**
+   * THE PLAN LINE'S TENSE — the one thing about `currentPeriodEnd` this pane decides, and the
+   * same two rules the browser tab's billing pane keeps for the same account:
+   *
+   *  · A TRIAL DOES NOT RENEW. `cancelAtPeriodEnd` alone used to pick the sentence, so a
+   *    card-less trial read "Renews {when}" — a promise of a charge nothing on file can make.
+   *    `trialing` is judged first because "Trial ends" is true either way: at that date the
+   *    trial ends, into a plan if a card was added and into nothing if not.
+   *
+   *  · A PAST DATE IS SPOKEN ABOUT IN THE PAST. Nothing server-side expires a trial on the
+   *    clock — the row waits for the billing event that moves it — so a subscription can sit at
+   *    `trialing` with its recorded end days gone. A gone trial keeps a sentence of its own
+   *    ("Trial ended"), because that is true whichever way it went; every other state collapses
+   *    to one about the period this pane can actually see, never a renewal it cannot confirm
+   *    happened. This decides a word, not a right: the entitlement rows below are the server's.
+   */
+  const trialing = row?.status === "trialing";
+  const periodEndPassed =
+    row?.currentPeriodEnd != null && new Date(row.currentPeriodEnd).getTime() < Date.now();
 
   return (
     <SettingsSection>
@@ -229,9 +286,13 @@ export function DesktopBilling() {
             label={ts("billing")}
             description={
               row
-                ? row.cancelAtPeriodEnd
-                  ? ts("webPlanEnds", { when: when(row.currentPeriodEnd) })
-                  : ts("webPlanRenews", { when: when(row.currentPeriodEnd) })
+                ? ts(
+                    periodEndPassed
+                      ? trialing ? "webPlanTrialEnded" : "webPlanPeriodEnded"
+                      : trialing ? "webPlanTrialEnds"
+                        : row.cancelAtPeriodEnd ? "webPlanEnds" : "webPlanRenews",
+                    { when: when(row.currentPeriodEnd) },
+                  )
                 : ts("webPlanNone")
             }
             value={planLine}
