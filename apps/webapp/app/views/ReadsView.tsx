@@ -258,6 +258,16 @@ export function ReadsView({
    * earlier is a new request and must open.
    */
   const closedRef = useRef<string | null>(null);
+  /**
+   * HOW MANY CLOSES HAVE HAPPENED — the ordering `closedRef` alone cannot express.
+   *
+   * `closedRef` holds an id and keeps holding it, so "was this id closed?" answers the same
+   * before and after a second close of the SAME id. The jump needs the other question — "did a
+   * close happen while my frame was pending?" — and only a counter answers that: a reader who
+   * closes a card, deep-links back to it, and presses Back again inside the frame writes the
+   * identical id, and an id comparison sees no change where the sequence changed.
+   */
+  const closeSeqRef = useRef(0);
   const openLandedCard = useCallback((id: string) => {
     if (closedRef.current === id) return;
     document
@@ -296,6 +306,7 @@ export function ReadsView({
   useEffect(() => {
     if (!closeTo) return;
     closedRef.current = closeTo;
+    closeSeqRef.current += 1;
     // A landing still in flight for this id would re-open it; drop it before it can.
     setPendingScroll((p) => (p && p.id === closeTo ? null : p));
     document
@@ -380,15 +391,17 @@ export function ReadsView({
      * `[jumpTo]` is unchanged by a close, so the effect's own cleanup never ran and the frame
      * was never cancelled.
      *
-     * Recording whether this id was ALREADY closed when the jump was requested separates the
-     * two cases with no second piece of state: closed-before means a genuinely new deep link
-     * to a message the reader closed earlier, which must open; closed-after means the close
-     * arrived while this frame was pending and wins. The abandoned jump is still acknowledged
-     * — the shell must not be left holding a request forever.
+     * The two cases are separated by the close COUNTER and not by the tombstone's value:
+     * closed-before-the-request means a genuinely new deep link to a message the reader closed
+     * earlier, which must open; a close COUNTED while this frame was pending wins. Comparing
+     * the id alone is not enough and was the first form of this fix — a second Back on a
+     * message that was already the tombstone writes the same id, so nothing looks different.
+     * The abandoned jump is still acknowledged — the shell must not be left holding a request
+     * forever.
      */
-    const closedAtRequest = closedRef.current === jumpTo;
+    const closeSeqAtRequest = closeSeqRef.current;
     const timer = requestAnimationFrame(() => {
-      if (!closedAtRequest && closedRef.current === jumpTo) {
+      if (closeSeqRef.current !== closeSeqAtRequest && closedRef.current === jumpTo) {
         jumpRefs.current.onJumped();
         return;
       }

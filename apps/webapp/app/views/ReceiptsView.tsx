@@ -190,6 +190,8 @@ export function ReceiptsView({
   const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean } | null>(null);
   /** A card the shell has since asked to close — see `ReadsView.closedRef` for the race. */
   const closedRef = useRef<string | null>(null);
+  /** How many closes have happened — see `ReadsView.closeSeqRef` for why an id cannot say. */
+  const closeSeqRef = useRef(0);
   /** Open the landed card the way a click opens it — see `ReadsView.openLandedCard`. */
   const openLandedCard = useCallback((id: string) => {
     if (closedRef.current === id) return;
@@ -209,6 +211,7 @@ export function ReceiptsView({
   useEffect(() => {
     if (!closeTo) return;
     closedRef.current = closeTo;
+    closeSeqRef.current += 1;
     setPendingScroll((p) => (p && p.id === closeTo ? null : p));
     document
       .querySelector<HTMLElement>(
@@ -242,12 +245,12 @@ export function ReceiptsView({
   jumpRefs.current = { onCur, onJumped };
   useEffect(() => {
     if (!jumpTo) return;
-    /* Closed-before vs closed-after, exactly as `ReadsView`'s twin spells out: a Back that
-       lands between this effect and its frame must win, and `[jumpTo]` does not change on a
-       close so the cleanup never cancels the frame. The abandoned jump is acknowledged. */
-    const closedAtRequest = closedRef.current === jumpTo;
+    /* A close COUNTED while this frame was pending wins, exactly as `ReadsView`'s twin spells
+       out — including why the counter and not the tombstone's id. `[jumpTo]` does not change on
+       a close, so the cleanup never cancels the frame. The abandoned jump is acknowledged. */
+    const closeSeqAtRequest = closeSeqRef.current;
     const timer = requestAnimationFrame(() => {
-      if (!closedAtRequest && closedRef.current === jumpTo) {
+      if (closeSeqRef.current !== closeSeqAtRequest && closedRef.current === jumpTo) {
         jumpRefs.current.onJumped();
         return;
       }
