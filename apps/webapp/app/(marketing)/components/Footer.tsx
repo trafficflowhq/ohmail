@@ -4,10 +4,6 @@ import { Wordmark } from "./Wordmark";
 
 export function Footer() {
   const t = useTranslations("footer");
-  /* The switch's own label comes from `settings.languageName`; this namespace supplies the
-     landmark's name, so a reader listing the page's regions hears "Sprache" rather than a
-     second unnamed navigation. */
-  const tSettings = useTranslations("settings");
   return (
     <footer className="l-footer">
       <div className="l-footer-inner">
@@ -27,12 +23,15 @@ export function Footer() {
           <a href="/privacy">{t("privacy")}</a>
           <a href="/subprocessors">{t("subprocessors")}</a>
         </nav>
-        {/* The durable half of the language switch. The nav's copy disappears with the rest of
-            the bar on a narrow screen; this one is always here, and it is the link a crawler
-            following the footer finds. */}
-        <nav className="l-footer-nav" aria-label={tSettings("language")}>
-          <LangSwitch className="l-footer-lang" />
-        </nav>
+        {/* The durable half of the language switch. The bar's copy disappears with the rest of
+            the header on a narrow screen; this one is always here, and it is the link a crawler
+            following the footer finds.
+
+            The `<nav>` is the switch's own, not the footer's: the control withdraws for a
+            browser that has a session (its `/` href opens the app, not the English landing),
+            and a named landmark left standing around nothing is a region a screen-reader
+            reader can enter and find empty. Both go or neither does. */}
+        <LangSwitch className="l-footer-lang" landmarkClassName="l-footer-nav" />
         <p className="l-footer-copy num">{t("copyright")}</p>
       </div>
     </footer>

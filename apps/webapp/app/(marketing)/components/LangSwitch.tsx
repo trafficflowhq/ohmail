@@ -42,9 +42,10 @@ import { useSessionPresence } from "./session-presence";
  * acquisition trio for a session. A signed-in reader changes language in Settings, where the
  * preference is stored on the account rather than on the device.
  *
- * `useSessionPresence` answers "none" until the auth slice wires it, and its first client
- * render must answer "none" regardless, so the server render and every crawler still see the
- * link — which is what keeps `/de` linked rather than merely reachable.
+ * `useSessionPresence` reads the `tf_owner` marker after mount (see `session-presence.ts` for
+ * why that cookie is the truthful client-visible twin of what the middleware keys on), and its
+ * first client render answers "none" regardless, so the server render and every crawler still
+ * see the link — which is what keeps `/de` linked rather than merely reachable.
  *
  * ── WHY IT ALSO WRITES THE PREFERENCE, AND WHY THROUGH `rememberLocale` ───────────────────
  *
@@ -84,7 +85,28 @@ const OTHER: Record<AppLocale, AppLocale> = { en: "de", de: "en" };
 /** Where each locale's landing lives. The same pair `marketing-root.tsx` builds `hreflang` from. */
 const LANDING: Record<AppLocale, string> = { en: "/", de: "/de" };
 
-export function LangSwitch({ className }: { className: string }) {
+export function LangSwitch({
+  className,
+  landmarkClassName,
+}: {
+  className: string;
+  /**
+   * WHEN THE SWITCH IS A LANDMARK OF ITS OWN, IT OWNS THE LANDMARK — because it can now
+   * disappear, and an empty named region is worse than no region.
+   *
+   * The footer gives the switch its own `<nav>` so it is announced ("Language" / "Sprache")
+   * rather than being a stray link in the legal row. That wrapper used to live in `Footer.tsx`,
+   * where it could not see the session gate: with the gate live, a signed-in visit rendered a
+   * named navigation landmark containing nothing at all — a reader listing the page's regions
+   * hears "Sprache, navigation" and arrives at an empty one. Passing the wrapper's class in
+   * makes the landmark and its only child withdraw together, which is the sole correct
+   * behaviour and needs no second copy of the gate.
+   *
+   * Omitted in the header, where the switch is one control among several in an existing cluster
+   * and its absence leaves no hole.
+   */
+  landmarkClassName?: string;
+}) {
   const t = useTranslations("settings");
   const presence = useSessionPresence();
   /* `useLocale()` answers whatever the enclosing provider was built with, which is the root
@@ -95,7 +117,7 @@ export function LangSwitch({ className }: { className: string }) {
   /* After every hook, never before one: an early return above `useLocale` would change the
      hook order between the stranger render and the signed-in one. */
   if (presence === "present") return null;
-  return (
+  const link = (
     <a
       className={className}
       href={LANDING[other]}
@@ -106,5 +128,13 @@ export function LangSwitch({ className }: { className: string }) {
     >
       {other === "de" ? t("languageName.de") : t("languageName.en")}
     </a>
+  );
+  if (landmarkClassName === undefined) return link;
+  /* The landmark's NAME from the catalogue, in the page's own language — the same key the
+     selector in Settings uses, pinned in both catalogues by `locale-catalog.test.ts`. */
+  return (
+    <nav className={landmarkClassName} aria-label={t("language")}>
+      {link}
+    </nav>
   );
 }
