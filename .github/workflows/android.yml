@@ -314,9 +314,10 @@ jobs:
           name: ohmail-android-unsigned
           path: unsigned
 
-      # The mapping that belongs to the APK above. Downloading a text file executes nothing, so
-      # this job still runs no project code and the key stays isolated from everything that
-      # could read it; the file is never opened here, only forwarded to the release.
+      # The mapping that belongs to the APK above. Downloading a compressed text file executes
+      # nothing, and this job neither builds nor compresses it — the compression happened in the
+      # build job — so the key stays isolated from every piece of code that could read it. The
+      # only things done to the file here are an upload and a `cmp` against what came back.
       - name: Fetch the deobfuscation mapping from the build job
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -387,14 +388,28 @@ jobs:
               --title "$TAG" \
               --notes "Android APK for $TAG. Built and signed by this repository's Actions from the tagged tree."
           fi
-          # The mapping goes up with the APK, under a name that says which artifact it decodes.
-          # Asserted rather than best-effort: a release whose APK is obfuscated and whose mapping
-          # is missing produces crash reports nobody can read, and the failure would only be
-          # discovered by the first person to report one.
           test -f mapping/ohmail-android-mapping.txt.gz \
             || { echo "no R8 mapping was fetched from the build job" >&2; exit 1; }
+
+          # ORDER MATTERS, AND IT IS THE WHOLE MECHANISM HERE. A release has no transactional
+          # multi-asset upload: `gh release upload` puts one file up, then the next, and a failure
+          # between them leaves whatever already landed live on the page while this job goes red.
+          # One of the two possible half-states is harmful and the other is not:
+          #
+          #   mapping first, APK second — a failure leaves a mapping and no APK. Nobody can
+          #   install anything, so there is nothing to be unable to retrace. Harmless.
+          #
+          #   APK first — a failure leaves an obfuscated APK people can install with no way to
+          #   read a crash from it, which is exactly the state the mapping exists to prevent, and
+          #   it stays live after the red run.
+          #
+          # So the mapping goes FIRST, and the invariant is ordering rather than atomicity: any
+          # APK on this page has had its mapping beside it since before it arrived. Separate
+          # calls, so a failure on the first one never starts the second.
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-            ohmail-android.apk mapping/ohmail-android-mapping.txt.gz
+            mapping/ohmail-android-mapping.txt.gz
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            ohmail-android.apk
 
       - name: What was uploaded is what was signed
         env:
@@ -406,3 +421,16 @@ jobs:
             --pattern "ohmail-android.apk"
           cmp ohmail-android.apk uploaded/ohmail-android.apk
           echo "release asset verified byte-for-byte"
+
+          # BOTH assets, read back from the release rather than assumed from two exit codes. The
+          # upload above is ordered so no harmful half-state can survive a failure, and this is
+          # the check that the pair really is on the page: an APK whose mapping is missing is an
+          # APK nobody can retrace a crash from, and without this the previous step's success is
+          # the only evidence there is.
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir uploaded \
+            --pattern "ohmail-android-mapping.txt.gz"
+          # Byte-for-byte against the file the build job produced, which is the strongest thing
+          # available here and makes a separate integrity test redundant: these bytes came out of
+          # that job's compression step, which would have failed if they had not.
+          cmp mapping/ohmail-android-mapping.txt.gz uploaded/ohmail-android-mapping.txt.gz
+          echo "release mapping verified byte-for-byte"
