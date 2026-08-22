@@ -87,15 +87,31 @@ export function storageState(status: SubscriptionStatus | null): StorageState {
  * COUNT (~80 000 on Solo). The card sells an estimate because nobody knows how many emails fit
  * in a gigabyte; a settings screen reports the real figure, because this is the one place the
  * account's own number is knowable and an estimate would be a worse answer than the truth.
+ *
+ * ── THE LOCALE IS A REQUIRED ARGUMENT, WHICH IS THE POINT OF IT ─────────────────────────────
+ *
+ * This used to interpolate the number raw, so "1.5 GB" reached a German pane — where a decimal
+ * point is a thousands separator and the row read as fifteen gigabytes. It sat directly beside
+ * an email count the catalogue grouped correctly, so one row carried two conventions.
+ *
+ * The locale is the language the reader chose in the app, which the caller has from its intl
+ * provider and this module cannot know. It is REQUIRED rather than defaulted for the reason the
+ * count is formatted by the catalogue: `toLocaleString()` with no argument reads the HOST's
+ * locale, which is a property of the computer rather than a choice the reader made — German in
+ * the app on a US machine would still say "1.5 GB", and switching the app's language would
+ * change nothing. A missing argument is a compile error here; a wrong default would have been
+ * silent.
  */
-export function formatStorageBytes(bytes: number): string {
+export function formatStorageBytes(bytes: number, locale: string): string {
+  const n = (v: number, decimals: number): string =>
+    v.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: decimals });
   if (bytes >= 1_000_000_000) {
     const gb = bytes / 1_000_000_000;
-    return `${gb >= 10 ? Math.round(gb) : Math.round(gb * 10) / 10} GB`;
+    return `${n(gb >= 10 ? Math.round(gb) : Math.round(gb * 10) / 10, 1)} GB`;
   }
-  if (bytes >= 1_000_000) return `${Math.round(bytes / 1_000_000)} MB`;
-  if (bytes >= 1_000) return `${Math.round(bytes / 1_000)} KB`;
-  return `${bytes} B`;
+  if (bytes >= 1_000_000) return `${n(Math.round(bytes / 1_000_000), 0)} MB`;
+  if (bytes >= 1_000) return `${n(Math.round(bytes / 1_000), 0)} KB`;
+  return `${n(bytes, 0)} B`;
 }
 
 /**
@@ -107,20 +123,20 @@ export function formatStorageBytes(bytes: number): string {
  */
 export const BYTES_PER_STORED_EMAIL_ESTIMATE = 25_000;
 
-/** Bytes → the advertised email count, floored — every step moves the number DOWN. */
+/**
+ * Bytes → the advertised email count, floored — every step moves the number DOWN.
+ *
+ * A NUMBER, not a string, and that is the whole of what this module has to say about the count.
+ * The GROUPING belongs to the catalogue: both panes' strings take it as `{used, number}` /
+ * `{cap, number}`, which formats against the locale the intl provider was built with — the
+ * language the reader chose in this app.
+ *
+ * Formatting it here was tried and was wrong twice over. A hardcoded `toLocaleString("en-US")`
+ * put "200,000" into a German pane. Dropping the argument was worse in a subtler way: it reads
+ * the HOST's locale, so German-in-app on a US machine still grouped "60,000" and switching the
+ * app's language changed nothing — the one thing a reader would expect it to change. The app's
+ * locale is a preference, not a property of the computer, and only the catalogue layer knows it.
+ */
 export function estimatedEmails(bytes: number): number {
   return Math.floor(bytes / BYTES_PER_STORED_EMAIL_ESTIMATE);
-}
-
-/**
- * The email count as a row renders it: grouped for the reader in front of it.
- *
- * NO LOCALE ARGUMENT, deliberately — the same convention as the dates in both billing panes
- * (`toLocaleDateString()`, no argument). It replaces a hardcoded `"en-US"`, which grouped
- * "200,000" into a German settings pane whose neighbouring row rendered "22.8.2026": one card,
- * two number conventions, and only one of them the reader's. A grouped count is the only thing
- * this adds over {@link estimatedEmails}, so the arithmetic still has exactly one definition.
- */
-export function formatEmailCount(bytes: number): string {
-  return estimatedEmails(bytes).toLocaleString();
 }

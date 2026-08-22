@@ -41,7 +41,7 @@
  * different questions: bytes are the figure the cap is actually enforced in, and an email count
  * is the figure a person can picture. Neither is a substitute for the other, so both are shown.
  *
- * `storageFigures`, `storageState`, `formatStorageBytes` and `formatEmailCount` come from
+ * `storageFigures`, `storageState`, `formatStorageBytes` and `estimatedEmails` come from
  * `apps/webapp/app/shell/storage-state.ts` — the same four the browser tab's billing pane calls,
  * over the same `GET /billing/subscription` fields. Nothing about storage is computed here: the
  * threshold, the byte formatter and the bytes-per-email estimate all have exactly one definition
@@ -59,14 +59,14 @@
  */
 
 import { useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead, Switch } from "@ohmail/ui";
 
 import { bridgeFetch } from "./bridge-fetch.js";
 import { openWeb } from "./native.js";
 import type { SubscriptionStatus } from "../../webapp/app/api-client";
 import {
-  formatEmailCount,
+  estimatedEmails,
   formatStorageBytes,
   storageFigures,
   storageState,
@@ -133,6 +133,9 @@ export function DesktopBilling() {
    * desktop's settings copy lives.
    */
   const ts = useTranslations("settings");
+  /* The app's chosen language, for the byte figure alone: it is a unit-bearing string, so its
+     number cannot be grouped by an ICU placeholder the way the email count is. */
+  const locale = useLocale();
 
   const [read, setRead] = useState<Read>({ state: "loading" });
   /** `null` while unknown — the switch is drawn but not pressable until the account has answered. */
@@ -266,12 +269,12 @@ export function DesktopBilling() {
                   ? ts(storState.kind === "at_cap" ? "webStorageFull" : "webStorageNear")
                   : ts("webStorageSub")
               } ${ts("webStorageEmails", {
-                used: formatEmailCount(storFigures.usedBytes),
-                cap: formatEmailCount(storFigures.capBytes),
+                used: estimatedEmails(storFigures.usedBytes),
+                cap: estimatedEmails(storFigures.capBytes),
               })}`}
               value={ts("webStorageOf", {
-                used: formatStorageBytes(storFigures.usedBytes),
-                cap: formatStorageBytes(storFigures.capBytes),
+                used: formatStorageBytes(storFigures.usedBytes, locale),
+                cap: formatStorageBytes(storFigures.capBytes, locale),
               })}
             />
           ) : null}

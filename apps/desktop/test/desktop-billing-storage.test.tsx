@@ -9,6 +9,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import messages from "../../webapp/messages/en.json";
+import german from "../../webapp/messages/de.json";
 import { BILLING_PATH, DesktopBilling } from "../src/DesktopBilling.js";
 
 /**
@@ -260,14 +261,16 @@ function shellAnswering(): void {
 let hostEl: HTMLDivElement;
 let root: Root;
 
-async function mountPane(): Promise<void> {
+async function mountPane(locale: "en" | "de" = "en"): Promise<void> {
   hostEl = document.createElement("div");
   document.body.append(hostEl);
   root = createRoot(hostEl);
   await act(async () => {
     root.render(
       h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC",
+        locale,
+        messages: locale === "de" ? german : messages,
+        timeZone: "UTC",
         children: h(ThemeProvider, null, h(ToastHost, null, h(DesktopBilling))),
       }),
     );
@@ -321,6 +324,40 @@ describe("the storage row in the app's subscription pane", () => {
     expect(row).toContain("1.5 GB of 2 GB");
     // …and the same two figures as emails, at the shared per-email estimate.
     expect(row).toContain("Roughly 60,000 of 80,000 emails.");
+  });
+
+  /**
+   * THE COUNT IS GROUPED BY THE LANGUAGE THE READER CHOSE IN THE APP, not by the computer's.
+   *
+   * The app's locale is a preference held by the intl provider; the machine's is a property of
+   * the machine, and the two disagree all the time. Two spellings of this were wrong before it
+   * became the catalogue's `{used, number}`: a hardcoded US grouping put "200,000" into a German
+   * pane, and a bare `toLocaleString()` read the HOST locale — so German-in-app on a US machine
+   * still said "60,000" and switching the app's language changed nothing at all, which is the one
+   * thing switching a language should change. This case is that regression, and it is the reason
+   * the arithmetic hands the catalogue a NUMBER rather than a formatted string.
+   */
+  it("groups the count for the app's language, not the machine's", async () => {
+    await mountPane("de");
+    const row = rowText("Speicher")!;
+    expect(row).toContain("Rund 60.000 von 80.000 E-Mails.");
+    expect(row, "US grouping in a German pane").not.toContain("60,000");
+  });
+
+  /**
+   * …AND THE BYTE FIGURE IN THE SAME ROW AGREES WITH IT.
+   *
+   * The count is grouped by the catalogue; the byte figure cannot be, because it is a
+   * unit-bearing string and the number lives inside it. So it takes the locale as an argument.
+   * Before it did, this row said "Rund 60.000 … 1.5 GB von 2 GB" — one row, two conventions,
+   * and in German a decimal point is a thousands separator, so the value read as fifteen
+   * gigabytes.
+   */
+  it("and the byte figure uses the same convention as the count beside it", async () => {
+    await mountPane("de");
+    const row = rowText("Speicher")!;
+    expect(row).toContain("1,5 GB von 2 GB");
+    expect(row, "a US decimal point beside a German-grouped count").not.toContain("1.5 GB");
   });
 
   it("says nothing about attachments counting, because they never do", async () => {

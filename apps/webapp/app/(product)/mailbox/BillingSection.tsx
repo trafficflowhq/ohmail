@@ -31,7 +31,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Button, SettingsNote, SettingsRow, SettingsSection, Switch } from "@ohmail/ui";
 import {
   aiSettings,
@@ -46,7 +46,7 @@ import {
   type TwofaChallenge,
 } from "../../api-client";
 import { aiCreditMessageKey, aiCreditState } from "./ai-credit-state";
-import { formatEmailCount, formatStorageBytes, storageFigures, storageState } from "../../shell/storage-state";
+import { estimatedEmails, formatStorageBytes, storageFigures, storageState } from "../../shell/storage-state";
 
 type Plan = "solo" | "plus" | "pro";
 type Factor = "webauthn" | "totp" | "recovery_code";
@@ -59,6 +59,11 @@ export function BillingSection() {
   const t = useTranslations("billing");
   /** The shared AI-credit vocabulary — the same sentences the Screener's line renders. */
   const tc = useTranslations("aiCredits");
+  /* The language the reader chose in this app, for the one figure the catalogue cannot group:
+     `formatStorageBytes` builds a unit-bearing string, so the number inside it is formatted
+     here rather than by an ICU placeholder. Required argument, so it cannot silently fall back
+     to the computer's locale. */
+  const locale = useLocale();
 
   const [sub, setSub] = useState<SubscriptionStatus | null>(null);
   /**
@@ -418,13 +423,13 @@ export function BillingSection() {
                 `${storState
                   ? t(storState.kind === "at_cap" ? "storageFull" : "storageNear")
                   : t("storageSub")} ${t("storageEmails", {
-                  used: formatEmailCount(storFigures.usedBytes),
-                  cap: formatEmailCount(storFigures.capBytes),
+                  used: estimatedEmails(storFigures.usedBytes),
+                  cap: estimatedEmails(storFigures.capBytes),
                 })}`
               }
               value={t("storageOf", {
-                used: formatStorageBytes(storFigures.usedBytes),
-                cap: formatStorageBytes(storFigures.capBytes),
+                used: formatStorageBytes(storFigures.usedBytes, locale),
+                cap: formatStorageBytes(storFigures.capBytes, locale),
               })}
             />
           ) : null}
