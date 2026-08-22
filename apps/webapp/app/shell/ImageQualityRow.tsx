@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * SETTINGS → GENERAL → SHRINK PICTURES.
+ * SETTINGS → GENERAL → PICTURE QUALITY.
  *
  * A `SegmentedControl` beside the theme's and the language's, because it is the same class of
  * decision as they are: it changes how this install behaves and nothing about anybody's mail, it is
@@ -38,17 +38,17 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SegmentedControl, SettingsRow } from "@ohmail/ui";
 import {
-  DEFAULT_IMAGE_SHRINK_LEVEL,
-  IMAGE_SHRINK_LEVELS,
-  type ImageShrinkLevel,
-  readImageShrinkLevel,
-  writeImageShrinkLevel,
-} from "../components/image-shrink";
+  DEFAULT_IMAGE_QUALITY_LEVEL,
+  IMAGE_QUALITY_LEVELS,
+  type ImageQualityLevel,
+  readImageQualityLevel,
+  writeImageQualityLevel,
+} from "../components/image-quality";
 import { readOwner } from "./owner-cookie";
 
-export function ImageShrinkRow() {
+export function ImageQualityRow() {
   const t = useTranslations("settings");
-  const [level, setLevel] = useState<ImageShrinkLevel>(DEFAULT_IMAGE_SHRINK_LEVEL);
+  const [level, setLevel] = useState<ImageQualityLevel>(DEFAULT_IMAGE_QUALITY_LEVEL);
   /** The account whose preference this row edits — read post-mount like the value itself. */
   const owner = useRef<string | null>(null);
 
@@ -56,27 +56,27 @@ export function ImageShrinkRow() {
   // in the same effect for the same reason: there is no document on the server.
   useEffect(() => {
     owner.current = readOwner();
-    setLevel(readImageShrinkLevel(owner.current));
+    setLevel(readImageQualityLevel(owner.current));
   }, []);
 
   return (
     <SettingsRow
-      label={t("imageShrink")}
-      description={t("imageShrinkHint")}
+      label={t("imageQuality")}
+      description={t("imageQualityHint")}
       control={
-        <SegmentedControl<ImageShrinkLevel>
-          ariaLabel={t("imageShrinkAria")}
+        <SegmentedControl<ImageQualityLevel>
+          ariaLabel={t("imageQualityAria")}
           value={level}
           onChange={(next) => {
             if (next === level) return;
             // Storage first, then the control. There is nothing asynchronous to fail here — a
-            // blocked storage is swallowed inside `writeImageShrinkLevel` — so the two cannot end
+            // blocked storage is swallowed inside `writeImageQualityLevel` — so the two cannot end
             // up disagreeing, and the next pick reads back exactly what the segment shows.
-            writeImageShrinkLevel(next, owner.current);
+            writeImageQualityLevel(next, owner.current);
             setLevel(next);
           }}
-          className="shrink-seg"
-          options={IMAGE_SHRINK_LEVELS.map((id) => ({ id, label: t(`imageShrinkLevel.${id}`) }))}
+          className="quality-seg"
+          options={IMAGE_QUALITY_LEVELS.map((id) => ({ id, label: t(`imageQualityLevel.${id}`) }))}
         />
       }
     />

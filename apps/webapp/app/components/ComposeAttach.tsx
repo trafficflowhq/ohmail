@@ -28,20 +28,20 @@
  *
  * ── PICTURES ARE SHRUNK FIRST, AND THE ORDER IS THE POINT ────────────────────────────────
  *
- * Every picked file goes through {@link shrinkImage} BEFORE the cap above is applied to it, and the
+ * Every picked file goes through {@link compressImage} BEFORE the cap above is applied to it, and the
  * cap is then applied to the SHRUNK size. Written the other way round the feature would be nearly
  * pointless: the common attachment is a phone photo of six megabytes, the cap is three, and a
  * compressor that only runs on files which already fit never runs on the file that needed it. So
  * the sequence is decode → re-encode → measure → admit or refuse, and a photo that fits only
  * because it was shrunk attaches.
  *
- * The transform is in `./image-shrink`, which is where the level table, the format rules and the
+ * The transform is in `./image-quality`, which is where the level table, the format rules and the
  * keep-the-original guard are documented. This file's only job is to run it in the right place and
  * to say what happened.
  *
  * ── THE DIAL, IN THE ROW IT ACTS ON — ONE VALUE PER ACCOUNT ──────────────────────────────
  *
- * The shrink level is offered beside the attach button because the moment the level matters is
+ * The quality level is offered beside the attach button because the moment the level matters is
  * the pick: a person about to send a photo at full size should not have to know that a dial
  * lives two views away.
  *
@@ -49,7 +49,7 @@
  * — the next compose on this account opens at the level chosen — and it is the SAME value the
  * Settings → General row edits, through the same two functions, so the two surfaces cannot
  * disagree. What changed from the first shipping of this dial is the KEY: the value is stored
- * per account (`imageShrinkKeyFor`; the id is `readOwner`'s, the one the mail mirror is named
+ * per account (`imageQualityKeyFor`; the id is `readOwner`'s, the one the mail mirror is named
  * for), because the old account-less key meant a control that looks personal silently rewrote
  * the preference for EVERYONE who signs in on the machine. A surface with no account — the
  * standalone desktop, the demo — uses the account-less key, where every pre-scoping choice
@@ -61,11 +61,10 @@
  * dial while files are attached therefore states the scope in a visible note instead of leaving
  * the user to discover that the change did nothing to the rows above it.
  *
- * The options run strongest-first with Original last — a menu leads with the default, and
- * "Original" at the end anchors what the scale is FOR (everything above it trades fidelity for
- * bytes). The Settings segment reads the same table the other way, ascending; both orders come
- * from `IMAGE_SHRINK_LEVELS` and the labels from one catalog entry, so neither surface can grow
- * a level or a word the other lacks.
+ * The options run Low → Medium → High → Original, ascending, with the default in the middle and
+ * "Original" at the end anchoring what the scale is FOR (everything below it trades fidelity for
+ * bytes). The Settings segment renders the SAME array in the SAME order — one table, one catalog
+ * entry for the labels — so neither surface can grow a level or a word the other lacks.
  *
  * ── PASTED AND DROPPED FILES ARE PICKS TOO ───────────────────────────────────────────────
  *
@@ -88,21 +87,25 @@ import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import type { ComposeAttachment } from "@ohmail/client-engine";
 import {
-  DEFAULT_IMAGE_SHRINK_LEVEL,
-  IMAGE_SHRINK_LEVELS,
-  type ImageShrinkLevel,
-  isImageShrinkLevel,
-  readImageShrinkLevel,
-  shrinkImage,
-  writeImageShrinkLevel,
-} from "./image-shrink";
+  DEFAULT_IMAGE_QUALITY_LEVEL,
+  IMAGE_QUALITY_LEVELS,
+  type ImageQualityLevel,
+  compressImage,
+  isImageQualityLevel,
+  readImageQualityLevel,
+  writeImageQualityLevel,
+} from "./image-quality";
 import { readOwner } from "../shell/owner-cookie";
 
 /**
- * The dial's own order: strongest first, Original last. Derived from the one table rather than
- * restated, so a level added there surfaces here without anybody remembering this file exists.
+ * The dial's own order — the table's, unreversed.
+ *
+ * It used to reverse the array, because the levels ascended by EFFORT and this menu had to lead
+ * with the strongest squeeze. On a quality axis the table already reads Low → Medium → High →
+ * Original, which is the order this menu wants and the order the Settings segment wants, so both
+ * surfaces now render one array as it stands and neither can drift from the other.
  */
-const LEVEL_CHOICES: readonly ImageShrinkLevel[] = [...IMAGE_SHRINK_LEVELS].reverse();
+const LEVEL_CHOICES: readonly ImageQualityLevel[] = IMAGE_QUALITY_LEVELS;
 
 /**
  * THE INLINE TRANSPORT'S OWN CEILING on total attachment bytes — the mirror of the constant the
@@ -259,22 +262,22 @@ export function ComposeAttach({
    * account from), and a mismatch would make React keep the server's value. The ref is the
    * same value readable from inside async handlers without re-binding them per change.
    */
-  const [level, setLevel] = useState<ImageShrinkLevel>(DEFAULT_IMAGE_SHRINK_LEVEL);
-  const levelRef = useRef<ImageShrinkLevel>(DEFAULT_IMAGE_SHRINK_LEVEL);
+  const [level, setLevel] = useState<ImageQualityLevel>(DEFAULT_IMAGE_QUALITY_LEVEL);
+  const levelRef = useRef<ImageQualityLevel>(DEFAULT_IMAGE_QUALITY_LEVEL);
   /** Whose preference the dial edits — `readOwner`'s account id, `null` where there is none. */
   const owner = useRef<string | null>(null);
   useEffect(() => {
     owner.current = readOwner();
-    const stored = readImageShrinkLevel(owner.current);
+    const stored = readImageQualityLevel(owner.current);
     setLevel(stored);
     levelRef.current = stored;
   }, []);
   /**
-   * WHAT THE SHRINK SAVED on the most recent pick — `null` when nothing was re-encoded, which is
-   * every pick containing no picture and every pick at level None. Held as the two totals rather
-   * than as a rendered sentence so the copy stays in the catalog.
+   * WHAT THE COMPRESSION SAVED on the most recent pick — `null` when nothing was re-encoded, which
+   * is every pick containing no picture and every pick at quality Original. Held as the two totals
+   * rather than as a rendered sentence so the copy stays in the catalog.
    */
-  const [shrunk, setShrunk] = useState<{ from: number; to: number } | null>(null);
+  const [compressed, setCompressed] = useState<{ from: number; to: number } | null>(null);
   /** Files a pick skipped because identical bytes under the same name are already in the list. */
   const [duplicates, setDuplicates] = useState<string[]>([]);
   /** The dial moved while files were attached — say what the change does NOT touch. */
@@ -282,7 +285,7 @@ export function ComposeAttach({
 
   const pick = useCallback(() => {
     setError(null);
-    setShrunk(null);
+    setCompressed(null);
     setDuplicates([]);
     inputRef.current?.click();
   }, []);
@@ -291,7 +294,7 @@ export function ComposeAttach({
     async (fileList: FileList | null) => {
       if (!fileList || fileList.length === 0) return;
       setError(null);
-      setShrunk(null);
+      setCompressed(null);
       setDuplicates([]);
       // THIS SURFACE'S DIAL, once per pick, off the ref — inside the handler because the level
       // must be the one on screen at the moment of the pick, not the one a stale closure holds.
@@ -307,7 +310,7 @@ export function ComposeAttach({
           // BEFORE THE CAP CHECK. The whole value of compressing on the client is that it changes
           // which files are admissible, and it cannot do that from behind the check that refuses
           // them. See the header note.
-          const picture = await shrinkImage(file, level);
+          const picture = await compressImage(file, level);
           if (running + picture.bytes > maxTotalBytes) {
             refused = true;
             continue;
@@ -329,7 +332,7 @@ export function ComposeAttach({
             contentBase64,
           });
           running += picture.bytes;
-          if (picture.shrunk) {
+          if (picture.compressed) {
             savedFrom += picture.originalBytes;
             savedTo += picture.bytes;
           }
@@ -343,7 +346,7 @@ export function ComposeAttach({
       // The totals of this pick, not of the list: the sentence explains what just happened to the
       // files being added, and for the single-picture case — which is nearly all of them — the two
       // numbers are that picture's own.
-      if (savedFrom > 0) setShrunk({ from: savedFrom, to: savedTo });
+      if (savedFrom > 0) setCompressed({ from: savedFrom, to: savedTo });
       if (skipped.length > 0) setDuplicates(skipped);
       onChange(next);
       // Clear the native input so re-picking the same file fires `change` again.
@@ -394,7 +397,7 @@ export function ComposeAttach({
       setError(null);
       // The note described a pick that no longer stands once one of its files is gone. Dropping it
       // is the honest move; recomputing it would mean claiming a saving for bytes still in the list.
-      setShrunk(null);
+      setCompressed(null);
       setDuplicates([]);
       const next = attachments.filter((_, i) => i !== index);
       // Nothing "already attached" is left for the scope note to be about.
@@ -435,17 +438,17 @@ export function ComposeAttach({
             they were admitted with, and moving the dial while any are attached says so in the
             note below. */}
         <label className="compose-attach-level" htmlFor={levelId}>
-          {t("attachLevelLabel")}
+          {t("attachQualityLabel")}
           <select
             id={levelId}
             value={level}
             disabled={disabled}
             onChange={(e) => {
               const next = e.target.value;
-              if (!isImageShrinkLevel(next) || next === level) return;
+              if (!isImageQualityLevel(next) || next === level) return;
               // Storage first, then the control — the Settings row's own pairing, so the next
               // pick (which reads the ref) and the next mount (which reads the store) agree.
-              writeImageShrinkLevel(next, owner.current);
+              writeImageQualityLevel(next, owner.current);
               levelRef.current = next;
               setLevel(next);
               if (attachments.length > 0) setScopeNote(true);
@@ -453,7 +456,7 @@ export function ComposeAttach({
           >
             {LEVEL_CHOICES.map((id) => (
               <option key={id} value={id}>
-                {ts(`imageShrinkLevel.${id}`)}
+                {ts(`imageQualityLevel.${id}`)}
               </option>
             ))}
           </select>
@@ -465,7 +468,7 @@ export function ComposeAttach({
           change happens with focus on the select — a visible-only sentence would be silent for
           exactly the person the silence misled. */}
       {scopeNote ? (
-        <p className="compose-attach-scope" role="status">{t("attachLevelScope")}</p>
+        <p className="compose-attach-scope" role="status">{t("attachQualityScope")}</p>
       ) : null}
 
       {attachments.length > 0 ? (
@@ -493,9 +496,9 @@ export function ComposeAttach({
           not the refusal's tinted panel: nothing went wrong, and a picture that got smaller is not
           news the way a file that was turned away is. No `role="alert"` for the same reason — this
           must not interrupt a screen reader mid-sentence; it is read when the region is reached. */}
-      {shrunk ? (
-        <p className="compose-attach-shrunk">
-          {t("attachShrunk", { from: formatSize(shrunk.from), to: formatSize(shrunk.to) })}
+      {compressed ? (
+        <p className="compose-attach-saved">
+          {t("attachCompressed", { from: formatSize(compressed.from), to: formatSize(compressed.to) })}
         </p>
       ) : null}
 

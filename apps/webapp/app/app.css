@@ -2134,14 +2134,14 @@ textarea.c-input:read-only {
    weight and colour of the cap text it sits under, so the block reads as one quiet caption rather
    than as two competing messages, and tabular figures keep the two sizes aligned when a second
    pick changes them. */
-.compose-attach-shrunk {
+.compose-attach-saved {
   margin: 8px 0 0;
   font-size: 11.5px;
   line-height: 1.55;
   color: var(--ink2);
   font-variant-numeric: tabular-nums;
 }
-/* The shrink dial's scope note and the duplicate-skip note: quiet captions in the shrunk note's
+/* The quality dial's scope note and the duplicate-skip note: quiet captions in the saved note's
    own register — nothing went wrong in either case, so neither may borrow the refusal's tinted
    panel. Two classes, one look, because they are different live regions with different copy. */
 .compose-attach-scope,
