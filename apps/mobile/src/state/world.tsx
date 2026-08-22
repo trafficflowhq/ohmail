@@ -40,6 +40,7 @@ import { Copy } from "../copy";
 import { useConnection } from "../net/connection";
 import * as Crypto from "expo-crypto";
 import {
+  flushQueued,
   liveActions,
   liveMessage,
   liveOhbox,
@@ -102,6 +103,13 @@ export interface World {
   /** The account's tags, for the message screen's tag sheet — the mirror's `tag` entities. */
   tags: WorldTag[];
   message(id: string): WorldMail | undefined;
+  /**
+   * WHAT BECAME OF A QUEUED SEND — how a locked composer settles. `pending` while the key
+   * still stands on the engine's queue; `confirmed`/`rolled_back` once a reconnect flush
+   * resolved it (the ledger below); `unknown` for a key this session never queued (or after
+   * a session swap — the queue is memory-only and died with its composer).
+   */
+  sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unknown";
   actions: WorldActions;
 }
 
@@ -147,8 +155,9 @@ const NO_ACTIONS: WorldActions = {
   markSeen: () => undefined,
   move: () => undefined,
   // The empty world cannot send; the composer treats `failed` as the refusal it is.
-  sendReply: () => Promise.resolve("failed" as const),
-  sendForward: () => Promise.resolve("failed" as const),
+  sendReply: () => Promise.resolve({ outcome: "failed" as const }),
+  sendForward: () => Promise.resolve({ outcome: "failed" as const }),
+  sendOutcome: () => "unknown",
   tagToggle: () => undefined,
   tagCreate: () => undefined,
   screenSender: () => undefined,
@@ -168,6 +177,7 @@ function emptyWorld(actions: WorldActions): World {
     pilesMeta: "",
     tags: [],
     message: () => undefined,
+    sendOutcome: () => "unknown",
     actions,
   };
 }
@@ -224,6 +234,57 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     [engine, showToast, zone],
   );
 
+  /*
+   * ── THE RECONNECT FLUSH ─────────────────────────────────────────────────────────────────
+   *
+   * A retryable rejection parks its mutation on the engine's queue under its
+   * Idempotency-Key, and `flushPending` had NO caller in this app — a queued intent (a send,
+   * a triage press taken offline) stood forever while its toast said "still trying". The
+   * proof the server is reachable again is a drain completing (`conn.syncing` falling with
+   * no error), so the queue flushes HERE, with the same keys — which is what makes the retry
+   * unable to double-deliver. It lives in the world layer, not the connection, because the
+   * two things a terminal outcome owes are both here: the TOAST (an intent that will never
+   * send must say so out loud) and the LEDGER a locked composer settles from.
+   */
+  const outcomes = useRef(new Map<string, "confirmed" | "rolled_back">());
+  const [outcomeSeq, setOutcomeSeq] = useState(0);
+  const flushing = useRef(false);
+  const outcomeOf = useCallback(
+    (key: string): "pending" | "confirmed" | "rolled_back" | "unknown" => {
+      const settled = outcomes.current.get(key);
+      if (settled) return settled;
+      const eng = backendEngineRef.current;
+      return eng && eng.pendingMutations().some((m) => m.key === key) ? "pending" : "unknown";
+    },
+    [],
+  );
+  /** The engine the flush and the ledger read — a ref, so `outcomeOf` has one identity. */
+  const backendEngineRef = useRef(engine);
+  backendEngineRef.current = engine;
+  useEffect(() => {
+    if (conn.syncing || engine === null || flushing.current) return;
+    if (engine.pendingMutations().length === 0) return;
+    flushing.current = true;
+    void flushQueued(engine)
+      .then((settled) => {
+        let failedSends = 0;
+        for (const [key, status] of settled) {
+          outcomes.current.set(key, status);
+          if (status === "rolled_back") failedSends += 1;
+        }
+        if (failedSends > 0) showToast(Copy.liveSaveFailed);
+        if (settled.size > 0) setOutcomeSeq((n) => n + 1);
+      })
+      .finally(() => {
+        flushing.current = false;
+      });
+    // `conn.syncing` falling is the drain-completed signal this effect keys on.
+  }, [conn.syncing, engine, showToast]);
+  // The outgoing session's ledger must not answer for the next session's keys.
+  useEffect(() => {
+    outcomes.current = new Map();
+  }, [sessionKey]);
+
   /* The CURRENT backend, refreshed per render; the stable facade delegates per call. */
   const backendRef = useRef<WorldActions>(NO_ACTIONS);
   backendRef.current =
@@ -250,6 +311,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           move: (id, dest) => void acts.move(id, dest),
           sendReply: (id, body, all) => acts.sendReply(id, body, all),
           sendForward: (id, to, body) => acts.sendForward(id, to, body),
+          sendOutcome: (key) => outcomeOf(key),
           tagToggle: (id, tag, assigned) => void acts.tagToggle(id, tag, assigned),
           tagCreate: (id, name) => void acts.tagCreate(id, name),
           screenSender: (id, dest, scope) => void acts.screenSender(id, dest, scope),
@@ -298,12 +360,15 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       // The RAW mirror, like the webapp's `reader.list<TagDTO>("tag")` — tags are not projected.
       tags: liveTags(engine.read()),
       message: (id) => liveMessage(engine, id, { now: new Date(), zone }),
+      sendOutcome: outcomeOf,
       actions,
     };
     // `version` IS the dependency that re-derives the world on every mirror change; the
-    // reader itself is stable across drains, so it cannot stand in for it.
+    // reader itself is stable across drains, so it cannot stand in for it — and `outcomeSeq`
+    // re-derives it when a reconnect flush settles a queued key, so a locked composer's
+    // settle effect fires without a mirror change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, session, scopes, zone, actions, version]);
+  }, [engine, session, scopes, zone, actions, version, outcomeSeq, outcomeOf]);
 
   return (
     <WorldContext.Provider value={world}>

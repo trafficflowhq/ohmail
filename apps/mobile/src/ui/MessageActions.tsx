@@ -351,7 +351,26 @@ function ComposeSheet({
    * what is true; closing discards only this screen's copy of text the queue already holds.
    */
   const [phase, setPhase] = useState<"idle" | "sending" | "queued">("idle");
+  /** The queued send's Idempotency-Key — what the settle effect follows through the ledger. */
+  const [queuedKey, setQueuedKey] = useState<string | null>(null);
   const forward = mode === "forward";
+
+  /**
+   * THE LOCKED COMPOSER SETTLES ITSELF. A queued send is retried by the world layer's
+   * reconnect flush; when the ledger answers for THIS key, the composer follows: confirmed
+   * closes it with the sent toast it was owed, a terminal rollback re-arms it (the queued
+   * copy is gone, so a fresh Send cannot double-deliver). `w` re-derives on every flush
+   * settle (`outcomeSeq`), which is what fires this without a mirror change.
+   */
+  useEffect(() => {
+    if (phase !== "queued" || queuedKey === null) return;
+    const settled = w.sendOutcome(queuedKey);
+    if (settled === "confirmed") onClose();
+    else if (settled === "rolled_back") {
+      setQueuedKey(null);
+      setPhase("idle");
+    }
+  }, [phase, queuedKey, w, onClose]);
   // EVERY typed entry must parse, or nothing sends. A filter that dropped the malformed
   // entry silently narrowed the audience — "alice@x, bob.x" sent to Alice alone with nobody
   // told — so an invalid entry LOCKS Send rather than shrinking the list. Entries split on
@@ -363,14 +382,19 @@ function ComposeSheet({
 
   const send = async () => {
     setPhase("sending");
-    const outcome = forward
+    const result = forward
       ? await w.actions.sendForward(m.id, recipients ?? [], body)
       : await w.actions.sendReply(m.id, body, mode === "replyAll");
-    if (outcome === "sent") {
+    if (result.outcome === "sent") {
       onClose();
       return;
     }
-    setPhase(outcome === "queued" ? "queued" : "idle");
+    if (result.outcome === "queued") {
+      setQueuedKey(result.key ?? null);
+      setPhase("queued");
+      return;
+    }
+    setPhase("idle");
   };
 
   return (
@@ -416,6 +440,7 @@ function ComposeSheet({
               <TextInput
                 value={to}
                 onChangeText={setTo}
+                editable={phase !== "queued"}
                 placeholder={Copy.forwardToPlaceholder}
                 placeholderTextColor={t.c.ink3}
                 autoCapitalize="none"
@@ -435,9 +460,12 @@ function ComposeSheet({
               />
             </View>
           ) : null}
+          {/* Frozen while queued: the queue holds the SUBMITTED text under its key, and an
+              editable field above "still trying" would display words the retry will not send. */}
           <TextInput
             value={body}
             onChangeText={setBody}
+            editable={phase !== "queued"}
             placeholder={forward ? Copy.forwardNotePlaceholder : Copy.replyPlaceholder}
             placeholderTextColor={t.c.ink3}
             multiline

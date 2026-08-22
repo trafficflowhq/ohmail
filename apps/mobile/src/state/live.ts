@@ -633,9 +633,23 @@ function watched(p: Promise<MutationResult>): Promise<boolean> {
  * hold it — the screens stay logic-free (this module's own charter).
  */
 export function parseRecipients(typed: string): { name: string | null; address: string }[] | null {
-  const entries = typed.split(/[,;]+/).map((e) => e.trim()).filter((e) => e !== "");
+  // Quote-aware split: `"Doe, Alice" <alice@x.org>` is ONE entry — a comma inside double
+  // quotes is part of the display name, not a delimiter. A naive split refused exactly the
+  // shape address books paste.
+  const entries: string[] = [];
+  let held = "";
+  let quoted = false;
+  for (const ch of typed) {
+    if (ch === '"') quoted = !quoted;
+    if ((ch === "," || ch === ";") && !quoted) {
+      entries.push(held);
+      held = "";
+    } else held = held + ch;
+  }
+  entries.push(held);
+  const trimmed = entries.map((e) => e.trim()).filter((e) => e !== "");
   const out: { name: string | null; address: string }[] = [];
-  for (const entry of entries) {
+  for (const entry of trimmed) {
     const angled = /^(.*)<([^<>\s]+@[^<>\s]+\.[^<>\s]+)>$/.exec(entry);
     if (angled) {
       const name = angled[1]!.trim().replace(/^"(.*)"$/, "$1");
@@ -657,6 +671,32 @@ export function parseRecipients(typed: string): { name: string | null; address: 
  * stands on the engine's queue under its key, and a second Send would be a second key.
  */
 export type SendOutcome = "sent" | "queued" | "failed";
+
+/**
+ * A send's result: the outcome, plus — for `queued` alone — the Idempotency-Key the queued
+ * mutation stands under, so the composer can follow ITS OWN send through later flushes
+ * ({@link flushQueued}'s ledger) and settle when the background retry lands or dies.
+ */
+export interface SendResult {
+  outcome: SendOutcome;
+  key?: string;
+}
+
+/**
+ * DRAIN THE RETRY QUEUE, remembering what became of each intent — the reconnect path's one
+ * flush, called by the world layer after every successful sync. Terminal outcomes land in
+ * the returned map (key → status) so a composer holding a queued key can settle, and the
+ * caller can say the one visible sentence for an intent that will never send. Failures that
+ * are still retryable re-queue inside the engine and simply stay pending.
+ */
+export async function flushQueued(engine: OhmailEngine): Promise<Map<string, "confirmed" | "rolled_back">> {
+  const outcomes = new Map<string, "confirmed" | "rolled_back">();
+  const results = await engine.flushPending().catch(() => []);
+  for (const r of results) {
+    if (r.status === "confirmed" || r.status === "rolled_back") outcomes.set(r.key, r.status);
+  }
+  return outcomes;
+}
 
 export interface LiveDeps {
   engine: OhmailEngine;
@@ -712,9 +752,9 @@ export interface LiveWorldActions {
   /** Move THIS message to a view — `POST /messages/:id/move`, the same verb every list uses. */
   move(messageId: string, dest: MoveTarget): Promise<boolean>;
   /** Reply (or reply all) — `mail_send` with `inReplyTo`; the engine derives the envelope. */
-  sendReply(messageId: string, body: string, all: boolean): Promise<SendOutcome>;
+  sendReply(messageId: string, body: string, all: boolean): Promise<SendResult>;
   /** Forward — `mail_send` with `forwardOf`, recipients the USER typed, the user's note as body. */
-  sendForward(messageId: string, to: EmailAddress[], body: string): Promise<SendOutcome>;
+  sendForward(messageId: string, to: EmailAddress[], body: string): Promise<SendResult>;
   /** Put a tag on / take it off — `tag_assign`. */
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean>;
   /** Tag-or-create: a name that does not exist yet, minted and put on this message in one act. */
@@ -1085,21 +1125,28 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * locked Send is what keeps a fresh-key duplicate impossible while the reconnect flush
    * (`connection.tsx`'s drain) keeps retrying the original.
    */
-  const sent = async (p: Promise<MutationResult>, sentToast: string): Promise<SendOutcome> => {
-    let status = await p.then((r) => r.status, () => "rolled_back" as const);
-    if (status === "queued") {
+  const sent = async (p: Promise<MutationResult>, sentToast: string): Promise<SendResult> => {
+    const first = await p.then((r) => r, () => null);
+    let status = first?.status ?? ("rolled_back" as const);
+    if (first && status === "queued") {
+      // The flush replays the WHOLE queue; only THIS send's own result — matched by the
+      // Idempotency-Key the first dispatch minted — may settle this send. An unrelated
+      // mutation confirming is not this message delivering.
       const flushed = await engine.flushPending().catch(() => []);
-      if (flushed.some((r) => r.status === "confirmed")) status = "confirmed";
-      else if (flushed.length > 0 && flushed.every((r) => r.status === "rolled_back")) status = "rolled_back";
+      const mine = flushed.find((r) => r.key === first.key);
+      if (mine) status = mine.status;
     }
     toast(status === "confirmed" ? sentToast : status === "queued" ? Copy.replyQueued : Copy.replyFailed);
-    return status === "confirmed" ? "sent" : status === "queued" ? "queued" : "failed";
+    return {
+      outcome: status === "confirmed" ? "sent" : status === "queued" ? "queued" : "failed",
+      ...(status === "queued" && first ? { key: first.key } : {}),
+    };
   };
 
-  const sendReply = async (messageId: string, body: string, all: boolean): Promise<SendOutcome> => {
+  const sendReply = async (messageId: string, body: string, all: boolean): Promise<SendResult> => {
     const m = messageOf(messageId);
     const text = body.trim();
-    if (!m || text === "") return "failed";
+    if (!m || text === "") return { outcome: "failed" };
     // A plain reply leaves the envelope to `Engine.enrich` (to = the sender, the parent's
     // mailbox, thread and subject); reply-all carries the SAME envelope the sheet offered.
     const env = all ? replyAllRecipients(m, NO_OWN_ADDRESSES) : null;
@@ -1114,11 +1161,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     );
   };
 
-  const sendForward = async (messageId: string, to: EmailAddress[], body: string): Promise<SendOutcome> => {
+  const sendForward = async (messageId: string, to: EmailAddress[], body: string): Promise<SendResult> => {
     const m = messageOf(messageId);
     // The `no_forward` refusal is client-side courtesy AND server-side law — the sheet never
     // offers the verb on such a message, and this arm refuses it too rather than trusting the UI.
-    if (!m || to.length === 0 || m.sensitivity?.no_forward) return "failed";
+    if (!m || to.length === 0 || m.sensitivity?.no_forward) return { outcome: "failed" };
     return sent(
       engine.mutate({
         kind: "mail_send",
@@ -1273,9 +1320,11 @@ export interface WorldActions {
   resurfaceDone(messageId: string): void;
   markSeen(messageId: string, unread: boolean): void;
   move(messageId: string, dest: MoveTarget): void;
-  /** Resolves to the send's outcome: `sent` closes, `failed` re-arms, `queued` locks the composer. */
-  sendReply(messageId: string, body: string, all: boolean): Promise<SendOutcome>;
-  sendForward(messageId: string, to: EmailAddress[], body: string): Promise<SendOutcome>;
+  /** Resolves to the send's result: `sent` closes, `failed` re-arms, `queued` locks the composer. */
+  sendReply(messageId: string, body: string, all: boolean): Promise<SendResult>;
+  sendForward(messageId: string, to: EmailAddress[], body: string): Promise<SendResult>;
+  /** What became of a queued send's key — how a locked composer settles. See `World.sendOutcome`. */
+  sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
   tagCreate(messageId: string, name: string): void;
   screenSender(messageId: string, dest: Destination, scope: Scope): void;
@@ -1314,6 +1363,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     move: (id, dest) => void current().move(id, dest),
     sendReply: (id, body, all) => current().sendReply(id, body, all),
     sendForward: (id, to, body) => current().sendForward(id, to, body),
+    sendOutcome: (key) => current().sendOutcome(key),
     tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),
     tagCreate: (id, name) => void current().tagCreate(id, name),
     screenSender: (id, dest, scope) => void current().screenSender(id, dest, scope),
