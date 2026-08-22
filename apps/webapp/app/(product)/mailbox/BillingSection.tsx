@@ -46,7 +46,7 @@ import {
   type TwofaChallenge,
 } from "../../api-client";
 import { aiCreditMessageKey, aiCreditState } from "./ai-credit-state";
-import { formatStorageBytes, storageState, estimatedEmails } from "./storage-state";
+import { formatEmailCount, formatStorageBytes, storageFigures, storageState } from "../../shell/storage-state";
 
 type Plan = "solo" | "plus" | "pro";
 type Factor = "webauthn" | "totp" | "recovery_code";
@@ -320,7 +320,11 @@ export function BillingSection() {
   const creditNote = creditState
     ? (creditState.kind === "trial_credits" ? "trialSub" : aiCreditMessageKey(creditState))
     : null;
-  /** The storage derivation, pure over the same DTO — `storage-state.ts` carries the argument. */
+  /** The storage derivation, pure over the same DTO — `storage-state.ts` carries the argument.
+      TWO questions, and the module answers both: `storageFigures` is whether there is a row at
+      all, `storageState` is whether the last tenth has something to say about it. The desktop's
+      subscription pane reads the same two. */
+  const storFigures = storageFigures(sub);
   const storState = storageState(sub);
 
   return (
@@ -382,20 +386,20 @@ export function BillingSection() {
               and "0 GB of 0 GB" would be a broken claim). The sublabel is scoped to message
               CONTENT deliberately: the mailbox on the user's own server is never counted, and
               a row that just said "Storage" would read as a claim about their mail itself. */}
-          {storState || (typeof sub?.storageUsedBytes === "number" && typeof ent?.storageBytesLimit === "number" && ent.storageBytesLimit > 0) ? (
+          {storFigures ? (
             <SettingsRow
               label={t("storage")}
               description={
                 `${storState
                   ? t(storState.kind === "at_cap" ? "storageFull" : "storageNear")
                   : t("storageSub")} ${t("storageEmails", {
-                  used: estimatedEmails(sub!.storageUsedBytes!).toLocaleString("en-US"),
-                  cap: estimatedEmails(ent!.storageBytesLimit!).toLocaleString("en-US"),
+                  used: formatEmailCount(storFigures.usedBytes),
+                  cap: formatEmailCount(storFigures.capBytes),
                 })}`
               }
               value={t("storageOf", {
-                used: formatStorageBytes(sub!.storageUsedBytes!),
-                cap: formatStorageBytes(ent!.storageBytesLimit!),
+                used: formatStorageBytes(storFigures.usedBytes),
+                cap: formatStorageBytes(storFigures.capBytes),
               })}
             />
           ) : null}

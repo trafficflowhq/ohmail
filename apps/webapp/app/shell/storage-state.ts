@@ -1,9 +1,23 @@
-import type { SubscriptionStatus } from "../../api-client";
+import type { SubscriptionStatus } from "../api-client";
 
 /**
  * WHAT TO SAY ABOUT STORAGE — one derivation, `ai-credit-state.ts`'s shape for the same reason:
  * the settings row and any surface that warns must not be able to disagree, and a pure function
  * over `GET /billing/subscription` is the whole of what a test needs.
+ *
+ * ── WHY IT LIVES IN THE SHARED SHELL AND NOT BESIDE THE PANE THAT FIRST READ IT ─────────────
+ *
+ * TWO clients render a storage row over the same account row: the browser tab's billing pane
+ * (`(product)/mailbox/BillingSection.tsx`) and the desktop app's subscription pane
+ * (`apps/desktop/src/DesktopBilling.tsx`), which relays the same `GET /billing/subscription`
+ * through its shell bridge. `shell/` is the directory both of them compile — imports run
+ * `(product)` → `shell`, never back — so this is the only place a definition can sit without
+ * one client either importing a route group it is not part of or keeping a second copy.
+ *
+ * A second copy is the failure mode worth naming: the two panes would then hold two thresholds
+ * and two byte formatters, and the first thing to drift would be the number a person compares
+ * between a browser tab and the app on their desk. There is one threshold, one formatter and
+ * one estimate here, and both panes read them.
  *
  * The states are deliberately few. Below ninety percent there is nothing worth saying — the row
  * shows the numbers and stops. `near_cap` exists so the first a person hears of the cap is not
@@ -29,11 +43,35 @@ export type StorageState =
 /** The approaching-cap threshold: at or past nine tenths of the cap, say so. */
 export const STORAGE_NEAR_CAP_RATIO = 0.9;
 
-export function storageState(status: SubscriptionStatus | null): StorageState {
+/** The two numbers a storage row is made of, once both are known to be knowable. */
+export type StorageFigures = { usedBytes: number; capBytes: number };
+
+/**
+ * IS THERE A STORAGE ROW AT ALL — the presence rule, exported because two panes ask it.
+ *
+ * {@link storageState} answers "what is worth SAYING", and below ninety percent that is
+ * deliberately nothing. A pane that keyed its row on `storageState` alone would therefore show
+ * storage only to accounts nearly out of it, which is the wrong way round: the numbers are the
+ * row, and the sentence is what the last tenth adds. So presence and sentence are two questions
+ * and this is the first of them.
+ *
+ * Both panes used to spell the same three type guards out at the point of render. Two spellings
+ * of one rule is the drift this module exists to prevent — and one of them had already grown a
+ * redundant `storageState(...) ||` disjunct in front of it, which read as though the sentence
+ * could appear without the numbers. It cannot: a non-null {@link storageState} implies this.
+ */
+export function storageFigures(status: SubscriptionStatus | null): StorageFigures | null {
   if (!status) return null;
   const usedBytes = status.storageUsedBytes;
   const capBytes = status.entitlements.storageBytesLimit;
   if (typeof usedBytes !== "number" || typeof capBytes !== "number" || capBytes <= 0) return null;
+  return { usedBytes, capBytes };
+}
+
+export function storageState(status: SubscriptionStatus | null): StorageState {
+  const figures = storageFigures(status);
+  if (!figures) return null;
+  const { usedBytes, capBytes } = figures;
   if (usedBytes >= capBytes) return { kind: "at_cap", usedBytes, capBytes };
   if (usedBytes >= capBytes * STORAGE_NEAR_CAP_RATIO) return { kind: "near_cap", usedBytes, capBytes };
   return null;
@@ -72,4 +110,17 @@ export const BYTES_PER_STORED_EMAIL_ESTIMATE = 25_000;
 /** Bytes → the advertised email count, floored — every step moves the number DOWN. */
 export function estimatedEmails(bytes: number): number {
   return Math.floor(bytes / BYTES_PER_STORED_EMAIL_ESTIMATE);
+}
+
+/**
+ * The email count as a row renders it: grouped for the reader in front of it.
+ *
+ * NO LOCALE ARGUMENT, deliberately — the same convention as the dates in both billing panes
+ * (`toLocaleDateString()`, no argument). It replaces a hardcoded `"en-US"`, which grouped
+ * "200,000" into a German settings pane whose neighbouring row rendered "22.8.2026": one card,
+ * two number conventions, and only one of them the reader's. A grouped count is the only thing
+ * this adds over {@link estimatedEmails}, so the arithmetic still has exactly one definition.
+ */
+export function formatEmailCount(bytes: number): string {
+  return estimatedEmails(bytes).toLocaleString();
 }

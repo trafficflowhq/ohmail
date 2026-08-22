@@ -32,6 +32,30 @@
  * and this door has a third that a browser tab does not — an install that is simply OFFLINE,
  * whose engine answers `503` before it forwards anything. That is a plan that exists and cannot
  * be reached right now, which is not the same sentence as either of the others.
+ *
+ * ── THE STORAGE ROW, AND WHY THE DERIVATION IS IMPORTED RATHER THAN WRITTEN ──────────────────
+ *
+ * The hosted tier stores message bodies so a browser tab and this account's other devices can
+ * read mail without reaching the mail server themselves, and that store has a per-account byte
+ * cap. This row is the account's own two numbers against it — in BOTH forms, because they answer
+ * different questions: bytes are the figure the cap is actually enforced in, and an email count
+ * is the figure a person can picture. Neither is a substitute for the other, so both are shown.
+ *
+ * `storageFigures`, `storageState`, `formatStorageBytes` and `formatEmailCount` come from
+ * `apps/webapp/app/shell/storage-state.ts` — the same four the browser tab's billing pane calls,
+ * over the same `GET /billing/subscription` fields. Nothing about storage is computed here: the
+ * threshold, the byte formatter and the bytes-per-email estimate all have exactly one definition
+ * in the tree, and a person comparing this window against a browser tab on the same account is
+ * comparing one derivation with itself. A copy of the arithmetic would be a second thing to keep
+ * true, and the number it would eventually get wrong is one somebody paid for.
+ *
+ * WHAT THE COPY IS CAREFUL ABOUT. The cap counts stored message BODY text, and nothing else:
+ * attachment bytes are never stored server-side at all, so they can never count against it, and
+ * the mailbox on the account's own server is not a hosted copy and is never counted either. At
+ * the cap the store is a rolling window — the oldest stored copies make room and mail keeps
+ * arriving and keeps being organized — so the sentence must not read as a threat to mail that
+ * already exists, because nothing is deleted from the mailbox. The catalogue strings say all of
+ * that; this note is here so a future edit to them knows which parts are load-bearing.
  */
 
 import { useEffect, useState } from "react";
@@ -41,6 +65,12 @@ import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead, Sw
 import { bridgeFetch } from "./bridge-fetch.js";
 import { openWeb } from "./native.js";
 import type { SubscriptionStatus } from "../../webapp/app/api-client";
+import {
+  formatEmailCount,
+  formatStorageBytes,
+  storageFigures,
+  storageState,
+} from "../../webapp/app/shell/storage-state";
 
 /**
  * The hosted routes this pane addresses, root-relative like every path in this window.
@@ -169,6 +199,13 @@ export function DesktopBilling() {
      turned off exactly like one that is off because the plan does not include it — and only the
      second has a remedy. The web pane draws them as two for the same reason. */
   const planAllowsAi = sub?.entitlements.aiEnabled ?? false;
+  /* TWO QUESTIONS, both answered by the shared module and neither by this file. `storageFigures`
+     is whether there is a row at all — an older server sends neither number and a zero cap is
+     the suspended-account shape, and in both cases the honest row is no row rather than "0 of 0".
+     `storageState` is what the last tenth adds: below ninety percent the numbers say everything
+     worth saying, so the sublabel stays the plain description. */
+  const storFigures = storageFigures(sub);
+  const storState = storageState(sub);
   const row = sub?.subscription ?? null;
   const planLine = row
     ? `${PLAN_NAME[row.plan] ?? row.plan} · ${isKnownStatus(row.status) ? ts(`webStatus_${row.status}` as never) : row.status}`
@@ -206,6 +243,38 @@ export function DesktopBilling() {
             description={ts("webBudgetSub")}
             value={String(sub.balance)}
           />
+          {/* THE SETUP POOL — the screening-only credits each connected mailbox brings, spent
+              before the budget above. Rendered only while something remains, exactly as in the
+              browser tab: a row reading "0" would demand an explanation of a pool most accounts
+              have already drained. It is an ordinary field of the same read, so withholding it
+              here was a lag rather than a decision. */}
+          {sub.setupCredits && sub.setupCredits.remaining > 0 ? (
+            <SettingsRow
+              label={ts("webSetupCredits")}
+              description={ts("webSetupCreditsSub", { when: when(sub.setupCredits.expiresAt) })}
+              value={String(sub.setupCredits.remaining)}
+            />
+          ) : null}
+          {/* STORAGE — the numbers, in both forms, and from ninety percent the sentence too.
+              Same shape as the browser tab's row and the same four functions behind it; see the
+              header for why none of the arithmetic is written out here. */}
+          {storFigures ? (
+            <SettingsRow
+              label={ts("webStorage")}
+              description={`${
+                storState
+                  ? ts(storState.kind === "at_cap" ? "webStorageFull" : "webStorageNear")
+                  : ts("webStorageSub")
+              } ${ts("webStorageEmails", {
+                used: formatEmailCount(storFigures.usedBytes),
+                cap: formatEmailCount(storFigures.capBytes),
+              })}`}
+              value={ts("webStorageOf", {
+                used: formatStorageBytes(storFigures.usedBytes),
+                cap: formatStorageBytes(storFigures.capBytes),
+              })}
+            />
+          ) : null}
 
           <SettingsSubhead>{ts("webAiTitle")}</SettingsSubhead>
           <SettingsRow
