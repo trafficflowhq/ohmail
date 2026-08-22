@@ -1,13 +1,14 @@
 import { and, eq, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import {
-  alertState, billingEvents, mailboxes, outboundSends, workerHeartbeats,
+  alertState, billingEvents, billingReconciliationRuns, mailboxes, outboundSends,
+  workerHeartbeats,
 } from "./schema.js";
 import { accountsWithSyncDisabled } from "./billing.js";
 import { accountsAtStorageCap } from "./storage-cloud.js";
 import type { Tx } from "./change-log.js";
 
 /**
- * THE ALERTS. Four rules, one evaluator, one delivery pass.
+ * THE ALERTS. Seven rules, one evaluator, one delivery pass.
  *
  * ## The failure this file exists to prevent
  *
@@ -54,7 +55,7 @@ import type { Tx } from "./change-log.js";
  * by any success. And a refusal now has to SAY WHY — {@link AlertDeliveryResult} — because the
  * reason a sink refuses was, for the whole of that outage, information nobody had.
  *
- * ## Two drivers, because one of the four rules is about the driver
+ * ## Two drivers, because one of the rules is about the driver
  *
  * The worker runs the pass every minute. It cannot report its own death, so the API host
  * runs the SAME pass from `GET /internal/alerts`, driven by a scheduler that lives on
@@ -67,7 +68,7 @@ import type { Tx } from "./change-log.js";
    The rules, and the numbers the arch doc fixed
    ════════════════════════════════════════════════════════════════════════════════════════ */
 
-/** The five conditions. Stable strings — they are the alert identity in `alert_state`. */
+/** The seven conditions. Stable strings — they are the alert identity in `alert_state`. */
 export type AlertKind =
   /** No leader heartbeat for a shard within the threshold: nothing is syncing. */
   | "worker_down"
@@ -89,7 +90,20 @@ export type AlertKind =
    * backfill mints day-one at-cap accounts), and the two-driver design already survives the
    * worker being down.
    */
-  | "storage_at_cap";
+  | "storage_at_cap"
+  /**
+   * The latest billing-reconciliation pass found the mirror diverged from Stripe — events were
+   * re-emitted (a webhook was lost: healed, but the loss itself is the news) or rows were
+   * flagged unreconcilable. The named test rows (`test_row`) are excluded: production holds
+   * one by design and paging about design is how a pager gets filtered.
+   */
+  | "billing_reconciliation_divergence"
+  /**
+   * No COMPLETED apply-mode reconciliation pass inside the threshold, on a deployment where
+   * one has ever run. The reconciler exists to remove a silence; the rule exists so the
+   * reconciler cannot itself go silent. Failed runs (error non-null) do not reset the clock.
+   */
+  | "billing_reconciliation_stale";
 
 export type AlertSeverity = "critical" | "warning";
 
@@ -107,12 +121,19 @@ export interface AlertThresholds {
   stuckSendMs: number;
   /** An on-duty mailbox not synced within this is lagging. Arch doc: 15 minutes. */
   syncLagMs: number;
+  /**
+   * No completed apply-mode reconciliation run within this ⇒ the reconciler is dark. Six
+   * hours against an hourly cron: five missed runs before a page, so one platform hiccup is
+   * not a 3am mail, while a genuinely dead cron pages the same day it died.
+   */
+  reconcileStaleMs: number;
 }
 
 export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   leaderStaleMs: 2 * 60 * 1000,
   stuckSendMs: 10 * 60 * 1000,
   syncLagMs: 15 * 60 * 1000,
+  reconcileStaleMs: 6 * 60 * 60 * 1000,
 };
 
 /**
@@ -413,6 +434,131 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       count: atCapOnDuty.length,
       oldestSeconds: null,
     });
+  }
+
+  // ── 6. the billing mirror diverged from Stripe (reconciliation) ────────────────────────
+  //
+  // Reads the NEWEST completed `billing_reconciliation_runs` row, either mode: a dry run that
+  // saw divergence is the same fact about the mirror as an armed run that healed it. Two
+  // things matter to a human:
+  //  · `emitted > 0` — webhooks were LOST. The heal already ran (or is queued, on a dry run),
+  //    so the page is about the pipeline, not the data: something dropped a delivery, and the
+  //    next drop might be an invoice. WARNING while everything applied cleanly.
+  //  · flags (minus `test_row`) or failed applies — divergence the pass could NOT close:
+  //    an unattributable live subscription, a mirror row Stripe does not hold, an apply that
+  //    failed. CRITICAL: money state needs a person.
+  // The alert RESOLVES through the same read: the next converged pass writes emitted=0 with no
+  // flags, this rule stops firing, and `runAlertPass` closes the alert_state row.
+  const lastRun = await db
+    .select({
+      ranAt: billingReconciliationRuns.ranAt,
+      mode: billingReconciliationRuns.mode,
+      emitted: billingReconciliationRuns.emitted,
+      applyFailed: billingReconciliationRuns.applyFailed,
+      flagged: billingReconciliationRuns.flagged,
+      truncated: billingReconciliationRuns.truncated,
+    })
+    .from(billingReconciliationRuns)
+    .where(sql`${billingReconciliationRuns.error} is null`)
+    .orderBy(sql`${billingReconciliationRuns.ranAt} desc`)
+    .limit(1);
+  const run = lastRun[0];
+  // THE DURABLE HALF OF THE EVIDENCE: a heal that LANDED is a
+  // `billing_events` claim of the reconciliation's own type, and it survives a pass that died
+  // between applying and recording its run row — the exact sequence in which the run ledger
+  // alone would report a converged mirror and never page the lost webhook. Recent claims are
+  // therefore an independent trigger, windowed at 24 h so the operator has a day to see it and
+  // it self-resolves after.
+  const healWindow = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const recentHeals = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(billingEvents)
+    .where(sql`${billingEvents.type} = 'reconciliation.subscription'
+      and ${billingEvents.receivedAt} > ${healWindow.toISOString()}::timestamptz`);
+  const healCount = Number(recentHeals[0]?.n ?? 0);
+  if (run || healCount > 0) {
+    const flagged = (run?.flagged ?? {}) as Record<string, number>;
+    // `test_row` (a standing test account) and `comp_row` (operator comps) are DESIGN, present on
+    // every pass by construction — excluded here so the pager never learns to be filtered.
+    // They stay visible in every run row and every dry-run read.
+    const flaggedReal = Object.entries(flagged)
+      .filter(([code]) => code !== "test_row" && code !== "comp_row");
+    const flaggedCount = flaggedReal.reduce((n, [, c]) => n + Number(c), 0);
+    const unhealed = flaggedCount + (run?.applyFailed ?? 0);
+    const emitted = run?.emitted ?? 0;
+    // `truncated` fires too: a bound that stops every pass at
+    // the same prefix leaves the tail permanently unread, and a clean prefix must not read as
+    // a clean population.
+    if (emitted > 0 || unhealed > 0 || healCount > 0 || run?.truncated === true) {
+      const ranSeconds = run ? secondsBetween(now, run.ranAt) : null;
+      alerts.push({
+        key: "billing_reconciliation_divergence",
+        kind: "billing_reconciliation_divergence",
+        severity: unhealed > 0 ? "critical" : "warning",
+        title: `Billing reconciliation: ${Math.max(emitted + flaggedCount, healCount)} divergence(s) between Stripe and the mirror`,
+        detail:
+          (run
+            ? `The latest reconciliation pass (${run.mode}, ${humanAge(ranSeconds)} ago) ` +
+              `${run.mode === "apply" ? "re-emitted" : "would re-emit"} ${emitted} subscription ` +
+              `event(s) the webhook pipeline lost` +
+              ((run.applyFailed ?? 0) > 0 ? `, of which ${run.applyFailed} FAILED to apply (see billing_events)` : "") +
+              (flaggedCount > 0
+                ? `, and flagged ${flaggedCount} row(s) it cannot reconcile: ` +
+                  flaggedReal.map(([code, c]) => `${code}×${c}`).join(", ")
+                : "") + "."
+            : "No completed reconciliation run is recorded, yet reconciliation events applied — " +
+              "a pass died between healing and recording.") +
+          (healCount > 0 ? ` ${healCount} reconciliation event(s) applied in the last 24 h.` : "") +
+          (run?.truncated === true
+            ? " The pass was TRUNCATED at its bound — part of the population went UNREAD and" +
+              " absence checks were skipped; raise the bound or shrink the population."
+            : "") +
+          " A lost webhook heals here, but the loss is the incident: check the relay and the plane.",
+        count: Math.max(emitted + flaggedCount, healCount, 1),
+        oldestSeconds: ranSeconds,
+      });
+    }
+  }
+
+  // ── 7. the reconciler itself went dark ─────────────────────────────────────────────────
+  //
+  // Fires only on a deployment where an APPLY-mode pass has ever completed (a self-hosted
+  // deployment that never armed the cron stays silent — same contract as `worker_down`, which
+  // needs `shards` to say what to expect). Failed runs are excluded on purpose: a reconciler
+  // that fails every pass is exactly as dark as one that stopped, and a failure row that reset
+  // the clock would page NEVER, which is the quiet branch this whole slice exists to remove.
+  const lastApply = await db
+    .select({ ranAt: billingReconciliationRuns.ranAt })
+    .from(billingReconciliationRuns)
+    .where(sql`${billingReconciliationRuns.mode} = 'apply' and ${billingReconciliationRuns.error} is null`)
+    .orderBy(sql`${billingReconciliationRuns.ranAt} desc`)
+    .limit(1);
+  const anyApply = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(billingReconciliationRuns)
+    .where(sql`${billingReconciliationRuns.mode} = 'apply'`);
+  const applyEver = Number(anyApply[0]?.n ?? 0) > 0;
+  if (applyEver) {
+    const freshest = lastApply[0]?.ranAt ?? null;
+    const staleSeconds = freshest ? secondsBetween(now, freshest) : null;
+    const dark = staleSeconds === null || staleSeconds * 1000 > t.reconcileStaleMs;
+    if (dark) {
+      alerts.push({
+        key: "billing_reconciliation_stale",
+        kind: "billing_reconciliation_stale",
+        severity: "warning",
+        title: "The billing reconciliation has stopped running",
+        detail:
+          (staleSeconds === null
+            ? "Apply-mode reconciliation runs exist but none ever completed. "
+            : `The last completed apply-mode reconciliation pass was ${humanAge(staleSeconds)} ago ` +
+              `(threshold ${humanAge(Math.round(t.reconcileStaleMs / 1000))}). `) +
+          "A lost Stripe webhook now stays unhealed until this is fixed — check the " +
+          "/internal/billing/reconcile cron and the billing plane.",
+        count: 1,
+        oldestSeconds: staleSeconds,
+      });
+    }
   }
 
   return alerts;

@@ -213,6 +213,14 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   "public.billing_events": [
     "stripe_event_id", "type", "account_id", "event_ts", "received_at", "error", "status",
   ],
+  // The reconciliation run ledger (cloud 0023): counts, a mode word, a CLOSED code→count map
+  // and a class:code-scrubbed error — the two reconciliation alert rules read it on this role.
+  // Minus `divergences`, which carries Stripe subscription ids and account ids the alert does
+  // not need; the counts are complete without it.
+  "public.billing_reconciliation_runs": [
+    "id", "ran_at", "mode", "stripe_subscriptions", "mirror_rows", "emitted", "apply_failed",
+    "flagged", "pages", "truncated", "error",
+  ],
   // ── FUNNEL TOP — invite/waitlist DATES ONLY, so the admin console can see the signup funnel
   //    on an invite-only beta (task: admin funnel). Both tables were fully un-granted before,
   //    and the ONLY reason they are named now is that their whole point — how many invites are

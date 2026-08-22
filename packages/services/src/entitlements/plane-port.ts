@@ -1,4 +1,6 @@
-import type { EntitlementAddon, EntitlementEvent, EntitlementPlan } from "./entitlement-event.js";
+import type {
+  EntitlementAddon, EntitlementEvent, EntitlementPlan, ReconcilePageDTO,
+} from "./entitlement-event.js";
 
 /**
  * `BillingPlanePort`: how the open server reaches the Stripe machinery, and the ONLY way
@@ -99,4 +101,14 @@ export interface BillingPlanePort {
    * @returns the in-band verdict — see {@link WebhookVerdict} for the 400/503 contract.
    */
   verifyWebhook(rawBody: Uint8Array, signature: string | null): Promise<WebhookVerdict>;
+
+  /**
+   * THE RECONCILIATION READ — one page of the plane's Stripe subscription list
+   * (`status: "all"`), each subscription translated into the `subscription`-kind event the
+   * missed webhook would have carried. The plane decides nothing; the comparison against the
+   * mirror and the apply both live HERE, open-side (`entitlements/reconcile.ts`), which is what
+   * keeps the extraction ruling's boundary: no plane→open callback, no second write path.
+   * Throws on any plane/Stripe failure — the pass records a failed run, never a converged one.
+   */
+  reconcileSubscriptions(req: { cursor: string | null; limit: number }): Promise<ReconcilePageDTO>;
 }

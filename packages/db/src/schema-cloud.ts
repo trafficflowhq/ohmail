@@ -1,5 +1,5 @@
 /**
- * THE CLOUD-ONLY SCHEMA — the 26 tables the hosted service adds, and the half that never ships.
+ * THE CLOUD-ONLY SCHEMA — the 27 tables the hosted service adds, and the half that never ships.
  *
  * The identity ceremony (password hashes, WebAuthn, TOTP, recovery codes; the refresh-token
  * store itself moved to the mail half in 0060 — paired devices rotate against the store that
@@ -470,6 +470,47 @@ export const alertState = pgTable("alert_state", {
   notifyCount: integer("notify_count").notNull().default(0),
   detail: text("detail"),
 }, (t) => ({ ixLastSeen: index("alert_state_last_seen_idx").on(t.lastSeenAt) }));
+
+/**
+ * ONE ROW PER BILLING-RECONCILIATION PASS (cloud 0023) — the run ledger of the scheduled
+ * mirror-vs-Stripe comparison (`packages/services/src/entitlements/reconcile.ts`).
+ *
+ * Why a table and not a log line: the two alerts built on it are DB-evaluated
+ * (`evaluateAlerts`), and both are about ABSENCE — a pass that found divergence, and a pass
+ * that stopped happening. A log line can say a pass ran; only a row can page when none did.
+ * The founding failure is a lost Stripe webhook leaving a no-card trial mirrored as
+ * full-featured forever, with every test green — the reconciler heals it, and this table is
+ * how a human hears that a heal was ever needed (a heal needed = a webhook was lost = the
+ * pipeline needs looking at).
+ *
+ * CONTENT RULES, because `ohmail_admin` is granted SELECT on most columns: `flagged` is a
+ * closed code→count map (`ReconcileCode` — the write site's exported vocabulary) and `error`
+ * is class:code scrubbed, NEVER message text — the same scrubbing rule as
+ * `billing_events.error`. `divergences` (codes + Stripe/account ids, bounded) is deliberately
+ * NOT granted to the staff role; the alert needs counts, not rows.
+ */
+export const billingReconciliationRuns = pgTable("billing_reconciliation_runs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  ranAt: timestamp("ran_at", { withTimezone: true }).defaultNow().notNull(),
+  /** 'dry-run' never applied anything; 'apply' is the armed pass. CHECK-constrained. */
+  mode: text("mode").notNull(),
+  /** How many subscriptions Stripe listed / mirror rows were read — the pass's population. */
+  stripeSubscriptions: integer("stripe_subscriptions").notNull(),
+  mirrorRows: integer("mirror_rows").notNull(),
+  /** Events re-emitted through claim+apply (or that WOULD be, on a dry run). */
+  emitted: integer("emitted").notNull(),
+  /** Emitted events whose apply answered non-200 — each also left a failed billing_events row. */
+  applyFailed: integer("apply_failed").notNull(),
+  /** Closed code→count map of divergences NOT healed by an emit (test_row, missing_in_stripe, …). */
+  flagged: jsonb("flagged").notNull().default(sql`'{}'::jsonb`),
+  /** Bounded list of {code, stripeSubscriptionId, accountId} — the operator's detail. */
+  divergences: jsonb("divergences").notNull().default(sql`'[]'::jsonb`),
+  pages: integer("pages").notNull(),
+  /** True when the page bound stopped the listing early — absence checks were skipped. */
+  truncated: boolean("truncated").notNull().default(false),
+  /** class:code, scrubbed — null on a completed pass. A non-null row does not reset staleness. */
+  error: text("error"),
+}, (t) => ({ ixRanAt: index("billing_recon_runs_ran_at_idx").on(t.ranAt) }));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REGISTRATION & ONBOARDING (migration 0020): the funnel's two tables.
@@ -950,7 +991,7 @@ export const setupGrantSpends = pgTable("setup_grant_spends", {
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const cloudSchema = {
-  credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens, oauthAuthCodes, authEvents, authThrottle, pushSubscriptions, billingCustomers, billingSubscriptions, creditBalances, creditLedger, billingEvents, workerHeartbeats, alertState, waitlist, staffUsers, staffSessions, accountSuspensions,
+  credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens, oauthAuthCodes, authEvents, authThrottle, pushSubscriptions, billingCustomers, billingSubscriptions, billingReconciliationRuns, creditBalances, creditLedger, billingEvents, workerHeartbeats, alertState, waitlist, staffUsers, staffSessions, accountSuspensions,
   mailboxOauthCeremonies, oauthProviderConfig, attachmentStaging, invites, aiAttemptClaims,
   setupGrants, setupGrantSpends,
 };

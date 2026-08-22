@@ -1,4 +1,4 @@
-import type { EntitlementEvent } from "./entitlement-event.js";
+import type { EntitlementEvent, ReconcilePageDTO } from "./entitlement-event.js";
 import type { BillingPlanePort, PlaneCheckoutRequest, WebhookVerdict } from "./plane-port.js";
 
 /**
@@ -219,6 +219,32 @@ export function makeBillingPlaneClient(cfg: BillingPlaneClientConfig): BillingPl
       if (res.status !== 200) {
         throw new Error(`billing plane answered ${res.status} for /v1/addons`);
       }
+    },
+
+    async reconcileSubscriptions(req: { cursor: string | null; limit: number }): Promise<ReconcilePageDTO> {
+      const res = await post("/v1/reconcile", JSON.stringify(req), {
+        "content-type": "application/json",
+      }, (status) => status === 200);
+      if (res.status !== 200) {
+        // Status only, per the client-wide rule — and EVERY non-200 is a throw: a refused or
+        // failed list must surface as a failed pass, never as an empty page (an empty page
+        // reads as "Stripe holds no subscriptions" and would flag every mirror row).
+        throw new Error(`billing plane answered ${res.status} for /v1/reconcile`);
+      }
+      const parsed = (res.bodyIsJson ? res.body : undefined) as {
+        observedAt?: unknown; events?: unknown; nextCursor?: unknown;
+      } | undefined;
+      if (
+        !parsed || typeof parsed.observedAt !== "number" || !Array.isArray(parsed.events)
+        || (parsed.nextCursor !== null && typeof parsed.nextCursor !== "string")
+      ) {
+        throw new Error("billing plane answered 200 without a reconcile page for /v1/reconcile");
+      }
+      return {
+        observedAt: parsed.observedAt,
+        events: parsed.events as EntitlementEvent[],
+        nextCursor: parsed.nextCursor as string | null,
+      };
     },
 
     async verifyWebhook(rawBody: Uint8Array, signature: string | null): Promise<WebhookVerdict> {

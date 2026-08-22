@@ -1,12 +1,17 @@
 import {
-  runAlertPass, listOpenAlerts, newDeliveryStreak, sinkHealthOf, type AlertSink,
+  billingReconciliationRuns, runAlertPass, listOpenAlerts, newDeliveryStreak, sinkHealthOf,
+  type AlertSink,
 } from "@trafficflow/db/cloud";
+import { sql } from "drizzle-orm";
 import { silentLogger, type Logger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
-import { reapStaleWebSessions, type AdminDb } from "@trafficflow/services";
+import {
+  reapStaleWebSessions, reconcileBillingMirror, recordReconcileFailure, type AdminDb,
+} from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import type { AlertsConfig } from "../deps-cloud.js";
-import type { AlertArmHealth, AlertSinkSummary } from "../deps.js";
+import type { AlertArmHealth, AlertSinkSummary, ApiDeps } from "../deps.js";
+import type {} from "../deps-cloud.js";
 import type { Route } from "../router.js";
 import { learnMissingSmtpSizes } from "../smtp-size.js";
 
@@ -143,6 +148,23 @@ export const SESSIONS_REAP_CRON_PATH = "/internal/sessions/reap";
  * silently never runs.
  */
 export const SMTP_SIZE_CRON_PATH = "/internal/mailboxes/smtp-size";
+
+/**
+ * The PATH Vercel Cron fires the billing reconciliation at — the ARMED pass, exported for the
+ * reason its three siblings are: the host deployment's cron config names it as a literal
+ * string and a test asserts the two agree. The read-only twin (`GET /internal/billing/reconcile`,
+ * dry-run) is the runbook's safe curl — it compares and reports but applies nothing, exactly as
+ * `GET /internal/alerts` reads without paging.
+ */
+export const BILLING_RECONCILE_CRON_PATH = "/internal/billing/reconcile/run";
+
+/** class + code, never message text — the same scrubbing rule as `billing_events.error`. */
+function scrubError(err: unknown): string {
+  const e = err as { name?: unknown; code?: unknown; constructor?: { name?: string } } | null;
+  const cls = typeof e?.name === "string" ? e.name : e?.constructor?.name ?? "unknown";
+  const code = typeof e?.code === "string" ? e.code : null;
+  return code ? `${cls}:${code}` : cls;
+}
 
 /**
  * The two arming facts, in ONE place, because the three routes must never disagree about them.
@@ -361,6 +383,96 @@ async function alertPass(
   }
 }
 
+/**
+ * One reconciliation pass, shared by the dry-run read and the armed cron — one implementation,
+ * two clocks, exactly as `alertPass` is shared, and for the same drift reason.
+ *
+ * Never throws (`raw` routes have no error envelope). A pass that could not run records a
+ * FAILED run row (class:code only) so the staleness rule sees a reconciler that is failing,
+ * not a gap, and answers 503 to its scheduler.
+ */
+async function reconcilePass(
+  req: Request, deps: ApiDeps, mode: "dry-run" | "apply", route: string,
+): Promise<Response> {
+  const log = (deps.logger ?? silentLogger).child({ route });
+  const cfg = deps.alerts;
+  // The sibling rules verbatim: no armed internal surface ⇒ 404, wrong secret ⇒ 401.
+  if (!cfg || cfg.secret.trim().length === 0) {
+    return json(404, { error: { code: "not_found" } });
+  }
+  const cron = cfg.cronSecret?.trim();
+  const authorized = presentsSecret(req, cfg.secret)
+    || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+  if (!authorized) {
+    log.warn("billing_reconcile_unauthorized", {});
+    return json(401, { error: { code: "unauthorized" } });
+  }
+  const plane = deps.services?.billingPlane;
+  const svc = deps.services?.entitlements;
+  if (!plane || !svc) {
+    // A deployment without billing has nothing to reconcile, and a cron with nothing to do did
+    // not fail — a genuinely billing-free host answers 200 and writes nothing, forever.
+    //
+    // But a host whose RUN LEDGER HAS HISTORY is not that host: billing ran here before, and
+    // "unconfigured" now is a mis-flip (an env change that dropped the plane block, a restored
+    // environment). The stale rule alone cannot see the difference between "never armed" and
+    // "disarmed yesterday" until its threshold passes — and on the armed CRON path a mis-flip
+    // must become durable immediately, so a FAILED run row is recorded (failed rows never
+    // reset the staleness clock, and the divergence trail shows the reason by name). The
+    // dry-run path stays read-only: a person's curl must not write.
+    if (mode === "apply") {
+      try {
+        const ranBefore = await (deps.db as unknown as Tx)
+          .select({ n: sql`count(*)::int` })
+          .from(billingReconciliationRuns).limit(1);
+        const n = Number((ranBefore[0] as { n?: unknown } | undefined)?.n ?? 0);
+        if (n > 0) {
+          await recordReconcileFailure(deps.db, mode, "billing_unconfigured", deps.now());
+          log.error("billing_reconcile_unconfigured_with_history", {
+            reason: "the reconciliation ran on this deployment before, and billing is now unconfigured",
+          });
+        }
+      } catch { /* the 200-skip is still the honest cron answer; the stale rule remains the net */ }
+    }
+    return json(200, { skipped: "billing_unconfigured" });
+  }
+  try {
+    const report = await reconcileBillingMirror(deps.db, {
+      mode,
+      plane,
+      applyEvent: (db, event) => svc.applyEvent(db, event),
+      now: deps.now,
+    });
+    if (report.emitted > 0 || Object.keys(report.flagged).length > 0) {
+      log.warn("billing_reconcile_divergence", {
+        mode, emitted: report.emitted, applyFailed: report.applyFailed,
+        flagged: Object.entries(report.flagged).map(([c, n]) => `${c}:${n}`).join(","),
+        pages: report.pages, truncated: report.truncated,
+      });
+    }
+    return json(200, {
+      now: deps.now().toISOString(),
+      mode: report.mode,
+      stripeSubscriptions: report.stripeSubscriptions,
+      mirrorRows: report.mirrorRows,
+      emitted: report.emitted,
+      applyFailed: report.applyFailed,
+      flagged: report.flagged,
+      divergences: report.divergences,
+      pages: report.pages,
+      truncated: report.truncated,
+    });
+  } catch (err) {
+    // The pass itself could not run. Record the failure (best effort — the 503 is the
+    // load-bearing part) with class:code only, never message text.
+    log.error("billing_reconcile_failed", { err });
+    try {
+      await recordReconcileFailure(deps.db, mode, scrubError(err), deps.now());
+    } catch { /* the 503 already says it; a second failure must not mask the first */ }
+    return json(503, { error: { code: "reconcile_failed" } });
+  }
+}
+
 export const internalRoutes: Route[] = [
   {
     method: "POST",
@@ -566,5 +678,48 @@ export const internalRoutes: Route[] = [
         return json(503, { error: { code: "smtp_size_pass_failed" } });
       }
     },
+  },
+  /*
+   * THE BILLING RECONCILIATION — two routes, the alerts pattern verbatim (a safe read and an
+   * armed clock), because the thing being guarded is money state.
+   *
+   * `GET /internal/billing/reconcile` is the DRY RUN: it pages the plane's `status:"all"`
+   * subscription list, compares every subscription against the `billing_subscriptions` mirror,
+   * and reports what an armed pass WOULD re-emit — codes, Stripe ids, account ids, nothing
+   * else — applying nothing. The runbook's first command after any webhook incident, and the
+   * read this slice's production bring-up ran before arming anything.
+   *
+   * `GET /internal/billing/reconcile/run` is the ARMED pass Vercel Cron fires hourly: the same
+   * comparison, and each divergence is re-emitted through `EntitlementsService.applyEvent` —
+   * the SAME claim+apply transaction the webhook relay calls, so there is no second write path
+   * into the mirror (replay semantics — the license boundary keeps every write open-side).
+   * Both record their run in
+   * `billing_reconciliation_runs`, which the two reconciliation alert rules read.
+   *
+   * Shape borrowed from the three siblings above, each property load-bearing for their stated
+   * reasons: GET because Vercel Cron issues GET; either shared secret, constant-time; 404 on a
+   * deployment that armed no internal surface. Two departures, both argued:
+   *  · with alerts armed but billing unconfigured (no plane, no entitlements service) the
+   *    answer is 200 `{skipped:"billing_unconfigured"}`, not 5xx — a cron with nothing to do
+   *    did not fail, and a self-hosted deployment without billing must not record red cron
+   *    runs forever. On OUR production the quiet-branch tripwire is the `billing_reconciliation_stale`
+   *    alert: skipped passes insert no run row, so a mis-flip goes stale and pages.
+   *  · it runs on `deps.db`, the RUNTIME connection, for the reaper's reason: applyEvent
+   *    writes billing tables and the ledger, grants `ohmail_admin` does not hold and must not
+   *    gain.
+   */
+  {
+    method: "GET",
+    pattern: "/internal/billing/reconcile",
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => reconcilePass(req, deps, "dry-run", "/internal/billing/reconcile"),
+  },
+  {
+    method: "GET",
+    pattern: BILLING_RECONCILE_CRON_PATH,
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => reconcilePass(req, deps, "apply", BILLING_RECONCILE_CRON_PATH),
   },
 ];

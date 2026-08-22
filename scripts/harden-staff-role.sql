@@ -793,6 +793,18 @@ REVOKE ALL ON public.billing_events FROM ohmail_admin;
 GRANT SELECT (stripe_event_id, type, account_id, event_ts, received_at, error, status)
   ON public.billing_events TO ohmail_admin;
 
+-- `billing_reconciliation_runs` (cloud 0023) — the run ledger of the scheduled mirror-vs-Stripe
+-- reconciliation. Billing/ops data in the invariant's own words: counts, a mode word, a closed
+-- code→count map (`flagged` holds ReconcileCode strings only — the write site's exported
+-- vocabulary) and a class:code-scrubbed `error`. The alerts driver on this role reads it for
+-- the two reconciliation rules, which is why the grant exists at all. `divergences` (Stripe
+-- subscription ids + account ids) is deliberately NOT granted: the alert needs counts, the
+-- operator detail lives on the runtime-role surfaces.
+REVOKE ALL ON public.billing_reconciliation_runs FROM ohmail_admin;
+GRANT SELECT (id, ran_at, mode, stripe_subscriptions, mirror_rows, emitted, apply_failed,
+  flagged, pages, truncated, error)
+  ON public.billing_reconciliation_runs TO ohmail_admin;
+
 -- ── 9d. Funnel top — invite/waitlist DATES ONLY, never an address. ────────────────────────
 --
 -- On an invite-only beta the TOP of the signup funnel — how many invites are outstanding, how

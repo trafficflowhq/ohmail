@@ -157,6 +157,11 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // month in twelve.
   ["billing_subscriptions", "addon_storage_units"],
   ["billing_subscriptions", "billing_interval"],
+  // cloud 0023_billing_reconciliation — the reconciliation run ledger. `ran_at` is the column
+  // BOTH alert rules key their newest-run reads on, so a database missing the table fails here
+  // at the deploy gate rather than as an `alert_pass_failed` loop — the pager breaking is the
+  // one failure mode this table must never have, since it exists to page.
+  ["billing_reconciliation_runs", "ran_at"],
 ] as const;
 
 /**
@@ -215,6 +220,11 @@ export const CLOUD_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker
  */
 export const CLOUD_INDEX_MARKERS: ReadonlyArray<string> = [
   "credit_ledger_one_trial_grant_idx",   // cloud 0013_ledger_integrity
+  // cloud 0023_billing_reconciliation — the newest-run read both reconciliation alert rules
+  // make (`ORDER BY ran_at DESC LIMIT 1`, twice a pass, every alert pass). The table itself is
+  // probed by column below; the index rides the same journal entry, and a database that took
+  // the table by hand without it would page correctly and scan for it.
+  "billing_recon_runs_ran_at_idx",
 ] as const;
 
 /**
@@ -341,7 +351,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0022_subscription_addons";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0023_billing_reconciliation";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

@@ -6,8 +6,8 @@
  * direction is the link the AGPL boundary forbids.
  */
 export {
-  ENTITLEMENT_EVENT_VERSION,
-  type EntitlementEvent, type EntitlementPlan,
+  ENTITLEMENT_EVENT_VERSION, RECONCILIATION_EVENT_TYPE,
+  type EntitlementEvent, type EntitlementPlan, type ReconcilePageDTO,
   type CheckoutLinkDTO, type SubscriptionDTO, type SubscriptionItemDTO,
   type InvoiceDTO, type InvoiceLineDTO, type RevenueReversalDTO,
 } from "./entitlement-event.js";
@@ -18,6 +18,11 @@ export {
   makeBillingPlaneClient, PLANE_CALL_TIMEOUT_MS,
   type BillingPlaneClientConfig, type PlaneFetch,
 } from "./plane-client.js";
+export {
+  reconcileBillingMirror, recordReconcileFailure,
+  RECONCILE_MAX_PAGES, RECONCILE_TEST_ROW_PREFIX, RECONCILE_RUN_RETENTION_MS,
+  type ReconcileCode, type ReconcileDivergence, type ReconcileReport, type ReconcileOptions,
+} from "./reconcile.js";
 export {
   makeEntitlementsService, BillingApplyError, GRACE_MS, ERASURE_CANCEL_TIMEOUT_MS,
   type EntitlementsService, type EntitlementsServiceConfig,

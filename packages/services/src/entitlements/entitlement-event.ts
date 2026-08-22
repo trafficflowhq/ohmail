@@ -183,3 +183,35 @@ export type EntitlementEvent =
   | (EntitlementEventBase & { kind: "invoice_payment_failed"; invoice: InvoiceDTO })
   | (EntitlementEventBase & { kind: "revenue_reversal"; reversal: RevenueReversalDTO })
   | (EntitlementEventBase & { kind: "ignored" });
+
+/**
+ * The `type` a RECONCILIATION event carries — a `subscription`-kind event the plane minted from
+ * a LISTED subscription rather than from a delivered webhook. Not a Stripe event type on
+ * purpose: the audit trail (`billing_events.type`) must name the provenance, and a row claiming
+ * `customer.subscription.updated` with no `evt_…` behind it would be a half-truth. The apply
+ * switch reads `kind`/`phase`, never this string, so the apply path is the webhook's verbatim.
+ */
+export const RECONCILIATION_EVENT_TYPE = "reconciliation.subscription" as const;
+
+/**
+ * One page of the reconciliation read — what the plane's `POST /v1/reconcile` answers.
+ *
+ * `events` holds, for EVERY subscription Stripe listed on this page (`status: "all"`, so
+ * canceled subscriptions are present — the lost `customer.subscription.deleted` is the founding
+ * case), the `subscription`-kind {@link EntitlementEvent} the missed webhook would have
+ * carried: the same translation, `phase: "deleted"` when Stripe says `canceled`, `"updated"`
+ * otherwise. The plane decides nothing — whether the mirror already holds that state is THIS
+ * side's comparison, against its own rows (`entitlements/reconcile.ts`).
+ *
+ * `id` is `recon_<sha256 of the DTO>` — a pure function of the observed state, so a repeat pass
+ * over an unchanged subscription mints the same event and the claim ledger dedups it exactly
+ * like a resent webhook. `created` is `observedAt`: the moment the plane read the list, which
+ * is what the mirror's `stripe_event_ts` fence measures against. `nextCursor` is Stripe's own
+ * cursor (the last subscription id), or `null` on the last page.
+ */
+export interface ReconcilePageDTO {
+  /** Unix SECONDS at which the plane read this page from Stripe. Stamped on every event. */
+  observedAt: number;
+  events: EntitlementEvent[];
+  nextCursor: string | null;
+}
