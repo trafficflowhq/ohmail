@@ -497,6 +497,16 @@ export const RELATION_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "42501", "42P01", "3F000", "PGRST205", "PGRST106",
 ]);
 
+/**
+ * The statuses a refusal can wear. The CODE carries the meaning; this only rules out shapes that
+ * are not refusals at all (a 5xx, a redirect). `406` is on the list because it is measured, not
+ * guessed: asking the closed endpoint for schema `public` outright answers
+ * `406 {"code":"PGRST106", … "Only the following schemas are exposed: graphql_public"}`, and a
+ * status gate of 401/403/404 alone would have called that correctly-closed endpoint UNKNOWN and
+ * failed a provisioning run over it.
+ */
+export const REFUSAL_STATUSES: ReadonlySet<number> = new Set([401, 403, 404, 406]);
+
 /** PostgREST's own error `code`, or `null` when the body is not one of its error payloads. */
 function postgrestErrorCode(body: string): string | null {
   try {
@@ -525,7 +535,7 @@ export function classifyDataApiResponse(
     return { verdict: "exposed", note: `HTTP ${status}` };
   }
   const code = postgrestErrorCode(body);
-  if (code && RELATION_REFUSAL_CODES.has(code) && (status === 401 || status === 403 || status === 404)) {
+  if (code && RELATION_REFUSAL_CODES.has(code) && REFUSAL_STATUSES.has(status)) {
     return { verdict: "refused", note: `HTTP ${status} ${code}` };
   }
   if (code) {
@@ -566,6 +576,10 @@ export async function probeDataApi(
     }
     let status: number;
     let body: string;
+    // Capped by what is LEFT of the budget, not just by the per-request limit: a request that
+    // starts one millisecond inside a 120s budget must not be allowed to run 15s past it, or
+    // the advertised whole-probe deadline is not one.
+    const perRequestMs = Math.max(1, Math.min(timeoutMs, deadline - Date.now()));
     try {
       // One signal for the whole exchange — it aborts a stalled body read as well as a stalled
       // response, which is the half a headers-only timeout would miss.
@@ -573,7 +587,7 @@ export async function probeDataApi(
         `${target.baseUrl}/rest/v1/${encodeURIComponent(table)}?select=*&limit=1`,
         {
           headers: { apikey: target.anonKey, Authorization: `Bearer ${target.anonKey}` },
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: AbortSignal.timeout(perRequestMs),
         },
       );
       status = res.status;
@@ -584,7 +598,7 @@ export async function probeDataApi(
       // "The request failed so we must be safe" is how a DNS hiccup becomes a sign-off.
       const err = e as Error;
       const why = err.name === "TimeoutError" || err.name === "AbortError"
-        ? `no complete answer within ${timeoutMs}ms`
+        ? `no complete answer within ${perRequestMs}ms`
         : err.message;
       unknown.push(`${table} (probe failed: ${why})`);
       continue;
@@ -698,7 +712,9 @@ export function dataApiTargetProblem(
     /* a stray % in a role name — compare the raw form rather than give up */
   }
   const components = [
-    ...u.hostname.toLowerCase().split("."),
+    // Trailing root dot stripped for the same reason `hostedProjectRef` strips it: the FQDN
+    // spelling is the same host, and an empty last component must not shift the comparison.
+    ...u.hostname.toLowerCase().replace(/\.+$/, "").split("."),
     ...user.toLowerCase().split("."),
   ];
   if (components.includes(r)) return null;
@@ -710,10 +726,19 @@ export function dataApiTargetProblem(
   );
 }
 
-/** The `<ref>` of a hosted Data API URL, or `null` for a self-hosted gateway or custom domain. */
+/**
+ * The `<ref>` of a hosted Data API URL, or `null` for a self-hosted gateway or custom domain.
+ *
+ * The trailing dot is stripped first, and it is not pedantry: `https://<ref>.supabase.co.` is a
+ * legal FQDN that RESOLVES and answers — measured — while `URL.hostname` keeps the dot. Without
+ * this, that spelling makes the host unrecognisable as a hosted one, the binding check has
+ * nothing to compare, and the run probes whichever project it likes. One character, and the
+ * guard is off.
+ */
 export function hostedProjectRef(baseUrl: string): string | null {
   try {
-    const m = /^([a-z0-9-]{1,63})\.supabase\.co$/i.exec(new URL(baseUrl).hostname);
+    const host = new URL(baseUrl).hostname.replace(/\.+$/, "");
+    const m = /^([a-z0-9-]{1,63})\.supabase\.co$/i.exec(host);
     return m ? m[1]!.toLowerCase() : null;
   } catch {
     return null;
