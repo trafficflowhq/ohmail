@@ -23,6 +23,16 @@ import {
  * self-hosted worker in Docker on somebody's own network is exactly that case, and it is bounded to
  * one login per mailbox per process, so on a blocked host it costs one refused connection each and
  * logs it at `info`.
+ *
+ * ── AND IT DELIBERATELY DOES NOT WRITE MAIL 0063'S ATTEMPT STAMP ────────────────────────────
+ *
+ * The scheduled pass on the API host records `smtp_size_probed_at` / `smtp_size_probe_code` so a
+ * permanently silent server is re-asked on a backoff instead of every day. This arm must NOT: on the
+ * managed deployment every dial from here fails on a blocked port, so stamping would write
+ * `unreachable` across the whole fleet and suppress the one host whose egress works — the back-fill
+ * would converge on "nothing is probeable" while the path that functions sat idle. This arm's bound
+ * stays the in-memory one-dial-per-mailbox-per-process guard, which is the right shape for a
+ * long-lived process anyway.
  */
 
 /** The production dial from this host: a real SMTP login on the TLS floor, on the worker's timeouts. */

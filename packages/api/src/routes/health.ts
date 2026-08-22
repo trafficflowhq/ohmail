@@ -748,6 +748,30 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // features). No CHECK marker for `message_bodies_withheld_reason` (0030's rule: a closed-set
   // CHECK the column marker already implies — same migration, same transaction).
   ["message_bodies", "withheld_reason"],
+  // mail 0063_smtp_size_probe_stamp — WHEN the `SIZE` back-fill last dialled a mailbox's submission
+  // server. Two columns land (`smtp_size_probed_at` and `smtp_size_probe_code`) in one migration
+  // inside one transaction, so one marker probes them on this list's usual rule — and the one named
+  // here is the column the SELECTION filters on, which is the statement whose absence changes
+  // behaviour rather than merely reading it.
+  //
+  // It earns a marker on the whole-row-select argument at its sharpest for this table, the same one
+  // `smtp_max_size_bytes` (0055) makes two entries up: `MailboxService.list` does
+  // `select().from(mailboxes)`, so a too-early API 42703s the mailbox panel and every read that
+  // resolves a mailbox, AND `SendService.reserve` enumerates the row inside the transaction that
+  // reserves an idempotent send — so the same missing column takes out SENDING, before the
+  // reservation commits.
+  //
+  // No worker half: the sync host neither reads nor writes either column (its own arm of the
+  // back-fill deliberately does not stamp — a host that cannot reach submission ports would
+  // suppress the host that can), and it selects a narrow projection rather than whole rows. Deploy
+  // order: migration → API, no third step.
+  //
+  // The CHECK gets its own entry in `SCHEMA_CHECK_MARKERS` rather than riding on this one, on
+  // 0027's rule: a missing column is loud on the first read, while a column present WITHOUT its
+  // constraint accepts whatever a write site lets through and says nothing — and what this
+  // constraint keeps out is a third party's SMTP response line. No INDEX marker: the migration
+  // deliberately adds none.
+  ["mailboxes", "smtp_size_probed_at"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -878,7 +902,8 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // reader-disagreement is a rule that matches EVERY MESSAGE while its row reads as specific —
   // and for a body term "every message" is literal, since every message has a body to substring.
   // Same predicate, same six-character class, and the pg test pins the two constraints'
-  // definitions equal up to the column name. It is the NEWEST entry in the mail journal.
+  // definitions equal up to the column name. It was the newest entry here until mail 0053's locale
+  // set landed below it.
   "rules_body_contains_nonempty",
   // mail 0053_account_locale — the closed set behind `account_settings.locale`. Listed on 0027's
   // rule (the column and the CHECK fail DIFFERENTLY, and only one of them is loud) and it is the
@@ -892,8 +917,21 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // set with a 400, but that is code and can regress; the CHECK is the layer that holds for a
   // hand-run UPDATE, a future admin tool and any importer.
   //
-  // It is the NEWEST entry in the mail journal.
+  // It was the newest entry here until mail 0063's probe-code set landed below it.
   "account_settings_locale_supported",
+  // mail 0063_smtp_size_probe_stamp — the closed set behind `mailboxes.smtp_size_probe_code`.
+  // Listed on 0027's rule (the column and the CHECK fail DIFFERENTLY, and only one of them is
+  // loud), and its origin is the sharpest on this list: the value stored there is derived from an
+  // SMTP AUTH failure, and nodemailer's message for one embeds the submission server's own response
+  // line — third-party text that routinely contains the username and can contain an echoed
+  // credential. The whole `code`-not-message rule in `SmtpSizeFailure` exists to keep that off a
+  // log drain; this constraint is the half of it that also keeps it out of a `mailboxes` row.
+  //
+  // The write site takes a `SmtpSizeProbeCode`, so the compiler refuses free text today. That is
+  // code and code regresses — `error_detail` had exactly one write-site guard and a server's
+  // bracket atom walked through it into a column an operator reads. It is the NEWEST entry in the
+  // mail journal.
+  "mailboxes_smtp_size_probe_code_closed",
 ];
 
 /**
@@ -1294,8 +1332,19 @@ export const MAIL_EXPECTED_MARKERS =
  * 0061's, belongs to the runbook: re-run once after the worker deploy, because the OLD worker
  * keeps ingesting uncounted bodies between the pre-alias migration and its own restart, and the
  * backfill's `ON CONFLICT … DO UPDATE` recomputes rather than preserves.
+ *
+ * `0063_smtp_size_probe_stamp` is probed TWICE, and the pair is 0027's exactly: `mailboxes
+ * .smtp_size_probed_at` in {@link MAIL_SCHEMA_MARKERS}, because `MailboxService.list` and
+ * `SendService.reserve` select whole rows and a too-early API 42703s the mailbox panel and the
+ * send reservation; and `mailboxes_smtp_size_probe_code_closed` in {@link SCHEMA_CHECK_MARKERS},
+ * because the code column's constraint is what keeps a submission server's own AUTH response line
+ * out of a row an operator reads, and a constraint that never landed is silently absent rather
+ * than loudly broken. Two columns, one column marker: they land in one statement block inside one
+ * transaction, so no database can hold one without the other, and the one named is the column the
+ * pass's SELECTION filters on. It has no data statement and no index, so there is nothing left for
+ * the runbook to carry.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0062_storage_accounting";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0063_smtp_size_probe_stamp";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

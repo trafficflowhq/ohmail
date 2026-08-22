@@ -208,6 +208,33 @@ export const mailboxes = pgTable("mailboxes", {
   // connect flow's transaction. No CHECK (a size closes no set) and no index — it is read off a row
   // already fetched by primary key and is never a predicate.
   smtpMaxSizeBytes: bigint("smtp_max_size_bytes", { mode: "number" }),
+  // ── Mail 0063 — WHEN THE `SIZE` BACK-FILL LAST ASKED, AND WHAT IT HEARD ──
+  //
+  // The pair that turns the back-fill's selection from "every row that still announces nothing"
+  // into a backoff. The column above stays NULL for three outcomes that are not failures of the
+  // pass — a server that advertises no `SIZE`, a login it refuses, a mailbox with nothing to dial
+  // — so a selection keyed on `IS NULL` alone re-picked exactly those rows on every scheduled run,
+  // for ever: a permanently silent submission server cost a real login a day, and once a batch's
+  // worth of them existed no learnable mailbox was ever reached again.
+  //
+  // NOT A TERMINAL STATE, and the asymmetry with `smtp_max_size_bytes` is deliberate: nothing here
+  // ever says "never ask again". `smtp_size_probed_at` is WHEN we last asked and
+  // `smtp_size_probe_code` is what came back, and the pass re-asks on an interval chosen from the
+  // code (a month for a server that answered and named nothing, a week for anything else). A
+  // provider that raises its limit is picked up on the next interval, and a person who re-enters
+  // their password gets the real number immediately, because that path writes the column directly.
+  //
+  // ONLY THE API HOST WRITES THESE. The sync host's arm of the same back-fill deliberately does
+  // not: on the managed deployment its platform blocks outbound submission, so a stamp from there
+  // would record "unreachable" for every mailbox and suppress the one host whose egress works.
+  //
+  // `smtp_size_probe_code` carries a CHECK (`SMTP_SIZE_PROBE_CODES` in `mailbox-errors.ts`) because
+  // the value is derived from an SMTP AUTH failure, and a submission server's own response line —
+  // which can carry the username, an echoed credential, or arbitrary provider text — must not be
+  // able to reach a column through a write site nobody has reviewed yet. Same reasoning as
+  // `sync_blocked_reason`'s constraint, with a sharper origin.
+  smtpSizeProbedAt: timestamp("smtp_size_probed_at", { withTimezone: true }),
+  smtpSizeProbeCode: text("smtp_size_probe_code"),
   // ── Mail 0030 — the ONE-TIME re-evaluation of mail the sensitivity override already misrouted ──
   //
   // A fix stopped `pipeline.ts:393` letting a sender-chosen subject or body carry a stranger

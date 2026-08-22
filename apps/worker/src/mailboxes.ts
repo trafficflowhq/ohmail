@@ -3,7 +3,9 @@ import { mailboxes, mailboxCredentials, type Tx } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { workerHeartbeats, accountsWithSyncDisabled } from "@trafficflow/db/cloud";
 import type { KeyProvider, OAuthTokenProvider } from "@trafficflow/core";
-import { buildImapAuth, type ImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
+import {
+  buildImapAuth, oauthSmtpEndpoint, type ImapAuth, type CredMetaAuth,
+} from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { asDatabaseFault, markDatabaseFaults } from "./db-fault.js";
 import type { SyncWriteFence } from "./sync.js";
@@ -339,9 +341,37 @@ export async function loadMailboxCreds(
   const imap = await toTransport(imapRow, "imap", keyProvider, makeFetcher);
 
   const smtpRow = byTransport.get("smtp");
-  const smtp = smtpRow ? await toTransport(smtpRow, "smtp", keyProvider, makeFetcher) : undefined;
+  // ── AN OAUTH MAILBOX HAS NO `smtp` ROW, AND IT STILL HAS A SUBMISSION ENDPOINT ─────────────
+  //
+  // One refresh token covers both transports, so the connect flow stores no second row and the
+  // submission host/port/secure live in the imap row's `meta.smtp`. Returning `undefined` for
+  // `smtp` here — which is what this did — told every caller "this mailbox cannot submit", and the
+  // one caller that believed it was the `SIZE` back-fill: an oauth mailbox was reported as having
+  // no SMTP credentials and therefore never learned what its server accepts, on ANY host.
+  //
+  // The `auth` handed back is `imap.auth` ITSELF, not a second assembly of it: the same token
+  // callback, so the same per-mailbox access-token cache and the same rotated-refresh-token write.
+  // This is `makeSendAdapter`'s resolution on the API host, and the coordinates come from the
+  // shared `oauthSmtpEndpoint` so the two cannot drift about a default port.
+  const smtp = smtpRow
+    ? await toTransport(smtpRow, "smtp", keyProvider, makeFetcher)
+    : oauthSmtpFor(imapRow.meta, imap);
 
   return smtp ? { imap, smtp } : { imap };
+}
+
+/**
+ * The submission profile of an OAUTH mailbox, or `undefined` for anything else.
+ *
+ * Keyed on `meta.authType` rather than on the shape of `imap.auth`, because the question being asked
+ * is "does this mailbox's stored credential describe an oauth submission endpoint" — a property of
+ * the row — and `buildImapAuth` has already refused anything oauth-shaped it cannot serve by the
+ * time this runs.
+ */
+function oauthSmtpFor(meta: unknown, imap: TransportCreds): TransportCreds | undefined {
+  const m = (meta ?? {}) as CredMetaAuth & { smtp?: { host?: string; port?: number; secure?: boolean } };
+  if (m.authType !== "oauth2") return undefined;
+  return { ...oauthSmtpEndpoint(m.smtp), auth: imap.auth };
 }
 
 export interface BootstrapInput {

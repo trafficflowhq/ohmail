@@ -9,6 +9,10 @@ import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
 // The connection class `SMTPTransport.verify()` drives internally. Imported directly for the one
 // thing `verify()` cannot do — see {@link verifySmtpLogin}.
 import SMTPConnection from "nodemailer/lib/smtp-connection/index.js";
+// The XOAUTH2 authenticator `SMTPConnection.login` requires for a bearer-token AUTH. Imported
+// directly for the same reason as the connection class above: `SMTPTransport` builds one internally
+// and exports no handle on it. See {@link loginAuth}.
+import XOAuth2 from "nodemailer/lib/xoauth2/index.js";
 // `../mail.js`, not `../index.js`: the IMAP adapter needs the mail half only, and the default
 // barrel would pull the classifier and drafter prompts into every artifact that opens a mailbox.
 import {
@@ -252,10 +256,17 @@ export interface SmtpLoginProof {
  *    as an attempt. A caller that re-enters this path per pass — a roster that re-attaches a
  *    flapping mailbox, a cron that runs every few minutes — would otherwise log in to somebody's
  *    provider over and over, which is how a provider decides to throttle a customer.
- *  · NEVER AN OAUTH TRANSPORT. {@link buildImapAuth} yields a token callback for those, not a
- *    password, and `verifySmtpLogin` authenticates with a static password: handing it a refresh
- *    token in the password seat is the mistake this narrowing exists to prevent. An oauth mailbox
- *    keeps the strict fallback until its own connect flow probes it.
+ *  · AN OAUTH TRANSPORT IS DIALLED WITH A TOKEN, NEVER WITH THE STORED SECRET. For such a row the
+ *    secret at rest is a REFRESH TOKEN, and {@link buildImapAuth} therefore yields a freshness
+ *    callback rather than a password. This rule awaits THAT callback — the same one
+ *    `ImapAdapter.send` awaits per message — and dials XOAUTH2 with the resulting access token, so
+ *    the probe authenticates the way the send authenticates and the refresh token never reaches a
+ *    password seat. No token means no dial: a closed `token_unavailable`, and the mailbox keeps the
+ *    strict fallback until the next pass.
+ *
+ *    This bullet used to say the opposite — an oauth transport was SKIPPED — and the cost was
+ *    invisible rather than dramatic: such a mailbox could never learn its ceiling from any host, so
+ *    it stayed pinned to the product constant no matter how generous its provider was.
  *  · NEVER THROWS, AND NEVER REPEATS THE SERVER'S WORDS. A submission server that refuses a login
  *    must cost this mailbox its ceiling and nothing else — on a sync host an exception here would
  *    abort an attach, which means a mailbox stops receiving mail over an attachment limit. The
@@ -266,19 +277,35 @@ export interface SmtpLoginProof {
  *    place. A stored `0` would be a ceiling no message can clear.
  */
 
+/**
+ * THE AUTHENTICATION A PROBE DIAL PRESENTS — a static password, or a bearer access token.
+ *
+ * Two members because a submission server can be reached two ways and BOTH are the send path's:
+ * `{ user, pass }` is AUTH PLAIN/LOGIN, `{ user, accessToken }` is AUTH XOAUTH2. They are a union
+ * rather than one optional-field shape so that no site can hand a token to the password seat by
+ * forgetting a branch — the mistake this whole family of types exists to make unrepresentable.
+ *
+ * The oauth member carries a TOKEN and never a refresh token: the refresh token stays behind
+ * {@link ImapOAuthAuth.fetchAccessToken}, which {@link learnSmtpMaxSize} awaits, exactly as
+ * `ImapAdapter.send` awaits it per message.
+ */
+export type SmtpSizeDialAuth =
+  | { user: string; pass: string }
+  | { user: string; accessToken: string };
+
 /** The dial this decision may perform, injectable so the rule is testable without a server. */
 export type SmtpSizeDial = (smtp: {
   host: string;
   port: number;
   secure: boolean;
-  auth: { user: string; pass: string };
+  auth: SmtpSizeDialAuth;
 }) => Promise<SmtpLoginProof>;
 
 export type SmtpSizeOutcome =
   /** The column already holds an announcement. No dial was made. */
   | { outcome: "known"; maxMessageBytes: number }
   /** Nothing to dial with, or nothing to learn. No dial was made. */
-  | { outcome: "skipped"; reason: "no_smtp_credentials" | "oauth_transport" | "already_attempted" }
+  | { outcome: "skipped"; reason: "no_smtp_credentials" | "already_attempted" }
   /** Dialled, and the server announced a usable ceiling. The caller records it. */
   | { outcome: "learned"; maxMessageBytes: number }
   /** Dialled, and the server announced nothing usable. Nothing to record. */
@@ -304,6 +331,19 @@ export type SmtpSizeFailure =
   | "unreachable"
   /** The connection was made and TLS would not come up on the floor this product requires. */
   | "tls_refused"
+  /**
+   * AN OAUTH MAILBOX, AND NO ACCESS TOKEN COULD BE OBTAINED — so no dial was made at all.
+   *
+   * One member for every reason, deliberately: the refresh token is dead and the mailbox needs
+   * reconnecting, the token endpoint is down, this deployment has no client secret. Those are
+   * genuinely different situations and telling them apart HERE would mean carrying a provider's
+   * own error text one step further towards a log line, which is the boundary this whole type
+   * exists to hold. The distinction is already available where it belongs — the token client
+   * raises named classes (`OAuthReauthRequiredError`, `OAuthProviderUnavailableError`,
+   * `OAuthConfigError`) and the sync path classifies a mailbox on them. A back-fill probe needs
+   * one bit: there was no token, so there is nothing to learn today.
+   */
+  | "token_unavailable"
   /** Anything else. Deliberately opaque — see the note above. */
   | "unknown";
 
@@ -344,6 +384,25 @@ function staticSmtpAuth(smtp: SmtpSizeCreds): { user: string; pass: string } | n
     : null;
 }
 
+/**
+ * The OAUTH auth — a user plus the freshness callback — or `null` for anything else.
+ *
+ * Structural, like {@link staticSmtpAuth} beside it, because `SmtpSizeCreds.auth` is deliberately
+ * `unknown`: this rule is reached from three hosts that each assemble the credential themselves,
+ * and a nominal type here would only be as strong as the weakest cast on the way in. The two
+ * predicates are mutually exclusive on the shapes {@link buildImapAuth} produces — a password row
+ * has no `fetchAccessToken`, an oauth row has no `pass` — and the PASSWORD branch is tested first
+ * at the call site, so a hypothetical object carrying both could never route a token into an AUTH
+ * PLAIN. That order is the one property here worth stating: it fails towards the password the
+ * caller explicitly stored, never towards a secret it did not.
+ */
+function oauthSmtpAuth(smtp: SmtpSizeCreds): { user: string; fetchAccessToken: () => Promise<string> } | null {
+  const auth = smtp.auth as { user?: unknown; fetchAccessToken?: unknown } | null | undefined;
+  return typeof auth?.user === "string" && typeof auth?.fetchAccessToken === "function"
+    ? { user: auth.user, fetchAccessToken: auth.fetchAccessToken as () => Promise<string> }
+    : null;
+}
+
 export async function learnSmtpMaxSize(input: {
   mailboxId: string;
   /** The stored `smtp_max_size_bytes`, or `null` when this mailbox has never announced one. */
@@ -364,14 +423,53 @@ export async function learnSmtpMaxSize(input: {
   if (attempted.has(mailboxId)) return { outcome: "skipped", reason: "already_attempted" };
   if (!smtp) return { outcome: "skipped", reason: "no_smtp_credentials" };
 
+  // ── WHICH AUTHENTICATION THIS MAILBOX'S SEND WOULD PRESENT ─────────────────────────────────
+  //
+  // PASSWORD FIRST, and the order is the safety property rather than a style choice: a shape that
+  // somehow carried both a password and a token callback dials the password the caller stored, and
+  // can never route a secret it did not choose into an AUTH command.
+  //
+  // The oauth arm is the one that used to be absent, and its absence was not neutral. An oauth
+  // mailbox could not be probed at all, so it kept the strict product constant for ever while its
+  // provider would have accepted far more — and the arm cannot simply be "dial with the secret",
+  // because for such a row the stored secret is a REFRESH TOKEN. The access token is fetched
+  // through THE SAME CALLBACK THE SEND USES (`ImapAdapter.send` awaits `fetchAccessToken()` per
+  // message and hands nodemailer message-level OAuth2 auth), so there is exactly one token path in
+  // the product: one cache, one rotation-persist, one client resolution. A probe that minted its
+  // own token would be a second one, and a second one is a second thing to get wrong.
   const auth = staticSmtpAuth(smtp);
-  if (!auth) return { outcome: "skipped", reason: "oauth_transport" };
+  const oauth = auth ? null : oauthSmtpAuth(smtp);
+  if (!auth && !oauth) return { outcome: "skipped", reason: "no_smtp_credentials" };
 
   // BEFORE the dial, so a failure counts. See the once-per-process bound in the header.
   attempted.add(mailboxId);
 
   try {
-    const proof = await dial({ host: smtp.host, port: smtp.port, secure: smtp.secure, auth });
+    // NO TOKEN, NO DIAL — and it is reported as a failure with a closed code rather than thrown.
+    // `fetchAccessToken` rejects for three reasons that are all somebody else's to fix (a dead
+    // refresh token, a token endpoint that will not answer, a deployment with no client secret),
+    // and every one of them must cost this mailbox its ceiling and nothing else. The rejection's
+    // MESSAGE is dropped here: it is the token endpoint's own words, and `SmtpSizeFailure` states
+    // why third-party prose may not travel to a caller that logs.
+    let dialAuth: SmtpSizeDialAuth;
+    if (auth) {
+      dialAuth = auth;
+    } else {
+      let accessToken: string;
+      try {
+        accessToken = await oauth!.fetchAccessToken();
+      } catch {
+        return { outcome: "failed", code: "token_unavailable" };
+      }
+      // An empty token is not a token. Presenting one would send `AUTH XOAUTH2` with an empty
+      // bearer, which a provider answers with an auth failure — a misleading classification for a
+      // condition that never left this process.
+      if (typeof accessToken !== "string" || accessToken.trim() === "") {
+        return { outcome: "failed", code: "token_unavailable" };
+      }
+      dialAuth = { user: oauth!.user, accessToken };
+    }
+    const proof = await dial({ host: smtp.host, port: smtp.port, secure: smtp.secure, auth: dialAuth });
     const bytes = proof.maxMessageBytes;
     // The same admissibility test the column's readers apply, restated rather than trusted: this
     // is the last point at which a `0` or a `NaN` could become a stored ceiling.
@@ -384,14 +482,62 @@ export async function learnSmtpMaxSize(input: {
   }
 }
 
+/**
+ * WHAT `SMTPConnection.login` IS HANDED — the password credentials, or an XOAUTH2 authenticator.
+ *
+ * `SMTPTransport` builds this object itself in `getAuth()` and never exports it; the shape below is
+ * that function's `OAUTH2` branch, arm for arm (`type`, `user`, `oauth2`, `method`), for the same
+ * reason {@link verifySmtpLogin} transcribes `verify()` rather than calling it: the EHLO's `SIZE`
+ * only exists on a connection this module owns.
+ *
+ * ── WHY NODEMAILER'S OWN `XOAuth2` AND NOT A HAND-ROLLED SASL STRING ────────────────────────
+ *
+ * `login` does not accept a bare access token: it selects XOAUTH2 only when `_auth.oauth2` is
+ * present, and then drives it through `getToken`/`buildXOAuth2Token`. Constructing that object with
+ * an `accessToken` and nothing else is EXACTLY what a send does — `ImapAdapter.send` sets
+ * `mail.data.auth = { type: "OAuth2", user, accessToken }` and nodemailer's `getAuth` turns it into
+ * this — so the bytes on the wire here are the bytes a later send will put there.
+ *
+ * It also makes the retry path safe by construction. On an AUTH failure nodemailer asks the
+ * authenticator for a FRESH token once (`_handleXOauth2Token(true, …)`); with no `refreshToken`,
+ * `clientId` or `serviceClient` on the object, `generateToken` refuses locally and immediately —
+ * no request to any token endpoint, and certainly not to the Google default `accessUrl` this class
+ * carries. The refusal surfaces as nodemailer's `EAUTH`, which {@link classifySmtpSizeFailure}
+ * reads as `auth_refused`: the honest answer, since the server did refuse the token we presented.
+ * A refresh, if one is warranted, belongs to the token provider that owns the refresh token — not
+ * to a probe holding a copy of one access token.
+ */
+function loginAuth(auth: SmtpSizeDialAuth): Parameters<SMTPConnection["login"]>[0] {
+  if ("pass" in auth) return { user: auth.user, pass: auth.pass };
+  const oauth2 = new XOAuth2({ user: auth.user, accessToken: auth.accessToken });
+  return {
+    type: "OAUTH2", user: auth.user, method: "XOAUTH2", oauth2,
+    // `login`'s published types describe `oauth2` as XOAuth2.OPTIONS, while the runtime requires the
+    // AUTHENTICATOR (it calls `oauth2.getToken`). The cast names that gap rather than working around
+    // it: `getAuth` passes an instance here too.
+  } as unknown as Parameters<SMTPConnection["login"]>[0];
+}
+
 export async function verifySmtpLogin(
-  smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } },
+  smtp: { host: string; port: number; secure: boolean; auth: SmtpSizeDialAuth },
   timeouts?: Partial<NetTimeouts>,
 ): Promise<SmtpLoginProof> {
+  const password = "pass" in smtp.auth ? smtp.auth : null;
   const options = smtpTransportOptions({
+    // The top-level fields are an `ImapConfig`'s IMAP half and `smtpTransportOptions` reads NONE of
+    // them but `timeouts`; the submission coordinates are the `smtp` block. They are still filled
+    // honestly rather than with placeholders, because a future reader will assume they are read.
     host: smtp.host, port: smtp.port, secure: smtp.secure,
-    auth: { user: smtp.auth.user, pass: smtp.auth.pass },
-    smtp,
+    auth: password ?? {
+      user: smtp.auth.user,
+      fetchAccessToken: async (): Promise<string> => (smtp.auth as { accessToken: string }).accessToken,
+    },
+    // NO STATIC AUTH FOR THE OAUTH ARM, and that is `makeSendAdapter`'s shape verbatim: a bearer
+    // token is not transport state, so it is presented at the AUTH step below and nowhere else.
+    smtp: {
+      host: smtp.host, port: smtp.port, secure: smtp.secure,
+      ...(password ? { auth: password } : {}),
+    },
     ...(timeouts ? { timeouts } : {}),
   });
   const connection = new SMTPConnection(options as ConstructorParameters<typeof SMTPConnection>[0]);
@@ -422,7 +568,7 @@ export async function verifySmtpLogin(
       // would refuse a submission endpoint that works.
       const allowsAuth = (connection as unknown as { allowsAuth?: boolean }).allowsAuth !== false;
       if (!allowsAuth) return settleOk();
-      connection.login({ user: smtp.auth.user, pass: smtp.auth.pass }, (err) => {
+      connection.login(loginAuth(smtp.auth), (err) => {
         if (err) return settleErr(err);
         settleOk();
       });

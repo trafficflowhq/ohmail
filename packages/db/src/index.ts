@@ -129,6 +129,10 @@ export {
 export {
   MAILBOX_SYNC_BLOCK_REASONS, isMailboxSyncBlockReason, type MailboxSyncBlockReason,
 } from "./mailbox-errors.js";
+/** Mail 0063's closed set for `mailboxes.smtp_size_probe_code`, beside the column it constrains. */
+export {
+  SMTP_SIZE_PROBE_CODES, isSmtpSizeProbeCode, type SmtpSizeProbeCode,
+} from "./mailbox-errors.js";
 
 /**
  * ONE definition of the row a bought Screener suggestion is stored as — the provenance that marks

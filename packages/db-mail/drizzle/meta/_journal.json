@@ -442,6 +442,13 @@
       "when": 1790550140527,
       "tag": "0062_storage_accounting",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1790982140527,
+      "tag": "0063_smtp_size_probe_stamp",
+      "breakpoints": true
     }
   ]
 }

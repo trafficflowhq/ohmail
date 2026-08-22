@@ -37,6 +37,35 @@ export interface CredMetaAuth {
 }
 
 /**
+ * WHERE AN OAUTH MAILBOX SUBMITS — the coordinates, with the product's defaults applied.
+ *
+ * An oauth mailbox stores NO `smtp` credential row: one refresh token covers both transports, so
+ * the submission host/port/secure live in the imap row's `meta.smtp` and the secret does not
+ * repeat. Three sites resolve them — the send adapter, the `SIZE` probe on the API host, and the
+ * sync host's credential loader — and each of them wrote the same three `??` defaults by hand.
+ * That is a triplicated constant with a sharp failure: a mailbox whose meta carries no submission
+ * block would, at the site that drifted, be dialled on somebody else's default port.
+ *
+ * It lives beside {@link buildImapAuth} because it answers the other half of the same question —
+ * that function says WHAT to present, this says WHERE — and because this module is pure, so the
+ * services package's onboarding refusal can reach it without pulling nodemailer into the bundle.
+ *
+ * The defaults are Exchange Online's submission endpoint on the STARTTLS port, which is the only
+ * provider `buildImapAuth` will assemble an oauth auth for at all (`provider: "microsoft"`, and
+ * anything else throws there). `secure: false` is not plaintext: `smtpTlsFloor` turns it into a
+ * MANDATORY STARTTLS, which is what 587 speaks.
+ */
+export function oauthSmtpEndpoint(
+  smtp: { host?: string; port?: number; secure?: boolean } | undefined,
+): { host: string; port: number; secure: boolean } {
+  return {
+    host: smtp?.host ?? "smtp.office365.com",
+    port: smtp?.port ?? 587,
+    secure: smtp?.secure ?? false,
+  };
+}
+
+/**
  * A HOST-PROVIDED factory that turns the stored refresh token + oauth params into the freshness
  * callback {@link ImapOAuthAuth} carries. The host binds it to a mailbox and to its own caching +
  * rotation-persist policy (worker: per-mailbox, long-lived; API: per-invocation); this module knows

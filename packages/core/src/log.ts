@@ -180,10 +180,15 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // `announcedBytes` is the RFC 1870 `SIZE` a submission server published — a number about a
   // server's configuration, carrying nothing about a person or a message. `code` is a member of
   // the closed `SmtpSizeFailure` set and never the server's own words; the whole reason that type
-  // is a union of four literals is that `reason` one line up is allowlisted and the value scrubber
-  // only redacts strings that label themselves, so a remote server's AUTH response must not be
-  // able to arrive under either name.
-  "considered", "learned", "silent", "skipped", "failed", "announcedBytes",
+  // is a union of literals we wrote (five, since an oauth mailbox with no mintable access token
+  // joined it) is that `reason` one line up is allowlisted and the value scrubber only redacts
+  // strings that label themselves, so a remote server's AUTH response must not be able to arrive
+  // under either name.
+  //
+  // `stamped` is the durable half of the same pass (mail 0063): how many rows now remember that
+  // they were dialled, which is deliberately not the same number as `considered` — a mailbox whose
+  // credentials rotated mid-dial is left unstamped so it stays due.
+  "considered", "learned", "silent", "skipped", "failed", "announcedBytes", "stamped",
   "disabledReason", "stoppedBy", "heldBy",
   // `syncBlockedReason` is mail 0029's `MAILBOX_SYNC_BLOCK_REASONS` member — one of three literals
   // this repository wrote, beside `disabledReason` for the same reason.

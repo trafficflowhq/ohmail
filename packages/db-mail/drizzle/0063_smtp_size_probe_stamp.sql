@@ -1,0 +1,121 @@
+-- WHEN THE `SIZE` BACK-FILL LAST ASKED THIS MAILBOX'S SERVER, AND WHAT IT HEARD.
+--
+-- ══ WHAT THIS FIXES ════════════════════════════════════════════════════════════════════════
+--
+-- `mailboxes.smtp_max_size_bytes` (mail 0055) is the ceiling a submission server announced, and the
+-- scheduled back-fill that learns it for already-connected mailboxes selects on `IS NULL` — "this
+-- row has never announced anything". That predicate is correct about which rows have an unanswered
+-- question and wrong about which rows are worth ASKING AGAIN, because three outcomes leave the
+-- column NULL and none of them is a failure of the pass:
+--
+--   · the server advertises no `SIZE` at all (or the bare keyword, or `SIZE 0`);
+--   · the server refuses the login, or cannot be reached;
+--   · there is nothing to dial with — no credential row, an `authType` this build refuses, an
+--     envelope this deployment cannot decrypt.
+--
+-- So a permanently silent server was re-dialled on EVERY scheduled run: a real SMTP login against
+-- somebody else's infrastructure, once a day, for the life of the account. Worse than the waste is
+-- the starvation — the pass takes a bounded batch, so once as many un-learnable rows exist as the
+-- batch holds, no learnable mailbox is ever reached again. The in-process guard the pass already had
+-- (one dial per mailbox per invocation) cannot help: on a serverless host the invocation IS the
+-- process, so every run starts with an empty memory of what the last one tried.
+--
+-- ══ THE COLUMNS ════════════════════════════════════════════════════════════════════════════
+--
+--   smtp_size_probed_at   timestamptz NULL
+--       WHEN the last attempt happened. **NULL means "never asked", which is DUE NOW** — the value
+--       every existing row gets here, and the reason no backfill is needed or wanted: every mailbox
+--       is due, which is exactly what the pass believed before this migration.
+--
+--   smtp_size_probe_code  text NULL, CHECK-constrained
+--       WHAT the last attempt found: `learned`, `silent`, `auth_refused`, `unreachable`,
+--       `tls_refused`, `token_unavailable`, `no_credentials`, `unknown`. The pass picks the retry
+--       interval from it — a month for `silent`, a week for the rest — so it is a schedule input,
+--       not decoration.
+--
+-- The pair is written by ONE statement together with the announcement it explains, so no reader can
+-- observe "probed, learned" beside a NULL ceiling, or a ceiling with no record of the attempt.
+--
+-- ══ IT IS A BACKOFF, NEVER A TERMINAL STATE ════════════════════════════════════════════════
+--
+-- Nothing here can say "never ask again", and that is deliberate, on `0058_reconcile_backoff`'s rule:
+-- there is no "gave up" flag and no cap beyond the interval. A provider that turns `SIZE` on next
+-- month is picked up next month. A mailbox whose CREDENTIALS change goes straight back to due — the
+-- write is keyed to the credential row's `updated_at`, so a rotation leaves the row unstamped — and
+-- a person who re-enters their password does not wait at all, because the connect flow re-dials SMTP
+-- and writes `smtp_max_size_bytes` itself. The interval governs only how often we ask a server
+-- nobody has touched.
+--
+-- ══ ONLY ONE HOST WRITES THESE, AND THE OTHER ONE MUST NOT ═════════════════════════════════
+--
+-- The same back-fill rule has two arms: the API host (which runs it on a schedule) and the sync host
+-- (kept for a self-hosted deployment whose egress is open). On the managed deployment the sync host
+-- CANNOT dial submission at all — measured: twelve distinct submission hosts, every one answering
+-- `Connection timeout`, while the IMAP dial to the same host on 993 completed in about 300 ms in the
+-- next log line. If that arm stamped this column, it would record `unreachable` for every mailbox in
+-- the fleet and suppress the host whose egress actually works: the back-fill would converge on
+-- "nothing is probeable" with the working path sitting idle. So the sync arm keeps its in-memory
+-- bound and writes nothing here. That is a property of the code, and this paragraph is what stops
+-- the next reader "completing" it.
+--
+-- ══ WHY THE CODE GETS A CHECK WHEN `error_code` DID NOT ════════════════════════════════════
+--
+-- 0023 argued, correctly, that a provider's failure vocabulary is unbounded and therefore
+-- `error_code` must be TEXT with no constraint. That argument does not apply here, and someone will
+-- claim it does. Every member of this set is a branch WE wrote: `learned`/`silent` are two readings
+-- of RFC 1870, and the four failure members are the whole of `SmtpSizeFailure` in `packages/core`,
+-- which is derived from nodemailer's own `code` field through a closed switch whose default is
+-- `unknown`. A server that invents a new response line lands in `unknown`; only a new branch in our
+-- own classifier adds a member, and that is a code change this migration's successor rides with.
+--
+-- And the CHECK is a privacy boundary rather than tidiness. The value here is derived from an SMTP
+-- AUTH failure, whose nodemailer message embeds the server's own response line — which routinely
+-- contains the username, can contain an echoed credential, and is written by a third party. The
+-- whole `code`-not-message rule exists for that reason; the constraint is the half of it that
+-- survives a call site nobody has written yet. `error_detail` had exactly one guard at its write
+-- site and a server's bracket atom walked through it into a column an operator reads.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO BACKFILL, NO INDEX ════════════════════════════════════════════
+--
+-- Two `ADD COLUMN IF NOT EXISTS`, both nullable with no default, plus a DROP/ADD constraint pair so
+-- a replay is a no-op rather than a 42710 (`ADD CONSTRAINT` has no `IF NOT EXISTS`; the guarded drop
+-- first is this repository's idiom for a re-runnable constraint). A partially-applied window costs
+-- nothing: an unstamped mailbox is exactly today's behaviour.
+--
+-- NO BACKFILL, and unlike 0055 the refusal is not about honesty but about the schedule. Writing
+-- `now()` into `smtp_size_probed_at` for every row would silence the back-fill for a week on rows it
+-- has never dialled, i.e. it would defer the very work this column exists to make sustainable. NULL
+-- means "never asked", every row deserves that, and the pass drains the backlog a batch at a time.
+--
+-- No index. The selection scans `mailboxes` — one row per connected mailbox, in the hundreds — with
+-- `smtp_max_size_bytes IS NULL` and a `random()` order that forbids an index-ordered read anyway. If
+-- this table ever justifies one it wants `(smtp_max_size_bytes, smtp_size_probed_at)` and it is a
+-- separate, measured migration.
+--
+-- `ADD COLUMN` inherits the table's grants.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → API. `MailboxService.list` and `SendService.reserve` both select WHOLE `mailboxes` rows
+-- through the drizzle schema, so an API deployed ahead of this answers Postgres 42703 on the mailbox
+-- list AND on every send reservation — not a panel, the sending. The health markers
+-- `["mailboxes","smtp_size_probed_at"]` and `mailboxes_smtp_size_probe_code_closed` turn that into a
+-- `503 schema_incomplete` naming this file.
+--
+-- No worker half: the sync host neither reads nor writes either column (see above), and it selects a
+-- narrow projection rather than whole rows, so a worker of any vintage is unaffected in both
+-- directions.
+--
+-- A CLIENT never sees either column. Nothing projects them into a DTO — they are the schedule of a
+-- background pass, and the only user-visible consequence is that the ceiling it learns keeps showing
+-- up in the compose form as it always did.
+--
+-- ROLLBACK is `ALTER TABLE mailboxes DROP CONSTRAINT mailboxes_smtp_size_probe_code_closed`, then
+-- `DROP COLUMN smtp_size_probe_code, DROP COLUMN smtp_size_probed_at`. The cost is a return to
+-- asking every un-learnable server once a day; no announcement is lost, because the announcements
+-- live in `smtp_max_size_bytes` and this migration does not touch it.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "smtp_size_probed_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "smtp_size_probe_code" text;--> statement-breakpoint
+ALTER TABLE "mailboxes" DROP CONSTRAINT IF EXISTS "mailboxes_smtp_size_probe_code_closed";--> statement-breakpoint
+ALTER TABLE "mailboxes" ADD CONSTRAINT "mailboxes_smtp_size_probe_code_closed" CHECK ("smtp_size_probe_code" IS NULL OR "smtp_size_probe_code" IN ('learned', 'silent', 'auth_refused', 'unreachable', 'tls_refused', 'token_unavailable', 'no_credentials', 'unknown'));

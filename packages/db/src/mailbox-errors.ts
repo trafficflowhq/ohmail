@@ -155,3 +155,74 @@ export type MailboxSyncBlockReason = (typeof MAILBOX_SYNC_BLOCK_REASONS)[number]
 export function isMailboxSyncBlockReason(v: unknown): v is MailboxSyncBlockReason {
   return typeof v === "string" && (MAILBOX_SYNC_BLOCK_REASONS as readonly string[]).includes(v);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   WHAT THE LAST `SIZE` PROBE OF A MAILBOX FOUND — `smtp_size_probe_code` (mail 0063)
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Every value `mailboxes.smtp_size_probe_code` may hold. CLOSED, with a CHECK, on
+ * {@link MAILBOX_SYNC_BLOCK_REASONS}' argument rather than {@link MAILBOX_ERROR_CODES}' — and the
+ * distinction is the whole reason this comment is long, because the first reading of this set is
+ * that it is a failure taxonomy and therefore ought to be open.
+ *
+ * It is not. Every member is a branch WE wrote:
+ *
+ *  · `learned` / `silent` — the dial completed, and the EHLO either named a usable ceiling or did
+ *    not. Two states of our own reading of RFC 1870, not of anybody's error vocabulary.
+ *  · `auth_refused` / `unreachable` / `tls_refused` / `unknown` — `SmtpSizeFailure` in
+ *    `packages/core`, which is derived from nodemailer's own `code` field through a closed switch
+ *    with `unknown` as its default. A provider that invents a new response line cannot add a member
+ *    here: it lands in `unknown`. Only a new branch in OUR classifier can, and that is a code
+ *    change the migration rides along with.
+ *  · `token_unavailable` — an oauth mailbox for which no access token could be minted, so no dial
+ *    happened.
+ *  · `no_credentials` — nothing to dial with at all: no `imap` row, an `authType` this build
+ *    refuses, or a credential envelope this deployment cannot decrypt.
+ *
+ * ── WHY THE CHECK IS A PRIVACY BOUNDARY AND NOT TIDINESS ────────────────────────────────────
+ *
+ * The value this column records is derived from an SMTP AUTH failure, and nodemailer's error text
+ * for one embeds the server's own response line — which routinely contains the username, can
+ * contain an echoed credential, and is written by a third party. The entire `code`-not-message rule
+ * in `SmtpSizeFailure` exists for that reason, and the CHECK is the half of it that survives a call
+ * site nobody has written yet: `error_detail` had exactly one guard at the write site and a server's
+ * bracket atom walked straight through it into a column an operator reads. This column starts closed
+ * at both ends.
+ *
+ * TEXT with a CHECK rather than a Postgres enum, on the whole repository's rule: a set member is
+ * added by a migration that lands with the code, and `ALTER TYPE` is not a thing to do to a live
+ * database when `ALTER TABLE … ADD CONSTRAINT` says the same thing.
+ */
+export const SMTP_SIZE_PROBE_CODES = [
+  /** The server announced a usable `SIZE`; the row carries the number. */
+  "learned",
+  /** The login completed and the server named no usable ceiling (no `SIZE`, bare, or `SIZE 0`). */
+  "silent",
+  /** The server refused the credentials we presented (nodemailer `EAUTH`). */
+  "auth_refused",
+  /** No usable connection: timeout, DNS, refused socket. */
+  "unreachable",
+  /** Connected, and TLS would not come up on the floor this product requires. */
+  "tls_refused",
+  /** An oauth mailbox, and no access token could be minted — so nothing was dialled. */
+  "token_unavailable",
+  /** Nothing to dial with: no credential row, an unsupported `authType`, an unreadable envelope. */
+  "no_credentials",
+  /** Dialled, and the failure classified as none of the above. Deliberately opaque. */
+  "unknown",
+] as const;
+
+export type SmtpSizeProbeCode = (typeof SMTP_SIZE_PROBE_CODES)[number];
+
+/**
+ * Is this a value `mailboxes.smtp_size_probe_code` is allowed to hold?
+ *
+ * The narrowing predicate for a column that is TEXT at rest, exactly as
+ * {@link isMailboxSyncBlockReason} is for its own. The probe pass takes a
+ * {@link SmtpSizeProbeCode}, so the compiler is the first gate, the CHECK is the last, and this is
+ * what a value read back OUT of the column has to pass before anything treats it as a member.
+ */
+export function isSmtpSizeProbeCode(v: unknown): v is SmtpSizeProbeCode {
+  return typeof v === "string" && (SMTP_SIZE_PROBE_CODES as readonly string[]).includes(v);
+}
