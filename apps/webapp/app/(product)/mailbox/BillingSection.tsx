@@ -48,6 +48,17 @@ import {
 import { aiCreditMessageKey, aiCreditState } from "./ai-credit-state";
 import { estimatedEmails, formatStorageBytes, storageFigures, storageState } from "../../shell/storage-state";
 
+/**
+ * `setTimeout`'s ceiling. A delay above this is CLAMPED and the timer fires immediately rather
+ * than late, which is the opposite of the failure mode people expect from a long timeout.
+ */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+/**
+ * How far PAST a deadline the one wake-up lands, so the re-render's own clock read cannot fall on
+ * the same millisecond and conclude the deadline is still ahead.
+ */
+const PERIOD_SETTLE_MS = 1_000;
+
 type Plan = "solo" | "plus" | "pro";
 type Factor = "webauthn" | "totp" | "recovery_code";
 /** `idle` → the pane. `password`/`factor` → the step-up the portal demands. */
@@ -93,25 +104,31 @@ export function BillingSection() {
    * the exact false claim the tense rule exists to remove, in the one case where the transition
    * happens while somebody is watching it. One timer, set for that instant, re-renders the row
    * once. It is not a poll: the pane already re-reads on every load, and nothing else here
-   * depends on the clock.
+   * depends on the clock. The dependency does not change when the beat lands, so the effect does
+   * not re-arm — one wake-up, not a loop.
    *
-   * Nothing is scheduled for a date already gone (that render is right the first time), for a
-   * pane with no date, or for a boundary further out than a timer can express — `setTimeout`
-   * clamps its delay to a signed 32-bit millisecond count (~24.9 days) and a longer wait FIRES
-   * IMMEDIATELY rather than late, which would spend the one timer on a no-op re-render the
-   * moment an annual subscription's pane opened. Not a loop, to be exact: the dependency does
-   * not change, so the effect does not re-arm. Every mount and every re-read evaluates the
-   * deadline again, which is how a boundary past the ceiling is eventually picked up.
+   * TWO EDGES, both of them the same mistake in opposite directions: assuming this effect reads
+   * the same clock the render did, and assuming the number checked against the ceiling is the
+   * number handed to `setTimeout`. Each is answered at its own line below.
    */
   const [, setPeriodBeat] = useState(0);
   const periodEndAt = sub?.subscription?.currentPeriodEnd ?? null;
   useEffect(() => {
     if (periodEndAt == null) return;
     const delay = new Date(periodEndAt).getTime() - Date.now();
-    if (delay <= 0 || delay > 2_147_483_647) return;
-    // A second past the boundary, so the re-render's own `Date.now()` cannot land on the same
-    // millisecond and read the date as still ahead — which would burn the one timer for nothing.
-    const id = setTimeout(() => setPeriodBeat((n) => n + 1), delay + 1_000);
+    /* THE CEILING IS CHECKED AGAINST WHAT IS ACTUALLY SCHEDULED, margin included. Comparing
+       `delay` alone lets the last second below {@link MAX_TIMEOUT_MS} through and then passes
+       `delay + PERIOD_SETTLE_MS` — over the limit, clamped, fired immediately — spending the one
+       wake-up twenty-five days early on a render that changes nothing. Beyond the ceiling
+       nothing is scheduled at all; every mount and every re-read evaluates the deadline again,
+       which is how a boundary that far out is eventually picked up. */
+    if (delay > MAX_TIMEOUT_MS - PERIOD_SETTLE_MS) return;
+    /* A DEADLINE ALREADY GONE STILL GETS ITS BEAT — `Math.max`, not an early return. The render
+       above sampled the clock a moment before this effect did, so a non-positive `delay` here
+       can mean the row was rendered in the future tense microseconds before the boundary
+       crossed; returning silently would leave that sentence on screen for as long as the pane
+       stays open. One re-render costs nothing and removes the window entirely. */
+    const id = setTimeout(() => setPeriodBeat((n) => n + 1), Math.max(delay, 0) + PERIOD_SETTLE_MS);
     return () => clearTimeout(id);
   }, [periodEndAt]);
 
