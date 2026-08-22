@@ -179,7 +179,7 @@
     "verifyResend": "Neuen Link schicken",
     "verifyResent": "Ist unterwegs",
     "verifyRecheck": "Ich habe bestätigt — weiter",
-    "planPriceAnnual": "${price}/Jahr",
+    "planPriceAnnual": "{price} $/Jahr",
     "intervalLabel": "Abrechnungszeitraum",
     "intervalMonthly": "Monatlich",
     "intervalAnnual": "Jährlich — zwei Monate geschenkt"
@@ -1367,9 +1367,9 @@
     "intervalMonthly": "Monatlich",
     "intervalAnnual": "Jährlich",
     "perYear": "/Jahr",
-    "soloPriceAnnual": "$90",
-    "plusPriceAnnual": "$150",
-    "proPriceAnnual": "$290"
+    "soloPriceAnnual": "90 $",
+    "plusPriceAnnual": "150 $",
+    "proPriceAnnual": "290 $"
   },
   "downloads": {
     "title": "Nimm es mit.",
@@ -1860,9 +1860,9 @@
     "setupCreditsSub": "Vom Verbinden der Postfächer — wird vor dem Plan-Guthaben für Screener-Vorschläge verwendet. Nutzbar bis {when}.",
     "addonsTitle": "Extras",
     "addonStorage": "Zusätzlicher Speicher",
-    "addonStorageSub": "Je +10 GB gespeicherter Nachrichtentext, ${price}/Monat.",
+    "addonStorageSub": "Je +10 GB gespeicherter Nachrichtentext, {price} $/Monat.",
     "addonMailbox": "Zusätzliches Postfach",
-    "addonMailboxSub": "Je +1 Postfach, ${price}/Monat.",
+    "addonMailboxSub": "Je +1 Postfach, {price} $/Monat.",
     "addonAdd": "Eins hinzufügen",
     "addonRemove": "Eins entfernen",
     "addonNote": "Änderungen werden sofort anteilig über die hinterlegte Karte abgerechnet. Beim Entfernen wird die nächste Rechnung gutgeschrieben.",
