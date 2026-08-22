@@ -391,21 +391,35 @@ jobs:
           test -f mapping/ohmail-android-mapping.txt.gz \
             || { echo "no R8 mapping was fetched from the build job" >&2; exit 1; }
 
-          # ORDER MATTERS, AND IT IS THE WHOLE MECHANISM HERE. A release has no transactional
-          # multi-asset upload: `gh release upload` puts one file up, then the next, and a failure
-          # between them leaves whatever already landed live on the page while this job goes red.
-          # One of the two possible half-states is harmful and the other is not:
+          # ── THE INVARIANT: NO APK IS EVER ON THIS PAGE WITHOUT ITS OWN MAPPING ───────────
           #
-          #   mapping first, APK second — a failure leaves a mapping and no APK. Nobody can
-          #   install anything, so there is nothing to be unable to retrace. Harmless.
+          # A release has no transactional multi-asset upload. `gh release upload` puts one file
+          # up, then the next, and `--clobber` DELETES an existing asset before uploading its
+          # replacement — so every intermediate state is visible to anyone downloading, and the
+          # one this job must never leave behind is an installable obfuscated APK whose mapping
+          # is absent or belongs to a different build. The job going red does not undo it.
           #
-          #   APK first — a failure leaves an obfuscated APK people can install with no way to
-          #   read a crash from it, which is exactly the state the mapping exists to prevent, and
-          #   it stays live after the red run.
+          # Ordering the two uploads is not enough on its own, and the first version of this was
+          # wrong for thinking it was. It holds on a first run, where the page starts empty. On a
+          # RERUN — a re-run of a red job, a re-pushed tag — the release already carries the
+          # previous pair, and replacing the mapping first would delete the old APK's mapping
+          # while the old APK was still downloadable, then, if anything failed or the run were
+          # cancelled, leave it that way or leave it beside a mapping from a different build.
+          # R8 may rename differently on any rebuild, so a mismatched mapping is not a partial
+          # answer; it is a wrong one.
           #
-          # So the mapping goes FIRST, and the invariant is ordering rather than atomicity: any
-          # APK on this page has had its mapping beside it since before it arrived. Separate
-          # calls, so a failure on the first one never starts the second.
+          # So the APK is WITHDRAWN FIRST, and everything after that happens while there is no
+          # APK to be unable to retrace. Every interruption point now leaves one of: no APK and
+          # the old mapping, no APK and the new mapping, or the complete new pair. A brief 404
+          # on a download is the cost, and it is the right side of this trade.
+          HAS_APK=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '[.assets[] | select(.name == "ohmail-android.apk")] | length')
+          if [ "${HAS_APK:-0}" -gt 0 ]; then
+            echo "a previous APK is attached to $TAG — withdrawing it before replacing the pair"
+            gh release delete-asset "$TAG" ohmail-android.apk --yes --repo "$GITHUB_REPOSITORY"
+          fi
+
+          # Separate calls, so a failure on the mapping never starts the APK upload.
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             mapping/ohmail-android-mapping.txt.gz
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
