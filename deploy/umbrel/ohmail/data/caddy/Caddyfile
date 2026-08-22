@@ -1,0 +1,7 @@
+# Placeholder — hooks/pre-start renders the real file over this one on every start of
+# the app, from data/env/settings.env. It is committed so the compose file's bind mount
+# has a source even if the hook never ran; if the page below is what you are seeing,
+# that is what happened.
+:8099 {
+	respond "ohmail is starting. If this page persists, the app's pre-start hook did not run — restart the ohmail app from the Umbrel dashboard." 200
+}

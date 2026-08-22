@@ -78,7 +78,7 @@ Keep a couple of weeks of dumps and delete older ones; a nightly gzipped
 dump of a household's server is small.
 
 On Umbrel the same dump works with the container's name instead of compose:
-`docker exec ohmail-server_db_1 pg_dump -U ohmail -d ohmail`.
+`docker exec ohmail_db_1 pg_dump -U ohmail -d ohmail`.
 
 ## Restoring
 

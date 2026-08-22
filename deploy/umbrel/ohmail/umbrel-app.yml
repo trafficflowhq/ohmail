@@ -1,15 +1,15 @@
-# The umbrelOS app manifest, in the format the official app repository uses
-# (manifestVersion 1.1). DRAFT — see ../README.md for what is verified against the
-# format and what still needs a real device. Two placeholders are deliberate and
-# must be filled at submission time:
-#   · version — set to the first published image tag, and keep it in step with the
-#     image digests pinned in docker-compose.yml;
-#   · gallery — screenshots, produced with the store submission.
+# The umbrelOS app manifest, in the format the official app repository
+# (github.com/getumbrel/umbrel-apps) uses. `manifestVersion: 1.1` because the package
+# relies on lifecycle hooks (hooks/pre-start), which older umbrelOS versions do not run.
+#
+# `version` tracks the pinned image tag in docker-compose.yml — the two must move
+# together. `submission` is set to the pull-request URL right after the PR is opened
+# (see ../SUBMISSION.md); until then it points at the source repository.
 manifestVersion: 1.1
-id: ohmail-server
+id: ohmail
 category: social
 name: ohmail
-version: "0.0.0"
+version: "0.11.0"
 tagline: A calm home for your family's mail, on your own box
 description: >-
   ohmail connects to the mailboxes your household already has — over IMAP, with
@@ -18,27 +18,31 @@ description: >-
   message, and you can stop using it at any time without moving anything.
 
 
+  One thing to prepare: ohmail needs an https address of its own (your mail
+  passwords deserve TLS, and secure cookies and passkeys do not exist on plain
+  http://umbrel.local). Point a domain at your home, forward your router's
+  outside port 443 to this device's port 4443, and set the address in the app's
+  settings file — opening the app before that shows the exact steps, and the
+  guide in the repository walks through them.
+
+
   Made for one household: you, your partner, your family. No metering, no
   billing, no open signup — the first account is created with a one-time token
   printed to the app's log, and every later account arrives by invitation.
-
-
-  One thing to prepare: ohmail needs an https address (your mail passwords
-  deserve TLS, and secure cookies and passkeys do not exist on plain
-  http://umbrel.local). Point a domain at your home, forward port 443 to your
-  Umbrel, and set the address in the app's settings file — the guide in the
-  repository walks through it.
 releaseNotes: ""
+
 developer: TrafficFlow
 website: https://ohmail.app
 dependencies: []
 repo: https://github.com/trafficflowhq/ohmail
 support: https://github.com/trafficflowhq/ohmail/issues
+
 port: 4680
 gallery: []
 path: ""
+
 defaultUsername: ""
 defaultPassword: ""
-torOnly: false
+
 submitter: TrafficFlow
 submission: https://github.com/trafficflowhq/ohmail
