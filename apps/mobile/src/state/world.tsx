@@ -196,15 +196,25 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     () => (engine ? engine.read().version() : 0),
   );
 
-  /* The toast: one sentence per rejected (or optimistically stated) act. */
-  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
+  /*
+   * The toast: one sentence per rejected (or optimistically stated) act — QUEUED, not
+   * replaced. A reconnect flush can settle several intents in one continuation, and React
+   * batches the state updates: with a single slot, "Reply sent." followed by a rolled-back
+   * move rendered only the rollback. Each sentence now takes its turn (the Toast's own
+   * dismiss timer advances the queue), capped so a burst cannot backlog the screen.
+   */
+  const [toastQueue, setToastQueue] = useState<{ id: number; message: string }[]>([]);
   const toastSeq = useRef(0);
   const showToast = useCallback((message: string) => {
     toastSeq.current += 1;
-    setToast({ id: toastSeq.current, message });
+    const id = toastSeq.current;
+    setToastQueue((q) => (q.length >= 4 ? q : [...q, { id, message }]));
   }, []);
-  const dismissToast = useCallback(() => setToast(null), []);
-  const worldToast = useMemo<WorldToast>(() => ({ toast, dismiss: dismissToast }), [toast, dismissToast]);
+  const dismissToast = useCallback(() => setToastQueue((q) => q.slice(1)), []);
+  const worldToast = useMemo<WorldToast>(
+    () => ({ toast: toastQueue[0] ?? null, dismiss: dismissToast }),
+    [toastQueue, dismissToast],
+  );
 
   /* Per-sender scope choice (this sender / whole domain) — view state on the session,
      keyed by the STABLE routeKey (the sender address), never the representative id. */
@@ -220,7 +230,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const sessionKey = session?.ownerKey ?? null;
   useEffect(() => {
     setScopes({});
-    setToast(null);
+    setToastQueue([]);
   }, [sessionKey]);
 
   const zone = useMemo(readerZone, []);
@@ -264,9 +274,20 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
+  /** Keys already retried since the last drain — a requeued batch is NOT immediately retried
+   *  again (a persistent 500 or a ten-minute `send_in_flight` would loop hot); the next
+   *  drain's start clears the latch, because a fresh drain is the next connectivity proof. */
+  const tried = useRef(new Set<string>());
+  useEffect(() => {
+    if (conn.syncing) tried.current.clear();
+  }, [conn.syncing]);
   useEffect(() => {
     if (conn.syncing || engine === null || flushing.current === engine) return;
-    if (engine.pendingMutations().length === 0) return;
+    const pending = engine.pendingMutations();
+    if (pending.length === 0) return;
+    // Everything pending was already retried since the last drain: wait for the next one.
+    if (pending.every((m) => tried.current.has(m.key))) return;
+    for (const m of pending) tried.current.add(m.key);
     const flushed = engine;
     flushing.current = flushed;
     void flushQueued(flushed)
@@ -292,7 +313,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       .finally(() => {
         if (flushing.current === flushed) flushing.current = null;
         // Re-run the effect: intents queued DURING this flush (or on a session that switched
-        // in under it) get their turn instead of waiting for the next wake.
+        // in under it) get their turn — the tried-latch keeps the batch that was merely
+        // REQUEUED from spinning a retry loop against a server that keeps refusing.
         setOutcomeSeq((n) => n + 1);
       });
     // `conn.syncing` falling is the drain-completed signal; `outcomeSeq` re-checks after a flush.
