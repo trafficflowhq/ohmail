@@ -24,9 +24,8 @@ Seven services: Caddy (TLS front door), the web app, the API server, the sync wo
 Postgres, MinIO (attachment staging), and Mailpit (default sink for verification
 mail). All state lives under `${APP_DATA_DIR}/data/...`. Secrets are generated
 on-device by `hooks/pre-start` into `data/env/` — the person installing never handles
-them. They are random rather than seed-derived on purpose: the credential-encryption
-key is the one value users are told to copy into a password manager, because with it
-(plus a database dump) the install can be rebuilt on any machine.
+them. Why they are generated rather than derived from the device seed is the first of
+the two departures below.
 
 ### Two deliberate departures from the packaging guidance
 
@@ -96,5 +95,5 @@ cannot reach a Docker daemon, so all of the above is static validation. The same
 services, same images and same wiring do boot and serve as the project's own
 `deploy/selfhost` stack, but that is evidence about the software, not about this
 package. The package README lists the assumptions a first device run must check, and
-we will run whatever verification you want to see — including on hardware, if you tell
-us what you want to see from it.
+we will run whatever else you want us to run — on hardware included, if you tell us
+what you need from it.
