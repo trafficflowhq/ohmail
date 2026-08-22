@@ -50,6 +50,7 @@ import { AppShell } from "../../webapp/app/shell/AppShell";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go } from "../../webapp/app/shell/routing";
 import { BootStatus } from "./BootStatus.js";
+import { bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";
 import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
 import { DesktopMailboxes, readMailboxFacts } from "./DesktopMailboxes.js";
@@ -87,6 +88,18 @@ import { createLocalEngine, type EngineStatus } from "./bridge-fetch.js";
  * and the poll exists only while the engine is starting, so the steady state still costs zero.
  */
 const SETTLING_POLL_MS = 250;
+
+/**
+ * How often a CLOUD-door window re-asks the engine whether the hosted session still exists.
+ *
+ * The engine learns a dead session on its own (`cloud-auth.ts`'s definitive-refusal cue) and
+ * flips `/health` to `signedIn: false` — but nothing pushed that fact into a window that was
+ * already showing mail, so the person kept reading a mirror that had silently stopped
+ * receiving, for days, with no sentence anywhere. Measured live on a paired desktop whose
+ * refresh family was revoked. One local stdio call a minute is the whole steady-state cost,
+ * and only on the cloud door — the standalone door has no hosted session to lose.
+ */
+const HOSTED_SESSION_PROBE_MS = 60_000;
 
 export function DesktopGate() {
   const [shell, setShell] = useState<Shell | null>(null);
@@ -166,6 +179,42 @@ export function DesktopGate() {
    */
   const [ai, setAi] = useState<LocalAiStatus | null>(null);
   const door = shell?.kind === "status" ? (shell.status.mode ?? null) : null;
+
+  /**
+   * THE HOSTED SESSION'S LIVE TRUTH, asked of the engine rather than remembered from launch.
+   *
+   * `hostedSessionGone` latches when the cloud door's engine answers `signedIn: false` — the
+   * state it enters when the hosted API definitively refused to renew the session. The gate
+   * then replaces the mail client with an honest sentence and the sign-in surface, instead of
+   * a mailbox that silently stopped moving (the engine also refuses reads in that state, so
+   * staying mounted would mean error toasts over stale mail). `signInAfterExpiry` is the
+   * person taking the offered action.
+   */
+  const [hostedSessionGone, setHostedSessionGone] = useState(false);
+  const [signInAfterExpiry, setSignInAfterExpiry] = useState(false);
+  useEffect(() => {
+    if (door !== "cloud" || !bridgeAvailable()) {
+      setHostedSessionGone(false);
+      setSignInAfterExpiry(false);
+      return;
+    }
+    let cancelled = false;
+    const probe = async (): Promise<void> => {
+      try {
+        const res = await bridgeFetch("/health");
+        if (!res.ok) return; // a dead ENGINE is the status path's story, not this one's
+        const health = (await res.json()) as { signedIn?: boolean };
+        if (!cancelled && health.signedIn === false) setHostedSessionGone(true);
+      } catch {
+        /* engine unreachable — the status path owns that */
+      }
+    };
+    const timer = setInterval(() => void probe(), HOSTED_SESSION_PROBE_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [door]);
   useEffect(() => {
     if (door !== "local") {
       setAi(null);
@@ -233,6 +282,35 @@ export function DesktopGate() {
 
   if (gate.kind === "choose") {
     return <DoorChooser onEntered={(r) => { if (r.status) onStatus(r.status); else void refresh(); }} />;
+  }
+
+  /* THE HOSTED SESSION ENDED under a window that was already serving mail. Say so, in a
+     sentence, and offer the way back — never a mailbox that silently stopped moving. The
+     mirrored mail is kept on disk (sign-out freezes the directory) and returns with the
+     sign-in. */
+  if (hostedSessionGone) {
+    if (signInAfterExpiry) {
+      return (
+        <DoorChooser
+          onEntered={(r) => {
+            setHostedSessionGone(false);
+            setSignInAfterExpiry(false);
+            if (r.status) onStatus(r.status);
+            else void refresh();
+          }}
+        />
+      );
+    }
+    return (
+      <GateNotice
+        reason={
+          "You were signed out of your hosted account, so this install stopped receiving " +
+          "new mail. What was already here is kept; sign in again to reconnect."
+        }
+        actionLabel="Sign in"
+        onAction={() => setSignInAfterExpiry(true)}
+      />
+    );
   }
 
   const status = shell.kind === "status" ? shell.status : null;

@@ -1586,6 +1586,17 @@ describe("the UI bundle's build config", () => {
    * nothing else.
    */
   it("talks to the shell's commands and opens nothing", () => {
+    /* THE HOSTED SESSION'S LIVE TRUTH REACHES THE WINDOW. The engine flips /health to
+       signedIn:false when the hosted API definitively refuses to renew the session; a window
+       that never re-asked kept serving week-old mail with no sentence anywhere — measured live
+       on a paired desktop whose refresh family was revoked. The gate must hold the probe, the
+       latch, and the honest sentence with its way back. */
+    const gate = read("src/DesktopGate.tsx");
+    expect(gate).toMatch(/HOSTED_SESSION_PROBE_MS/);
+    expect(gate).toMatch(/health\.signedIn === false/);
+    expect(gate).toMatch(/signed out of your hosted account/);
+    expect(gate).toMatch(/actionLabel="Sign in"/);
+
     const bridge = read("src/bridge-fetch.ts");
     expect(bridge).toMatch(/const REQUEST_COMMAND = "engine_request"/);
     expect(bridge).toMatch(/const STATUS_COMMAND = "engine_status"/);

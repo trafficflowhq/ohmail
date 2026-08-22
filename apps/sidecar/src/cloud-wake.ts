@@ -184,11 +184,18 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
       // never faster than {@link WAKE_THROTTLE_RETRY_MS} — which is one dial a minute at most,
       // not the reconnect storm the permanent-off doctrine exists to prevent.
       if (res.status === 429) {
-        const retryAfter = Number(res.headers.get("retry-after"));
-        const waitMs = Math.max(
-          throttleRetryMs,
-          Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 0,
-        );
+        // `Retry-After` is delay-seconds OR an HTTP-date; a proxy is free to use either form,
+        // and reading a date with Number() yields NaN — which would fall to the floor and
+        // redial into the very limiter that asked for more time.
+        const raw = res.headers.get("retry-after");
+        const asSeconds = Number(raw);
+        const asDate = raw ? Date.parse(raw) : Number.NaN;
+        const askedMs = Number.isFinite(asSeconds) && asSeconds > 0
+          ? asSeconds * 1000
+          : Number.isFinite(asDate)
+            ? asDate - Date.now()
+            : 0;
+        const waitMs = Math.max(throttleRetryMs, askedMs);
         cfg.log?.("cloud_wake_throttled", {
           reason: "the hosted events stream is rate-limited right now; the dial repeats on a " +
             "slow cadence and the mirror stays on its poll until it connects",

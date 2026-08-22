@@ -386,6 +386,14 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
      * retried into 401s every five minutes for a day while its window showed week-old mail.
      */
     let sessionExpired = false;
+    /**
+     * The in-flight session-death teardown, retained so a shutdown that races it can wait.
+     * `onSessionRefused` fires from inside a pull's own refresh and cannot await the teardown
+     * (its stop() resolves only after that pull fails out — awaiting there is the deadlock),
+     * so the teardown runs detached — and a `stop()` that found `authed` already null would
+     * otherwise close the database under a mirror still draining its last page.
+     */
+    let sessionTeardown: Promise<void> | null = null;
 
     const activate = (tokens: CloudTokens): Authed => {
       sessionExpired = false;
@@ -408,7 +416,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             reason: "the hosted API refused to renew the session (revoked or rotated past); " +
               "the engine returns to sign-in and the mirror keeps serving what it holds",
           });
-          void signOut().catch(() => undefined);
+          sessionTeardown = signOut().catch(() => undefined).finally(() => {
+            sessionTeardown = null;
+          });
         },
       });
 
@@ -822,6 +832,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // period, and the process was killed instead of leaving. Now the drain is asked to stop and
         // this waits for it to be out of the database before the close is issued.
         await authed?.mirror.stop();
+        // A session-death teardown that raced this shutdown already set `authed` null, so the
+        // stop above matched nothing — but ITS mirror may still be draining its last page.
+        // Wait for the teardown to be out of the database before the close is issued.
+        await sessionTeardown;
         await opened.close();
       },
     };

@@ -1,7 +1,7 @@
-import { and, desc, eq, gt, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import {
-  alertState, billingEvents, billingReconciliationRuns, changeLog, devices, mailboxes,
-  outboundSends, sessions, workerHeartbeats,
+  alertState, billingEvents, billingReconciliationRuns, mailboxes, outboundSends,
+  workerHeartbeats,
 } from "./schema.js";
 import { accountsWithSyncDisabled } from "./billing.js";
 import { accountsAtStorageCap } from "./storage-cloud.js";
@@ -589,57 +589,56 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
 
   // ── 8. a paired native device that stopped syncing ──────────────────────────────────────
   //
-  // The population is `devices.last_synced_at` (mail 0064): stamped only by a `GET /sync`
-  // answer that reached the horizon, so "quiet" covers both ways the incident this guards
-  // actually happened — a mirror stuck re-paging its backlog forever (requests happening, no
-  // convergence) and a session killed by refresh-reuse detection (no requests at all). The
-  // client cannot report either: it retries on its own backoff and shows what it holds.
+  // The population is `devices.last_synced_at` (mail 0064): stamped only by a `GET /sync` poll
+  // whose PRESENTED cursor already sits at the horizon — the client's own proof of a committed
+  // drain — so "quiet" covers both ways the incident this guards actually happened: a mirror
+  // stuck re-paging its backlog forever (requests happening, no convergence) and a session
+  // killed by refresh-reuse detection (no requests at all). The client cannot report either:
+  // it retries on its own backoff and shows what it holds.
   //
-  // Three gates, each a correctness statement:
-  //  · kind ≠ 'web' — a browser tab left closed is not an incident; the desktop IS one;
-  //  · the account MOVED ON — the newest change_log row is younger than the device's last
-  //    horizon, so there demonstrably was mail the device never received. A dormant account
-  //    keeps its devices quiet and unpaged;
-  //  · the device is still ARMED — an unrevoked session (alive but not converging), or one
-  //    revoked within 14 days (reuse detection writes no audit row and tells nobody, so the
-  //    person is likely still in front of a mirror that silently died). A device retired
-  //    months ago ages out of the arm window and the alert closes on its own.
+  // READ THROUGH `device_sync_stale_candidates` (mail 0067), NEVER the raw tables. The alert
+  // pass runs on the CONTENT-BLIND staff handle, which has no grant on `devices` or `sessions`
+  // and is deliberately refused `change_log` — a direct read here answered 42501 before any
+  // rule ran, and every other alert died with it: the pager went dark BECAUSE an alarm was
+  // added to it. The definer function carries only closed fields (ids, kinds, timestamps) and
+  // owns all four predicates — see the migration header for each one's argument.
+  //
+  // THE ISOLATION IS PART OF THE RULE. A database without the function (a deployment between
+  // migration and API, an adopted database mid-catch-up) or a handle without EXECUTE must cost
+  // exactly this rule, never the pass: the pass dying wholesale is the failure mode this
+  // paragraph exists to record. Only the two codes that mean "this rule cannot run here" are
+  // swallowed; anything else is a real fault and still fails the pass loudly.
   //
   // Per-device keys, like `worker_down:<shard>`: paired native devices are tens fleet-wide,
   // the remedy is per-device, and a grouped count would hide WHICH mirror is dead.
   const deviceStaleCut = new Date(now.getTime() - t.deviceSyncStaleMs);
-  const staleDevices = await db.select().from(devices)
-    .where(and(
-      ne(devices.kind, "web"),
-      isNotNull(devices.lastSyncedAt),
-      lt(devices.lastSyncedAt, deviceStaleCut),
-    ));
-  const deviceArmWindowMs = 14 * 24 * 60 * 60 * 1000;
+  const deviceArmCut = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+  type StaleDeviceRow = { device_id: string; kind: string; last_synced_at: Date | string; newest_change_at: Date | string };
+  let staleDevices: StaleDeviceRow[] = [];
+  try {
+    const res = await db.execute(
+      sql`select device_id, kind, last_synced_at, newest_change_at
+          from device_sync_stale_candidates(${deviceStaleCut}, ${deviceArmCut})`,
+    );
+    staleDevices = (Array.isArray(res) ? res : (res as { rows?: StaleDeviceRow[] }).rows ?? []) as StaleDeviceRow[];
+  } catch (err) {
+    const code = (err as { code?: string })?.code;
+    // 42883 undefined_function (pre-0067 database), 42501 insufficient_privilege (a handle the
+    // grant has not reached). Both mean "not evaluable HERE"; everything else stays fatal.
+    if (code !== "42883" && code !== "42501") throw err;
+  }
   for (const d of staleDevices) {
-    if (d.lastSyncedAt == null) continue; // isNotNull above; narrows the type
-    // Index-backed: (account_id, seq) descending, first row — the newest change's wall clock.
-    const [latest] = await db.select({ createdAt: changeLog.createdAt }).from(changeLog)
-      .where(eq(changeLog.accountId, d.accountId))
-      .orderBy(desc(changeLog.seq)).limit(1);
-    if (!latest || latest.createdAt <= d.lastSyncedAt) continue;
-    const armCut = new Date(now.getTime() - deviceArmWindowMs);
-    const armed = await db.select({ id: sessions.id }).from(sessions)
-      .where(and(
-        eq(sessions.deviceId, d.id),
-        or(isNull(sessions.revokedAt), gt(sessions.revokedAt, armCut)),
-      ))
-      .limit(1);
-    if (armed.length === 0) continue;
-    const staleSeconds = secondsBetween(now, d.lastSyncedAt);
+    const lastSynced = new Date(d.last_synced_at as string);
+    const staleSeconds = secondsBetween(now, lastSynced);
     alerts.push({
-      key: `device_sync_stale:${d.id}`,
+      key: `device_sync_stale:${d.device_id}`,
       kind: "device_sync_stale",
       // WARNING, not critical: mail is safe on the account and the webapp still shows it —
       // what is broken is one device's mirror, and the person may not know.
       severity: "warning",
       title: `A paired ${d.kind} device has not synced in ${humanAge(staleSeconds)}`,
       detail:
-        `Device ${d.id} (kind ${d.kind}) last reached the sync horizon ` +
+        `Device ${d.device_id} (kind ${d.kind}) last reached the sync horizon ` +
         `${humanAge(staleSeconds)} ago (threshold ${humanAge(Math.round(t.deviceSyncStaleMs / 1000))}), ` +
         `and its account has newer changes it never received. Its session is still armed ` +
         `(live, or revoked within 14 days) — the person in front of it is reading stale ` +

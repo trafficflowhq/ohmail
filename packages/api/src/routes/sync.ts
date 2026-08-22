@@ -45,9 +45,15 @@ export const DEVICE_SYNC_STAMP_MIN_GAP_MS = 5 * 60_000;
  * Stamp `devices.last_synced_at` (mail 0064) for the session's device — the per-device "last
  * time this mirror was genuinely current" the `device_sync_stale` alert reads.
  *
- * Called ONLY when a `GET /sync` response says `hasMore: false`: a device that is paging a
- * backlog (or stuck re-bootstrapping the same backlog forever — the measured failure this
- * column exists for) makes requests but never reaches the horizon, and must not look current.
+ * Called ONLY when the response is the EMPTY TAIL — no changes, `hasMore: false`, the cursor
+ * handed back unchanged. That shape is the client's own proof of a COMMITTED horizon: both
+ * mirrors write their cursor only after the page it names is committed (the sidecar per page
+ * transaction, the browser engine in the same flush as the rows), so a client PRESENTING the
+ * horizon cursor has durably applied everything below it. The weaker form — stamping any
+ * `hasMore: false` answer — stamped the final page as it was HANDED OVER, before the client
+ * applied it; a client that keeps fetching that page and dying before its commit would have
+ * looked current forever. A device paging a backlog (or stuck re-bootstrapping it — the
+ * measured failure this column exists for) never presents the horizon and never stamps.
  * A deviceless session (a plain browser tab) matches no row and writes nothing.
  *
  * FAILURE POSTURE: swallowed, deliberately, and the direction is fail-LOUD for the alert —
@@ -88,8 +94,13 @@ export const syncRoutes: Route[] = [
         ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
         ...(types ? { types } : {}),
       });
-      // The horizon is the stamp's whole meaning — a page mid-backlog stamps nothing.
-      if (!result.hasMore) await stampDeviceSynced(deps);
+      // The COMMITTED horizon is the stamp's whole meaning: only the empty tail — the client
+      // presenting a cursor that is already the horizon — proves a committed drain. A page
+      // mid-backlog, and the final page itself (handed over but not yet applied), stamp nothing.
+      const emptyTail = !result.hasMore && since !== undefined && result.cursor === since
+        && result.changes.creates.length === 0 && result.changes.updates.length === 0
+        && result.changes.moves.length === 0 && result.changes.deletes.length === 0;
+      if (emptyTail) await stampDeviceSynced(deps);
       return jsonResponse(result);
     },
   },
