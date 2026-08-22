@@ -90,28 +90,34 @@ with the sender's original one click away.
 
 ## Photos are compressed before they are sent
 
-Attach a picture and it is re-encoded **on your own machine** before anything
-leaves it, at a quality you pick: **Low**, **Medium**, **High**, or **Original**
-for the bytes exactly as they came off the camera. Medium is the default —
-2048 px at JPEG quality 0.82, which a mail reader cannot tell from the original
-and which is a fraction of the size. The dial sits beside the attach button,
-where the decision is being made, and in Settings; both move the same
+Attach a **JPEG or a PNG** and it is re-encoded **on your own machine** before
+anything leaves it, at a quality you pick: **Low**, **Medium**, **High**, or
+**Original** for the bytes exactly as they came off the camera. Medium is the
+default — 2048 px at JPEG quality 0.82, which a mail reader cannot tell from the
+original and which is a fraction of the size. The dial sits beside the attach
+button, where the decision is being made, and in Settings; both move the same
 preference, and it is remembered per account.
+
+**Those two formats and no others**, and the boundary is worth stating plainly
+rather than leaving to be discovered: HEIC/HEIF — which is what a modern iPhone
+writes by default — WebP, AVIF, GIF, SVG and anything arriving with no declared
+type are sent **exactly as they are**, at every level, with their metadata
+intact. Re-encoding them would mean converting them, and an animated GIF through
+a canvas comes out as its first frame — data loss dressed as an optimisation.
 
 Nothing is converted: a JPEG comes back a JPEG and a PNG comes back a PNG. JPEGs
 are re-encoded at the level's quality and fitted to its longest edge; PNGs are
 only scaled, because canvas PNG encoding is lossless and re-encoding one at a
-"lower quality" makes it bigger. GIFs, SVGs and everything that is not a picture
-are never touched — an animated GIF through a canvas comes out as its first
-frame, which is data loss dressed as an optimisation.
+"lower quality" makes it bigger.
 
-Two properties worth stating plainly. The re-encode drops every EXIF tag the
-file carried, the camera, the timestamps and the GPS position included; the
-orientation is read before the pixels are written, so a portrait photo does not
-arrive on its side. And if the re-encode comes out **larger** than the original —
-which happens — the original bytes are sent, EXIF and all, because a feature
-called compression that makes a file bigger while losing detail is worse than
-one that does not run.
+Two more properties worth stating plainly. Where a re-encode does happen it drops
+every EXIF tag the file carried — the camera, the timestamps and the GPS position
+included — and the orientation is read before the pixels are written, so a
+portrait photo does not arrive on its side. And if the re-encode comes out
+**larger** than the original, which happens, the original bytes are sent, EXIF
+and all: a feature called compression that makes a file bigger while losing
+detail is worse than one that does not run. Both of those mean the metadata strip
+is a consequence of compression, never a promise held independently of it.
 
 <img src="docs/assets/feature-wall/08-picture-quality.gif" alt="Dropping a photo into a message, the Quality dial beside the attach button, and the size the picture is sent at" width="100%">
 
