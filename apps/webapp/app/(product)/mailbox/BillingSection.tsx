@@ -85,6 +85,36 @@ export function BillingSection() {
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
+  /**
+   * THE PERIOD BOUNDARY IS SCHEDULED, NOT MERELY SAMPLED.
+   *
+   * `periodEndPassed` below reads `Date.now()` during a render, so a pane opened before the
+   * period ends and left mounted past it keeps the future-tense sentence it was rendered with —
+   * the exact false claim the tense rule exists to remove, in the one case where the transition
+   * happens while somebody is watching it. One timer, set for that instant, re-renders the row
+   * once. It is not a poll: the pane already re-reads on every load, and nothing else here
+   * depends on the clock.
+   *
+   * Nothing is scheduled for a date already gone (that render is right the first time), for a
+   * pane with no date, or for a boundary further out than a timer can express — `setTimeout`
+   * clamps its delay to a signed 32-bit millisecond count (~24.9 days) and a longer wait FIRES
+   * IMMEDIATELY rather than late, which would spend the one timer on a no-op re-render the
+   * moment an annual subscription's pane opened. Not a loop, to be exact: the dependency does
+   * not change, so the effect does not re-arm. Every mount and every re-read evaluates the
+   * deadline again, which is how a boundary past the ceiling is eventually picked up.
+   */
+  const [, setPeriodBeat] = useState(0);
+  const periodEndAt = sub?.subscription?.currentPeriodEnd ?? null;
+  useEffect(() => {
+    if (periodEndAt == null) return;
+    const delay = new Date(periodEndAt).getTime() - Date.now();
+    if (delay <= 0 || delay > 2_147_483_647) return;
+    // A second past the boundary, so the re-render's own `Date.now()` cannot land on the same
+    // millisecond and read the date as still ahead — which would burn the one timer for nothing.
+    const id = setTimeout(() => setPeriodBeat((n) => n + 1), delay + 1_000);
+    return () => clearTimeout(id);
+  }, [periodEndAt]);
+
   const load = useCallback(async (): Promise<void> => {
     try {
       const s = await billing.subscription();
