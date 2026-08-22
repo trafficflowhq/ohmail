@@ -30,9 +30,10 @@ Verified (2026-08-22, re-checked against the live registries and a current
   the six env files written `0600`, the setup-page Caddyfile rendered), configured,
   re-run (the key ring is stable — secrets are minted once), and with a second
   key-ring version added to `secrets.env` (both the api's and the organizer's env files
-  grow the extra ring line, so a rotation reaches both processes). Origins were exercised one by one:
-  `https://host` and `https://host:443` render the front door, `https://host:8443`,
-  `http://host` and `https://host/path` are refused with a log line and the setup page.
+  grow the extra ring line, so a rotation reaches both processes). Origins were
+  exercised one by one: `https://host` and `https://host:443` render the front door;
+  `https://host:8443`, `http://host` and `https://host/path` are each refused with a
+  log line, leaving the setup page.
 - `docker compose config` resolves the whole stack, exit 0, in both the configured and
   the unconfigured state, with Mailpit's UI bound to `127.0.0.1` as intended.
 
@@ -64,7 +65,7 @@ cp -R deploy/umbrel/ohmail/. "$APP/"
 cd "$APP"
 export APP_DATA_DIR="$APP"
 bash hooks/pre-start                                     # secrets, env files, Caddyfile
-sed -i 's|^OHMAIL_ORIGIN=.*|OHMAIL_ORIGIN=https://mail.example.test|' data/env/settings.env
+sed -i 's|^OHMAIL_ORIGIN=.*|OHMAIL_ORIGIN=https://mail.example.com|' data/env/settings.env
 bash hooks/pre-start                                     # re-render with the origin set
 printf 'services:\n  app_proxy:\n    image: getumbrel/app-proxy:1.0.0\n' > emulation.yml
 dc() { docker compose --compatibility -p ohmail -f docker-compose.yml -f emulation.yml "$@"; }
