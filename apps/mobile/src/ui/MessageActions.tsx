@@ -178,7 +178,10 @@ export function MessageActions({ m }: { m: WorldMail }) {
           // The picked day, as rows — the native idiom for the webapp's date input, floored at
           // tomorrow so the chooser cannot name a horizon in the past.
           <ScrollView style={{ maxHeight: 320 }}>
-            {Array.from({ length: 14 }, (_, i) => {
+            {/* Ninety days of rows — the webapp's date input takes any future day; a list is
+                the phone's idiom, and a quarter ahead covers the horizons people actually
+                book. A fortnight did not, and was an exclusion nothing on screen admitted. */}
+            {Array.from({ length: 90 }, (_, i) => {
               const day = dayNine(new Date(), i + 1);
               return (
                 <SheetRow
@@ -337,11 +340,13 @@ function ComposeSheet({
   const [to, setTo] = useState("");
   const [sending, setSending] = useState(false);
   const forward = mode === "forward";
-  const recipients = forward
-    ? to
-        .split(/[,\s]+/)
-        .filter((x) => x.includes("@"))
-        .map((address) => ({ name: null, address }))
+  // EVERY typed entry must parse, or nothing sends. A filter that dropped the malformed
+  // entry silently narrowed the audience — "alice@x, bob.x" sent to Alice alone with nobody
+  // told — so an invalid token LOCKS Send rather than shrinking the list.
+  const typedTo = to.split(/[,\s]+/).filter((x) => x !== "");
+  const invalidTo = forward ? typedTo.filter((x) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)) : [];
+  const recipients = forward && invalidTo.length === 0
+    ? typedTo.map((address) => ({ name: null, address }))
     : [];
   const canSend = !sending && (forward ? recipients.length > 0 : body.trim() !== "");
 
@@ -375,10 +380,20 @@ function ComposeSheet({
             t.liftUp("l3"),
           ]}
         >
-          {/* The head states the audience — the same statement the webapp editor opens with. */}
+          {/* The head states the audience — the same statement the webapp editor opens with,
+              and for reply-all the same envelope the send will carry, every name on it. */}
           <Txt variant="settingsLabel">
-            {forward ? Copy.forwardHead : mode === "replyAll" ? Copy.replyToAll(replyAllNames(m)) : Copy.replyTo(m.from.name)}
+            {forward
+              ? Copy.forwardHead
+              : mode === "replyAll" && m.replyAllHead
+                ? Copy.replyToAll(m.replyAllHead.to)
+                : Copy.replyTo(m.from.name)}
           </Txt>
+          {mode === "replyAll" && m.replyAllHead && m.replyAllHead.cc !== "" ? (
+            <Txt variant="caption" tone="ink3">
+              {Copy.replyCcLine(m.replyAllHead.cc)}
+            </Txt>
+          ) : null}
           {forward ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
               <Txt variant="caption" tone="ink3">
@@ -441,10 +456,7 @@ function ComposeSheet({
   );
 }
 
-/** The reply-all head's names — the To line the send will carry, spelled out. */
-function replyAllNames(m: WorldMail): string {
-  return m.from.name;
-}
+
 
 /* ── primitives ────────────────────────────────────────────────────────────────────────────── */
 

@@ -134,6 +134,15 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     const run = (async () => {
       try {
         await (first ? session.engine.start() : session.engine.syncOnce());
+        // THE RECONNECT PATH DRAINS THE RETRY QUEUE. A retryable rejection parks the
+        // mutation on the engine's queue under its Idempotency-Key, and `flushPending` had
+        // NO caller in this app — a queued intent (a send, a triage press taken offline)
+        // stood forever. A successful drain is the proof the server is reachable again, so
+        // the queue retries HERE, with the same keys, which is what makes the retry unable
+        // to double-deliver. Failures go back on the queue; the next drain tries again.
+        if (session.engine.pendingMutations().length > 0) {
+          await session.engine.flushPending().catch(() => undefined);
+        }
       } catch (err) {
         setSyncError(String(err));
         // Re-sync memory with disk so the torn-flush guard's refusal window closes and the

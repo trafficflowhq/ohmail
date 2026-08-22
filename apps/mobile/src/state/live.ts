@@ -147,6 +147,14 @@ export type WorldMail = Mail & {
    * predicate the webapp bar and its send path resolve, so a 1:1 message offers no second reply.
    */
   canReplyAll: boolean;
+  /**
+   * The reply-all head's OWN words: the To line and the surviving Cc line of the SAME
+   * envelope the send will carry, names first. Carried on the row so the composer states
+   * the whole audience it is about to address — a head naming only the sender promised
+   * "Reply to Alice" over a send that reached everyone. `null` exactly when
+   * {@link canReplyAll} is false.
+   */
+  replyAllHead: { to: string; cc: string } | null;
   /** `sensitivity.no_forward` — the forward entry is ABSENT on such a message, never dead. */
   noForward: boolean;
   /** The tag ids on this message — what the tag sheet shows as checked. */
@@ -177,12 +185,24 @@ function pileOf(reader: EntityReader, m: EngineMessage): WorldPileState {
   return s === "reply_later" || s === "set_aside" || s === "bubbled_up" ? s : null;
 }
 
+/** A recipient's face: the name, or the address where none was given. */
+function displayName(r: EmailAddress): string {
+  return r.name || r.address;
+}
+
 function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail {
   const body = bodyOf(reader, m);
+  const env = replyAllRecipients(m, NO_OWN_ADDRESSES);
   return {
     id: m.id,
     place: placeOfFolder(m.folder),
-    folder: m.folder,
+    // The PHYSICAL folder, not the presented one: this reader is the projection, which
+    // re-homes a decided sender's mail for display while `physicalFolder` keeps the real
+    // location. The move panel excludes where the message actually IS, and `move()` reads
+    // the raw mirror — a presented folder here offered a destination the move then refused.
+    // (`physicalFolderOf` answers `physicalFolder ?? folder`, both `Folder` values on the
+    // wire; its `string` return is the DTO's optional field being untyped, not a new shape.)
+    folder: physicalFolderOf(m) as Folder,
     // The wire's `name` is nullable; the row shape's is not — a nameless sender reads as
     // their address, exactly as every list row already renders one.
     from: { name: m.from.name || m.from.address, address: m.from.address },
@@ -195,7 +215,10 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
     pile: pileOf(reader, m),
     // The phone holds no `GET /mailboxes` facts, so the reader cannot be told apart — the
     // predicate's documented degradation: offered from two listed people, withheld at one.
-    canReplyAll: replyAllRecipients(m, NO_OWN_ADDRESSES) !== null,
+    canReplyAll: env !== null,
+    replyAllHead: env
+      ? { to: env.to.map(displayName).join(", "), cc: env.cc.map(displayName).join(", ") }
+      : null,
     noForward: m.sensitivity?.no_forward === true,
     labels: [...(m.labels ?? [])],
     ...(m.rationale ? { rationale: m.rationale } : {}),
@@ -730,7 +753,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (members.length > 0) void engine.hydrateThread(members.map((t) => t.id)).catch(() => undefined);
     if (m.hasAttachments) void engine.loadAttachments(id).catch(() => undefined);
     if (!m.unread) return true;
-    const ok = await watched(engine.mutate({ kind: "mark_seen", messageIds: [id], unread: false }));
+    // A RESURFACED PIN IS NOT SPENT BY OPENING. The open is the involuntary read (the
+    // webapp's dwell), and the engine's own glance rule prunes pinned ids — but a one-id
+    // glance pruned to nothing is `mutate`'s not-found rollback, which would raise a false
+    // failure toast over a working open. So the pinned case is answered here, with no wire
+    // call at all: the row stays bold ("you have not dealt with this yet"), and the
+    // deliberate reads — the sheet's Done, Mark as read — remain the acts that spend it.
+    if (triageStateOf(engine.read(), m) === "resurfaced") return true;
+    // `via: "glance"` — the involuntary read, so the server's pin semantics see it as such.
+    const ok = await watched(engine.mutate({ kind: "mark_seen", messageIds: [id], unread: false, via: "glance" }));
     if (!ok) toast(Copy.liveSaveFailed);
     return ok;
   };
@@ -1004,6 +1035,23 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return ok;
   };
 
+  /**
+   * A SEND'S THREE HONEST OUTCOMES — narrower than {@link watched}, deliberately.
+   *
+   * For triage and moves, `queued` leaving the optimistic view standing is truthful. For a
+   * SEND it is not the same sentence: "Reply sent." on a queued send claims a delivery that
+   * has not happened. So `confirmed` alone says sent; `queued` says the true thing — the
+   * intent stands on the retry queue under its Idempotency-Key, and the reconnect path
+   * (`connection.tsx`'s drain, which flushes pending after every successful sync) retries it
+   * with the SAME key, so it cannot double-deliver. The composer closes on both (the text is
+   * on the queue, not lost) and stays open only on a rollback.
+   */
+  const sent = async (p: Promise<MutationResult>, sentToast: string): Promise<boolean> => {
+    const status = await p.then((r) => r.status, () => "rolled_back" as const);
+    toast(status === "confirmed" ? sentToast : status === "queued" ? Copy.replyQueued : Copy.replyFailed);
+    return status !== "rolled_back";
+  };
+
   const sendReply = async (messageId: string, body: string, all: boolean): Promise<boolean> => {
     const m = messageOf(messageId);
     const text = body.trim();
@@ -1011,16 +1059,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // A plain reply leaves the envelope to `Engine.enrich` (to = the sender, the parent's
     // mailbox, thread and subject); reply-all carries the SAME envelope the sheet offered.
     const env = all ? replyAllRecipients(m, NO_OWN_ADDRESSES) : null;
-    const ok = await watched(
+    return sent(
       engine.mutate({
         kind: "mail_send",
         inReplyTo: messageId,
         body: text,
         ...(env ? { to: env.to, cc: env.cc } : {}),
       }),
+      Copy.replySent,
     );
-    toast(ok ? Copy.replySent : Copy.replyFailed);
-    return ok;
   };
 
   const sendForward = async (messageId: string, to: EmailAddress[], body: string): Promise<boolean> => {
@@ -1028,7 +1075,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // The `no_forward` refusal is client-side courtesy AND server-side law — the sheet never
     // offers the verb on such a message, and this arm refuses it too rather than trusting the UI.
     if (!m || to.length === 0 || m.sensitivity?.no_forward) return false;
-    const ok = await watched(
+    return sent(
       engine.mutate({
         kind: "mail_send",
         inReplyTo: null,
@@ -1040,9 +1087,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         body,
         to,
       }),
+      Copy.forwarded,
     );
-    toast(ok ? Copy.forwarded : Copy.replyFailed);
-    return ok;
   };
 
   const tagToggle = async (messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean> => {
@@ -1111,6 +1157,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       ruled = watched(
         engine.mutate({ kind: "screener_decide", senderId: waiting.id, decision, dest: dest as ScreenDest, scope }),
       );
+      // The decide relocates the HELD rows and promotes the rule — it does not touch the
+      // subject's mail that already left the gate. Those rows move beside it (the webapp's
+      // `planScreeningChange` shape: moves cover what the decide does not), capped and
+      // unawaited like every optimistic move.
+      subject
+        .filter((x) => physicalFolderOf(x) !== FOLDER_OF_VIEW.screener && x.folder !== wanted)
+        .slice(0, 50)
+        .forEach((x) => void engine.mutate({ kind: "move", messageId: x.id, folder: wanted }));
     } else {
       const standing = rulesList(raw).filter(
         (r) =>
