@@ -6,6 +6,8 @@ import {
   runAlertPass,
   webhookAlertSink,
   resendAlertSink,
+  telegramAlertSink,
+  sinkHealthOf,
   newDeliveryStreak,
   writeHeartbeat,
   refreshHeartbeat,
@@ -24,6 +26,7 @@ import {
   pruneAiAttemptClaims,
   type AiCreditGate,
   type AlertSink,
+  type AlertSinkHealth,
   type AttachmentStagingStorage,
 } from "@trafficflow/db/cloud";
 import {
@@ -174,6 +177,21 @@ export interface WorkerStats {
    * or all-failed cycle must not refresh freshness, or `/health` lies about a dead leader.
    */
   lastCycleAt: Date | null;
+  /**
+   * EVERY CONFIGURED PAGER ARM, AND WHETHER IT IS ACTUALLY DELIVERING.
+   *
+   * The startup line has always named the arms (`worker_serving alertSinks:["mail"]`), and a
+   * name is not a state: an arm that has refused every delivery since the day it was
+   * configured appears in that list exactly like a working one, and did — the webhook arm sat
+   * in it, dead, for months. A second vendor makes that worse rather than better, because the
+   * surviving arm keeps the pages landing and there is then no symptom at all.
+   *
+   * So the standing per-arm verdict is published: closed outcome codes, counts and timestamps,
+   * never the vendor's error sentence (that is drain-bound and this endpoint is not). A
+   * `lastOkAt: null` with `attempts: 0` is the honest report for an arm nobody has exercised —
+   * absence of evidence, said out loud rather than read as health.
+   */
+  alertSinks: AlertSinkHealth[];
 }
 
 export interface RunningWorker {
@@ -577,6 +595,15 @@ export async function startWorkerWithLock(
       config.alertPost,
     );
     if (mailArm) alertSinks.push(mailArm);
+    // The PUSH arm — the pager's second VENDOR, not merely its second arm. The mail arm above
+    // is the product's own transactional mailer: one account, one credential, one company
+    // carrying every page there is. This one shares none of that, and its reachability from
+    // this container was probed rather than assumed. See `packages/db/src/alert-push.ts`.
+    const pushArm = telegramAlertSink(
+      { botToken: config.alertTelegramBotToken, chatId: config.alertTelegramChatId },
+      config.alertPost,
+    );
+    if (pushArm) alertSinks.push(pushArm);
     /**
      * The consecutive-failure memory behind `alerts_undeliverable` for a CONFIGURED sink.
      *
@@ -4114,6 +4141,24 @@ export async function startWorkerWithLock(
             sinkFailureStreak: result.sinkFailureStreak,
           });
         }
+        for (const lost of result.sinkDegraded) {
+          // REDUNDANCY LOST, AND NOTHING ELSE WOULD HAVE SAID SO.
+          //
+          // The page landed — `alerts_undeliverable` has nothing to report and `sinkErrors`
+          // reads like the routine noise a working pager also produces. Meanwhile one arm has
+          // refused every delivery for the whole streak, and this deployment is back to the
+          // single-vendor posture a second vendor was added to leave. ERROR, because the cost
+          // of learning it during the NEXT outage is the entire reason the arm exists.
+          log.error("alert_sink_degraded", {
+            sink: lost.sink,
+            outcome: lost.outcome,
+            consecutiveFailures: lost.consecutiveFailures,
+            survivors: lost.survivors,
+            sinkErrors: lost.error ? [`${lost.sink}: ${lost.error}`] : [],
+            reason: "one alert sink has refused every delivery for a full streak while another " +
+              "delivered — pages are still landing, and the pager is back to a single vendor",
+          });
+        }
         if (result.escalate) {
           // A CONFIGURED sink that has refused every delivery is the same outcome as no sink at
           // all — alerts firing into nothing — and until this line existed it was the quieter of
@@ -4282,6 +4327,21 @@ export async function startWorkerWithLock(
       maxMailboxes, rosterIntervalMs, alertIntervalMs,
       alertSinks: alertSinks.map((s) => s.name),
     });
+    if (alertSinks.length === 1) {
+      // ONE ARM IS NOT A PAGER, IT IS A SINGLE POINT OF FAILURE THAT USUALLY WORKS.
+      //
+      // Said at boot rather than left to be noticed, because the state is silent by
+      // construction: one arm delivers every page correctly right up to the moment its vendor
+      // has an outage, and then there is nothing — no failed delivery to escalate, no arm left
+      // to carry the escalation. This is the one line that distinguishes "configured" from
+      // "redundant", and it names the way out rather than only the problem.
+      log.warn("alert_sinks_single_vendor", {
+        alertSinks: alertSinks.map((s) => s.name),
+        reason: "the pager has exactly one delivery arm; a single vendor outage silences it " +
+          "entirely — arm a second by setting TF_ALERT_TELEGRAM_BOT_TOKEN + " +
+          "TF_ALERT_TELEGRAM_CHAT_ID, or TF_ALERT_EMAIL (with RESEND_API_KEY + MAIL_FROM)",
+      });
+    }
 
     pollTimer = setInterval(() => { kickCycle(); }, config.pollIntervalMs);
     // TAKEOVER KICK. `setInterval` fires for the FIRST time only after a full period, so
@@ -4451,6 +4511,9 @@ export async function startWorkerWithLock(
           // `worker_heartbeats` as well, and that table has no column for this one.
           escalatedMessages: [...runtimes.values()]
             .reduce((n, r) => n + (r.deps.deadLetters?.escalated ?? 0), 0),
+          // Derived rather than stored, so it cannot drift from the streak the pass actually
+          // mutates. `sinkHealthOf` reads memory only — `/health` still touches no database.
+          alertSinks: sinkHealthOf(alertSinks, alertDeliveryStreak),
         };
       },
       stop(): Promise<void> {

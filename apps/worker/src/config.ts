@@ -469,6 +469,28 @@ export interface WorkerConfig {
   mailFrom?: string;
   /** `RESEND_API_KEY` — the mail arm's bearer credential. Scoped, sending-only. */
   resendApiKey?: string;
+  /**
+   * The PUSH arm of the pager — the pager's SECOND VENDOR
+   * (`TF_ALERT_TELEGRAM_BOT_TOKEN` + `TF_ALERT_TELEGRAM_CHAT_ID`).
+   *
+   * The mail arm above left the pager single-vendor: one transactional-mail account carrying
+   * every page there is, so that account's outage, suspension or revoked key takes the pager
+   * with it at the moment something is wrong. This arm shares nothing with it — different
+   * company, different network, different credential, and a push to a device rather than a
+   * message into a mailbox that this very product serves.
+   *
+   * Reachability was probed from inside this worker's own container rather than assumed, which
+   * is how the webhook arm's host was found to be blackholed: `api.telegram.org` answered 200
+   * in 86 ms from the same shell where `ntfy.sh` still times out.
+   *
+   * Either variable present arms the arm; the missing half is then a NAMED fault rather than a
+   * quiet disarm — unlike `TF_ALERT_EMAIL`, neither of these exists for any other purpose, so
+   * one of them being set can only mean somebody meant to arm this. `alert-push.ts` rules the
+   * states.
+   */
+  alertTelegramBotToken?: string;
+  /** Where the push arm posts — a numeric chat id, or an `@channelusername`. */
+  alertTelegramChatId?: string;
   /** How often the leader runs the alert pass. Default {@link DEFAULT_ALERT_INTERVAL_MS}. */
   alertIntervalMs?: number;
   // ── The organizer lease (mail migration 0027) ───────────────────────────────────────
@@ -787,6 +809,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     },
     alertWebhookUrl: env.TF_ALERT_WEBHOOK_URL,
     alertEmail: env.TF_ALERT_EMAIL,
+    alertTelegramBotToken: env.TF_ALERT_TELEGRAM_BOT_TOKEN,
+    alertTelegramChatId: env.TF_ALERT_TELEGRAM_CHAT_ID,
     mailFrom: env.MAIL_FROM,
     resendApiKey: env.RESEND_API_KEY,
     alertIntervalMs: optInt(env, "TF_ALERT_INTERVAL_MS", DEFAULT_ALERT_INTERVAL_MS),

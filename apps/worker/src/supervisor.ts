@@ -171,6 +171,9 @@ export async function runWorkerSupervised(
           ? { active: config.kek.active, count: config.kek.count, fingerprint: config.kek.fingerprint }
           : null,
         shard: { index: shardIndex, shards },
+        // `[]` when there is no worker yet — a standby has composed no sinks and run no pass,
+        // and an empty list is the honest answer rather than a fabricated healthy one.
+        alertSinks: stats?.alertSinks ?? [],
         error,
       };
     },

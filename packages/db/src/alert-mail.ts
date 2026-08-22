@@ -1,5 +1,5 @@
 import {
-  nodePostJson, renderAlertText,
+  classifyTransportError, nodePostJson, renderAlertText,
   type AlertSink, type PostJson,
 } from "./alerts.js";
 
@@ -166,7 +166,10 @@ export function resendAlertSink(
         "display name, or a comma list in the value?)"
       : null;
   if (configError) {
-    return { name: "mail", notify: () => Promise.resolve({ ok: false, error: configError }) };
+    return {
+      name: "mail",
+      notify: () => Promise.resolve({ ok: false, error: configError, outcome: "misconfigured" }),
+    };
   }
 
   return {
@@ -188,9 +191,10 @@ export function resendAlertSink(
           authorization: `Bearer ${apiKey}`,
           "Idempotency-Key": idem,
         });
-        if (res.status >= 200 && res.status < 300) return { ok: true };
+        if (res.status >= 200 && res.status < 300) return { ok: true, outcome: "ok" };
         return {
           ok: false,
+          outcome: "refused",
           error: redactCredential(
             `HTTP ${res.status}${res.body ? ` — ${res.body}` : ""}`, apiKey,
           ),
@@ -206,7 +210,7 @@ export function resendAlertSink(
         const name = e?.name === undefined ? "Error" : asText(e.name);
         const message = e?.message === undefined ? asText(err) : asText(e.message);
         const text = `${name}: ${message}${cause ? ` (${cause})` : ""}`;
-        return { ok: false, error: redactCredential(text, apiKey) };
+        return { ok: false, outcome: classifyTransportError(err), error: redactCredential(text, apiKey) };
       }
     },
   };

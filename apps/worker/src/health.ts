@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import type { AlertSinkHealth } from "@trafficflow/db/cloud";
 
 /**
  * What the worker's health endpoint reports, and for how long it is
@@ -170,6 +171,21 @@ export interface HealthSnapshot {
    */
   kek: { active: number; count: number; fingerprint: string } | null;
   shard: { index: number; shards: number };
+  /**
+   * EVERY CONFIGURED PAGER ARM AND WHETHER IT IS ACTUALLY DELIVERING — one entry per arm, in
+   * the order the worker composed them. `[]` on a standby instance (no worker, no pass yet).
+   *
+   * The state this closes is the one the pager itself cannot report: an arm that has refused
+   * every delivery since it was configured, beside an arm that works. Nothing fails, no
+   * escalation fires, the pages land — and the deployment has one vendor while believing it
+   * has two. `attempts: 0` says "never exercised", which is not the same claim as healthy.
+   *
+   * CLOSED CODES ONLY (`ok` / `misconfigured` / `refused` / `unreachable` / `timeout` /
+   * `threw`). The vendor's own error sentence stays in the log line, where a drain gates it;
+   * this endpoint is reachable by anyone and an unbounded third-party string does not belong
+   * on it. A memory read like every other field here, so `/health` still touches no database.
+   */
+  alertSinks: AlertSinkHealth[];
   /** Present in the fatal state (a failed takeover, or a LOST leader lock). */
   error?: string;
 }

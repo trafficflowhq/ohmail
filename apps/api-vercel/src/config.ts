@@ -393,6 +393,23 @@ export interface AlertsHostConfig {
    */
   operatorEmail: string | null;
   mail: MailHostConfig | null;
+  /**
+   * The PUSH arm — the pager's SECOND VENDOR
+   * (`TF_ALERT_TELEGRAM_BOT_TOKEN` + `TF_ALERT_TELEGRAM_CHAT_ID`), or `null`.
+   *
+   * This host is the ONLY observer of `worker_down`, so its own delivery path being
+   * single-vendor is the sharper version of the same problem: a mail-vendor outage that
+   * coincides with a dead worker is total silence, and those two are not independent events —
+   * a bad enough day takes both. The push arm shares nothing with the mailer: another company,
+   * another network, another credential, and a device push rather than a message into a
+   * mailbox this product serves.
+   *
+   * NOT all-or-nothing, unlike {@link MailHostConfig}: neither variable exists for any other
+   * purpose here, so a half-set pair is a fault to name rather than a mailer to protect. The
+   * arm itself refuses every delivery and says which half is missing — `alert-push.ts` rules
+   * the states, and the same object arms the worker.
+   */
+  telegram: { botToken: string | null; chatId: string | null } | null;
 }
 
 /**
@@ -1068,12 +1085,18 @@ export function loadAlertsConfig(env: NodeJS.ProcessEnv): AlertsHostConfig | nul
   // rate limit and no lockout behind the compare, so length is the only thing between a
   // guesser and a public URL that runs four aggregate queries and can send mail.
   const cronSecret = env.CRON_SECRET?.trim();
+  const botToken = env.TF_ALERT_TELEGRAM_BOT_TOKEN?.trim() || null;
+  const chatId = env.TF_ALERT_TELEGRAM_CHAT_ID?.trim() || null;
   return {
     secret,
     cronSecret: cronSecret && cronSecret.length >= 24 ? cronSecret : null,
     webhookUrl: env.TF_ALERT_WEBHOOK_URL?.trim() || null,
     operatorEmail,
     mail: operatorEmail ? mail : null,
+    // Either half present ⇒ a block, so a half-configured push arm reaches `telegramAlertSink`
+    // and is REPORTED as half-configured. Folding it to null here would make the commonest
+    // misconfiguration — one of two variables set — indistinguishable from never arming it.
+    telegram: (botToken || chatId) ? { botToken, chatId } : null,
   };
 }
 

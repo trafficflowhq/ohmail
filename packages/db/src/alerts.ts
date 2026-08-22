@@ -439,6 +439,59 @@ export interface AlertDeliveryResult {
   ok: boolean;
   /** Why it failed, already redacted and bounded. Ignored when `ok`. */
   error?: string | null;
+  /**
+   * The CLOSED code for what happened, beside the free-text {@link error}.
+   *
+   * The prose stays — it was added because "the webhook refused" with no reason attached was
+   * the state this file spent months in, and that ruling is not being undone. But prose is the
+   * wrong thing for a machine: it is vendor-authored, unbounded, and it lands on `/health`,
+   * which is a surface anybody can read. So every failure now carries BOTH — a token a guard
+   * can assert on and a health endpoint can publish, and a sentence a human can diagnose from.
+   *
+   * Optional, and derived when a sink omits it (`ok ? "ok" : "refused"`), so every existing
+   * sink and every test fake stays valid.
+   */
+  outcome?: AlertSinkOutcome;
+}
+
+/**
+ * What happened to ONE delivery through ONE sink. A closed set, because it is published on
+ * `/health` and asserted on by guards.
+ *
+ *  · `ok` — the vendor accepted it.
+ *  · `misconfigured` — the sink was built from values it cannot use, and refuses every
+ *    delivery saying which value. Set-but-unusable, which is NOT the same state as unset.
+ *  · `refused` — the vendor answered, with a non-2xx. Its network path is fine; it said no.
+ *  · `unreachable` — the request never got an answer: DNS, TCP, TLS. **This is the shape of
+ *    the ntfy.sh outage** — a sink whose host blackholes this deployment's egress — and it is
+ *    worth its own token precisely because it looks identical to `refused` in prose.
+ *  · `timeout` — the request was still open when the sink's own deadline expired.
+ *  · `threw` — the sink violated its never-throws contract and `deliver` caught it.
+ */
+export type AlertSinkOutcome =
+  | "ok"
+  | "misconfigured"
+  | "refused"
+  | "unreachable"
+  | "timeout"
+  | "threw";
+
+/**
+ * Classify a value that came out of a sink's `catch` into a closed {@link AlertSinkOutcome}.
+ *
+ * Shared by every sink so that "the host blackholes us" reads as the same token whichever arm
+ * hit it — the whole point of a closed code is that two sinks cannot spell one condition two
+ * ways. An abort is the sink's own deadline (`nodePostJson` aborts at 8 s); everything else
+ * that never reached an HTTP status is `unreachable`, which is the honest verdict for a
+ * transport that produced no answer.
+ */
+export function classifyTransportError(err: unknown): AlertSinkOutcome {
+  const e = err as { name?: unknown };
+  // `AbortError` is what an `AbortController` deadline produces; `TimeoutError` is what
+  // `AbortSignal.timeout` produces. Neither is a refusal — nobody said no.
+  const name = typeof e?.name === "string" ? e.name : "";
+  if (name === "AbortError" || name === "TimeoutError") return "timeout";
+  return "unreachable";
 }
 
 /**
@@ -580,7 +633,10 @@ export function webhookAlertSink(url: string | undefined, post: PostJson = nodeP
       ? `TF_ALERT_WEBHOOK_URL is set but its scheme is '${parsed.protocol}', not http(s)`
       : null;
   if (configError) {
-    return { name: "webhook", notify: () => Promise.resolve({ ok: false, error: configError }) };
+    return {
+      name: "webhook",
+      notify: () => Promise.resolve({ ok: false, error: configError, outcome: "misconfigured" }),
+    };
   }
 
   return {
@@ -601,9 +657,10 @@ export function webhookAlertSink(url: string | undefined, post: PostJson = nodeP
           })),
         });
         const res = await post(endpoint, body);
-        if (res.status >= 200 && res.status < 300) return { ok: true };
+        if (res.status >= 200 && res.status < 300) return { ok: true, outcome: "ok" };
         return {
           ok: false,
+          outcome: "refused",
           error: redactEndpoint(
             `HTTP ${res.status}${res.body ? ` — ${res.body}` : ""}`, endpoint,
           ),
@@ -616,7 +673,7 @@ export function webhookAlertSink(url: string | undefined, post: PostJson = nodeP
         const e = err as { name?: string; message?: string; cause?: { message?: string; code?: string } };
         const cause = e?.cause?.code ?? e?.cause?.message ?? "";
         const text = `${e?.name ?? "Error"}: ${e?.message ?? String(err)}${cause ? ` (${cause})` : ""}`;
-        return { ok: false, error: redactEndpoint(text, endpoint) };
+        return { ok: false, outcome: classifyTransportError(err), error: redactEndpoint(text, endpoint) };
       }
     },
   };
@@ -645,26 +702,51 @@ export function renderAlertText(alerts: readonly Alert[], ctx: AlertNotifyContex
  */
 export async function deliver(
   sinks: readonly AlertSink[], alerts: readonly Alert[], ctx: AlertNotifyContext,
-): Promise<{ delivered: string[]; failed: string[]; errors: string[] }> {
+): Promise<DeliveryReport> {
   const delivered: string[] = [];
   const failed: string[] = [];
   const errors: string[] = [];
+  const outcomes: SinkOutcome[] = [];
   for (const sink of sinks) {
     let ok = false;
     let error: string | null = null;
+    let outcome: AlertSinkOutcome | null = null;
     try {
       const out = await sink.notify(alerts, ctx);
       if (typeof out === "boolean") ok = out;
-      else { ok = out.ok; error = out.error ?? null; }
+      else { ok = out.ok; error = out.error ?? null; outcome = out.outcome ?? null; }
     } catch (err) {
       ok = false;
+      outcome = "threw";
       error = `threw: ${(err as { message?: string })?.message ?? String(err)}`.slice(0, 200);
     }
+    // A sink that says nothing about its outcome still gets a code: the bare `boolean` return
+    // is not deprecated, so the DEFAULT has to be honest rather than absent. `refused` is the
+    // conservative reading of a failure that declined to explain itself — it claims only that
+    // the delivery did not happen, never that the network was at fault.
+    outcomes.push({ sink: sink.name, ok, outcome: outcome ?? (ok ? "ok" : "refused"), error });
     if (ok) { delivered.push(sink.name); continue; }
     failed.push(sink.name);
     if (error) errors.push(`${sink.name}: ${error}`);
   }
-  return { delivered, failed, errors };
+  return { delivered, failed, errors, outcomes };
+}
+
+/** One sink's verdict on one delivery attempt, as {@link deliver} saw it. */
+export interface SinkOutcome {
+  sink: string;
+  ok: boolean;
+  outcome: AlertSinkOutcome;
+  /** The sink's own stated reason, already redacted by the sink. Null when it said nothing. */
+  error: string | null;
+}
+
+export interface DeliveryReport {
+  delivered: string[];
+  failed: string[];
+  errors: string[];
+  /** One entry per sink ATTEMPTED, in sink order. The per-sink half of the same story. */
+  outcomes: SinkOutcome[];
 }
 
 /* ════════════════════════════════════════════════════════════════════════════════════════
@@ -730,10 +812,45 @@ export interface DeliveryStreak {
   consecutiveFailures: number;
   /** Whether the current streak has already been escalated. One ERROR per streak. */
   escalated: boolean;
+  /**
+   * The SAME memory, per sink — and the reason it had to exist the moment a second vendor did.
+   *
+   * ── THE HOLE A SECOND ARM OPENS, WHICH THE FIRST ONE COULD NOT HAVE ─────────────────────
+   *
+   * The counter above is global, and it is cleared by ANY success. That was right while the
+   * question was only "did an alert reach a human" — with one arm, one arm's failure IS total
+   * failure. Add a second vendor and the same rule silently inverts: an arm that has refused
+   * every delivery for a month keeps its streak cleared by the OTHER arm's successes, so the
+   * deployment reports a healthy pager, is told nothing, and has exactly one working arm — the
+   * single-vendor state it just paid to leave, now invisible instead of merely bad.
+   *
+   * Redundancy you cannot observe is not redundancy; it is one arm and a false belief. So each
+   * sink keeps its own streak, and losing one arm while the other still delivers is its own
+   * named alarm ({@link SinkDegradation}) rather than a silence.
+   */
+  sinks: Record<string, SinkStreak>;
+}
+
+/** One sink's experience of this driver, across passes. See {@link DeliveryStreak.sinks}. */
+export interface SinkStreak {
+  /** Consecutive delivery attempts THIS sink refused. Cleared by its own success only. */
+  consecutiveFailures: number;
+  /** Whether this sink's current streak has been reported. One report per streak. */
+  escalated: boolean;
+  /** The closed code from its most recent attempt, or null — it has never been attempted. */
+  lastOutcome: AlertSinkOutcome | null;
+  /** ISO of the last delivery this sink ACCEPTED, or null — it has never delivered one. */
+  lastOkAt: string | null;
+  /** Delivery attempts made through this sink. `0` is not health; it is absence of evidence. */
+  attempts: number;
+}
+
+export function newSinkStreak(): SinkStreak {
+  return { consecutiveFailures: 0, escalated: false, lastOutcome: null, lastOkAt: null, attempts: 0 };
 }
 
 export function newDeliveryStreak(): DeliveryStreak {
-  return { consecutiveFailures: 0, escalated: false };
+  return { consecutiveFailures: 0, escalated: false, sinks: {} };
 }
 
 /** Emitted on the ONE pass where a streak crosses the threshold. */
@@ -743,6 +860,33 @@ export interface SinkEscalation {
   sinks: string[];
   /** `"<sink>: <reason>"` for each that said anything. Flat — see {@link deliver}. */
   errors: string[];
+}
+
+/**
+ * ONE ARM OF THE PAGER IS DEAD AND THE PAGES ARE STILL LANDING.
+ *
+ * Emitted on the one pass where an INDIVIDUAL sink's own streak crosses the threshold while
+ * something else delivered. {@link SinkEscalation} is the other half — every arm down, nothing
+ * reaching anybody — and the two are deliberately disjoint alarms for two different faults,
+ * exactly as `undeliverable` and `escalate` already are.
+ *
+ * This one is the quieter fault and the more dangerous posture: nothing is failing that a
+ * human can feel, and the next vendor outage is now total. It is reported at ERROR anyway,
+ * because the cost of learning it during the outage is the whole reason a second arm exists.
+ *
+ * Not emitted on a pass where NOTHING delivered: that pass belongs to {@link SinkEscalation},
+ * and two alarms for one silence is how a real one gets filtered. The per-sink streak still
+ * advances underneath, so the dead arm is named the moment the other one comes back.
+ */
+export interface SinkDegradation {
+  sink: string;
+  consecutiveFailures: number;
+  /** The closed code from the crossing attempt. */
+  outcome: AlertSinkOutcome;
+  /** This sink's own stated reason, already redacted by it. Null when it said nothing. */
+  error: string | null;
+  /** The sinks that DID accept — what redundancy is left, named rather than implied. */
+  survivors: string[];
 }
 
 export interface AlertPassOptions extends EvaluateOptions {
@@ -792,6 +936,60 @@ export interface AlertPassResult {
    * it was the one the original `undeliverable` flag could not see.
    */
   escalate: SinkEscalation | null;
+  /** One entry per sink attempted on THIS pass, with its closed code. Empty when nothing was. */
+  sinkOutcomes: SinkOutcome[];
+  /**
+   * The arms that just crossed their OWN failure threshold while the page still landed
+   * elsewhere — redundancy lost, silently, which is the failure a second vendor is bought to
+   * prevent and the one adding it creates. Empty on almost every pass. See
+   * {@link SinkDegradation}.
+   */
+  sinkDegraded: SinkDegradation[];
+  /**
+   * Every CONFIGURED sink's standing health, whether or not this pass attempted it — the
+   * snapshot `/health` publishes. A sink that has never been attempted appears with
+   * `attempts: 0`, because an arm nobody has exercised is not evidence of anything and the
+   * surface has to say so rather than leave it out.
+   */
+  sinkHealth: AlertSinkHealth[];
+}
+
+/** One sink's standing health, as published. Closed codes only — see {@link sinkHealthOf}. */
+export interface AlertSinkHealth {
+  name: string;
+  /** Its most recent closed code, or null — never attempted. */
+  outcome: AlertSinkOutcome | null;
+  consecutiveFailures: number;
+  attempts: number;
+  lastOkAt: string | null;
+}
+
+/**
+ * The standing health of every CONFIGURED sink — the shape `/health` publishes.
+ *
+ * Driven off the sink LIST rather than off the streak record, so an arm that has never been
+ * attempted is present and says `attempts: 0` instead of being absent. That difference is the
+ * whole point: "not in the list" and "in the list, never exercised" read identically to a
+ * reader and mean opposite things, and the second is the state a freshly-configured second
+ * vendor is in for its first quiet hour.
+ *
+ * NO PROSE. Every field here is a name, a closed code, a count or a timestamp — the sink's own
+ * `error` sentence is vendor-authored and unbounded and stays in the log line, where a drain
+ * gates it, rather than on an endpoint anybody can read.
+ */
+export function sinkHealthOf(
+  sinks: readonly AlertSink[], streak: DeliveryStreak | undefined,
+): AlertSinkHealth[] {
+  return sinks.map((sink) => {
+    const s = streak?.sinks?.[sink.name];
+    return {
+      name: sink.name,
+      outcome: s?.lastOutcome ?? null,
+      consecutiveFailures: s?.consecutiveFailures ?? 0,
+      attempts: s?.attempts ?? 0,
+      lastOkAt: s?.lastOkAt ?? null,
+    };
+  });
 }
 
 /**
@@ -959,6 +1157,10 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       now: now.toISOString(), firing, notified: [], resolved,
       delivered: [], failedSinks: [], sinkErrors: [], undeliverable: false,
       sinkFailureStreak: streak?.consecutiveFailures ?? 0, escalate: null,
+      sinkOutcomes: [], sinkDegraded: [],
+      // Published on a pass that attempted nothing, and that is the point: standing health is
+      // what the last ATTEMPT established, and a quiet pass neither confirms nor disturbs it.
+      sinkHealth: sinkHealthOf(sinks, streak),
     };
   }
 
@@ -967,7 +1169,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     environment: opts.environment ?? "production",
     now,
   };
-  const { delivered, failed, errors } = await deliver(sinks, toNotify, ctx);
+  const { delivered, failed, errors, outcomes } = await deliver(sinks, toNotify, ctx);
 
   // ── the streak, and the ONE escalation it is allowed ──────────────────────────────────
   //
@@ -977,19 +1179,57 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // deliberately disjoint alarms for two different faults: nothing configured, and
   // everything configured and refusing.
   let escalate: SinkEscalation | null = null;
+  const sinkDegraded: SinkDegradation[] = [];
+  const threshold = opts.escalateAfter ?? DEFAULT_SINK_FAILURE_ESCALATION;
   if (streak && sinks.length > 0) {
+    // A streak object built before per-sink memory existed — a stale compiled `dist/` in
+    // another package is the reachable way to get one — would make every read below throw on
+    // `undefined`. An observability feature may never be the thing that breaks the pass.
+    if (!streak.sinks) streak.sinks = {};
+
+    // ── each ARM's own memory, kept whatever the aggregate did ────────────────────────────
+    for (const o of outcomes) {
+      const per = (streak.sinks[o.sink] ??= newSinkStreak());
+      per.attempts += 1;
+      per.lastOutcome = o.outcome;
+      if (o.ok) {
+        per.consecutiveFailures = 0;
+        per.escalated = false;
+        per.lastOkAt = now.toISOString();
+      } else {
+        per.consecutiveFailures += 1;
+      }
+    }
+
     if (delivered.length > 0) {
-      // ANY success clears it, including a success on a different sink than the one failing:
-      // the question this answers is "did an alert reach a human", not "is every sink well".
+      // ANY success clears the AGGREGATE, including a success on a different sink than the one
+      // failing: the question this answers is "did an alert reach a human", not "is every sink
+      // well". That second question is the per-arm loop above, and it is asked here — a pass
+      // that delivered is exactly the pass on which a dead arm would otherwise be invisible.
       streak.consecutiveFailures = 0;
       streak.escalated = false;
+      for (const o of outcomes) {
+        if (o.ok) continue;
+        const per = streak.sinks[o.sink];
+        if (!per || per.escalated || per.consecutiveFailures < threshold) continue;
+        per.escalated = true;
+        sinkDegraded.push({
+          sink: o.sink,
+          consecutiveFailures: per.consecutiveFailures,
+          outcome: o.outcome,
+          error: o.error,
+          survivors: [...delivered],
+        });
+      }
     } else {
       streak.consecutiveFailures += 1;
-      const threshold = opts.escalateAfter ?? DEFAULT_SINK_FAILURE_ESCALATION;
       if (streak.consecutiveFailures >= threshold && !streak.escalated) {
         streak.escalated = true;
         escalate = { consecutiveFailures: streak.consecutiveFailures, sinks: [...failed], errors };
       }
+      // Per-arm reports are deliberately NOT emitted here — see {@link SinkDegradation}. The
+      // per-arm counters above still advanced, and their `escalated` flags are still false, so
+      // an arm that stayed dead is named on the first pass the other one recovers.
     }
   }
 
@@ -1023,6 +1263,9 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     undeliverable: sinks.length === 0,
     sinkFailureStreak: streak?.consecutiveFailures ?? 0,
     escalate,
+    sinkOutcomes: outcomes,
+    sinkDegraded,
+    sinkHealth: sinkHealthOf(sinks, streak),
   };
 }
 

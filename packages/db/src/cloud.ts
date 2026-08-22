@@ -151,18 +151,30 @@ export {
   evaluateAlerts, runAlertPass, deliver, webhookAlertSink, nodePostJson, renderAlertText,
   writeHeartbeat, refreshHeartbeat, clearHeartbeat, humanAge,
   listFailedBillingEvents, listStuckSends, listOpenAlerts,
-  newDeliveryStreak, redactEndpoint,
+  newDeliveryStreak, newSinkStreak, redactEndpoint, classifyTransportError, sinkHealthOf,
   DEFAULT_ALERT_THRESHOLDS, DEFAULT_ALERT_REPEAT_MS, DEFAULT_CLAIM_TTL_MS,
   DEFAULT_SINK_FAILURE_ESCALATION,
   type Alert, type AlertKind, type AlertSeverity, type AlertThresholds, type AlertSink,
   type AlertNotifyContext, type AlertPassOptions, type AlertPassResult, type EvaluateOptions,
   type HeartbeatInput, type HeartbeatRefresh, type PostJson, type FailedBillingEventRow,
   type StuckSendRow, type AlertDeliveryResult, type DeliveryStreak, type SinkEscalation,
+  type AlertSinkOutcome, type SinkOutcome, type DeliveryReport, type SinkStreak,
+  type SinkDegradation, type AlertSinkHealth,
 } from "./alerts.js";
 
 export {
   resendAlertSink, RESEND_EMAILS_URL, type ResendAlertSinkConfig,
 } from "./alert-mail.js";
+
+/**
+ * The PUSH arm — the pager's second vendor. Same seam, same `PostJson`, a different company,
+ * a different credential and a different delivery channel from the mail arm above; the whole
+ * argument is in the module's own header.
+ */
+export {
+  telegramAlertSink, TELEGRAM_API_ORIGIN, TELEGRAM_TEXT_LIMIT,
+  type TelegramAlertSinkConfig,
+} from "./alert-push.js";
 
 /**
  * The managed storage cap's CLOUD half: the per-account cap read the hosted worker

@@ -439,6 +439,14 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // called `webhook` would have had its reason dropped for not being on this list — the
   // diagnostic would have been added, deployed, and still said nothing.
   "sinks", "sinkErrors", "sinkFailureStreak",
+  // WHICH arm, and what happened to it — the per-sink half of the same story. A pager with two
+  // vendors can lose one of them without losing a single page, so "did anything get through"
+  // stopped being a sufficient question; `sink` names the arm, `outcome` is the CLOSED code for
+  // its last attempt (never the vendor's prose — that rides in `sinkErrors`, which is already
+  // bounded and redacted by the sink), and `survivors` names the redundancy that is left.
+  // `outcome` is a token from a closed set and `sink` is an author-written sink name, so both
+  // are structurally content-free in this census's sense.
+  "sink", "outcome", "survivors",
   // ── AI cost accounting: AnthropicCallReport, spread wholesale as `ai_call`. Per-action cost is
   //    measured from these five token counts, which is why they are named rather than eaten
   //    by a `token` substring rule. See SUBSTRING_EXEMPT_FIELDS.

@@ -2,6 +2,7 @@ import { noticeSinkFor, setNoticeSink, IDEMPOTENCY_TTL_MS, type Tx } from "@traf
 import { makePooledDb } from "@trafficflow/db/cloud";
 import {
   adminDbFor, attestStaffDbFault, makeAiCreditGate, resetAdminDbs, webhookAlertSink,
+  telegramAlertSink,
   assertWeightedScheduleActive, grantSetupCredits, withSetupPool,
   acquireImapSlot, releaseImapSlot, balanceOf, storageCapOf,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
@@ -524,6 +525,15 @@ function alertSinksFor(cfg: HostConfig): AlertSink[] {
     try {
       const hook = webhookAlertSink(alerts.webhookUrl ?? undefined);
       if (hook) sinks.push(hook);
+      // The PUSH arm — the pager's second vendor, and this host is the only observer of a dead
+      // worker, so a single-vendor delivery path here is the version of the problem that can
+      // coincide with the outage it is meant to report. Built before the mail sink because it
+      // needs no `MailService` and therefore cannot be the thing that throws in this block.
+      const push = telegramAlertSink({
+        botToken: alerts.telegram?.botToken ?? undefined,
+        chatId: alerts.telegram?.chatId ?? undefined,
+      });
+      if (push) sinks.push(push);
       if (alerts.mail && alerts.operatorEmail) {
         const mailer = new ResendMailer({
           apiKey: alerts.mail.apiKey,
