@@ -72,6 +72,11 @@ interface NativeModule {
 interface NativeApi {
   module: NativeModule;
   subscribe(fn: (e: { action: string; data: Record<string, unknown> }) => void): () => void;
+  /**
+   * Ask the OS for the notification permission the killed-app wake notice needs. Present only on a
+   * build with the native module; the connector answers `"denied"` on an emulator by design.
+   */
+  requestPermissions?: () => Promise<string>;
 }
 
 /**
@@ -98,9 +103,14 @@ function native(): NativeApi | null {
       subscribeDistributorMessages: (
         fn: (e: { action: string; data: Record<string, unknown> }) => void,
       ) => () => void;
+      requestPermissions?: () => Promise<string>;
     };
     /* eslint-enable */
-    cached = { module: mod.default, subscribe: mod.subscribeDistributorMessages };
+    cached = {
+      module: mod.default,
+      subscribe: mod.subscribeDistributorMessages,
+      requestPermissions: mod.requestPermissions,
+    };
   } catch {
     // No native module in this binary (iOS, or a JS-only test run). Not an error to report.
     cached = null;
@@ -287,6 +297,29 @@ export function onWake(onWakeReceived: () => void): () => void {
     });
   } catch {
     return () => { /* nothing was subscribed */ };
+  }
+}
+
+/**
+ * Ask the OS for the notification permission the KILLED-APP wake notice needs.
+ *
+ * On Android 13+ `POST_NOTIFICATIONS` starts denied, and the native renderer's `notify` is dropped
+ * without it — so a wake to a closed app would render nothing until the user granted it by hand.
+ * This requests it at the moment the user opts into wakes (choosing a distributor), which is the one
+ * place there is an Activity in the foreground to show the prompt.
+ *
+ * Best-effort and swallowing by contract: a denial is a real, supported outcome (the copy says the
+ * closed-app notice needs the permission and that mail still syncs on open without it), so this
+ * never throws and never surfaces a result. It does nothing on a platform with no native module,
+ * and the connector answers `"denied"` on an emulator by design.
+ */
+export async function requestNotificationPermission(): Promise<void> {
+  const api = native();
+  if (!api || !api.requestPermissions) return;
+  try {
+    await api.requestPermissions();
+  } catch {
+    /* the OS refused to even ask; the copy already tells the user what happens without it */
   }
 }
 

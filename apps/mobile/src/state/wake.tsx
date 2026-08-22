@@ -4,8 +4,8 @@ import {
 import { useConnection } from "../net/connection";
 import { forgetWake, registerWake, NO_DISTRIBUTOR, type WakeState } from "../net/push";
 import {
-  chooseDistributor, listDistributors, onWake, savedDistributor, unifiedPushDistributor,
-  type DistributorChoice,
+  chooseDistributor, listDistributors, onWake, requestNotificationPermission, savedDistributor,
+  unifiedPushDistributor, type DistributorChoice,
 } from "../net/unified-push";
 
 /**
@@ -208,6 +208,11 @@ export function WakeProvider({ children }: { children: ReactNode }) {
 
   const choose = useCallback((id: string): void => {
     chooseDistributor(id);
+    // Opting into wakes is the moment to ask for the notification permission the KILLED-APP notice
+    // needs (Android 13+ starts it denied). Fire-and-forget: a denial is fine — the wake still syncs
+    // on open, and the copy says the closed-app notice depends on it. There is an Activity in the
+    // foreground here (a Settings tap), which is where the OS prompt can appear.
+    void requestNotificationPermission();
     readDevice();
     // `() => true` for the MOUNT question only: a choice made by a tap is one the user is waiting
     // on, so its result is worth writing even if the pane re-rendered underneath it. The generation
