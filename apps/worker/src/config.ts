@@ -769,7 +769,32 @@ function apiCronFrom(env: NodeJS.ProcessEnv): { baseUrl: string; secret: string 
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new WorkerConfigError("TF_API_CRON_URL", "TF_API_CRON_URL must be an absolute http(s) URL");
   }
-  return { baseUrl: url.replace(/\/+$/, ""), secret };
+  // A BARE ORIGIN, refused otherwise — not normalized silently. A path would survive boot and
+  // then malform every target (`https://host/base` + `/internal/…` → `/base/internal/…`, 404s
+  // for ever, which the /health surface would at least show but nobody should have to read);
+  // embedded credentials or a query are copy-paste accidents that must not ride every request.
+  if (parsed.username !== "" || parsed.password !== "" || parsed.pathname !== "/"
+    || parsed.search !== "" || parsed.hash !== "") {
+    throw new WorkerConfigError("TF_API_CRON_URL",
+      "TF_API_CRON_URL must be a bare origin (scheme://host[:port]) — no path, query, fragment or credentials");
+  }
+  // The bearer is a privileged credential and must not cross a public network unencrypted.
+  // Plain http is allowed only where TLS is genuinely absent by design: loopback, and
+  // single-label hosts (a compose-internal service name like `api` has no dot; a public host
+  // does). Everything else presents the secret to every network hop in cleartext — refused.
+  if (parsed.protocol === "http:") {
+    const h = parsed.hostname;
+    const local = h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1"
+      || !h.includes(".");
+    if (!local) {
+      throw new WorkerConfigError("TF_API_CRON_URL",
+        "TF_API_CRON_URL over plain http is allowed only for loopback or single-label " +
+        "(compose-internal) hosts — a public endpoint must be https, or the bearer travels in cleartext");
+    }
+  }
+  // `origin` rather than the raw string: one canonical spelling (no trailing slash, lowercased
+  // host), so `${baseUrl}${route}` is well-formed by construction.
+  return { baseUrl: parsed.origin, secret };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
