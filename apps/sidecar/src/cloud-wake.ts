@@ -14,12 +14,15 @@ import type { Diagnostic } from "./log.js";
  * behaves exactly as it did before the wake channel existed. Which is why every failure here
  * degrades to silence rather than to an error the door can feel:
  *
- *  · **Any non-200** ⇒ OFF for the process's lifetime, zero retries. This is the production
+ *  · **Any non-200 except 429** ⇒ OFF for the process's lifetime, zero retries. This is the production
  *    default until the deploy flips the server's flag (503 `sse_disabled`), it is what an
  *    unknown route answers (404), and it is what capacity or an auth refusal answers — and a
  *    subscriber that re-dialed a refusing endpoint on a timer is a reconnect storm against
  *    the exact deployment that asked it to stop. One line says it happened; the poll carries
- *    the door from there.
+ *    the door from there. A **429** is the one refusal that means LATER rather than never —
+ *    measured live: the launch bootstrap's own `/sync` paging tripped the limiter over the
+ *    `/events` dial beside it — so a throttle redials on a slow cadence (`Retry-After`,
+ *    floored at {@link WAKE_THROTTLE_RETRY_MS}) instead of dying for the process's lifetime.
  *  · **A connect that THROWS before the stream ever succeeded** ⇒ up to
  *    {@link NEVER_CONNECTED_ATTEMPTS} tries, then OFF. A host that never once answered is a
  *    host without the channel; endless redials would be pure noise (and in tests, pure churn).
@@ -35,6 +38,8 @@ export const NEVER_CONNECTED_ATTEMPTS = 3;
 export const WAKE_RECYCLE_DELAY_MS = 1_000;
 export const WAKE_BACKOFF_BASE_MS = 1_000;
 export const WAKE_BACKOFF_MAX_MS = 300_000;
+/** The floor under a 429 redial — the server said LATER, and later is at most once a minute. */
+export const WAKE_THROTTLE_RETRY_MS = 60_000;
 
 export interface CloudWakeConfig {
   auth: { authedFetch(path: string, init?: RequestInit): Promise<Response> };
@@ -45,6 +50,7 @@ export interface CloudWakeConfig {
   recycleDelayMs?: number;
   backoffBaseMs?: number;
   backoffMaxMs?: number;
+  throttleRetryMs?: number;
 }
 
 export interface CloudWake {
@@ -100,6 +106,7 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
   const recycleDelayMs = cfg.recycleDelayMs ?? WAKE_RECYCLE_DELAY_MS;
   const backoffBaseMs = cfg.backoffBaseMs ?? WAKE_BACKOFF_BASE_MS;
   const backoffMaxMs = cfg.backoffMaxMs ?? WAKE_BACKOFF_MAX_MS;
+  const throttleRetryMs = cfg.throttleRetryMs ?? WAKE_THROTTLE_RETRY_MS;
 
   let stopped = false;
   let everConnected = false;
@@ -164,14 +171,34 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
     }
 
     if (!res.ok || !res.body) {
-      // The one refusal case that is EXPECTED in the field: the server's own flag is off
-      // (503) until the deploy flips it. Permanent for the process, zero retries — see the
-      // header for why redialing a refusing endpoint is the storm this must never start.
       try {
         await res.body?.cancel();
       } catch {
         /* nothing to release */
       }
+      // A 429 is the server saying LATER, not never — and it is exactly what a fresh install
+      // hears, measured live: the launch's bootstrap is paging `/sync` flat out, the limiter
+      // throttles the `/events` dial that rides in beside it, and "permanent for the process"
+      // turned one crowded second into a push channel that stayed dead for the install's whole
+      // lifetime. So a throttle redials — at the server's own `Retry-After` when it names one,
+      // never faster than {@link WAKE_THROTTLE_RETRY_MS} — which is one dial a minute at most,
+      // not the reconnect storm the permanent-off doctrine exists to prevent.
+      if (res.status === 429) {
+        const retryAfter = Number(res.headers.get("retry-after"));
+        const waitMs = Math.max(
+          throttleRetryMs,
+          Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 0,
+        );
+        cfg.log?.("cloud_wake_throttled", {
+          reason: "the hosted events stream is rate-limited right now; the dial repeats on a " +
+            "slow cadence and the mirror stays on its poll until it connects",
+        });
+        scheduleReconnect(waitMs);
+        return;
+      }
+      // Every OTHER refusal is permanent for the process, zero retries: the server's own flag
+      // being off (503) until the deploy flips it, an unknown route (404), an auth refusal —
+      // see the header for why redialing a refusing endpoint is the storm this must never start.
       cfg.log?.("cloud_wake_off", {
         status: res.status,
         reason: "the hosted events stream refused; the mirror stays on its poll — " +

@@ -378,7 +378,17 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
      */
     let linkVerifier: string | null = null;
 
+    /**
+     * TRUE from the moment the hosted API definitively refuses to renew the session (401/403 on
+     * `/auth/refresh` — a revoked or rotated-past family) until the next successful activation.
+     * `/health` carries it beside `signedIn`, so the shell can say "your session ended — sign in
+     * again" instead of the plain first-run sign-in. The measured alternative was a desktop that
+     * retried into 401s every five minutes for a day while its window showed week-old mail.
+     */
+    let sessionExpired = false;
+
     const activate = (tokens: CloudTokens): Authed => {
+      sessionExpired = false;
       const auth = createCloudAuth({
         baseUrl: config.cloudUrl,
         tokens,
@@ -387,6 +397,19 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         sealPath,
         now,
         ...(log ? { log } : {}),
+        onSessionRefused: () => {
+          // The session is DEAD server-side; nothing this process can send will renew it. Tear
+          // down to the pre-auth state (stop the pulls, drop the spent seal) so the window
+          // renders the sign-in surface instead of a silently frozen mirror. Fire-and-forget:
+          // this fires from inside a pull's own refresh, and the teardown's stop() resolves
+          // only after that pull fails out — awaiting it here would be the deadlock.
+          sessionExpired = true;
+          log?.("cloud_session_expired", {
+            reason: "the hosted API refused to renew the session (revoked or rotated past); " +
+              "the engine returns to sign-in and the mirror keeps serving what it holds",
+          });
+          void signOut().catch(() => undefined);
+        },
       });
 
       const mirror: CloudMirror = createCloudMirror({
@@ -508,6 +531,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           mailboxId: world.mailboxId,
           signedIn: authed !== null,
           online: authed !== null && authed.mirror.online(),
+          // The reason `signedIn` is false, when the reason is the server ending the session
+          // rather than nobody having signed in yet. The shell words its sign-in surface off it.
+          sessionExpired,
         });
       }
 

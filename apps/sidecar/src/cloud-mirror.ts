@@ -1,10 +1,13 @@
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { and, asc, eq, gt, isNull, ne, notInArray } from "drizzle-orm";
-import { recordChange } from "@trafficflow/db";
+import { recordChange, recordChanges, accountSettings,
+} from "@trafficflow/db";
 import {
-  approvals, drafts, folderState, mailboxCredentials, mailboxFolders, mailboxes, messageBodies,
-  messageFailures, messageInstances, messageStates, messages, messageTags, routingDecisions, rules,
-  tags, threads, unsubscribeRecords,
+  approvals, attachments, drafts, flagState, folderState, mailboxCredentials, mailboxFolders,
+  mailboxes, messageBodies, messageFailures, messageInstances, messageStates, messages, messageTags,
+  outboundSends, routingDecisions, rules, tags, threadNotes, threads, trackerEvents,
+  unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
 import type {
@@ -111,7 +114,7 @@ export const CLOUD_SYNC_TYPES: readonly EntityType[] = [
  * the time the message carrying the assignment is applied.
  */
 const APPLY_ORDER: readonly EntityType[] = [
-  "tag", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
+  "folder", "tag", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
 ];
 
 const DEFAULT_PAGE_LIMIT = 500;
@@ -205,11 +208,17 @@ interface CursorState {
   /** How far the body walk has got. See {@link BodiesWalk} for why this is not just an id. */
   bodies: BodiesWalk;
   /**
-   * Set while a `since=0` bootstrap is in flight and its trailing sweep has NOT yet run. It is what
-   * makes the mark-and-sweep crash-safe: a bootstrap that commits a page then dies leaves a NON-zero
-   * cursor, and resuming incrementally from it would rebuild only a PARTIAL generation and sweep real
-   * rows. So a launch that finds this set restarts the whole bootstrap from zero — rebuilding the
-   * complete generation — and clears it only once the sweep has run.
+   * Set while a `since=0` bootstrap is in flight and its trailing sweep has NOT yet run; cleared
+   * only once the sweep has. It is what makes the mark-and-sweep crash-safe, and what it demands
+   * changed when the generation learned to persist ({@link BootstrapGen.flush}): a bootstrap that
+   * commits a page then dies leaves a NON-zero cursor, and resuming from it is safe ONLY against
+   * the SAME generation's marks — a resume against a partial rebuild would sweep real rows. So a
+   * launch that finds this set RESUMES from the committed cursor when the generation file is
+   * there to continue marking into, and restarts the whole bootstrap from zero when it is not
+   * (a pre-generation-file cursor, an unreadable file). The restart-from-zero-on-every-failure
+   * form this replaces cannot finish on a large mailbox: a replay hundreds of pages long that
+   * starts over on ANY interruption — a sleep, a network change, an app quit — never reaches the
+   * horizon, and the mirror silently serves week-old mail forever while every retry looks alive.
    */
   bootstrapping: boolean;
   /**
@@ -219,6 +228,9 @@ interface CursorState {
    * mirrors bootstrapped while the drain still asked for eight of the feed's nine types.
    */
   tagBackfill: boolean;
+  /** The one-time folder backfill's consumed flag — `tagBackfill`'s shape, for the folder
+   *  entities the pre-folders apply loop dropped while the cursor advanced past them. */
+  folderBackfill: boolean;
   /**
    * Set once the one-time cap-marker repair has been CONSIDERED — see {@link repairCapMarkers}.
    * Absent from every cursor file written before that repair existed, which reads as `false`, and
@@ -367,6 +379,7 @@ interface CursorFile {
   bodies?: unknown;
   bootstrapping?: unknown;
   tagBackfill?: unknown;
+  folderBackfill?: unknown;
   capMarkerRepair?: unknown;
 }
 
@@ -382,6 +395,7 @@ function readCursor(path: string): CursorState {
       bodies: readBodiesWalk(j.bodies),
       bootstrapping: j.bootstrapping === true,
       tagBackfill: j.tagBackfill === true,
+      folderBackfill: j.folderBackfill === true,
       // `=== true`, never `?? true`: an absent key must read FALSE. The inverse would silently
       // exempt every install that HAS the defect and leave only fresh ones correct.
       capMarkerRepair: j.capMarkerRepair === true,
@@ -392,7 +406,7 @@ function readCursor(path: string): CursorState {
     // statement about mirrors that exist.
     return {
       version: CURSOR_VERSION, sync: "0", bodies: { phase: "unresolved" },
-      bootstrapping: false, tagBackfill: false,
+      bootstrapping: false, tagBackfill: false, folderBackfill: false,
       // A fresh install has no pre-marker rows and its walk writes markers from the start.
       capMarkerRepair: true,
     };
@@ -406,6 +420,7 @@ function writeCursor(path: string, state: CursorState): void {
     bodies: writeBodiesWalk(state.bodies),
     bootstrapping: state.bootstrapping,
     tagBackfill: state.tagBackfill,
+    folderBackfill: state.folderBackfill,
     capMarkerRepair: state.capMarkerRepair,
   };
   writeFileSync(path, JSON.stringify(onDisk));
@@ -429,22 +444,124 @@ const isBootstrapCursor = (s: string): boolean => !s || s === "0";
  * delete the managed rows it never touched. Membership is keyed by each table's own id, except
  * `message_state`, whose `/sync` id is its `messageId` (as {@link applyPage} records it).
  */
-interface BootstrapGen {
-  thread: Set<string>;
-  message: Set<string>;
-  message_state: Set<string>;
-  rule: Set<string>;
-  draft: Set<string>;
-  approval: Set<string>;
-  routing_decision: Set<string>;
-  tag: Set<string>;
+interface MarkSet {
+  add(id: string): void;
+  has(id: string): boolean;
 }
 
-function newBootstrapGen(): BootstrapGen {
+interface BootstrapGen {
+  folder: MarkSet;
+  thread: MarkSet;
+  message: MarkSet;
+  message_state: MarkSet;
+  rule: MarkSet;
+  draft: MarkSet;
+  approval: MarkSet;
+  routing_decision: MarkSet;
+  tag: MarkSet;
+  /**
+   * Append every id marked since the last flush to the generation file, fsynced. Called after
+   * a page's transaction commits and BEFORE the cursor advances past it — the cursor is the
+   * barrier: a crash between the commit and this flush leaves the cursor on the previous page,
+   * so the next launch re-applies the page (idempotent upserts) and re-marks it. The dangerous
+   * direction — a cursor past rows the file never recorded — is unreachable, and a duplicate
+   * line from a re-applied page is absorbed by the set on load.
+   */
+  flush(): void;
+}
+
+/** The generation file, beside the cursor. NDJSON-ish: one `<type> <id>` line per marked row. */
+const BOOTSTRAP_GEN_FILE = "cloud-bootstrap-gen.marks";
+
+function genPathFor(cursorPath: string): string {
+  return join(dirname(cursorPath), BOOTSTRAP_GEN_FILE);
+}
+
+const GEN_TYPES = [
+  "folder", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision", "tag",
+] as const;
+type GenType = (typeof GEN_TYPES)[number];
+
+function genOver(path: string, sets: Record<GenType, Set<string>>): BootstrapGen {
+  const pending: string[] = [];
+  const mark = (t: GenType): MarkSet => ({
+    add(id: string): void {
+      const s = sets[t];
+      if (!s.has(id)) {
+        s.add(id);
+        pending.push(`${t} ${id}`);
+      }
+    },
+    has: (id: string): boolean => sets[t].has(id),
+  });
   return {
-    thread: new Set(), message: new Set(), message_state: new Set(), rule: new Set(),
-    draft: new Set(), approval: new Set(), routing_decision: new Set(), tag: new Set(),
+    folder: mark("folder"),
+    thread: mark("thread"), message: mark("message"), message_state: mark("message_state"),
+    rule: mark("rule"), draft: mark("draft"), approval: mark("approval"),
+    routing_decision: mark("routing_decision"), tag: mark("tag"),
+    flush(): void {
+      if (pending.length === 0) return;
+      const fd = openSync(path, "a");
+      try {
+        // The WHOLE buffer, looped: `writeSync` may return a short count, and an append that
+        // stopped short would fsync a truncated record, clear the pending marks, and let the
+        // cursor advance past rows the file never named — which the next resume's sweep would
+        // then remove as phantoms. Loop or throw; the cursor must never outrun the marks.
+        const buf = Buffer.from(pending.join("\n") + "\n", "utf8");
+        let written = 0;
+        while (written < buf.length) {
+          written += writeSync(fd, buf, written, buf.length - written);
+        }
+        // Fsynced so an OS-level loss cannot leave the cursor ahead of the marks it rode with.
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      pending.length = 0;
+    },
   };
+}
+
+const emptyGenSets = (): Record<GenType, Set<string>> => ({
+  folder: new Set(),
+  thread: new Set(), message: new Set(), message_state: new Set(), rule: new Set(),
+  draft: new Set(), approval: new Set(), routing_decision: new Set(), tag: new Set(),
+});
+
+/** A FRESH generation: truncate the file, start marking from nothing. */
+function newBootstrapGen(path: string): BootstrapGen {
+  writeFileSync(path, "");
+  return genOver(path, emptyGenSets());
+}
+
+/**
+ * The generation an interrupted bootstrap left behind, or null when there is none (a fresh
+ * install, a pre-generation-file build's leftover, an unreadable file). Null means the caller
+ * restarts the bootstrap from zero — the always-safe answer, and the only one available when
+ * the marks cannot be trusted.
+ */
+function loadBootstrapGen(path: string): BootstrapGen | null {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+  const sets = emptyGenSets();
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    const sp = line.indexOf(" ");
+    if (sp <= 0) continue;
+    const t = line.slice(0, sp) as GenType;
+    if (!(GEN_TYPES as readonly string[]).includes(t)) continue;
+    sets[t].add(line.slice(sp + 1));
+  }
+  return genOver(path, sets);
+}
+
+/** Drop the generation file — the bootstrap completed and swept, or is starting over. */
+function deleteBootstrapGen(path: string): void {
+  rmSync(path, { force: true });
 }
 
 /** The tx handle `db.transaction` hands its callback. */
@@ -691,6 +808,26 @@ async function applyUpsert(
   known: ReadonlySet<string>,
 ): Promise<boolean> {
   switch (ch.type) {
+    case "folder": {
+      // ONE OF THE MAILBOX'S OWN FOLDERS (the folders foundation). The local row takes the
+      // HOSTED entity's id verbatim — the local /sync materializes folder entities BY ROW ID
+      // and the shell deep-links `#/folder/<id>`, so hosted and local links are one namespace.
+      // Guarded on the mirrored mailbox exactly as messages are: never re-attributed, never
+      // invented. The local "Use folders" flag is reconciled after the page (see applyPage) —
+      // the local SyncService gates its folder reads on it, and the honest local value is
+      // derived from what the hosted feed actually sent.
+      const f = ch.entity as { id?: string; name?: string; mailboxId?: string } | undefined;
+      if (!f?.name || !f.mailboxId) return false;
+      if (!known.has(f.mailboxId)) return false;
+      await tx.insert(mailboxFolders).values({
+        id: ch.id, mailboxId: f.mailboxId, folder: f.name, updatedAt: now,
+      }).onConflictDoUpdate({
+        target: mailboxFolders.id,
+        set: { mailboxId: f.mailboxId, folder: f.name, updatedAt: now },
+      });
+      gen?.folder.add(ch.id);
+      return true;
+    }
     case "thread": {
       const t = ch.entity as ThreadDTO | undefined;
       if (!t) return false;
@@ -942,20 +1079,95 @@ async function applyUpsert(
   }
 }
 
-/** Apply one delete. Children of a message go first, so the message's own FKs are clear. */
-async function applyDelete(tx: Tx, ch: SyncChange): Promise<boolean> {
+/**
+ * Apply one delete. Children of a message go first, so the message's own FKs are clear.
+ *
+ * ── EVERY `message_id` FOREIGN KEY, NOT JUST THE ONES THIS FILE WRITES ────────────────────────
+ *
+ * A delete that misses one FK-holder does not lose that one row — it ABORTS THE WHOLE PAGE
+ * TRANSACTION with 23503, the cursor never advances past the page, and the retry replays the
+ * identical page into the identical violation: the mirror is wedged for ever while looking like
+ * a transient network error. Measured live 2026-08-24 on a Linux install: one local draft whose
+ * `in_reply_to_message_id` named a message deleted on Cloud pinned the cursor for two days
+ * (`cloud_pull_failed` code 23503 on every poll), which the user experiences as "the desktop is
+ * stale". The hosted store never hits this because ITS delete is a `deleted_at` stamp — the row
+ * stays and every FK stays satisfied; the mirror's hard delete has to clear the children itself.
+ *
+ * So this clears every table `schema-mail.ts` points at `messages.id` — including the five the
+ * Cloud door never writes (instances, flag state, tracker events, attachments, unsubscribe
+ * records), for `mailboxReferenced`'s reason: this can run on a database that was a STANDALONE
+ * install before the door was switched, and those tables hold that era's rows.
+ *
+ * A replying draft is DETACHED (`in_reply_to_message_id` → NULL), not deleted: the draft is the
+ * user's writing and outlives its target, exactly as the hosted store keeps it when the message
+ * it answers goes to Trash. A re-emitted draft converges — the upsert guards that column on
+ * `messagePresent` and writes NULL for a target the mirror no longer holds. A draft on a DELETED
+ * THREAD is detached the same way (`thread_id` → NULL), never deleted with it: the hosted store
+ * still holds that draft, and a mirror that destroyed it would resurrect it only on its next
+ * hosted edit — a draft at rest emits nothing.
+ *
+ * ── AND EVERY DETACH IS REPORTED, so the projection hears about the survivor ─────────────────
+ *
+ * A detach is a real change to a row the incoming feed did not name. The local `/sync` is
+ * `change_log` over this database, so a detach nothing records is a detach the window never
+ * redraws — a message still grouped under a deleted thread, for as long as that message stays at
+ * rest. `detached` collects the survivors; the caller appends one local `update` change-log row
+ * per entry in the same transaction, exactly as it records the delete itself.
+ */
+interface DetachedSurvivor { type: "message" | "draft"; id: string }
+
+/**
+ * How many survivor announcements one `recordChanges` call may carry.
+ *
+ * PGlite 0.2.17 accepts at most 32,767 bind parameters per statement, and a change-log insert
+ * spends six per row — so a single unchunked batch THROWS (`RangeError: Invalid array length`) at
+ * exactly 5,462 rows, measured. The failure mode is the one this whole slice removes: the page
+ * transaction rolls back, the cursor never advances, and every poll replays the same tombstone —
+ * a thread hoarding 5,462 stale messages would wedge the mirror by being repaired. 1,000 rows is
+ * 6,000 parameters: comfortably under the cap, still ~5 statements for the largest plausible
+ * thread instead of three per survivor.
+ */
+const DETACHED_BATCH_MAX = 1000;
+
+/** Announce detached survivors on the local change log, in parameter-safe slices. */
+async function recordDetached(tx: Tx, world: LocalWorld, detached: readonly DetachedSurvivor[]): Promise<void> {
+  for (let i = 0; i < detached.length; i += DETACHED_BATCH_MAX) {
+    await recordChanges(tx, detached.slice(i, i + DETACHED_BATCH_MAX).map((d) => ({
+      accountId: world.accountId, entityType: d.type, entityId: d.id, op: "update" as const, meta: null,
+    })));
+  }
+}
+
+async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]): Promise<boolean> {
   switch (ch.type) {
     case "message": {
       if (!(await messagePresent(tx, ch.id))) return false;
+      const replying = await tx.select({ id: drafts.id }).from(drafts)
+        .where(eq(drafts.inReplyToMessageId, ch.id));
+      await tx.update(drafts).set({ inReplyToMessageId: null })
+        .where(eq(drafts.inReplyToMessageId, ch.id));
+      for (const d of replying) detached?.push({ type: "draft", id: d.id });
       await tx.delete(folderState).where(eq(folderState.messageId, ch.id));
       await tx.delete(messageStates).where(eq(messageStates.messageId, ch.id));
       await tx.delete(messageBodies).where(eq(messageBodies.messageId, ch.id));
       await tx.delete(routingDecisions).where(eq(routingDecisions.messageId, ch.id));
       // The assignments hang off the message by FK, so they go before it.
       await tx.delete(messageTags).where(eq(messageTags.messageId, ch.id));
+      // The standalone era's children (see header) — empty on a pure Cloud-door database.
+      await tx.delete(messageInstances).where(eq(messageInstances.messageId, ch.id));
+      await tx.delete(flagState).where(eq(flagState.messageId, ch.id));
+      await tx.delete(trackerEvents).where(eq(trackerEvents.messageId, ch.id));
+      await tx.delete(attachments).where(eq(attachments.messageId, ch.id));
+      await tx.delete(unsubscribeRecords).where(eq(unsubscribeRecords.messageId, ch.id));
       await tx.delete(messages).where(eq(messages.id, ch.id));
       return true;
     }
+    case "folder":
+      // The inventory row alone: a folder entity's delete says "stop showing this folder", never
+      // anything about mail — the messages that lived there keep their own lifecycle (the
+      // hosted feed tombstones them separately if they go).
+      await tx.delete(mailboxFolders).where(eq(mailboxFolders.id, ch.id));
+      return true;
     case "tag":
       // Assignments first, for the same FK reason, and this is also what a deleted tag MEANS: the
       // messages stay, they simply stop carrying it.
@@ -964,7 +1176,26 @@ async function applyDelete(tx: Tx, ch: SyncChange): Promise<boolean> {
       return true;
     case "thread": {
       if (!(await threadPresent(tx, ch.id))) return false;
-      await tx.delete(drafts).where(eq(drafts.threadId, ch.id));
+      // The thread's drafts are DETACHED, never deleted with it (see the header): the hosted
+      // store still holds them, and their send records (`outbound_sends.draft_id`, standalone
+      // era) would otherwise be one more foreign key wedging the page. A later hosted edit of
+      // the draft re-points it — the upsert's own thread stub covers a thread that is gone.
+      const orphaned = await tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.threadId, ch.id));
+      await tx.update(drafts).set({ threadId: null }).where(eq(drafts.threadId, ch.id));
+      for (const d of orphaned) detached?.push({ type: "draft", id: d.id });
+      // Notes hang off the thread by a NOT NULL FK (standalone era; the Cloud door writes none),
+      // so they cannot be detached — they go with the thread they annotate.
+      await tx.delete(threadNotes).where(eq(threadNotes.threadId, ch.id));
+      // Same wedge as the message case, from the other side: `messages.thread_id` is an FK, and
+      // a hosted merge deletes the losing thread (`thread-service.ts#merge`). Ordinarily the same
+      // page re-points every message first (updates apply before deletes), but a message whose
+      // upsert was SKIPPED — unknown mailbox, or its update fell below the feed's retention
+      // horizon — still holds the old thread id, and one such row would pin the cursor for ever.
+      // Detach rather than delete: the message is real mail; its own next update re-threads it.
+      const unthreaded = await tx.select({ id: messages.id }).from(messages).where(eq(messages.threadId, ch.id));
+      await tx.update(messages).set({ threadId: null })
+        .where(eq(messages.threadId, ch.id));
+      for (const m of unthreaded) detached?.push({ type: "message", id: m.id });
       await tx.delete(threads).where(eq(threads.id, ch.id));
       return true;
     }
@@ -975,6 +1206,9 @@ async function applyDelete(tx: Tx, ch: SyncChange): Promise<boolean> {
       await tx.delete(rules).where(eq(rules.id, ch.id));
       return true;
     case "draft":
+      // Send records reference the draft (standalone era; the Cloud door proxies sends to the
+      // hosted account and writes none locally).
+      await tx.delete(outboundSends).where(eq(outboundSends.draftId, ch.id));
       await tx.delete(drafts).where(eq(drafts.id, ch.id));
       return true;
     case "approval":
@@ -1033,11 +1267,22 @@ async function applyPage(
     for (const type of [...APPLY_ORDER].reverse()) {
       for (const ch of deletes) {
         if (ch.type !== type) continue;
-        if (await applyDelete(tx, ch)) {
+        const detached: DetachedSurvivor[] = [];
+        if (await applyDelete(tx, ch, detached)) {
           await record(type, ch.id, "delete");
+          // The survivors the delete DETACHED (a draft losing its reply target, a message losing
+          // its thread) changed too, and the feed did not name them — see applyDelete's header.
+          // Batched (not a per-row loop holding the seq counter), and CHUNKED (not one statement
+          // that dies on PGlite's bind-parameter cap) — see DETACHED_BATCH_MAX.
+          await recordDetached(tx, world, detached);
           applied++;
         }
       }
+    }
+    // A page that moved the folder inventory also settles the local flag it is read behind —
+    // same transaction, so the local /sync can never see rows the flag disowns or vice versa.
+    if (changes.some((c) => c.type === "folder")) {
+      await reconcileLocalFoldersFlag(tx, world, now);
     }
     return applied;
   });
@@ -1050,7 +1295,8 @@ async function applyPage(
  * FK-safe, children before parents: routing decisions, approvals, drafts, message states and rules
  * first (each can be an independent phantom hanging off a SURVIVING message when only that child was
  * removed on Cloud), then messages — whose delete cascades folder_state, bodies, states and routing
- * decisions exactly as a tombstone would — and threads last, whose delete cascades their drafts.
+ * decisions exactly as a tombstone would — and threads last, whose delete detaches their surviving
+ * drafts and messages rather than taking user writing with it.
  *
  * Each swept entity appends a local DELETE change-log row, so the Swift projection's own `/sync`
  * drops it too; a sweep the reader never hears about would leave the phantom on screen. `applyDelete`
@@ -1061,8 +1307,14 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
     let swept = 0;
     const sweepOne = async (type: EntityType, id: string): Promise<void> => {
       const ch: SyncChange = { type, op: "delete", id, seq: 0, updatedAt: now.toISOString() };
-      if (await applyDelete(tx, ch)) {
+      const detached: DetachedSurvivor[] = [];
+      if (await applyDelete(tx, ch, detached)) {
         await recordChange(tx, { accountId: world.accountId, entityType: type, entityId: id, op: "delete", meta: null });
+        // Survivors the sweep detached are announced exactly as the incremental path announces
+        // them — a change the projection never hears about is a row it never redraws. Batched
+        // and chunked for the incremental path's reasons (the seq counter is a lock; the bind
+        // parameters are a cap) — see DETACHED_BATCH_MAX.
+        await recordDetached(tx, world, detached);
         swept++;
       }
     };
@@ -1087,9 +1339,44 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
        `applyDelete` clears the assignments with it. */
     for (const r of await tx.select({ id: tags.id }).from(tags).where(eq(tags.accountId, world.accountId)))
       if (!gen.tag.has(r.id)) await sweepOne("tag", r.id);
+    /* Folder entities the bootstrap never named — a folder deleted (or the feature disabled)
+       while this mirror was offline. Scoped through the mirrored mailbox list: `mailbox_folders`
+       has no account column, and the mirrored mailboxes ARE this account's. */
+    for (const r of await tx.select({ id: mailboxFolders.id }).from(mailboxFolders)
+      .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+      .where(eq(mailboxes.accountId, world.accountId)))
+      if (!gen.folder.has(r.id)) await sweepOne("folder", r.id);
 
+    await reconcileLocalFoldersFlag(tx, world, now);
     return swept;
   });
+}
+
+/**
+ * THE LOCAL "USE FOLDERS" FLAG, derived from what the hosted feed actually sent. The local
+ * SyncService (cloud-read serves the shell from this database with the SAME service the hosted
+ * API uses) gates folder reads on `account_settings.folders_enabled_at` — and the honest local
+ * value is exactly "does this mirror hold folder entities": the hosted feed emits them ONLY
+ * while the hosted flag is on, and deletes them all on a disable. So: rows present ⇒ ensure the
+ * flag is set; none ⇒ ensure it is NULL. (An enabled-but-folderless hosted account mirrors to
+ * NULL here, which serves the same empty answer the hosted /sync gives — the shell's own switch
+ * reads the hosted /consent over the bridge and stays authoritative for the interface.)
+ */
+async function reconcileLocalFoldersFlag(tx: Tx, world: LocalWorld, now: Date): Promise<void> {
+  const [row] = await tx.select({ id: mailboxFolders.id }).from(mailboxFolders)
+    .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+    .where(eq(mailboxes.accountId, world.accountId)).limit(1);
+  const wantOn = row !== undefined;
+  const [settings] = await tx.select({ at: accountSettings.foldersEnabledAt })
+    .from(accountSettings).where(eq(accountSettings.accountId, world.accountId)).limit(1);
+  const isOn = (settings?.at ?? null) !== null;
+  if (wantOn === isOn) return;
+  await tx.insert(accountSettings)
+    .values({ accountId: world.accountId, foldersEnabledAt: wantOn ? now : null })
+    .onConflictDoUpdate({
+      target: accountSettings.accountId,
+      set: { foldersEnabledAt: wantOn ? now : null, updatedAt: now },
+    });
 }
 
 /**
@@ -1178,6 +1465,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const now = cfg.now ?? ((): Date => new Date());
   const pageLimit = cfg.pageLimit ?? DEFAULT_PAGE_LIMIT;
   const cursor = readCursor(cfg.cursorPath);
+  /** The bootstrap generation's on-disk marks, beside the cursor. See {@link BootstrapGen}. */
+  const genPath = genPathFor(cfg.cursorPath);
   let stopped = false;
   /**
    * The abort every loop in this file checks. Set by `stop()` and never cleared: a mirror that has
@@ -1368,9 +1657,76 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       } else if (ch.type === "draft") {
         const d = ch.entity as DraftDTO | undefined;
         if (d?.mailboxId) out.add(d.mailboxId);
+      } else if (ch.type === "folder") {
+        // A page can name a NEW mailbox through its folder inventory alone — a just-connected
+        // mailbox whose first mirrored change is a folder entity. Without this the apply's
+        // known-mailbox guard dropped the folder while the cursor advanced past it, and no
+        // later refresh could recover it.
+        const f = ch.entity as { mailboxId?: string } | undefined;
+        if (f?.mailboxId) out.add(f.mailboxId);
       }
     }
     return out;
+  };
+
+  /**
+   * RULES BEFORE MAIL — the bootstrap's one ordering promise.
+   *
+   * A `since=0` replay interleaves by hosted seq, and a sender the account decided AFTER their
+   * mail arrived replays as mail-first: for the whole stretch between the mail's seqs and the
+   * rule's, the mirror holds messages whose sender looks undecided. Every reader downstream —
+   * the shell's snapshot off this database, its delta off the local `change_log` — inherits that
+   * order, and the consent cutline reads the absent rule as "no decision", so already-screened
+   * senders present in the Screener until the replay catches up. Measured live on a desktop
+   * initial sync; unknown is not undecided.
+   *
+   * So a drain that is a bootstrap first drains `?types=rule` from zero to its horizon, applied
+   * through the SAME `applyPage` (local change-log rows and generation marks included), without
+   * ever touching the drain's committed cursor. Two consequences, both deliberate:
+   *
+   *  · the local `change_log` carries every rule before any message, so a client that snapshots
+   *    this mirror mid-bootstrap gets the full rule set on page 1 and one that tails the delta
+   *    gets rules first — the ordering holds at every interleaving;
+   *  · the main replay re-delivers every rule change at its natural seq and re-applies it
+   *    (idempotent — the DTO is re-materialized CURRENT state on both passes), which also
+   *    re-marks it in the generation, so the trailing sweep needs nothing special.
+   *
+   * It re-runs on a RESUMED bootstrap too: rules decided while the install was interrupted sit
+   * above the committed cursor, and the remaining replay would otherwise serve their senders'
+   * mail first. The pass is cheap — rules are the smallest type in the feed.
+   *
+   * A failure is a failure of the same wire the main drain uses, so it propagates as any drain
+   * page failure does rather than degrading to an unordered bootstrap.
+   *
+   * ── THE RESIDUAL WINDOW ON A RESUME, AND WHY READS ARE NOT GATED ON THIS PASS ────────────
+   *
+   * The bridge is deliberately exposed before the first pull (`main.ts` — the window must render
+   * sign-in and locally-held mail with no network at all), so a client that connects between
+   * process start and this pass landing can still read an interrupted bootstrap's message-only
+   * stretch — last session's state, which is what that client was already showing. Gating the
+   * read surface until this pass completes is the obvious remedy and is refused, because the
+   * gate would hold LOCAL reads hostage to a NETWORK request — a dead network would blank a
+   * desktop whose whole promise is that the mail is on the device. What bounds the window is
+   * that this pass is the first thing the first pull does: the rules land in the local
+   * change_log ahead of everything the resumed replay adds, so a connected client corrects on
+   * its next delta poll (seconds), instead of at the end of the replay (minutes).
+   */
+  const drainRulesFirst = async (gen: BootstrapGen | null): Promise<{ applied: number; cut: boolean }> => {
+    let applied = 0;
+    let since = "0";
+    for (;;) {
+      if (aborted) return { applied, cut: true };
+      const q = new URLSearchParams({ since, limit: String(pageLimit), types: "rule" });
+      const res = await cfg.auth.authedFetch(`/sync?${q.toString()}`);
+      if (!res.ok) throw new Error(`the hosted /sync answered HTTP ${res.status} to the rules-first pass`);
+      const body = (await res.json()) as SyncResponse;
+      applied += await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes);
+      gen?.flush();
+      reachable = true;
+      since = body.cursor;
+      if (!body.hasMore) break;
+    }
+    return { applied, cut: false };
   };
 
   /**
@@ -1384,36 +1740,69 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const drainSync = async (): Promise<{ applied: number; sweep: BootstrapGen | null; cut: boolean }> => {
     let applied = 0;
     // A drain that begins at since=0 — a first launch, or a healed/absent cursor — OR that finds a
-    // bootstrap left unfinished by a crash is a BOOTSTRAP. Force since=0 so the generation is rebuilt
-    // in FULL (a partial resume would sweep real rows), and tag what it touches.
+    // bootstrap left unfinished by a crash is a BOOTSTRAP: tag what it touches, sweep at the end.
     //
-    // A cursor written by an older format is the FOURTH way in, and the one this slice added: its
-    // rows carry the wrong mailbox attribution and no delta can correct them, so the whole feed is
-    // replayed through the corrected upsert. See {@link CURSOR_VERSION}.
+    // An unfinished bootstrap RESUMES from the committed cursor when its generation file is there
+    // to continue marking into — the union of marks across every segment covers exactly the pages
+    // the feed served, which is the sweep's whole requirement — and restarts from zero when it is
+    // not. Restart-from-zero-on-every-interruption cannot finish on a large mailbox (a replay
+    // hundreds of pages long, any sleep or quit starting it over; the mirror serves stale mail
+    // while looking alive), which is why the generation persists at all.
+    //
+    // A cursor written by an older format is the FOURTH way in: its rows carry the wrong mailbox
+    // attribution and no delta can correct them, so the whole feed is replayed through the
+    // corrected upsert — never resumed, whatever files are lying around. See {@link CURSOR_VERSION}.
     let sweep: BootstrapGen | null = null;
     const reKeying = cursor.version < CURSOR_VERSION;
     if (isBootstrapCursor(cursor.sync) || cursor.bootstrapping || reKeying) {
-      if (reKeying && !isBootstrapCursor(cursor.sync)) {
-        // The event name IS the fact, so the line carries only the reason — the same discipline
-        // `packages/core/src/log.ts` prescribes for the cron passes: a version number would be a
-        // new allowlist entry to say what the event already says.
-        cfg.log?.("cloud_mirror_rekey", {
-          reason: "this mirror's mail was filed under a local placeholder mailbox rather than the " +
-            "account's own; the feed is replayed from the start so every row is re-attributed",
+      // The re-key RESUMES on the same terms as any bootstrap: an interrupted replay whose marks
+      // survived continues from its committed cursor, and every seq still passes through the
+      // corrected upsert exactly once. This is the upgraded-install case measured live — the
+      // replay is the account's whole feed, and a form that restarted it from zero on every
+      // interruption never finished on a real mailbox. (`bootstrapping` is only ever true for a
+      // replay that STARTED from zero, so resuming it cannot skip the re-key's early pages; the
+      // version stamp still lands only when the sweep completes.)
+      const resumed = cursor.bootstrapping && !isBootstrapCursor(cursor.sync)
+        ? loadBootstrapGen(genPath)
+        : null;
+      if (resumed) {
+        sweep = resumed;
+        cfg.log?.("cloud_bootstrap_resumed", {
+          reason: "an interrupted bootstrap continues from its committed cursor against the same " +
+            "generation's marks, instead of replaying the whole feed from zero",
         });
+      } else {
+        if (reKeying && !isBootstrapCursor(cursor.sync)) {
+          // The event name IS the fact, so the line carries only the reason — the same discipline
+          // `packages/core/src/log.ts` prescribes for the cron passes: a version number would be a
+          // new allowlist entry to say what the event already says.
+          cfg.log?.("cloud_mirror_rekey", {
+            reason: "this mirror's mail was filed under a local placeholder mailbox rather than the " +
+              "account's own; the feed is replayed from the start so every row is re-attributed",
+          });
+        }
+        cursor.sync = "0";
+        cursor.bootstrapping = true;
+        sweep = newBootstrapGen(genPath);
       }
-      cursor.sync = "0";
-      cursor.bootstrapping = true;
-      sweep = newBootstrapGen();
     }
     /** One refetch per drain — see the pre-scan below. */
     let refetched = false;
+    // A bootstrap (fresh, resumed, re-keyed — anything that set `sweep`) owes the rules-first
+    // pass before its first page; the 410 branch below re-owes it with the fresh generation.
+    let rulesFirstOwed = sweep !== null;
     for (;;) {
       // BETWEEN PAGES, so a quit costs at most the page already in flight. `sweep: null` is the
       // load-bearing half: a bootstrap generation that stopped early has marked only part of the
       // account, and sweeping against it would delete rows the feed simply had not reached yet.
       // `cursor.bootstrapping` is left SET, so the next launch restarts the bootstrap in full.
       if (aborted) return { applied, sweep: null, cut: true };
+      if (rulesFirstOwed) {
+        rulesFirstOwed = false;
+        const rf = await drainRulesFirst(sweep);
+        applied += rf.applied;
+        if (rf.cut) return { applied, sweep: null, cut: true };
+      }
       const q = new URLSearchParams({
         since: cursor.sync || "0",
         limit: String(pageLimit),
@@ -1439,8 +1828,12 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         // cursor has fallen below the feed's retention horizon.
         cursor.bodies = { phase: "walking", after: null };
         cursor.bootstrapping = true;
-        sweep = newBootstrapGen();
+        // A fresh generation, never a resume: the 410 is the one moment the mirror's own position
+        // is untrustworthy, and that verdict covers any marks it made from that position.
+        sweep = newBootstrapGen(genPath);
         applied = 0;
+        // The re-bootstrap owes the rules-first pass again, against the fresh generation.
+        rulesFirstOwed = true;
         cfg.log?.("cloud_cursor_expired", { reason: "410 from /sync; re-bootstrapping from since=0 with mark-and-sweep" });
         continue;
       }
@@ -1474,8 +1867,15 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       }
       applied += await applyPage(cfg.db, cfg.world, body, now(), sweep, knownMailboxes);
       // AFTER the commit: a crash before this line re-applies the page next launch, which converges.
+      // The generation's marks land BEFORE the cursor moves past the page they describe — the
+      // ordering {@link BootstrapGen.flush} rests on.
+      sweep?.flush();
       cursor.sync = body.cursor;
       writeCursor(cfg.cursorPath, cursor);
+      // A page LANDED, so Cloud demonstrably answers: reachable heals per page, not only when
+      // the whole pull completes. Without this, an install part-way through a long bootstrap
+      // wore the "this install is offline" banner while actively landing pages.
+      reachable = true;
       // The hosted account has more to give, which is the one cheap signal that this mirror is
       // BEHIND. Read at the top of the next pull to decide whether the denominator is worth an
       // aggregate; nothing else reads it, and it changes no drain decision here.
@@ -1517,11 +1917,20 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * Crash safety is the flag being the LAST write: a repair that commits and then dies re-probes on
    * the next launch, finds tags present, and skips at gate 2 — the apply is an upsert either way.
    */
+  /**
+   * THE FIRST SNAPSHOT PAGE, fetched at most once per pull across BOTH one-time repairs (tags,
+   * folders). `undefined` = not asked yet; `null` = asked and did not answer, so the second
+   * repair defers with the first instead of dialling again. The repairs are the only readers,
+   * and once both are marked consumed the cache is never consulted again.
+   */
+  let snapshotPage1: SnapshotResponse | null | undefined;
   const fetchSnapshotPage = async (pageCursor?: string): Promise<SnapshotResponse | null> => {
+    if (!pageCursor && snapshotPage1 !== undefined) return snapshotPage1;
     const q = new URLSearchParams({ limit: String(pageLimit) });
     if (pageCursor) q.set("cursor", pageCursor);
     const res = await cfg.auth.authedFetch(`/sync/snapshot?${q.toString()}`);
     if (!res.ok) {
+      if (!pageCursor) snapshotPage1 = null;
       cfg.log?.("cloud_tag_backfill_deferred", {
         status: res.status,
         reason: "a snapshot page for the one-time tag repair did not answer; the mirror is " +
@@ -1532,6 +1941,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     const snap = (await res.json()) as SnapshotResponse;
     // A wire boundary, so the shape is checked rather than assumed: marking the repair done off a
     // body that is not a snapshot would spend the one chance this install gets at it.
+    if (!pageCursor) snapshotPage1 = Array.isArray((snap as { changes?: unknown }).changes) ? snap : null;
     if (!Array.isArray(snap.changes)) {
       cfg.log?.("cloud_tag_backfill_deferred", {
         reason: "a snapshot page answered something that is not a snapshot; the mirror is " +
@@ -1590,6 +2000,75 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       });
       return 0;
     }
+  };
+
+  /**
+   * THE ONE-TIME FOLDER BACKFILL — `repairStaleTags`' shape, for `repairStaleTags`' reason with
+   * one difference in the gates. Between the drain first asking for `folder` entities and the
+   * apply loop learning to store them, a mirror could drain folder creates, drop them, and
+   * persist a cursor past them — a delta only ever looks forward, so no later pull re-delivers
+   * them and the desktop's Folders rail stays empty for the life of the install.
+   *
+   * Unlike tags, "no local folder rows" is AMBIGUOUS (the account may simply have folders off),
+   * so there is no present-rows gate: the snapshot's first page is the answer itself — it
+   * carries the account's folder entities IFF the hosted flag is on (they are live small state,
+   * page 1 only, never the tail) — and applying whatever it holds plus reconciling the local
+   * flag settles both readings. Marked considered only when the page was READ; a failed fetch
+   * retries on the next pull, and the apply is idempotent so a crash re-run converges.
+   */
+  const repairStaleFolders = async (bootstrapped: boolean): Promise<number> => {
+    if (cursor.folderBackfill) return 0;
+    // A pull that just BOOTSTRAPPED replayed the whole account through the folder-capable
+    // apply — the entities are already here natively, so the repair is consumed without a
+    // fetch. Only a mirror carrying a PRE-FOLDERS cursor forward has anything to recover.
+    if (bootstrapped) {
+      cursor.folderBackfill = true;
+      writeCursor(cfg.cursorPath, cursor);
+      return 0;
+    }
+    let snap: SnapshotResponse | null = null;
+    try {
+      snap = await fetchSnapshotPage();
+    } catch (err) {
+      // Non-fatal by contract, like every other outcome of this one-time repair: a transport
+      // rejection must not fail an otherwise successful pull or mark the mirror offline. Not
+      // marked consumed — the next pull retries.
+      cfg.log?.("cloud_folder_backfill_deferred", {
+        err,
+        reason: "the one-time folder repair could not read the snapshot; the mirror is " +
+          "unaffected and the next pull retries",
+      });
+      return 0;
+    }
+    if (!snap) return 0;   // did not answer → not marked; the next pull retries
+    const folderChanges = snap.changes.filter((c) => c.type === "folder" && c.op !== "delete");
+    let appliedCount = 0;
+    // The mirrored mailboxes as the DATABASE holds them — the drain's own known-set is a local
+    // of the pull and may not be populated on this path.
+    const knownRows = await cfg.db.select({ id: mailboxes.id }).from(mailboxes)
+      .where(eq(mailboxes.accountId, cfg.world.accountId));
+    const knownHere = new Set(knownRows.map((r) => r.id));
+    await cfg.db.transaction(async (tx) => {
+      for (const ch of folderChanges) {
+        if (await applyUpsert(tx, cfg.world, ch, now(), null, knownHere)) {
+          await recordChange(tx, {
+            accountId: cfg.world.accountId, entityType: "folder", entityId: ch.id, op: "create", meta: null,
+          });
+          appliedCount++;
+        }
+      }
+      await reconcileLocalFoldersFlag(tx, cfg.world, now());
+    });
+    cursor.folderBackfill = true;
+    writeCursor(cfg.cursorPath, cursor);
+    if (appliedCount > 0) {
+      cfg.log?.("cloud_folder_backfill_applied", {
+        folders: appliedCount,
+        reason: "this mirror drained folder entities before the apply loop stored them, so they " +
+          "sat below the cursor and no delta could ever re-deliver them",
+      });
+    }
+    return appliedCount;
   };
 
   /**
@@ -1885,8 +2364,20 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
          applied. This ordering is the whole reason the mirror can attribute mail honestly, and a
          version of it that ran AFTER the drain would skip every message of a mailbox added since
          the last pull — a first pull on a fresh install would land nothing at all. */
+      // The repairs' shared snapshot cache is PER PULL: a page-1 failure cached across pulls
+      // would return the same refusal forever and the promised next-pull retry would never dial.
+      snapshotPage1 = undefined;
       await refreshMailboxes();
       const { applied, sweep, cut } = await drainSync();
+      // REACHABLE MEANS REACHABLE. The drain came back, so Cloud demonstrably answers — flip the
+      // flag here, not only at the end of the whole pull. It used to flip only after the sweep,
+      // the tag repair and the body walk all completed, so an install part-way through a long
+      // bootstrap wore the "this install is offline" banner for the replay's whole life while
+      // it was actively landing pages — measured on an upgraded install whose replay was
+      // interrupted for days: the person read "offline" on a machine that was online the whole
+      // time. Writes forward correctly from here too: the proxy's gate is this flag, and Cloud
+      // is the thing that just answered.
+      reachable = true;
       if (cut) {
         cfg.log?.("cloud_pull_stopped", {
           count: applied,
@@ -1912,6 +2403,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         cursor.bootstrapping = false;
         cursor.version = CURSOR_VERSION;
         writeCursor(cfg.cursorPath, cursor);
+        // The generation completed and swept: its marks have no further reader. AFTER the cursor
+        // write, so a crash between the two leaves a stale file a fresh generation truncates,
+        // never a finished bootstrap the next launch mistakes for an interrupted one.
+        deleteBootstrapGen(genPath);
         /* AND NOW THE RETIRED ROWS CAN GO. On an upgraded install the placeholder mailbox was
            still holding every mirrored message when the refresh retired it, so it survived as a
            tombstone; the re-pull above has just moved them onto the account's own mailboxes, and a
@@ -1930,6 +2425,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // AFTER the drain, so a bootstrap has already delivered the tags natively and is skipped by
       // the zero-tags gate rather than by a special case for it.
       await repairStaleTags();
+      await repairStaleFolders(sweep !== null && sweep !== undefined);
       await backfillBodies();
       // AFTER the body pass, deliberately: `backfillBodies` is what resolves the walk and moves it
       // to `complete`, and the repair defers (without marking) while it is still walking — so
