@@ -242,10 +242,18 @@ export function ReceiptsView({
   jumpRefs.current = { onCur, onJumped };
   useEffect(() => {
     if (!jumpTo) return;
+    /* Closed-before vs closed-after, exactly as `ReadsView`'s twin spells out: a Back that
+       lands between this effect and its frame must win, and `[jumpTo]` does not change on a
+       close so the cleanup never cancels the frame. The abandoned jump is acknowledged. */
+    const closedAtRequest = closedRef.current === jumpTo;
     const timer = requestAnimationFrame(() => {
+      if (!closedAtRequest && closedRef.current === jumpTo) {
+        jumpRefs.current.onJumped();
+        return;
+      }
       jumpRefs.current.onCur(jumpTo);
       stream.ensure(allRef.current.findIndex((m) => m.id === jumpTo));
-      // A NEW request to show this message outranks any earlier close of it.
+      // A NEW request to show this message outranks an EARLIER close of it.
       if (closedRef.current === jumpTo) closedRef.current = null;
       setPendingScroll({ id: jumpTo, open: true });
       jumpRefs.current.onJumped();

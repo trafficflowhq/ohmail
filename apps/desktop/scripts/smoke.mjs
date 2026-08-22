@@ -183,6 +183,16 @@ const SERVED = [
     unread: false,
   },
 ];
+/**
+ * A SENTENCE ONLY THE BATCH BODY READ CAN PUT ON THE WIRE.
+ *
+ * `/sync` already carries each message's snippet, so a body that WAS the snippet made the two
+ * routes indistinguishable downstream: every check below passed on the sync payload alone, and
+ * the batch route could have gone unasked — or been answered by a laxer stub — with nothing
+ * saying so. A real body contains its snippet and continues past it, so appending is the
+ * faithful shape as well as the distinguishable one.
+ */
+const HYDRATED_TAIL = "The rest of this paragraph exists only in the fetched body.";
 
 function syncPage() {
   /* Relative to now rather than a fixed date: the Ohbox groups by recency, and a
@@ -448,9 +458,11 @@ function installShellStub(window) {
 
            THE ANSWER IS THE SAME SHAPE THE REAL ROUTE SERVES — `{ items: [...] }`, one row per id
            with `messageId` ON the row, because position is meaningless on this wire: the server
-           answers only the ids it owns and omits the rest. Bodies are the served snippet, which
-           keeps the stub's world consistent (the snippet check below reads the same text) and
-           keeps every privacy-shaped field at its resting value: `html: null`, no remote content
+           answers only the ids it owns and omits the rest. Each body is the served snippet PLUS
+           {@link HYDRATED_TAIL}: it still contains the snippet, so the stub's world stays
+           consistent and the snippet check below reads the same text, but it is no longer a
+           sentence `/sync` could have supplied — see the check that this route was asked at all.
+           Every privacy-shaped field stays at its resting value: `html: null`, no remote content
            loaded, no unsubscribe header, and no `withheld` key — that key exists only when a
            server says it, and inventing one would make this boot exercise the storage-cap
            surface instead of the ordinary one. */
@@ -463,7 +475,7 @@ function installShellStub(window) {
                route's omission rule, kept so the check cannot pass against a laxer stub. */
             items: SERVED.filter((m) => asked.has(m.id)).map((m) => ({
               messageId: m.id,
-              text: m.snippet,
+              text: `${m.snippet} ${HYDRATED_TAIL}`,
               html: null,
               loadedRemoteContent: false,
               unsubscribe: "no_header",
@@ -697,6 +709,17 @@ check("no collapsed-mail placeholder", collapsed == null, collapsed?.[0] ?? "");
   check(
     "the window asked the engine which mailboxes this install opens",
     asked.some((i) => String(i.payload?.url ?? "") === "/mailboxes"),
+    asked.map((i) => i.payload?.url).join(", "),
+  );
+
+  /* THE SAME RULE FOR THE BATCH BODY READ, and it needs saying separately because this route
+     was ADDED to the stub in response to `unmodelled` naming it. An added route is exactly the
+     kind that quietly stops being asked: `unmodelled` cannot tell "the bundle no longer warms
+     recent mail" from "everything was modelled", and the eager-hydration path would then be
+     broken with thirty-nine green checks above it. Named, so the two are different sentences. */
+  check(
+    "the window warmed recent mail through the batch body read",
+    asked.some((i) => String(i.payload?.url ?? "").startsWith("/messages/bodies?")),
     asked.map((i) => i.payload?.url).join(", "),
   );
 

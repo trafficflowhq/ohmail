@@ -369,10 +369,32 @@ export function ReadsView({
   jumpRefs.current = { onCur, onJumped };
   useEffect(() => {
     if (!jumpTo) return;
+    /**
+     * WHICH REQUEST IS NEWER, DECIDED AT SCHEDULE TIME RATHER THAN ASSUMED.
+     *
+     * The line below used to clear `closedRef` unconditionally, on the reading that a jump is
+     * always the newer request. It is not: this effect runs on the render that sets `jumpTo`
+     * and the work happens a frame later, and the close effect is synchronous — so a Back
+     * landing inside that one frame set `closedRef`, the frame then cleared it, and the
+     * landing re-opened the card the reader had just closed, with the URL already bare.
+     * `[jumpTo]` is unchanged by a close, so the effect's own cleanup never ran and the frame
+     * was never cancelled.
+     *
+     * Recording whether this id was ALREADY closed when the jump was requested separates the
+     * two cases with no second piece of state: closed-before means a genuinely new deep link
+     * to a message the reader closed earlier, which must open; closed-after means the close
+     * arrived while this frame was pending and wins. The abandoned jump is still acknowledged
+     * — the shell must not be left holding a request forever.
+     */
+    const closedAtRequest = closedRef.current === jumpTo;
     const timer = requestAnimationFrame(() => {
+      if (!closedAtRequest && closedRef.current === jumpTo) {
+        jumpRefs.current.onJumped();
+        return;
+      }
       jumpRefs.current.onCur(jumpTo);
       stream.ensure(allRef.current.findIndex((m) => m.id === jumpTo));
-      // A NEW request to show this message outranks any earlier close of it — see `closedRef`.
+      // A NEW request to show this message outranks an EARLIER close of it — see `closedRef`.
       if (closedRef.current === jumpTo) closedRef.current = null;
       setPendingScroll({ id: jumpTo, open: true });
       jumpRefs.current.onJumped();
