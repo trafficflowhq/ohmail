@@ -1105,7 +1105,8 @@
     "themeToggle": "Farbschema wechseln",
     "home": "ohmail — Startseite",
     "github": "ohmail auf GitHub",
-    "githubName": "GitHub"
+    "githubName": "GitHub",
+    "siteNav": "Seite"
   },
   "hero": {
     "mark": "oh.",
@@ -1505,7 +1506,8 @@
     "imprint": "Impressum",
     "privacy": "Datenschutz",
     "subprocessors": "Auftragsverarbeiter",
-    "copyright": "© 2026 ohmail"
+    "copyright": "© 2026 ohmail",
+    "legalNav": "Rechtliches"
   },
   "siteMeta": {
     "title": "ohmail — E-Mail auf deinen eigenen Postfächern, und nichts ohne dein Ja.",

@@ -214,7 +214,12 @@ export function GetOhmail() {
             paragraph. profile-message.data.ts is diffed against the writer in
             @trafficflow/core by a guard, so this exhibit can never drift into fiction. */}
         <figure className="l-get-msg">
-          <div className="l-get-msg-sheet">
+          {/* `lang="en"`: every string inside this sheet is quoted VERBATIM from the
+              message the product writes, and a guard diffs it against that writer — so it
+              cannot be translated, and on the German landing it would otherwise be spoken
+              with German pronunciation rules. The caption below is ours and stays
+              outside, in the document's language. */}
+          <div className="l-get-msg-sheet" lang="en">
             <p className="l-get-msg-loc">{PROFILE_MESSAGE_FOLDER}</p>
             <p className="l-get-msg-subj">
               <span className="l-get-msg-h">Subject:</span> {PROFILE_MESSAGE_SUBJECT}

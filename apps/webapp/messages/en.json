@@ -1105,7 +1105,8 @@
     "themeToggle": "Switch color theme",
     "home": "ohmail — home",
     "github": "ohmail on GitHub",
-    "githubName": "GitHub"
+    "githubName": "GitHub",
+    "siteNav": "Site"
   },
   "hero": {
     "mark": "oh.",
@@ -1505,7 +1506,8 @@
     "imprint": "Imprint",
     "privacy": "Privacy",
     "subprocessors": "Subprocessors",
-    "copyright": "© 2026 ohmail"
+    "copyright": "© 2026 ohmail",
+    "legalNav": "Legal"
   },
   "siteMeta": {
     "title": "ohmail — Consent-first email on your own mailboxes.",

@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import { readStoredLocale, rememberLocale, type AppLocale } from "../../shell/locale";
+import {
+  localeFromCookieHeader, readStoredLocale, rememberLocale, type AppLocale,
+} from "../../shell/locale";
 
 /**
  * ARRIVING ON A TRANSLATED LANDING IS ITSELF A LANGUAGE CHOICE — record it, once.
@@ -21,6 +23,15 @@ import { readStoredLocale, rememberLocale, type AppLocale } from "../../shell/lo
  * happens only from the resting state, which is also the rule the rest of the product follows:
  * `account_settings.locale` stores NULL rather than `'en'`, and nobody's default is ever
  * written down.
+ *
+ * BOTH MEDIUMS ARE READ, and that is not belt-and-braces. `rememberLocale` writes
+ * `localStorage` AND the cookie, and the storage write is the one that silently fails — a
+ * private window, a webview with site data off, a reader who cleared storage but kept cookies.
+ * In every one of those the cookie is the only surviving record of an explicit choice, so
+ * reading the store alone answers "nobody has said" and this effect would overwrite an English
+ * choice with German the moment somebody opened a German link. `document.cookie` has the same
+ * `k=v; k=v` shape as the `Cookie:` header, so the server render's parser reads it unchanged
+ * rather than a second one being written here.
  *
  * The English landing has no counterpart to this and should not: English IS the resting state,
  * so storing it would turn "nobody has said" into "they said English" and freeze out exactly
@@ -42,6 +53,7 @@ import { readStoredLocale, rememberLocale, type AppLocale } from "../../shell/lo
 export function RememberLocale({ locale }: { locale: AppLocale }) {
   useEffect(() => {
     if (readStoredLocale() !== null) return;
+    if (localeFromCookieHeader(document.cookie) !== null) return;
     rememberLocale(locale);
   }, [locale]);
   return null;

@@ -3465,7 +3465,12 @@ a.btn {
 }
 
 @media (max-width: 760px) {
-  .l-nav-links {
+  .l-nav-links,
+  /* with it, and not 280px later. The action row does not wrap and `.l-body` clips its
+     overflow, so at ~600px "Deutsch" pushed the sign-in link and the capsule off the
+     right edge with nothing to scroll to — the ask, unreachable, on every tablet. The
+     footer's copy is the one that survives this width. */
+  .l-nav-lang {
     display: none; /* one-page site: the scroll IS the nav on small screens */
   }
   /* the demo itself is one column at this width — so is its build-up */
@@ -3525,9 +3530,6 @@ a.btn {
   .l-nav-github-name,
   .l-nav-stars {
     display: none; /* the octocat alone at this width — the ask must not wrap */
-  }
-  .l-nav-lang {
-    display: none; /* the footer's copy is the one that survives this width */
   }
 
   .l-hero-ctas {

@@ -39,7 +39,10 @@ export function Nav() {
         <a className="l-nav-brand" href="#top" aria-label={t("home")}>
           <Wordmark />
         </a>
-        <nav className="l-nav-links" aria-label="Site">
+        {/* The landmark's NAME, from the catalogue: a hard-coded English word here is read
+            aloud by a screen reader inside `<html lang="de">` with German phonemes and no
+            translation, which no guard over the visible copy can see. */}
+        <nav className="l-nav-links" aria-label={t("siteNav")}>
           <a href="#product">{t("product")}</a>
           {/* left of Pricing on purpose (owner ask, 2026-08-21): running it yourself
               is presented before paying for it, in the bar as on the page */}

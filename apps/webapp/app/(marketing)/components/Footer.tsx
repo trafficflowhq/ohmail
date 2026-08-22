@@ -22,7 +22,7 @@ export function Footer() {
           </svg>
           {t("noTrackers")}
         </p>
-        <nav className="l-footer-nav" aria-label="Legal">
+        <nav className="l-footer-nav" aria-label={t("legalNav")}>
           <a href="/imprint">{t("imprint")}</a>
           <a href="/privacy">{t("privacy")}</a>
           <a href="/subprocessors">{t("subprocessors")}</a>
