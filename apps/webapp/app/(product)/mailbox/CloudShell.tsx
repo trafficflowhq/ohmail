@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import { AppShell } from "../../shell/AppShell";
 import type { MailboxFacts } from "../../shell/mail-state";
+import { COMPOSE_ATTACH_STAGED_SURFACE_BYTES } from "../../components/ComposeAttach";
 import { auth, mailboxes as mailboxApi } from "../../api-client";
 import { AboutSection } from "./AboutSection";
 import { AccountLocale } from "./AccountLocale";
@@ -181,26 +182,30 @@ export function CloudShell({ demo }: { demo: boolean }) {
         demo={demo}
         resolveOwner={resolveOwner}
         mailboxFacts={mailboxFacts}
-        /* WHAT A SEND FROM THIS WINDOW RIDES — `null`, EXPLICITLY UNCAPPED, and it is a change
-           of fact rather than of policy.
+        /* WHAT A SEND FROM THIS WINDOW RIDES — the staging bucket's per-object ceiling.
 
            This used to declare nothing, which `composeAttachCap` resolves to the 3 MB constant,
            and that was the truth while attachment bytes travelled base64 inside the send request:
            the ~4.5 MB serverless body limit was a real ceiling between this form and the wire. It
            is no longer between them. `createEngine` builds this window's adapter with
            `stageAttachments: true`, so a send whose files do not fit that limit puts them straight
-           into storage and sends references — no request body carries them, and the only ceiling
-           left is the sending mailbox's own announced `SIZE`.
+           into storage and sends references — no request body carries them.
 
-           `null` is therefore the same declaration the standalone desktop door makes, for the same
-           underlying reason, and `composeAttachCap` still refuses to read it as "unbounded": a
+           It then declared `null`, EXPLICITLY UNCAPPED, and that went one step too far. Removing
+           the request-body limit did not remove every limit: the staging bucket refuses an object
+           over its configured size, in the browser's own PUT, after the grant was minted and after
+           the person waited — and all the client can report is "try again", which is a retry that
+           can never succeed. So the surface is the bucket's per-object ceiling, which the mint
+           applies server-side as the same bound.
+
+           `composeAttachCap` still refuses to read a missing announcement as "unbounded": a
            mailbox that has never announced a SIZE falls back to the constant, because an unknown
            limit read as no limit costs the user a message they composed and waited for.
 
            THE DESKTOP'S CLOUD DOOR KEEPS THE CONSTANT and must: it forwards this send verbatim to
            the hosted API and does not stage, so its bytes really do ride a request body. That is
            declared in `apps/desktop/src/DesktopGate.tsx` and guarded from source there. */
-        sendSurfaceMaxTotalBytes={null}
+        sendSurfaceMaxTotalBytes={COMPOSE_ATTACH_STAGED_SURFACE_BYTES}
         accountSection={<AccountSection />}
         securitySection={<SecuritySection />}
         mailboxSection={<MailboxSection />}

@@ -312,6 +312,68 @@ interface ForwardPart {
 export const SEND_ATTACHMENT_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
 
 /**
+ * WHAT THE MESSAGE COSTS BEFORE A SINGLE ATTACHMENT BYTE IS COUNTED — headers, the MIME
+ * boundaries, and the body somebody typed.
+ *
+ * `SIZE` bounds the whole document, and {@link attachmentBudgetFor} converts it into a budget for
+ * attachment bytes only; everything else in the message has to come out of the announcement first
+ * or the conversion is optimistic by exactly the size of the letter. 64 KiB is generous for the
+ * headers and boundaries and covers an ordinary body with room to spare. It is not a bound on the
+ * body — a message with a megabyte of typed text can still be refused by the server — and it is
+ * not pretending to be: the honest description is an allowance, and erring high here costs the
+ * user 64 KiB of attachment they will never notice, while erring low costs them a bounced send.
+ */
+export const SEND_MIME_ENVELOPE_BYTES = 64 * 1024;
+
+/**
+ * THE PER-OBJECT CEILING OF THE STAGING BUCKET, and therefore of the transport that uses it.
+ *
+ * Uploading straight to object storage removes the request-body limit; it does not remove every
+ * limit. The bucket refuses an object over its configured size, and it does so in the BROWSER's
+ * PUT — after the mint answered 201 and after the person waited for the upload. The client can
+ * only report that as "try again", which is a retry that can never succeed. So the number is
+ * stated here, applied by the mint, and declared by the hosted window as its surface.
+ *
+ * It MIRRORS the bucket's own `file_size_limit` and cannot verify it from here: the bucket is
+ * remote configuration. The direction of any drift is what matters — a bucket configured LARGER
+ * than this simply goes unused above this line, while a bucket configured SMALLER reintroduces
+ * exactly the failure above. Raising this number therefore means raising the bucket first.
+ */
+export const SEND_STAGED_OBJECT_MAX_BYTES = 40 * 1024 * 1024;
+
+/**
+ * AN ANNOUNCED `SIZE` IS ABOUT THE ENCODED MESSAGE. This converts it into a budget for RAW
+ * attachment bytes, which is what every caller here actually counts.
+ *
+ * RFC 1870's `SIZE` is the largest MESSAGE a submission server will accept, and a message is the
+ * MIME document: attachments are base64 — four characters per three bytes — and the transfer
+ * encoding wraps at 76 characters with a CRLF. So the expansion is (4/3)·(78/76), and the inverse
+ * is exactly 19/26. 25 MB of files is about 34 MB of message.
+ *
+ * Reading the announcement as a raw budget therefore overshoots by more than a third, and the cost
+ * of that lands on the user: they attach 25 MB to a server that said 25 MB, wait for the send, and
+ * their own provider bounces it. This is the one direction the rule may not err in — the same
+ * reason an unknown ceiling is read as the strict one rather than as no ceiling.
+ *
+ * ── WHY THIS WAS INVISIBLE UNTIL NOW ────────────────────────────────────────────────────────
+ *
+ * While every mailbox fell back to {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES}, the announcement was
+ * never the binding term: 3 MB of files is about 4 MB of message, and no provider announces
+ * anything that small. The overshoot became reachable the moment real announcements started being
+ * learned for mailboxes that were already connected.
+ *
+ * The result is FLOORED AT ONE BYTE rather than allowed to reach zero. A server announcing less
+ * than the envelope allowance accepts no attachment at all, and that is the truth — but zero and
+ * negative are read as "not a ceiling" by {@link effectiveAttachmentCap}, which would make the
+ * stingiest server in the world the most permissive one.
+ */
+export function attachmentBudgetFor(announcedMessageBytes: number): number {
+  const forAttachments = announcedMessageBytes - SEND_MIME_ENVELOPE_BYTES;
+  if (forAttachments <= 0) return 1;
+  return Math.max(1, Math.floor((forAttachments * 19) / 26));
+}
+
+/**
  * THE CAP THAT ACTUALLY APPLIES TO ONE SEND — the smaller of what the HOST can carry and what the
  * MAIL SERVER said it will accept.
  *
@@ -355,12 +417,17 @@ export function effectiveAttachmentCap(
   const usable = (n: number | null | undefined): n is number =>
     typeof n === "number" && Number.isFinite(n) && n > 0;
   const surface = surfaceMax === undefined ? SEND_ATTACHMENT_MAX_TOTAL_BYTES : surfaceMax;
-  // `null`/`undefined` is UNPROBED and contributes the strict constant; a present-but-unusable
-  // number (`SIZE 0`, NaN) is a measurement or garbage and is ignored, exactly as before.
-  const mailbox = mailboxMax === null || mailboxMax === undefined
-    ? SEND_ATTACHMENT_MAX_TOTAL_BYTES
-    : mailboxMax;
-  const bounds = [surface, mailbox].filter(usable);
+  const bounds: number[] = [];
+  if (usable(surface)) bounds.push(surface);
+  if (mailboxMax === null || mailboxMax === undefined) {
+    // UNPROBED. The strict constant, and NOT run through `attachmentBudgetFor`: that constant
+    // already describes raw attachment bytes, so converting it would shrink an unprobed mailbox's
+    // allowance for a reason that has nothing to do with the mailbox.
+    bounds.push(SEND_ATTACHMENT_MAX_TOTAL_BYTES);
+  } else if (usable(mailboxMax)) {
+    // A REAL ANNOUNCEMENT, which is about the encoded message — see `attachmentBudgetFor`.
+    bounds.push(attachmentBudgetFor(mailboxMax));
+  }
   return bounds.length > 0 ? Math.min(...bounds) : SEND_ATTACHMENT_MAX_TOTAL_BYTES;
 }
 

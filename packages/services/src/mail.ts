@@ -209,6 +209,7 @@ export {
 export {
   SendService, sendService, SEND_STALE_AFTER_MS,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_MAX_ATTACHMENT_PARTS, dedupeStagedIds,
+  SEND_MIME_ENVELOPE_BYTES, SEND_STAGED_OBJECT_MAX_BYTES, attachmentBudgetFor,
   effectiveAttachmentCap, sendSurfaceFor,
   type SendDeps, type SendResult, type SendAttachment, type SendInput,
   type StagedAttachmentSource,

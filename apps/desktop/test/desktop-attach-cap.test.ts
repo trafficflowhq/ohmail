@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
-  composeAttachCap,
+  composeAttachBudgetFor, composeAttachCap,
   COMPOSE_ATTACH_MAX_TOTAL_BYTES,
 } from "../../webapp/app/components/ComposeAttach";
 
@@ -44,8 +44,11 @@ const MIB = 1024 * 1024;
 
 describe("what the declaration buys, in the form's own rule", () => {
   it("the acceptance pair: uncapped surface follows a probed SIZE, and never 'unbounded'", () => {
-    expect(composeAttachCap(25 * MIB, null)).toBe(25 * MIB);
-    expect(25 * MIB).toBeGreaterThan(COMPOSE_ATTACH_MAX_TOTAL_BYTES);
+    // The announcement's budget for RAW bytes, not its face value: `SIZE` bounds the ENCODED
+    // message, and attachments are base64 on the way into one. `composeAttachBudgetFor` holds the
+    // derivation and is pinned against the send's own copy by the repository's parity suite.
+    expect(composeAttachCap(25 * MIB, null)).toBe(composeAttachBudgetFor(25 * MIB));
+    expect(composeAttachBudgetFor(25 * MIB)).toBeGreaterThan(COMPOSE_ATTACH_MAX_TOTAL_BYTES);
     expect(composeAttachCap(null, null)).toBe(COMPOSE_ATTACH_MAX_TOTAL_BYTES);
   });
 

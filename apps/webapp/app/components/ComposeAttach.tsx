@@ -126,6 +126,42 @@ const LEVEL_CHOICES: readonly ImageQualityLevel[] = IMAGE_QUALITY_LEVELS;
 export const COMPOSE_ATTACH_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
 
 /**
+ * THE ENVELOPE ALLOWANCE and THE ENCODING EXPANSION — the mirror of the send's, kept as literals
+ * for the same reason the constant above is.
+ *
+ * A server's announced `SIZE` bounds the ENCODED MESSAGE: headers, MIME boundaries, the body, and
+ * every attachment base64-encoded at four characters per three bytes, wrapped at 76 characters
+ * with a CRLF. The expansion is therefore (4/3)·(78/76) and its inverse is exactly 19/26, so 25 MB
+ * of files is about 34 MB of message.
+ *
+ * Stating the face value would be a promise the sending server breaks: somebody attaches 25 MB to
+ * a provider that announced 25 MB, waits for the send, and has it bounced. Pinned value for value
+ * against `attachmentBudgetFor` in the services package by the repository's parity suite.
+ */
+export const COMPOSE_ATTACH_MIME_ENVELOPE_BYTES = 64 * 1024;
+
+/**
+ * WHAT THE HOSTED WINDOW'S TRANSPORT CAN CARRY — the staging bucket's per-object ceiling.
+ *
+ * Uploading straight to object storage removes the request-body limit; it does not remove every
+ * limit. An object over the bucket's configured size is refused by the browser's own PUT, after
+ * the upload grant was minted and after the person waited, and there is nothing useful the client
+ * can say about it. So the window declares this as its surface instead of `null`, and the mint
+ * applies the same bound server-side.
+ *
+ * A per-OBJECT limit used as a per-TOTAL bound, deliberately: it is always correct in the safe
+ * direction, because if the total fits then every individual file fits.
+ */
+export const COMPOSE_ATTACH_STAGED_SURFACE_BYTES = 40 * 1024 * 1024;
+
+/** An announced `SIZE` converted to a budget for RAW attachment bytes. See the constants above. */
+export function composeAttachBudgetFor(announcedMessageBytes: number): number {
+  const forAttachments = announcedMessageBytes - COMPOSE_ATTACH_MIME_ENVELOPE_BYTES;
+  if (forAttachments <= 0) return 1;
+  return Math.max(1, Math.floor((forAttachments * 19) / 26));
+}
+
+/**
  * THE CEILING THIS FORM MAY PROMISE — the smaller of what the sending surface can carry and what
  * the sending mailbox's own server said it will accept.
  *
@@ -169,7 +205,15 @@ export function composeAttachCap(
   const usable = (n: number | null | undefined): n is number =>
     typeof n === "number" && Number.isFinite(n) && n > 0;
   const surface = surfaceMax === undefined ? COMPOSE_ATTACH_MAX_TOTAL_BYTES : surfaceMax;
-  const bounds = [surface, mailboxMax].filter(usable);
+  const bounds: number[] = [];
+  if (usable(surface)) bounds.push(surface);
+  if (mailboxMax === null || mailboxMax === undefined) {
+    // UNPROBED. The strict constant, NOT converted — it already describes raw attachment bytes.
+    bounds.push(COMPOSE_ATTACH_MAX_TOTAL_BYTES);
+  } else if (usable(mailboxMax)) {
+    // A REAL ANNOUNCEMENT, which is about the encoded message. See `composeAttachBudgetFor`.
+    bounds.push(composeAttachBudgetFor(mailboxMax));
+  }
   return bounds.length > 0 ? Math.min(...bounds) : COMPOSE_ATTACH_MAX_TOTAL_BYTES;
 }
 

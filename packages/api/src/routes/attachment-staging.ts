@@ -1,4 +1,6 @@
-import { ServiceError, effectiveAttachmentCap } from "@trafficflow/services/mail";
+import {
+  ServiceError, effectiveAttachmentCap, SEND_STAGED_OBJECT_MAX_BYTES,
+} from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
@@ -41,11 +43,19 @@ import { mailbox, readBody } from "./shared.js";
  *
  * ## THE CEILING IS THE MAILBOX'S OWN, AND IT IS THE SAME RULE THE SEND APPLIES
  *
- * `effectiveAttachmentCap(null, mailbox.smtpMaxSizeBytes)` — an EXPLICITLY UNCAPPED surface, which
- * is the honest description of a transport with no request body in it, bounded by the RFC 1870
- * `SIZE` the mailbox's submission server announced. A mailbox that has never been probed announces
- * nothing and the answer falls back to the product constant, because an unknown limit read as no
- * limit costs the user a message they composed and waited for.
+ * `effectiveAttachmentCap(SEND_STAGED_OBJECT_MAX_BYTES, mailbox.smtpMaxSizeBytes)` — the smaller of
+ * what the BUCKET will hold and the RFC 1870 `SIZE` the mailbox's submission server announced. A
+ * mailbox that has never been probed announces nothing and the answer falls back to the product
+ * constant, because an unknown limit read as no limit costs the user a message they composed and
+ * waited for.
+ *
+ * THE SURFACE IS THE BUCKET, NOT `null`, and this is a correction rather than a tightening. It used
+ * to declare an explicitly uncapped surface on the reading that a transport with no request body in
+ * it has no ceiling. It has one: the bucket refuses an object over its configured `file_size_limit`,
+ * and it refuses it in the BROWSER's PUT — after this route answered 201 and after the person
+ * waited for the upload. All the client can say then is "try again", which is a retry that can
+ * never succeed. Minting a grant this deployment's storage will not accept is the one thing this
+ * check exists to prevent, so the bucket's own number is a bound here like any other.
  *
  * That makes the refusal here the SAME number the compose form states and the same number
  * `SendService` will enforce on the total. It is a per-file bound; the TOTAL is the send's, and it
@@ -92,7 +102,7 @@ export const attachmentStagingRoutes: Route[] = [
         throw new ServiceError("validation_failed", 400, "mailboxId is required");
       }
       const mb = await mailbox(deps).get(ctx, mailboxId);
-      const cap = effectiveAttachmentCap(null, mb.smtpMaxSizeBytes ?? null);
+      const cap = effectiveAttachmentCap(SEND_STAGED_OBJECT_MAX_BYTES, mb.smtpMaxSizeBytes ?? null);
       if (sizeBytes > cap) {
         throw new ServiceError(
           "payload_too_large", 413,
