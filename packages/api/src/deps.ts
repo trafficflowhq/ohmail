@@ -355,6 +355,67 @@ export interface ChangeWakeHub {
 }
 
 /**
+ * ONE PAGER ARM'S STANDING VERDICT, as `GET /health` publishes it.
+ *
+ * A structural MIRROR of `AlertSinkHealth` (`packages/db/src/alerts.ts`) and deliberately not an
+ * import of it: this file is compiled by every host, the shipped local engine included, and that
+ * type belongs to the hosted half. The mirror cannot drift silently, because the projector that
+ * fills it (`apiAlertSinkSummary`, on the Cloud side where BOTH types are nameable) is annotated
+ * with this one — a renamed field or a new outcome code fails to compile there rather than
+ * changing what an endpoint publishes.
+ *
+ * The projection is written out field by field rather than forwarded, and that is load-bearing
+ * rather than tidy. Structural assignability accepts a WIDER object, and `JSON.stringify`
+ * publishes what an object actually holds, not what its type says — so forwarding `sinkHealthOf`'s
+ * rows would put any field a later edit adds to `AlertSinkHealth` onto an endpoint anybody can
+ * read, a vendor's own error sentence among the candidates.
+ */
+export interface AlertArmHealth {
+  /** The sink's name (`"webhook"`, `"telegram"`, `"mail"`). Not an endpoint and not a credential. */
+  name: string;
+  /** Its most recent CLOSED code, or null — this instance has never attempted it. */
+  outcome: "ok" | "misconfigured" | "refused" | "unreachable" | "timeout" | "threw" | null;
+  /** Consecutive failures of THIS arm, cleared by a success of its own and by nothing else. */
+  consecutiveFailures: number;
+  /** Delivery attempts this instance has made on this arm. `0` ⇒ never exercised here. */
+  attempts: number;
+  /** When this arm last accepted, ISO-8601, or null. */
+  lastOkAt: string | null;
+}
+
+/**
+ * THE WHOLE PAGER, as `GET /health` publishes it: which arms exist, and what this instance has
+ * seen them do.
+ *
+ * Two fields and not one, because they have different lifetimes and only saying so keeps the
+ * numbers honest — see {@link AlertSinkSummary.passes}.
+ */
+export interface AlertSinkSummary {
+  /**
+   * Every CONFIGURED arm, in composition order.
+   *
+   * `[]` is a statement, not an absence: this host has no way to page anybody. Exactly ONE entry
+   * is the single-vendor pager — the state that delivers every page correctly right up to its
+   * vendor's outage and then delivers nothing, with no failed delivery to escalate and no arm
+   * left to carry the escalation.
+   *
+   * Instance-INDEPENDENT: it is the composition, so the names and the count read the same from
+   * any instance of this deployment.
+   */
+  arms: AlertArmHealth[];
+  /**
+   * How many alert passes THIS INSTANCE has completed.
+   *
+   * The per-arm counters in {@link AlertSinkSummary.arms} are the delivery streak of one warm
+   * instance, so a cold one reports `attempts: 0` for an arm that has been delivering for
+   * months. That is the difference between "never exercised" and "never exercised HERE", and
+   * without this number the first reading is the one an operator would take. `passes: 0` says
+   * the counters beside it are cold rather than that the pager is dead.
+   */
+  passes: number;
+}
+
+/**
  * What `GET /health` publishes about the host itself.
  *
  * `kek` is the {@link KekEnvIdentity} — `{ active, count, fingerprint }` — and it is
@@ -500,6 +561,37 @@ export interface HealthConfig {
    * Safe to publish for `dbProvider`'s reason: fixed strings only, no URL, no secret.
    */
   billing?: "plane" | "unconfigured" | null;
+  /**
+   * **EVERY CONFIGURED PAGER ARM ON THIS HOST, AND WHETHER IT IS ACTUALLY DELIVERING.**
+   *
+   * A capability, not a value, for the inverse of {@link HealthConfig.staffDbAttestation}'s
+   * reason: this one is a pure MEMORY read — `/health` still touches no database — but the memory
+   * is the alert driver's own delivery streak, which lives in the route module that mutates it.
+   * Deriving the summary at call time is what stops it from drifting from the streak the pass
+   * actually wrote, which is the same rule the worker's `/health` states about `sinkHealthOf`.
+   *
+   * ── WHY A SERVERLESS HOST NEEDED THIS, WHEN THE WORKER DID NOT ──────────────────────────
+   *
+   * The worker names its arms in its startup line and warns when there is exactly one, because
+   * one arm is a single point of failure that usually works. A serverless host has no startup
+   * line, so that announcement had no equivalent here: the per-arm health existed only on the
+   * `/internal/alerts` response, behind the scheduler's credential, in a body nobody reads
+   * unless they are already debugging. And this host is the ONLY observer of a dead worker, so
+   * its own arms going quiet is the version of the fault that coincides with the outage the arms
+   * exist to report.
+   *
+   * ABSENT (desktop, any host that injects nothing) means "no pager here by construction" and
+   * publishes no key at all. Present with `arms: []` is the opposite claim: this deployment is
+   * meant to page and cannot. That state is otherwise camouflaged, which is why the hosted host
+   * injects unconditionally — {@link HealthConfig.alertsError} only fires when the alert
+   * credential IS configured, so a deployment that lost `TF_ALERT_SECRET` reads exactly like a
+   * healthy one.
+   *
+   * NO VENDOR PROSE. Names, closed codes, counts and timestamps, per {@link AlertArmHealth} —
+   * the sink's own error sentence is unbounded third-party text and stays in the log line, where
+   * a drain gates it. This endpoint is reachable by anyone.
+   */
+  alertSinks?: (() => AlertSinkSummary) | null;
 }
 
 /**

@@ -56,6 +56,17 @@ import type { Route } from "../router.js";
  * a caller could determine anyway by presenting a cookie — and it is what makes the DNS flip
  * verifiable in one `curl`.
  *
+ * **`alertSinks` / `alertPasses` are the worker's boot announcement in this host's idiom.** The
+ * worker names its pager arms in its startup line and warns when there is exactly one; a
+ * serverless host has no startup line, so until now the per-arm delivery health lived only on
+ * the authenticated `/internal/alerts` response — and this host is the ONLY observer of a dead
+ * worker, so its arms going quiet is the version of the fault that coincides with the outage
+ * they exist to report. Same key, same shape and the same closed codes the worker publishes, so
+ * the two are a literal JSON diff. Names, codes and counts only: a sink's own error sentence is
+ * unbounded vendor text and stays in the log line. See `HealthConfig.alertSinks`, and
+ * `AlertSinkSummary.passes` for why the counts are published with an instance-scoped pass count
+ * beside them.
+ *
  * **Nothing else environmental is echoed.** `kek` is the ring IDENTITY from
  * `kekEnvIdentity()` — a fingerprint plus two integers, never key material — and it is the
  * same object the worker publishes, nested under the same `kek` key on both hosts, so
@@ -1600,6 +1611,30 @@ export const healthRoutes: Route[] = [
       // `billing_unconfigured`). Emitted on every branch, like dbProvider and for its reason.
       const billing = injected?.billing ?? null;
 
+      // THE PAGER'S ARMS — the worker's boot announcement, in the idiom a serverless host has.
+      //
+      // A memory read (`HealthConfig.alertSinks` says why it is a capability and not a value), so
+      // it costs no round trip and is published on EVERY branch below, beside `dbProvider` and
+      // `billing`: a host that cannot reach its database is exactly when "does this deployment
+      // still have a way to page anybody?" is worth the most.
+      //
+      // Two keys, from one call. `alertSinks` is the same key, the same shape and the same closed
+      // codes the worker's `/health` publishes, so the two are a literal JSON diff — the property
+      // the `kek` object was given for the same reason. `alertPasses` is what stops the counters
+      // from lying on a cold instance; see `AlertSinkSummary.passes`.
+      let pager: Record<string, unknown> = {};
+      if (injected?.alertSinks) {
+        try {
+          const summary = injected.alertSinks();
+          pager = { alertSinks: summary.arms, alertPasses: summary.passes };
+        } catch {
+          // Contracted not to throw — it reads memory. Belt-and-braces for the same reason
+          // `staffDbAttestation`'s catch exists: an observability surface may never darken the
+          // host it reports on, and `raw` means there is no error envelope above this handler.
+          pager = {};
+        }
+      }
+
       // WHICH SCHEMA THIS HOST IS SUPPOSED TO HAVE. A desktop install ran the mail journal alone
       // and has no billing ledger to find; probed against both, it would answer
       // `schema_incomplete` on every request for ever — which reads as "somebody forgot to
@@ -1634,6 +1669,7 @@ export const healthRoutes: Route[] = [
           kek,
           dbProvider,
           billing,
+          ...pager,
           ...staffFaults,
         });
       }
@@ -1642,6 +1678,7 @@ export const healthRoutes: Route[] = [
           ok: false, version, dbLatencyMs: probe.dbLatencyMs, error: "database_probe_empty", kek,
           dbProvider,
           billing,
+          ...pager,
           ...staffFaults,
         });
       }
@@ -1664,6 +1701,7 @@ export const healthRoutes: Route[] = [
         kek,
         dbProvider,
         billing,
+        ...pager,
         ...staffFaults,
         ...(fault ?? {}),
       });

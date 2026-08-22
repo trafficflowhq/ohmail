@@ -1,9 +1,12 @@
-import { runAlertPass, listOpenAlerts, newDeliveryStreak } from "@trafficflow/db/cloud";
+import {
+  runAlertPass, listOpenAlerts, newDeliveryStreak, sinkHealthOf, type AlertSink,
+} from "@trafficflow/db/cloud";
 import { silentLogger, type Logger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
 import { reapStaleWebSessions, type AdminDb } from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import type { AlertsConfig } from "../deps-cloud.js";
+import type { AlertArmHealth, AlertSinkSummary } from "../deps.js";
 import type { Route } from "../router.js";
 import { learnMissingSmtpSizes } from "../smtp-size.js";
 
@@ -194,6 +197,56 @@ function alertsArmed(
  */
 const apiDeliveryStreak = newDeliveryStreak();
 
+/**
+ * How many passes THIS INSTANCE has completed, and the only reason it is counted.
+ *
+ * `apiDeliveryStreak` above accumulates for as long as one instance stays warm, so a cold
+ * instance answers `attempts: 0` for every arm — including arms that have been delivering for
+ * months. Published on `/health` with nothing beside it, those zeros read as "the pager has
+ * never worked", which is a lie in the direction that endpoint may never lie in. This number is
+ * the qualifier: `passes: 0` says the counters are cold, `passes: 40` with `attempts: 0` says
+ * this instance ran forty passes and had nothing to page about.
+ *
+ * Incremented on a COMPLETED pass only. A pass that threw evaluated nothing.
+ */
+let apiAlertPasses = 0;
+
+/**
+ * The pager's standing health as `GET /health` publishes it — the ONE reader of the streak above
+ * that is not the pass itself.
+ *
+ * It exists because the worker's boot announcement has no equivalent on a serverless host: the
+ * worker names its arms in its startup line and warns when there is exactly one, and until this
+ * function the per-arm verdicts here lived only on the `/internal/alerts` response, behind the
+ * scheduler's credential. This host is the only observer of a dead worker, so its own arms going
+ * quiet is precisely the fault that coincides with the outage they exist to report.
+ *
+ * DERIVED, never stored, for the reason the worker's `/health` gives about `sinkHealthOf`: a
+ * cached copy would drift from the streak the pass actually mutates. It reads memory only, so
+ * `/health` still touches no database — which for this field is the whole point, since one of the
+ * states it has to be readable in is the one where the database cannot be read.
+ *
+ * The return type is the MAIL-half `AlertSinkSummary`, and the projection is written out field by
+ * field on purpose. `AlertSinkHealth` is a hosted type that `/health`'s own module may not name,
+ * so the two shapes are mirrors — and structural assignability would happily accept a wider
+ * object, while `JSON.stringify` publishes what an object holds rather than what its type says.
+ * Naming every field is what makes a later addition to `AlertSinkHealth` — a vendor's error
+ * sentence being the candidate that matters — a compile error here instead of new text on an
+ * endpoint anybody can read.
+ */
+export function apiAlertSinkSummary(sinks: readonly AlertSink[]): AlertSinkSummary {
+  return {
+    arms: sinkHealthOf(sinks, apiDeliveryStreak).map((arm): AlertArmHealth => ({
+      name: arm.name,
+      outcome: arm.outcome,
+      consecutiveFailures: arm.consecutiveFailures,
+      attempts: arm.attempts,
+      lastOkAt: arm.lastOkAt,
+    })),
+    passes: apiAlertPasses,
+  };
+}
+
 async function alertPass(
   cfg: AlertsConfig, log: Logger, now: () => Date, staffDb: () => Promise<AdminDb>,
 ): Promise<Response> {
@@ -208,6 +261,10 @@ async function alertPass(
       environment: cfg.environment ?? "production",
       deliveryStreak: apiDeliveryStreak,
     });
+    // A COMPLETED pass. Counted here and not at entry: `runAlertPass` throwing means nothing was
+    // evaluated, and this number's only job is to say whether the per-arm counters beside it on
+    // `/health` are cold. See `apiAlertPasses`.
+    apiAlertPasses++;
 
     for (const alert of result.firing) {
       log.warn("alert_firing", {

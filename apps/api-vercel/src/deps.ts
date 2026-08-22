@@ -33,7 +33,7 @@ import {
   MailService, ResendMailer, mailAlertSink, dbRecipientLimiter, makeWaitlistService,
   type ServiceContext,
 } from "@trafficflow/services";
-import { makeProbeHostGuard } from "@trafficflow/api";
+import { makeProbeHostGuard, apiAlertSinkSummary } from "@trafficflow/api";
 import type { AiCreditGateFactory, ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
 import { allowCookieAuthForRequest, type HostConfig } from "./config.js";
 import { makeChangeWakeHub } from "./wake-hub.js";
@@ -631,6 +631,22 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
       // wiring. Since the billing extraction the vocabulary is two-valued: "plane" or
       // "unconfigured" ("in-process" left with the deleted Stripe arm).
       billing: cfg.billingPlane ? "plane" : "unconfigured",
+      // THE PAGER'S ARMS, published where an operator already looks. The worker announces its
+      // arms in a startup line and warns when there is exactly one; this host has no startup
+      // line, so until now its per-arm delivery health was reachable only through the
+      // `/internal/alerts` response — behind the scheduler's credential, on the one host that is
+      // the sole observer of a dead worker.
+      //
+      // UNCONDITIONAL, `cfg.alerts` null included, and that is the deliberate half: `arms: []` is
+      // then the loud statement that this hosted deployment cannot page anybody. Gating it on
+      // `cfg.alerts` would make the key vanish in exactly that state, and nothing else reports it
+      // — `alertsError` only fires when the alert credential IS configured, so a deployment that
+      // lost `TF_ALERT_SECRET` would read as a healthy one with a shorter body.
+      //
+      // A closure, so the streak is read at `/health` time rather than frozen per request, and
+      // `alertSinksFor` is the same cached list `deps.alerts` hands the pass — one composition,
+      // not a second opinion about what this host's arms are.
+      alertSinks: () => apiAlertSinkSummary(alertSinksFor(cfg)),
     },
     /**
      * What `GET /push/vapid-key` answers — the PUBLIC half of the wake-signing keypair.
