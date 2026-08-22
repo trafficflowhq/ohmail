@@ -429,14 +429,30 @@ export interface MessageBodyWire {
    */
   unsubscribeUrl: string | null;
   /**
-   * The server's word for why `text` is empty, when it is empty by POLICY: the account was at
-   * its managed storage cap when this message arrived, so the hosted store holds no body — the
-   * mail itself is untouched on the user's own mail server. Absent on every ordinarily stored
-   * body and on an older server (§8). See {@link MessageBodyRecord.withheld} for how the engine
-   * carries it and {@link BodyState} for the terminal surface state it becomes.
+   * The server's word for why `text` is empty, when it is empty by POLICY — the closed
+   * {@link WithheldMarker} set. In every case the mail itself is untouched on the user's own
+   * mail server (for `junk_filed` it lives in the provider's Junk folder, where the verdict
+   * sent it). Absent on every ordinarily stored body and on an older server (§8). See
+   * {@link MessageBodyRecord.withheld} for how the engine carries it and {@link BodyState} for
+   * the terminal surface state it becomes.
    */
-  withheld?: "storage_cap";
+  withheld?: WithheldMarker;
 }
+
+/**
+ * WHY a stored body holds no content, when that is policy rather than an empty message — the
+ * server's closed set, verbatim (`MessageBodyDTO.withheld`):
+ *
+ *  · `"storage_cap"` — the account's managed storage cap declined or evicted the hosted copy.
+ *  · `"junk_filed"`  — the spam verdict filed the message to the provider's native Junk; the
+ *                      durable artifact is the sender rule, and the bytes live on in Junk.
+ *  · `"expunged"`    — every watched copy is gone from the server; the row is tombstoned.
+ *
+ * Every member hydrates as ITSELF into the mirror ({@link MessageBodyRecord.withheld}): a build
+ * that narrowed unknown members to `null` would persist "an ordinary, complete, empty body" —
+ * ANSWERED, so never re-asked — which is precisely the permanent lie the tri-state ended.
+ */
+export type WithheldMarker = "storage_cap" | "junk_filed" | "expunged";
 
 /**
  * ONE ROW of the batch body read — `GET /messages/bodies?ids=…`, the thread-open call.
@@ -514,7 +530,7 @@ export interface MessageBodyRecord {
    * still means "not withheld, or a server too old to say", which is a statement about a response,
    * not about what this store has ever been told.
    */
-  withheld?: "storage_cap" | null;
+  withheld?: WithheldMarker | null;
   /**
    * The endpoint's html part, or `null` — for a message with none, for sensitive
    * mail, and for every record that is not `ready`. Held here rather than on the message
@@ -623,6 +639,11 @@ export type BodyState = "full" | "snippet" | "loading" | "failed" | "withheld";
  * rendering a stale document while saying it is still asking for it.
  */
 export interface MessageBody {
+  /**
+   * Present ONLY on the `withheld` state: WHICH policy emptied the stored body, so a surface
+   * can say the right sentence for each ({@link WithheldMarker}). Absent everywhere else.
+   */
+  withheld?: WithheldMarker | null;
   text: string;
   state: BodyState;
   /** The sender's html part, unsanitized. `null` unless `state === "full"`. */

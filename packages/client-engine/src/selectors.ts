@@ -219,13 +219,16 @@ export function bodyOf(
   }
   const rec = reader.get<MessageBodyRecord>("message_body", m.id);
   if (!rec) return { text: m.snippet, state: "snippet", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null };
-  if (rec.state === "ready" && rec.withheld === "storage_cap") {
+  if (rec.state === "ready" && rec.withheld != null) {
     // The server answered and the answer is "not holding it" — see the header block. The
     // snippet is the text because it is the only text there is, exactly as loading/failed
     // below; what differs is that this state is TERMINAL and no Retry can change it.
     return {
       text: m.snippet,
       state: "withheld",
+      // WHICH policy emptied it (mail 0065 widened the set) — the surface owes each member its
+      // own sentence, and a selector that flattened them would make that sentence unwritable.
+      withheld: rec.withheld,
       html: null,
       loadedRemoteContent: false,
       unsubscribe: rec.unsubscribe ?? "no_header",

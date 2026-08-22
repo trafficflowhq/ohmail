@@ -22,7 +22,18 @@ import {
   type OhmailView,
   type SyncSnapshotPage,
   type UnsubscribeResult,
+  type WithheldMarker,
 } from "./types.js";
+
+/**
+ * The wire's withheld marker, narrowed to the CLOSED set the mirror understands — every member
+ * hydrates as itself, and anything else (an older/newer server) narrows to `null`, which is
+ * ANSWERED-ordinary. See `WithheldMarker` for why dropping a real member here would be a
+ * permanent lie in the record. One helper for both hydration sites so they cannot disagree.
+ */
+const withheldMarkerOf = (w: unknown): WithheldMarker | null =>
+  w === "storage_cap" || w === "junk_filed" || w === "expunged" ? w : null;
+
 
 /**
  * The delta-sync engine (brief §4 — the load-bearing abstraction):
@@ -2066,7 +2077,7 @@ export class OhmailEngine {
           // answered, and this body is ordinarily stored". Absence is reserved for records no
           // such build ever touched, which is what makes the pre-slice heal terminate. The batch
           // path and the single path must agree; see `MessageBodyRecord.withheld`.
-          withheld: wire.withheld === "storage_cap" ? ("storage_cap" as const) : null,
+          withheld: withheldMarkerOf(wire.withheld),
         });
       } catch (err) {
         await this.failBody(id, err);
@@ -2241,7 +2252,7 @@ export class OhmailEngine {
               // the marker, never from emptiness. Writing the key unconditionally is what lets
               // the guard below distinguish "not withheld" from "never asked by a build that
               // could tell", and so what makes the pre-slice heal happen ONCE and stop.
-              withheld: wire.withheld === "storage_cap" ? ("storage_cap" as const) : null,
+              withheld: withheldMarkerOf(wire.withheld),
             },
       );
     } catch (err) {
