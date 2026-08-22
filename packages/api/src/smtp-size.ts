@@ -90,15 +90,33 @@ interface CredMeta extends CredMetaAuth {
 interface ProbeTarget {
   creds: SmtpSizeCreds;
   /**
-   * WHICH ROW the secret came from, and WHEN that row was last written.
+   * WHICH ROW the secret came from, and WHAT ABOUT IT the write is allowed to depend on.
    *
-   * The transport is part of the stamp, not decoration. Both rows are inserted with ONE timestamp
+   * The transport is part of the guard, not decoration. Both rows are inserted with ONE timestamp
    * by the env-credential bootstrap, so a predicate that accepted either transport at that instant
    * would be satisfied by the UNROTATED imap row after the smtp row alone had been replaced — and
    * the write it was guarding would go through against credentials it never probed.
+   *
+   * ── AND THE TWO BRANCHES GUARD ON DIFFERENT THINGS, BECAUSE ONE OF THEM MOVES ITS OWN ROW ──
+   *
+   * `stamp` is the row's `updated_at` as it stood before the dial, which is the right guard when
+   * the SECRET is the credential: a PATCH that installs a new password rewrites it.
+   *
+   * `meta` is the non-secret half — host, port, user, provider, tenant, the submission block — and
+   * it is the guard for an OAUTH row, because that row's `updated_at` is moved BY THE PROBE ITSELF.
+   * Measured on the first live pass: Microsoft returned a rotated refresh token, the token provider
+   * persisted it (which is `rotateMailboxOAuthSecret`, and it writes `secret_enc`, `key_version` and
+   * `updated_at` and nothing else), and the stamp guard then read its own side effect as somebody
+   * else's rotation and threw the measurement away. The pass reported `learned: 1` with the row
+   * still NULL and unstamped — the exact defect this whole slice exists to end, reintroduced by the
+   * guard that protects it.
+   *
+   * `meta` is the honest predicate there: what an announcement is ABOUT is the endpoint and the
+   * identity, and those live in `meta`. A reconnect to a different account or a re-dial that moves
+   * the submission host rewrites it; a token rotation does not.
    */
   credentialsTransport: "imap" | "smtp";
-  credentialsUpdatedAt: Date;
+  credentialsGuard: { kind: "stamp"; updatedAt: Date } | { kind: "meta"; meta: unknown };
 }
 
 /**
@@ -158,7 +176,9 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
         auth: buildImapAuth(imapMeta, secret, deps.oauth?.forMailbox(mailboxId)),
       },
       credentialsTransport: "imap",
-      credentialsUpdatedAt: imapRow.updatedAt,
+      // META, not `updated_at`: the token refresh this dial performs moves the row's stamp. See
+      // {@link ProbeTarget.credentialsGuard}.
+      credentialsGuard: { kind: "meta", meta: imapRow.meta },
     };
   }
   if (authType !== undefined && authType !== "password") return undefined;
@@ -182,7 +202,9 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
     // imap row the fallback borrows from. That is the row a rotation would touch, and NAMING it
     // is what stops the other row standing in for it.
     credentialsTransport: smtpRow ? "smtp" : "imap",
-    credentialsUpdatedAt: (smtpRow ?? imapRow).updatedAt,
+    // THE STAMP, for the password branch: here the secret IS the credential, so the row's own
+    // `updated_at` is what a rotation moves and nothing in this path moves it by itself.
+    credentialsGuard: { kind: "stamp", updatedAt: (smtpRow ?? imapRow).updatedAt },
   };
 }
 
@@ -297,6 +319,12 @@ export interface SmtpSizePassResult {
  * transport-blind check even after the smtp row alone has been rotated — and the guard would pass
  * in exactly the case it exists to catch.
  *
+ * WHICH PROPERTY OF THE ROW is checked depends on the branch, and an OAUTH row is guarded on its
+ * `meta` rather than its `updated_at` because the probe's own token refresh moves that timestamp —
+ * measured live, with the pass reporting a learned announcement it then discarded. The argument is
+ * written out at {@link ProbeTarget.credentialsGuard}; it is not a relaxation, it is the predicate
+ * that names what the measurement actually depends on.
+ *
  * `announced` is passed only for a learned outcome. A `null` here would MEAN something (the connect
  * flow writes it to say "this server states no ceiling"), so it is an absent property rather than an
  * explicit null: nothing in this pass may clear a number another writer put there.
@@ -322,7 +350,11 @@ async function stampProbe(
         ? [exists(deps.db.select({ one: sql`1` }).from(mailboxCredentials).where(and(
             eq(mailboxCredentials.mailboxId, mailboxId),
             eq(mailboxCredentials.transport, target.credentialsTransport),
-            eq(mailboxCredentials.updatedAt, target.credentialsUpdatedAt),
+            target.credentialsGuard.kind === "stamp"
+              ? eq(mailboxCredentials.updatedAt, target.credentialsGuard.updatedAt)
+              // `jsonb = jsonb`, which is key-order-insensitive and so survives a round trip
+              // through the driver. The captured value came out of this very column.
+              : eq(mailboxCredentials.meta, target.credentialsGuard.meta),
           )))]
         : []),
     ))
