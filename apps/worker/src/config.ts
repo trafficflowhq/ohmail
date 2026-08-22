@@ -6,7 +6,10 @@ import {
   type KekEnvIdentity, type Logger,
 } from "@trafficflow/core";
 import { transactionPoolerReason, sessionUrlRejection } from "@trafficflow/db";
-import { DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, type PostJson } from "@trafficflow/db/cloud";
+import {
+  DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, assertWeightedScheduleActive,
+  type PostJson,
+} from "@trafficflow/db/cloud";
 import type { MailboxAdapter, ImapConfig } from "@trafficflow/core/adapters/imap";
 import { buildVersionOf } from "./build-version.js";
 import type { MailboxSelection } from "./mailboxes.js";
@@ -918,6 +921,21 @@ export function loadAiPorts(
 ): Pick<WorkerConfig, "classifier" | "drafter" | "proposer"> {
   const raw = (env.ANTHROPIC_API_KEY ?? "").trim();
   if (raw === "") return {};
+  // ── THE ARMING GUARD: managed AI does not come up against a FLAT debit schedule ────────────
+  //
+  // The rule is older than the mechanism — managed AI must not arm before the weighted prices
+  // land — and while it lived only in prose it was one revert away from being untrue. This is
+  // the worker's half of it, placed where the key is parsed rather than where a spend happens,
+  // because the whole point is to refuse at BOOT: a guard at first spend would let the process
+  // come up healthy, sync mail, and only then start under-charging.
+  //
+  // The worker is the metered arm for three of the four priced reasons (classify, workflow steps,
+  // the proposer pass), so a flat schedule here would meter a workflow draft at a fifteenth of
+  // what it costs — an allowance that costs more than the tier earns, with every gate working
+  // perfectly. It throws for the reason `loadAiPorts` already throws on a malformed key: a
+  // deployment somebody configured wrong must fail loudly, not sell an AI product whose
+  // metering is quietly wrong. After the weighted schedule shipped this passes by construction.
+  assertWeightedScheduleActive();
   const client = makeAnthropicClient({
     apiKey: assertAnthropicKey(raw),
     baseUrl: env.ANTHROPIC_BASE_URL?.trim() || undefined,

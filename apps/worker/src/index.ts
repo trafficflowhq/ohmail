@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { pruneIdempotencyKeys, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials } from "@trafficflow/db";
 import { makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
 import {
-  makeAiCreditGate,
+  makeAiCreditGate, withSetupPool,
   runAlertPass,
   webhookAlertSink,
   resendAlertSink,
@@ -65,6 +65,7 @@ import { screenerAutoApplyPass } from "./screener-auto.js";
 import { screenerAutoSuggestPass } from "./screener-auto-suggest.js";
 import { syncKickPass } from "./sync-kick.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
+import { storageEvictPass } from "./storage-evict.js";
 import { awayResponderPass } from "./away-responder.js";
 import { isCliEntry, flushExit, installCrashHandlers } from "./entry.js";
 import {
@@ -1001,7 +1002,13 @@ export async function startWorkerWithLock(
      * makes them exclude each other rather than merely deduplicate.
      */
     const screenerAutoGateFor = (accountId: string): AiCreditGate =>
-      gateFor(accountId, "debit_classify", { exclusive: true });
+      // `withSetupPool` — the cron half of the Screener draws the same screening-only setup
+      // pool as the request path, BEFORE the main balance, over the SAME memoized inner gate
+      // (so the exclusive claim and the in-process refund marker stay one instance per
+      // account). No other worker gate wears the wrapper: that is what scopes the pool to
+      // screening.
+      withSetupPool(db as unknown as Tx, accountId,
+        gateFor(accountId, "debit_classify", { exclusive: true }));
 
     // ── The LIVE classifier, behind a per-process circuit breaker ─────────────────────
     //
@@ -3490,6 +3497,33 @@ export async function startWorkerWithLock(
             reason: "no account was marked done and the cursor advanced only past committed pages, " +
               "so the next cycle resumes from `ohbox_tidy_cursor`; mail already moved is desired " +
               "state the reconciler converges independently of this pass",
+          });
+        }
+      }
+
+      // ── TRIM THE ROLLING WINDOW: at the storage cap, the oldest stored bodies husk ──────
+      //
+      // Its OWN try/catch and loop, like every pass here: one account's failure must not skip
+      // the rest. For every account under its high-water mark the pass is two indexed reads and
+      // no more; over it, bounded rounds of bounded batches, resuming next cycle
+      // (`storage-evict.ts` carries the hysteresis argument). Registered in this SERIAL
+      // per-account section deliberately — the repair passes order body-row-then-counter, the
+      // evictor counter-then-body-rows, and serial execution per account is what keeps the two
+      // orderings from ever facing each other.
+      for (const accountId of passAccounts) {
+        if (stopped) return;
+        try {
+          const { ran, evicted, freedBytes, capped } = await storageEvictPass(
+            db as unknown as Tx, { accountId, log }, new Date(),
+          );
+          if (ran && evicted > 0) {
+            log.info("storage_evict_pass", { accountId, evicted, freedBytes, capped });
+          }
+        } catch (err) {
+          log.error("storage_evict_failed", {
+            accountId, err,
+            reason: "each round is one transaction, so a failure loses nothing durable; the " +
+              "counter and the husks move together or not at all, and the next cycle re-probes",
           });
         }
       }

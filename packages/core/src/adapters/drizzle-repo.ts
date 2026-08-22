@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { messages, messageInstances, messageFailures, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, bodyBytesOf, reserveBodyBytes, releaseBodyBytes, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
+import { messages, messageInstances, messageFailures, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, bodyBytesOf, reserveBodyBytesEvicting, releaseBodyBytes, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   Rule, NativeLocator, EmailAddress,
@@ -817,7 +817,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     messageId: string, body: MessageBodyInput, storage: BodyStorageContext,
   ): Promise<BodyStorageOutcome> {
     const bytes = bodyBytesOf(body);
-    const reserved = await reserveBodyBytes(this.db, storage.accountId, bytes, storage.capBytes);
+    // `reserveBodyBytesEvicting` (the 2026-08-21 rolling window): at cap it husks the oldest
+    // stored bodies to fit THIS one — bounded, same transaction — and only past that bound does
+    // it answer `false`, which is the old decline-new shape kept as the pathological ceiling.
+    const reserved = await reserveBodyBytesEvicting(this.db, storage.accountId, bytes, storage.capBytes);
     const rows = await this.db.insert(messageBodies).values({
       messageId,
       text: reserved ? body.text : "",

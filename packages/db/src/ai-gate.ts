@@ -3,7 +3,7 @@ import { entitlementsFor, effectiveSubscriptionOf, type Entitlements } from "./b
 import { debitCredits, refundCredits, type DebitReason } from "./credits.js";
 import { lockExistingBalance } from "./spend-lock.js";
 import { AI_CLAIM_TTL_MS, claimAiAttempt, releaseAiAttempt } from "./ai-claim.js";
-import { AI_ACTION_COST, ledgerSources } from "./ledger-source.js";
+import { aiActionCost, ledgerSources, type WeightedDebitReason } from "./ledger-source.js";
 import { isSuspended } from "./suspension.js";
 import { accounts, auditLog, creditLedger } from "./schema.js";
 import type { LedgerTx, Tx } from "./change-log.js";
@@ -184,7 +184,8 @@ import type { LedgerTx, Tx } from "./change-log.js";
  */
 
 export {
-  AI_ACTION_COST, classifyLedgerSource, screenerLedgerSource,
+  AI_ACTION_WEIGHTS, WEIGHTED_DEBIT_REASONS, aiActionCost, assertWeightedScheduleActive,
+  classifyLedgerSource, screenerLedgerSource, type WeightedDebitReason,
 } from "./ledger-source.js";
 
 /* THE PORT — the shapes every call site names — lives in `ai-gate-port.ts`; everything that
@@ -201,9 +202,25 @@ import type { AiRefusalReason, AiSpendOutcome, AiCreditGate } from "./ai-gate-po
 
 
 export interface AiCreditGateOptions {
-  /** Which spend this gate books. Pins the `source` namespace via the ledger's CHECK. */
-  reason: DebitReason;
-  /** Credits per action; defaults to {@link AI_ACTION_COST}. */
+  /**
+   * Which spend this gate books. Pins the `source` namespace via the ledger's CHECK — and, since
+   * debits became weighted, pins the PRICE too.
+   *
+   * Narrower than the ledger's `DebitReason` on purpose: only the four reasons a gate can mint
+   * have a weight. `period_expiry`, `setup_expiry` and `adjustment_debit` are debits nobody buys,
+   * so a gate for one of them would have no price to charge — and this narrowing is what makes
+   * that a compile error at the call site rather than an `undefined` amount that `assertAmount`
+   * throws on, inside a transaction, where the gate's contract turns it into a silent degrade.
+   */
+  reason: WeightedDebitReason;
+  /**
+   * Credits per action; defaults to {@link aiActionCost} of {@link AiCreditGateOptions.reason}.
+   *
+   * **No production call site passes this, and the schedule depends on that staying true.**
+   * {@link AI_ACTION_WEIGHTS} is the price of every metered action precisely because every gate
+   * takes the default; an `amount` here is a local override of the published price list. It
+   * survives for tests and for a future caller that genuinely charges a multiple of one action.
+   */
   amount?: number;
   /** The gate's clock — the entitlement decision and the retry window read it. */
   now?: () => Date;
@@ -378,7 +395,7 @@ export function makeAiCreditGate(
   accountId: string,
   opts: AiCreditGateOptions,
 ): AiCreditGate {
-  const amount = opts.amount ?? AI_ACTION_COST;
+  const amount = opts.amount ?? aiActionCost(opts.reason);
   const now = opts.now ?? (() => new Date());
   const report = opts.onError ?? ((err, ctx) => {
     console.error(`[credits] ${ctx.phase} failed for account ${ctx.accountId} (${ctx.source}):`, err);

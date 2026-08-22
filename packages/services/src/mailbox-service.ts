@@ -555,6 +555,14 @@ export interface MailboxServiceDeps {
    * accident. A test in this package holds that as an assertion.
    */
   allowance?: MailboxAllowancePolicy;
+  /**
+   * Runs INSIDE the create transaction, after the allowance gate and the insert — the hosted
+   * composition's hook for per-mailbox onboarding state (today: the one-time screening-only
+   * setup grant, `@trafficflow/db/cloud#grantSetupCredits`). Absent on the local tiers, which
+   * meter nothing and grant nothing — the same asymmetry as `allowance`, in the same direction:
+   * forgetting it costs a hosted customer a bonus, never money.
+   */
+  onCreated?: (tx: LedgerTx, accountId: string, mailboxId: string, now: Date) => Promise<unknown>;
 }
 
 /**
@@ -918,6 +926,10 @@ export class MailboxService {
           }));
         }
       }
+      // Per-mailbox onboarding state, in the SAME transaction as the row: a create that fails
+      // any later statement grants nothing, and a grant that fails aborts the create — the two
+      // are one fact or neither is.
+      if (this.deps.onCreated) await this.deps.onCreated(tx as LedgerTx, ctx.accountId, row!.id, ctx.now());
       return row!;
     }).catch((err: unknown) => {
       if (isActiveAddressConflict(err)) throw addressTaken();
@@ -1088,6 +1100,9 @@ export class MailboxService {
         authKind: "oauth",
       }).returning();
       await this.upsertCredOn(tx, ctx, kp, created!.id, "imap", o.refreshToken, meta);
+      // Same hook, same transaction, as `create` — an OAuth connect of a NEW address is a
+      // create in every sense that matters here (a reconnect returned above and grants nothing).
+      if (this.deps.onCreated) await this.deps.onCreated(tx as LedgerTx, ctx.accountId, created!.id, ctx.now());
       return { created: true, row: created as MailboxRow };
     }).catch((err: unknown) => {
       if (isActiveAddressConflict(err)) throw addressTaken();

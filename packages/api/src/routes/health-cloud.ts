@@ -140,6 +140,23 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // unmeters storage — the one consumer whose failure is silent, which is exactly what the
   // deploy-gate 503 exists to forestall. Deploy order: migration → API → worker.
   ["billing_subscriptions", "storage_bytes_limit"],
+  // cloud 0021_setup_grants — TWO markers for two independent tables, the rule 0007 set: without
+  // `setup_grants` no mailbox connect can write its screening pool (the create transaction
+  // 42703s — loud); without `setup_grant_spends` the pool EXISTS but every draw fails inside
+  // the gate wrapper, whose contract swallows faults — the Screener silently bills the main
+  // balance instead, which is exactly the quiet mispricing a deploy gate exists to refuse.
+  // The columns are the ones the queries read: `expires_at` is the draw predicate's whole
+  // point, `refunded_at` the exactly-once refund marker.
+  ["setup_grants", "expires_at"],
+  ["setup_grant_spends", "refunded_at"],
+  // cloud 0022_subscription_addons — the add-on quantities and the billing cadence on the
+  // mirror row. One marker per concern: `addon_storage_units` stands for the pair of addon
+  // columns (one migration, one failure mode — the mirror upsert 42703s on either), and
+  // `billing_interval` is the column whose absence is SILENT in the way this class exists
+  // for: every query still runs, and an annual customer's cycle invoice simply grants one
+  // month in twelve.
+  ["billing_subscriptions", "addon_storage_units"],
+  ["billing_subscriptions", "billing_interval"],
 ] as const;
 
 /**
@@ -305,6 +322,17 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * half-migrated host (drop the column from the writes) is precisely the verification forgery
  * the column closes. The deploy-gate 503 is what makes that repair never look attractive.
  *
+ * `0020_replan_2026_08_21` is the FIRST data-only cloud migration: three UPDATEs, no DDL, so
+ * none of the five marker classes can see it — the same shape as 0014 without even a function
+ * body to probe. That is accepted rather than worked around: the values it writes are exactly
+ * what `mirrorSubscription` writes for a new sale, so a database that somehow skipped it is
+ * WRONG about three numbers but structurally current, and the wrongness is visible in every
+ * admin listing rather than silent. The journal accounting (`drizzle_cloud.__drizzle_migrations`)
+ * remains its record of application.
+ *
+ * `0021_setup_grants` and `0022_subscription_addons` are the easy case — new tables and new
+ * columns — and take ordinary column markers above.
+ *
  * `0019_storage_bytes_limit` is the easy case — one added column on an existing table,
  * `billing_subscriptions.storage_bytes_limit` — and its marker entry carries the argument worth
  * keeping: of its consumers, the one whose too-early failure is SILENT is the worker's cap read,
@@ -313,7 +341,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0019_storage_bytes_limit";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0022_subscription_addons";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

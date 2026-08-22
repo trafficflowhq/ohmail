@@ -44,7 +44,17 @@ import type { LedgerTx, Tx } from "./change-log.js";
 /**
  * The canonical plan card — Checkout, the pricing UI and tests share it.
  *
- * Mailboxes are **5 / 10 / 50** (raised from 2/5/10 during the pre-beta build).
+ * ## MAILBOXES ARE **2 / 5 / 10**, AND THEY ARE THE HEADLINE ALLOWANCE
+ *
+ * They were 2/5/10 before the pre-beta build raised them to 5/10/50; the 2026-08-21 re-pricing
+ * put them back. The reason is the same one that drove the credits down in the same commit: a
+ * mailbox is not free to serve. Each one is an IMAP connection the worker holds, a rotation slot
+ * in every cycle, and its own share of stored bodies — and 50 of them for $29 priced the tier
+ * against a customer who would never appear while being ruinous if one did. Two, five and ten
+ * are the counts real accounts actually use, and they are what the card now LEADS with, because
+ * "how many of my mailboxes can this organize" is the question a person picking a tier is
+ * actually asking.
+ *
  * This constant is the enforcement side of a number the landing page advertises, and the two
  * were allowed to drift once already: `apps/webapp/messages/en.json` sold Solo as 5 mailboxes
  * while this card still said 2, so the third `POST /mailboxes` answered 409 to a customer who
@@ -52,26 +62,145 @@ import type { LedgerTx, Tx } from "./change-log.js";
  * same commit — `test/entitlements.test.ts` pins the whole card so the diff cannot
  * be one-sided.
  *
- * Credits are unchanged (2k / 6k / 20k): the mailbox count is a capacity promise, an AI action
- * is a metered cost, and only the first one was under-priced against what the product does.
+ * **EXISTING ROWS MOVED WITH THE CARD — grandfathering was explicitly overridden for this
+ * re-pricing** (owner ruling, 2026-08-21). Cloud migration `0020_replan_2026_08_21` rewrote
+ * every live row's three allowances to the values below; the sale-time CASE guards in
+ * `entitlements-service.ts#mirrorSubscription` are untouched and still own the columns from
+ * here forward, so a routine `customer.subscription.updated` can never re-price anyone — the
+ * migration was a one-time act of the same authority that owns this card. What makes the
+ * reduction safe for an account already holding more than the new limit: **the limit gates NEW
+ * connects (and re-enables) only** — the retention disabler that once shut off a downgraded
+ * account's newest mailboxes is removed in the same change, so nothing an over-limit account
+ * already connected stops working.
+ *
+ * ## CREDITS ARE 1 000 / 2 000 / 4 000, AND THAT IS A CUT ONLY IF YOU READ IT ALONE
+ *
+ * They were 2 000 / 6 000 / 20 000, sold as "~N AI actions", against a FLAT price of one credit
+ * per action, whichever action. A flat schedule charges the same credit
+ * for a classification and for a draft, and those two do not cost the same money — the classify
+ * call is capped at 512 output tokens over one message, the draft at 1 024 over a whole thread
+ * plus the account's voice profile, and the proposer pass at 2 048 over a batch. So the allowance
+ * had to be sized against the WORST mix a customer might pick, and every customer who spent it
+ * the ordinary way (overwhelmingly classifications) was sold a pool priced for a mix nobody runs.
+ *
+ * Debits are WEIGHTED now — {@link ../ledger-source AI_ACTION_WEIGHTS}, 1 for classify/screen,
+ * 15 for a draft, 20 for a proposer pass — so the pool is priced per action instead of per
+ * worst case, and a smaller pool buys strictly more of what people actually do: Solo's 1 000
+ * credits are 1 000 classifications where its old 2 000 were 2 000 classifications OR 100 drafts,
+ * and it is the second number that had to be honest. The break-even per CREDIT went from
+ * 0.45 / 0.25 / 0.145 ¢ to 0.90 / 0.75 / 0.725 ¢ — Pro, the tier that goes underwater first,
+ * gained 5× headroom. The operator console's unit-economics view computes and shows these
+ * break-evens from this card rather than restating them.
+ *
+ * **The two halves land in the same commit deliberately, and BOTH reach everyone.** The
+ * WEIGHTS are not on this card and not on any row: they are what an action costs, charged at
+ * the gate, to every account. The pools are on the rows, and cloud 0020 moved every existing
+ * row to the new figures — a deliberate reversal of the grandfathering this comment used to
+ * promise. From here forward the card is read at sale time only, exactly as before.
  *
  * `storageBytes` is the managed STORED-BODY cap — how many bytes of message body
  * (`text` + `html` octets; headers, snippets, attachment metadata and the transient outbound
- * staging never count) the hosted tier stores for the account. At cap, ingest keeps ORGANIZING
- * on IMAP and stops storing new bodies (`withheld_reason = 'storage_cap'`); nothing existing is
- * ever deleted. DECIMAL gigabytes deliberately (5/15/50 × 10⁹), so the number a customer is
- * shown — "5 GB" — is the number enforced, with no binary-unit gap to explain. Worst-case cost
- * at the ceiling (~$0.125/GB-mo managed PG): $0.63 / $1.88 / $6.25 against $9 / $15 / $29 —
- * 7% / 12.5% / 21.5% of tier revenue, and a plausible usage mix sits far below the ceiling.
+ * staging never count) the hosted tier stores for the account. At cap the store is a ROLLING
+ * WINDOW (ratified 2026-08-21, replacing decline-new): the OLDEST stored bodies husk to make
+ * room and new mail keeps landing — `evictOldestBodies` in `storage.ts`, hysteresis in the
+ * worker's trim pass. IMAP is never touched: organizing continues in place, and every husk's
+ * original stays in the mailbox. DECIMAL gigabytes deliberately (2/5/10 × 10⁹), so the number a customer is
+ * shown — "2 GB" — is the number enforced, with no binary-unit gap to explain. Worst-case cost
+ * at the ceiling (~$0.125/GB-mo managed PG): $0.25 / $0.63 / $1.25 against $9 / $15 / $29 —
+ * 2.8% / 4.2% / 4.3% of tier revenue, where the previous 5/15/50 GB card put Pro at 21.5%.
+ * Existing rows moved to the new caps with the rest of the card (cloud 0020, the override
+ * above).
  * If these numbers change, they change HERE, with the pricing UI, in one commit.
  */
 export const PLAN_LIMITS = {
-  solo: { priceUsd: 9, mailboxes: 5, monthlyCredits: 2_000, storageBytes: 5_000_000_000 },
-  plus: { priceUsd: 15, mailboxes: 10, monthlyCredits: 6_000, storageBytes: 15_000_000_000 },
-  pro: { priceUsd: 29, mailboxes: 50, monthlyCredits: 20_000, storageBytes: 50_000_000_000 },
+  solo: { priceUsd: 9, mailboxes: 2, monthlyCredits: 1_000, storageBytes: 2_000_000_000 },
+  plus: { priceUsd: 15, mailboxes: 5, monthlyCredits: 2_000, storageBytes: 5_000_000_000 },
+  pro: { priceUsd: 29, mailboxes: 10, monthlyCredits: 4_000, storageBytes: 10_000_000_000 },
 } as const;
 
 export type Plan = keyof typeof PLAN_LIMITS;
+
+/**
+ * THE ADD-ON CARD — the two purchasable extensions of a plan, each its own recurring Stripe
+ * line item on the SAME subscription (ratified 2026-08-21). Like {@link PLAN_LIMITS} this is
+ * the canonical statement the pricing surfaces and their anti-drift tests derive from; the
+ * Stripe products/prices carry the same figures and the billing plane maps their price ids.
+ *
+ * The entitlement side is QUANTITIES on the mirror row (`addon_storage_units`,
+ * `addon_mailboxes`, cloud 0022), composed by {@link entitlementsFor}: each storage unit adds
+ * {@link ADDON_STORAGE_UNIT_BYTES} to the byte cap, each mailbox unit adds one to the mailbox
+ * limit. Worst-case cost of a storage unit at its ceiling (~$0.125/GB-mo managed PG): $1.25
+ * against $10/mo — 12.5% of the add-on's own revenue, priced with more headroom than any tier.
+ */
+export const ADDON_CARD = {
+  storage: { priceUsd: 10, unitBytes: 10_000_000_000 },
+  mailbox: { priceUsd: 3, unitMailboxes: 1 },
+} as const;
+
+export type AddonKind = keyof typeof ADDON_CARD;
+
+/** How many bytes one +10 GB storage add-on unit adds to the account's cap. */
+export const ADDON_STORAGE_UNIT_BYTES = ADDON_CARD.storage.unitBytes;
+
+/**
+ * The most units of ONE add-on kind a subscription may carry — the request-validation bound.
+ * Ten of either is the whole current product ceiling doubled; anything above it is a typo or an
+ * attack, and both deserve a 400 rather than a Stripe call.
+ */
+export const MAX_ADDON_QUANTITY = 10;
+
+/**
+ * HOW MANY BYTES ONE STORED EMAIL IS ASSUMED TO TAKE — the estimate that turns a storage CAP into
+ * the number a customer is actually shown.
+ *
+ * Owner decision, 2026-08-21: the pricing copy presents managed storage as an EMAIL COUNT, not as
+ * gigabytes. "2 GB" is a true statement about the cap and a useless one to a person deciding
+ * between tiers, because nobody knows how many emails fit in a gigabyte. "Room for roughly 80,000
+ * emails" is the same fact in the unit the decision is made in.
+ *
+ * ## The derivation, and why the number is rounded the way it is
+ *
+ * Measured on a real heavily-used production account: **1.72 × 10⁹ counted bytes across 73,167
+ * stored messages ⇒ ~23,507 bytes each.** That is the average of the bytes this cap actually
+ * counts — `text` + `html` octets — on a mailbox with years of mail in it.
+ *
+ * The constant is **25,000**, i.e. the measurement rounded UP. Rounding the per-email figure UP is
+ * what rounds the advertised COUNT down, and that is the only safe direction: a larger assumed
+ * email means fewer of them fit, so the number on the card under-promises. Rounding the measured
+ * 23,507 down to 20,000 would have advertised 100,000 emails on Solo against a real ~85,000, and
+ * a storage claim that a heavy user can disprove is the kind of claim this repo treats as a
+ * defect rather than as marketing.
+ *
+ * At 25,000: Solo 80,000 · Plus 200,000 · Pro 400,000. Those are exactly the figures the copy
+ * states, and `test/landing-pricing-matches-plan-card.test.ts` derives them from THIS constant and
+ * {@link PLAN_LIMITS} rather than trusting the strings — so the copy cannot drift from the
+ * arithmetic, which is the same guard the mailbox count and the credit allowance already have.
+ *
+ * ## What it is NOT
+ *
+ * **It is not an enforcement figure and nothing reads it to decide anything.** Bytes remain the
+ * unit everywhere in code: `reserveBodyBytes` counts octets, `storage_bytes_limit` is a byte
+ * count, the at-cap decision is a byte comparison. This constant exists solely to render a count,
+ * and the word "roughly" travels with it in every locale precisely because an average is not a
+ * promise about any particular mailbox — a newsletter-heavy account will store fewer and larger
+ * bodies, a plain-text-heavy one many more.
+ *
+ * Attachments are the other half of why the count is defensible: attachment bytes are never stored
+ * server-side at all (only their metadata), so they never count against the cap. That is a
+ * structural fact about the ingest path, not a policy, which is why the copy is allowed to say it.
+ */
+export const BYTES_PER_STORED_EMAIL_ESTIMATE = 25_000;
+
+/**
+ * The advertised email capacity of a plan: its byte cap divided by
+ * {@link BYTES_PER_STORED_EMAIL_ESTIMATE}, floored.
+ *
+ * Floored rather than rounded, for the reason the constant is rounded up: every step of this
+ * arithmetic moves the advertised number DOWN, so the card can only ever under-promise.
+ */
+export function estimatedStoredEmails(storageBytes: number): number {
+  return Math.floor(storageBytes / BYTES_PER_STORED_EMAIL_ESTIMATE);
+}
 
 /**
  * WHAT A TRIAL IS GIVEN — the bounty, granted once per account when its trial row first lands.
@@ -84,10 +213,14 @@ export type Plan = keyof typeof PLAN_LIMITS;
  * demonstrate the thing being sold is not a trial of the product.
  *
  * 500 is chosen against what the trial has to DO rather than against a plan's monthly figure. One
- * credit is one AI action ({@link ../ledger-source AI_ACTION_COST}), a first-contact backlog is
- * typically tens of senders, and the automatic Screener batch buys ten per open — so 500 covers
- * a real first fortnight several times over and still stops well short of a month of the smallest
- * plan (2 000). It is a fixed number and NOT a fraction of the plan the visitor picked at
+ * credit is one screening classification — the cheapest row of
+ * {@link ../ledger-source AI_ACTION_WEIGHTS}, and the action a trial actually spends on — a
+ * first-contact backlog is typically tens of senders, and the automatic Screener batch buys ten
+ * per open, so 500 covers a real first fortnight several times over and still stops short of a
+ * month of the smallest plan (1 000 since the 2026-08-21 re-pricing, so the margin is narrower
+ * than it was and the "well under" claim is now merely "under" — the bounty is deliberately not
+ * being cut, because a converting trial's leftover is capped at 500 once per account for life).
+ * It is a fixed number and NOT a fraction of the plan the visitor picked at
  * Checkout: the trial is the same product whichever card was clicked, and scaling the bounty by
  * plan would make the cheapest trial the worst demonstration.
  *
@@ -164,6 +297,16 @@ export interface SubscriptionSnapshot {
   graceUntil: Date | null;
   currentPeriodEnd: Date | null;
   cancelAtPeriodEnd: boolean;
+  /**
+   * ADD-ON quantities (cloud 0022): +10 GB storage units and +1-mailbox units riding the
+   * subscription as their own Stripe line items. OPTIONAL with a 0 default so every snapshot a
+   * test builds by hand stays valid; {@link entitlementsFor} composes them into the effective
+   * limits. Unlike the three sold-at columns they move on every admitted mirror write.
+   */
+  addonStorageUnits?: number;
+  addonMailboxes?: number;
+  /** The plan price's cadence — 'year' multiplies the cycle grant by 12. Default 'month'. */
+  billingInterval?: "month" | "year";
 }
 
 export interface EntitlementsInput {
@@ -325,10 +468,11 @@ export function entitlementsFor(input: EntitlementsInput): Entitlements {
   if (suspended) return NOTHING("suspended");
   if (!sub) return NOTHING("no_subscription");
 
-  const plan = sub.mailboxLimit;
-  // The row's sold-at storage cap, on the same denormalization argument as `plan` above. Every
-  // arm below that grants retention grants THIS number; the zero shape answers 0.
-  const storage = sub.storageBytesLimit;
+  // The EFFECTIVE limits: the row's sold-at allowance PLUS its add-on quantities (cloud 0022).
+  // `?? 0` because the fields are optional on hand-built snapshots; the mirror always writes
+  // them. Every arm below that grants retention grants THESE numbers; the zero shape answers 0.
+  const plan = sub.mailboxLimit + (sub.addonMailboxes ?? 0);
+  const storage = sub.storageBytesLimit + (sub.addonStorageUnits ?? 0) * ADDON_STORAGE_UNIT_BYTES;
   /**
    * MAY THIS ACCOUNT SPEND — the whole predicate, not the subscription's half of it.
    *
@@ -443,6 +587,9 @@ export async function liveSubscriptionOf(
       mailboxLimit: billingSubscriptions.mailboxLimit,
       monthlyCredits: billingSubscriptions.monthlyCredits,
       storageBytesLimit: billingSubscriptions.storageBytesLimit,
+      addonStorageUnits: billingSubscriptions.addonStorageUnits,
+      addonMailboxes: billingSubscriptions.addonMailboxes,
+      billingInterval: billingSubscriptions.billingInterval,
       graceUntil: billingSubscriptions.graceUntil,
       currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
       cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
@@ -466,6 +613,9 @@ export async function liveSubscriptionOf(
     mailboxLimit: row.mailboxLimit,
     monthlyCredits: row.monthlyCredits,
     storageBytesLimit: row.storageBytesLimit,
+    addonStorageUnits: row.addonStorageUnits,
+    addonMailboxes: row.addonMailboxes,
+    billingInterval: row.billingInterval as "month" | "year",
     graceUntil: row.graceUntil ?? null,
     currentPeriodEnd: row.currentPeriodEnd ?? null,
     cancelAtPeriodEnd: row.cancelAtPeriodEnd,
@@ -526,6 +676,9 @@ export async function newestSubscriptionOf(
       mailboxLimit: billingSubscriptions.mailboxLimit,
       monthlyCredits: billingSubscriptions.monthlyCredits,
       storageBytesLimit: billingSubscriptions.storageBytesLimit,
+      addonStorageUnits: billingSubscriptions.addonStorageUnits,
+      addonMailboxes: billingSubscriptions.addonMailboxes,
+      billingInterval: billingSubscriptions.billingInterval,
       graceUntil: billingSubscriptions.graceUntil,
       currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
       cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
@@ -545,6 +698,9 @@ export async function newestSubscriptionOf(
     mailboxLimit: row.mailboxLimit,
     monthlyCredits: row.monthlyCredits,
     storageBytesLimit: row.storageBytesLimit,
+    addonStorageUnits: row.addonStorageUnits,
+    addonMailboxes: row.addonMailboxes,
+    billingInterval: row.billingInterval as "month" | "year",
     graceUntil: row.graceUntil ?? null,
     currentPeriodEnd: row.currentPeriodEnd ?? null,
     cancelAtPeriodEnd: row.cancelAtPeriodEnd,
@@ -714,6 +870,9 @@ export async function accountsWithSyncDisabled(
       mailboxLimit: billingSubscriptions.mailboxLimit,
       monthlyCredits: billingSubscriptions.monthlyCredits,
       storageBytesLimit: billingSubscriptions.storageBytesLimit,
+      addonStorageUnits: billingSubscriptions.addonStorageUnits,
+      addonMailboxes: billingSubscriptions.addonMailboxes,
+      billingInterval: billingSubscriptions.billingInterval,
       graceUntil: billingSubscriptions.graceUntil,
       currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
       cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,

@@ -2,6 +2,7 @@ import { noticeSinkFor, setNoticeSink, IDEMPOTENCY_TTL_MS, type Tx } from "@traf
 import { makePooledDb } from "@trafficflow/db/cloud";
 import {
   adminDbFor, attestStaffDbFault, makeAiCreditGate, resetAdminDbs, webhookAlertSink,
+  assertWeightedScheduleActive, grantSetupCredits, withSetupPool,
   acquireImapSlot, releaseImapSlot, balanceOf, storageCapOf,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
   // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
@@ -257,7 +258,12 @@ function buildServices(cfg: HostConfig): ApiServices {
   }));
   // Envelope-encrypts mailbox credentials with the SAME provider the worker decrypts them
   // with — the KEK ring identity on `/health` is what proves those agree (risk 2).
-  lazily(bag, "mailbox", () => makeMailboxService({ keyProvider }));
+  //
+  // `onCreated` is the setup grant: every hosted mailbox connect writes its one-time,
+  // screening-only, 90-day credit pool in the SAME transaction as the row (cloud 0021,
+  // `setup-grant.ts`). Hosted-only by construction — the local tiers construct this service
+  // without the hook, exactly as they pass their own `allowance`.
+  lazily(bag, "mailbox", () => makeMailboxService({ keyProvider, onCreated: grantSetupCredits }));
   // NO adapter injected, so a screener or approval decision leaves
   // `folder_state` pending and the WORKER applies the IMAP move. The serverless host never
   // opens IMAP to apply organization — one organizer per mailbox is the rule.
@@ -276,6 +282,27 @@ function buildServices(cfg: HostConfig): ApiServices {
   // deadline and one retry rather than the worker's patient 30 s: a slow model fails one
   // sender's suggestion, never the invocation.
   const anthropicApiKey = cfg.anthropicApiKey;
+  // ── THE ARMING GUARD: the PRODUCTION managed-AI arm refuses a FLAT debit schedule ──────────
+  //
+  // "Managed AI must not arm before the weighted prices land" was a rule in prose, which is to
+  // say it was one revert away from being untrue. Here it is mechanical, and it sits at the
+  // hoist rather than at each arm so that BOTH the Screener's classifier below and the drafter
+  // further down are covered by one statement — a guard per arm is a guard the third arm forgets.
+  //
+  // The condition is the PRODUCTION shape specifically: a model key AND the billing plane. The
+  // plane is what makes this host the metered one — it is where subscriptions, invoices and
+  // therefore the allowance actually exist. A host holding a key with no plane is a preview or a
+  // self-host shape, where there is no ledger for a mis-priced debit to land in and refusing to
+  // boot would buy nothing.
+  //
+  // A hard throw, against the standing counter-argument that `loadAlertsConfig` answers with a
+  // soft `null` because a throw here means 503 on every request. That trade is right for alerting
+  // and wrong for this: a deployment that can call a model and prices a draft like a
+  // classification charges a fifteenth of its cost to every customer for as long as it serves,
+  // and unlike a missing alert route that is not recoverable after the fact. Refusing to serve is
+  // the cheaper failure. After the weighted schedule shipped it passes by construction; it exists
+  // for the revert.
+  if (anthropicApiKey && cfg.billingPlane) assertWeightedScheduleActive();
   lazily(bag, "screener", () => makeScreenerService({
     // `exclusive: true` — closes the concurrent double-purchase race a money review found,
     // and the ONE option this gate takes.
@@ -292,8 +319,13 @@ function buildServices(cfg: HostConfig): ApiServices {
     // and serves that instead. The worker's auto-suggest pass sets the same option against the
     // same ledger source, which is what makes the cron/press collision — the reaching of this
     // that needs no unusual behaviour from anyone — close on both sides rather than one.
+    // `withSetupPool` — the Screener draws each mailbox's screening-only setup grant BEFORE the
+    // main balance. Only the two Screener arms wear this wrapper (this one and the worker's
+    // auto-suggest gate); drafting, the proposer and workflow steps never see it, which is what
+    // makes the pool screening-only in mechanism rather than in prose.
     credits: (db, accountId) =>
-      makeAiCreditGate(db, accountId, { reason: "debit_classify", exclusive: true }),
+      withSetupPool(db, accountId,
+        makeAiCreditGate(db, accountId, { reason: "debit_classify", exclusive: true })),
     // WHAT IS LEFT, so the summary after a run can answer "and how much have I got?" without
     // the client keeping a shadow ledger. `balanceOf` is the O(1) `credit_balances` read and
     // never a `SUM` over the ledger — see its own note. It is wired HERE, in the host that has

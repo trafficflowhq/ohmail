@@ -897,8 +897,13 @@ export const messageBodies = pgTable("message_bodies", {
   /**
    * ── Mail 0062: WHY THIS ROW HOLDS NO CONTENT — the managed storage cap's honest marker ──
    *
-   * NULL for every ordinarily stored body. `'storage_cap'` means ingest DECLINED to store this
-   * message's text/html because the account was at its managed storage cap — the row still
+   * NULL for every ordinarily stored body. `'storage_cap'` means this message's text/html is
+   * not in the hosted store BECAUSE OF the account's managed storage cap — since the 2026-08-21
+   * rolling-window ruling that is almost always an EVICTED husk (the body was stored, then aged
+   * out of the window as new mail needed the room, `storage.ts#evictOldestBodies`), and only at
+   * the pathological ceiling a declined-new one (`reserveBodyBytesEvicting`'s bound). One marker
+   * for both deliberately: the REASON is the cap either way, and every consumer below already
+   * says the right sentence for both. The row still
    * carries the real `headers` (the organizing passes read stored headers; declining them would
    * silently break unsubscribe/screener/consent/away on exactly the mail the cap touches) and
    * `text = ''`/`html = NULL`, and the message on the IMAP server is UNTOUCHED (the mailbox is

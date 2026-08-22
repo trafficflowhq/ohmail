@@ -208,6 +208,19 @@ export function makeBillingPlaneClient(cfg: BillingPlaneClientConfig): BillingPl
       }
     },
 
+    async setAddonQuantity(req: {
+      stripeSubscriptionId: string; addon: "storage" | "mailbox"; quantity: number;
+    }): Promise<void> {
+      // Status-only, like the cancel beside it: nothing reads the body, so a 200 whose body
+      // stalls is still a committed update.
+      const res = await post("/v1/addons", JSON.stringify(req), {
+        "content-type": "application/json",
+      }, () => false);
+      if (res.status !== 200) {
+        throw new Error(`billing plane answered ${res.status} for /v1/addons`);
+      }
+    },
+
     async verifyWebhook(rawBody: Uint8Array, signature: string | null): Promise<WebhookVerdict> {
       // THE BYTES, VERBATIM. No decode, no re-encode, no content-type games — the plane HMACs
       // exactly these octets (mutation-checked: one flipped byte fails the verify). The

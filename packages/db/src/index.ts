@@ -61,6 +61,11 @@ export {
  */
 export {
   bodyBytesOf, storageUsageOf, reserveBodyBytes, releaseBodyBytes, applyBodyBytesDelta,
+  // The rolling window (ratified 2026-08-21): at cap the OLDEST stored bodies husk so new mail
+  // keeps landing. The worker's background trim and the ingest fallback share these.
+  evictOldestBodies, reserveBodyBytesEvicting,
+  EVICT_HIGH_WATER_RATIO, EVICT_LOW_WATER_RATIO, EVICT_BATCH_BODIES, EVICT_INLINE_MAX_BODIES,
+  type EvictionResult,
   recomputeAccountStorage,
 } from "./storage.js";
 
@@ -87,8 +92,9 @@ export { runtimeUrlReason, providerFamily } from "./session-url.js";
  */
 export {
   clientIdempotencyKey, ledgerSources,
-  AI_ACTION_COST, classifyLedgerSource, screenerLedgerSource,
-  type IdempotencyKey,
+  AI_ACTION_WEIGHTS, WEIGHTED_DEBIT_REASONS, aiActionCost, assertWeightedScheduleActive,
+  classifyLedgerSource, screenerLedgerSource,
+  type IdempotencyKey, type WeightedDebitReason,
 } from "./ledger-source.js";
 
 /**

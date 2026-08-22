@@ -78,14 +78,37 @@ export const billingRoutes: Route[] = [
     // class is the only privilege check in front of the money.
     cost: "paid",
     handler: async (req, deps) => {
-      const body = await readBody<{ plan?: string }>(req);
+      const body = await readBody<{ plan?: string; interval?: string }>(req);
       // Preflight OPEN (the 409, the trial eligibility, the per-IP trial throttle, the customer
       // ref — every one a DB fact), THEN the plane. The order is load-bearing: a refusal after
       // Checkout has created a session is a subscription somebody may have to cancel.
+      // `interval` (month|year, monthly the default) picks the annual price; validated in the
+      // preflight beside the plan for the same one-authority reason.
       const preflight = await entitlements(deps)
-        .checkoutPreflight(serviceContext(deps, req), body.plan ?? "");
+        .checkoutPreflight(serviceContext(deps, req), body.plan ?? "", body.interval);
       const out = await billingPlane(deps).checkout(preflight);
       return jsonResponse(out);
+    },
+  },
+  {
+    method: "POST",
+    pattern: "/billing/addons",
+    // `paid` + `stepUp`, the portal's exact posture: this is a money MUTATION against the card
+    // on file (an increase invoices immediately), so a recent second factor is owed — unlike
+    // checkout, where Stripe's own page collects the card and is its own proof of presence.
+    cost: "paid",
+    options: { stepUp: true },
+    handler: async (req, deps) => {
+      const body = await readBody<{ addon?: string; quantity?: unknown }>(req);
+      // Preflight OPEN (kind + quantity bounds, the live-and-active requirement, the
+      // subscription ref), THEN the plane — the checkout ordering, for the checkout reason.
+      const preflight = await entitlements(deps)
+        .addonPreflight(serviceContext(deps, req), body.addon ?? "", body.quantity);
+      await billingPlane(deps).setAddonQuantity(preflight);
+      // DECLARATIVE ack only. The new limits arrive through the webhook mirror, not this
+      // response: inventing them here would be a second copy of the entitlement computation
+      // that is right until the webhook is delayed, then wrong in the customer's favour.
+      return jsonResponse({ ok: true, addon: preflight.addon, quantity: preflight.quantity });
     },
   },
   {

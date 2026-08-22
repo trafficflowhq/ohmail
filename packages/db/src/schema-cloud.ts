@@ -240,6 +240,18 @@ export const billingSubscriptions = pgTable("billing_subscriptions", {
   // later change to the plan card cannot shrink what a live customer already bought. bigint —
   // the smallest card value (5 GB) already outruns int4.
   storageBytesLimit: bigint("storage_bytes_limit", { mode: "number" }).notNull(),
+  // ADD-ON QUANTITIES (cloud 0022) — how many +10 GB storage add-ons and +1 mailbox add-ons
+  // ride this subscription as their own recurring Stripe line items. NOT sold-at columns:
+  // unlike the three allowances above, these move on EVERY admitted subscription event (an
+  // add-on change arrives with the plan price unchanged, so the price-moves-only CASE must not
+  // gate them; the `stripe_event_ts` fence still orders the writes). `entitlementsFor` composes
+  // the effective allowance from base + add-ons.
+  addonStorageUnits: integer("addon_storage_units").notNull().default(0),
+  addonMailboxes: integer("addon_mailboxes").notNull().default(0),
+  // The plan price's billing cadence (cloud 0022) — 'month' | 'year' (CHECK). A property of the
+  // PRICE, so the mirror moves it under the same price-moves-only CASE as the allowances. An
+  // annual cycle invoice grants twelve months of credits at once (`monthlyCreditsFor` × 12).
+  billingInterval: text("billing_interval").notNull().default("month"),
   currentPeriodStart: timestamp("current_period_start", { withTimezone: true }),
   currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
@@ -881,6 +893,57 @@ export const invites = pgTable("invites", {
 }));
 
 /**
+ * SETUP GRANTS (cloud 0021) — the screening-only, expiring credit pool granted once per
+ * connected mailbox (see `SETUP_GRANT_CREDITS_PER_MAILBOX`), SEPARATE from the main ledger.
+ *
+ * Separate because two of its three properties are not expressible on the one main balance:
+ * "screening-only" needs the spender to know which pool it draws, and "expires in 90 days"
+ * needs an attributable remainder — which a commingled balance has not, and which the monthly
+ * renewal's `period_expiry` would eat at the first cycle boundary regardless (the
+ * renewal-boundary hazard the architecture review flagged). The Screener suggestion gates draw
+ * this pool FIRST (`setup-grant.ts#withSetupPool`), before the main balance, and a setup-funded
+ * suggestion writes NOTHING to `credit_ledger` — the money audit's invariants keep their exact
+ * meaning.
+ *
+ * `UNIQUE (mailbox_id)` is "one grant per mailbox, ever" as a table fact — the trial bounty's
+ * pattern. No FK on the mailbox, deliberately: the grant must survive a disconnect precisely so
+ * a reconnect cannot re-arm it.
+ */
+export const setupGrants = pgTable("setup_grants", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  mailboxId: uuid("mailbox_id").notNull(),
+  granted: integer("granted").notNull(),
+  remaining: integer("remaining").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  uqMailbox: unique("setup_grants_mailbox_uq").on(t.mailboxId),
+  ixAccountExpiry: index("setup_grants_account_expiry_idx").on(t.accountId, t.expiresAt),
+  ckBounds: check("setup_grants_remaining_bounds", sql`${t.remaining} >= 0 AND ${t.remaining} <= ${t.granted}`),
+  ckPositive: check("setup_grants_granted_positive", sql`${t.granted} > 0`),
+}));
+
+/**
+ * The pool's own idempotency ledger — `PRIMARY KEY (account_id, source)` mirrors
+ * `credit_ledger`'s UNIQUE so a crash-retried suggestion is a free retry here exactly as it is
+ * on the main ledger; `refunded_at` is the exactly-once refund marker.
+ */
+export const setupGrantSpends = pgTable("setup_grant_spends", {
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  grantId: uuid("grant_id").notNull().references(() => setupGrants.id, { onDelete: "cascade" }),
+  amount: integer("amount").notNull(),
+  refundedAt: timestamp("refunded_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  pk: primaryKey({ name: "setup_grant_spends_pk", columns: [t.accountId, t.source] }),
+  ixGrant: index("setup_grant_spends_grant_idx").on(t.grantId),
+  ckAmount: check("setup_grant_spends_amount_positive", sql`${t.amount} > 0`),
+  ckSourceLen: check("setup_grant_spends_source_len", sql`char_length(${t.source}) <= 200`),
+}));
+
+/**
  * The Cloud-only half as one object, for `drizzle(client, { schema })`.
  *
  * Spread into `schema` by `./schema.js` for every consumer that wants both halves. A local
@@ -889,4 +952,5 @@ export const invites = pgTable("invites", {
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens, oauthAuthCodes, authEvents, authThrottle, pushSubscriptions, billingCustomers, billingSubscriptions, creditBalances, creditLedger, billingEvents, workerHeartbeats, alertState, waitlist, staffUsers, staffSessions, accountSuspensions,
   mailboxOauthCeremonies, oauthProviderConfig, attachmentStaging, invites, aiAttemptClaims,
+  setupGrants, setupGrantSpends,
 };

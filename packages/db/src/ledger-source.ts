@@ -150,11 +150,138 @@ export const ledgerSources = {
 } as const;
 
 /**
- * What one AI action costs. The plan card sells "~2 000 / 6 000 / 20 000 AI actions" per month
- * against `monthly_credits` of 2 000 / 6 000 / 20 000, so the exchange rate is 1:1 by
- * construction and this constant is where it would change if a future model tier cost more.
+ * WHAT EACH METERED ACTION COSTS, IN CREDITS — the price list, pinned per reason.
+ *
+ * ## Why a table and not a constant
+ *
+ * This was a single constant at 1: one credit per action, whichever action. The plan card sold
+ * "~2 000 / 6 000 / 20 000 AI actions" against `monthly_credits` of the same figures, so the
+ * exchange rate was 1:1 by construction — and the construction was the defect. The four metered
+ * actions do not cost the same money and are not close:
+ *
+ *  · a CLASSIFICATION reads one message and is capped at 512 output tokens
+ *    (`packages/core/src/ai/classify.ts`);
+ *  · a DRAFT reads a whole thread plus the account's voice profile, capped at 1 024
+ *    (`packages/core/src/ai/draft.ts`);
+ *  · a PROPOSER PASS reads a BATCH of mail, capped at 2 048 (`.../workflows/propose.ts`) — the
+ *    largest-context call in the product;
+ *  · a WORKFLOW STEP is a draft. The only tool with a `prepare` is `draft_reply` and its prepare
+ *    calls the draft path, so a step and a draft are one model call with one budget.
+ *
+ * Under a flat price the ALLOWANCE had to absorb that spread: it could only be sized against the
+ * worst mix a customer might pick, so it was sized against a month of drafts, and every customer
+ * who spent it the ordinary way — overwhelmingly classifications — was sold a pool priced for a
+ * mix they never ran. Pricing the action instead lets the pool be honest, which is why the plan
+ * card's credits fell to 1 000 / 2 000 / 4 000 in the same change (see `billing.ts`'s
+ * `PLAN_LIMITS`, which explains the arithmetic — and the deliberate decision to move EXISTING
+ * rows onto the new pools rather than grandfather them, cloud 0020).
+ *
+ * ## The weight is charged where the debit is MINTED, and nowhere else
+ *
+ * `makeAiCreditGate` defaults `amount` to `aiActionCost(opts.reason)`, and **no call site in the
+ * product passes an `amount`** — the five gates (ingest classify, the Screener's request path and
+ * its cron, drafting, the proposer, workflow steps) all take the default. So this table is the
+ * price of every metered action in the hosted product, and there is no second place where a
+ * price could disagree with it. The `amount` option survives for tests and for a future caller
+ * that genuinely charges a multiple; it is not how the schedule is applied.
+ *
+ * ## It applies to EVERYONE, and that is structural rather than configured
+ *
+ * A weight is not on any row — it is what the action costs — so it is charged to every account
+ * at the gate. (The POOLS moved for everyone too: the 2026-08-21 ruling overrode grandfathering
+ * and cloud 0020 migrated every existing row to the new card. The weight table needed no
+ * migration precisely because it was never denormalized anywhere.)
  */
-export const AI_ACTION_COST = 1;
+export const AI_ACTION_WEIGHTS = {
+  debit_classify: 1,
+  debit_draft: 15,
+  debit_propose: 20,
+  debit_workflow: 15,
+} as const;
+
+/**
+ * The debit reasons a spend GATE can mint — exactly the keys of {@link AI_ACTION_WEIGHTS}.
+ *
+ * A strict subset of the ledger's `DebitReason`: `period_expiry`, `setup_expiry` and
+ * `adjustment_debit` are debits nobody buys, so they have no price and must not acquire one.
+ */
+export const WEIGHTED_DEBIT_REASONS = [
+  "debit_classify", "debit_draft", "debit_propose", "debit_workflow",
+] as const;
+
+export type WeightedDebitReason = keyof typeof AI_ACTION_WEIGHTS;
+
+/**
+ * What one action of `reason` costs. The ONE way to price a metered action.
+ *
+ * Written as a function rather than left as a bare index so the call sites that QUOTE a price to
+ * a customer before charging it — `ScreenerService`'s `quotedCredits`, the auto-suggest pass's
+ * `charged` tally — name the same thing the gate debits. Those two used to multiply by
+ * that single constant, which was correct only while every action cost the same.
+ */
+export function aiActionCost(reason: WeightedDebitReason): number {
+  return AI_ACTION_WEIGHTS[reason];
+}
+
+/**
+ * THE ARMING GUARD: refuse to construct a production managed-AI arm while debits are FLAT.
+ *
+ * The rule is older than the mechanism — *"managed AI must not be armed before the weights
+ * land"* — and a rule that lives only in prose is a rule the next revert breaks silently. This
+ * is that rule as a structural check, called from the composition root that arms managed AI
+ * (an `ANTHROPIC_API_KEY` present on the billing plane). After the weighted schedule shipped it
+ * passes by construction; it exists for the day somebody puts a weight back to 1.
+ *
+ * **It judges the SHAPE, not the exact numbers, and that split is the point.** The exact card
+ * belongs in `test/ai-action-weights.test.ts`, which pins it by whole-object equality; a guard
+ * that pinned it too would be a second copy of the card, and the copy would have to be edited
+ * every time an action was re-priced — turning a safety check into a chore, which is how
+ * safety checks get deleted. What cannot be allowed to change without a deliberate decision is
+ * that the schedule is WEIGHTED at all: that every priced reason has a price, and that the two
+ * expensive calls are strictly dearer than the cheap one. A flat table fails all three tests
+ * below; a re-priced but still-weighted table passes, and should.
+ *
+ * Throws rather than returning a boolean: there is no useful degraded mode. An arm that came up
+ * with a flat schedule would meter every draft at a fifteenth of its cost, and the resulting
+ * spend is not recoverable from.
+ */
+export function assertWeightedScheduleActive(
+  schedule: Record<WeightedDebitReason, number> = AI_ACTION_WEIGHTS,
+): void {
+  for (const reason of WEIGHTED_DEBIT_REASONS) {
+    const weight = schedule[reason];
+    if (!Number.isInteger(weight) || weight <= 0) {
+      throw new Error(
+        `assertWeightedScheduleActive: ${reason} has no positive integer weight ` +
+          `(got ${String(weight)}). Managed AI must not arm against an incomplete schedule — a ` +
+          "missing weight makes every action of that kind fail the gate and degrade silently.",
+      );
+    }
+  }
+  const classify = schedule.debit_classify;
+  if (WEIGHTED_DEBIT_REASONS.every((r) => schedule[r] === classify)) {
+    throw new Error(
+      "assertWeightedScheduleActive: the debit schedule is FLAT — every action costs " +
+        `${classify}. Managed AI must not arm against a flat schedule: a draft costs ~15× a ` +
+        "classification in tokens, so a flat price puts the plan allowance underwater at a " +
+        "plausible mix while every gate works perfectly.",
+    );
+  }
+  if (schedule.debit_draft <= classify) {
+    throw new Error(
+      `assertWeightedScheduleActive: a draft is priced at ${schedule.debit_draft} against a ` +
+        `classification's ${classify} — a draft reads a whole thread plus the voice profile and ` +
+        "must cost strictly more. This is not a weighted schedule.",
+    );
+  }
+  if (schedule.debit_propose <= classify) {
+    throw new Error(
+      `assertWeightedScheduleActive: a propose pass is priced at ${schedule.debit_propose} ` +
+        `against a classification's ${classify} — the proposer reads a BATCH of mail and is the ` +
+        "largest-context call in the product. This is not a weighted schedule.",
+    );
+  }
+}
 
 /**
  * The ledger source for ONE classification of ONE message — a correction to the earlier registry keying.

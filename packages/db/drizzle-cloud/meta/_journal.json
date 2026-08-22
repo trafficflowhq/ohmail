@@ -141,6 +141,27 @@
       "when": 1790636540527,
       "tag": "0019_storage_bytes_limit",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790722940527,
+      "tag": "0020_replan_2026_08_21",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790809340527,
+      "tag": "0021_setup_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790895740527,
+      "tag": "0022_subscription_addons",
+      "breakpoints": true
     }
   ]
 }

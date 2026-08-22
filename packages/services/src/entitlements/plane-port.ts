@@ -1,4 +1,4 @@
-import type { EntitlementEvent, EntitlementPlan } from "./entitlement-event.js";
+import type { EntitlementAddon, EntitlementEvent, EntitlementPlan } from "./entitlement-event.js";
 
 /**
  * `BillingPlanePort`: how the open server reaches the Stripe machinery, and the ONLY way
@@ -22,6 +22,13 @@ export interface PlaneCheckoutRequest {
   /** From the SESSION, never the body — becomes `client_reference_id` + subscription metadata. */
   accountId: string;
   plan: EntitlementPlan;
+  /**
+   * The billing cadence the customer chose — 'month' (the pricing page's default) or 'year'
+   * (two months free). The plane picks the corresponding configured price; it is also a
+   * parameter of the Stripe idempotency key, because two otherwise-identical clicks that
+   * differ here are genuinely different sessions.
+   */
+  interval: "month" | "year";
   /**
    * The open preflight's verdict (no non-incomplete subscription history), which selects the
    * no-card trial fork. It is a PARAMETER of the Stripe idempotency key, because it is the one
@@ -68,6 +75,18 @@ export interface BillingPlanePort {
    * `"cancel_failed"`, because Art. 17 may not be blocked by a payment processor.
    */
   cancelSubscription(req: { stripeSubscriptionId: string }): Promise<void>;
+
+  /**
+   * SET an add-on's quantity on a live subscription — the purchase and the removal are one
+   * declarative operation, so a double-click sets the same number twice instead of buying
+   * twice. The plane adds/updates/deletes the add-on line item with `always_invoice`
+   * proration, so an increase charges the card on file immediately (revenue precedes the
+   * entitlement mirror) and a decrease credits the balance. Throws on any Stripe failure —
+   * including a subscription with no payable card — and the route's error envelope answers.
+   */
+  setAddonQuantity(req: {
+    stripeSubscriptionId: string; addon: EntitlementAddon; quantity: number;
+  }): Promise<void>;
 
   /**
    * Verify a webhook delivery over the EXACT raw bytes and translate it.

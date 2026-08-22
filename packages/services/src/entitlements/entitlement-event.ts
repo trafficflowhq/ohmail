@@ -1,6 +1,7 @@
 /**
- * `EntitlementEvent` v1: what the billing plane hands the open server after it has
- * verified a Stripe delivery.
+ * `EntitlementEvent` v2: what the billing plane hands the open server after it has
+ * verified a Stripe delivery. (v2, 2026-08-22: items and lines carry the plane's add-on and
+ * billing-interval verdicts — the annual prices and the two paid add-ons.)
  *
  * This file is the WIRE CONTRACT between two programs that must not link (the AGPL boundary):
  * the private plane verifies the HMAC, checks the envelope (`livemode`, `api_version`, the org
@@ -12,7 +13,7 @@
  *
  * ## Versioning
  *
- * `v: 1` is stamped on every event. A field the apply logic newly needs is a NEW VERSION, not a
+ * The version is stamped on every event. A field the apply logic newly needs is a NEW VERSION, not a
  * quiet widening: the plane and the open server deploy separately, so an optional field
  * silently absent is `undefined` flowing into a credit computation — the exact failure class the
  * plane's own `api_version` pin exists to refuse.
@@ -27,7 +28,17 @@
  */
 
 /** The version this module speaks. The plane stamps it; the open server refuses anything else. */
-export const ENTITLEMENT_EVENT_VERSION = 1 as const;
+export const ENTITLEMENT_EVENT_VERSION = 2 as const;
+
+/**
+ * The two purchasable add-ons, as the plane's verdict about a price id. Structurally identical
+ * to `AddonKind` in `@trafficflow/db/cloud` (`keyof typeof ADDON_CARD`), re-declared here for
+ * the same reason `EntitlementPlan` is: this contract file imports nothing.
+ */
+export type EntitlementAddon = "storage" | "mailbox";
+
+/** The billing cadence of a configured price — the plane knows it from its own price map. */
+export type EntitlementInterval = "month" | "year";
 
 /**
  * The plan a price id maps to. Structurally identical to `Plan` in `@trafficflow/db/cloud`
@@ -67,6 +78,21 @@ export interface SubscriptionItemDTO {
   priceId: string | null;
   /** The plane's price→plan verdict for this item's price. `null` ⇒ not a configured plan price. */
   plan: EntitlementPlan | null;
+  /**
+   * The plane's price→ADD-ON verdict (v2). A subscription now legitimately carries several
+   * items: exactly one PLAN item (`plan` set, `addon` null) and zero or more add-on items
+   * (`addon` set, `plan` null). An item with BOTH null is an unconfigured price, which the open
+   * mirror refuses exactly as it always refused an unknown plan price.
+   */
+  addon: EntitlementAddon | null;
+  /** The item's quantity — how many units of an add-on. `null` when Stripe carries none. */
+  quantity: number | null;
+  /**
+   * The configured price's cadence (v2), from the plane's own price map — `null` for a price
+   * the map does not know. The mirror denormalizes the PLAN item's interval; an annual cycle
+   * invoice grants twelve months of credits at once.
+   */
+  interval: EntitlementInterval | null;
   /** Unix seconds, or null when the item carries none. */
   currentPeriodStart: number | null;
   currentPeriodEnd: number | null;
@@ -93,6 +119,10 @@ export interface InvoiceLineDTO {
   priceId: string | null;
   /** The plane's price→plan verdict for this line's price. */
   plan: EntitlementPlan | null;
+  /** The plane's price→ADD-ON verdict (v2). Add-on lines never grant credits. */
+  addon: EntitlementAddon | null;
+  /** The configured price's cadence (v2) — the ×12 decision on an annual cycle grant. */
+  interval: EntitlementInterval | null;
   /** The line's amount in cents — sign separates a proration pair's old (−) from new (+). */
   amount: number;
   /** Whether Stripe marks this line a proration (either parent shape). */

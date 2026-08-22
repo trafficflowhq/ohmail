@@ -402,8 +402,9 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       title: `${atCapOnDuty.length} account${atCapOnDuty.length === 1 ? " is" : "s are"} at the storage cap`,
       detail:
         `${atCapOnDuty.length} on-duty account(s) hold stored mail bodies at or over their plan's ` +
-        `storage cap; new bodies are being withheld from the hosted store while their mail keeps ` +
-        `organizing on IMAP. Nothing is deleted. The largest overshoot is ` +
+        `storage cap. The rolling window should be trimming these before they reach the cap ` +
+        `(worker storage_evict_pass), so an account HERE means the trim is lagging or broken — ` +
+        `ingest is evicting inline per message meanwhile, and IMAP is untouched. The largest overshoot is ` +
         `${worst.bytes - worst.storageBytesLimit} bytes over a ${worst.storageBytesLimit}-byte cap.` +
         (capParked.size > 0
           ? ` (${capParked.size} further at-cap account(s) are parked by their subscription's ` +

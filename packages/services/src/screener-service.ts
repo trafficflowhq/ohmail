@@ -13,7 +13,7 @@ import {
   storeScreenerSuggestion,
   screenerSuggestionsBySender,
   SCREENER_SUGGESTION_PROVENANCE,
-  AI_ACTION_COST,
+  AI_ACTION_WEIGHTS,
   type Tx,
 } from "@trafficflow/db";
 // Values from the root barrel's pure leaf, the GATE as a type only — see `drafting-service.ts`.
@@ -380,13 +380,15 @@ export interface ScreenerSuggestResult {
    */
   quoted: number;
   /**
-   * What {@link quoted} COSTS, in credits — `quoted × AI_ACTION_COST`, computed here.
+   * What {@link quoted} COSTS, in credits — `quoted × AI_ACTION_WEIGHTS.debit_classify`,
+   * computed here.
    *
    * The count and the price are different numbers and only one of them is what the pricing
    * invariant demands a control names before it spends. They happen to be equal today because
-   * `AI_ACTION_COST` is 1, which is exactly why the client must not be the one multiplying:
-   * the webapp cannot import `@trafficflow/db`, so a client-side price would be a hardcoded
-   * `1` that goes on reading "40 senders · 40 credits" the day the constant becomes 2.
+   * a screening classification weighs 1, which is exactly why the client must not be the one
+   * multiplying: the webapp cannot import `@trafficflow/db`, so a client-side price would be a
+   * hardcoded `1` that goes on reading "40 senders · 40 credits" the day the weight moves —
+   * and since 2026-08-21 the schedule is per-reason, so weights DO move independently.
    * `GET /screener` already states `suggestable.credits` for the same reason; this is the
    * same sentence on the path that a client which does not read that page can reach.
    */
@@ -441,7 +443,7 @@ export interface ScreenerPage extends Page<ScreenerItem> {
   suggestable: {
     /** Page senders that are held, AI-eligible, and have no stored suggestion yet. */
     senders: string[];
-    /** `senders.length × AI_ACTION_COST`. Stated, not implied. */
+    /** `senders.length × AI_ACTION_WEIGHTS.debit_classify`. Stated, not implied. */
     credits: number;
     /**
      * How many senders one `POST /screener/suggest` will accept — {@link MAX_SUGGEST_SENDERS}.
@@ -672,7 +674,7 @@ export class ScreenerReadService {
       nextCursor,
       suggestable: {
         senders: suggestable,
-        credits: suggestable.length * AI_ACTION_COST,
+        credits: suggestable.length * AI_ACTION_WEIGHTS.debit_classify,
         maxPerRequest: MAX_SUGGEST_SENDERS,
       },
     };
@@ -1592,12 +1594,12 @@ export class ScreenerService extends ScreenerReadService {
         // `charged: false` is a free retry of an attempt already on record — a `duplicate`.
         // Reporting it as spend would tell the user they paid twice for one message.
         //
-        // `+= AI_ACTION_COST` and not `++`: the field is documented as CREDITS and `spend()`
-        // moves `AI_ACTION_COST` of them per call (`ai-gate.ts` — `opts.amount ?? AI_ACTION_COST`,
-        // and no amount is passed here). The two agree at today's value of 1, so this changes
-        // no number now; it is the increment that stays true if the constant ever moves, and
-        // the alternative is a field whose name and its arithmetic disagree.
-        if (outcome.charged) charged += AI_ACTION_COST;
+        // `+= the weight` and not `++`: the field is documented as CREDITS and `spend()` moves
+        // that many per call (`ai-gate.ts` — `opts.amount ?? aiActionCost(opts.reason)`, and no
+        // amount is passed here). The gate this service is handed books `debit_classify`, whose
+        // weight is 1, so the two agree today and this changes no number; it is the increment
+        // that stays true now that weights are per-reason and move independently.
+        if (outcome.charged) charged += AI_ACTION_WEIGHTS.debit_classify;
 
         // ── A FREE RETRY LOOKS FOR THE RESULT IT IS A RETRY OF, BEFORE RE-BUYING TOKENS ────
         //
@@ -1738,7 +1740,8 @@ export class ScreenerService extends ScreenerReadService {
     }
 
     const dto: ScreenerSuggestResult = {
-      dryRun, requested: senders.length, quoted, quotedCredits: quoted * AI_ACTION_COST, charged,
+      dryRun, requested: senders.length, quoted,
+      quotedCredits: quoted * AI_ACTION_WEIGHTS.debit_classify, charged,
       ...(stopped ? { stopped } : {}),
       ...(typeof remainingCredits === "number" ? { remainingCredits } : {}),
       suggestions, skipped,

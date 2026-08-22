@@ -89,6 +89,12 @@ export {
 export {
   PLAN_LIMITS, LIVE_SUBSCRIPTION_STATUSES, EXPORT_WINDOW_MS, TRIAL_GRANT_CREDITS,
   TRIAL_STARTS_PER_IP, TRIAL_START_WINDOW_MS,
+  // The two purchasable add-ons (ratified 2026-08-21) and what one storage unit adds.
+  ADDON_CARD, ADDON_STORAGE_UNIT_BYTES, MAX_ADDON_QUANTITY, type AddonKind,
+  // The storage cap, as the number a customer is SHOWN. Bytes stay the enforcement unit
+  // everywhere; this pair only renders a count. See `billing.ts` for the measurement it comes
+  // from and why it rounds against us.
+  BYTES_PER_STORED_EMAIL_ESTIMATE, estimatedStoredEmails,
   entitlementsFor, liveSubscriptionOf, newestSubscriptionOf, effectiveSubscriptionOf,
   accountsWithSyncDisabled,
   claimBillingEvent, recordBillingEventFailure, recordBillingEventNoop,
@@ -169,7 +175,19 @@ export {
 } from "./storage-cloud.js";
 
 export {
-  makeAiCreditGate, aiRefusalReason, classifyLedgerSource, screenerLedgerSource, AI_ACTION_COST,
+  // The screening-only, expiring, once-per-mailbox setup pool (cloud 0021) and the gate wrapper
+  // the two Screener arms install over their spend gates. See `setup-grant.ts`.
+  SETUP_GRANT_CREDITS_PER_MAILBOX, SETUP_GRANT_TTL_DAYS,
+  grantSetupCredits, setupPoolOf, withSetupPool,
+} from "./setup-grant.js";
+
+export {
+  makeAiCreditGate, aiRefusalReason, classifyLedgerSource, screenerLedgerSource,
+  // The WEIGHTED debit schedule (2026-08-21), which replaced a flat one-credit-per-action price.
+  // `assertWeightedScheduleActive` is the boot guard the managed-AI arm calls: it refuses to
+  // construct against a flat schedule. See `ledger-source.ts`.
+  AI_ACTION_WEIGHTS, WEIGHTED_DEBIT_REASONS, aiActionCost, assertWeightedScheduleActive,
+  type WeightedDebitReason,
   // The account-level AI off switch (migration 0022). Read by the gate itself on every
   // spend decision; these two are the settings surface over the same column.
   getAiEnabled, setAiEnabled,

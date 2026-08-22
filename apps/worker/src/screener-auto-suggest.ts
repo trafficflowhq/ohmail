@@ -2,7 +2,7 @@ import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import {
   accountSettings, folderState, messages,
   screenerLedgerSource, storeScreenerSuggestion,
-  screenerSuggestedSenderExists, hasScreenerSuggestionForSender, AI_ACTION_COST,
+  screenerSuggestedSenderExists, hasScreenerSuggestionForSender, AI_ACTION_WEIGHTS,
   type AiCreditGate, type Tx,
 } from "@trafficflow/db";
 import { askScreeningQuestion, silentLogger, type ClassifierPort, type Logger } from "@trafficflow/core/mail";
@@ -407,10 +407,11 @@ export async function screenerAutoSuggestPass(
       await gate?.release?.(source);
       continue;
     }
-    // `+= AI_ACTION_COST` and not `++`: the field is credits, and `spend()` moves that many per
+    // `+= the weight` and not `++`: the field is credits, and `spend()` moves that many per
     // call. A `charged: false` is a free retry of an attempt already on record — reporting it as
-    // spend would say the account paid twice for one message.
-    if (chargedAttempt !== undefined) result.charged += AI_ACTION_COST;
+    // spend would say the account paid twice for one message. This pass books `debit_classify`,
+    // weight 1; naming the weight is what keeps the tally right now that prices are per-reason.
+    if (chargedAttempt !== undefined) result.charged += AI_ACTION_WEIGHTS.debit_classify;
 
     let verdict;
     try {
