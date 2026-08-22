@@ -1580,22 +1580,25 @@ export async function startWorkerWithLock(
             await recordSmtpMaxSize(db, mb.mailboxId, learned.maxMessageBytes);
             log.info("mailbox_smtp_size_learned", {
               mailboxId: mb.mailboxId, accountId: mb.accountId,
-              maxMessageBytes: learned.maxMessageBytes,
+              announcedBytes: learned.maxMessageBytes,
             });
           } else if (learned.outcome === "failed") {
             // A submission server that refuses a login costs this mailbox its ceiling and nothing
             // else — the strict fallback still applies and the mailbox still syncs. `info`, not
             // `warn`: a mailbox whose SMTP password differs from its IMAP one is a supported
             // configuration this deployment simply cannot probe, not an incident.
+            // A CLOSED CODE, never the submission server's own words: that text is written by a
+            // third party, routinely contains the username, and `reason` is an allowlisted field.
             log.info("mailbox_smtp_size_unlearned", {
-              mailboxId: mb.mailboxId, accountId: mb.accountId, reason: learned.error,
+              mailboxId: mb.mailboxId, accountId: mb.accountId, code: learned.code,
             });
           }
         } catch (err) {
           // The RECORD can still fail (a database fault), and it must not take the attach with it.
+          // The RECORD failed (a database fault), not the dial. `code` from our own taxonomy
+          // rather than the driver's message, on the same rule as the arm above.
           log.info("mailbox_smtp_size_unlearned", {
-            mailboxId: mb.mailboxId, accountId: mb.accountId,
-            reason: err instanceof Error ? err.message : String(err),
+            mailboxId: mb.mailboxId, accountId: mb.accountId, code: "unknown",
           });
         }
 

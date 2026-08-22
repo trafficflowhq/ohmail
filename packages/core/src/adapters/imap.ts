@@ -256,9 +256,11 @@ export interface SmtpLoginProof {
  *    password, and `verifySmtpLogin` authenticates with a static password: handing it a refresh
  *    token in the password seat is the mistake this narrowing exists to prevent. An oauth mailbox
  *    keeps the strict fallback until its own connect flow probes it.
- *  · NEVER THROWS. A submission server that refuses a login must cost this mailbox its ceiling and
- *    nothing else. On a sync host an exception here would abort an attach, which means a mailbox
- *    stops receiving mail over an attachment limit.
+ *  · NEVER THROWS, AND NEVER REPEATS THE SERVER'S WORDS. A submission server that refuses a login
+ *    must cost this mailbox its ceiling and nothing else — on a sync host an exception here would
+ *    abort an attach, which means a mailbox stops receiving mail over an attachment limit. The
+ *    failure is reported as a closed code rather than as a message, because the message is written
+ *    by a third party and callers log it: see {@link SmtpSizeFailure}.
  *  · SILENCE IS NOT A CEILING. No `SIZE`, a bare `SIZE` keyword, and `SIZE 0` (RFC 1870 §6, "no
  *    fixed maximum") all resolve to `null` and record NOTHING, leaving the strict fallback in
  *    place. A stored `0` would be a ceiling no message can clear.
@@ -281,8 +283,49 @@ export type SmtpSizeOutcome =
   | { outcome: "learned"; maxMessageBytes: number }
   /** Dialled, and the server announced nothing usable. Nothing to record. */
   | { outcome: "silent" }
-  /** The dial failed. Reported, never thrown. */
-  | { outcome: "failed"; error: string };
+  /** The dial failed. Reported, never thrown — as a CLOSED CODE, never as the server's words. */
+  | { outcome: "failed"; code: SmtpSizeFailure };
+
+/**
+ * WHY A FAILURE IS A CODE AND NOT A MESSAGE, which is a privacy boundary rather than tidiness.
+ *
+ * nodemailer's error text embeds the SMTP server's own response line. On an AUTH failure that
+ * response is written by somebody else's server and routinely contains the username; it can contain
+ * an echoed credential, and it can contain arbitrary provider-controlled text. Callers log this,
+ * `reason` is an allowlisted field in the structured logger, and the value scrubber only redacts
+ * strings that LABEL themselves as secrets — so a raw message here would be a path from a third
+ * party's socket to a log drain. The closed set below is derived from nodemailer's own `code`,
+ * never from its prose, so nothing a remote server writes can reach a log line through this.
+ */
+export type SmtpSizeFailure =
+  /** The server refused the credentials (nodemailer `EAUTH`). */
+  | "auth_refused"
+  /** Never got a usable connection: timeout, DNS, refused socket. */
+  | "unreachable"
+  /** The connection was made and TLS would not come up on the floor this product requires. */
+  | "tls_refused"
+  /** Anything else. Deliberately opaque — see the note above. */
+  | "unknown";
+
+/**
+ * Classify a dial failure from the ERROR'S CODE, never from its message.
+ *
+ * nodemailer sets `code` on the errors this path can produce (`EAUTH`, `ETIMEDOUT`,
+ * `ECONNECTION`, `ESOCKET`, `EDNS`, `ETLS`). An error with no code — including the plain
+ * `Connection closed` this module raises itself — is `unknown`, which is the honest answer and
+ * the one that leaks nothing.
+ */
+export function classifySmtpSizeFailure(err: unknown): SmtpSizeFailure {
+  const code = (err as { code?: unknown } | null | undefined)?.code;
+  if (typeof code !== "string") return "unknown";
+  switch (code) {
+    case "EAUTH": return "auth_refused";
+    case "ETIMEDOUT": case "ETIMEOUT": case "ECONNECTION": case "ESOCKET": case "EDNS":
+      return "unreachable";
+    case "ETLS": return "tls_refused";
+    default: return "unknown";
+  }
+}
 
 /** The minimal shape of a decrypted SMTP credential this rule reads. */
 export interface SmtpSizeCreds {
@@ -336,7 +379,8 @@ export async function learnSmtpMaxSize(input: {
       ? { outcome: "learned", maxMessageBytes: bytes }
       : { outcome: "silent" };
   } catch (err) {
-    return { outcome: "failed", error: err instanceof Error ? err.message : String(err) };
+    // A CODE, never the server's words. See {@link SmtpSizeFailure}.
+    return { outcome: "failed", code: classifySmtpSizeFailure(err) };
   }
 }
 

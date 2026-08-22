@@ -170,6 +170,20 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // ── the sentence a human reads, and the config name a human checks ──
   "connectMs", "leaseMs", "foldersMs", "kickstartMs", "watchMs", "attachMs",
   "reason", "detail", "kind", "severity", "phase", "state", "verdict", "configVar",
+  // ── The `SIZE` back-fill pass's counts and its two per-mailbox facts ──
+  //
+  // Added WITH the lines that emit them, not after, because this census has silently swallowed
+  // instrumentation twice already (the attach-phase durations above, `messageId` below) and the
+  // suites could not see it either time: a test that injects a fake logger asserts what a call
+  // site HANDS OVER, never what this list lets through.
+  //
+  // `announcedBytes` is the RFC 1870 `SIZE` a submission server published — a number about a
+  // server's configuration, carrying nothing about a person or a message. `code` is a member of
+  // the closed `SmtpSizeFailure` set and never the server's own words; the whole reason that type
+  // is a union of four literals is that `reason` one line up is allowlisted and the value scrubber
+  // only redacts strings that label themselves, so a remote server's AUTH response must not be
+  // able to arrive under either name.
+  "considered", "learned", "silent", "skipped", "failed", "announcedBytes",
   "disabledReason", "stoppedBy", "heldBy",
   // `syncBlockedReason` is mail 0029's `MAILBOX_SYNC_BLOCK_REASONS` member — one of three literals
   // this repository wrote, beside `disabledReason` for the same reason.
