@@ -114,8 +114,17 @@ const CHAT_ID = /^(?:-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/;
  * misses every variant this sink did not configure — a rotated token the API echoes back, or a
  * whole URL quoted inside an error body that {@link redactEndpoint} did not match verbatim.
  * Anything SHAPED like a bot token goes, whether or not it is ours.
+ *
+ * ── LOOKAROUNDS, NOT `\b`, AND THE DIFFERENCE IS A LEAKED CREDENTIAL ────────────────────
+ *
+ * Review finding. The token's secret half may legally END IN A HYPHEN, and `-` is not a word
+ * character — so `\b` after it needs a word character NEXT, and an echoed token followed by a
+ * quote, a comma or the end of the string has none. The scrub then silently did not fire, and
+ * `redactEndpoint`'s exact pass cannot save it either: that matches the whole ENDPOINT URL, so
+ * a token echoed on its own is not a substring it looks for. The boundary therefore has to be
+ * "not a token character" rather than "not a word character", stated in both directions.
  */
-const TOKEN_SHAPE = /\b\d{5,}:[A-Za-z0-9_-]{30,}\b/g;
+const TOKEN_SHAPE = /(?<![A-Za-z0-9_:-])\d{5,}:[A-Za-z0-9_-]{30,}(?![A-Za-z0-9_-])/g;
 
 /** Endpoint redaction plus the token shape. Bounded to 200 like every other sink's. */
 function redact(raw: string, endpoint: string): string {

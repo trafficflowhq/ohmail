@@ -224,6 +224,23 @@ async function alertPass(
         sinkFailureStreak: result.sinkFailureStreak,
       });
     }
+    for (const lost of result.sinkDegraded) {
+      // REDUNDANCY LOST ON *THIS* HOST — and this host is the only observer of a dead worker,
+      // so its arms going quiet one at a time is the version of the fault that can coincide
+      // with the outage it exists to report. The worker logs the same event about the worker's
+      // own arms; neither driver can see the other's, because a streak is one driver's
+      // experience of one sink (`DeliveryStreak`). Without this line an arm that died HERE
+      // would be silent while the worker cheerfully reported two healthy arms of its own.
+      log.error("alert_sink_degraded", {
+        sink: lost.sink,
+        outcome: lost.outcome,
+        consecutiveFailures: lost.consecutiveFailures,
+        survivors: lost.survivors,
+        sinkErrors: lost.error ? [`${lost.sink}: ${lost.error}`] : [],
+        reason: "one alert sink has refused every delivery for a full streak while another " +
+          "delivered — pages are still landing, and this host is back to a single vendor",
+      });
+    }
     if (result.escalate) {
       log.error("alerts_undeliverable", {
         firing: result.firing.length,
@@ -256,6 +273,10 @@ async function alertPass(
       sinkErrors: result.sinkErrors,
       sinkFailureStreak: result.sinkFailureStreak,
       undeliverable: result.undeliverable,
+      // Per-arm standing health, so an operator with curl can see WHICH arm is carrying the
+      // pages rather than only that something did. Closed codes and counts — the vendor's own
+      // sentence is already in `sinkErrors` above, which this endpoint's credential gates.
+      sinkHealth: result.sinkHealth,
     });
   } catch (err) {
     // `raw` means there is no error envelope above this handler, so it must never throw.
