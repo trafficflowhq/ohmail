@@ -286,10 +286,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const pending = engine.pendingMutations();
     if (pending.length === 0) return;
     // Everything pending was already retried since the last drain: wait for the next one.
-    // (A NEW intent arriving beside a stuck key does flush the whole queue — the engine's
-    // flush has no key filter — so a stuck key is replayed at most once per genuinely new
-    // arrival, under its unchanged Idempotency-Key. Bounded by user acts, never a loop; a
-    // keyed flush is an engine seam change and deliberately not made from this app.)
+    // (When a flush DOES run with a new key beside a stuck one, the whole queue replays —
+    // the engine's flush has no key filter — so a stuck key is replayed at most once per
+    // flush that a new arrival participates in, under its unchanged Idempotency-Key.
+    // Bounded by drains, never a loop; a keyed flush is an engine seam change and
+    // deliberately not made from this app.)
     if (pending.every((m) => tried.current.has(m.key))) return;
     for (const m of pending) tried.current.add(m.key);
     const flushed = engine;
@@ -316,9 +317,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       })
       .finally(() => {
         if (flushing.current === flushed) flushing.current = null;
-        // Re-run the effect: intents queued DURING this flush (or on a session that switched
-        // in under it) get their turn — the tried-latch keeps the batch that was merely
-        // REQUEUED from spinning a retry loop against a server that keeps refusing.
+        // Re-run the effect ONCE, for intents that queued DURING this flush (or on a session
+        // that switched in under it) — the tried-latch keeps the merely-REQUEUED batch from
+        // spinning against a server that keeps refusing. An intent that queues AFTER the
+        // flush settles waits for the next drain signal (`conn.syncing` falling), the same
+        // signal every retry waits for: this effect deliberately has no per-mutation trigger.
         setOutcomeSeq((n) => n + 1);
       });
     // `conn.syncing` falling is the drain-completed signal; `outcomeSeq` re-checks after a flush.
