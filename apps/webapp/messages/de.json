@@ -1813,6 +1813,8 @@
     "renewsOn": "Verlängert sich {when}",
     "endsOn": "Endet {when}",
     "trialEndsOn": "Testphase endet {when}",
+    "trialEndedOn": "Testphase endete {when}",
+    "periodEndedOn": "Abrechnungszeitraum endete {when}",
     "mailboxes": "Postfächer",
     "mailboxesSub": "Wie viele du in diesem Tarif verbinden kannst.",
     "credits": "Verbleibende KI-Guthabenpunkte",

@@ -303,6 +303,21 @@ export function BillingSection() {
   const planAllowsAi = aiAllowed || ent?.reason === "ai_disabled";
   const trialing = s?.status === "trialing";
   /**
+   * HAS THE RECORDED PERIOD END ALREADY GONE BY — a question about the DATE, not an entitlement.
+   *
+   * Measured on a live account: `status: "trialing"` with a `currentPeriodEnd` five days past,
+   * and the row read "Trial ends Aug 18, 2026" beside a status of "Trial". Nothing server-side
+   * expires a trial on the clock — `entitlementsFor` switches on the status, and only
+   * `canceled`/`unpaid` compare the period end to now — so a mirror row sits at `trialing` until
+   * the Stripe event that moves it arrives. Until then this pane is the only thing that can be
+   * honest about the date, and honesty here is a tense.
+   *
+   * It says nothing about what the account may still DO: the entitlement rows below are the
+   * server's answer to that and are not touched. This decides one word.
+   */
+  const periodEndPassed =
+    s?.currentPeriodEnd != null && new Date(s.currentPeriodEnd).getTime() < Date.now();
+  /**
    * THE SAME DERIVATION THE SCREENER'S LINE USES — so this pane and that line cannot say
    * different things about one balance.
    *
@@ -345,8 +360,18 @@ export function BillingSection() {
                  ("no charge until then"). `trialing` is judged before `cancelAtPeriodEnd`
                  because it is true either way: at that date the trial ends — into a plan if a
                  card was added, into nothing if not — and "Trial ends" is the sentence that is
-                 right in both futures. */
-              ? t(trialing ? "trialEndsOn" : s.cancelAtPeriodEnd ? "endsOn" : "renewsOn", {
+                 right in both futures.
+
+                 AND THERE ARE TWO PASTS BEHIND IT. Every string above is future tense, and the
+                 date is not always in the future (see `periodEndPassed`). A trial keeps its own
+                 sentence there, because "the trial ended" is the one thing that is true of a
+                 gone trial whichever way it went. Everything else collapses to the neutral
+                 one: for `cancelAtPeriodEnd` the period did end, and for a live plan whose
+                 recorded end has passed the honest statement is about the period this pane can
+                 see — not a renewal it cannot confirm happened. */
+              ? t(periodEndPassed
+                    ? (trialing ? "trialEndedOn" : "periodEndedOn")
+                    : trialing ? "trialEndsOn" : s.cancelAtPeriodEnd ? "endsOn" : "renewsOn", {
                   when: new Date(s.currentPeriodEnd).toLocaleDateString(undefined, { dateStyle: "medium" }),
                 })
               : ""}

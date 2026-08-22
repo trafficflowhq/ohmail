@@ -1813,6 +1813,8 @@
     "renewsOn": "Renews {when}",
     "endsOn": "Ends {when}",
     "trialEndsOn": "Trial ends {when}",
+    "trialEndedOn": "Trial ended {when}",
+    "periodEndedOn": "Billing period ended {when}",
     "mailboxes": "Mailboxes",
     "mailboxesSub": "How many you can connect on this plan.",
     "credits": "AI credits left",
