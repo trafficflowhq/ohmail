@@ -791,6 +791,21 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // No worker half: the sync host neither reads nor writes the column. Deploy order:
   // migration → API, no third step.
   ["devices", "last_synced_at"],
+  // mail 0065_junk_trash_delete — the provider's own \Junk/\Trash paths, discovered at connect.
+  // TWO columns land in one migration inside one transaction; the marker names `trash_folder`
+  // because it is the one whose absence changes an API decision (`MessageService.delete` refuses
+  // on NULL — reading it at all 42703s the delete), and the whole-row-select rule bites here the
+  // same way 0063's does: `MailboxService.list` does `select().from(mailboxes)`, so a too-early
+  // API takes out the mailbox panel. Worker half is loud on its own (the discovery UPDATE names
+  // both columns). Deploy order: migration → worker → API.
+  ["mailboxes", "trash_folder"],
+  // mail 0065, marker TWO — when a message left the mirror's living views. The predicates that
+  // read it are the snapshot bootstrap (`isNull(messages.deletedAt)`) and search's raw
+  // `m.deleted_at is null`, so an API ahead of the migration 42703s the fresh-mirror bootstrap
+  // and every search — and the delete route's own stamp UPDATE besides. No CHECK marker for the
+  // widened `message_bodies_withheld_reason` (0030's rule: replaced in the same migration
+  // transaction as these columns, so the column probe implies it).
+  ["messages", "deleted_at"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1362,8 +1377,19 @@ export const MAIL_EXPECTED_MARKERS =
  * transaction, so no database can hold one without the other, and the one named is the column the
  * pass's SELECTION filters on. It has no data statement and no index, so there is nothing left for
  * the runbook to carry.
+ *
+ * `0064_device_sync_stamp` is probed as `devices.last_synced_at` (its entry carries the
+ * whole-row-select argument). Its landing did not bump this tag — the anti-drift gate was red
+ * from that commit until 0065's markers landed, which is exactly the drift the gate exists to
+ * catch; recorded here rather than silently healed.
+ *
+ * `0065_junk_trash_delete` is probed TWICE — `mailboxes.trash_folder` (the delete refusal's
+ * read, plus `MailboxService.list`'s whole-row select) and `messages.deleted_at` (the snapshot
+ * bootstrap and search predicates). The widened `message_bodies_withheld_reason` CHECK rides
+ * the same migration transaction as the columns, so the column probes imply it (0030's rule).
+ * No data statement, no index; deploy order migration → worker → API is the file's own header.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0063_smtp_size_probe_stamp";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0065_junk_trash_delete";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
