@@ -36,6 +36,28 @@
 # the pipe, the producer takes SIGPIPE, and under a leading `!` that death reads as "produced
 # nothing". It is size-dependent, so it looks like flakiness rather than a defect. Every check here
 # captures into a variable and tests the variable.
+#
+# ── THE RELEASE BUILD IS MINIFIED, AND THAT NEARLY BROKE THIS SCRIPT SILENTLY ──────────────────
+#
+# R8 is on for release (apps/mobile/plugins/release-minification.js, to strip a push secret out of
+# logcat). Every check below is a search for a TYPE DESCRIPTOR, and obfuscation renames type
+# descriptors: minified, `com/google/android/gms/cloudmessaging/CloudMessage` is spelled `La/b/c;`,
+# this grep finds nothing, and an ABSENCE check that cannot see its subject PASSES. Turning
+# minification on would therefore have converted the central checks of this script into vacuous
+# ones — permanently green, while the thing they ban walks in under a new name, and nothing
+# anywhere would have failed.
+#
+# What keeps them meaningful is a set of `-keepnames` rules in that plugin, covering exactly the
+# namespaces named here: `com.google.firebase.**`, `com.google.android.gms.**` and the embedded
+# distributor. `-keepnames` forbids RENAMING while still allowing SHRINKING, which is the
+# combination this script needs: unreachable code is still deleted from the binary (a real
+# improvement — see the allow-list discussion below), and anything reachable keeps the name the
+# grep looks for.
+#
+# So the two files are load-bearing for each other. If those `-keepnames` rules are ever dropped,
+# this script does not go red; it goes quiet. The connector canary below is the one thing that
+# would still fail, because the connector is `-keep`-ed by name for its own reasons — which is why
+# it is checked FIRST and why its failure message says the scan is broken rather than the APK.
 set -euo pipefail
 
 APK="${1:?usage: assert-no-fcm.sh <path-to-apk>}"
@@ -62,7 +84,13 @@ test "$DEX_COUNT" -ge 1 \
   || { echo "assert-no-fcm: no classes*.dex came out of the APK — nothing was scanned" >&2; exit 1; }
 
 cat "$WORK"/classes*.dex > "$WORK/all.dex"
-DEX_BYTES=$(stat -c%s "$WORK/all.dex")
+# Portable file size. The workflow runs this on ubuntu (GNU `stat -c`); it is also run by hand
+# against a locally built APK on macOS (BSD `stat -f`), which is how the minification change was
+# smoked before it shipped. A guard nobody can run locally is a guard nobody watches fail.
+fsize() {
+  stat -c%s "$1" 2>/dev/null || stat -f%z "$1"
+}
+DEX_BYTES=$(fsize "$WORK/all.dex")
 # A floor, so a truncated or empty extraction cannot pass the absence checks. A release APK's dex is
 # several megabytes; one megabyte is a generous floor that still catches "nothing came out".
 test "$DEX_BYTES" -gt 1000000 \
@@ -145,6 +173,15 @@ check_absent() {
 # inside an allowed package — `com/google/firebase/components/PushClient` — would have been waved
 # through as inert. So the permitted set is the exact descriptor list measured from a real build,
 # and anything outside it is red with its own name printed.
+#
+# SINCE MINIFICATION, THE FOUND SET IS USUALLY A SUBSET OF THE ALLOW-LIST, AND THAT IS THE RULE
+# WORKING RATHER THAN THE CHECK ROTTING. The allow-listed classes are inert precisely because they
+# are reachable from nothing, and `-keepnames` allows shrinking — so R8 deletes most of them from
+# the binary outright. `comm -23` compares found-against-allowed and cares only about what is
+# found and NOT allowed, so a shrinking set stays green for the right reason and the assertion is
+# unchanged: anything Firebase that survives into the dex must be one of the enumerated inert
+# classes. The `>= 50` floor below is a check on the FILE, not on the APK, so it still holds when
+# the APK contains none of them.
 ALLOWLIST="$(dirname "$0")/firebase-inert-allowlist.txt"
 test -f "$ALLOWLIST" || { echo "assert-no-fcm: missing $ALLOWLIST" >&2; exit 1; }
 /usr/bin/grep '^Lcom/google/firebase/' "$ALLOWLIST" | sort -u > "$WORK/fb-allowed"
@@ -208,6 +245,18 @@ if [ "${n:-0}" -gt 0 ]; then
 else
   echo "assert-no-fcm: MISSING the silent push renderer class ($RENDERER_DESC)." >&2
   echo "  Check that plugins/silent-push-renderer.js wrote the class into the generated project." >&2
+  # SECOND CAUSE, and since minification was turned on it is the more likely one. The connector
+  # only ever names this class as a STRING (an AndroidManifest meta-data value it hands to
+  # Class.forName), and a string is not a code reference — so R8 sees an unreferenced class, and
+  # renames it or drops it as unused. `resolvePayloadRenderer` then returns null and the service
+  # falls back to its DEFAULT renderer, which draws server-supplied title/body/image with a
+  # server-supplied ACTION_VIEW tap target. That is the phishing surface the renderer exists to
+  # close, reopened, with nothing else in the build reporting a problem. This assertion is the
+  # only thing standing between that rule going missing and it shipping.
+  echo "  If minification is on, the more likely cause is a missing keep rule: the connector names" >&2
+  echo "  this class only as a manifest meta-data STRING, so R8 cannot see the reference and will" >&2
+  echo "  rename or drop it. apps/mobile/plugins/release-minification.js must carry" >&2
+  echo "  '-keep class $RENDERER_FQCN { *; }'." >&2
   fail=1
 fi
 

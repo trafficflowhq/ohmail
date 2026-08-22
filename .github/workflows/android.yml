@@ -143,6 +143,13 @@ jobs:
       - name: No Google push code in the binary
         run: bash .github/scripts/assert-no-fcm.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
 
+      # AND THIS IS ALSO THE CHECK THAT MINIFICATION HAPPENED AT ALL. The strip rules are inert
+      # without `android.enableMinifyInReleaseBuilds`, and a config plugin that silently stopped
+      # applying would leave a working, shippable APK with the leak back in it. There is no
+      # separate "is R8 on" assertion because this one cannot pass without it.
+      - name: The push registration is not in logcat
+        run: bash .github/scripts/assert-log-hygiene.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ohmail-android-debug-signed
@@ -220,6 +227,12 @@ jobs:
       # signed and attached, so it is the one whose contents are a published claim.
       - name: No Google push code in the binary
         run: bash .github/scripts/assert-no-fcm.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+
+      # On the TAG path too: this is the artifact that gets signed and attached, so its contents
+      # are a published claim. Also the only assertion that minification actually ran — the strip
+      # rules do nothing without it, and an APK with the leak back in is otherwise shippable.
+      - name: The push registration is not in logcat
+        run: bash .github/scripts/assert-log-hygiene.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
