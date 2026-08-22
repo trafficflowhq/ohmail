@@ -87,7 +87,17 @@ interface CredMeta extends CredMetaAuth {
  * is in flight — see {@link learnMissingSmtpSizes}. Carried out of the resolution rather than
  * re-read at the write, because the point is the value AS IT WAS WHEN PROBED.
  */
-interface ProbeTarget {
+/**
+ * EXPORTED FOR ONE REASON: the real-Postgres guard drives {@link stampProbe} directly.
+ *
+ * The pass's selection is fleet-wide and randomly ordered, so no test can steer a batch onto a row
+ * it seeded in a shared database — which means the concurrency question this write exists to answer
+ * ("does a genuinely concurrent, genuinely COMMITTED credential write change what this statement
+ * matches?") is unreachable through `learnMissingSmtpSizes` there. Exporting the write lets that
+ * question be asked against the statement itself, with a second connection and a real commit
+ * barrier, instead of against a restatement of it.
+ */
+export interface ProbeTarget {
   creds: SmtpSizeCreds;
   /**
    * WHICH ROW the secret came from, and WHAT ABOUT IT the write is allowed to depend on.
@@ -331,7 +341,7 @@ export interface SmtpSizePassResult {
  * flow writes it to say "this server states no ceiling"), so it is an absent property rather than an
  * explicit null: nothing in this pass may clear a number another writer put there.
  */
-async function stampProbe(
+export async function stampProbe(
   deps: ApiDeps,
   mailboxId: string,
   code: SmtpSizeProbeCode,
