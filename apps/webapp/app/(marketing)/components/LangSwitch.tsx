@@ -60,13 +60,22 @@ import { useSessionPresence } from "./session-presence";
  * storage is blocked the only cost is that the product starts in English, which is the same
  * cost every other locale-less visit has.
  *
- * BOTH ACTIVATIONS THAT CAN FIRE A HANDLER DO. `onClick` covers a primary click and the
- * keyboard; a MIDDLE click fires `onAuxClick` and not `onClick`, so "open the other language in
- * a new tab" used to switch the page and leave the product on the old language. One residual is
- * not reachable from here and is recorded rather than papered over: the context menu's "Open
- * link in a new tab" fires no handler at all, so that tab's `/de` still records German through
- * `RememberLocale` while that tab's `/` records nothing — English is the resting state and is
- * deliberately never written down (`app/shell/locale.ts`).
+ * BOTH ACTIVATIONS THAT CAN FIRE A HANDLER DO, AND NO MORE THAN THOSE. `onClick` covers a
+ * primary click and the keyboard; a MIDDLE click fires `onAuxClick` and not `onClick`, so
+ * "open the other language in a new tab" used to switch the page and leave the product on the
+ * old language.
+ *
+ * `auxclick` fires for EVERY non-primary button, the RIGHT one included, and that made the
+ * first version of this handler worse than the gap it closed: right-clicking the link to copy
+ * its address — or to dismiss the menu again — changed the language of every later product
+ * route while the page in front of the reader did not move at all. One bug loses a preference;
+ * the other invents one, silently, from a gesture that opens no document. So the handler is
+ * gated on button 1, the middle button, which is the only aux button that navigates.
+ *
+ * One residual is not reachable from here and is recorded rather than papered over: the context
+ * menu's own "Open link in a new tab" fires no handler at all, so that tab's `/de` still
+ * records German through `RememberLocale` while that tab's `/` records nothing — English is the
+ * resting state and is deliberately never written down (`app/shell/locale.ts`).
  */
 
 /** The other locale, for each locale. Exhaustive over the closed set by construction. */
@@ -93,7 +102,7 @@ export function LangSwitch({ className }: { className: string }) {
       hrefLang={other}
       lang={other}
       onClick={() => rememberLocale(other)}
-      onAuxClick={() => rememberLocale(other)}
+      onAuxClick={(event) => { if (event.button === 1) rememberLocale(other); }}
     >
       {other === "de" ? t("languageName.de") : t("languageName.en")}
     </a>
