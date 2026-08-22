@@ -79,7 +79,6 @@ export function MessageActions({ m }: { m: WorldMail }) {
             paddingTop: 10,
             paddingBottom: 8 + insets.bottom,
             flexDirection: "row",
-            flexWrap: "wrap",
             alignItems: "center",
             gap: 7,
           },
@@ -87,34 +86,44 @@ export function MessageActions({ m }: { m: WorldMail }) {
           t.liftUp("barEdge"),
         ]}
       >
-        <Button
-          label={Copy.actionReply}
-          icon="pen"
-          variant="solid"
-          onPress={() => setOpen({ compose: "reply" })}
-        />
-        {/* The three horizons — toggles, with the pile that holds the message shown pressed. */}
-        <BarToggle
-          label={Copy.actionLater}
-          icon="clock"
-          on={m.pile === "reply_later"}
-          onPress={() => a.pileToggle(m.id, "replyLater")}
-        />
-        <BarToggle
-          label={Copy.actionSetAside}
-          icon="pause"
-          on={m.pile === "set_aside"}
-          onPress={() => a.pileToggle(m.id, "setAside")}
-        />
-        {/* Resurface asks "when?" — except on a message already scheduled, where the press is
-            the webapp's horizon-less toggle: it clears the booking rather than re-dating it. */}
-        <BarToggle
-          label={Copy.actionResurface}
-          icon="up"
-          on={m.pile === "bubbled_up"}
-          onPress={() => (m.pile === "bubbled_up" ? a.resurfaceToggle(m.id) : setOpen("resurface"))}
-        />
-        <View style={{ flex: 1 }} />
+        {/* ONE ROW, NEVER TWO. The verbs ride a horizontal scroller and More is pinned outside
+            it, because a wrapping bar puts More alone on a second line as a stray glyph — the
+            first release-binary walk produced exactly that. A narrow phone scrolls the verbs;
+            the disclosure stays where a thumb expects it. */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ flexGrow: 1, flexShrink: 1 }}
+          contentContainerStyle={{ flexDirection: "row", alignItems: "center", gap: 7, paddingRight: 4 }}
+        >
+          <Button
+            label={Copy.actionReply}
+            icon="pen"
+            variant="solid"
+            onPress={() => setOpen({ compose: "reply" })}
+          />
+          {/* The three horizons — toggles, with the pile that holds the message shown pressed. */}
+          <BarToggle
+            label={Copy.actionLater}
+            icon="clock"
+            on={m.pile === "reply_later"}
+            onPress={() => a.pileToggle(m.id, "replyLater")}
+          />
+          <BarToggle
+            label={Copy.actionSetAside}
+            icon="pause"
+            on={m.pile === "set_aside"}
+            onPress={() => a.pileToggle(m.id, "setAside")}
+          />
+          {/* Resurface asks "when?" — except on a message already scheduled, where the press is
+              the webapp's horizon-less toggle: it clears the booking rather than re-dating it. */}
+          <BarToggle
+            label={Copy.actionResurface}
+            icon="up"
+            on={m.pile === "bubbled_up"}
+            onPress={() => (m.pile === "bubbled_up" ? a.resurfaceToggle(m.id) : setOpen("resurface"))}
+          />
+        </ScrollView>
         <Tap
           onPress={() => setOpen("more")}
           accessibilityRole="button"
