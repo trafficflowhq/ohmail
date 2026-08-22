@@ -7,9 +7,10 @@ import { runMigrations, JOURNALS } from "./migrate.js";
 import { ensureSearchExtensions } from "./search-setup.js";
 import { transactionPoolerReason, sessionUrlRejection } from "./session-url.js";
 import {
-  applySupabaseLockdown, closeDataApiEndpoint, dataApiProblems, dataApiTargetProblem,
-  dataApiUnverifiedProblem, lockdownCensus, lockdownProblems, probeDataApi, publicRelationNames,
-  SENSITIVE_PROBE_TABLES, supabaseHostRoles, type DataApiDeps, type DataApiPolicy,
+  applySupabaseLockdown, closeDataApiEndpoint, dataApiBindingProblems, dataApiBindingUnprovable,
+  dataApiProblems, dataApiUnverifiedProblem, lockdownCensus, lockdownProblems, probeDataApi,
+  publicRelationNames, SENSITIVE_PROBE_TABLES, supabaseHostRoles,
+  type DataApiDeps, type DataApiPolicy,
 } from "./supabase-lockdown-core.js";
 
 /**
@@ -462,17 +463,25 @@ export async function setupProdDatabase(
         dataApiProblemLines.push(dataApiUnverifiedProblem(policy.missing));
       } else {
         const deps = opts.dataApiDeps ?? {};
-        // Before anything is asked of the endpoint: is it the endpoint in front of THIS
-        // database? A stale ref probes a project nobody provisioned, comes back clean, and
-        // means nothing — and the endpoint half would PATCH that project's configuration.
-        // So a mismatch stops here rather than proceeding to touch somebody else's project.
-        const mismatch = policy.derivedFromRef
-          ? dataApiTargetProblem(url, policy.derivedFromRef)
-          : null;
-        if (mismatch) {
-          dataApiProblemLines.push(mismatch);
-          log(`supabase data API: ${mismatch}`);
+        // Before anything is asked of the endpoint — or written to anyone's project — does
+        // every project this run would touch belong to the database in front of us? A stale
+        // ref probes a project nobody provisioned, comes back clean, and means nothing; with a
+        // management token it also rewrites that project's Data API configuration. So a
+        // mismatch stops here, before the first request leaves.
+        const binding = dataApiBindingProblems(url, policy.target);
+        if (binding.length > 0) {
+          dataApiProblemLines.push(...binding);
+          for (const b of binding) log(b);
         } else {
+          if (dataApiBindingUnprovable(policy.target)) {
+            // Not a problem: a self-hosted gateway or a custom domain cannot be tied to a
+            // database from here. Said out loud, because the verdict below rests on it.
+            log(
+              `supabase data API: ${policy.target.baseUrl} names no hosted project, so that it ` +
+                "fronts THIS database is the operator's statement and not something this run " +
+                "verified",
+            );
+          }
           try {
             let endpointClosed = false;
             if (policy.target.close) {

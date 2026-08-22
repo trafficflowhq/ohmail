@@ -418,25 +418,39 @@ export interface DataApiTarget {
  * a host that has the exposure class, and ignore it on a plain Postgres that cannot.
  */
 export type DataApiPolicy =
-  | {
-      kind: "verify";
-      target: DataApiTarget;
-      /**
-       * Set ONLY when `baseUrl` was derived from a project ref rather than stated outright.
-       * {@link dataApiTargetProblem} then requires the provisioned database to name that ref —
-       * see there for why a probe of the wrong project is the failure mode that matters.
-       */
-      derivedFromRef?: string;
-    }
+  | { kind: "verify"; target: DataApiTarget }
   | { kind: "unverifiable"; missing: string[] };
 
-/** Injection seams. Tests supply both; production supplies neither. */
+/** Injection seams. Tests supply them; production supplies none. */
 export interface DataApiDeps {
   fetch?: typeof globalThis.fetch;
   sleep?: (ms: number) => Promise<void>;
   /** How long to wait after an endpoint change before probing. Config changes propagate. */
   settleMs?: number;
+  /** Per-request deadline, headers AND body. See {@link DATA_API_REQUEST_TIMEOUT_MS}. */
+  timeoutMs?: number;
+  /** Whole-probe deadline. See {@link DATA_API_PROBE_BUDGET_MS}. */
+  budgetMs?: number;
 }
+
+/**
+ * One request's deadline — and it is not a nicety.
+ *
+ * `fetch` has no application timeout, and neither does reading the body: an endpoint that
+ * accepts the connection and then stalls, or dribbles an error body forever, blocks the
+ * provisioning run indefinitely with a database client open. Sequential probing turns one such
+ * relation into a hang of the whole command. An abort makes it what it actually is — an answer
+ * that proves nothing — which the caller already fails on.
+ */
+export const DATA_API_REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * The whole probe's deadline. Per-request timeouts bound each answer; this bounds their SUM,
+ * because a schema with a hundred relations behind a uniformly slow endpoint is a long hang made
+ * of short ones. Relations left unprobed when it expires are reported as UNKNOWN — never
+ * silently dropped, which would make the verdict cover fewer tables than it claims.
+ */
+export const DATA_API_PROBE_BUDGET_MS = 120_000;
 
 /** The env names the provisioning CLI reads for {@link dataApiPolicyFromEnv}. */
 export const DATA_API_ENV = {
@@ -458,6 +472,30 @@ export interface DataApiProbeResult {
 }
 
 export type DataApiVerdict = "exposed" | "refused" | "unknown";
+
+/**
+ * The error codes that prove a RELATION-level refusal — an ALLOWLIST, because the fail-closed
+ * direction of a mistake here is a false failure and the other direction is a false sign-off.
+ *
+ * The distinction the list encodes: PostgREST answers some errors BEFORE it ever resolves the
+ * relation. Its `PGRST3xx` family is exactly that — JWT/authentication failures — so an expired
+ * or malformed key gets the same 401 from an EXPOSED table as from a closed one, which is the
+ * gateway hazard one layer in. Only these codes mean "the request reached the relation and was
+ * turned away":
+ *
+ *   · `42501`    — Postgres: permission denied for the relation (the lockdown working);
+ *   · `42P01`    — Postgres: the relation does not exist;
+ *   · `3F000`    — Postgres: the schema does not exist;
+ *   · `PGRST205` — the table is not in the exposed schema cache (the endpoint half working);
+ *   · `PGRST106` — the requested schema is not exposed at all.
+ *
+ * Anything else with a code — including a PostgREST code this list has not met — is UNKNOWN, and
+ * the caller fails on UNKNOWN. A new refusal code costs one failed provisioning run and a line
+ * here; a new code silently read as a refusal costs a world-readable database.
+ */
+export const RELATION_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  "42501", "42P01", "3F000", "PGRST205", "PGRST106",
+]);
 
 /** PostgREST's own error `code`, or `null` when the body is not one of its error payloads. */
 function postgrestErrorCode(body: string): string | null {
@@ -487,11 +525,16 @@ export function classifyDataApiResponse(
     return { verdict: "exposed", note: `HTTP ${status}` };
   }
   const code = postgrestErrorCode(body);
-  if (code && (status === 401 || status === 403 || status === 404)) {
+  if (code && RELATION_REFUSAL_CODES.has(code) && (status === 401 || status === 403 || status === 404)) {
     return { verdict: "refused", note: `HTTP ${status} ${code}` };
   }
   if (code) {
-    return { verdict: "unknown", note: `HTTP ${status} ${code} — not a refusal shape` };
+    // Notably a `PGRST3xx` — an authentication failure raised before the relation was resolved,
+    // which an exposed table answers identically. See {@link RELATION_REFUSAL_CODES}.
+    return {
+      verdict: "unknown",
+      note: `HTTP ${status} ${code} — not a relation-level refusal`,
+    };
   }
   return {
     verdict: "unknown",
@@ -509,23 +552,41 @@ export async function probeDataApi(
   deps: DataApiDeps = {},
 ): Promise<DataApiProbeResult> {
   const doFetch = deps.fetch ?? globalThis.fetch;
+  const timeoutMs = deps.timeoutMs ?? DATA_API_REQUEST_TIMEOUT_MS;
+  const budgetMs = deps.budgetMs ?? DATA_API_PROBE_BUDGET_MS;
+  const deadline = Date.now() + budgetMs;
   const exposed: string[] = [];
   const unknown: string[] = [];
   for (const table of tables) {
+    if (Date.now() >= deadline) {
+      // Reported, not dropped: a verdict that quietly covers fewer relations than it names is
+      // the vacuous-pass shape this whole module is built against.
+      unknown.push(`${table} (not probed: the ${budgetMs}ms probe budget was exhausted)`);
+      continue;
+    }
     let status: number;
     let body: string;
     try {
+      // One signal for the whole exchange — it aborts a stalled body read as well as a stalled
+      // response, which is the half a headers-only timeout would miss.
       const res = await doFetch(
         `${target.baseUrl}/rest/v1/${encodeURIComponent(table)}?select=*&limit=1`,
-        { headers: { apikey: target.anonKey, Authorization: `Bearer ${target.anonKey}` } },
+        {
+          headers: { apikey: target.anonKey, Authorization: `Bearer ${target.anonKey}` },
+          signal: AbortSignal.timeout(timeoutMs),
+        },
       );
       status = res.status;
       // A 2xx body is rows; we do not read or log them. Everything else is an error payload,
       // and its shape is the evidence.
-      body = status >= 200 && status < 300 ? "" : await res.text().catch(() => "");
+      body = status >= 200 && status < 300 ? "" : await res.text();
     } catch (e) {
       // "The request failed so we must be safe" is how a DNS hiccup becomes a sign-off.
-      unknown.push(`${table} (probe failed: ${(e as Error).message})`);
+      const err = e as Error;
+      const why = err.name === "TimeoutError" || err.name === "AbortError"
+        ? `no complete answer within ${timeoutMs}ms`
+        : err.message;
+      unknown.push(`${table} (probe failed: ${why})`);
       continue;
     }
     const { verdict, note } = classifyDataApiResponse(status, body);
@@ -556,6 +617,9 @@ export async function closeDataApiEndpoint(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ db_schema: "graphql_public", db_extra_search_path: "public" }),
+      // A management API that accepts the connection and stalls would otherwise hang the
+      // provisioning run before it ever reached the probe.
+      signal: AbortSignal.timeout(deps.timeoutMs ?? DATA_API_REQUEST_TIMEOUT_MS),
     },
   );
   // Truncated: this string reaches an operator's log, and a management API error body is
@@ -595,23 +659,29 @@ export function dataApiProblems(result: DataApiProbeResult): string[] {
 }
 
 /**
- * Does the endpoint about to be probed belong to the database that was just provisioned?
+ * Does a project ref name the database that was just provisioned?
  *
  * This is the hole a clean probe would otherwise leave wide open: point `SUPABASE_PROJECT_REF`
  * at a DIFFERENT project — a stale value in a shell, a copied line from another deployment — and
  * every relation comes back refused, because that project's endpoint really is closed. The run
- * then prints a verdict about a database nobody provisioned. It is the same class of mistake
+ * then prints a verdict about a database nobody provisioned, and with a management token in the
+ * environment it also rewrites that project's configuration. It is the same class of mistake
  * {@link assertExpectedHost} exists for on the SQL side, one connection over.
  *
  * A hosted project's ref appears in the connection string in both shapes the platform issues:
  * `db.<ref>.supabase.co` puts it in the host, and the session pooler puts it in the USER
  * (`postgres.<ref>@…pooler…`), which is the shape production uses — so the check reads both.
  *
- * Only applies when the endpoint was DERIVED from a ref. An operator who states the base URL
- * outright (a self-hosted gateway, a custom domain) has said which endpoint belongs to this
- * database, and this cannot second-guess that without knowing their topology.
+ * COMPONENT-EXACT, never a substring: a role named `migrator_<other-ref>` or a host like
+ * `<other-ref>-backup.example.com` would satisfy a substring test for a project this database
+ * has nothing to do with, which is the check certifying the mistake it exists to catch. The ref
+ * has to BE one of the dot-separated components.
  */
-export function dataApiTargetProblem(dbUrl: string, ref: string): string | null {
+export function dataApiTargetProblem(
+  dbUrl: string,
+  ref: string,
+  what = "the endpoint",
+): string | null {
   const r = ref.trim().toLowerCase();
   if (!r) return null;
   let u: URL;
@@ -619,22 +689,75 @@ export function dataApiTargetProblem(dbUrl: string, ref: string): string | null 
     u = new URL(dbUrl);
   } catch {
     return `supabase data API: the database URL is not parseable, so nothing can confirm that ` +
-      `the endpoint for project '${ref}' is the one in front of it`;
+      `${what} for project '${ref}' belongs to it`;
   }
-  const user = (() => {
-    try {
-      return decodeURIComponent(u.username);
-    } catch {
-      return u.username;
-    }
-  })().toLowerCase();
-  if (u.hostname.toLowerCase().includes(r) || user.includes(r)) return null;
+  let user = u.username;
+  try {
+    user = decodeURIComponent(u.username);
+  } catch {
+    /* a stray % in a role name — compare the raw form rather than give up */
+  }
+  const components = [
+    ...u.hostname.toLowerCase().split("."),
+    ...user.toLowerCase().split("."),
+  ];
+  if (components.includes(r)) return null;
   return (
     `supabase data API: the database at '${u.hostname}' does not name project '${ref}' in its ` +
-    "host or its user, so probing that project's endpoint would be a verdict about a DIFFERENT " +
-    `database — a refusal there proves nothing about this one. Set ${DATA_API_ENV.baseUrl} to ` +
-    "the endpoint that fronts THIS database if the two really are related"
+    `host or its user, so ${what} would be a verdict about — or a change to — a DIFFERENT ` +
+    `project. Set ${DATA_API_ENV.baseUrl} to the endpoint that fronts THIS database if the two ` +
+    "really are related"
   );
+}
+
+/** The `<ref>` of a hosted Data API URL, or `null` for a self-hosted gateway or custom domain. */
+export function hostedProjectRef(baseUrl: string): string | null {
+  try {
+    const m = /^([a-z0-9-]{1,63})\.supabase\.co$/i.exec(new URL(baseUrl).hostname);
+    return m ? m[1]!.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every project this run would touch, checked against the database it is provisioning.
+ *
+ * Two of them, and the second is the one a narrower check missed: the endpoint about to be
+ * PROBED (identifiable whenever the base URL is a hosted one, however it was configured — a
+ * ref-derived URL and an explicitly stated hosted URL are the same fact), and the project whose
+ * configuration the endpoint half would REWRITE, which is always identified by a ref and must
+ * therefore always be checkable. An explicit URL made the first check defer; it never licensed
+ * a PATCH of a project the database does not name.
+ *
+ * A base URL that is not hosted — a self-hosted gateway, a custom domain — cannot be tied to a
+ * database from here without knowing the operator's topology. That case yields no problem and
+ * no evidence either: see {@link dataApiBindingUnprovable}, whose caller says so out loud.
+ */
+export function dataApiBindingProblems(dbUrl: string, target: DataApiTarget): string[] {
+  const urlRef = hostedProjectRef(target.baseUrl);
+  const closeRef = target.close?.projectRef.trim().toLowerCase() ?? null;
+  const roles = new Map<string, string>();
+  if (urlRef) roles.set(urlRef, "the endpoint about to be probed");
+  if (closeRef) {
+    roles.set(
+      closeRef,
+      roles.has(closeRef)
+        ? "the endpoint about to be probed, whose configuration would also be rewritten"
+        : "the project whose Data API configuration would be rewritten",
+    );
+  }
+  const problems: string[] = [];
+  for (const [ref, what] of roles) {
+    const p = dataApiTargetProblem(dbUrl, ref, what);
+    if (p) problems.push(p);
+  }
+  return problems;
+}
+
+/** True when nothing about this target can be tied to a database — the operator's word alone. */
+export function dataApiBindingUnprovable(target: DataApiTarget): boolean {
+  return hostedProjectRef(target.baseUrl) === null && !target.close;
 }
 
 /** The refusal when a Supabase-shaped host was provisioned with no way to check its endpoint. */
@@ -692,8 +815,5 @@ export function dataApiPolicyFromEnv(
       // projects by ref, so a self-hosted base URL alone cannot drive it.
       close: ref && accessToken ? { projectRef: ref, accessToken } : undefined,
     },
-    // Only when the URL was BUILT from the ref: an explicitly stated base URL is the operator
-    // telling us which endpoint fronts this database, and {@link dataApiTargetProblem} defers.
-    derivedFromRef: explicit ? undefined : ref,
   };
 }
