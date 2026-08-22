@@ -50,27 +50,36 @@ const {
  * decides whether to wake at all, so that is inside its existing power (a spurious silent sync),
  * not a new capability, and it is not a phishing vector: fixed text, no payload-supplied URL.
  *
- * ── AND ONLY WHEN THERE IS NO JS TO HANDLE IT — WITHOUT A SIDE-EFFECTING PROBE ────────────────
+ * ── AND ONLY WHEN THERE IS NO MOUNTED SURFACE TO HANDLE IT — WITHOUT READING THE HOST ─────────
  *
  * `ExpoUPService.onMessage` runs the renderer on EVERY delivered wake, alive or dead — the
- * connector gives us no "is the app running" flag. The obvious probe, reading
- * `ReactApplication.reactHost.currentReactContext`, is a TRAP and was measured to be one: `reactHost`
- * is a `by lazy`, so reading it CREATES and starts the host, which populates the context — the probe
- * makes its own answer true, and the killed-app notice never draws. (Proven on an emulator: with the
- * probe in place the renderer's channel was never even created.)
+ * connector gives us no "is the app running" flag. Two tempting probes are both wrong, and both
+ * were reasoned/measured out:
  *
- * So the check is a two-stage one, and the FLAG comes first precisely so the host is never read on
- * the killed path. A tiny auto-start `ContentProvider` (`WakeInteractiveInitializer`) registers
- * `ActivityLifecycleCallbacks` in `onCreate`, which runs in EVERY process start — including the one
- * the connector's broadcast spawns — before any other component. In a process spawned only for the
- * broadcast no Activity is ever created, so the flag stays false: the renderer draws the notice and
- * NEVER touches `reactHost` (reading a boolean has no side effect). In a process where the app was
- * opened an Activity was created, so the flag is true AND the host already exists — only then does
- * the renderer read `currentReactContext`, a cheap cached read that is non-null while JS is alive
- * (foreground or backgrounded, where `onWake` syncs) and null once the context has been torn down
- * (the task was removed but the process lingers). So a running app suppresses the notice, a killed
- * app draws it, and a lingering process with no JS left also draws it instead of losing the wake.
- * Process death resets the flag, which is the clean transition from "alive" to "killed".
+ *  · reading `ReactApplication.reactHost.currentReactContext` in the broadcast process is a TRAP —
+ *    `reactHost` is a `by lazy`, so reading it CREATES and starts the host and makes a killed
+ *    process look alive (proven on an emulator: the notice's channel was never even created);
+ *  · and even where the host already exists, `currentReactContext` is the WRONG question: when the
+ *    task is swiped away, React tears down the SURFACE (`onHostDestroy`) — unmounting the tree and
+ *    with it `state/wake.tsx`'s `onWake` listener — but leaves the ReactHost, so the context stays
+ *    non-null and a context read would wrongly suppress the notice in exactly the case this exists
+ *    for.
+ *
+ * The right question is "is the React SURFACE mounted", and the answer is a plain count. A tiny
+ * auto-start `ContentProvider` (`WakeInteractiveInitializer`) registers `ActivityLifecycleCallbacks`
+ * in `onCreate`, which runs in EVERY process start — including the one the connector's broadcast
+ * spawns — before any other component, and keeps a count of activities CREATED minus DESTROYED.
+ * The renderer reads only that count (`WakeAppState.interactive` = count > 0), never the host:
+ *
+ *  · a broadcast-only process never creates an Activity → 0 → draw (the killed-app case);
+ *  · foreground, and backgrounded-after-opening (home STOPS the Activity but does not destroy it, so
+ *    the surface stays mounted and `onWake` still fires) → >= 1 → suppress;
+ *  · task swiped away → the Activity is DESTROYED and the surface torn down → 0 → draw, instead of
+ *    losing the wake.
+ *
+ * Process death resets the count, the clean "alive → killed" transition. It counts create/destroy
+ * rather than start/stop precisely so a backgrounded app (surface mounted, `onWake` live) keeps
+ * suppressing.
  *
  * ── NO NETWORK, NO LOGGING, RETURNS null ──────────────────────────────────────────────────────
  *
@@ -125,18 +134,35 @@ const APP_STATE_SOURCE = `package ${PACKAGE}
 /**
  * GENERATED at prebuild by apps/mobile/plugins/wake-push-renderer.js. Do not edit here.
  *
- * interactive is true once any Activity has been created in this process — i.e. the app was
- * opened and its JS engine booted (foreground now, or backgrounded after being opened). It is
- * false in a process spawned only for the connector's broadcast receiver, and process death resets
- * it. It is the FIRST stage of the wake renderer's "is there live JS to handle this wake" check,
- * and it is read BEFORE the React host is ever touched: reading a boolean has no side effect,
- * whereas reading ReactHost.currentReactContext lazily creates the host and would make a killed
- * process look alive, so the killed path must be settled by this flag alone.
+ * {@link liveActivities} counts activities that have been CREATED and not yet DESTROYED in this
+ * process — which is exactly "is the React surface (and with it state/wake.tsx's onWake
+ * listener) currently mounted". {@link interactive} is that count being non-zero, and it is the
+ * wake renderer's whole "is there live JS to handle this wake" signal:
+ *
+ *  · a process spawned only for the connector's broadcast never creates an Activity → 0 → the
+ *    renderer draws the notice (the killed-app case);
+ *  · foreground, and backgrounded-after-opening (home pressed → the Activity is STOPPED, not
+ *    destroyed, and the React tree stays mounted so onWake still fires) → >= 1 → suppress;
+ *  · the task swiped away → the Activity is DESTROYED and the surface torn down, so onWake is
+ *    gone → 0 → draw, instead of losing the wake. This is why it counts CREATED/DESTROYED and NOT
+ *    started/stopped, and why it is NOT a read of ReactHost.currentReactContext — the host outlives
+ *    the surface on a task removal, so a context read would stay non-null and wrongly suppress
+ *    (and reading the lazy host in a broadcast process would create it and defeat the killed case).
+ *
+ * All writes happen on the main thread (lifecycle callbacks), so the non-atomic ++/-- are
+ * safe; @Volatile is for the cross-thread READ from the connector's service. Process death
+ * resets it, which is the clean "alive → killed" transition. A configuration change (rotation)
+ * destroys then recreates, so the count dips to 0 and back within a frame; a wake in that sub-frame
+ * window would draw a correct notice over a foreground app, which is rare and harmless.
  */
 object WakeAppState {
   @Volatile
   @JvmStatic
-  var interactive: Boolean = false
+  var liveActivities: Int = 0
+
+  @JvmStatic
+  val interactive: Boolean
+    get() = liveActivities > 0
 }
 `;
 
@@ -163,15 +189,20 @@ class ${INITIALIZER_CLASS} : ContentProvider() {
   override fun onCreate(): Boolean {
     val app = context?.applicationContext as? Application ?: return false
     app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+      // Count CREATED minus DESTROYED — the number of activities that exist, i.e. whether the React
+      // surface (and its onWake listener) is mounted. Background STOP does not destroy, so it stays
+      // counted; a task removal destroys, so it drops to zero and the killed-app notice takes over.
       override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
-        WakeAppState.interactive = true
+        WakeAppState.liveActivities++
       }
-      override fun onActivityStarted(activity: Activity) { WakeAppState.interactive = true }
+      override fun onActivityDestroyed(activity: Activity) {
+        if (WakeAppState.liveActivities > 0) WakeAppState.liveActivities--
+      }
+      override fun onActivityStarted(activity: Activity) {}
       override fun onActivityResumed(activity: Activity) {}
       override fun onActivityPaused(activity: Activity) {}
       override fun onActivityStopped(activity: Activity) {}
       override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-      override fun onActivityDestroyed(activity: Activity) {}
     })
     return true
   }
@@ -194,7 +225,6 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import com.facebook.react.ReactApplication
 import dev.djara.expounifiedpush.NotificationContent
 import dev.djara.expounifiedpush.PushPayloadRenderer
 
@@ -215,13 +245,14 @@ import dev.djara.expounifiedpush.PushPayloadRenderer
  *     byte-for-byte the closed wake constant; a rich payload from a paired server (with its own
  *     title, body, image and tap URL) is not the constant, so it renders nothing. That is what
  *     keeps a server the phone paired with from drawing a notification in ohmail's name.
- *  2. It draws only when there is no live JS to handle the wake the way a running app does (sync
- *     silently; a wake is not a notification while you are in the app). {@link jsWillHandle} checks
- *     the {@link WakeAppState.interactive} flag FIRST — false in a broadcast-spawned process (the
- *     killed case), so the React host is never read there, because reading the lazy host would
- *     create it and make a killed process look alive. Only when the flag is already set (an Activity
- *     ran, so the host exists) does it read currentReactContext, which distinguishes a live app
- *     (suppress) from a process whose context was torn down after a task removal (draw).
+ *  2. It draws only when the React surface is not mounted — i.e. no Activity is alive to keep
+ *     state/wake.tsx's onWake listener running. The signal is {@link WakeAppState.interactive},
+ *     a plain count of created-minus-destroyed activities, NEVER a read of ReactHost: reading the
+ *     lazy host in a broadcast process would create it (killed case defeated), and on a task removal
+ *     the host outlives the torn-down surface, so a context read would suppress the very notice this
+ *     exists to draw. The count is 0 in a broadcast-only process (draw), >= 1 foreground and
+ *     backgrounded (suppress; the surface is mounted and onWake syncs), and back to 0 once the
+ *     task is swiped away and the Activity destroyed (draw).
  *
  * It posts the notification itself and returns null, so the connector draws nothing of its own and
  * there is never a second notice. It logs nothing.
@@ -230,37 +261,15 @@ class ${CLASS} : PushPayloadRenderer {
   override fun render(context: Context, instance: String, decrypted: String): NotificationContent? {
     // Only our own closed constant is ever acted on. No field is read out of the payload.
     if (decrypted != WAKE_PAYLOAD) return null
-    // A live app syncs the wake silently through JS; only a killed app needs a notice drawn here.
-    if (jsWillHandle(context)) return null
+    // A mounted React surface means state/wake.tsx's onWake will sync this silently; only when no
+    // Activity is alive (killed app, or a task swiped away in a lingering process) is there no JS to
+    // hand the wake to, and only then does this draw the notice. WakeAppState.interactive is a plain
+    // count of live activities — never a read of ReactHost, which would create the lazy host in a
+    // killed process AND, on a task removal, outlive the surface and wrongly report JS as alive.
+    if (WakeAppState.interactive) return null
     postWakeNotification(context)
     // We drew it (or tried). null tells the connector to draw nothing itself.
     return null
-  }
-
-  /**
-   * True when live JS will handle this wake instead, so this renderer must stay silent. Two stages,
-   * and the ORDER is the whole point:
-   *
-   *  1. If no Activity ever started in this process, the app was not opened here — the killed-app
-   *     case. Return false WITHOUT touching the React host: reactHost is a \`by lazy\`, so reading it
-   *     would CREATE and start the host and make a killed process look alive (measured — the notice
-   *     then never drew). The interactive flag, set by an Activity-lifecycle callback, is the only
-   *     thing consulted on this path.
-   *  2. If an Activity did start, the host already exists, so currentReactContext is a cheap cached
-   *     read that reflects reality: non-null while JS is alive (foreground OR backgrounded — the
-   *     onWake listener syncs), null once the context has been torn down (e.g. the task was removed
-   *     but the process lingers). A null context here means there is no JS to handle the wake, so we
-   *     fall through and draw the notice rather than swallowing it.
-   */
-  private fun jsWillHandle(context: Context): Boolean {
-    if (!WakeAppState.interactive) return false
-    return try {
-      (context.applicationContext as? ReactApplication)?.reactHost?.currentReactContext != null
-    } catch (t: Throwable) {
-      // The app was opened this process; if the host cannot be read, assume JS is still there
-      // rather than drawing a notice over a running app.
-      true
-    }
   }
 
   private fun postWakeNotification(context: Context) {
