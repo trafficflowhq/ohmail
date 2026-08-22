@@ -115,16 +115,30 @@ const CHAT_ID = /^(?:-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/;
  * whole URL quoted inside an error body that {@link redactEndpoint} did not match verbatim.
  * Anything SHAPED like a bot token goes, whether or not it is ours.
  *
- * ── LOOKAROUNDS, NOT `\b`, AND THE DIFFERENCE IS A LEAKED CREDENTIAL ────────────────────
+ * ── NO BOUNDARY ASSERTIONS AT ALL, AND TWO REVIEWS WENT INTO THAT SENTENCE ──────────────
  *
- * Review finding. The token's secret half may legally END IN A HYPHEN, and `-` is not a word
- * character — so `\b` after it needs a word character NEXT, and an echoed token followed by a
- * quote, a comma or the end of the string has none. The scrub then silently did not fire, and
- * `redactEndpoint`'s exact pass cannot save it either: that matches the whole ENDPOINT URL, so
- * a token echoed on its own is not a substring it looks for. The boundary therefore has to be
- * "not a token character" rather than "not a word character", stated in both directions.
+ * Every boundary written here has leaked a credential, so the pattern now has none.
+ *
+ *  1. `\b` on the right. The secret half may legally END IN A HYPHEN, which is not a word
+ *     character, so a trailing `\b` needs a word character next and an echoed token before a
+ *     quote or at end-of-string has none. Mostly survivable — the quantifier is greedy, so the
+ *     engine backtracks one character and still redacts the secret — but NOT at the pattern's
+ *     own `{30,}` floor, where dropping the final hyphen breaks the quantifier and the match
+ *     fails at every start position, redacting nothing.
+ *  2. `(?<![A-Za-z0-9_:-])` on the left, the fix for (1). Worse: it excludes the two commonest
+ *     DELIMITERS in error prose, so `token:<token>` and `bot-<token>` matched nothing, and
+ *     because every interior start position is preceded by a digit the whole token survived.
+ *     Measured across 21 shapes: this leaked 12 of them, including a bare `x<token>`.
+ *
+ * A left boundary cannot be right, because whatever it excludes is a character somebody's
+ * error prose will glue the token to. And it is not needed: the tail is GREEDY over the token
+ * character class, so a match always extends to the end of the run — a trailing hyphen
+ * included — whether or not anything asserts it. Starting mid-run costs at most a few leading
+ * digits of the BOT ID, which is not the secret. Over-redaction is the safe direction here;
+ * `redactEndpoint` cannot cover any of this, because it looks for the whole endpoint URL and
+ * an echoed token is not a substring of that.
  */
-const TOKEN_SHAPE = /(?<![A-Za-z0-9_:-])\d{5,}:[A-Za-z0-9_-]{30,}(?![A-Za-z0-9_-])/g;
+const TOKEN_SHAPE = /\d{5,}:[A-Za-z0-9_-]{30,}/g;
 
 /** Endpoint redaction plus the token shape. Bounded to 200 like every other sink's. */
 function redact(raw: string, endpoint: string): string {
