@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import {
   mailboxes, messages, folderState, messageBodies, messageStates, claimIdempotencyKey, recordChange,
   type LedgerTx, type Tx,
@@ -211,6 +211,11 @@ export class MessageService {
     const filters = [
       eq(messages.accountId, ctx.accountId),
       eq(folderState.desiredFolder, desiredFolder),
+      // Mail 0065: a tombstoned row keeps its folder_state (the reaper stamps `deleted_at` and
+      // touches nothing else), so without this predicate an expunged message kept appearing in
+      // its former view from THIS endpoint while `/sync` had already tombstoned it and a fresh
+      // snapshot excluded it — three answers to one question.
+      isNull(messages.deletedAt),
     ];
     if (unread !== undefined) filters.push(eq(messages.unread, unread));
     if (opts.cursor) {

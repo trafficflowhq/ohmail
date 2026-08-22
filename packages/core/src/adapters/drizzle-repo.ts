@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { messages, messageInstances, messageFailures, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
+import { accountStorage, messages, messageInstances, messageFailures, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   Rule, NativeLocator, EmailAddress,
@@ -207,6 +207,15 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * OPTIONAL, as above. Returns how many rows were tombstoned.
    */
   tombstoneInstanceless?(accountId: string, mailboxId: string, limit: number): Promise<number>;
+  /**
+   * Which of these messages owe their `ohmail/Quarantine` placement to an AI AUTO-APPLY (mail
+   * 0065) — a graduated pattern's per-message act, not a user's press and not a rule. The
+   * amended product rule allows only USER-COMMANDED writes into the provider's \Junk, so the
+   * reconciler's junk mapping excludes these: they file to `ohmail/Quarantine` exactly as
+   * before, the conservative direction. OPTIONAL; a repo without it excludes nothing, which is
+   * wrong ONLY toward the narrower action (fakes never junk-file at all unless they opt in).
+   */
+  listAiAutoAppliedQuarantine?(messageIds: readonly string[]): Promise<string[]>;
   /**
    * Every UID of this mailbox that is still owed — failed, and neither ingested nor written off as
    * void. Read at the top of every cycle and merged into the adapter's known-set, which is what
@@ -832,6 +841,15 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * never released twice.
    */
   async huskBody(accountId: string, messageId: string, reason: "junk_filed" | "expunged"): Promise<boolean> {
+    // THE ACCOUNT COUNTER ROW IS LOCKED FIRST — `evictOldestBodies`' exact idiom, and for the
+    // same two reasons: it serializes every concurrent husk/evict of this account (two callers
+    // that both selected the same unwithheld row would otherwise both release its bytes — the
+    // loser's UPDATE hits zero rows but its release still ran), and it keeps the lock ORDER
+    // consistent with ingest and the repair passes (counter row, then anything else) so no
+    // ordering inversion can deadlock against the eviction path.
+    await this.db.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();
+    await this.db.execute(sql`
+      select bytes from ${accountStorage} where ${accountStorage.accountId} = ${accountId} for update`);
     const [victim] = await this.db.select({
       id: messageBodies.id,
       freed: sql<string>`octet_length(${messageBodies.text}) + coalesce(octet_length(${messageBodies.html}), 0)`,
@@ -845,6 +863,46 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .where(and(eq(messageBodies.id, victim.id), isNull(messageBodies.withheldReason)));
     const freed = Number(victim.freed);
     if (freed > 0) await releaseBodyBytes(this.db, accountId, freed);
+    return true;
+  }
+
+  /** Mail 0065 — see the WorkerRepo doc: the AI-auto-applied Quarantine placements to exclude. */
+  async listAiAutoAppliedQuarantine(messageIds: readonly string[]): Promise<string[]> {
+    if (messageIds.length === 0) return [];
+    const rows = await this.db.select({ messageId: routingDecisions.messageId })
+      .from(routingDecisions)
+      .where(and(
+        inArray(routingDecisions.messageId, [...messageIds]),
+        eq(routingDecisions.inputProvenance, "ai"),
+        eq(routingDecisions.status, "auto_applied"),
+        eq(routingDecisions.destination, "ohmail/Quarantine"),
+      ));
+    return [...new Set(rows.map((r) => r.messageId))];
+  }
+
+  /** Mail 0065 — refill a junk_filed/expunged husk from an arrival's bytes. See RepoPort's doc. */
+  async restoreWithheldBody(
+    messageId: string, body: MessageBodyInput, storage: BodyStorageContext,
+  ): Promise<boolean> {
+    const [row] = await this.db.select({ id: messageBodies.id, reason: messageBodies.withheldReason })
+      .from(messageBodies).where(eq(messageBodies.messageId, messageId)).limit(1);
+    if (!row || (row.reason !== "junk_filed" && row.reason !== "expunged")) return false;
+    const bytes = bodyBytesOf(body);
+    // The rolling-window reserve — counter row locked here, before the caller's seq writes.
+    const reserved = await reserveBodyBytesEvicting(this.db, storage.accountId, bytes, storage.capBytes);
+    if (!reserved) return false;   // at the pathological ceiling the husk stands, honestly
+    const updated = await this.db.update(messageBodies)
+      .set({ text: body.text, html: body.html, withheldReason: null })
+      .where(and(
+        eq(messageBodies.id, row.id),
+        inArray(messageBodies.withheldReason, ["junk_filed", "expunged"]),
+      ))
+      .returning({ id: messageBodies.id });
+    if (updated.length === 0) {
+      // A concurrent writer beat this restore: give the reserve back on the lock it holds.
+      await releaseBodyBytes(this.db, storage.accountId, bytes);
+      return false;
+    }
     return true;
   }
 

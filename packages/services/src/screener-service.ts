@@ -1059,6 +1059,9 @@ export class ScreenerReadService {
     const filters: SQL[] = [
       eq(messages.accountId, ctx.accountId),
       eq(folderState.desiredFolder, SCREENER_FOLDER),
+      // Mail 0065: a held message whose every watched copy was expunged is tombstoned by the
+      // reaper; the gate must not ask the user about mail the server no longer holds.
+      isNull(messages.deletedAt),
     ];
     if (extra) filters.push(extra);
 
@@ -1149,6 +1152,9 @@ export class ScreenerReadService {
       .where(and(
         eq(messages.accountId, ctx.accountId),
         eq(folderState.desiredFolder, SCREENER_FOLDER),
+        // Mail 0065: heldRows' exclusion, applied where the representative is CHOSEN — a
+        // tombstoned newest message must not stand in for a sender whose older mail is live.
+        isNull(messages.deletedAt),
       ))
       .orderBy(sender, desc(sortKey), desc(messages.id))
       .as("reps");

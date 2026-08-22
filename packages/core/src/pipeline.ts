@@ -17,7 +17,7 @@ import { resolveThread } from "./threading.js";
 import { classifyLedgerSource } from "@trafficflow/db";
 import type {
   Change, CreditGate, MoveEvidence, PipelineDeps, RepoPort, RoutingPort, FolderStateRow,
-  NativeLocator, StoredMessage,
+  MessageBodyInput, NativeLocator, StoredMessage,
 } from "./ports.js";
 import type { ClassifierPort, ClassifierResult } from "./classifier-port.js";
 import type { NormalizedMessage } from "./types.js";
@@ -197,6 +197,14 @@ export interface ExistingPlan {
   ownAuthored: boolean;
   state: FolderStateRow;
   action: ReconcileAction;
+  /**
+   * The ARRIVAL's parsed body (mail 0065) — what {@link commitChange} restores a `junk_filed`/
+   * `expunged` husk from when the message re-appears in a watched folder: the bytes are in hand
+   * (this plan was built from a create carrying RFC822), so leaving the husk would strand a
+   * message the server demonstrably holds behind an empty pane for ever. Optional so every
+   * existing constructor and fake keeps compiling; absent ⇒ nothing to restore from.
+   */
+  body?: MessageBodyInput;
   /**
    * THE SOURCE COPY WHOSE EXPUNGE IS STILL OWED, WHEN NOTHING PROVED IT WENT AWAY.
    *
@@ -1082,6 +1090,14 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       ownAuthored: change.ownAuthored === true,
       state,
       action,
+      // The arrival's content, for the husk restore — the same three fields the new path
+      // stores, through the same html gate (`prepareHtmlForStorage` is the ONLY route html
+      // takes into the database; see the new path's body write).
+      body: {
+        text: normalized.textBody,
+        html: prepareHtmlForStorage(normalized.htmlBody),
+        headers: normalized.headers,
+      },
       ...(unexpungedSource ? { unexpungedSource } : {}),
     },
     ...(upgrade ? { upgrade } : {}),
@@ -1451,6 +1467,28 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     await repo.updateLocator(e.messageId, e.arrivalLocator);
   }
 
+  // ── A RE-APPEARANCE UN-DELETES, WHOEVER AUTHORED IT (mail 0065) ────────────────────────────
+  //
+  // The server demonstrably holds this message in a watched folder — that is what an existing-
+  // message arrival IS — so a standing tombstone is the mirror describing a mailbox that does
+  // not exist. Cleared here, BEFORE the switch, and not only in the adopt arm: the case the
+  // adopt arm alone would miss is our own completed move whose bookkeeping crashed — the next
+  // cycle's reaper tombstones the instanceless row, and the arrival then classifies as
+  // `own_move`/`none`, which adopts nothing. The resurrection delta is emitted after the
+  // switch (the adopt arm's own `move` change already carries the live entity; every other arm
+  // owes an `update`), and the seq allocation stays behind the counter lock the body restore
+  // below may take — the lock-order rule.
+  const resurrected = (await repo.clearDeletedOnAdopt?.(e.messageId)) === true;
+  // The husk restore: a `junk_filed`/`expunged` body whose bytes just arrived is refilled under
+  // the normal storage-cap accounting; a `storage_cap` husk is standing policy and is refused
+  // inside the repo method. Before any recordChange — counter row, then seq row, always.
+  if (e.body) {
+    await repo.restoreWithheldBody?.(e.messageId, e.body, {
+      accountId,
+      capBytes: deps.storageCap === UNMETERED_STORAGE_CAP ? null : deps.storageCap,
+    });
+  }
+
   switch (e.action.type) {
     case "none": {
       await repo.upsertFolderState(e.messageId, {
@@ -1463,11 +1501,9 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     case "adopt_external": {
       const to = e.action.newDesired;
       await repo.upsertFolderState(e.messageId, { desiredFolder: to, observedFolder: to, lastSetBy: "external" });
-      // Mail 0065: a tombstoned message re-appearing in a watched folder is its user restoring
-      // it (from the provider's Trash or Junk, in their own client). The adopt evidence IS the
-      // restore evidence; clearing the stamp before the `move` change below means the entity
-      // that change carries is already live, so every client resurrects on this one delta.
-      await repo.clearDeletedOnAdopt?.(e.messageId);
+      // The tombstone was already cleared before the switch (every arrival shape clears it, not
+      // only this arm — see the block above); the `move` change below carries the live entity,
+      // so this arm needs no separate resurrection delta.
       await repo.recordAudit(
         accountId,
         "adopt_external",
@@ -1486,6 +1522,15 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       await repo.upsertFolderState(e.messageId, e.state);
       break;
     }
+  }
+
+  // The resurrection delta for the arms whose switch emits no change of their own: a client
+  // holding the tombstone needs one newer-seq entity write to live again ("a LATER create
+  // resurrects" — the sync service re-materializes the row for an `update`).
+  if (resurrected && e.action.type !== "adopt_external") {
+    await repo.recordChange({
+      accountId, entityType: "message", entityId: e.messageId, op: "update", meta: null,
+    });
   }
 
   // ── THE TWO COPIES ARE BOTH ON RECORD, AND THE MOVE IS STILL OWED ──────────────────────────

@@ -477,15 +477,28 @@ export interface RepoPort {
   updateLocator(messageId: string, locator: NativeLocator): Promise<void>;
   /**
    * Clear `messages.deleted_at` because the message RE-APPEARED in a watched folder (mail 0065)
-   * — a restore from the provider's Trash or Junk in the user's own client, arriving as the
-   * adopt path's evidence-checked create. The other half of "delete ⇒ tombstone; a LATER create
-   * resurrects": the adopt already emits the `move` change carrying the live entity, so clearing
-   * the stamp is all the resurrection the server side owes.
+   * — a restore from the provider's Trash or Junk in the user's own client, a second delivery,
+   * or our own completed move whose bookkeeping crashed before it could commit. Called for
+   * EVERY existing-message arrival shape in `commitChange`, not only the adopt arm: the
+   * own-move case adopts nothing, and gating the clear on adoption left that message deleted
+   * for ever while it sat in its destination. The caller owes the resurrection delta for arms
+   * whose switch emits none.
    *
    * Returns whether anything was cleared. OPTIONAL so every fake repo keeps compiling; a repo
    * without it simply predates tombstones and has nothing to clear.
    */
   clearDeletedOnAdopt?(messageId: string): Promise<boolean>;
+  /**
+   * Refill a `junk_filed`/`expunged` husk from an arrival that carries the bytes (mail 0065) —
+   * the message re-appeared in a watched folder, so the mirror owes it its content back. Runs
+   * under the normal storage-cap accounting (the rolling-window reserve; at the pathological
+   * ceiling the husk stands, honestly). A `storage_cap` husk is standing POLICY and is refused
+   * here — the cap's restore is a ratified pass of its own, not a side effect of a duplicate
+   * delivery. Returns whether content was written. OPTIONAL so every fake keeps compiling.
+   */
+  restoreWithheldBody?(
+    messageId: string, body: MessageBodyInput, storage: BodyStorageContext,
+  ): Promise<boolean>;
 
   // ── Physical identity: `message_instances` ──
   //

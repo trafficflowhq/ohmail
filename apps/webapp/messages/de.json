@@ -1438,7 +1438,7 @@
     "title": "So sieht dein IMAP aus.",
     "sub": "ohmail organisiert dein eigenes Postfach, indem es Post zwischen ein paar schlichten Ordnern verschiebt — den Ordnern, die du in jedem Mailprogramm öffnen kannst, auf dem Server, den du längst hast.",
     "inbox": "Post von Leuten, zu denen du Ja gesagt hast.",
-    "junk": "Der Ordner deines Anbieters. ohmail liest ihn nie und schreibt nie hinein.",
+    "junk": "Der Ordner deines Anbieters. ohmail liest ihn nie; deine Spam-Urteile und die daraus entstandenen Regeln legen Post hinein.",
     "sent": "Deine Antworten, dort, wo dein Anbieter sie sowieso ablegt.",
     "screener": "Neue Absender warten hier, bis du entscheidest, wohin sie gehen.",
     "reads": "Newsletter und Sachen, die du liest, wenn du eine Minute hast.",

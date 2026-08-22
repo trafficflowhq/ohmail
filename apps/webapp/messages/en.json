@@ -1438,7 +1438,7 @@
     "title": "This is what your IMAP looks like.",
     "sub": "ohmail organizes your own mailbox by moving mail between a few plain folders — the ones you can open in any mail app, on the server you already have.",
     "inbox": "Mail from people you've said yes to.",
-    "junk": "Your provider's own. ohmail never reads it or writes to it.",
+    "junk": "Your provider's own. ohmail never reads it; your spam verdicts and the rules they promote file mail into it.",
     "sent": "Your replies, left where your provider already keeps them.",
     "screener": "New senders wait here until you decide where they go.",
     "reads": "Newsletters and things you read when you have a minute.",

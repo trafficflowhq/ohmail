@@ -82,8 +82,14 @@ export async function specialFoldersOf(repo: WorkerRepo, mailboxId: string): Pro
  * the closed code `no_junk_folder` on the audit row so the fallback is a fact somebody can
  * select rather than an absence.
  */
-export function physicalDestination(desiredFolder: string, special: SpecialFolderMap): string {
-  if (desiredFolder === SPAM_PILE && special.junkFolder !== null) return special.junkFolder;
+export function physicalDestination(
+  desiredFolder: string, special: SpecialFolderMap, opts: { aiAuthored?: boolean } = {},
+): string {
+  // An AI AUTO-APPLIED placement is not a user-commanded write (the amended rule's boundary),
+  // so it keeps the pre-0065 destination — the pile itself. See the reconciler's exclusion set.
+  if (desiredFolder === SPAM_PILE && special.junkFolder !== null && opts.aiAuthored !== true) {
+    return special.junkFolder;
+  }
   return desiredFolder;
 }
 
@@ -100,10 +106,14 @@ function parksLocator(p: PendingFolderState, physical: string, special: SpecialF
  */
 export function junkAuditCode(
   desiredFolder: string, physical: string, special: SpecialFolderMap,
-): "filed_to_junk" | "no_junk_folder" | null {
+): "filed_to_junk" | "no_junk_folder" | "ai_authored" | null {
   if (desiredFolder !== SPAM_PILE) return null;
-  if (special.junkFolder !== null && physical === special.junkFolder) return "filed_to_junk";
-  return "no_junk_folder";
+  if (special.junkFolder === null) return "no_junk_folder";
+  // A spam-pile move that stayed on the pile while a junk folder exists is the provenance
+  // exclusion: the placement was AI auto-applied, and only a user-commanded verdict may write
+  // into the provider's Junk. Derived rather than passed — the combination is unreachable any
+  // other way.
+  return physical === special.junkFolder ? "filed_to_junk" : "ai_authored";
 }
 
 /**

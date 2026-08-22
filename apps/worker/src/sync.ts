@@ -22,7 +22,7 @@ import { KnownSetCache, watchKnownSet } from "./known-set.js";
 import { buildVersionOf } from "./build-version.js";
 import {
   completeFiling, junkAuditCode, physicalDestination, specialFoldersOf,
-  TOMBSTONE_MAX_PER_CYCLE, type SpecialFolderMap,
+  SPAM_PILE, TOMBSTONE_MAX_PER_CYCLE, type SpecialFolderMap,
 } from "./junk-filing.js";
 
 /**
@@ -1211,8 +1211,34 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
   const owesMore = pending.length > RECONCILE_MOVES_PER_CYCLE;
   const work = owesMore ? pending.slice(0, RECONCILE_MOVES_PER_CYCLE) : pending;
 
-  /** Rows that need an IMAP move, keyed by the (source folder → destination) they share. */
-  const groups = new Map<string, PendingFolderState[]>();
+  // Mail 0065 — where a spam verdict physically files. Read once per pass; a repo without the
+  // discovery answers "neither exists", which keeps the pre-0065 behaviour byte-for-byte.
+  const special = await specialFoldersOf(repo, mailboxId);
+  // ── ONLY USER-COMMANDED VERDICTS MAY FILE INTO THE PROVIDER'S JUNK ─────────────────────────
+  //
+  // `desired_folder = 'ohmail/Quarantine'` has three authors: a press, a rule (promoted by a
+  // press, or written by the user — both standing verdicts), and an AI AUTO-APPLY, which is a
+  // graduated pattern acting per message with no hand on it. The amended product rule
+  // (imap-types.ts) licenses user-commanded writes only, so the auto-applied placements are
+  // excluded from the mapping — they keep the pre-0065 behaviour (the pile itself), which is
+  // the conservative direction: excluding too much files into our own folder; excluding too
+  // little trains a provider's filter and husks a mirror body on the organizer's own initiative.
+  // One indexed read for the whole pass, only when a junk folder exists to map to.
+  const spamCandidates = special.junkFolder === null ? [] : work.filter(
+    (p) => p.lastSetBy === "us" && p.desiredFolder === SPAM_PILE
+      && p.desiredFolder !== p.observedFolder && p.nativeLocator,
+  );
+  const aiAuthored: ReadonlySet<string> =
+    spamCandidates.length > 0 && typeof repo.listAiAutoAppliedQuarantine === "function"
+      ? new Set(await repo.listAiAutoAppliedQuarantine(spamCandidates.map((p) => p.messageId)))
+      : new Set<string>();
+
+  /**
+   * Rows that need an IMAP move, keyed by the (source folder → PHYSICAL destination) they
+   * share — physical, not desired, because one desire can map to two destinations under the
+   * exclusion above, and a chunk issues ONE `UID MOVE` for its whole membership.
+   */
+  const groups = new Map<string, PendingPhysical[]>();
   for (const p of work) {
     if (p.lastSetBy !== "us") continue;                       // user-wins: never revert an external move
     if (p.desiredFolder === p.observedFolder) {
@@ -1220,20 +1246,20 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
       continue;
     }
     if (!p.nativeLocator) continue;
+    const physical = physicalDestination(p.desiredFolder, special, {
+      aiAuthored: aiAuthored.has(p.messageId),
+    });
     // `JSON.stringify` of the PAIR, not the two names joined by a separator. A folder name comes
     // from the mail server and may contain any character a delimiter could be chosen from, so a
     // joined key can collide across two different pairs — and the obvious unambiguous separator is
     // a NUL, which cannot be written here: a single raw NUL anywhere in a source file makes every
     // grep-family tool skip the WHOLE file silently, which this repository has already paid for
     // once. The array form is unambiguous and printable.
-    const key = JSON.stringify([p.nativeLocator.folder, p.desiredFolder]);
+    const key = JSON.stringify([p.nativeLocator.folder, physical]);
+    const row: PendingPhysical = { ...p, physical };
     const bucket = groups.get(key);
-    if (bucket) bucket.push(p); else groups.set(key, [p]);
+    if (bucket) bucket.push(row); else groups.set(key, [row]);
   }
-
-  // Mail 0065 — where a spam verdict physically files. Read once per pass; a repo without the
-  // discovery answers "neither exists", which keeps the pre-0065 behaviour byte-for-byte.
-  const special = await specialFoldersOf(repo, mailboxId);
 
   for (const group of groups.values()) {
     for (let i = 0; i < group.length; i += FILING_BATCH_MAX) {
@@ -1245,6 +1271,9 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
   return owesMore;
 }
 
+/** A pending row plus the physical destination its group was keyed on (mail 0065). */
+type PendingPhysical = PendingFolderState & { physical: string };
+
 /**
  * File one chunk in a batch, or report that it was not filed at all.
  *
@@ -1254,14 +1283,15 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
  * leaves the row pending for `changesSince` to adopt — which is the same convergence the
  * per-message path has always relied on for a crash between the IMAP move and the DB write.
  */
-async function fileChunk(deps: SyncDeps, chunk: PendingFolderState[], special: SpecialFolderMap): Promise<boolean> {
+async function fileChunk(deps: SyncDeps, chunk: PendingPhysical[], special: SpecialFolderMap): Promise<boolean> {
   const { adapter, accountId, mailboxId, log } = deps;
   if (typeof adapter.moveMany !== "function") return false;
   const first = chunk[0]!;
   const srcFolder = first.nativeLocator!.folder;
-  // Mail 0065: the spam pile files into the provider's native Junk when the mailbox has one —
-  // the group shares one desiredFolder, so it shares one physical destination.
-  const toFolder = physicalDestination(first.desiredFolder, special);
+  // Mail 0065: the group was KEYED on its physical destination (a spam-pile desire maps to the
+  // provider's Junk unless the placement was AI-authored), so its members share this by
+  // construction.
+  const toFolder = first.physical;
   // A locator already sitting at its destination is the per-message path's problem to reason
   // about, not a batch's: `moveMany` refuses a same-folder group outright.
   if (srcFolder === toFolder) return false;
@@ -1418,11 +1448,12 @@ async function voidGoneFiling(repo: WorkerRepo, accountId: string, p: PendingFol
  * `reconcile.move.failed` audit row asserting that a move which HAD succeeded was refused, and put
  * the correction to sleep behind it.
  */
-async function fileOne(deps: SyncDeps, p: PendingFolderState, special: SpecialFolderMap): Promise<void> {
+async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolderMap): Promise<void> {
   const { adapter, accountId, mailboxId, log } = deps;
-  // Mail 0065: the same physical mapping `fileChunk` applies — a spam verdict files into the
-  // provider's native Junk when the mailbox has one, and everything else is already physical.
-  const physical = physicalDestination(p.desiredFolder, special);
+  // Mail 0065: the physical destination was decided when the row was grouped — a spam verdict
+  // files into the provider's native Junk when the mailbox has one and the placement was not
+  // AI-authored; everything else is already physical.
+  const physical = p.physical;
   // Typed off the adapter's own signature rather than by importing `NativeLocator`: this module
   // reaches core through `/mail` and `/adapters/imap` only, and neither exports that name — see the
   // import block's note on what naming the bare barrel here would drag into the desktop engine.
