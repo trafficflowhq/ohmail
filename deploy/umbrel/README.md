@@ -68,8 +68,14 @@ container names in the compose and the hook to match
   rendering from `settings.env` is what lets the unconfigured launcher serve
   instructions instead of a dead redirect. The committed `data/caddy/Caddyfile` is a
   placeholder so the bind mount always has a file source; the hook overwrites it. The
-  origin read from `settings.env` is validated to a strict shape (https, hostname,
-  optional port) before it is baked into config.
+  origin read from `settings.env` is validated before it is baked into config: https,
+  a hostname, and NO port. The port is not a matter of taste — a Caddyfile site
+  address's port is the port Caddy LISTENS on inside the container, and only container
+  443 is published (as host 4443), so `https://host:8443` would put the TLS site
+  where nothing forwards. TLS-ALPN issuance is answered on port 443 of the domain
+  besides, so no other outside port can get a certificate anyway. A written-out `:443`
+  is accepted and normalized away; anything else logs a line naming the rule and
+  renders the setup page.
 - **The organizer's database variable is `DATABASE_URL_SESSION`**, not
   `DATABASE_URL` — the hook writes both files from the same secret, mirroring
   `deploy/selfhost/docker-compose.yml`.
@@ -93,12 +99,20 @@ In the order they would bite:
   443→4443 forward.
 - The manifest `port: 4680` and the internal `:8099` launcher port collide with
   nothing (no store app uses 4680).
-- The manifest `category: social` is accepted (there is no obviously right category
-  for mail).
+- The manifest `category: social` is accepted. Measured against the store, mail has no
+  settled home: `mailarchiver` and `stalwart` sit in `files`, `mailflow` (a webmail
+  client) in `networking`. `social` is where the store keeps the things people talk to
+  each other with — Element, Mattermost, The Lounge, FreshRSS — which is the closest
+  fit for a mail client, and the PR says so and invites a retag.
 
 ## What is still to do
 
-- One full run on a real umbrelOS device, against the checklist above.
+- **The boot.** No container has been started for this package — the machine it was
+  written on cannot reach a Docker daemon. Two runs are outstanding and both are
+  written out as runnable command blocks in
+  [`SUBMISSION.md`](./SUBMISSION.md#the-boot-proof-parked--and-how-to-run-it): the
+  stack on any Docker-capable host, and a real umbrelOS device against the checklist
+  above.
 - Screenshots for the store submission (attached to the pull request, not committed —
   the Umbrel team creates and hosts the final store assets, including the icon).
 - Replace the settings-file step with a form the app shows on first open — the SSH

@@ -33,6 +33,12 @@ so an Umbrel install needs two things most Umbrel apps don't:
    listens one door over). The app obtains and renews its TLS certificate
    itself once traffic on 443 reaches it.
 
+Outside port 443 specifically — not a spare port with `:8443` in the
+address. The certificate is issued over a challenge answered on port 443 of
+your domain, so that is the only outside port this works on, and the app
+refuses an address carrying any other port rather than starting a front door
+nothing can reach.
+
 If forwarding a port is not something you can do (some ISPs make it hard),
 the honest answer today is: ohmail on this box is not ready for you yet —
 an alternative that needs no open ports is being worked on.
@@ -151,8 +157,12 @@ matter, in order:
 
 1. **The generated secrets** — one small file at
    `~/umbrel/app-data/ohmail/data/env/secrets.env`. It holds the key that
-   encrypts your mailbox credentials; copy it into a password manager once,
-   the day you install. Lose it and every mailbox has to be re-entered.
+   encrypts your mailbox credentials; copy it into a password manager the day
+   you install. Lose it and every mailbox has to be re-entered. If you ever
+   rotate the key — [BACKUP.md](./BACKUP.md#rotating-the-key) has the
+   mechanics, and they add a second key version to this same file while
+   keeping the first — copy the file again afterwards. A key version that
+   exists only on the device is a version your backup cannot decrypt.
 2. **The database** — the nightly backup script from
    [BACKUP.md](./BACKUP.md), with one Umbrel-shaped change: its
    `docker compose exec -T db pg_dump …` line (and the `cd` above it)

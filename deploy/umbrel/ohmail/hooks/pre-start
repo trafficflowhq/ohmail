@@ -49,6 +49,19 @@ mkdir -p "${ENV_DIR}" \
          "${DATA_DIR}/caddy/state" \
          "${DATA_DIR}/caddy/config"
 
+# The bind-mount source directories are committed with .gitkeep markers, because git
+# cannot carry an empty directory and the store wants the directories committed.
+# umbrelOS REMOVES those markers when it copies a package into app-data — which is why
+# every Postgres app in the official store can mount its committed data directory
+# straight as PGDATA — so the removal below is not what makes an installed app work.
+# It is for the other case: this directory brought up with plain `docker compose`,
+# where the marker survives and initdb refuses a non-empty data directory (one dotfile
+# is enough). Idempotent, and a no-op on a device where umbrelOS already did it.
+rm -f "${DATA_DIR}/postgres/.gitkeep" \
+      "${DATA_DIR}/minio/.gitkeep" \
+      "${DATA_DIR}/caddy/state/.gitkeep" \
+      "${DATA_DIR}/caddy/config/.gitkeep"
+
 rand_hex() {
   # $1 bytes of randomness, as lowercase hex. openssl when present, /dev/urandom
   # otherwise — both exist on umbrelOS, the fallback is for safety.
@@ -67,9 +80,12 @@ if [[ ! -f "${SECRETS}" ]]; then
 #
 # TF_KEK_V1 encrypts mailbox credentials at rest — copy this file (or at least that
 # line) into a password manager. To ROTATE the key, add TF_KEK_V2 with a fresh value
-# to settings.env and KEEP TF_KEK_V1: new writes use the highest version, old rows
-# still decrypt. Never replace TF_KEK_V1 in place — rows encrypted under it would
-# become unreadable.
+# to THIS file and keep TF_KEK_V1: new writes use the highest version, old rows still
+# decrypt. Never replace TF_KEK_V1 in place — rows encrypted under it would become
+# unreadable. Then copy the file again. This file, and not settings.env, is where a
+# rotation belongs because this is the file the backup guide names: a key version
+# living anywhere else is absent from that backup, and a restore from it could not
+# read the rows written under the version it is missing.
 POSTGRES_PASSWORD=$(rand_hex 24)
 TF_KEK_V1=$(rand_hex 32)
 MINIO_ROOT_PASSWORD=$(rand_hex 24)
@@ -136,7 +152,9 @@ if [[ ! -f "${SETTINGS}" ]]; then
 # REQUIRED — the one browser address this install serves, scheme + host only, e.g.
 #   OHMAIL_ORIGIN=https://mail.example.com
 # The domain must resolve to your home and your router must forward outside port 443
-# to this device's port 4443. This value derives the cookie host and the passkey
+# to this device's port 4443. No port in the address: the app's TLS certificate is
+# issued over a challenge answered on port 443 of your domain, so 443 is the only
+# outside port this works on. This value derives the cookie host and the passkey
 # identity; changing it later signs everybody out.
 OHMAIL_ORIGIN=
 
@@ -175,17 +193,35 @@ fi
 # ── the front door: rendered on every start from settings.env ──────────────────────
 # Values are read with sed, not sourced — settings.env is the operator's file and this
 # hook must not execute it. The origin is validated to a strict shape before it is
-# baked into Caddy config: scheme https, then hostname (dots, dashes) and an optional
-# port, nothing else. Anything that does not match renders the setup page instead.
+# baked into Caddy config: scheme https, then a hostname (dots, dashes), and NO port
+# other than the default 443. Anything that does not match renders the setup page.
+#
+# The port restriction is not fussiness. A site address's port in a Caddyfile is the
+# port Caddy LISTENS on inside the container, and this compose publishes exactly one:
+# container 443, as host 4443. An origin of https://mail.example.com:8443 would move
+# the TLS site to a port nothing forwards to, while this hook reported the config as
+# valid and redirected the launcher there. The same number is also load-bearing for
+# the certificate: TLS-ALPN issuance is answered on port 443 of the domain, so an
+# outside port other than 443 cannot obtain one however the listener is arranged.
+# `:443` written out is accepted and normalized away — same address, canonical form.
 setting() {
   sed -n "s/^$1=//p" "${SETTINGS}" 2>/dev/null | tail -n1 | tr -d '\r' \
     | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//" -e 's:/*$::'
 }
 
 ORIGIN="$(setting OHMAIL_ORIGIN)"
-if ! [[ "${ORIGIN}" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+if ! [[ "${ORIGIN}" =~ ^https://[A-Za-z0-9.-]+(:443)?$ ]]; then
+  # A set-but-unusable value is worth a line in the app's log: the launcher page it
+  # falls back to explains the shape, but only to whoever thinks to open it. The value
+  # itself is not echoed — the same discipline the server's own refusals keep.
+  if [[ -n "${ORIGIN}" ]]; then
+    echo "ohmail: OHMAIL_ORIGIN in data/env/settings.env is not a usable address — expected" >&2
+    echo "ohmail: https://<hostname> with no port (forward outside 443 to this device's 4443)." >&2
+    echo "ohmail: serving the setup page instead; fix the line and restart the app." >&2
+  fi
   ORIGIN=""
 fi
+ORIGIN="${ORIGIN%:443}"
 
 # The staging bucket's name must match what the api and organizer read; the browser
 # upload route below carries `/<bucket>/*`. An override that is not a valid bucket

@@ -9,48 +9,126 @@ exact ceremony.
 
 ## What is already verified — and what is not
 
-Verified (2026-08-22):
+Verified (2026-08-22, re-checked against the live registries and a current
+`umbrel-apps` checkout):
 
-- `ghcr.io/trafficflowhq/ohmail-{server,worker,web}:0.11.0` are public, multi-arch
-  (linux/amd64 + linux/arm64) OCI indexes; the digests in `docker-compose.yml` are the
-  index digests the registry reports for that tag.
-- `npm run lint:apps -- ohmail --check-images` in a current `umbrel-apps` checkout:
-  no issues. That check covers manifest shape, port conflicts across the whole store,
-  image pinning, public pullability, multi-arch support, app_proxy wiring, and
-  persistence paths.
-- `docker compose config` resolves the stack end to end after `hooks/pre-start` runs
-  (secrets generated, env files derived, Caddyfile rendered), in both the configured
-  and the unconfigured state.
+- All eight images resolve, and every digest in `docker-compose.yml` is the one the
+  registry returns for that tag: the three ohmail images at `0.11.0`, Postgres 16.15,
+  Caddy 2.10.2, MinIO, mc, Mailpit v1.24.2. The three ohmail images are public OCI
+  **indexes** carrying `linux/amd64` and `linux/arm64` — index digests, not
+  per-architecture ones, which is what the store asks for.
+- `npm run lint:apps -- ohmail --check-images`: `No issues found`, exit 0. That check
+  covers manifest shape, port conflicts across the whole store, image pinning, public
+  pullability, multi-arch support, app_proxy wiring and persistence paths. It is not a
+  green nobody has watched fail: dropping one image's digest makes it report
+  `image.pinned`, and moving the manifest port to 4444 makes it report
+  `manifest.port_unique … conflicts with nolooking`, both exit 1.
+- Host ports are free across the store, checked directly as well as by the linter: no
+  other app claims manifest port 4680, and no other `docker-compose.yml` publishes
+  4443 or 8025.
+- `hooks/pre-start` was run through its states: fresh and unconfigured (secrets minted,
+  the six env files written `0600`, the setup-page Caddyfile rendered), configured,
+  re-run (the key ring is stable — secrets are minted once), and with a second
+  key-ring version added to `secrets.env` (both the api's and the organizer's env files
+  grow the extra ring line, so a rotation reaches both processes). Origins were exercised one by one:
+  `https://host` and `https://host:443` render the front door, `https://host:8443`,
+  `http://host` and `https://host/path` are refused with a log line and the setup page.
+- `docker compose config` resolves the whole stack, exit 0, in both the configured and
+  the unconfigured state, with Mailpit's UI bound to `127.0.0.1` as intended.
 
-NOT verified: a run on a real umbrelOS device. The assumptions a first device run
-must check are listed in [`README.md`](./README.md). If a device or an umbrelOS VM is
-available, run the package through it before submitting — the store repository's
-`umbrel-test-app` guidance (in its `.claude/skills/`) describes the expected test
-pass: install, open, create state, restart, data survives. If not, say so in the PR
-honestly; the reviewers test on hardware anyway.
+NOT verified: **the stack has not been booted for this package.** No container was
+started — the authoring machine's user cannot reach its Docker daemon (`docker info`
+fails with `permission denied while trying to connect to the docker API at
+unix:///var/run/docker.sock`), so everything above is static validation, and it is
+worth exactly what static validation is worth. The same seven services, same images,
+same wiring in a different host layout do boot and serve as this repository's
+`deploy/selfhost` stack; that is evidence about the software, not about this package.
 
-## The ceremony
+### The boot proof, parked — and how to run it
 
-One block, from a machine with `gh` signed in. It forks the store repository, copies
-the package, verifies it with the store's own linter, and opens the pull request:
+Two runs are outstanding. Neither needs anything from this repository beyond a
+checkout, and both are worth doing before the PR if a machine is available.
+
+**1. The stack, on any host with a working Docker daemon** (`docker info` must exit 0 —
+on Linux that usually means the user is in the `docker` group). This boots the package
+outside umbrelOS, which is enough to prove the hook's output actually starts the
+software. `--compatibility -p ohmail` is what reproduces umbrelOS's `ohmail_db_1`
+container naming, which the generated env files and the rendered Caddyfile depend on —
+so the `docker ps` line is the first thing to check, not the last:
 
 ```sh
 set -euo pipefail
-gh repo fork getumbrel/umbrel-apps --clone umbrel-apps-fork
-cd umbrel-apps-fork
-git checkout -b ohmail
-cp -r ../ohmail/deploy/umbrel/ohmail ./ohmail
-npm install && npm run lint:apps -- ohmail --check-images   # must be: no issues
+git clone https://github.com/trafficflowhq/ohmail && cd ohmail
+APP="$(mktemp -d)/ohmail"; mkdir -p "$APP"
+cp -R deploy/umbrel/ohmail/. "$APP/"
+cd "$APP"
+export APP_DATA_DIR="$APP"
+bash hooks/pre-start                                     # secrets, env files, Caddyfile
+sed -i 's|^OHMAIL_ORIGIN=.*|OHMAIL_ORIGIN=https://mail.example.test|' data/env/settings.env
+bash hooks/pre-start                                     # re-render with the origin set
+printf 'services:\n  app_proxy:\n    image: getumbrel/app-proxy:1.0.0\n' > emulation.yml
+dc() { docker compose --compatibility -p ohmail -f docker-compose.yml -f emulation.yml "$@"; }
+
+# Everything except the TLS front door: Caddy would chase a certificate for a domain
+# that does not resolve, which says nothing about the app.
+dc up -d db minio minio-init api organizer web mailpit
+docker ps --format '{{.Names}}' | grep -x ohmail_db_1    # the naming the env files assume
+dc ps                                                    # api and organizer must reach (healthy)
+dc logs api | grep -A6 'FIRST-RUN SETUP'                 # the one-time token is printed once
+dc restart api && sleep 20 && dc ps                      # state survives a restart
+dc down -v
+```
+
+A pass is: `api` and `organizer` reach `(healthy)` — which for `api` means boot
+migrations ran and the key ring loaded, because `/health` answers only then — and the
+first-run block appears in the log. A fail worth reporting is any of them stuck in
+`starting` or restarting.
+
+**2. A real umbrelOS device or VM**, which is the run that tests the parts nothing
+local can: that `hooks/pre-start` is executed before compose up with `APP_DATA_DIR`
+set, that host port 4443 may be published, that `.gitkeep` removal happens as the
+packaging guidance says it does, and that TLS-ALPN issuance succeeds behind a home
+router's 443→4443 forward. Install the package through a community app store (the
+README documents the app-id rename that path needs), then follow the store
+repository's own `umbrel-test-app` guidance in its `.claude/skills/`: install, open,
+create state, restart, confirm the data survived.
+
+If neither run happens, the PR says so — it already does, in those words. The
+reviewers test on hardware anyway, and a claim we did not check is worse than a gap we
+named.
+
+## The ceremony
+
+One block, run from anywhere inside THIS repository, on a machine with `gh` signed in.
+It forks the store repository, copies the package in verbatim, verifies it with the
+store's own linter, and opens the pull request:
+
+```sh
+set -euo pipefail
+OHMAIL="$(git rev-parse --show-toplevel)"          # this repository, wherever it lives
+cd "$(mktemp -d)"                                  # never clone into this working tree
+gh repo fork getumbrel/umbrel-apps --clone
+cd umbrel-apps
+git switch -c ohmail
+cp -R "$OHMAIL/deploy/umbrel/ohmail" ./ohmail
+npm install
+npm run lint:apps -- ohmail --check-images          # must print: No issues found
 git add ohmail
 git commit -m "Add ohmail"
 git push -u origin ohmail
 gh pr create --repo getumbrel/umbrel-apps --title "Add ohmail" \
-  --body-file ../ohmail/deploy/umbrel/pr-body.md
+  --body-file "$OHMAIL/deploy/umbrel/pr-body.md"
 ```
 
-(Adjust the repository path if the checkout lives elsewhere. The PR body is the
-committed [`pr-body.md`](./pr-body.md) beside this file — one source of truth, so the
-text the reviewers read is the text this repository carries.)
+Two things in that block are deliberate rather than stylistic. `--clone` is a boolean
+flag — it takes no directory, and `gh repo fork` clones into `umbrel-apps`; the
+destination is chosen by the `cd` above it instead. And that `cd` leaves this
+repository on purpose: `gh repo fork --clone` clones into the current directory, and a
+store checkout dropped inside this working tree would dirty it, which blocks the
+publish ceremony here.
+
+The PR body is the committed [`pr-body.md`](./pr-body.md) beside this file — one source
+of truth, so the text the reviewers read is the text this repository carries.
 
 Immediately after the PR exists, set its URL as `submission:` in
 `ohmail/umbrel-app.yml`, commit, and push to the same branch — the manifest field is
