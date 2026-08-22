@@ -418,7 +418,16 @@ export interface DataApiTarget {
  * a host that has the exposure class, and ignore it on a plain Postgres that cannot.
  */
 export type DataApiPolicy =
-  | { kind: "verify"; target: DataApiTarget }
+  | {
+      kind: "verify";
+      target: DataApiTarget;
+      /**
+       * Set ONLY when `baseUrl` was derived from a project ref rather than stated outright.
+       * {@link dataApiTargetProblem} then requires the provisioned database to name that ref —
+       * see there for why a probe of the wrong project is the failure mode that matters.
+       */
+      derivedFromRef?: string;
+    }
   | { kind: "unverifiable"; missing: string[] };
 
 /** Injection seams. Tests supply both; production supplies neither. */
@@ -585,6 +594,49 @@ export function dataApiProblems(result: DataApiProbeResult): string[] {
   return problems;
 }
 
+/**
+ * Does the endpoint about to be probed belong to the database that was just provisioned?
+ *
+ * This is the hole a clean probe would otherwise leave wide open: point `SUPABASE_PROJECT_REF`
+ * at a DIFFERENT project — a stale value in a shell, a copied line from another deployment — and
+ * every relation comes back refused, because that project's endpoint really is closed. The run
+ * then prints a verdict about a database nobody provisioned. It is the same class of mistake
+ * {@link assertExpectedHost} exists for on the SQL side, one connection over.
+ *
+ * A hosted project's ref appears in the connection string in both shapes the platform issues:
+ * `db.<ref>.supabase.co` puts it in the host, and the session pooler puts it in the USER
+ * (`postgres.<ref>@…pooler…`), which is the shape production uses — so the check reads both.
+ *
+ * Only applies when the endpoint was DERIVED from a ref. An operator who states the base URL
+ * outright (a self-hosted gateway, a custom domain) has said which endpoint belongs to this
+ * database, and this cannot second-guess that without knowing their topology.
+ */
+export function dataApiTargetProblem(dbUrl: string, ref: string): string | null {
+  const r = ref.trim().toLowerCase();
+  if (!r) return null;
+  let u: URL;
+  try {
+    u = new URL(dbUrl);
+  } catch {
+    return `supabase data API: the database URL is not parseable, so nothing can confirm that ` +
+      `the endpoint for project '${ref}' is the one in front of it`;
+  }
+  const user = (() => {
+    try {
+      return decodeURIComponent(u.username);
+    } catch {
+      return u.username;
+    }
+  })().toLowerCase();
+  if (u.hostname.toLowerCase().includes(r) || user.includes(r)) return null;
+  return (
+    `supabase data API: the database at '${u.hostname}' does not name project '${ref}' in its ` +
+    "host or its user, so probing that project's endpoint would be a verdict about a DIFFERENT " +
+    `database — a refusal there proves nothing about this one. Set ${DATA_API_ENV.baseUrl} to ` +
+    "the endpoint that fronts THIS database if the two really are related"
+  );
+}
+
 /** The refusal when a Supabase-shaped host was provisioned with no way to check its endpoint. */
 export function dataApiUnverifiedProblem(missing: readonly string[]): string {
   return (
@@ -640,5 +692,8 @@ export function dataApiPolicyFromEnv(
       // projects by ref, so a self-hosted base URL alone cannot drive it.
       close: ref && accessToken ? { projectRef: ref, accessToken } : undefined,
     },
+    // Only when the URL was BUILT from the ref: an explicitly stated base URL is the operator
+    // telling us which endpoint fronts this database, and {@link dataApiTargetProblem} defers.
+    derivedFromRef: explicit ? undefined : ref,
   };
 }

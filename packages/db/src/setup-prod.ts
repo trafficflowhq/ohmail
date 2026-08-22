@@ -7,9 +7,9 @@ import { runMigrations, JOURNALS } from "./migrate.js";
 import { ensureSearchExtensions } from "./search-setup.js";
 import { transactionPoolerReason, sessionUrlRejection } from "./session-url.js";
 import {
-  applySupabaseLockdown, closeDataApiEndpoint, dataApiProblems, dataApiUnverifiedProblem,
-  lockdownCensus, lockdownProblems, probeDataApi, publicRelationNames, SENSITIVE_PROBE_TABLES,
-  supabaseHostRoles, type DataApiDeps, type DataApiPolicy,
+  applySupabaseLockdown, closeDataApiEndpoint, dataApiProblems, dataApiTargetProblem,
+  dataApiUnverifiedProblem, lockdownCensus, lockdownProblems, probeDataApi, publicRelationNames,
+  SENSITIVE_PROBE_TABLES, supabaseHostRoles, type DataApiDeps, type DataApiPolicy,
 } from "./supabase-lockdown-core.js";
 
 /**
@@ -462,54 +462,66 @@ export async function setupProdDatabase(
         dataApiProblemLines.push(dataApiUnverifiedProblem(policy.missing));
       } else {
         const deps = opts.dataApiDeps ?? {};
-        try {
-          let endpointClosed = false;
-          if (policy.target.close) {
-            const closed = await closeDataApiEndpoint(policy.target.close, deps);
-            log(
-              `supabase data API: PATCH postgrest db_schema -> graphql_public (HTTP ${closed.status})`,
-            );
-            if (!closed.ok) {
-              dataApiProblemLines.push(
-                `supabase data API: closing the endpoint FAILED (HTTP ${closed.status}` +
-                  `${closed.detail ? `: ${closed.detail}` : ""}) — the exposed schemas are ` +
-                  "whatever they were, so this run cannot claim to have closed them",
+        // Before anything is asked of the endpoint: is it the endpoint in front of THIS
+        // database? A stale ref probes a project nobody provisioned, comes back clean, and
+        // means nothing — and the endpoint half would PATCH that project's configuration.
+        // So a mismatch stops here rather than proceeding to touch somebody else's project.
+        const mismatch = policy.derivedFromRef
+          ? dataApiTargetProblem(url, policy.derivedFromRef)
+          : null;
+        if (mismatch) {
+          dataApiProblemLines.push(mismatch);
+          log(`supabase data API: ${mismatch}`);
+        } else {
+          try {
+            let endpointClosed = false;
+            if (policy.target.close) {
+              const closed = await closeDataApiEndpoint(policy.target.close, deps);
+              log(
+                `supabase data API: PATCH postgrest db_schema -> graphql_public (HTTP ${closed.status})`,
               );
-            } else {
-              endpointClosed = true;
-              // A config change propagates; a probe fired the same instant reads the old state
-              // and calls an unfixed endpoint safe. Only after a change — an unmodified
-              // endpoint has nothing to settle.
-              const settleMs = deps.settleMs ?? DATA_API_SETTLE_MS;
-              const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-              log(`supabase data API: waiting ${settleMs}ms for the endpoint change to propagate`);
-              await sleep(settleMs);
+              if (!closed.ok) {
+                dataApiProblemLines.push(
+                  `supabase data API: closing the endpoint FAILED (HTTP ${closed.status}` +
+                    `${closed.detail ? `: ${closed.detail}` : ""}) — the exposed schemas are ` +
+                    "whatever they were, so this run cannot claim to have closed them",
+                );
+              } else {
+                endpointClosed = true;
+                // A config change propagates; a probe fired the same instant reads the old state
+                // and calls an unfixed endpoint safe. Only after a change — an unmodified
+                // endpoint has nothing to settle.
+                const settleMs = deps.settleMs ?? DATA_API_SETTLE_MS;
+                const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+                log(`supabase data API: waiting ${settleMs}ms for the endpoint change to propagate`);
+                await sleep(settleMs);
+              }
             }
+            // The union: every relation `public` actually holds (so a table a migration adds is
+            // probed the day it lands) and the standing sensitive list (so a rename cannot
+            // quietly drop `mailbox_credentials` out of the probe).
+            const live = await publicRelationNames(client);
+            const tables = [...new Set([...live, ...SENSITIVE_PROBE_TABLES])].sort();
+            const probe = await probeDataApi(policy.target, tables, deps);
+            supabaseDataApi = {
+              endpoint: probe.endpoint,
+              endpointClosed,
+              probed: probe.probed.length,
+              exposed: probe.exposed,
+              unknown: probe.unknown,
+            };
+            log(
+              `supabase data API probed ${probe.probed.length} relations at ${probe.endpoint}: ` +
+                `${probe.exposed.length} answered, ${probe.unknown.length} inconclusive`,
+            );
+            dataApiProblemLines.push(...dataApiProblems(probe));
+          } catch (e) {
+            // A verification that threw is not a verification that passed.
+            dataApiProblemLines.push(
+              `supabase data API: the verification itself failed (${(e as Error).message}) — ` +
+                "the endpoint's state is unknown, which is not a pass",
+            );
           }
-          // The union: every relation `public` actually holds (so a table a migration adds is
-          // probed the day it lands) and the standing sensitive list (so a rename cannot
-          // quietly drop `mailbox_credentials` out of the probe).
-          const live = await publicRelationNames(client);
-          const tables = [...new Set([...live, ...SENSITIVE_PROBE_TABLES])].sort();
-          const probe = await probeDataApi(policy.target, tables, deps);
-          supabaseDataApi = {
-            endpoint: probe.endpoint,
-            endpointClosed,
-            probed: probe.probed.length,
-            exposed: probe.exposed,
-            unknown: probe.unknown,
-          };
-          log(
-            `supabase data API probed ${probe.probed.length} relations at ${probe.endpoint}: ` +
-              `${probe.exposed.length} answered, ${probe.unknown.length} inconclusive`,
-          );
-          dataApiProblemLines.push(...dataApiProblems(probe));
-        } catch (e) {
-          // A verification that threw is not a verification that passed.
-          dataApiProblemLines.push(
-            `supabase data API: the verification itself failed (${(e as Error).message}) — ` +
-              "the endpoint's state is unknown, which is not a pass",
-          );
         }
       }
     }
