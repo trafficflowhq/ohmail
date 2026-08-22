@@ -5,6 +5,7 @@ import { reapStaleWebSessions, type AdminDb } from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import type { AlertsConfig } from "../deps-cloud.js";
 import type { Route } from "../router.js";
+import { learnMissingSmtpSizes } from "../smtp-size.js";
 
 /**
  * `POST /internal/alerts` — the OUTSIDE-THE-WORKER alert driver.
@@ -131,6 +132,14 @@ export const ALERT_CRON_PATH = "/internal/alerts/run";
  * hygiene that "shipped" and silently never runs.
  */
 export const SESSIONS_REAP_CRON_PATH = "/internal/sessions/reap";
+
+/**
+ * The PATH Vercel Cron fires the `SIZE` back-fill at — exported for the reason the two above it
+ * are: the host deployment's cron config names it as a literal string and a test asserts the two
+ * agree, because a cron whose path this router does not serve is hygiene that "shipped" and
+ * silently never runs.
+ */
+export const SMTP_SIZE_CRON_PATH = "/internal/mailboxes/smtp-size";
 
 /**
  * The two arming facts, in ONE place, because the three routes must never disagree about them.
@@ -404,6 +413,60 @@ export const internalRoutes: Route[] = [
         // `raw` means no error envelope above this handler; it must never throw.
         log.error("sessions_reap_failed", { err });
         return json(503, { error: { code: "sessions_reap_failed" } });
+      }
+    },
+  },
+  {
+    /**
+     * `GET /internal/mailboxes/smtp-size` — LEARN WHAT EXISTING MAILBOXES' SERVERS ACCEPT.
+     *
+     * `mailboxes.smtp_max_size_bytes` is the only ceiling left on an attachment once the bytes stop
+     * riding the send request, and nothing ever learned it for a mailbox that was already
+     * connected: the column is written on create and on a PATCH that re-dials SMTP, which means the
+     * person re-entering their password. This pass closes that, a bounded batch at a time —
+     * `learnMissingSmtpSizes` holds the whole policy, including why it runs on THIS host and not on
+     * the sync worker (the platform there blocks outbound submission ports; measured, not assumed).
+     *
+     * The session reaper's shape verbatim, and each borrowed property is load-bearing for the same
+     * reasons stated there: GET because Vercel Cron issues GET; either shared secret, compared in
+     * constant time; and 404 rather than 401 on a deployment that armed no internal surface —
+     * which does mean the back-fill DOES NOT RUN there, and such a deployment's mailboxes keep the
+     * strict fallback until somebody re-enters a password.
+     *
+     * It runs on `deps.db`, the runtime connection, for the reaper's reason: this reads
+     * `mailbox_credentials` and writes `mailboxes`, which is user-table machinery the content-blind
+     * staff handle does not hold and must not gain.
+     *
+     * `cost: "unauthenticated"` like its two siblings — the shared secret is the whole gate, no
+     * user session is resolved, and the spend census counts it in the unauthenticated class rather
+     * than in the gated remainder. It DOES open sockets to third-party servers, which is why the
+     * batch and the deadline are constants in `smtp-size.ts` rather than parameters a caller picks.
+     */
+    method: "GET",
+    pattern: SMTP_SIZE_CRON_PATH,
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => {
+      const log = (deps.logger ?? silentLogger).child({ route: SMTP_SIZE_CRON_PATH });
+      const cfg = deps.alerts;
+      if (!cfg || cfg.secret.trim().length === 0) {
+        return json(404, { error: { code: "not_found" } });
+      }
+      const cron = cfg.cronSecret?.trim();
+      const authorized = presentsSecret(req, cfg.secret)
+        || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+      if (!authorized) {
+        log.warn("smtp_size_unauthorized", {});
+        return json(401, { error: { code: "unauthorized" } });
+      }
+      try {
+        const result = await learnMissingSmtpSizes({ ...deps, logger: log });
+        if (result.learned > 0) log.info("smtp_size_pass", { ...result });
+        return json(200, { now: deps.now().toISOString(), ...result });
+      } catch (err) {
+        // `raw` means no error envelope above this handler; it must never throw.
+        log.error("smtp_size_pass_failed", { err });
+        return json(503, { error: { code: "smtp_size_pass_failed" } });
       }
     },
   },

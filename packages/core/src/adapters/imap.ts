@@ -229,6 +229,117 @@ export interface SmtpLoginProof {
  * (`SEND_ATTACHMENT_MAX_TOTAL_BYTES` in `packages/services` treats an unknown ceiling as the
  * strict one, never as an unbounded one).
  */
+/**
+ * ══ WHETHER TO ASK A SUBMISSION SERVER FOR ITS `SIZE` AT ALL ══════════════════════════════════
+ *
+ * `mailboxes.smtp_max_size_bytes` is the RFC 1870 `SIZE` a submission server announced, and once
+ * attachment bytes stop riding the send request it is the only ceiling left on one. It is written
+ * when a mailbox is created with an SMTP block and when a PATCH re-dials SMTP — which means the
+ * person re-entering their password — so a mailbox that predates the column announces nothing for
+ * ever, and an unannounced ceiling is deliberately read as the strict product constant rather than
+ * as "no limit".
+ *
+ * This is the decision half of the back-fill that closes that: given what the row already says and
+ * what credentials exist, should a dial happen, and what should be recorded. It lives beside
+ * {@link verifySmtpLogin} because that is the call it is deciding about, and it is HOST-AGNOSTIC on
+ * purpose — the same rule is wanted from a long-running sync process and from a scheduled pass on a
+ * serverless host, and those two disagree about timeouts and about which of them can even reach a
+ * submission port. Neither difference belongs in the rule.
+ *
+ * ── THE FOUR BOUNDS, EACH OF WHICH HAS A REASON ─────────────────────────────────────────────
+ *
+ *  · ONE DIAL PER MAILBOX PER PROCESS. `attempted` is marked BEFORE the dial, so a failure counts
+ *    as an attempt. A caller that re-enters this path per pass — a roster that re-attaches a
+ *    flapping mailbox, a cron that runs every few minutes — would otherwise log in to somebody's
+ *    provider over and over, which is how a provider decides to throttle a customer.
+ *  · NEVER AN OAUTH TRANSPORT. {@link buildImapAuth} yields a token callback for those, not a
+ *    password, and `verifySmtpLogin` authenticates with a static password: handing it a refresh
+ *    token in the password seat is the mistake this narrowing exists to prevent. An oauth mailbox
+ *    keeps the strict fallback until its own connect flow probes it.
+ *  · NEVER THROWS. A submission server that refuses a login must cost this mailbox its ceiling and
+ *    nothing else. On a sync host an exception here would abort an attach, which means a mailbox
+ *    stops receiving mail over an attachment limit.
+ *  · SILENCE IS NOT A CEILING. No `SIZE`, a bare `SIZE` keyword, and `SIZE 0` (RFC 1870 §6, "no
+ *    fixed maximum") all resolve to `null` and record NOTHING, leaving the strict fallback in
+ *    place. A stored `0` would be a ceiling no message can clear.
+ */
+
+/** The dial this decision may perform, injectable so the rule is testable without a server. */
+export type SmtpSizeDial = (smtp: {
+  host: string;
+  port: number;
+  secure: boolean;
+  auth: { user: string; pass: string };
+}) => Promise<SmtpLoginProof>;
+
+export type SmtpSizeOutcome =
+  /** The column already holds an announcement. No dial was made. */
+  | { outcome: "known"; maxMessageBytes: number }
+  /** Nothing to dial with, or nothing to learn. No dial was made. */
+  | { outcome: "skipped"; reason: "no_smtp_credentials" | "oauth_transport" | "already_attempted" }
+  /** Dialled, and the server announced a usable ceiling. The caller records it. */
+  | { outcome: "learned"; maxMessageBytes: number }
+  /** Dialled, and the server announced nothing usable. Nothing to record. */
+  | { outcome: "silent" }
+  /** The dial failed. Reported, never thrown. */
+  | { outcome: "failed"; error: string };
+
+/** The minimal shape of a decrypted SMTP credential this rule reads. */
+export interface SmtpSizeCreds {
+  host: string;
+  port: number;
+  secure: boolean;
+  /** The assembled auth — `{ user, pass }` for a password row, a token callback for oauth2. */
+  auth: unknown;
+}
+
+/** The static password auth, or `null` for anything else (an oauth token callback included). */
+function staticSmtpAuth(smtp: SmtpSizeCreds): { user: string; pass: string } | null {
+  const auth = smtp.auth as { user?: unknown; pass?: unknown } | null | undefined;
+  return typeof auth?.user === "string" && typeof auth?.pass === "string"
+    ? { user: auth.user, pass: auth.pass }
+    : null;
+}
+
+export async function learnSmtpMaxSize(input: {
+  mailboxId: string;
+  /** The stored `smtp_max_size_bytes`, or `null` when this mailbox has never announced one. */
+  announced: number | null;
+  /** The decrypted SMTP credential, absent when the mailbox has no `smtp` row. */
+  smtp: SmtpSizeCreds | undefined;
+  /** Mailbox ids this process has already tried. Mutated here — see the once-per-process bound. */
+  attempted: Set<string>;
+  dial: SmtpSizeDial;
+}): Promise<SmtpSizeOutcome> {
+  const { mailboxId, announced, smtp, attempted, dial } = input;
+
+  // A stored announcement is the answer. Re-dialling to confirm it would spend a provider login
+  // per pass to learn what the column already says.
+  if (typeof announced === "number" && Number.isFinite(announced) && announced > 0) {
+    return { outcome: "known", maxMessageBytes: announced };
+  }
+  if (attempted.has(mailboxId)) return { outcome: "skipped", reason: "already_attempted" };
+  if (!smtp) return { outcome: "skipped", reason: "no_smtp_credentials" };
+
+  const auth = staticSmtpAuth(smtp);
+  if (!auth) return { outcome: "skipped", reason: "oauth_transport" };
+
+  // BEFORE the dial, so a failure counts. See the once-per-process bound in the header.
+  attempted.add(mailboxId);
+
+  try {
+    const proof = await dial({ host: smtp.host, port: smtp.port, secure: smtp.secure, auth });
+    const bytes = proof.maxMessageBytes;
+    // The same admissibility test the column's readers apply, restated rather than trusted: this
+    // is the last point at which a `0` or a `NaN` could become a stored ceiling.
+    return typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0
+      ? { outcome: "learned", maxMessageBytes: bytes }
+      : { outcome: "silent" };
+  } catch (err) {
+    return { outcome: "failed", error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function verifySmtpLogin(
   smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } },
   timeouts?: Partial<NetTimeouts>,

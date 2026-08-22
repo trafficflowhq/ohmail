@@ -33,7 +33,8 @@ import {
 } from "@trafficflow/core";
 import { makeDrizzleRepo, mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
 import {
-  ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, type MailboxAdapter,
+  ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, learnSmtpMaxSize,
+  type MailboxAdapter,
 } from "@trafficflow/core/adapters/imap";
 import {
   loadConfig, keyProviderFromKekEnv, selectionOf, instanceIdFrom, WorkerConfigError,
@@ -72,7 +73,7 @@ import {
   startPushWake, pushEndpointGuardFromEnv, vapidFromEnv, type RunningPushWake,
 } from "./push-wake.js";
 import { driverWriteRaceReason } from "./driver-write-race.js";
-import { learnSmtpMaxSize, recordSmtpMaxSize, smtpSizeDial } from "./smtp-size.js";
+import { recordSmtpMaxSize, smtpSizeDial } from "./smtp-size.js";
 import type { Tx } from "@trafficflow/db";
 import {
   loadEnabledMailboxes, loadMailboxCreds, loadMailboxById, bootstrapEnvCreds,
@@ -1552,19 +1553,21 @@ export async function startWorkerWithLock(
 
         // ── WHAT THIS MAILBOX'S SUBMISSION SERVER WILL ACCEPT (mail 0055) ────────────────────
         //
-        // Learned HERE because this is the one place that holds decrypted SMTP credentials for a
-        // mailbox nobody is asking to change. The column is otherwise written only when a mailbox
-        // is created or when a PATCH re-dials SMTP — which means the person re-entering their
-        // password — so every mailbox that predates the column announced nothing for ever, and an
-        // unannounced ceiling is read as the STRICT product constant by both the compose form and
-        // the send. That is the right rule and it stays; what was missing is anything that learns
-        // the number. See `smtp-size.ts` for the bounds (one login per mailbox per process, never
-        // an oauth transport, never a throw, and silence records nothing).
+        // Attempted here because this is a place that already holds decrypted SMTP credentials
+        // for a mailbox nobody is asking to change. The rule and its bounds are
+        // `learnSmtpMaxSize`'s; the timeouts and the write are `smtp-size.ts`'s.
+        //
+        // ON THE MANAGED DEPLOYMENT THIS ALWAYS FAILS, and that is measured rather than assumed:
+        // Railway blocks outbound submission ports, so every dial from here answers "Connection
+        // timeout" while the IMAP dial to the same host on 993 completes in the next log line.
+        // The managed service learns these numbers from the API host on a schedule instead. This
+        // arm is kept because it is correct wherever egress is open — a self-hosted worker on
+        // somebody's own network — and it is bounded to one refused connection per mailbox per
+        // process, logged at `info`.
         //
         // AWAITED rather than fired and forgotten, and it is worth saying why: the alternative
         // leaves a promise rejecting into nothing on a path whose whole purpose is that one
-        // mailbox's failure stays one mailbox's failure. It costs one SMTP login, once, ahead of
-        // an attach that is about to open an IMAP connection to the same provider anyway.
+        // mailbox's failure stays one mailbox's failure.
         try {
           const learned = await learnSmtpMaxSize({
             mailboxId: mb.mailboxId,
