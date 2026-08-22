@@ -71,7 +71,15 @@ interface CredMeta extends CredMetaAuth {
  */
 interface ProbeTarget {
   creds: SmtpSizeCreds;
-  /** `mailbox_credentials.updated_at` of the row whose secret this dial will present. */
+  /**
+   * WHICH ROW the secret came from, and WHEN that row was last written.
+   *
+   * The transport is part of the stamp, not decoration. Both rows are inserted with ONE timestamp
+   * by the env-credential bootstrap, so a predicate that accepted either transport at that instant
+   * would be satisfied by the UNROTATED imap row after the smtp row alone had been replaced — and
+   * the write it was guarding would go through against credentials it never probed.
+   */
+  credentialsTransport: "imap" | "smtp";
   credentialsUpdatedAt: Date;
 }
 
@@ -102,8 +110,13 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
   // else's AUTH command. `buildImapAuth` throws on an unknown type for exactly this reason; this
   // resolution must not be the one place that does not.
   //
-  // So the accepted set is explicit: absent or `password` dials, `oauth2` produces coordinates
-  // with a token callback the rule then declines, and ANYTHING ELSE is not probed at all.
+  // So the accepted set is explicit: absent (`undefined`) or exactly `password` dials, `oauth2`
+  // produces coordinates with a token callback the rule then declines, and ANYTHING ELSE is not
+  // probed at all — `null` INCLUDED. A first pass at this wrote `!== undefined && !== null &&
+  // !== "password"`, which reads as "absent in either spelling", and that is wrong here: an
+  // untyped row and a row that stores JSON `null` are not the same claim, and an oauth-shaped row
+  // whose `authType` came back `null` would have had its refresh token decrypted and sent as a
+  // password — the exact leak this branch exists to close.
   const authType = imapMeta.authType;
   if (authType === "oauth2") {
     const s = imapMeta.smtp ?? {};
@@ -116,10 +129,11 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
         secure: s.secure ?? false,
         auth: buildImapAuth(imapMeta, "", deps.oauth?.forMailbox(mailboxId)),
       },
+      credentialsTransport: "imap",
       credentialsUpdatedAt: imapRow.updatedAt,
     };
   }
-  if (authType !== undefined && authType !== null && authType !== "password") return undefined;
+  if (authType !== undefined && authType !== "password") return undefined;
 
   const smtpRow = rows.find((r) => r.transport === "smtp");
   const smtpMeta = smtpRow ? ((smtpRow.meta ?? {}) as CredMeta) : {
@@ -137,7 +151,9 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
       auth: { user, pass: secret },
     },
     // The row whose SECRET is being presented — the smtp row when there is one, otherwise the
-    // imap row the fallback borrows from. That is the row a rotation would touch.
+    // imap row the fallback borrows from. That is the row a rotation would touch, and NAMING it
+    // is what stops the other row standing in for it.
+    credentialsTransport: smtpRow ? "smtp" : "imap",
     credentialsUpdatedAt: (smtpRow ?? imapRow).updatedAt,
   };
 }
@@ -242,7 +258,12 @@ export async function learnMissingSmtpSizes(
       //
       // The credential row's `updated_at` as it stood BEFORE the dial closes it: a rotation moves
       // that stamp, so the update matches nothing and the newer measurement stands.
-      const stamp = target!.credentialsUpdatedAt;
+      //
+      // THE TRANSPORT IS PART OF THE PREDICATE. `IN ('smtp','imap')` was not enough: the env
+      // bootstrap writes both rows with one timestamp, so at that value the untouched imap row
+      // satisfies a transport-blind check even after the smtp row alone has been rotated — and the
+      // guard would pass in exactly the case it exists to catch.
+      const { credentialsTransport: transport, credentialsUpdatedAt: stamp } = target!;
       await deps.db.update(mailboxes)
         .set({ smtpMaxSizeBytes: res.maxMessageBytes })
         .where(and(
@@ -251,7 +272,7 @@ export async function learnMissingSmtpSizes(
           sql`EXISTS (
             SELECT 1 FROM mailbox_credentials mc
             WHERE mc.mailbox_id = ${row.id}
-              AND mc.transport IN ('smtp', 'imap')
+              AND mc.transport = ${transport}
               AND mc.updated_at = ${stamp}
           )`,
         ));
