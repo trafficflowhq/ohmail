@@ -290,6 +290,20 @@ export async function reconcileBillingMirror(db: Db, opts: ReconcileOptions): Pr
     cursor = page.nextCursor;
   }
 
+  // A SPENT BUDGET SKIPS STRAIGHT TO THE RECORD (review round two). Past the deadline, every
+  // further await — the mirror scan, the listed-id completion, an emit — is a chance for the
+  // platform to kill the invocation before `recordReconcileRun`, recreating the silent end the
+  // budget exists to remove. Nothing was compared, so nothing is emitted or flagged: the run
+  // says truncated, the divergence alert pages the truncation, and the next pass resumes.
+  if (outOfTime()) {
+    const report: ReconcileReport = {
+      mode: opts.mode, observedAt: now(), stripeSubscriptions: events.length, mirrorRows: 0,
+      emitted: 0, applyFailed: 0, flagged: {}, divergences: [], pages, truncated: true,
+    };
+    if (opts.record !== false) await recordReconcileRun(tx, report);
+    return report;
+  }
+
   // ── 2. the mirror, whole (bounded by the same order of magnitude as the listing) ───────
   const MIRROR_COLUMNS = {
     accountId: billingSubscriptions.accountId,

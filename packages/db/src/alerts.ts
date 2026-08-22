@@ -473,7 +473,11 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   const recentHeals = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(billingEvents)
+    // APPLIED only: a failed reconciliation apply writes the same type with status='failed',
+    // and it is already the failed-events rule's critical page — counting it here as a heal
+    // would say "applied" and "failed" about one row in two alerts.
     .where(sql`${billingEvents.type} = 'reconciliation.subscription'
+      and ${billingEvents.status} = 'applied'
       and ${billingEvents.receivedAt} > ${healWindow.toISOString()}::timestamptz`);
   const healCount = Number(recentHeals[0]?.n ?? 0);
   if (run || healCount > 0) {
@@ -491,11 +495,16 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     // a clean population.
     if (emitted > 0 || unhealed > 0 || healCount > 0 || run?.truncated === true) {
       const ranSeconds = run ? secondsBetween(now, run.ranAt) : null;
+      const found = Math.max(emitted + flaggedCount, healCount);
       alerts.push({
         key: "billing_reconciliation_divergence",
         kind: "billing_reconciliation_divergence",
         severity: unhealed > 0 ? "critical" : "warning",
-        title: `Billing reconciliation: ${Math.max(emitted + flaggedCount, healCount)} divergence(s) between Stripe and the mirror`,
+        // A truncation-only firing must not present itself as "0 divergences" — the incident
+        // is the UNREAD population, and the title says so.
+        title: found > 0
+          ? `Billing reconciliation: ${found} divergence(s) between Stripe and the mirror`
+          : "Billing reconciliation was truncated — part of the population went unread",
         detail:
           (run
             ? `The latest reconciliation pass (${run.mode}, ${humanAge(ranSeconds)} ago) ` +
@@ -514,7 +523,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
               " absence checks were skipped; raise the bound or shrink the population."
             : "") +
           " A lost webhook heals here, but the loss is the incident: check the relay and the plane.",
-        count: Math.max(emitted + flaggedCount, healCount, 1),
+        count: Math.max(found, 1),
         oldestSeconds: ranSeconds,
       });
     }
