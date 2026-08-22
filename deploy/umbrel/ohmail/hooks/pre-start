@@ -51,12 +51,16 @@ mkdir -p "${ENV_DIR}" \
 
 # The bind-mount source directories are committed with .gitkeep markers, because git
 # cannot carry an empty directory and the store wants the directories committed.
-# umbrelOS REMOVES those markers when it copies a package into app-data — which is why
-# every Postgres app in the official store can mount its committed data directory
-# straight as PGDATA — so the removal below is not what makes an installed app work.
-# It is for the other case: this directory brought up with plain `docker compose`,
-# where the marker survives and initdb refuses a non-empty data directory (one dotfile
-# is enough). Idempotent, and a no-op on a device where umbrelOS already did it.
+# umbrelOS REMOVES those markers when it copies a package into app-data, so the removal
+# below is not what makes an INSTALLED app work. Counted in the store rather than
+# assumed: of the 48 packages that both mount a Postgres data directory and commit a
+# marker inside it, 45 mount that directory straight as PGDATA — which initdb refuses
+# if it is not empty, and one dotfile is enough to make it not empty — while 3 point
+# PGDATA at a subdirectory and so never depend on the removal at all.
+#
+# The removal below is for the other case: this directory brought up with plain
+# `docker compose`, where nothing strips the marker. Idempotent, and a no-op on a
+# device where umbrelOS already did it.
 rm -f "${DATA_DIR}/postgres/.gitkeep" \
       "${DATA_DIR}/minio/.gitkeep" \
       "${DATA_DIR}/caddy/state/.gitkeep" \
