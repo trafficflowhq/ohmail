@@ -51,6 +51,8 @@ import {
 import {
   accountSuspensions,
   aiAttemptClaims,
+  setupGrants,
+  setupGrantSpends,
   attachmentStaging,
   authEvents,
   authThrottle,
@@ -313,6 +315,14 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // The FK is `ON DELETE cascade`, which would have taken these with `accounts`; `accounts`
     // survives, so the cascade never fires and the claims outlive the mail they name.
     await drop("ai_attempt_claims", tx.delete(aiAttemptClaims).where(eq(aiAttemptClaims.accountId, accountId)));
+    // The screening-only setup pools (cloud 0021): per-account state, not the money audit — the
+    // audit is `credit_ledger`, which a setup-funded suggestion never touches. `mailbox_id` and
+    // the spends' `source` (`classify:screener:<message_id>`) both name objects of the account
+    // being erased, the same argument as the claims row above. Spends first (FK to grants).
+    await drop("setup_grant_spends",
+      tx.delete(setupGrantSpends).where(eq(setupGrantSpends.accountId, accountId)));
+    await drop("setup_grants",
+      tx.delete(setupGrants).where(eq(setupGrants.accountId, accountId)));
     // Presence IS the state, and there is nothing left to suspend: no users, no mailboxes, no
     // session that could ever authenticate. What remains in the row is `note` — an operator's
     // free text ABOUT THIS PERSON — so leaving it would retain the one field here that is

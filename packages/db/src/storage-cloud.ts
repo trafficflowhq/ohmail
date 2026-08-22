@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
-  effectiveSubscriptionOf, entitlementsFor, LIVE_SUBSCRIPTION_STATUSES,
+  effectiveSubscriptionOf, entitlementsFor, LIVE_SUBSCRIPTION_STATUSES, ADDON_STORAGE_UNIT_BYTES,
 } from "./billing.js";
 import type { Tx } from "./change-log.js";
 
@@ -66,10 +66,15 @@ export async function accountsAtStorageCap(tx: Tx): Promise<AtCapAccount[]> {
   // Generated FROM the const, like `liveSubscriptionOf`'s WHERE, so the two SQL forms of
   // "live" cannot disagree.
   const live = sql.join([...LIVE_SUBSCRIPTION_STATUSES].map((s) => sql`${s}`), sql`, `);
+  // THE EFFECTIVE CAP, the same composition `entitlementsFor` makes: base + add-on units.
+  // Comparing against the base column alone paged forever about every customer whose add-on
+  // bought them the headroom the worker correctly honours (review finding).
   const rows = await tx.execute<{ account_id: string; bytes: number; storage_bytes_limit: number }>(sql`
     with eff as (
       select distinct on (bs.account_id)
-             bs.account_id, bs.storage_bytes_limit
+             bs.account_id,
+             (bs.storage_bytes_limit
+               + bs.addon_storage_units * ${sql.raw(String(ADDON_STORAGE_UNIT_BYTES))}) as storage_bytes_limit
         from billing_subscriptions bs
        order by bs.account_id,
                 (bs.status in (${live})) desc,

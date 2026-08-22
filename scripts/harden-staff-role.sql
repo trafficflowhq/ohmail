@@ -657,7 +657,11 @@ REVOKE ALL ON public.billing_subscriptions FROM ohmail_admin;
 GRANT SELECT (
   id, account_id, stripe_subscription_id, stripe_price_id, plan, status,
   mailbox_limit, monthly_credits, storage_bytes_limit, current_period_start, current_period_end,
-  cancel_at_period_end, grace_until, stripe_event_ts, created_at, updated_at
+  cancel_at_period_end, grace_until, stripe_event_ts,
+  -- cloud 0022 — cadence and add-on quantities: subscription data by the isolation rule's own
+  -- words (staff see billing; the admin MRR and the at-cap alert compose these).
+  billing_interval, addon_storage_units, addon_mailboxes,
+  created_at, updated_at
 ) ON public.billing_subscriptions TO ohmail_admin;
 
 -- `account_storage` (mail 0062) — the stored-body byte counter behind the managed storage cap.

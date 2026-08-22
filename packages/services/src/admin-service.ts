@@ -15,7 +15,7 @@ import {
   listStuckSends,
   DEFAULT_ALERT_THRESHOLDS,
   LIVE_SUBSCRIPTION_STATUSES,
-  PLAN_LIMITS,
+  PLAN_LIMITS, ADDON_CARD,
   type ContentBlind,
 } from "@trafficflow/db/cloud";
 import type { Db } from "./context.js";
@@ -213,6 +213,23 @@ const PLAN_MRR_CENTS: Record<AdminPlan, number> = {
   pro: PLAN_LIMITS.pro.priceUsd * 100,
 };
 
+/**
+ * One row's MONTHLY-EQUIVALENT list price, in cents: the plan (an annual cadence pays ten
+ * monthly months across twelve, so its MRR is 10/12 of the monthly card × 12ths — rounded per
+ * row), plus the add-on line items the mirror carries (cloud 0022), which bill monthly at the
+ * add-on card whatever the plan's cadence. Same LIST-price caveat as {@link PLAN_MRR_CENTS}.
+ */
+function rowMrrCents(plan: AdminPlan, sub: SubscriptionRow | undefined): number {
+  const base = PLAN_MRR_CENTS[plan];
+  const cadence = sub?.billingInterval === "year"
+    ? Math.round((base * 10) / 12)
+    : base;
+  const addons =
+    int(sub?.addonStorageUnits ?? 0) * ADDON_CARD.storage.priceUsd * 100 +
+    int(sub?.addonMailboxes ?? 0) * ADDON_CARD.mailbox.priceUsd * 100;
+  return cadence + addons;
+}
+
 /** Ledger reasons whose debit means SERVICE WAS DELIVERED — tokens we paid for. */
 const CONSUMPTION_REASONS: readonly AdminLedgerReason[] = [
   "debit_classify", "debit_draft", "debit_propose", "debit_workflow",
@@ -288,6 +305,10 @@ interface SubscriptionRow {
   status: string;
   mailboxLimit: number;
   monthlyCredits: number;
+  /** cloud 0022 — the plan price's cadence and the add-on quantities the mirror carries. */
+  billingInterval: string;
+  addonStorageUnits: number;
+  addonMailboxes: number;
   currentPeriodStart: Date | string | null;
   currentPeriodEnd: Date | string | null;
   cancelAtPeriodEnd: boolean;
@@ -475,7 +496,9 @@ async function loadRoster(db: AdminDb, now: Date): Promise<AccountSummary[]> {
       mailboxesInError: int(mb?.inError),
       mailboxesBlocked: int(mb?.blocked),
       // No subscription ⇒ entitled to ZERO mailboxes, not to a default.
-      mailboxLimit: sub ? int(sub.mailboxLimit) : 0,
+      // The EFFECTIVE limit — base plus purchased add-on units — the same composition
+      // `entitlementsFor` serves the product (cloud 0022).
+      mailboxLimit: sub ? int(sub.mailboxLimit) + int(sub.addonMailboxes ?? 0) : 0,
       creditBalance: balances.get(account.id) ?? 0,
       syncLagSeconds: secondsSince(now, mb?.oldestSync ?? null),
       // ALWAYS NULL — see the block above `return` for why there is no safe version
@@ -495,6 +518,9 @@ function selectSubscriptions(db: AdminDb): Promise<SubscriptionRow[]> {
       status: billingSubscriptions.status,
       mailboxLimit: billingSubscriptions.mailboxLimit,
       monthlyCredits: billingSubscriptions.monthlyCredits,
+      billingInterval: billingSubscriptions.billingInterval,
+      addonStorageUnits: billingSubscriptions.addonStorageUnits,
+      addonMailboxes: billingSubscriptions.addonMailboxes,
       currentPeriodStart: billingSubscriptions.currentPeriodStart,
       currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
       cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
@@ -869,7 +895,9 @@ export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Pr
     account,
     mailboxes: mailboxList,
     entitlements: {
-      mailboxLimit: sub ? int(sub.mailboxLimit) : 0,
+      // The EFFECTIVE limit — base plus purchased add-on units — the same composition
+      // `entitlementsFor` serves the product (cloud 0022).
+      mailboxLimit: sub ? int(sub.mailboxLimit) + int(sub.addonMailboxes ?? 0) : 0,
       monthlyCredits: sub ? int(sub.monthlyCredits) : 0,
       periodStart: sub ? iso(sub.currentPeriodStart) : null,
       periodEnd: sub ? iso(sub.currentPeriodEnd) : null,
@@ -931,7 +959,7 @@ export async function adminBilling(db: AdminDb, now: Date): Promise<BillingSnaps
     // Both buckets get the price; WHICH total it lands in is decided below, by status. A
     // per-status figure that silently zeroed `past_due` would hide the at-risk book entirely.
     if (plan && (CONTRACTED_STATUSES.has(status) || AT_RISK_STATUSES.has(status))) {
-      bucket.contractedMrrCents += PLAN_MRR_CENTS[plan];
+      bucket.contractedMrrCents += rowMrrCents(plan, sub);
     }
     byStatus.set(status, bucket);
   }
