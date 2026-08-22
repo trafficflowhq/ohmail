@@ -2067,6 +2067,25 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // folder the server does not have fails. The hosted sync worker does the same thing at
           // attach time.
           await adapter.ensureFolders();
+          // ── Mail 0065: DISCOVER THE PROVIDER'S OWN \Junk AND \Trash, AND WRITE THEM DOWN ──
+          //
+          // The hosted worker's attach hook, mirrored here because the LOCAL engine is its own
+          // attach path: without this, a local install's `mailboxes.trash_folder` stays NULL for
+          // ever, so its own API refuses every delete (`no_trash_folder`) and its spam verdicts
+          // never reach the provider's Junk. Read-only (one LIST), re-written every attach so a
+          // renamed folder heals, best-effort: a discovery failure keeps the stored answer and
+          // the fallbacks are never destructive. imap-types.ts carries the product rule.
+          if (typeof adapter.findSpecialFolders === "function"
+            && typeof repo.setMailboxSpecialFolders === "function") {
+            try {
+              const found = await adapter.findSpecialFolders();
+              await repo.setMailboxSpecialFolders(world.mailboxId, {
+                junkFolder: found.junk, trashFolder: found.trash,
+              });
+            } catch (err) {
+              log("special_folder_discovery_failed", { err });
+            }
+          }
           await serialize(() => drain(100));
           schedule();
         } catch (err) {
