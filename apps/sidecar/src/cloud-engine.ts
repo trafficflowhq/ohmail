@@ -404,7 +404,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // this fires from inside a pull's own refresh, and the teardown's stop() resolves
           // only after that pull fails out — awaiting it here would be the deadlock.
           sessionExpired = true;
-          log?.("cloud_session_expired", {
+          log?.("cloud_session_renewal_failed", {
             reason: "the hosted API refused to renew the session (revoked or rotated past); " +
               "the engine returns to sign-in and the mirror keeps serving what it holds",
           });
