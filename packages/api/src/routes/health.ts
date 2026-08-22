@@ -783,6 +783,14 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // constraint keeps out is a third party's SMTP response line. No INDEX marker: the migration
   // deliberately adds none.
   ["mailboxes", "smtp_size_probed_at"],
+  // mail 0064_device_sync_stamp — WHEN a device's `/sync` read last reached the horizon. It
+  // earns a marker on the whole-row-select rule: `SessionLifecycle.listDevices` does
+  // `select().from(devices)`, so an API ahead of the migration 42703s the Settings device
+  // list (and the revocation surface that hangs off it). The sync route's stamp itself is a
+  // guarded UPDATE that would merely fail loudly, but the read path is the one a person hits.
+  // No worker half: the sync host neither reads nor writes the column. Deploy order:
+  // migration → API, no third step.
+  ["devices", "last_synced_at"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.

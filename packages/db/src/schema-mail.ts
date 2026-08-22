@@ -1184,6 +1184,10 @@ export const devices = pgTable("devices", {
   ip: text("ip").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+  // mail 0064 — when this device's `/sync` read last reached the horizon (`hasMore: false`).
+  // NULL = never completed a drain. Stamped by the API's sync route alone, throttled in the
+  // statement; the `device_sync_stale` alert reads it. Never projected into a DTO.
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
 }, (t) => ({ ixUser: index("devices_user_idx").on(t.userId) }));
 
 export const sessions = pgTable("sessions", {

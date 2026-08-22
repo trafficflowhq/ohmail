@@ -41,7 +41,7 @@
 export type AdminSeverity = "ok" | "warn" | "bad" | "idle";
 export type AdminAlertKind =
   | "worker_down" | "billing_events_failed" | "sends_stuck" | "sync_lag" | "storage_at_cap"
-  | "billing_reconciliation_divergence" | "billing_reconciliation_stale";
+  | "billing_reconciliation_divergence" | "billing_reconciliation_stale" | "device_sync_stale";
 export type AdminMailboxStatus = "connected" | "error" | "disabled";
 export type AdminPlan = "solo" | "plus" | "pro";
 /** All eight `billing_subscriptions.status` values (migration 0018's CHECK) plus `none`. */

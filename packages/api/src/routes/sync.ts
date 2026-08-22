@@ -1,7 +1,10 @@
+import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { devices, sessions } from "@trafficflow/db";
 import type { EntityType } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
+import type { ApiDeps } from "../deps.js";
 import { sync } from "./shared.js";
 
 /**
@@ -30,6 +33,43 @@ function parseTypes(raw: string | null): EntityType[] | undefined {
   return types.length > 0 ? types : undefined;
 }
 
+/**
+ * How long a device-sync stamp is considered fresh enough not to rewrite. The throttle lives
+ * in the UPDATE's own predicate, so however many horizon-reaching polls a device makes, the
+ * row is written at most once per window — one guarded UPDATE per five minutes per device,
+ * not one per 20-second poll.
+ */
+export const DEVICE_SYNC_STAMP_MIN_GAP_MS = 5 * 60_000;
+
+/**
+ * Stamp `devices.last_synced_at` (mail 0064) for the session's device — the per-device "last
+ * time this mirror was genuinely current" the `device_sync_stale` alert reads.
+ *
+ * Called ONLY when a `GET /sync` response says `hasMore: false`: a device that is paging a
+ * backlog (or stuck re-bootstrapping the same backlog forever — the measured failure this
+ * column exists for) makes requests but never reaches the horizon, and must not look current.
+ * A deviceless session (a plain browser tab) matches no row and writes nothing.
+ *
+ * FAILURE POSTURE: swallowed, deliberately, and the direction is fail-LOUD for the alert —
+ * a stamp that stops landing lets `last_synced_at` age, which makes the staleness alert FIRE,
+ * never sleep. The read this rides on must not become 500s over bookkeeping.
+ */
+async function stampDeviceSynced(deps: ApiDeps): Promise<void> {
+  const sessionId = deps.session?.sessionId;
+  if (!sessionId) return;
+  try {
+    const cutoff = new Date(deps.now().getTime() - DEVICE_SYNC_STAMP_MIN_GAP_MS);
+    await deps.db.update(devices)
+      .set({ lastSyncedAt: deps.now() })
+      .where(and(
+        eq(devices.id, sql`(select ${sessions.deviceId} from ${sessions} where ${sessions.id} = ${sessionId})`),
+        or(isNull(devices.lastSyncedAt), lt(devices.lastSyncedAt, cutoff)),
+      ));
+  } catch {
+    /* bookkeeping only — see the failure posture above */
+  }
+}
+
 /** §3 — the delta reader. A 410 (expired/malformed cursor) flows through withErrorEnvelope. */
 export const syncRoutes: Route[] = [
   {
@@ -48,6 +88,8 @@ export const syncRoutes: Route[] = [
         ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
         ...(types ? { types } : {}),
       });
+      // The horizon is the stamp's whole meaning — a page mid-backlog stamps nothing.
+      if (!result.hasMore) await stampDeviceSynced(deps);
       return jsonResponse(result);
     },
   },

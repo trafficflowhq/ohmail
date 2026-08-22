@@ -1,7 +1,7 @@
-import { and, eq, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import {
-  alertState, billingEvents, billingReconciliationRuns, mailboxes, outboundSends,
-  workerHeartbeats,
+  alertState, billingEvents, billingReconciliationRuns, changeLog, devices, mailboxes,
+  outboundSends, sessions, workerHeartbeats,
 } from "./schema.js";
 import { accountsWithSyncDisabled } from "./billing.js";
 import { accountsAtStorageCap } from "./storage-cloud.js";
@@ -103,7 +103,16 @@ export type AlertKind =
    * one has ever run. The reconciler exists to remove a silence; the rule exists so the
    * reconciler cannot itself go silent. Failed runs (error non-null) do not reset the clock.
    */
-  | "billing_reconciliation_stale";
+  | "billing_reconciliation_stale"
+  /**
+   * A paired NATIVE device (kind ≠ 'web') that used to reach the sync horizon has gone quiet
+   * past the threshold while its account kept changing. Read from `devices.last_synced_at`
+   * (mail 0064) — stamped only by a `GET /sync` answer with `hasMore: false`, so a mirror
+   * stuck re-paging a backlog forever counts as quiet, exactly like one whose session died.
+   * This is the alert a week of dead desktop sync did not have: the client retries on its own
+   * backoff, its refresh family keeps rotating, and no other server-side signal moves.
+   */
+  | "device_sync_stale";
 
 export type AlertSeverity = "critical" | "warning";
 
@@ -127,6 +136,13 @@ export interface AlertThresholds {
    * not a 3am mail, while a genuinely dead cron pages the same day it died.
    */
   reconcileStaleMs: number;
+  /**
+   * A native device whose last horizon-reaching `/sync` is older than this, while its account
+   * has newer changes, is a dead mirror. Three days: a laptop closed over a weekend is not a
+   * page, a desktop that died on a Monday pages before the week is out — measured against the
+   * incident this exists for, which ran silent for seven.
+   */
+  deviceSyncStaleMs: number;
 }
 
 export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
@@ -134,6 +150,7 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   stuckSendMs: 10 * 60 * 1000,
   syncLagMs: 15 * 60 * 1000,
   reconcileStaleMs: 6 * 60 * 60 * 1000,
+  deviceSyncStaleMs: 3 * 24 * 60 * 60 * 1000,
 };
 
 /**
@@ -568,6 +585,68 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
         oldestSeconds: staleSeconds,
       });
     }
+  }
+
+  // ── 8. a paired native device that stopped syncing ──────────────────────────────────────
+  //
+  // The population is `devices.last_synced_at` (mail 0064): stamped only by a `GET /sync`
+  // answer that reached the horizon, so "quiet" covers both ways the incident this guards
+  // actually happened — a mirror stuck re-paging its backlog forever (requests happening, no
+  // convergence) and a session killed by refresh-reuse detection (no requests at all). The
+  // client cannot report either: it retries on its own backoff and shows what it holds.
+  //
+  // Three gates, each a correctness statement:
+  //  · kind ≠ 'web' — a browser tab left closed is not an incident; the desktop IS one;
+  //  · the account MOVED ON — the newest change_log row is younger than the device's last
+  //    horizon, so there demonstrably was mail the device never received. A dormant account
+  //    keeps its devices quiet and unpaged;
+  //  · the device is still ARMED — an unrevoked session (alive but not converging), or one
+  //    revoked within 14 days (reuse detection writes no audit row and tells nobody, so the
+  //    person is likely still in front of a mirror that silently died). A device retired
+  //    months ago ages out of the arm window and the alert closes on its own.
+  //
+  // Per-device keys, like `worker_down:<shard>`: paired native devices are tens fleet-wide,
+  // the remedy is per-device, and a grouped count would hide WHICH mirror is dead.
+  const deviceStaleCut = new Date(now.getTime() - t.deviceSyncStaleMs);
+  const staleDevices = await db.select().from(devices)
+    .where(and(
+      ne(devices.kind, "web"),
+      isNotNull(devices.lastSyncedAt),
+      lt(devices.lastSyncedAt, deviceStaleCut),
+    ));
+  const deviceArmWindowMs = 14 * 24 * 60 * 60 * 1000;
+  for (const d of staleDevices) {
+    if (d.lastSyncedAt == null) continue; // isNotNull above; narrows the type
+    // Index-backed: (account_id, seq) descending, first row — the newest change's wall clock.
+    const [latest] = await db.select({ createdAt: changeLog.createdAt }).from(changeLog)
+      .where(eq(changeLog.accountId, d.accountId))
+      .orderBy(desc(changeLog.seq)).limit(1);
+    if (!latest || latest.createdAt <= d.lastSyncedAt) continue;
+    const armCut = new Date(now.getTime() - deviceArmWindowMs);
+    const armed = await db.select({ id: sessions.id }).from(sessions)
+      .where(and(
+        eq(sessions.deviceId, d.id),
+        or(isNull(sessions.revokedAt), gt(sessions.revokedAt, armCut)),
+      ))
+      .limit(1);
+    if (armed.length === 0) continue;
+    const staleSeconds = secondsBetween(now, d.lastSyncedAt);
+    alerts.push({
+      key: `device_sync_stale:${d.id}`,
+      kind: "device_sync_stale",
+      // WARNING, not critical: mail is safe on the account and the webapp still shows it —
+      // what is broken is one device's mirror, and the person may not know.
+      severity: "warning",
+      title: `A paired ${d.kind} device has not synced in ${humanAge(staleSeconds)}`,
+      detail:
+        `Device ${d.id} (kind ${d.kind}) last reached the sync horizon ` +
+        `${humanAge(staleSeconds)} ago (threshold ${humanAge(Math.round(t.deviceSyncStaleMs / 1000))}), ` +
+        `and its account has newer changes it never received. Its session is still armed ` +
+        `(live, or revoked within 14 days) — the person in front of it is reading stale ` +
+        `mail and the client cannot say so.`,
+      count: 1,
+      oldestSeconds: staleSeconds,
+    });
   }
 
   return alerts;

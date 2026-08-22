@@ -449,6 +449,13 @@
       "when": 1790982140527,
       "tag": "0063_smtp_size_probe_stamp",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1790982140528,
+      "tag": "0064_device_sync_stamp",
+      "breakpoints": true
     }
   ]
 }

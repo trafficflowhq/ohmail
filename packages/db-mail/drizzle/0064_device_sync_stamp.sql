@@ -1,0 +1,47 @@
+-- WHEN A DEVICE'S MIRROR LAST REACHED THE ACCOUNT'S SYNC HORIZON.
+--
+-- ══ WHAT THIS FIXES ════════════════════════════════════════════════════════════════════════
+--
+-- A paired desktop pulls the account through `GET /sync`, and every way that pull can die is
+-- silent on the server: the client retries on its own backoff, its session keeps rotating
+-- (the token refresh is a different request that keeps succeeding), and no row anywhere
+-- records that the DEVICE has stopped receiving mail. Measured live: a desktop whose mirror
+-- froze kept rotating its refresh family four times an hour for five days — every server-side
+-- signal said "healthy" while the person in front of it read week-old mail.
+--
+-- The fix is a per-device stamp of the last time that device's `/sync` read reached the
+-- horizon (`hasMore: false`) — i.e. the last moment the device was genuinely CURRENT, not
+-- merely making requests. A mirror stuck re-bootstrapping pages forever never reaches the
+-- horizon and therefore never stamps, which is exactly the population the alert built on this
+-- column has to catch: requests happening, no convergence.
+--
+-- ══ THE COLUMN ═════════════════════════════════════════════════════════════════════════════
+--
+--   last_synced_at  timestamptz NULL
+--       NULL means "this device has never completed a drain" — the value every existing row
+--       gets, and the honest one: nothing was ever recorded for them. No backfill, because a
+--       backfilled `now()` would assert a convergence nobody observed and silence the alert
+--       for exactly the devices it exists for.
+--
+-- Written by the API's `GET /sync` handler alone, throttled in the statement itself (at most
+-- one write per device per five minutes), only when the response says `hasMore: false`, and
+-- only for a session that carries a `device_id` — a deviceless web session stamps nothing.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO INDEX ═════════════════════════════════════════════════════════
+--
+-- One nullable `ADD COLUMN IF NOT EXISTS`, no default, no DML. The alert scan reads `devices`
+-- (one row per paired device, tens fleet-wide) — no index earns its keep at that size.
+-- `ADD COLUMN` inherits the table's grants.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → API. `SessionLifecycle.listDevices` selects whole `devices` rows through the
+-- drizzle schema, so an API deployed ahead of this answers 42703 on the device list; the
+-- health marker `["devices","last_synced_at"]` turns that into `503 schema_incomplete`
+-- naming this file. No worker half: the sync host neither reads nor writes the column.
+-- A CLIENT never sees it; nothing projects it into a DTO.
+--
+-- ROLLBACK is `ALTER TABLE devices DROP COLUMN last_synced_at`. The cost is the alert going
+-- blind again; no user data is involved.
+
+ALTER TABLE "devices" ADD COLUMN IF NOT EXISTS "last_synced_at" timestamp with time zone;
