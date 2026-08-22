@@ -118,7 +118,7 @@ interface ProbeTarget {
   credentialsTransport: "imap" | "smtp";
   credentialsGuard:
     | { kind: "stamp"; updatedAt: Date }
-    | { kind: "meta"; meta: unknown; secretEnc: string };
+    | { kind: "meta"; meta: unknown; updatedAt: Date };
 }
 
 /**
@@ -180,7 +180,7 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
       credentialsTransport: "imap",
       // META, not `updated_at`: the token refresh this dial performs moves the row's stamp. See
       // {@link ProbeTarget.credentialsGuard}.
-      credentialsGuard: { kind: "meta", meta: imapRow.meta, secretEnc: imapRow.secretEnc },
+      credentialsGuard: { kind: "meta", meta: imapRow.meta, updatedAt: imapRow.updatedAt },
     };
   }
   if (authType !== undefined && authType !== "password") return undefined;
@@ -357,7 +357,7 @@ async function stampProbe(
               // `jsonb = jsonb`, which is key-order-insensitive and so survives a round trip
               // through the driver. The captured value came out of this very column.
               : eq(mailboxCredentials.meta, target.credentialsGuard.meta),
-            // ── AND FOR ONE CODE, THE SECRET TOO ────────────────────────────────────────────
+            // ── AND FOR ONE CODE, THE STAMP TOO ─────────────────────────────────────────────
             //
             // `token_unavailable` is the only outcome that is a statement ABOUT THE CREDENTIAL
             // rather than about the server: no token could be minted from the refresh token this
@@ -372,9 +372,25 @@ async function stampProbe(
             // never answered) is a fact about the server and earns its stamp even though this
             // probe's own refresh has since moved the row. That asymmetry is the whole point: it
             // keeps the common Microsoft case — a tenant with SMTP AUTH disabled — bounded to one
-            // login a week instead of one a day.
+            // login a week instead of one a day. And there is no own-rotation to accommodate here:
+            // a rotation only happens inside a mint that SUCCEEDED, which is not this code.
+            //
+            // `updated_at` AND NOT `secret_enc`, which is a correction rather than a preference:
+            // both move under a rotation, but a KEK REWRAP re-encrypts the same plaintext and
+            // writes `secret_enc` + `key_version` while deliberately leaving `updated_at` alone
+            // (`rewrapOneRow`, and its own CAS is on the ciphertext for that reason). Keying on the
+            // ciphertext would therefore read a pure re-encryption as a credential change and drop
+            // the stamp, costing a probe slot for something that changed no credential at all.
+            //
+            // WHAT THIS STILL DOES NOT CLOSE, named rather than left to be discovered: the commit
+            // ORDER. If the concurrent rotation commits after this UPDATE's snapshot, the predicate
+            // passes and the stamp lands anyway, so the replacement token waits out one backoff
+            // interval. Closing that needs a logical revision on the credential row — a migration,
+            // and a new obligation for every writer of a path that runs on every send — to buy the
+            // difference between a millisecond-wide race and a seconds-wide one, on a value whose
+            // absence has a strict fallback. Not worth it; recorded so the trade is visible.
             ...(target.credentialsGuard.kind === "meta" && code === "token_unavailable"
-              ? [eq(mailboxCredentials.secretEnc, target.credentialsGuard.secretEnc)]
+              ? [eq(mailboxCredentials.updatedAt, target.credentialsGuard.updatedAt)]
               : []),
           )))]
         : []),
