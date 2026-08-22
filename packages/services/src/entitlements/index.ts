@@ -20,7 +20,7 @@ export {
 } from "./plane-client.js";
 export {
   reconcileBillingMirror, recordReconcileFailure,
-  RECONCILE_MAX_PAGES, RECONCILE_TEST_ROW_PREFIX, RECONCILE_RUN_RETENTION_MS,
+  RECONCILE_MAX_PAGES, RECONCILE_TEST_ROW_PREFIX, RECONCILE_COMP_ROW_PREFIX, RECONCILE_RUN_RETENTION_MS,
   type ReconcileCode, type ReconcileDivergence, type ReconcileReport, type ReconcileOptions,
 } from "./reconcile.js";
 export {
