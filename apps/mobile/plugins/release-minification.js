@@ -46,7 +46,8 @@ const fs = require("node:fs");
  *  · DEBUG and VERBOSE logging from OTHER libraries is stripped too. That is the cost, it is
  *    accepted deliberately, and in a release build it is close to what one wants anyway: this app
  *    ships no `Log.d` of its own (the only Kotlin it contributes is `MainActivity`,
- *    `MainApplication` and the no-op renderer, none of which log).
+ *    `MainApplication` and the wake renderer, none of which log — the renderer deliberately logs
+ *    nothing at all, so no push content can reach logcat through it).
  *
  * One real footgun, recorded because it is the thing that would bite a future edit: R8 removes the
  * argument computation along with the call. `Log.d(TAG, "… $data")` is a pure string concat, so
@@ -69,7 +70,7 @@ const fs = require("node:fs");
  * file committed there would be deleted by the next prebuild and the minified APK would ship with
  * no keep rules at all — renamed renderer, silent fallback to the connector's default renderer,
  * every check still green. So the rules live here, in source, and are written into the generated
- * project at prebuild time. Same mechanism, and same reasoning, as `silent-push-renderer.js`.
+ * project at prebuild time. Same mechanism, and same reasoning, as `wake-push-renderer.js`.
  *
  * It writes a DELIMITED BLOCK into that file and rewrites only that block. Two failures are being
  * avoided at once, and they pull in opposite directions:
@@ -110,9 +111,9 @@ const PROPERTY = "android.enableMinifyInReleaseBuilds";
 
 /**
  * The FQCN the AndroidManifest names and R8 cannot see. Exported so a test compares values
- * instead of two copies of a string, exactly as `silent-push-renderer.js` does.
+ * instead of two copies of a string, exactly as `wake-push-renderer.js` does.
  */
-const RENDERER_FQCN = "app.ohmail.push.SilentPushPayloadRenderer";
+const RENDERER_FQCN = "app.ohmail.push.WakePayloadRenderer";
 
 /**
  * The connector's `Log.d` literals. These are the strings the release guard asserts are ABSENT
@@ -148,13 +149,13 @@ ${MARKER}
 
 # ── 2 · WHAT MINIFICATION MUST NOT TOUCH ──────────────────────────────────────────────────────
 #
-# The no-op payload renderer. The connector finds it by FQCN read from an AndroidManifest
+# The wake payload renderer. The connector finds it by FQCN read from an AndroidManifest
 # meta-data STRING and instantiates it with Class.forName. A string is not a code reference, so
 # R8 cannot see the link: without this rule the class is renamed or dropped as unused,
 # resolvePayloadRenderer() returns null, and the service falls back to its DEFAULT renderer —
 # which draws a notification from server-supplied title/body/image with a server-supplied
 # ACTION_VIEW tap target. The failure is SILENT: the app keeps working and the phishing surface
-# that renderer exists to close quietly reopens.
+# that renderer exists to close quietly reopens — and the killed-app notice it draws is gone too.
 -keep class ${RENDERER_FQCN} { *; }
 
 # Its interface and its return type, both named across that reflective boundary:

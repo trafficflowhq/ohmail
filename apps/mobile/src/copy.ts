@@ -208,19 +208,24 @@ export const Copy = {
     + "would accept. Whoever runs it can generate one — see the self-hosting guide. Mail still "
     + "arrives when you open the app or pull to refresh.",
   /**
-   * REGISTERED — and the qualification in the second sentence is load-bearing.
+   * REGISTERED — and every clause is measured against what the build actually does.
    *
-   * A wake reaches this app when its process is alive: open, or in the background. If the user
-   * swipes the app away, the connector's service still receives the wake and there is no JS to hand
-   * it to, so nothing happens until they open the app again. So the copy may NOT say "your phone
-   * wakes when mail arrives" full stop, and it does not — it says while ohmail is running, and then
-   * says what happens the rest of the time. A sentence that overstated this would be a claim the
-   * build cannot keep, on the one screen where a user would notice.
+   * While the process is alive (open or in the background) a wake is handled silently: the JS side
+   * syncs and the new mail simply appears, because a wake is not a notification while you are in the
+   * app. When the app has been swiped away, the connector's service still receives the wake in a
+   * fresh process with no JS, and a native renderer draws a single plain "New mail" notice whose tap
+   * opens the app — the one thing a content-free wake can honestly show. Either way the signal
+   * carries no subject, no sender and no count.
+   *
+   * The closed-app notice depends on the OS notification permission being granted (Android asks for
+   * it from Android 13 on); without it the app still syncs the next time it is opened. The copy says
+   * "if you've allowed notifications" so it stays true on a phone that has not.
    */
   wakeOn:
     "While ohmail is running — open or in the background — your server tells this phone that "
-    + "something changed, and the app fetches your mail directly. The signal carries no subject, no "
-    + "sender and no count. If you close the app, mail arrives the next time you open it.",
+    + "something changed, and the app fetches your mail directly. If you close the app, a plain "
+    + "“New mail” notice arrives instead (if you've allowed notifications); tapping it "
+    + "opens ohmail. Either way the signal carries no subject, no sender and no count.",
   /**
    * The distributor picker's label and hint.
    *

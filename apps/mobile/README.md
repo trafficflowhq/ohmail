@@ -21,15 +21,22 @@ Honest edges, stated here and on the screens themselves:
   picker's managed card negotiates against the real server and reports what it
   answers — today, that pairing arrives with a later update. No date is
   promised.
-- **New-mail wake works while the app is running — open or in the background —
-  and not when it has been swiped away.** The server sends a fifteen-byte
-  signal, encrypted to this device, through a [UnifiedPush][up] distributor you
-  choose and install yourself; no Google or Apple push service is in the path,
-  and the app carries no client for either. Settings shows the distributors
-  found on your phone and one sentence when there are none. If you close the
-  app, mail arrives the next time you open it; foreground sync and
-  pull-to-refresh are the floor underneath all of it. Waking a closed app needs
-  native code that is not written yet.
+- **New-mail wake works whether the app is open, backgrounded, or closed.** The
+  server sends a fifteen-byte signal, encrypted to this device, through a
+  [UnifiedPush][up] distributor you choose and install yourself; no Google or
+  Apple push service is in the path, and the app carries no client for either.
+  While the app is running (open or in the background) a wake is handled
+  silently — the app fetches your mail directly and it appears. When the app has
+  been swiped away, a small native renderer draws a single plain "New mail"
+  notice whose tap opens the app; that notice is the only thing a content-free
+  wake can show, and it carries no subject, no sender and no count. The renderer
+  reads no field out of the payload — it acts only on the exact wake constant, so
+  a paired server cannot draw a notification in ohmail's name. The closed-app
+  notice depends on the OS notification permission (Android asks for it from
+  Android 13 on); without it the app still syncs the next time it is opened, and
+  foreground sync and pull-to-refresh remain the floor underneath all of it.
+  Settings shows the distributors found on your phone and one sentence when there
+  are none.
 - The server must have a signing keypair for a wake to be renderable — the
   managed service has one, and a self-hosted install generates its own with
   `node scripts/vapid-keygen.mjs`. Without one, Settings says so rather than

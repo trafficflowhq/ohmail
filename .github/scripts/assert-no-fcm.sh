@@ -218,7 +218,7 @@ check_absent "the embedded UnifiedPush FCM distributor" 'Lorg/unifiedpush/androi
 check_absent "Play Services messaging" 'Lcom/google/android/gms/cloudmessaging/'
 check_absent "Firebase Installations" 'Lcom/google/firebase/installations/'
 
-# ── AND THE THING THAT MUST BE PRESENT: the silent payload renderer ──────────────────────────
+# ── AND THE THING THAT MUST BE PRESENT: the wake payload renderer ──────────────────────────
 #
 # `expo-unified-push`'s native service renders a notification from ANY decrypted payload carrying
 # an `id`, using that payload's own title, body, image and a tap URL. The actor who could do that
@@ -235,16 +235,16 @@ check_absent "Firebase Installations" 'Lcom/google/firebase/installations/'
 # class up if the manifest carries the meta-data pointing at it, so an `app.json` that lost the
 # `expo-unified-push` plugin entry would leave the class present, this check green, and the DEFAULT
 # renderer quietly in force. That is the exact silent-fallback path the renderer exists to close.
-RENDERER_FQCN='app.ohmail.push.SilentPushPayloadRenderer'
-RENDERER_DESC='Lapp/ohmail/push/SilentPushPayloadRenderer;'
+RENDERER_FQCN='app.ohmail.push.WakePayloadRenderer'
+RENDERER_DESC='Lapp/ohmail/push/WakePayloadRenderer;'
 META_NAME='dev.djara.expounifiedpush.PAYLOAD_RENDERER'
 
 n=$(/usr/bin/grep -a -c -F "$RENDERER_DESC" "$WORK/all.dex" || true)
 if [ "${n:-0}" -gt 0 ]; then
-  echo "assert-no-fcm: present — the silent push renderer class is compiled in"
+  echo "assert-no-fcm: present — the wake push renderer class is compiled in"
 else
-  echo "assert-no-fcm: MISSING the silent push renderer class ($RENDERER_DESC)." >&2
-  echo "  Check that plugins/silent-push-renderer.js wrote the class into the generated project." >&2
+  echo "assert-no-fcm: MISSING the wake push renderer class ($RENDERER_DESC)." >&2
+  echo "  Check that plugins/wake-push-renderer.js wrote the class into the generated project." >&2
   # SECOND CAUSE, and since minification was turned on it is the more likely one. The connector
   # only ever names this class as a STRING (an AndroidManifest meta-data value it hands to
   # Class.forName), and a string is not a code reference — so R8 sees an unreferenced class, and

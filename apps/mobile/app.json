@@ -48,10 +48,10 @@
       [
         "expo-unified-push",
         {
-          "payloadRendererClass": "app.ohmail.push.SilentPushPayloadRenderer"
+          "payloadRendererClass": "app.ohmail.push.WakePayloadRenderer"
         }
       ],
-      "./plugins/silent-push-renderer",
+      "./plugins/wake-push-renderer",
       "./plugins/release-minification"
     ]
   }
