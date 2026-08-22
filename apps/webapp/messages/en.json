@@ -1265,6 +1265,8 @@
     "sub": "The parts you stop noticing, which is the point of them.",
     "attachmentsTerm": "Attachments",
     "attachmentsBody": "Open a PDF or an image inside the message. Everything else downloads, and nothing renders itself.",
+    "picturesTerm": "Sending pictures",
+    "picturesBody": "Photos are compressed in your browser before they leave it, at a quality you choose — and the camera data goes with the re-encode, location included. Original sends the file as it was.",
     "trackersTerm": "Trackers",
     "trackersBody": "A spy pixel is never fetched, so it cannot fire. Ordinary pictures load through our proxy, which hides your address from the sender.",
     "laterTerm": "Later",

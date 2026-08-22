@@ -22,6 +22,9 @@ import { Reveal } from "./Reveal";
  */
 const ITEMS = [
   "attachments",
+  // Beside "Attachments" on purpose: one item is what happens to a file arriving, the other
+  // what happens to one leaving, and a reader scanning the list meets the pair together.
+  "pictures",
   "trackers",
   "later",
   "unsub",

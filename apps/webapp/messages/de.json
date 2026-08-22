@@ -1265,6 +1265,8 @@
     "sub": "Die Dinge, die du irgendwann nicht mehr bemerkst — und genau darum geht es.",
     "attachmentsTerm": "Anhänge",
     "attachmentsBody": "PDFs und Bilder öffnen sich in der Nachricht. Alles andere wird heruntergeladen, und nichts stellt sich selbst dar.",
+    "picturesTerm": "Bilder senden",
+    "picturesBody": "Fotos werden in deinem Browser komprimiert, bevor sie ihn verlassen — in einer Qualität, die du wählst. Beim Neucodieren entfallen die Kameradaten samt Standort. Mit „Original“ geht die Datei unverändert raus.",
     "trackersTerm": "Tracker",
     "trackersBody": "Ein Zählpixel wird nie geholt und kann deshalb nicht auslösen. Normale Bilder laufen über unseren Proxy, der deine Adresse vor dem Absender verbirgt.",
     "laterTerm": "Später",
