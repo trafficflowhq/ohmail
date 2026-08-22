@@ -75,6 +75,14 @@ export interface EnabledMailbox {
    */
   syncBlockedReason: string | null;
   /**
+   * Mail 0055. The RFC 1870 `SIZE` this mailbox's submission server announced, or NULL when it has
+   * never been probed. READ ONLY SO THE WORKER KNOWS WHETHER THERE IS ANYTHING TO LEARN — the
+   * back-fill in `smtp-size.ts` dials once for a NULL and records what it hears, and nothing here
+   * decides on the value. It is in this projection rather than re-read per mailbox because the
+   * common answer is "already known", and that answer should cost no query of its own.
+   */
+  smtpMaxSizeBytes: number | null;
+  /**
    * Mail 0039. WHEN the leader may next attach this mailbox, or NULL for "no backoff is in
    * force". THIS ONE IS DECIDED ON, unlike the two above it, and it is the only column in this
    * projection that is.
@@ -208,6 +216,7 @@ export async function loadEnabledMailboxes(
       syncBlockedReason: mailboxes.syncBlockedReason,
       retryAfter: mailboxes.retryAfter,
       retryCount: mailboxes.retryCount,
+      smtpMaxSizeBytes: mailboxes.smtpMaxSizeBytes,
     })
     .from(mailboxes)
     .where(and(...filters))
@@ -223,6 +232,7 @@ export async function loadEnabledMailboxes(
       syncBlockedReason: r.syncBlockedReason ?? null,
       retryAfter: r.retryAfter ?? null,
       retryCount: r.retryCount ?? 0,
+      smtpMaxSizeBytes: r.smtpMaxSizeBytes ?? null,
     }));
 }
 

@@ -72,6 +72,7 @@ import {
   startPushWake, pushEndpointGuardFromEnv, vapidFromEnv, type RunningPushWake,
 } from "./push-wake.js";
 import { driverWriteRaceReason } from "./driver-write-race.js";
+import { learnSmtpMaxSize, recordSmtpMaxSize, smtpSizeDial } from "./smtp-size.js";
 import type { Tx } from "@trafficflow/db";
 import {
   loadEnabledMailboxes, loadMailboxCreds, loadMailboxById, bootstrapEnvCreds,
@@ -728,6 +729,15 @@ export async function startWorkerWithLock(
     }
     /** Loud logs that must not repeat on every 30 s roster pass. */
     const announced = { cap: "", creds: new Set<string>() };
+    /**
+     * Mailboxes whose submission server this process has already asked for its `SIZE` (mail 0055).
+     *
+     * ONE SMTP LOGIN PER MAILBOX PER PROCESS, and the bound is not decoration: `attach` runs again
+     * every time a mailbox detaches and re-attaches, so without this a mailbox that flaps would log
+     * in to its provider on every roster pass — which is how a provider decides to throttle a
+     * customer. `smtp-size.ts` marks a mailbox here BEFORE it dials, so a failed dial counts too.
+     */
+    const smtpSizeAttempted = new Set<string>();
 
     /**
      * Enter (or stay in) the shared-database condition — ONE incident, however many mailboxes.
@@ -1539,6 +1549,52 @@ export async function startWorkerWithLock(
         }
         awaitingCreds.delete(mb.mailboxId);
         announced.creds.delete(mb.mailboxId);
+
+        // ── WHAT THIS MAILBOX'S SUBMISSION SERVER WILL ACCEPT (mail 0055) ────────────────────
+        //
+        // Learned HERE because this is the one place that holds decrypted SMTP credentials for a
+        // mailbox nobody is asking to change. The column is otherwise written only when a mailbox
+        // is created or when a PATCH re-dials SMTP — which means the person re-entering their
+        // password — so every mailbox that predates the column announced nothing for ever, and an
+        // unannounced ceiling is read as the STRICT product constant by both the compose form and
+        // the send. That is the right rule and it stays; what was missing is anything that learns
+        // the number. See `smtp-size.ts` for the bounds (one login per mailbox per process, never
+        // an oauth transport, never a throw, and silence records nothing).
+        //
+        // AWAITED rather than fired and forgotten, and it is worth saying why: the alternative
+        // leaves a promise rejecting into nothing on a path whose whole purpose is that one
+        // mailbox's failure stays one mailbox's failure. It costs one SMTP login, once, ahead of
+        // an attach that is about to open an IMAP connection to the same provider anyway.
+        try {
+          const learned = await learnSmtpMaxSize({
+            mailboxId: mb.mailboxId,
+            announced: mb.smtpMaxSizeBytes,
+            smtp: creds.smtp,
+            attempted: smtpSizeAttempted,
+            dial: smtpSizeDial,
+          });
+          if (learned.outcome === "learned") {
+            await recordSmtpMaxSize(db, mb.mailboxId, learned.maxMessageBytes);
+            log.info("mailbox_smtp_size_learned", {
+              mailboxId: mb.mailboxId, accountId: mb.accountId,
+              maxMessageBytes: learned.maxMessageBytes,
+            });
+          } else if (learned.outcome === "failed") {
+            // A submission server that refuses a login costs this mailbox its ceiling and nothing
+            // else — the strict fallback still applies and the mailbox still syncs. `info`, not
+            // `warn`: a mailbox whose SMTP password differs from its IMAP one is a supported
+            // configuration this deployment simply cannot probe, not an incident.
+            log.info("mailbox_smtp_size_unlearned", {
+              mailboxId: mb.mailboxId, accountId: mb.accountId, reason: learned.error,
+            });
+          }
+        } catch (err) {
+          // The RECORD can still fail (a database fault), and it must not take the attach with it.
+          log.info("mailbox_smtp_size_unlearned", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId,
+            reason: err instanceof Error ? err.message : String(err),
+          });
+        }
 
         adapter = makeAdapter({
           host: creds.imap.host, port: creds.imap.port, secure: creds.imap.secure,
