@@ -19,7 +19,12 @@
  * carrying the anon key. That is the actual threat model — a public key, an internet-facing
  * endpoint, no VPN, no session. **A 200 with `[]` is a FAILURE, not a pass**: an empty array
  * means the SELECT succeeded against an empty table, and the tables are empty only until
- * cutover. A refusal is 401.
+ * cutover.
+ *
+ * A refusal is only evidence when it came from PostgREST — a key the gateway rejects answers
+ * 401 for an exposed table and a closed one alike. That classification, the request itself and
+ * the endpoint half all live in `supabase-lockdown-core.ts` now, because the provisioning path
+ * runs them too and a second copy of a security predicate is how the first one rots.
  *
  * ── --prove ─────────────────────────────────────────────────────────────────────────────
  *
@@ -38,43 +43,22 @@ import { argv, env } from "node:process";
 import postgres from "postgres";
 import { transactionPoolerReason } from "./session-url.js";
 import {
-  HOST_ROLES, applySupabaseLockdown, lockdownCensus, supabaseHostRoles,
+  HOST_ROLES, SENSITIVE_PROBE_TABLES, applySupabaseLockdown, closeDataApiEndpoint,
+  dataApiProblems, lockdownCensus, probeDataApi, publicRelationNames, supabaseHostRoles,
 } from "./supabase-lockdown-core.js";
 
 const APPLY = argv.includes("--apply");
 const CLOSE_API = argv.includes("--close-api");
 const PROVE = argv.includes("--prove");
 
-/**
- * Probed by name from outside. Deliberately the worst cases rather than a sample: message
- * content (the very thing the isolation rules protect), envelope-encrypted credentials (a
- * decryption target), identity,
- * and the money table. If any of these answers 200 the lockdown did not work, whatever the
- * database says.
- */
-const PROBE_TABLES = [
-  "messages",
-  "message_bodies",
-  "mailbox_credentials",
-  "users",
-  "accounts",
-  "credit_ledger",
-  // Mail 0062 — the stored-body byte counter behind the managed storage cap. Usage data, not
-  // content, and probed anyway: the standing rule is that any table a migration CREATES joins
-  // this list, because a stock project served ALL tables over PostgREST while two internal
-  // checks read clean, and per-account byte counts are still an account-level fact nobody
-  // anonymous may enumerate.
-  "account_storage",
-];
-
 type Sql = ReturnType<typeof postgres>;
 
 /**
- * The census, the statement batch and the role detection all live in
- * `supabase-lockdown-core.ts` now, shared with `setupProdDatabase` — which runs the grant half
- * on every provisioning pass and fails closed on this same census. This file keeps what only an
- * operator ceremony can do: the Management-API `--close-api` half, the external anon-key
- * re-probe, and `--prove`.
+ * The census, the statement batch, the role detection, the endpoint close and the external probe
+ * all live in `supabase-lockdown-core.ts` now, shared with `setupProdDatabase` — which runs the
+ * whole lockdown on every provisioning pass and fails closed on the same census and the same
+ * probe. This file keeps what only an operator ceremony can do: the before/after narration of a
+ * one-off run, and `--prove`.
  */
 
 /**
@@ -101,34 +85,6 @@ async function newTableInherits(sql: Sql): Promise<string[]> {
   }
 }
 
-/**
- * The external verdict. Returns the tables that ANSWERED — i.e. the ones still exposed.
- *
- * A network error is NOT treated as a pass. "The request failed so we must be safe" is how a
- * DNS hiccup becomes a security sign-off; an unreachable probe is reported as UNKNOWN and the
- * caller fails on it.
- */
-async function probeRest(
-  ref: string,
-  anonKey: string,
-): Promise<{ exposed: string[]; unknown: string[] }> {
-  const exposed: string[] = [];
-  const unknown: string[] = [];
-  for (const t of PROBE_TABLES) {
-    try {
-      const res = await fetch(`https://${ref}.supabase.co/rest/v1/${t}?select=*&limit=1`, {
-        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
-      });
-      // 200 is the only outcome that means "the SELECT ran". 401/403/404 all mean refused or
-      // not routed, which is what we want. An empty body does not soften a 200.
-      if (res.status === 200) exposed.push(`${t} (200)`);
-    } catch (e) {
-      unknown.push(`${t} (${(e as Error).message})`);
-    }
-  }
-  return { exposed, unknown };
-}
-
 async function main(): Promise<number> {
   const url = (env.SUPABASE_DB_URL ?? "").trim();
   if (!url) {
@@ -151,6 +107,8 @@ async function main(): Promise<number> {
   });
 
   let failed = false;
+  /** Relations the external probe will ask about — read from the database, unioned with the list. */
+  let probeTables: string[] = [...SENSITIVE_PROBE_TABLES];
   try {
     const who = (await sql<Array<{ db: string; usr: string }>>`
       SELECT current_database() AS db, current_user AS usr`)[0]!;
@@ -254,6 +212,11 @@ async function main(): Promise<number> {
         failed = true;
       }
     }
+
+    // Captured while the connection is still open, for the probe below: the standing rule that
+    // "any table a migration CREATES joins this list" is a rule a human has to remember, so the
+    // probe covers what the schema ACTUALLY holds as well as the named sensitive set.
+    probeTables = [...new Set([...(await publicRelationNames(sql)), ...SENSITIVE_PROBE_TABLES])].sort();
   } catch (e) {
     console.error(`FAILED: ${(e as Error).message}`);
     for (const n of notices) console.error(`  ${n}`);
@@ -278,16 +241,12 @@ async function main(): Promise<number> {
       console.error("REFUSING --close-api: SUPABASE_PROJECT_REF and SUPABASE_ACCESS_TOKEN needed.");
       failed = true;
     } else {
-      // Drop `public` from PostgREST's exposed schemas. `graphql_public` is left because it
-      // exposes only the GraphQL entrypoint, not our tables — and removing every schema makes
-      // the service error rather than serve nothing, which reads as an outage.
-      const res = await fetch(`https://api.supabase.com/v1/projects/${ref}/postgrest`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ db_schema: "graphql_public", db_extra_search_path: "public" }),
-      });
-      console.log(`postgrest: db_schema -> graphql_public (HTTP ${res.status})`);
-      if (!res.ok) failed = true;
+      const closed = await closeDataApiEndpoint({ projectRef: ref, accessToken: token });
+      console.log(`postgrest: db_schema -> graphql_public (HTTP ${closed.status})`);
+      if (!closed.ok) {
+        if (closed.detail) console.error(`  ${closed.detail}`);
+        failed = true;
+      }
     }
   }
 
@@ -296,18 +255,16 @@ async function main(): Promise<number> {
     // an unfixed database safe. This waits, then probes, and reports the timing so a reader can
     // judge the result rather than trust it.
     await new Promise((r) => setTimeout(r, 15_000));
-    const { exposed, unknown } = await probeRest(ref, anonKey);
-    console.log(`\nexternal probe (anon key, +15s), ${PROBE_TABLES.length} tables:`);
-    if (unknown.length) {
-      console.error(`  UNKNOWN — not a pass: ${unknown.join("; ")}`);
-      failed = true;
-    }
-    if (exposed.length) {
-      console.error(`  STILL EXPOSED: ${exposed.join("; ")}`);
-      failed = true;
-    } else if (!unknown.length) {
-      console.log("  refused on every table — no 200 answered");
-    }
+    const probe = await probeDataApi({ baseUrl: `https://${ref}.supabase.co`, anonKey }, probeTables);
+    console.log(`\nexternal probe (anon key, +15s), ${probe.probed.length} relations:`);
+    // The classification, and the reason this is no longer a hand-rolled `status === 200` check:
+    // a key the gateway rejects answers 401 for an exposed table and a closed one alike, so
+    // "no 200 answered" used to be printable with a mistyped key. `dataApiProblems` fails on
+    // that case by name — see `classifyDataApiResponse`.
+    const problems = dataApiProblems(probe);
+    for (const p of problems) console.error(`  ${p}`);
+    if (problems.length > 0) failed = true;
+    else console.log("  refused by PostgREST on every relation — no 2xx answered");
   } else {
     console.log("\nexternal probe SKIPPED (SUPABASE_ANON_KEY unset) — the database half is not a verdict.");
   }

@@ -7,7 +7,9 @@ import { runMigrations, JOURNALS } from "./migrate.js";
 import { ensureSearchExtensions } from "./search-setup.js";
 import { transactionPoolerReason, sessionUrlRejection } from "./session-url.js";
 import {
-  applySupabaseLockdown, lockdownCensus, lockdownProblems, supabaseHostRoles,
+  applySupabaseLockdown, closeDataApiEndpoint, dataApiProblems, dataApiUnverifiedProblem,
+  lockdownCensus, lockdownProblems, probeDataApi, publicRelationNames, SENSITIVE_PROBE_TABLES,
+  supabaseHostRoles, type DataApiDeps, type DataApiPolicy,
 } from "./supabase-lockdown-core.js";
 
 /**
@@ -127,7 +129,49 @@ export interface ProdSetupReport {
     /** Table privileges a host role can EXERCISE, however derived — see `LockdownCensus.effective`. */
     effective: number;
   } | null;
+  /**
+   * The verdict from OUTSIDE: what the host's Data API answered to the PUBLIC anon key, after
+   * the grant half ran. `null` when the host is not Supabase-shaped (nothing to serve), or when
+   * the caller supplied no {@link ProdSetupOptions.dataApi} policy at all — the second case is
+   * announced in the log, because a database-only pass is not a verdict about a hosted endpoint.
+   *
+   * On a Supabase-shaped host with a policy this is fail-closed twice over: a relation that
+   * ANSWERS joins `problems`, and so does one whose answer proves nothing (an unreachable
+   * endpoint, a rate limit, or a key the gateway rejected before any table was consulted). See
+   * `classifyDataApiResponse` for why the second case cannot be counted as a refusal.
+   */
+  supabaseDataApi: {
+    /** The base URL probed. */
+    endpoint: string;
+    /** `true` when this run PATCHed the endpoint's exposed schemas; `false` when it only probed. */
+    endpointClosed: boolean;
+    /** Relations probed — the union of what `public` holds and the standing sensitive list. */
+    probed: number;
+    /** Relations that answered 2xx. Any entry is a live exposure. */
+    exposed: string[];
+    /** Relations whose answer proves nothing. Never a pass. */
+    unknown: string[];
+  } | null;
 }
+
+/** Options for {@link setupProdDatabase}. */
+export interface ProdSetupOptions {
+  log?: (msg: string) => void;
+  /** Hostname {@link assertExpectedHost} pins the URL to. Omitted by tests and throwaway dbs. */
+  expectedHost?: string;
+  /**
+   * How this run reaches a verdict about the host's Data API. `pnpm db:setup:prod` ALWAYS
+   * supplies one (from the environment), so the provisioning ceremony cannot end successfully
+   * with the endpoint half unchecked. Library callers that omit it get the database half only,
+   * announced as such.
+   */
+  dataApi?: DataApiPolicy;
+  /** Injection seams for the HTTP half — tests supply them, production does not. */
+  dataApiDeps?: DataApiDeps;
+}
+
+/** How long the endpoint half's config change is given to propagate before the probe fires. */
+export const DATA_API_SETTLE_MS = 15_000;
 
 /**
  * Read BOTH shipped journals — the authoritative list of migrations, per half, in application
@@ -282,7 +326,7 @@ export function journalProblems(statuses: readonly JournalStatus[]): string[] {
  */
 export async function setupProdDatabase(
   url: string,
-  opts: { log?: (msg: string) => void; expectedHost?: string } = {},
+  opts: ProdSetupOptions = {},
 ): Promise<ProdSetupReport> {
   const log = opts.log ?? (() => {});
   assertSessionUrl(url);
@@ -391,6 +435,85 @@ export async function setupProdDatabase(
       );
     }
 
+    // ── AND THE HALF THE CENSUS CANNOT SEE: the endpoint, probed from outside ──────────────
+    //
+    // The census proves the ACLs are gone. It does NOT prove the product is safe: the whole
+    // reason this exposure shipped once is that two internal checks read clean while a public
+    // key was reading every table over the host's Data API. So on a Supabase-shaped host the
+    // provisioning path now closes the endpoint (when it holds Management-API credentials) and
+    // then asks the endpoint itself, with the same public key an attacker would use. A 2xx is
+    // a failure; so is an answer that proves nothing. Both join `problems`.
+    //
+    // The probe runs LAST, after the census: every table this invocation created exists by
+    // now, and the grants that would have made them readable are already revoked, so a 2xx
+    // here is a live exposure and not a race with our own migration.
+    const dataApiProblemLines: string[] = [];
+    let supabaseDataApi: ProdSetupReport["supabaseDataApi"] = null;
+    if (hostRoles.length > 0) {
+      const policy = opts.dataApi;
+      if (!policy) {
+        // Not a problem — this caller may be a boot path with no credentials — but never
+        // silent: an operator reading a green report must be able to tell which halves ran.
+        log(
+          "supabase data API NOT verified from outside: this caller supplied no probe policy. " +
+            "The in-database census is not a verdict about a hosted endpoint",
+        );
+      } else if (policy.kind === "unverifiable") {
+        dataApiProblemLines.push(dataApiUnverifiedProblem(policy.missing));
+      } else {
+        const deps = opts.dataApiDeps ?? {};
+        try {
+          let endpointClosed = false;
+          if (policy.target.close) {
+            const closed = await closeDataApiEndpoint(policy.target.close, deps);
+            log(
+              `supabase data API: PATCH postgrest db_schema -> graphql_public (HTTP ${closed.status})`,
+            );
+            if (!closed.ok) {
+              dataApiProblemLines.push(
+                `supabase data API: closing the endpoint FAILED (HTTP ${closed.status}` +
+                  `${closed.detail ? `: ${closed.detail}` : ""}) — the exposed schemas are ` +
+                  "whatever they were, so this run cannot claim to have closed them",
+              );
+            } else {
+              endpointClosed = true;
+              // A config change propagates; a probe fired the same instant reads the old state
+              // and calls an unfixed endpoint safe. Only after a change — an unmodified
+              // endpoint has nothing to settle.
+              const settleMs = deps.settleMs ?? DATA_API_SETTLE_MS;
+              const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+              log(`supabase data API: waiting ${settleMs}ms for the endpoint change to propagate`);
+              await sleep(settleMs);
+            }
+          }
+          // The union: every relation `public` actually holds (so a table a migration adds is
+          // probed the day it lands) and the standing sensitive list (so a rename cannot
+          // quietly drop `mailbox_credentials` out of the probe).
+          const live = await publicRelationNames(client);
+          const tables = [...new Set([...live, ...SENSITIVE_PROBE_TABLES])].sort();
+          const probe = await probeDataApi(policy.target, tables, deps);
+          supabaseDataApi = {
+            endpoint: probe.endpoint,
+            endpointClosed,
+            probed: probe.probed.length,
+            exposed: probe.exposed,
+            unknown: probe.unknown,
+          };
+          log(
+            `supabase data API probed ${probe.probed.length} relations at ${probe.endpoint}: ` +
+              `${probe.exposed.length} answered, ${probe.unknown.length} inconclusive`,
+          );
+          dataApiProblemLines.push(...dataApiProblems(probe));
+        } catch (e) {
+          // A verification that threw is not a verification that passed.
+          dataApiProblemLines.push(
+            `supabase data API: the verification itself failed (${(e as Error).message}) — ` +
+              "the endpoint's state is unknown, which is not a pass",
+          );
+        }
+      }
+    }
+
     const statuses = await journalStatuses(db, before);
     const appliedThisRun = statuses.flatMap((s) => s.appliedThisRun);
 
@@ -455,6 +578,7 @@ export async function setupProdDatabase(
       changeLogCompositeIndex: composite[0]?.indexname ?? null,
       fuzzy,
       supabaseLockdown,
+      supabaseDataApi,
     };
 
     const problems: string[] = [...journalProblems(statuses)];
@@ -464,6 +588,8 @@ export async function setupProdDatabase(
       // the census's `detail`, so a failure NAMES the exposed tables.
       problems.push(...lockdownProblems(lockdownVerdict));
     }
+    // The endpoint half's verdict, on the same fail-closed list as the grant half's.
+    problems.push(...dataApiProblemLines);
     if (!report.pgTrgm) problems.push("pg_trgm extension is NOT installed (the fuzzy search arm would be dead)");
     for (const want of TRIGRAM_INDEXES) {
       if (!report.trigramIndexes.includes(want)) problems.push(`trigram GIN index missing: ${want}`);

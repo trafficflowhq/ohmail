@@ -44,6 +44,16 @@ export {
 export {
   setupProdDatabase, assertSessionUrl, assertExpectedHost, readJournals,
   readAppliedWhens, journalStatuses, journalProblems,
-  TRIGRAM_INDEXES, PROD_DB_HOST_ENV,
-  type ProdSetupReport, type JournalStatus, type AppliedWhens,
+  TRIGRAM_INDEXES, PROD_DB_HOST_ENV, DATA_API_SETTLE_MS,
+  type ProdSetupReport, type JournalStatus, type AppliedWhens, type ProdSetupOptions,
 } from "./setup-prod.js";
+/**
+ * The Data API half of the lockdown, for a caller that provisions a Supabase-shaped host and
+ * must therefore reach a verdict about the endpoint in front of it — not just about the grants.
+ * `dataApiPolicyFromEnv` is what `pnpm db:setup:prod` passes; a host with no such credentials
+ * gets `unverifiable`, which a Supabase-shaped target turns into a refusal rather than a skip.
+ */
+export {
+  dataApiPolicyFromEnv, DATA_API_ENV, SENSITIVE_PROBE_TABLES,
+  type DataApiPolicy, type DataApiDeps, type DataApiTarget,
+} from "./supabase-lockdown-core.js";

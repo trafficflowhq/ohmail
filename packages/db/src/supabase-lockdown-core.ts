@@ -10,9 +10,11 @@
  * would have shipped with the host's default `anon`/`authenticated`/`service_role` grants live
  * on every table (`messages`, `message_bodies`, `mailbox_credentials`, `users`, …), reachable
  * over PostgREST by the anon key — which is public by design. This module is the shared
- * implementation both callers import; the CLI keeps the operator ceremony (the Management-API
- * `--close-api` half, the external anon-key probe, `--prove`), and `setup-prod.ts` runs the
- * grant half on every provisioning pass and refuses to report success while the census is red.
+ * implementation both callers import: the GRANT half (the REVOKE batch and the census) and, at
+ * the bottom of the file, the DATA API half (the Management-API endpoint close, and the external
+ * anon-key probe that is the only real verdict). `setup-prod.ts` runs both on every provisioning
+ * pass and refuses to report success while either is red; the CLI keeps what only an operator
+ * ceremony can do — the before/after narration and `--prove`.
  *
  * ── WHY THE SQL IS AN EMBEDDED CONSTANT AND NOT `readFileSync` ─────────────────────────────
  *
@@ -329,4 +331,314 @@ export function lockdownProblems(census: LockdownCensus): string[] {
     );
   }
   return problems;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE DATA API HALF — the endpoint, and the verdict from OUTSIDE
+   ══════════════════════════════════════════════════════════════════════════════════════════
+
+   Everything above is the DATABASE half: it proves the ACLs are gone. It does NOT prove the
+   product is safe, and treating it as though it did is exactly the mistake that let the
+   exposure ship in the first place — a stock project granted `anon` full `arwdDxtm` on all 55
+   tables and served them over PostgREST while two internal checks read clean, because one
+   tested `grantee = 0` and the other measured the admin role, and `anon` is neither.
+
+   So the verdict is a live HTTP request to `<base>/rest/v1/<table>` carrying the PUBLIC anon
+   key — the actual threat model: a public key, an internet-facing endpoint, no VPN, no
+   session. **A 2xx with `[]` is a FAILURE, not a pass**: an empty array means the SELECT ran
+   against a table that happens to be empty, and tables are only empty until they are not.
+
+   This lived in the operator CLI alone, so the one idempotent provisioning path could report
+   OK over an open endpoint. It is library code here for the same reason the census is: two
+   callers, one implementation, no drift.
+
+   ── WHY A REFUSAL IS NOT AUTOMATICALLY A PASS ────────────────────────────────────────────
+
+   The nastier half, measured against a live project rather than reasoned about:
+
+     · valid anon key, endpoint closed → 404 `{"code":"PGRST205", … 'graphql_public.messages'
+       … }` — PostgREST itself answering about the table;
+     · JUNK key                        → 401 `{"message":"Invalid API key", …}`;
+     · NO key                          → 401 `{"message":"No API key found in request", …}`.
+
+   The last two carry no `code`, because the gateway refused before any table was consulted —
+   so they are returned by an EXPOSED table and a closed one alike. A probe that counts them as
+   "refused" is a green check that cannot see the case it exists to detect, which is how a
+   mistyped or rotated key becomes a security sign-off. {@link classifyDataApiResponse}
+   therefore treats a refusal as evidence ONLY when the body carries PostgREST's own error
+   `code`; everything else — a gateway 401, a 429, a 5xx, a DNS failure — is UNKNOWN, and the
+   caller fails on UNKNOWN. That same rule doubles as the probe's positive control: a
+   PostgREST error body proves the key was accepted and the request reached the database. */
+
+/**
+ * Probed by name whatever the schema currently holds. Deliberately the worst cases rather than
+ * a sample: message content (the very thing the isolation rules protect), envelope-encrypted
+ * credentials (a decryption target), identity, the money table, and the per-account byte counter
+ * behind the storage cap. The provisioning path probes the UNION of this list and every relation
+ * that actually exists in `public`, so a table a migration adds is covered the day it lands and
+ * a table this list still names after a rename is covered too.
+ */
+export const SENSITIVE_PROBE_TABLES = [
+  "messages",
+  "message_bodies",
+  "mailbox_credentials",
+  "users",
+  "accounts",
+  "credit_ledger",
+  "account_storage",
+] as const;
+
+/** Every relation in `public` a Data API could serve — ordinary/partitioned tables, views, matviews. */
+export async function publicRelationNames(sql: Sql): Promise<string[]> {
+  const rows = await sql<Array<{ relname: string }>>`
+    SELECT c.relname
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public'
+       AND c.relkind IN ('r', 'p', 'v', 'm')
+     ORDER BY 1`;
+  return rows.map((r) => r.relname);
+}
+
+/** Where the host's Data API lives, and the public key an attacker would use against it. */
+export interface DataApiTarget {
+  /** Base URL, no trailing slash — `https://<ref>.supabase.co`, or a self-hosted gateway. */
+  baseUrl: string;
+  /** The PUBLIC anon key. Public by design; it is the credential the threat model assumes. */
+  anonKey: string;
+  /** Management-API credentials. Present ⇒ the endpoint half runs (idempotent) before probing. */
+  close?: { projectRef: string; accessToken: string };
+}
+
+/**
+ * How a provisioning run reaches a verdict about the Data API.
+ *
+ * `unverifiable` is NOT a skip: it is carried into the provisioning path so the path — which is
+ * the only thing that knows whether the host is Supabase-shaped — can turn it into a refusal on
+ * a host that has the exposure class, and ignore it on a plain Postgres that cannot.
+ */
+export type DataApiPolicy =
+  | { kind: "verify"; target: DataApiTarget }
+  | { kind: "unverifiable"; missing: string[] };
+
+/** Injection seams. Tests supply both; production supplies neither. */
+export interface DataApiDeps {
+  fetch?: typeof globalThis.fetch;
+  sleep?: (ms: number) => Promise<void>;
+  /** How long to wait after an endpoint change before probing. Config changes propagate. */
+  settleMs?: number;
+}
+
+/** The env names the provisioning CLI reads for {@link dataApiPolicyFromEnv}. */
+export const DATA_API_ENV = {
+  projectRef: "SUPABASE_PROJECT_REF",
+  baseUrl: "SUPABASE_DATA_API_URL",
+  anonKey: "SUPABASE_ANON_KEY",
+  accessToken: "SUPABASE_ACCESS_TOKEN",
+} as const;
+
+export interface DataApiProbeResult {
+  /** The base URL probed — named in the report so a verdict states which endpoint it is about. */
+  endpoint: string;
+  /** Relations probed, in request order. An EMPTY list is a vacuous verdict, not a pass. */
+  probed: string[];
+  /** Relations that ANSWERED — `name (HTTP 200)`. Any entry is a live exposure. */
+  exposed: string[];
+  /** Relations whose answer proves nothing — gateway refusal, rate limit, 5xx, network error. */
+  unknown: string[];
+}
+
+export type DataApiVerdict = "exposed" | "refused" | "unknown";
+
+/** PostgREST's own error `code`, or `null` when the body is not one of its error payloads. */
+function postgrestErrorCode(body: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const code = (parsed as { code?: unknown }).code;
+      if (typeof code === "string" && code.length > 0) return code;
+    }
+  } catch {
+    /* not JSON — the gateway's HTML error pages land here, and they prove nothing */
+  }
+  return null;
+}
+
+/**
+ * The classification, and the whole safety property of this probe. See the block comment above
+ * for the measurements: only a PostgREST error body counts as a refusal, because only it proves
+ * the request was refused BY THE DATABASE rather than by the key check in front of it.
+ */
+export function classifyDataApiResponse(
+  status: number,
+  body: string,
+): { verdict: DataApiVerdict; note: string } {
+  if (status >= 200 && status < 300) {
+    // No softening for an empty array: the SELECT ran.
+    return { verdict: "exposed", note: `HTTP ${status}` };
+  }
+  const code = postgrestErrorCode(body);
+  if (code && (status === 401 || status === 403 || status === 404)) {
+    return { verdict: "refused", note: `HTTP ${status} ${code}` };
+  }
+  if (code) {
+    return { verdict: "unknown", note: `HTTP ${status} ${code} — not a refusal shape` };
+  }
+  return {
+    verdict: "unknown",
+    note: `HTTP ${status} with no PostgREST error code — refused before any table was consulted`,
+  };
+}
+
+/**
+ * Probe each relation with the public key. SEQUENTIAL on purpose: a 429 is UNKNOWN and
+ * therefore a failure, so firing sixty requests at once buys a rate limit and no information.
+ */
+export async function probeDataApi(
+  target: DataApiTarget,
+  tables: readonly string[],
+  deps: DataApiDeps = {},
+): Promise<DataApiProbeResult> {
+  const doFetch = deps.fetch ?? globalThis.fetch;
+  const exposed: string[] = [];
+  const unknown: string[] = [];
+  for (const table of tables) {
+    let status: number;
+    let body: string;
+    try {
+      const res = await doFetch(
+        `${target.baseUrl}/rest/v1/${encodeURIComponent(table)}?select=*&limit=1`,
+        { headers: { apikey: target.anonKey, Authorization: `Bearer ${target.anonKey}` } },
+      );
+      status = res.status;
+      // A 2xx body is rows; we do not read or log them. Everything else is an error payload,
+      // and its shape is the evidence.
+      body = status >= 200 && status < 300 ? "" : await res.text().catch(() => "");
+    } catch (e) {
+      // "The request failed so we must be safe" is how a DNS hiccup becomes a sign-off.
+      unknown.push(`${table} (probe failed: ${(e as Error).message})`);
+      continue;
+    }
+    const { verdict, note } = classifyDataApiResponse(status, body);
+    if (verdict === "exposed") exposed.push(`${table} (${note})`);
+    else if (verdict === "unknown") unknown.push(`${table} (${note})`);
+  }
+  return { endpoint: target.baseUrl, probed: [...tables], exposed, unknown };
+}
+
+/**
+ * Drop `public` from PostgREST's exposed schemas, through the Management API. Idempotent.
+ *
+ * `graphql_public` is left because it exposes only the GraphQL entrypoint, not our tables — and
+ * removing every schema makes the service error rather than serve nothing, which reads as an
+ * outage.
+ */
+export async function closeDataApiEndpoint(
+  close: { projectRef: string; accessToken: string },
+  deps: DataApiDeps = {},
+): Promise<{ ok: boolean; status: number; detail: string }> {
+  const doFetch = deps.fetch ?? globalThis.fetch;
+  const res = await doFetch(
+    `https://api.supabase.com/v1/projects/${encodeURIComponent(close.projectRef)}/postgrest`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${close.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ db_schema: "graphql_public", db_extra_search_path: "public" }),
+    },
+  );
+  // Truncated: this string reaches an operator's log, and a management API error body is
+  // somebody else's prose.
+  const detail = res.ok ? "" : (await res.text().catch(() => "")).slice(0, 200);
+  return { ok: res.ok, status: res.status, detail };
+}
+
+/**
+ * The probe as a verdict: problem lines for the provisioning path's fail-closed list, empty only
+ * when relations were actually probed and every one of them was refused BY POSTGREST.
+ */
+export function dataApiProblems(result: DataApiProbeResult): string[] {
+  const problems: string[] = [];
+  if (result.probed.length === 0) {
+    problems.push(
+      `supabase data API: the probe of ${result.endpoint} covered NO relations, so its clean ` +
+        "result is vacuous — a verdict about nothing is not a verdict",
+    );
+  }
+  if (result.exposed.length > 0) {
+    problems.push(
+      `supabase data API: ${result.exposed.length} relation(s) ANSWERED the public anon key at ` +
+        `${result.endpoint} — ${result.exposed.join("; ")}. A 200 with an empty array is a ` +
+        "FAILURE, not a pass: the SELECT ran, and the tables are empty only until they are not",
+    );
+  }
+  if (result.unknown.length > 0) {
+    problems.push(
+      `supabase data API: ${result.unknown.length} relation(s) gave no usable answer at ` +
+        `${result.endpoint} — ${result.unknown.join("; ")}. An unreachable endpoint, a rate ` +
+        "limit, or a key the gateway rejected before any table was consulted cannot tell an " +
+        "exposed table from a closed one, so it is not a pass",
+    );
+  }
+  return problems;
+}
+
+/** The refusal when a Supabase-shaped host was provisioned with no way to check its endpoint. */
+export function dataApiUnverifiedProblem(missing: readonly string[]): string {
+  return (
+    "supabase data API: this host has anon/authenticated/service_role roles, so it has the Data " +
+    `API exposure class, and nothing here could check it from outside — ${missing.join(", ")} ` +
+    `not set. Set ${DATA_API_ENV.projectRef} (or ${DATA_API_ENV.baseUrl} for a self-hosted ` +
+    `gateway) and ${DATA_API_ENV.anonKey}; the anon key is public by design. The in-database ` +
+    "census is not a verdict about a hosted endpoint"
+  );
+}
+
+/**
+ * Build the policy from the environment. The Management-API token is OPTIONAL: without it the
+ * run verifies but cannot close, which is the right shape for an operator who has the public key
+ * and not the admin one.
+ */
+export function dataApiPolicyFromEnv(
+  env: Record<string, string | undefined>,
+): DataApiPolicy {
+  const ref = (env[DATA_API_ENV.projectRef] ?? "").trim();
+  const explicit = (env[DATA_API_ENV.baseUrl] ?? "").trim();
+  const anonKey = (env[DATA_API_ENV.anonKey] ?? "").trim();
+  const accessToken = (env[DATA_API_ENV.accessToken] ?? "").trim();
+
+  const missing: string[] = [];
+  let baseUrl = "";
+  if (explicit) {
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(explicit);
+    } catch {
+      parsed = null;
+    }
+    if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
+      missing.push(`${DATA_API_ENV.baseUrl} (not a parseable http(s) URL)`);
+    } else {
+      baseUrl = explicit.replace(/\/+$/, "");
+    }
+  } else if (ref) {
+    baseUrl = `https://${ref}.supabase.co`;
+  } else {
+    missing.push(`${DATA_API_ENV.projectRef}/${DATA_API_ENV.baseUrl}`);
+  }
+  if (!anonKey) missing.push(DATA_API_ENV.anonKey);
+
+  if (missing.length > 0 || !baseUrl) return { kind: "unverifiable", missing };
+  return {
+    kind: "verify",
+    target: {
+      baseUrl,
+      anonKey,
+      // The endpoint half needs the project ref specifically — the Management API addresses
+      // projects by ref, so a self-hosted base URL alone cannot drive it.
+      close: ref && accessToken ? { projectRef: ref, accessToken } : undefined,
+    },
+  };
 }

@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 import {
   assertSessionUrl, setupProdDatabase, PROD_DB_HOST_ENV,
 } from "./setup-prod.js";
+import { dataApiPolicyFromEnv } from "./supabase-lockdown-core.js";
 
 /**
  * THE `pnpm db:setup:prod` ENTRY POINT, kept in a module NOTHING re-exports.
@@ -77,6 +78,14 @@ async function runCli(): Promise<number> {
     const report = await setupProdDatabase(url, {
       log: (m) => console.log(`[db:setup:prod] ${m}`),
       expectedHost,
+      // ALWAYS supplied, even when the environment holds nothing to verify with. The policy is
+      // then `unverifiable`, and `setupProdDatabase` — which is the only thing that knows
+      // whether this host is Supabase-shaped — turns that into a REFUSAL on a host that has the
+      // Data API exposure class, and ignores it on a plain Postgres that cannot. That is what
+      // stops this command from ending in `OK` over an endpoint nobody checked: the grant half
+      // used to be the whole story here, and a green census is not a verdict about a public
+      // key reading tables over HTTP.
+      dataApi: dataApiPolicyFromEnv(process.env),
     });
     console.log(JSON.stringify(report, null, 2));
     console.log(
@@ -87,7 +96,15 @@ async function runCli(): Promise<number> {
       `[db:setup:prod] OK — ${report.journals.map((j) => `${j.name} ${j.applied}/${j.expected}`).join(", ")} ` +
         `(${report.migrationsApplied}/${report.migrationsExpected} total), ` +
         `pg_trgm ${report.pgTrgmVersion}, applied this run: ` +
-        `${report.appliedThisRun.length === 0 ? "none (idempotent no-op)" : report.appliedThisRun.join(", ")}`,
+        `${report.appliedThisRun.length === 0 ? "none (idempotent no-op)" : report.appliedThisRun.join(", ")}` +
+        // The endpoint verdict on the same line an operator reads as the sign-off. A run that
+        // got here with a Supabase-shaped host DID probe (an unverifiable policy would have
+        // thrown), so this states which endpoint answered nothing and over how many relations.
+        `${report.supabaseDataApi
+          ? `; data API ${report.supabaseDataApi.endpoint} refused all ` +
+            `${report.supabaseDataApi.probed} probed relations` +
+            `${report.supabaseDataApi.endpointClosed ? " (endpoint closed this run)" : ""}`
+          : ""}`,
     );
     return 0;
   } catch (err: unknown) {
