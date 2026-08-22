@@ -145,8 +145,12 @@ async function main(): Promise<number> {
  * already uses. `console.log`/`console.error` QUEUE when the destination is a pipe, and
  * `process.exit` discards whatever has not drained — measured, not assumed:
  * `node -e 'console.log("x".repeat(120000)); process.exit(0)' | wc -c` emits 65536 of 120001 here.
- * On a terminal nobody sees it; under `db:mailboxes:dedup 2>&1 | tee cutover.log` the line lost is
- * the one naming the duplicate group or the failure. Setting the code instead of forcing the exit
+ * On a terminal nobody sees it; on a pipe the line lost is the one naming the duplicate group or
+ * the failure. The queue only exists while that pipe is NON-BLOCKING, so `tsx` masks this entry
+ * point today — its `esbuild` transform subprocess inherits stderr, which puts the pipe back into
+ * blocking mode. `setup-prod-cli.ts` carries the mechanism in full and
+ * `test/cli-exit-drain.test.ts` switches the masking off, which is the only way the shape below
+ * can be shown to be what delivers the line. Setting the code instead of forcing the exit
  * leaves the pending write holding the loop open until it has actually left the process.
  *
  * `.then`, NOT top-level `await`, and that is deliberate — see the note in `setup-prod.ts`.

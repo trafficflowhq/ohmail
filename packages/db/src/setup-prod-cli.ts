@@ -43,8 +43,15 @@ import { dataApiPolicyFromEnv } from "./supabase-lockdown-core.js";
  * `console.log`/`console.error` QUEUE when the destination is a pipe and `process.exit`
  * discards whatever has not drained. Measured, not assumed:
  * `node -e 'console.log("x".repeat(120000)); process.exit(0)' | wc -c` emits 65536 of 120001
- * on this platform. The exposure is exactly `pnpm db:setup:prod 2>&1 | tee cutover.log` during
- * a cutover — i.e. the line explaining the failure, during the incident. `process.exitCode`
+ * on this platform. The stake is a cutover: the line lost is the one explaining the failure,
+ * during the incident. The exposure needs a pipe that is still NON-BLOCKING, because that is
+ * where the queue exists at all — this file COMPILED, or `pnpm db:setup:prod 2>&1 | tee
+ * cutover.log` under any loader that has not cleared `O_NONBLOCK` on it first. Today's `tsx` HAS
+ * cleared it by then: it transforms this file with an `esbuild` service process spawned with
+ * stderr inherited, and an inherited pipe goes back to blocking for every holder of that file
+ * description, so the writes complete synchronously and there is nothing left to discard. That
+ * masking belongs to a dev dependency, not to this program, so it is not something to rely on —
+ * `test/cli-exit-drain.test.ts` turns it off to observe the defect. `process.exitCode`
  * plus a natural return keeps the pending write alive until it has left the process; it is
  * the shape `provision-staff-role.ts` already uses.
  *
