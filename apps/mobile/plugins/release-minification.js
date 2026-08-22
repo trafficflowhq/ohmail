@@ -71,14 +71,40 @@ const fs = require("node:fs");
  * every check still green. So the rules live here, in source, and are written into the generated
  * project at prebuild time. Same mechanism, and same reasoning, as `silent-push-renderer.js`.
  *
- * It APPENDS to the generated rules file rather than replacing it: the template already carries
- * `react-native-reanimated`'s keeps, and overwriting them would strip the animation library's
- * reflective surface. It fails LOUD if that file is not where it is expected, rather than skipping
- * and shipping a minified APK with none of the keeps below.
+ * It writes a DELIMITED BLOCK into that file and rewrites only that block. Two failures are being
+ * avoided at once, and they pull in opposite directions:
+ *
+ *  · Replacing the whole file would strip the template's own keeps — `react-native-reanimated`'s
+ *    and the turbomodule ones sit above ours — and the symptom would be a crash on some animated
+ *    screen, nowhere near this change.
+ *  · SKIPPING when the block is already there was the other half, and it was a real bug: a plain
+ *    `expo prebuild` runs over the existing `android/` tree, so once the marker was present, any
+ *    later edit to the rules below never reached the generated project. The Gradle property is
+ *    rewritten every run, so minification stayed ON while the keeps went stale — a build that
+ *    minifies with last week's rules, with the marker present and every grep for it green.
+ *
+ * So the region between the two markers is cut and rewritten, and the rest of the file is left
+ * exactly as the template wrote it. It fails LOUD if that file is not where it is expected, rather
+ * than skipping and shipping a minified APK with none of the keeps below.
  */
 
-/** Idempotency marker AND the greppable proof that the block landed in the generated project. */
+/** Opening marker AND the greppable proof that the block landed in the generated project. */
 const MARKER = "# ohmail: release minification — see apps/mobile/plugins/release-minification.js";
+
+/**
+ * The closing marker, which is what makes the block a REGION rather than "everything after the
+ * opener". Without it the only safe reaction to finding the opener was to leave the file alone,
+ * and that is a stale-rules bug: `expo prebuild` over an EXISTING android/ tree (the default —
+ * `--clean` is not) would refresh the Gradle property and keep whatever rules were written the
+ * last time this file was different. A build would then minify with obsolete keeps while this
+ * source showed the corrected ones, which is precisely the class of silent divergence the rest
+ * of this plugin exists to prevent.
+ *
+ * A block written by a version of this plugin that predates this marker has no closing line; it
+ * was appended at the end of the file, so "opener to end of file" is exactly its extent, and
+ * {@link withProguardRules} treats a missing closer that way.
+ */
+const END_MARKER = "# ohmail: end release minification";
 
 const PROPERTY = "android.enableMinifyInReleaseBuilds";
 
@@ -164,12 +190,28 @@ ${MARKER}
 -keepnames class com.google.android.gms.** { *; }
 -keepnames class org.unifiedpush.android.embedded_fcm_distributor.** { *; }
 
-# ── 4 · READABLE CRASHES ──────────────────────────────────────────────────────────────────────
+# ── 4 · HALF A READABLE CRASH, AND THE OTHER HALF IS THE MAPPING FILE ─────────────────────────
 #
-# A minified stack trace with no line numbers is unactionable, and this APK is sideloaded with no
-# crash reporting behind it — a person reading logcat is the only reporter there is.
+# This APK is sideloaded with no crash reporting behind it, so a person reading logcat is the only
+# reporter there is, and a trace with no line numbers is unactionable. These two attributes keep
+# the line numbers.
+#
+# THEY DO NOT MAKE A MINIFIED TRACE READABLE ON THEIR OWN, and saying so would overstate them.
+# Classes and methods are still renamed, so a release frame reads \`a.b(SourceFile:123)\`: the line
+# is right, the name is gone, and \`-renamesourcefileattribute\` replaces the original file name
+# too. Recovering the rest needs \`mapping.txt\`, which R8 writes to
+# \`android/app/build/outputs/mapping/release/\` and which is NOT reproducible by rebuilding — the
+# same source minified again can rename differently. It exists once, on the machine that built
+# the APK.
+#
+# So the release workflow keeps it: the tag build uploads it and the signing job attaches it to
+# the release beside the APK it belongs to. Keeping the names instead (\`-keepnames class **\`)
+# was the alternative and is worse — it would forfeit most of the shrink this change is for, and
+# it would keep the names of the very Log.d call sites being stripped.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+${END_MARKER}
 `;
 
 /** Turn minification on for the release build type. */
@@ -191,7 +233,41 @@ function withMinifyProperty(config) {
   });
 }
 
-/** Append the rules to the generated `android/app/proguard-rules.pro`. */
+/**
+ * The generated rules file, with OUR block brought up to date and nothing else touched.
+ *
+ * Pure and exported so the behaviour below can be asserted directly rather than by grepping this
+ * file's source for the shape of its implementation — the earlier census did the latter, and a
+ * source grep cannot tell a correct rewrite from a wrong one.
+ *
+ * REPLACE OUR BLOCK, never skip on finding it. `expo prebuild` regenerates `android/` from the
+ * template on a `--clean` run, but a plain `expo prebuild` runs over the tree that is already
+ * there — and the first version of this returned as soon as it saw the opening marker. Any later
+ * change to {@link RULES} then applied to the Gradle property (rewritten every run) and NOT to
+ * the rules, so a build minified with the previous keeps while this file showed the current ones.
+ * Nothing failed: the property was right, the marker was present, every grep for it succeeded.
+ *
+ * Cutting from the opener to the closer is what leaves the REST of the file alone — the
+ * template's own `react-native-reanimated` and turbomodule keeps live above ours and must
+ * survive. A block with no closer was written by a version of this plugin from before
+ * {@link END_MARKER} existed; that version appended at the end of the file, so "opener to end of
+ * file" is exactly its extent.
+ *
+ * @param existing the current contents of `android/app/proguard-rules.pro`
+ */
+function nextRulesFile(existing) {
+  const start = existing.indexOf(MARKER);
+  let base = existing;
+  if (start !== -1) {
+    const close = existing.indexOf(END_MARKER, start);
+    base = close === -1
+      ? existing.slice(0, start)
+      : existing.slice(0, start) + existing.slice(close + END_MARKER.length);
+  }
+  return `${base.trimEnd()}\n${RULES}`;
+}
+
+/** Write the rules block into the generated `android/app/proguard-rules.pro`. */
 function withProguardRules(config) {
   return withDangerousMod(config, [
     "android",
@@ -207,8 +283,10 @@ function withProguardRules(config) {
         );
       }
       const existing = fs.readFileSync(file, "utf8");
-      if (existing.includes(MARKER)) return cfg;
-      fs.writeFileSync(file, `${existing.trimEnd()}\n${RULES}`);
+      const next = nextRulesFile(existing);
+      // Byte-for-byte identical is the common case (a repeated prebuild with no source change),
+      // and not rewriting it keeps the file's mtime honest for Gradle's up-to-date checks.
+      if (next !== existing) fs.writeFileSync(file, next);
       return cfg;
     },
   ]);
@@ -221,6 +299,8 @@ function withReleaseMinification(config) {
 
 module.exports = createRunOncePlugin(withReleaseMinification, "ohmail-release-minification", "1.0.0");
 module.exports.MARKER = MARKER;
+module.exports.END_MARKER = END_MARKER;
+module.exports.nextRulesFile = nextRulesFile;
 module.exports.PROPERTY = PROPERTY;
 module.exports.RENDERER_FQCN = RENDERER_FQCN;
 module.exports.CONNECTOR_LOG_STRINGS = CONNECTOR_LOG_STRINGS;

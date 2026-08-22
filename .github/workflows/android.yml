@@ -156,6 +156,19 @@ jobs:
           path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 7
 
+      # R8's deobfuscation table, kept for the same seven days as the APK it belongs to. A crash
+      # in this build reports frames like `a.b(SourceFile:123)`: `-keepattributes` keeps the line
+      # number, and only this file can turn the rest back into names. It is NOT reproducible —
+      # minifying the same source again may rename differently — so it survives here or nowhere.
+      # `if-no-files-found: error` because a missing mapping means R8 did not run, and a release
+      # APK that skipped minification is the leak this workflow exists to prevent.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ohmail-android-debug-mapping
+          path: apps/mobile/android/app/build/outputs/mapping/release/mapping.txt
+          retention-days: 7
+          if-no-files-found: error
+
   # ── the tag build: same native build, secretless, hand the APK to the sign job ──────────
   build:
     name: android · tag build (no secrets)
@@ -241,6 +254,38 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+      # THE APK THIS TAG PUBLISHES IS OBFUSCATED, AND THIS IS THE ONLY KEY TO IT. R8 renames every
+      # class and method it does not keep, so a crash report from an installed build reads
+      # `a.b(SourceFile:123)` — the line number survives, the names do not, and
+      # `-renamesourcefileattribute` takes the file name too. `mapping.txt` is what turns such a
+      # frame back into source, it is written once by the build that produced this exact APK, and
+      # rebuilding does not recreate it: R8 may choose different names. Losing it with the runner
+      # would mean every crash report against this release is unreadable for as long as people
+      # have it installed, which for a sideloaded APK is a long time.
+      #
+      # A separate artifact rather than a second path on the one above: the sign job fetches that
+      # one by name and reads `unsigned/app-release.apk`, and giving upload-artifact two paths
+      # would re-root both under their common ancestor and quietly break that lookup.
+      #
+      # Compressed HERE, in the job that already runs the build, so the signing job never has to
+      # process the file at all — it forwards bytes it never opens. The raw mapping for this app
+      # is ~63 MB of text and compresses to about a tenth of that; as a release asset it sits
+      # beside a 125 MB APK, and a tenth of the size is worth one line and a gunzip.
+      - name: Compress the mapping for the release page
+        run: |
+          set -euo pipefail
+          MAP=apps/mobile/android/app/build/outputs/mapping/release/mapping.txt
+          test -f "$MAP" || { echo "R8 wrote no mapping — did minification run?" >&2; exit 1; }
+          gzip -9 -c "$MAP" > ohmail-android-mapping.txt.gz
+          echo "mapping: $(stat -c%s "$MAP") bytes -> $(stat -c%s ohmail-android-mapping.txt.gz) bytes gzipped"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ohmail-android-mapping
+          path: ohmail-android-mapping.txt.gz
+          retention-days: 1
+          if-no-files-found: error
+
   # ── the sign job: the ONLY job that sees the key, and it runs no project code ───────────
   sign:
     name: android · re-sign + attach the release APK
@@ -268,6 +313,15 @@ jobs:
         with:
           name: ohmail-android-unsigned
           path: unsigned
+
+      # The mapping that belongs to the APK above. Downloading a text file executes nothing, so
+      # this job still runs no project code and the key stays isolated from everything that
+      # could read it; the file is never opened here, only forwarded to the release.
+      - name: Fetch the deobfuscation mapping from the build job
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ohmail-android-mapping
+          path: mapping
 
       - name: Sign with the release keystore
         env:
@@ -333,7 +387,14 @@ jobs:
               --title "$TAG" \
               --notes "Android APK for $TAG. Built and signed by this repository's Actions from the tagged tree."
           fi
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber ohmail-android.apk
+          # The mapping goes up with the APK, under a name that says which artifact it decodes.
+          # Asserted rather than best-effort: a release whose APK is obfuscated and whose mapping
+          # is missing produces crash reports nobody can read, and the failure would only be
+          # discovered by the first person to report one.
+          test -f mapping/ohmail-android-mapping.txt.gz \
+            || { echo "no R8 mapping was fetched from the build job" >&2; exit 1; }
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            ohmail-android.apk mapping/ohmail-android-mapping.txt.gz
 
       - name: What was uploaded is what was signed
         env:
