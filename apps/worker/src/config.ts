@@ -493,6 +493,21 @@ export interface WorkerConfig {
   alertTelegramChatId?: string;
   /** How often the leader runs the alert pass. Default {@link DEFAULT_ALERT_INTERVAL_MS}. */
   alertIntervalMs?: number;
+  /**
+   * THE API-CRON ARM (`TF_API_CRON_URL` + `TF_API_CRON_SECRET`) — this worker as the schedule
+   * for the API host's internal passes (`api-cron.ts` has the whole argument: the platform
+   * cron layer those routes were written for was measured dark for three weeks of deploys).
+   *
+   * `baseUrl` is the API origin (`https://api.ohmail.app`); `secret` is presented as
+   * `Authorization: Bearer …` and must match the API host's `TF_ALERT_SECRET` or `CRON_SECRET`.
+   *
+   * Both-or-neither, enforced in `loadConfig`: neither ⇒ quiet disarm (a self-hosted compose
+   * where the API sits beside a cron-capable host has no use for this), exactly one ⇒ a
+   * NAMED refusal — like the Telegram pair, neither variable exists for any other purpose,
+   * so one being set can only mean somebody meant to arm this, and a half-armed schedule
+   * that quietly does nothing is precisely the dark-cron failure this arm replaces.
+   */
+  apiCron?: { baseUrl: string; secret: string };
   // ── The organizer lease (mail migration 0027) ───────────────────────────────────────
   /**
    * Who this Cloud deployment is, as an organizer of a mailbox.
@@ -730,6 +745,33 @@ export const buildIdentityErrorOf = (environment: string, version: string): stri
       "(the deploy script writes it) and neither RAILWAY_GIT_COMMIT_SHA nor TF_BUILD_VERSION is set"
     : null;
 
+/**
+ * `TF_API_CRON_URL` + `TF_API_CRON_SECRET` — both-or-neither, and the URL must parse as an
+ * absolute http(s) origin. The states and the argument are on {@link WorkerConfig.apiCron};
+ * what is enforced HERE is that a half-set pair refuses the boot by NAME instead of quietly
+ * disarming the schedule, because "configured and silently not running" is the exact failure
+ * this arm exists to replace. Error messages never include the values.
+ */
+function apiCronFrom(env: NodeJS.ProcessEnv): { baseUrl: string; secret: string } | undefined {
+  const url = env.TF_API_CRON_URL?.trim();
+  const secret = env.TF_API_CRON_SECRET?.trim();
+  if (!url && !secret) return undefined;
+  if (!url || !secret) {
+    const missing = url ? "TF_API_CRON_SECRET" : "TF_API_CRON_URL";
+    throw new WorkerConfigError(missing,
+      `${missing} is missing while its pair is set — TF_API_CRON_URL and TF_API_CRON_SECRET ` +
+      "arm the API-cron schedule together (both or neither)");
+  }
+  let parsed: URL;
+  try { parsed = new URL(url); } catch {
+    throw new WorkerConfigError("TF_API_CRON_URL", "TF_API_CRON_URL must be an absolute http(s) URL");
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new WorkerConfigError("TF_API_CRON_URL", "TF_API_CRON_URL must be an absolute http(s) URL");
+  }
+  return { baseUrl: url.replace(/\/+$/, ""), secret };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   const environment = env.TF_ENV ?? env.RAILWAY_ENVIRONMENT_NAME ?? "production";
   const buildVersion = buildVersionOf(env);
@@ -814,6 +856,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     mailFrom: env.MAIL_FROM,
     resendApiKey: env.RESEND_API_KEY,
     alertIntervalMs: optInt(env, "TF_ALERT_INTERVAL_MS", DEFAULT_ALERT_INTERVAL_MS),
+    apiCron: apiCronFrom(env),
     ...loadAttachmentStagingConfig(env),
     ...loadAiPorts(env),
   };

@@ -134,27 +134,34 @@ import { learnMissingSmtpSizes } from "../smtp-size.js";
 export const ALERT_CRON_PATH = "/internal/alerts/run";
 
 /**
- * The PATH Vercel Cron fires the session reaper at — exported for the same reason
- * {@link ALERT_CRON_PATH} is: the host deployment's cron config names it as a literal string
- * and a test asserts the two agree, because a cron whose path this router does not serve is
- * hygiene that "shipped" and silently never runs.
+ * The PATH the session reaper is scheduled at — exported for the same reason
+ * {@link ALERT_CRON_PATH} is: the scheduler names it as a literal string and a test asserts
+ * the two agree, because a schedule whose path this router does not serve is hygiene that
+ * "shipped" and silently never runs. The scheduler is the always-on WORKER
+ * (`apps/worker/src/api-cron.ts`, daily), not the host deployment's platform cron: that
+ * layer was measured dark for three weeks of deploys on 2026-08-22 — entries configured,
+ * never registered, nothing logged — and the same census now matches the worker's table.
  */
 export const SESSIONS_REAP_CRON_PATH = "/internal/sessions/reap";
 
 /**
- * The PATH Vercel Cron fires the `SIZE` back-fill at — exported for the reason the two above it
- * are: the host deployment's cron config names it as a literal string and a test asserts the two
- * agree, because a cron whose path this router does not serve is hygiene that "shipped" and
- * silently never runs.
+ * The PATH the `SIZE` back-fill is scheduled at — exported for the reason the two above it
+ * are: the scheduler names it as a literal string and a test asserts the two agree, because a
+ * schedule whose path this router does not serve is hygiene that "shipped" and silently never
+ * runs. Driven by the worker's `api-cron.ts` (daily), for the reason on
+ * {@link SESSIONS_REAP_CRON_PATH}; the PASS still runs here, on the API host, whose SMTP
+ * egress works — only the clock moved.
  */
 export const SMTP_SIZE_CRON_PATH = "/internal/mailboxes/smtp-size";
 
 /**
- * The PATH Vercel Cron fires the billing reconciliation at — the ARMED pass, exported for the
- * reason its three siblings are: the host deployment's cron config names it as a literal
- * string and a test asserts the two agree. The read-only twin (`GET /internal/billing/reconcile`,
- * dry-run) is the runbook's safe curl — it compares and reports but applies nothing, exactly as
- * `GET /internal/alerts` reads without paging.
+ * The PATH the billing reconciliation is scheduled at — the ARMED pass, exported for the
+ * reason its three siblings are: the scheduler names it as a literal string and a test asserts
+ * the two agree. Driven HOURLY by the worker's `api-cron.ts` (the reason is on
+ * {@link SESSIONS_REAP_CRON_PATH}); `billing_reconciliation_stale` (6 h) is the net under that
+ * clock. The read-only twin (`GET /internal/billing/reconcile`, dry-run) is the runbook's safe
+ * curl — it compares and reports but applies nothing, exactly as `GET /internal/alerts` reads
+ * without paging.
  */
 export const BILLING_RECONCILE_CRON_PATH = "/internal/billing/reconcile/run";
 

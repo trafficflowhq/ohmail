@@ -51,6 +51,7 @@ import {
   anyDegradedCause, type DegradedCauses, type UnservedBreakdown,
 } from "./health.js";
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
+import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
 import { runSyncCycle, LeaderFencedError, type SyncDeps } from "./sync.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
 import { DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
@@ -192,6 +193,17 @@ export interface WorkerStats {
    * absence of evidence, said out loud rather than read as health.
    */
   alertSinks: AlertSinkHealth[];
+  /**
+   * THE API-CRON SCHEDULE'S STANDING REPORT — one entry per internal API route this worker
+   * drives on a clock (`api-cron.ts`), in the table's order. `[]` on a deployment that armed
+   * no `TF_API_CRON_URL`/`TF_API_CRON_SECRET` pair, on every shard but 0, and on a standby.
+   *
+   * Here for the reason `alertSinks` is: the layer this replaced failed by SAYING NOTHING —
+   * a schedule that stops must be a row an operator can read going stale (`lastOkAt` ageing
+   * past `everySeconds`), not an absence. Closed codes and clocks only; a memory read, so
+   * `/health` still touches no database.
+   */
+  apiCron: ApiCronTargetHealth[];
 }
 
 export interface RunningWorker {
@@ -4245,6 +4257,13 @@ export async function startWorkerWithLock(
      */
     let pushWake: RunningPushWake | null = null;
     let wakeHub: ChangeWakeFanout | null = null;
+    /**
+     * The API-cron scheduler (`api-cron.ts`). In `clearTimers` for the push-wake's exact
+     * reason: a deposed leader that kept poking the reconcile route would overlap its
+     * successor's pokes — the one concurrency the scheduler cannot guard from inside one
+     * process — so "stop doing work NOW" must take it down with the rest.
+     */
+    let apiCron: ApiCronHandle | null = null;
     function clearTimers(): void {
       if (pollTimer) clearInterval(pollTimer);
       if (rosterTimer) clearInterval(rosterTimer);
@@ -4252,6 +4271,8 @@ export async function startWorkerWithLock(
       if (syncKickTimer) clearInterval(syncKickTimer);
       if (hbTimer) clearInterval(hbTimer);
       pollTimer = rosterTimer = alertTimer = syncKickTimer = hbTimer = null;
+      apiCron?.stop();
+      apiCron = null;
       pushWake?.stop();
       pushWake = null;
       const hub = wakeHub;
@@ -4374,6 +4395,23 @@ export async function startWorkerWithLock(
     // The alert pass runs OFF the serial queue: it is four aggregate reads and must not wait
     // behind a slow IMAP cycle — the cycle being slow is one of the things it reports on.
     alertTimer = setInterval(() => { void alertPass(); }, alertIntervalMs);
+    /**
+     * THE API-CRON SCHEDULE — this worker as the clock for the API host's internal passes
+     * (billing reconcile hourly, session reap and the SMTP SIZE back-fill daily). The whole
+     * argument — why the worker and not the platform cron those routes were written for, why
+     * the cadence restarts with leadership, and every overlap arm — is the header of
+     * `api-cron.ts`; what is decided HERE is only WHO schedules:
+     *
+     *  · inside `startWorkerWithLock`, so only the leader-lock holder ever pokes — a rolling
+     *    deploy's outgoing and incoming instances cannot both drive a route;
+     *  · shard 0 only, because these passes are deployment-wide, not per-shard, and N shard
+     *    leaders poking hourly is N−1 too many;
+     *  · armed by config (`TF_API_CRON_URL` + `TF_API_CRON_SECRET`), so a self-hosted compose
+     *    with its own scheduler stays quiet.
+     */
+    if (config.apiCron && shardIndex === 0) {
+      apiCron = startApiCron({ baseUrl: config.apiCron.baseUrl, secret: config.apiCron.secret, log });
+    }
     // ENFORCED SYNC (mail migration 0049): a short scan for mailboxes the API stamped `sync_requested_at`.
     // OFF the serial queue like the alert pass — it is one indexed read plus a compare-and-clear,
     // no adapter operation — and its `kick` REQUESTS a cycle rather than running one, so the actual
@@ -4514,6 +4552,9 @@ export async function startWorkerWithLock(
           // Derived rather than stored, so it cannot drift from the streak the pass actually
           // mutates. `sinkHealthOf` reads memory only — `/health` still touches no database.
           alertSinks: sinkHealthOf(alertSinks, alertDeliveryStreak),
+          // The API-cron schedule's per-target report — a memory read like everything else
+          // here. `[]` when the arm is unconfigured, on shards > 0, or after quiescing.
+          apiCron: apiCron?.health() ?? [],
         };
       },
       stop(): Promise<void> {

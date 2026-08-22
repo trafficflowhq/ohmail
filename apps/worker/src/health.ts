@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import type { AlertSinkHealth } from "@trafficflow/db/cloud";
+import type { ApiCronTargetHealth } from "./api-cron.js";
 
 /**
  * What the worker's health endpoint reports, and for how long it is
@@ -186,6 +187,18 @@ export interface HealthSnapshot {
    * on it. A memory read like every other field here, so `/health` still touches no database.
    */
   alertSinks: AlertSinkHealth[];
+  /**
+   * THE API-CRON SCHEDULE, PER TARGET — the internal API routes this worker drives on a clock
+   * (`api-cron.ts`: billing reconcile hourly, session reap and the SMTP SIZE back-fill daily).
+   *
+   * Published for the reason the schedule moved here at all: its predecessor (the API
+   * deployment's platform cron) failed by SAYING NOTHING, for three weeks of deploys. A
+   * schedule that stops must be a row going visibly stale — `lastOkAt` ageing past
+   * `everySeconds`, a closed `outcome` naming the refusal — never an absence. `[]` where the
+   * arm is unconfigured, on shards > 0, and on a standby. Closed codes and clocks only, and a
+   * memory read, so `/health` still touches no database.
+   */
+  apiCron: ApiCronTargetHealth[];
   /** Present in the fatal state (a failed takeover, or a LOST leader lock). */
   error?: string;
 }
