@@ -404,6 +404,15 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
   setFoldersEnabled: (enabled: boolean) => Promise<boolean>;
 } {
   const [state, setState] = useState<ConsentState>(RESTING);
+  /**
+   * The LAST CACHE ROW this hook wrote or adopted, so a same-tab settings write can update the
+   * device's copy WITHOUT re-deriving the other fields from state mid-callback. Without this,
+   * a toggle updated React state alone and the next boot painted the PREVIOUS answer until
+   * `GET /consent` landed — or for ever, if that read failed: disabling folders on a
+   * folders-on account could resurrect the rail from cache. Null until a cache row exists
+   * (first visit, desktop), in which case there is nothing stale to correct.
+   */
+  const bootCache = useRef<ConsentBootCache | null>(null);
 
   /* IS THERE ANYWHERE TO ASK — the host's wire, or the browser's. One answer, read by the fetch
      below, by all four writers, and by `standalone`, so those six can never disagree about
@@ -435,6 +444,7 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
     if (owner !== null) {
       const cached = readBootCache(CONSENT_BOOT_SCOPE, owner, acceptConsentCache);
       if (cached !== null) {
+        bootCache.current = cached;
         setState((prev) =>
           prev.known
             ? prev
@@ -527,6 +537,7 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
             foldersEnabledAt: wire.foldersEnabledAt ?? null,
           };
           writeBootCache(CONSENT_BOOT_SCOPE, owner, next);
+          bootCache.current = next;
         }
       } catch {
         // Deliberately silent — see the header.
@@ -569,6 +580,17 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
     // BOTH FIELDS FROM THE SAME ECHO — auto-suggest's rule: the boolean the shell gates on and
     // the instant the row displays must move together or not at all.
     setState((prev) => ({ ...prev, foldersEnabled: on, foldersEnabledAt: res.foldersEnabledAt ?? null }));
+    // …AND THE DEVICE'S CACHED COPY MOVES WITH THEM. The boot cache paints the next reload's
+    // first frame; leaving it at the pre-toggle answer would resurrect a rail the account just
+    // turned off (or hide one it turned on) until — or unless — the live read lands. Only when
+    // a cache row exists: no row means no stale copy to correct, and inventing one here would
+    // cache partition inputs this tab never confirmed.
+    const owner = readOwner();
+    if (owner !== null && bootCache.current !== null) {
+      const next: ConsentBootCache = { ...bootCache.current, foldersEnabledAt: res.foldersEnabledAt ?? null };
+      writeBootCache(CONSENT_BOOT_SCOPE, owner, next);
+      bootCache.current = next;
+    }
     return on;
   }, []);
 

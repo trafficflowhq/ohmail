@@ -49,6 +49,7 @@ const branchKey = (mailboxId: string, path: string): string => `${mailboxId}|${p
 export function FoldersRailGroup({
   folders,
   unread,
+  mailboxCount,
   activeFolderId,
   onNavigate,
 }: {
@@ -56,6 +57,14 @@ export function FoldersRailGroup({
   folders: FolderEntity[];
   /** Per-folder unread, keyed `mailboxId|path` — `folderUnreadCounts` over the projected mirror. */
   unread: ReadonlyMap<string, number>;
+  /**
+   * How many mailboxes the ACCOUNT has — the sectioning rule's real subject (spec §14: "with
+   * more than one mailbox on the account"). Deliberately not derived from `folders` alone: two
+   * connected mailboxes where only one currently has user folders must still wear the address
+   * label, or the lone tree is ambiguous about whose it is. Absent (demo, a host with no
+   * probe) falls back to what the entities themselves show.
+   */
+  mailboxCount?: number;
   activeFolderId?: string;
   onNavigate: (folderId: string) => void;
 }) {
@@ -225,7 +234,7 @@ export function FoldersRailGroup({
 
           return (
             <div key={mb.id}>
-              {mailboxes.length > 1 ? (
+              {(mailboxCount ?? mailboxes.length) > 1 ? (
                 <div className="rmblab" title={mb.label}>{mb.label}</div>
               ) : null}
               {mb.tree.length === 0 ? <p className="rsub-empty">{t("folderEmpty")}</p> : null}

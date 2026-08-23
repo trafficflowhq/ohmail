@@ -264,6 +264,8 @@ export type OpenTarget =
   // screener arm. The type is the invariant `openTargetFor` keeps: it never names a surface
   // that cannot show the message.
   | { kind: "screener"; segment: ScreenerSegmentId; row: string }
+  /** One of the mailbox's own folders — navigate to its view, message tail on the URL. */
+  | { kind: "folder"; folderId: string; id: string }
   | { kind: "reader"; id: string };
 
 /**
@@ -338,6 +340,13 @@ export function openTargetFor(
   placeOf?: ReadonlyMap<string, Folder | null>,
   parked?: ReadonlySet<string>,
   holds?: (view: "ohbox" | "reads" | "receipts", id: string) => boolean,
+  /**
+   * The `folder` entity id for `(mailboxId, canonical path)`, or null — the folders
+   * foundation's lookup (FOLDERS-SPEC.md). Mailbox-scoped like every folder-shaped surface:
+   * two mailboxes may both have a `Projects`, and a hit must open its OWN. Optional; absent
+   * (demo, folders off, callers written before the feature) keeps the reader fallback.
+   */
+  folderIdFor?: (mailboxId: string, folder: string) => string | null,
 ): OpenTarget {
   const presented = placeOf?.get(m.id);
   // `null` ⟺ History (dormant, undecided) — pile-less, so the reader is where it opens.
@@ -376,8 +385,14 @@ export function openTargetFor(
     // invariant that `openTargetFor` never names a surface that cannot show the message.
     return row ? { kind: "screener", segment, row } : { kind: "reader", id: m.id };
   }
-  // A folder no view owns. `Folder` is a closed six-member union today, so this is not
-  // reachable from the wire — see `openMessage` for why it is written anyway.
+  // ONE OF THE USER'S OWN FOLDERS — reachable since the folders foundation: a message whose
+  // presented place is not one of the six may live in a folder the account browses as a view.
+  // Route it there (the view lists it, the URL's message tail opens it) rather than stranding
+  // the hit in Search's reader — the same "never name a surface that cannot show the message"
+  // rule, pointed at the surface that CAN.
+  const folderId = folderIdFor?.(m.mailboxId, folder);
+  if (folderId) return { kind: "folder", folderId, id: m.id };
+  // A folder no view owns — the folders feature off, an unknown path. The reader, in place.
   return { kind: "reader", id: m.id };
 }
 
@@ -1244,10 +1259,13 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
             dormancyDays: consent.dormancyDays,
             baselineAt: consent.screeningBaselineAt,
             ownAddresses,
+            // The History-lens gate (spec §16.5): the CONSENT answer, not the mirror's folder
+            // entities — stale entities after a missed disable must not keep the lens on.
+            foldersEnabled: consent.foldersEnabled,
           }),
     [
       demo, consent.known, consent.standalone, reader, version, now, consent.dormancyDays,
-      consent.screeningBaselineAt, ownAddresses,
+      consent.screeningBaselineAt, ownAddresses, consent.foldersEnabled,
     ],
   );
   /**
@@ -1345,6 +1363,26 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   const folderUnread = useMemo(
     () => (consent.foldersEnabled ? folderUnreadCounts(presented.list<EngineMessage>("message")) : new Map<string, number>()),
     [presented, version, consent.foldersEnabled],
+  );
+  /** The open folder entity, and its mail — `tagGroup`'s twin, up here so every piece of route
+   *  chrome (the rail highlight, the mobile title, the fallback view) derives from ONE answer
+   *  to "does the folder the URL names exist". Absent ⇒ the Ohbox renders, and the chrome says
+   *  so too. */
+  const openFolder =
+    route.view === "folder" ? folders.find((f) => f.id === route.folderId) : undefined;
+  const folderMessages = useMemo(
+    () =>
+      openFolder
+        ? presented
+            .list<EngineMessage>("message")
+            .filter((m) => m.mailboxId === openFolder.mailboxId && m.folder === openFolder.name)
+            .sort((a, b) => {
+              const at = a.date ? new Date(a.date).getTime() : 0;
+              const bt = b.date ? new Date(b.date).getTime() : 0;
+              return bt - at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+            })
+        : [],
+    [presented, version, openFolder],
   );
   /** Every rule the consent gate has written, newest first. */
   const rules = useMemo(() => rulesList(reader), [reader, version]);
@@ -3738,6 +3776,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         consentView?.placeOf,
         parked,
         pileHolds,
+        // The mailbox's own folders (mailbox-scoped, like every folder-shaped surface): a hit
+        // living in one navigates to its folder view instead of dead-ending in Search.
+        (mailboxId, folder) =>
+          folders.find((f) => f.mailboxId === mailboxId && f.name === folder)?.id ?? null,
       );
       switch (target.kind) {
         case "ohbox":
@@ -3762,6 +3804,13 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
           setLocated(target.row);
           goScreener(target.segment);
           return;
+        case "folder":
+          // The canonical folder deep-link WITH the open-message tail, in one hash write: the
+          // route↔open-state mirror then opens the reader over the folder view (the same
+          // overlay a tag hit gets), so the message is on screen in the folder that holds it.
+          setLocated(target.id);
+          window.location.hash = `#/folder/${target.folderId}/m/${target.id}`;
+          return;
         default:
           // No navigation, so no `readerPending` is needed: nothing will clear this. This is the
           // "folder no view owns" arm, the History arm and the PARKED arm — a message presented
@@ -3778,7 +3827,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
           setReaderFor(target.id);
       }
     },
-    [readColumnHidden, screenerRowFor, consentView?.placeOf, parked, pileHolds],
+    [readColumnHidden, screenerRowFor, consentView?.placeOf, parked, pileHolds, folders],
   );
   /* Assigned here so `openDraft`, which is declared several hundred lines above this, can open a
      reply draft in its own conversation. See {@link openMessageRef}. */
@@ -4460,6 +4509,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
               <FoldersRailGroup
                 folders={folders}
                 unread={folderUnread}
+                /* The ACCOUNT's mailbox count, not the entity-derived one: two connected
+                   mailboxes where only one has folders still section, or the lone tree is
+                   ambiguous (spec §14). `facts` is the host's probe; null (demo, standalone)
+                   falls back to what the entities show. */
+                mailboxCount={facts?.length}
                 activeFolderId={route.view === "folder" ? (route.folderId ?? undefined) : undefined}
                 onNavigate={(id) => {
                   setRailOpen(false);
@@ -4499,7 +4553,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     ],
     [
       t, ohbox.newForYou.length, allOhbox.length, readsNew, receiptsNew, screener.waitingCount, piles,
-      tagGroups, tags, createTagAlone, consent.foldersEnabled, folders, folderUnread, route.view, route.folderId,
+      tagGroups, tags, createTagAlone, consent.foldersEnabled, folders, folderUnread, route.view,
+      route.folderId, facts,
     ],
   );
 
@@ -4588,7 +4643,12 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   );
 
   const activeRailId =
-    route.view === "tag" || route.view === "folder"
+    route.view === "folder"
+      // A folder URL whose entity is missing (feature off, folder gone) renders the Ohbox —
+      // so the rail highlights the Ohbox too, and the chrome never claims a view that is not
+      // on screen. With the entity present the folder row itself carries the highlight.
+      ? (openFolder ? undefined : "ohbox")
+      : route.view === "tag"
       ? undefined
       : route.view === "triage"
         // The row for the pile that is actually open. Hard-coded to `"triage"` before, which
@@ -4614,29 +4674,14 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     route.view === "tag"
       ? (tagGroups.find((g) => g.tag.id === route.tagId)?.tag.name ?? t("rail.tags"))
       : route.view === "folder"
-        ? (folders.find((f) => f.id === route.folderId)?.name ?? t("rail.folders"))
+        // The missing-folder fallback renders the Ohbox, so the title says Ohbox — the same
+        // one-answer rule the rail highlight follows.
+        ? (openFolder?.name ?? t("rail.ohbox"))
         : (viewTitles[route.view] ?? t("rail.ohbox"));
 
   /* ── views ── */
   const tagGroup =
     route.view === "tag" ? tagGroups.find((g) => g.tag.id === route.tagId) : undefined;
-  /** The open folder entity, and its mail — `tagGroup`'s twin. Absent ⇒ the Ohbox, below. */
-  const openFolder =
-    route.view === "folder" ? folders.find((f) => f.id === route.folderId) : undefined;
-  const folderMessages = useMemo(
-    () =>
-      openFolder
-        ? presented
-            .list<EngineMessage>("message")
-            .filter((m) => m.mailboxId === openFolder.mailboxId && m.folder === openFolder.name)
-            .sort((a, b) => {
-              const at = a.date ? new Date(a.date).getTime() : 0;
-              const bt = b.date ? new Date(b.date).getTime() : 0;
-              return bt - at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
-            })
-        : [],
-    [presented, version, openFolder],
-  );
   /**
    * `"seed"` matches no view below, which is how the review screen TAKES the stage instead of
    * appearing above a pile. Stated here rather than by guarding each of the ten renders: a

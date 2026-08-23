@@ -14,15 +14,24 @@
  *    and the empty state says exactly that — the folder list comes from the mailbox itself,
  *    not from the messages in it.
  *
+ * THE LIST IS WINDOWED, for History's measured reason (`useListWindow`): a folder is the
+ * user's own filing and has no upper bound — an archive-style folder holds years of mail by
+ * the thousands, and on the standalone desktop the mirror is the whole mailbox — so
+ * `messages.map` would mount every row at once, which is the multi-second freeze History
+ * already paid for and solved. One window over the flat unread-then-read ordering; the two group labels render
+ * with the first row of their group, so they unmount when scrolled past — a bounded (two
+ * label-heights) spacer drift, taken over per-row offset bookkeeping the rows do not need.
+ *
  * Read-only in the foundation stage: no move verb, no rules door, no menu — later stages.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { type EngineMessage, type FolderEntity, type TagDTO } from "@ohmail/client-engine";
 import { ListGroupLabel, ListPane, ListRows, MessageRow, ReadColumn } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { folderLeafOf, folderParentOf } from "../shell/folders";
+import { useListWindow } from "../shell/list-window";
 
 /** Below this the reading column is `display:none` (app.css), so a tap must open the sheet. */
 function readColumnHidden(): boolean {
@@ -61,6 +70,7 @@ export function FolderView({
   const t = useTranslations("folder");
   const to = useTranslations("ohbox");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
 
   // The user's pick, or the first row so the column is never blank beside a list that has
   // rows — TagView's rule, safe for TagView's reason: the list does not re-partition under it.
@@ -75,13 +85,13 @@ export function FolderView({
     else setSelectedId(m.id);
   };
 
-  const groups: Array<[string, EngineMessage[]]> = [
-    // The standard grouping, the Ohbox's own labels: unread is what is unhandled here, read is
-    // the folder's past. Both keys live in the `ohbox` namespace so the two lists can never
-    // drift apart in copy.
-    [to("newForYou"), messages.filter((m) => m.unread)],
-    [to("previouslySeen"), messages.filter((m) => !m.unread)],
-  ];
+  // The standard grouping, the Ohbox's own labels: unread is what is unhandled here, read is
+  // the folder's past. Both keys live in the `ohbox` namespace so the two lists can never
+  // drift apart in copy. Flattened unread-first so ONE window covers both groups.
+  const unreadRows = messages.filter((m) => m.unread);
+  const readRows = messages.filter((m) => !m.unread);
+  const ordered = [...unreadRows, ...readRows];
+  const win = useListWindow({ scrollerRef, count: ordered.length });
 
   const parent = folderParentOf(folder.name);
 
@@ -92,16 +102,26 @@ export function FolderView({
         // The full path as the meta line when the folder is nested, so "Q1" says where it
         // lives; the count otherwise — TagView's meta, one namespace over.
         meta={parent ? folder.name : t("metaCount", { count: messages.length })}
+        scrollerRef={scrollerRef}
       >
         <ListRows>
-          {messages.length ? (
-            groups.map(([label, set]) =>
-              set.length ? (
-                <div key={label}>
-                  <ListGroupLabel>{label}</ListGroupLabel>
-                  {set.map((m) => (
+          {ordered.length ? (
+            <>
+              {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
+              {ordered.slice(win.start, win.end).map((m, i) => {
+                const index = win.start + i;
+                // Each group's label rides its first row, so labels appear exactly where the
+                // grouping puts them and unmount with the rows they head.
+                const label =
+                  index === 0 && unreadRows.length > 0
+                    ? to("newForYou")
+                    : index === unreadRows.length && readRows.length > 0
+                      ? to("previouslySeen")
+                      : null;
+                return (
+                  <div key={m.id}>
+                    {label ? <ListGroupLabel>{label}</ListGroupLabel> : null}
                     <MessageRow
-                      key={m.id}
                       id={m.id}
                       from={senderName(m)}
                       address={rowAddress(m)}
@@ -120,10 +140,11 @@ export function FolderView({
                       tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
                       onClick={() => openRow(m)}
                     />
-                  ))}
-                </div>
-              ) : null,
-            )
+                  </div>
+                );
+              })}
+              {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
+            </>
           ) : (
             <div className="empty">
               <span className="glyph">📁</span>

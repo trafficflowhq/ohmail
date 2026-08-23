@@ -128,6 +128,13 @@ export interface ConsentPartition {
 
 export interface ConsentOptions {
   now?: Date;
+  /**
+   * Is "Use folders" ON for this account — the consent answer, not the mirror's contents.
+   * `true` widens History into the lens over the user's own folders (spec §16.5); absent or
+   * `false` is the pre-feature partition byte for byte, whatever `folder` entities the mirror
+   * happens to hold (they can be stale after a disable this tab never drained).
+   */
+  foldersEnabled?: boolean;
   /** Days. Defaults to {@link DEFAULT_DORMANCY_DAYS}. */
   dormancyDays?: number;
   /**
@@ -365,17 +372,23 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const own = ownSet(reader, opts);
   /* ── THE USER'S OWN FOLDERS, when "Use folders" is on (FOLDERS-SPEC.md §16.5) ────────────
    *
-   * `/sync` emits `folder` entities ONLY while the account's flag is set, so this set is empty
-   * on every flag-off account and the partition below is byte-identical to the pre-feature
-   * build — the parity claim is structural, not a branch to keep in sync. Names, not ids: a
-   * message carries its folder as the canonical path, and that spelling is the join.
+   * TWO gates, and both must say yes: the caller's {@link ConsentOptions.foldersEnabled} (the
+   * account's consent answer — the AUTHORITY) and the mirror's `folder` entities (the DATA).
+   * `/sync` emits the entities only while the flag is on, so on a clean account the entity set
+   * is empty whenever the flag is off — but a mirror can hold STALE entities (a disable this
+   * tab never drained, a cached boot), and inferring authority from eventually-deleted rows
+   * would keep the lens on over an interface that says folders are off. The explicit flag is
+   * what makes flag-off parity hold under staleness too. Names, not ids: a message carries its
+   * folder as the canonical path, and that spelling is the join.
    *
    * Junk and Trash can never appear here — they are never watched, never ingested, and never
    * emitted as entities — so the lens excludes them by construction rather than by filter. */
   const userFolders = new Set<string>(
-    reader.list<{ name?: unknown }>("folder")
-      .map((f) => f.name)
-      .filter((n): n is string => typeof n === "string" && n.length > 0),
+    opts.foldersEnabled === true
+      ? reader.list<{ name?: unknown }>("folder")
+          .map((f) => f.name)
+          .filter((n): n is string => typeof n === "string" && n.length > 0)
+      : [],
   );
   const activity = senderActivity(messages, opts, own);
   // The same line {@link senderActivity} measures from, read here for outbound mail — see the
