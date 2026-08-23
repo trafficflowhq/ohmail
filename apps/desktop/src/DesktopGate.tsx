@@ -191,10 +191,16 @@ export function DesktopGate() {
    * person taking the offered action.
    */
   const [hostedSessionGone, setHostedSessionGone] = useState(false);
+  /** signedIn:false WITHOUT the expiry verdict — a pre-auth engine (relaunch after an expiry
+      already removed the seal, an abandoned handoff). The mail app must not mount over it: its
+      mail routes refuse, and the honest surface is the sign-in — with no "you were signed out"
+      sentence, because for a session that never existed that sentence would be a lie. */
+  const [hostedPreAuth, setHostedPreAuth] = useState(false);
   const [signInAfterExpiry, setSignInAfterExpiry] = useState(false);
   useEffect(() => {
     if (door !== "cloud" || !bridgeAvailable()) {
       setHostedSessionGone(false);
+      setHostedPreAuth(false);
       setSignInAfterExpiry(false);
       return;
     }
@@ -203,17 +209,25 @@ export function DesktopGate() {
       try {
         const res = await bridgeFetch("/health");
         if (!res.ok) return; // a dead ENGINE is the status path's story, not this one's
-        // `sessionExpired` and never bare `signedIn: false`: a Cloud engine in ORDINARY
-        // pre-auth (a fresh door, an abandoned browser handoff, no sealed token) also answers
-        // signedIn:false, and telling that person "you were signed out" would be a lie about
-        // a session that never existed. The engine latches sessionExpired only on the hosted
-        // API's definitive refusal to renew — exactly the fact this notice states.
+        // `sessionExpired` and never bare `signedIn: false` decides the WORDING: an ordinary
+        // pre-auth engine also answers signedIn:false, and the engine latches sessionExpired
+        // only on the hosted API's definitive refusal to renew. Both states leave the mail
+        // client — the difference is the sentence over the sign-in, never whether it shows.
         const health = (await res.json()) as { signedIn?: boolean; sessionExpired?: boolean };
-        if (!cancelled && health.sessionExpired === true) setHostedSessionGone(true);
+        if (cancelled) return;
+        if (health.sessionExpired === true) setHostedSessionGone(true);
+        else if (health.signedIn === false) setHostedPreAuth(true);
+        else {
+          setHostedSessionGone(false);
+          setHostedPreAuth(false);
+        }
       } catch {
         /* engine unreachable — the status path owns that */
       }
     };
+    // Once at mount — a relaunch onto a signed-out engine must land on sign-in now, not a
+    // minute from now — then on the slow steady cadence.
+    void probe();
     const timer = setInterval(() => void probe(), HOSTED_SESSION_PROBE_MS);
     return () => {
       cancelled = true;
@@ -293,6 +307,22 @@ export function DesktopGate() {
      sentence, and offer the way back — never a mailbox that silently stopped moving. The
      mirrored mail is kept on disk (sign-out freezes the directory) and returns with the
      sign-in. */
+  /* A PRE-AUTH cloud engine under a configured door: the sign-in surface, plainly — the app
+     would render mail routes that refuse. (The expiry branch below carries the sentence.) */
+  if (hostedPreAuth && !hostedSessionGone) {
+    return (
+      <DoorChooser
+        start="cloud"
+        cloudAction="signIn"
+        onEntered={(r) => {
+          setHostedPreAuth(false);
+          if (r.status) onStatus(r.status);
+          else void refresh();
+        }}
+      />
+    );
+  }
+
   if (hostedSessionGone) {
     if (signInAfterExpiry) {
       /* Straight to the CLOUD sign-in, in place — the same `start`/`cloudAction` pair the
@@ -305,6 +335,7 @@ export function DesktopGate() {
           cloudAction="signIn"
           onEntered={(r) => {
             setHostedSessionGone(false);
+            setHostedPreAuth(false);
             setSignInAfterExpiry(false);
             if (r.status) onStatus(r.status);
             else void refresh();

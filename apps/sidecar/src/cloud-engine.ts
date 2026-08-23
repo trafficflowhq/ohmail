@@ -507,12 +507,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const signOut = async (): Promise<void> => {
       const live = authed;
       authed = null;
-      // The wake first — a frame arriving mid-sign-out must not kick a pull into a mirror that
-      // is being asked to leave.
-      live?.wake.stop();
-      // AWAITED. A drain that outlived the sign-out would go on writing the previous account's mail
-      // into a database this process has just declared signed out.
-      await live?.mirror.stop();
+      // THE SPENT SEAL GOES FIRST — before the awaits, not after them. This teardown's tail
+      // used to remove the seal after waiting out the mirror, and a sign-in completing inside
+      // that window sealed a FRESH pair the old rmSync then deleted. Removing it up front is
+      // safe in every ordering: these tokens are dead (or leaving) either way, and a crash
+      // right after leaves a pre-auth launch, which is the correct next state.
       try {
         rmSync(sealPath, { force: true });
       } catch (err) {
@@ -522,6 +521,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             "and a later sign-in overwrites it",
         });
       }
+      // The wake next — a frame arriving mid-sign-out must not kick a pull into a mirror that
+      // is being asked to leave.
+      live?.wake.stop();
+      // AWAITED. A drain that outlived the sign-out would go on writing the previous account's mail
+      // into a database this process has just declared signed out.
+      await live?.mirror.stop();
       log?.("cloud_signed_out", { mailboxId: world.mailboxId });
     };
 
@@ -587,6 +592,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       }
 
       if (req.method === "POST" && path === "/cloud/signin") {
+        // An expiry teardown may still be draining its last mirror request; its tail removes
+        // the seal. Sealing a FRESH pair before that tail runs hands the new session to the
+        // old teardown's rmSync — recovery looks successful until the next launch signs out
+        // again. Waiting here is bounded by one in-flight request and one page apply.
+        await sessionTeardown;
         if (authed) {
           return json(
             { error: { code: "already_signed_in", message: "this install already holds a session" } },
