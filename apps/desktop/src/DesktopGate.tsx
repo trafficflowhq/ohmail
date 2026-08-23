@@ -196,6 +196,11 @@ export function DesktopGate() {
       mail routes refuse, and the honest surface is the sign-in — with no "you were signed out"
       sentence, because for a session that never existed that sentence would be a lie. */
   const [hostedPreAuth, setHostedPreAuth] = useState(false);
+  /** TRUE once the probe's first `/health` answer for this door has been read. Until then a
+      cloud door's auth state is PENDING and the mail app is withheld — React would otherwise
+      commit `AppShell` once, before the asynchronous probe responds, over an engine whose mail
+      routes refuse. Non-cloud doors and bridge-less environments never consult it. */
+  const [hostedAuthKnown, setHostedAuthKnown] = useState(false);
   const [signInAfterExpiry, setSignInAfterExpiry] = useState(false);
   useEffect(() => {
     if (door !== "cloud" || !bridgeAvailable()) {
@@ -215,6 +220,7 @@ export function DesktopGate() {
         // client — the difference is the sentence over the sign-in, never whether it shows.
         const health = (await res.json()) as { signedIn?: boolean; sessionExpired?: boolean };
         if (cancelled) return;
+        setHostedAuthKnown(true);
         if (health.sessionExpired === true) setHostedSessionGone(true);
         else if (health.signedIn === false) setHostedPreAuth(true);
         else {
@@ -222,7 +228,7 @@ export function DesktopGate() {
           setHostedPreAuth(false);
         }
       } catch {
-        /* engine unreachable — the status path owns that */
+        /* engine unreachable — the status path owns that; the fast first-answer loop retries */
       }
     };
     // Once at mount — a relaunch onto a signed-out engine must land on sign-in now, not a
@@ -234,6 +240,31 @@ export function DesktopGate() {
       clearInterval(timer);
     };
   }, [door]);
+  /* UNTIL THE FIRST ANSWER, ask fast: the door's auth state is pending and the app is withheld,
+     and the ask is one local stdio call answered in milliseconds once the engine serves. This
+     loop exists only while the state is unknown — the flip to known unmounts it. */
+  useEffect(() => {
+    if (door !== "cloud" || !bridgeAvailable() || hostedAuthKnown) return;
+    let cancelled = false;
+    const probe = async (): Promise<void> => {
+      try {
+        const res = await bridgeFetch("/health");
+        if (!res.ok) return;
+        const health = (await res.json()) as { signedIn?: boolean; sessionExpired?: boolean };
+        if (cancelled) return;
+        setHostedAuthKnown(true);
+        if (health.sessionExpired === true) setHostedSessionGone(true);
+        else if (health.signedIn === false) setHostedPreAuth(true);
+      } catch {
+        /* engine still starting — the next tick asks again */
+      }
+    };
+    const fast = setInterval(() => void probe(), 400);
+    return () => {
+      cancelled = true;
+      clearInterval(fast);
+    };
+  }, [door, hostedAuthKnown]);
   useEffect(() => {
     if (door !== "local") {
       setAi(null);
@@ -307,6 +338,13 @@ export function DesktopGate() {
      sentence, and offer the way back — never a mailbox that silently stopped moving. The
      mirrored mail is kept on disk (sign-out freezes the directory) and returns with the
      sign-in. */
+  /* THE CLOUD DOOR'S AUTH STATE IS PENDING: the probe's first answer has not landed. Withhold
+     the mail app — React would otherwise commit it once, over an engine whose mail routes
+     refuse — and draw the same skeleton a starting engine draws. Resolved in milliseconds. */
+  if (door === "cloud" && bridgeAvailable() && !hostedAuthKnown) {
+    return <BootSkeleton active />;
+  }
+
   /* A PRE-AUTH cloud engine under a configured door: the sign-in surface, plainly — the app
      would render mail routes that refuse. (The expiry branch below carries the sentence.) */
   if (hostedPreAuth && !hostedSessionGone) {

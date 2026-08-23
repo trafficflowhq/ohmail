@@ -527,6 +527,17 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // AWAITED. A drain that outlived the sign-out would go on writing the previous account's mail
       // into a database this process has just declared signed out.
       await live?.mirror.stop();
+      // AGAIN, after the mirror is out: a request that was mid-refresh when the early removal
+      // ran can have PERSISTED its rotated pair between the two — a "signed out" answer with a
+      // live seal that signs back in on relaunch. This second, serialized deletion runs when
+      // nothing of the old session can write any more; and it can never eat a NEW sign-in's
+      // seal, because `POST /cloud/signin` awaits `sessionTeardown` (every teardown is retained
+      // there, the user-initiated one included) before it seals anything.
+      try {
+        rmSync(sealPath, { force: true });
+      } catch {
+        /* logged by the first attempt's arm if it matters; nothing of this session reads it */
+      }
       log?.("cloud_signed_out", { mailboxId: world.mailboxId });
     };
 
@@ -725,7 +736,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       }
 
       if (req.method === "DELETE" && path === "/cloud/session") {
-        await signOut();
+        const teardown = signOut();
+        sessionTeardown = teardown.catch(() => undefined).finally(() => {
+          sessionTeardown = null;
+        });
+        await teardown;
         return json({ status: "signed_out" });
       }
 
