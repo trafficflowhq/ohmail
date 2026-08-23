@@ -43,6 +43,7 @@ function readColumnHidden(): boolean {
 export function FolderView({
   folder,
   messages,
+  locateId,
   tags,
   threadParticipants,
   absoluteTime,
@@ -56,6 +57,13 @@ export function FolderView({
   folder: FolderEntity;
   /** The folder's mail, newest first — filtered by the shell on (mailboxId, name). */
   messages: EngineMessage[];
+  /**
+   * The URL's open message (`#/folder/<id>/m/<mid>`) — a search hit's landing. The window
+   * mounts the top of the list, so a deep hit needs its row REVEALED (scrolled into the
+   * window) and selected, or the shell's locator polls for a row that never existed and
+   * closing the reader leaves the list at the top instead of at the hit.
+   */
+  locateId?: string | null;
   tags: TagDTO[];
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
   absoluteTime?: boolean;
@@ -72,9 +80,14 @@ export function FolderView({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
 
-  // The user's pick, or the first row so the column is never blank beside a list that has
-  // rows — TagView's rule, safe for TagView's reason: the list does not re-partition under it.
-  const shown = messages.find((m) => m.id === selectedId) ?? messages[0] ?? null;
+  // The user's pick, else the URL's open message (a search hit's landing), else the first row
+  // so the column is never blank beside a list that has rows — TagView's rule, safe for
+  // TagView's reason: the list does not re-partition under it.
+  const shown =
+    messages.find((m) => m.id === selectedId)
+      ?? (locateId ? messages.find((m) => m.id === locateId) : null)
+      ?? messages[0]
+      ?? null;
 
   useEffect(() => {
     if (shown) hydrateBody(shown.id);
@@ -92,6 +105,26 @@ export function FolderView({
   const readRows = messages.filter((m) => !m.unread);
   const ordered = [...unreadRows, ...readRows];
   const win = useListWindow({ scrollerRef, count: ordered.length });
+
+  /**
+   * REVEAL A TARGET THE WINDOW HAS NOT MOUNTED — the Ohbox window's own rule, verbatim in
+   * spirit: the slice derives from `scrollTop`, so putting the row's offset in view mounts
+   * it, and the shell's locate pass then finds, centers and flashes it. Keyed on the target
+   * and a no-op when the row is already mounted, so it never fights the reader for the
+   * viewport and never re-runs on scroll.
+   */
+  useEffect(() => {
+    const target = locateId ?? null;
+    if (!target) return;
+    const idx = ordered.findIndex((m) => m.id === target);
+    if (idx < 0) return;
+    if (idx >= win.start && idx < win.end) return;
+    const el = scrollerRef.current;
+    if (el) el.scrollTop = Math.max(0, idx * win.rowHeight - el.clientHeight / 2);
+    // Only the target: the window's fields are read at fire time, and re-running on every
+    // scroll-driven change would re-scroll the list under the user.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locateId]);
 
   const parent = folderParentOf(folder.name);
 

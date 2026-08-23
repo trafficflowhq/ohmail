@@ -341,12 +341,16 @@ export function openTargetFor(
   parked?: ReadonlySet<string>,
   holds?: (view: "ohbox" | "reads" | "receipts", id: string) => boolean,
   /**
-   * The `folder` entity id for `(mailboxId, canonical path)`, or null — the folders
-   * foundation's lookup (FOLDERS-SPEC.md). Mailbox-scoped like every folder-shaped surface:
-   * two mailboxes may both have a `Projects`, and a hit must open its OWN. Optional; absent
-   * (demo, folders off, callers written before the feature) keeps the reader fallback.
+   * The `folder` entity id whose VIEW can show this message, or null — the folders
+   * foundation's lookup (FOLDERS-SPEC.md). Mailbox-scoped like every folder-shaped surface
+   * (two mailboxes may both have a `Projects`, and a hit must open its OWN), and the callback
+   * owns the HOLDS question too: an archive-only search hit can name a folder whose entity
+   * exists while the message is outside this device's mirror, and naming the folder view for
+   * a row its list cannot render is the exact promise this function's type forbids. Null ⇒
+   * the reader fallback, which carries the off-mirror row with it. Optional; absent (demo,
+   * folders off, callers written before the feature) keeps the reader fallback.
    */
-  folderIdFor?: (mailboxId: string, folder: string) => string | null,
+  folderTargetFor?: (m: EngineMessage, folder: Folder) => string | null,
 ): OpenTarget {
   const presented = placeOf?.get(m.id);
   // `null` ⟺ History (dormant, undecided) — pile-less, so the reader is where it opens.
@@ -390,7 +394,7 @@ export function openTargetFor(
   // Route it there (the view lists it, the URL's message tail opens it) rather than stranding
   // the hit in Search's reader — the same "never name a surface that cannot show the message"
   // rule, pointed at the surface that CAN.
-  const folderId = folderIdFor?.(m.mailboxId, folder);
+  const folderId = folderTargetFor?.(m, folder);
   if (folderId) return { kind: "folder", folderId, id: m.id };
   // A folder no view owns — the folders feature off, an unknown path. The reader, in place.
   return { kind: "reader", id: m.id };
@@ -3777,9 +3781,16 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         parked,
         pileHolds,
         // The mailbox's own folders (mailbox-scoped, like every folder-shaped surface): a hit
-        // living in one navigates to its folder view instead of dead-ending in Search.
-        (mailboxId, folder) =>
-          folders.find((f) => f.mailboxId === mailboxId && f.name === folder)?.id ?? null,
+        // living in one navigates to its folder view instead of dead-ending in Search — but
+        // ONLY when the PRESENTED mirror holds the row under that folder, which is exactly
+        // what the folder view renders. An archive-only hit (GET /search reaching past this
+        // device's window) falls to the reader, which carries the off-mirror row with it.
+        (hit, folder) => {
+          const f = folders.find((x) => x.mailboxId === hit.mailboxId && x.name === folder);
+          if (!f) return null;
+          const held = presented.get<EngineMessage>("message", hit.id);
+          return held && held.folder === folder ? f.id : null;
+        },
       );
       switch (target.kind) {
         case "ohbox":
@@ -3827,7 +3838,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
           setReaderFor(target.id);
       }
     },
-    [readColumnHidden, screenerRowFor, consentView?.placeOf, parked, pileHolds, folders],
+    [readColumnHidden, screenerRowFor, consentView?.placeOf, parked, pileHolds, folders, presented],
   );
   /* Assigned here so `openDraft`, which is declared several hundred lines above this, can open a
      reply draft in its own conversation. See {@link openMessageRef}. */
@@ -5340,6 +5351,9 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 folder={openFolder}
                 messages={folderMessages}
                 tags={tags}
+                /* The URL's open message — the reveal target: a deep search hit must mount
+                   and select its row, or the locator polls for a row the window never built. */
+                locateId={route.messageId}
                 now={now}
                 /* IN PLACE — `setReaderFor`, TagView's reason: the folder IS the message's place,
                    and `openMessage` would route it to a pile it does not present in. */
