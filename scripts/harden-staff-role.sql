@@ -571,6 +571,19 @@ GRANT SELECT (
 REVOKE ALL ON public.mailbox_credentials FROM ohmail_admin;
 GRANT SELECT (mailbox_id, transport) ON public.mailbox_credentials TO ohmail_admin;
 
+-- `devices` / `sessions` — THE DEVICE-SYNC STALENESS ALERT'S INPUTS (mail 0064; alerts.ts
+-- rule 8). Reliability data by the isolation rule's own words: ids, kinds and timestamps,
+-- the same class as `mailboxes.last_sync_at` above. Deliberately NOT `devices.label`
+-- (user-chosen text) and NOT `devices.ip`; on `sessions` exactly the two columns the
+-- armed-check reads — NEVER `access_token_hash`, `refresh_token_hmac_key` or any other
+-- credential column. (The rule's first form was a SECURITY DEFINER carrier; §pre-flight
+-- refuses those by construction, and mail 0068 retired it — these column grants are the
+-- designed mechanism.)
+REVOKE ALL ON public.devices FROM ohmail_admin;
+GRANT SELECT (id, account_id, kind, last_synced_at) ON public.devices TO ohmail_admin;
+REVOKE ALL ON public.sessions FROM ohmail_admin;
+GRANT SELECT (device_id, revoked_at) ON public.sessions TO ohmail_admin;
+
 -- ── 7. `folder_state` / `flag_state` — NO GRANT. ──────────────────────────────────────────
 --
 -- `folder_state` used to grant `(id, message_id, last_set_by, reconcile_status, conflict,
