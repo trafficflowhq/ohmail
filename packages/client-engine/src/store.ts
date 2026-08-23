@@ -199,13 +199,24 @@ export abstract class BaseMirrorStore implements MirrorStore {
     const out: MirrorRecord[] = [];
     for (const ch of changes) {
       if (ch.type !== "message") continue;
-      // A delete always sheds the body. A non-delete sheds it only when the message is now
-      // protected — read from the mirror rather than the raw delta, so a change `applyToRecords`
-      // refused (older-or-equal seq) cannot purge a body it never applied.
-      if (ch.op !== "delete" && !isProtectedMessage(this.get<EngineMessage>("message", ch.id))) continue;
       const key = recordKey("message_body", ch.id);
       const held = this.records.get(key);
       if (!held || held.entity === null) continue;
+      // A delete always sheds the body. A non-delete sheds it in exactly two cases, both read
+      // from the mirror rather than the raw delta, so a change `applyToRecords` refused
+      // (older-or-equal seq) cannot purge a body it never applied:
+      //  · the message is now PROTECTED — a cached body flipped sensitive must not survive;
+      //  · the cached body is a WITHHELD husk (mail 0065) — a `junk_filed`/`expunged` record is
+      //    terminal on the client ("ready", never re-asked), but the SERVER can refill it: a
+      //    message restored from the provider's Junk/Trash gets its content back and announces
+      //    itself with the very message change in hand. Shedding the husk here is the
+      //    invalidation signal — the next open re-fetches and finds either the restored body or
+      //    the same husk again (one cheap re-ask on the rare update of an unrestored husk).
+      if (ch.op !== "delete") {
+        const cached = held.entity as { state?: string; withheld?: string | null };
+        const withheldHusk = cached.state === "ready" && cached.withheld != null;
+        if (!withheldHusk && !isProtectedMessage(this.get<EngineMessage>("message", ch.id))) continue;
+      }
       const tombstone: MirrorRecord = { type: "message_body", id: ch.id, seq: 0, entity: null };
       this.records.set(key, tombstone);
       out.push(tombstone);

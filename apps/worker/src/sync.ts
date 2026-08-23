@@ -1204,7 +1204,7 @@ function isTransportFailure(err: unknown): boolean {
  * own verdict and its own `reconcile.move.failed` row.
  */
 async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
-  const { repo, mailboxId } = deps;
+  const { repo, accountId, mailboxId } = deps;
   // One row over the budget, so "there is more" is a fact about the queue rather than a guess
   // from a full page.
   const pending = await repo.listPendingFolderStates(mailboxId, RECONCILE_MOVES_PER_CYCLE + 1);
@@ -1230,7 +1230,7 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
   );
   const aiAuthored: ReadonlySet<string> =
     spamCandidates.length > 0 && typeof repo.listAiAutoAppliedQuarantine === "function"
-      ? new Set(await repo.listAiAutoAppliedQuarantine(spamCandidates.map((p) => p.messageId)))
+      ? new Set(await repo.listAiAutoAppliedQuarantine(accountId, spamCandidates.map((p) => p.messageId)))
       : new Set<string>();
 
   /**

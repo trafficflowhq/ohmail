@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, messages, messageInstances, messageFailures, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
+import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   Rule, NativeLocator, EmailAddress,
@@ -215,7 +215,7 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * before, the conservative direction. OPTIONAL; a repo without it excludes nothing, which is
    * wrong ONLY toward the narrower action (fakes never junk-file at all unless they opt in).
    */
-  listAiAutoAppliedQuarantine?(messageIds: readonly string[]): Promise<string[]>;
+  listAiAutoAppliedQuarantine?(accountId: string, messageIds: readonly string[]): Promise<string[]>;
   /**
    * Every UID of this mailbox that is still owed — failed, and neither ingested nor written off as
    * void. Read at the top of every cycle and merged into the adapter's known-set, which is what
@@ -866,16 +866,40 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return true;
   }
 
-  /** Mail 0065 — see the WorkerRepo doc: the AI-auto-applied Quarantine placements to exclude. */
-  async listAiAutoAppliedQuarantine(messageIds: readonly string[]): Promise<string[]> {
+  /**
+   * Mail 0065 — see the WorkerRepo doc: the AI-auto-applied Quarantine placements to exclude.
+   *
+   * Account-scoped, because the only index is `(account_id, message_id)` and a bare
+   * `message_id IN (…)` cannot seek through its leading key — the lookup would degrade into a
+   * scan of every account's routing history on every pass that carries a spam move.
+   *
+   * AND SUPERSEDED BY ANY LATER USER MOVE: the AI decision row is history, not the current
+   * placement's author. A message the AI once quarantined, that the user restored and then
+   * explicitly pressed spam on, has a `change_log` `move` row whose `meta.to` is the pile and
+   * whose timestamp POSTDATES the decision — every user path that files to the pile records
+   * one (the decide re-route, the API move, a rule's retro move), while the auto-apply arm
+   * records only the message `create`. Such a decision no longer authors the placement, and the
+   * verdict files to native Junk as the user commanded.
+   */
+  async listAiAutoAppliedQuarantine(accountId: string, messageIds: readonly string[]): Promise<string[]> {
     if (messageIds.length === 0) return [];
     const rows = await this.db.select({ messageId: routingDecisions.messageId })
       .from(routingDecisions)
       .where(and(
+        eq(routingDecisions.accountId, accountId),
         inArray(routingDecisions.messageId, [...messageIds]),
         eq(routingDecisions.inputProvenance, "ai"),
         eq(routingDecisions.status, "auto_applied"),
         eq(routingDecisions.destination, "ohmail/Quarantine"),
+        sql`not exists (
+          select 1 from ${changeLog} cl
+           where cl."account_id" = ${accountId}
+             and cl."entity_type" = 'message'
+             and cl."entity_id" = ${routingDecisions.messageId}
+             and cl."op" = 'move'
+             and cl."meta" ->> 'to' = 'ohmail/Quarantine'
+             and cl."created_at" > ${routingDecisions.createdAt}
+        )`,
       ));
     return [...new Set(rows.map((r) => r.messageId))];
   }
