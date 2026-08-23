@@ -195,26 +195,37 @@ export abstract class BaseMirrorStore implements MirrorStore {
    * live body — on the ordinary drain (nothing deleted, nothing newly protected, or such changes
    * for messages nobody opened) it allocates nothing.
    */
-  private cascadeLocalDeletes(changes: SyncChange[]): MirrorRecord[] {
+  private cascadeLocalDeletes(changes: SyncChange[], applied: MirrorRecord[]): MirrorRecord[] {
+    // ONLY CHANGES THAT WON THE SEQ GUARD MAY CASCADE. `applied` is `applyToRecords`' own dirty
+    // set, and the accepted change for a key is exactly the one whose seq the applied record now
+    // carries — an equal-seq mutation echo or an out-of-order replay was REFUSED there, and a
+    // cascade that read the raw page anyway would purge a body for a change that changed
+    // nothing, violating the idempotent-apply contract (review round 3: rehydrate between the
+    // optimistic echo and the sync replay, and the replay deleted the fresh body again).
+    const acceptedSeq = new Map<string, number>();
+    for (const r of applied) acceptedSeq.set(recordKey(r.type, r.id), r.seq);
     const out: MirrorRecord[] = [];
     for (const ch of changes) {
       if (ch.type !== "message") continue;
+      if (acceptedSeq.get(recordKey("message", ch.id)) !== ch.seq) continue;
       const key = recordKey("message_body", ch.id);
       const held = this.records.get(key);
       if (!held || held.entity === null) continue;
       // A delete always sheds the body. A non-delete sheds it in exactly two cases, both read
-      // from the mirror rather than the raw delta, so a change `applyToRecords` refused
-      // (older-or-equal seq) cannot purge a body it never applied:
+      // from the mirror rather than the raw delta:
       //  · the message is now PROTECTED — a cached body flipped sensitive must not survive;
-      //  · the cached body is a WITHHELD husk (mail 0065) — a `junk_filed`/`expunged` record is
-      //    terminal on the client ("ready", never re-asked), but the SERVER can refill it: a
-      //    message restored from the provider's Junk/Trash gets its content back and announces
-      //    itself with the very message change in hand. Shedding the husk here is the
-      //    invalidation signal — the next open re-fetches and finds either the restored body or
-      //    the same husk again (one cheap re-ask on the rare update of an unrestored husk).
+      //  · the cached body is a RESTORABLE husk (mail 0065) — `junk_filed`/`expunged` records
+      //    are terminal on the client ("ready", never re-asked), but the SERVER can refill
+      //    those two: a message restored from the provider's Junk/Trash gets its content back
+      //    and announces itself with the very message change in hand. Shedding the husk here is
+      //    the invalidation signal — the next open re-fetches and finds either the restored
+      //    body or the same husk again. `storage_cap` is deliberately NOT in the set: nothing
+      //    restores the cap's husk through an arrival, so shedding it would buy a request that
+      //    can only return the same husk, on every later update, for ever.
       if (ch.op !== "delete") {
         const cached = held.entity as { state?: string; withheld?: string | null };
-        const withheldHusk = cached.state === "ready" && cached.withheld != null;
+        const withheldHusk = cached.state === "ready"
+          && (cached.withheld === "junk_filed" || cached.withheld === "expunged");
         if (!withheldHusk && !isProtectedMessage(this.get<EngineMessage>("message", ch.id))) continue;
       }
       const tombstone: MirrorRecord = { type: "message_body", id: ch.id, seq: 0, entity: null };
@@ -225,7 +236,8 @@ export abstract class BaseMirrorStore implements MirrorStore {
   }
 
   async applyChanges(changes: SyncChange[]): Promise<void> {
-    const dirty = [...applyToRecords(this.records, changes), ...this.cascadeLocalDeletes(changes)];
+    const applied = applyToRecords(this.records, changes);
+    const dirty = [...applied, ...this.cascadeLocalDeletes(changes, applied)];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     if (dirty.length > 0) {
       this.ver++;
@@ -244,7 +256,8 @@ export abstract class BaseMirrorStore implements MirrorStore {
   async applyResponse(resp: SyncResponse): Promise<void> {
     const changes = flattenResponse(resp);
     // The body cascade rides in this page's dirty set — see `cascadeLocalDeletes`.
-    const dirty = [...applyToRecords(this.records, changes), ...this.cascadeLocalDeletes(changes)];
+    const applied = applyToRecords(this.records, changes);
+    const dirty = [...applied, ...this.cascadeLocalDeletes(changes, applied)];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     this.cursor = resp.cursor;
     this.ver++;
