@@ -806,6 +806,17 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // widened `message_bodies_withheld_reason` (0030's rule: replaced in the same migration
   // transaction as these columns, so the column probe implies it).
   ["messages", "deleted_at"],
+  // mail 0066_folders_enabled — "Use folders", the folders foundation's master toggle
+  // (FOLDERS-SPEC.md §6). One nullable column on `account_settings`, and it earns a marker for
+  // the whole-row-select reason: `consentSettings` does `select().from(accountSettings)`, so an
+  // API deployed ahead of the migration answers Postgres 42703 on `GET /consent` AND on
+  // `PATCH /consent/settings` — the entire consent surface, which onboarding runs through, not
+  // just this knob (0054's entry records the same blast radius for its column) — and the /sync
+  // snapshot's flag probe reads the same column. No worker half. Deploy order: migration → API.
+  // (Journal note: the entry is REISSUED after 0068 with a fresh-maximum `when` — it was first
+  // minted between two already-applied entries, which the single-watermark migrator skips
+  // forever on any database already at 0068.)
+  ["account_settings", "folders_enabled_at"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1391,12 +1402,15 @@ export const MAIL_EXPECTED_MARKERS =
  *
  * `0066_folders_enabled` is probed as `account_settings.folders_enabled_at` — the whole-row
  * `consentSettings` select means a too-early API takes out the entire consent surface, and the
- * marker names the migration instead. One column, no CHECK, no index, no worker half.
+ * marker names the migration instead. One column, no CHECK, no index, no worker half. It is
+ * the TAG below despite the smaller number: the journal entry was reissued AFTER 0068 with a
+ * fresh-maximum `when` (see the journal's README rule), so it is the newest entry in the mail
+ * journal — which is exactly what this tag pins.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0068_retire_device_sync_fn";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0066_folders_enabled";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

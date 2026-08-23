@@ -1,5 +1,10 @@
 import { and, eq } from "drizzle-orm";
-import { DESTINATIONS } from "@trafficflow/core";
+// `@trafficflow/core/mail`, NOT the default barrel: this module rides into the desktop
+// ENGINE bundle through `sync-service.ts`, and the default barrel puts the classifier and the
+// drafter (and, through them, the private cloud schema) into esbuild's input graph — which the
+// engine's private-input gate refuses outright (`scripts/engine-bundle.mjs`). The mail barrel
+// is the vocabulary half, exactly what imap-types.ts does internally for the same reason.
+import { DESTINATIONS } from "@trafficflow/core/mail";
 import { accountSettings, mailboxFolders, mailboxes } from "@trafficflow/db";
 import type { Db } from "./context.js";
 
@@ -18,7 +23,7 @@ import type { Db } from "./context.js";
      · the organized six (`DESTINATIONS`) — they are the product's spine, never "a folder";
      · the `ohmail` namespace, belt-and-braces (discovery already refuses it, including the
        namespace-prefixed forms);
-     · THE SENT FOLDER — the one genuinely open edge. The worker resolves it at connect
+     · THE SENT FOLDER — one of two genuinely open edges (the other is staleness, below). The worker resolves it at connect
        (SPECIAL-USE, then imap.ts's `SENT_BY_NAME`) and does NOT persist the answer, so this
        module cannot ask "which row is Sent" — it can only recognise Sent-shaped paths. The
        belt below covers every form the resolver itself can produce for the English names plus
@@ -28,6 +33,18 @@ import type { Db } from "./context.js";
        proper fix lands: persist the resolved Sent path beside `mailboxes.junk_folder` /
        `trash_folder` (mail 0065's discovery already stands at the right seam). That column is
        the sync lane's to grow; this comment is the hand-off.
+
+   STALENESS — the second open edge, and the second half of the same hand-off. `mailbox_folders`
+   rows are never deleted: a folder renamed or removed in another IMAP client stops appearing in
+   the worker's cursor writes but keeps its row, so this read emits it as a PHANTOM (a rename
+   emits old and new both) until the worker's discovery learns to prune disappeared rows and
+   emit the matching `folder` delete tombstones. That prune belongs beside the discovery that
+   writes the rows (`apps/worker/src/sync.ts`, the sync lane's hot path — not this module's),
+   and until it lands the phantom is bounded and honest in one direction: a phantom folder
+   renders EMPTY (its messages moved with the rename, the passive read adopts them under the
+   new path), never with another folder's mail, and a re-toggle or re-bootstrap after the prune
+   lands clears it. The IMAP-master rule is unbroken — nothing here writes to the mailbox —
+   but the inventory's answer can lag the mailbox by exactly this class of row.
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
