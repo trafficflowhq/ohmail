@@ -1593,9 +1593,15 @@ describe("the UI bundle's build config", () => {
        latch, and the honest sentence with its way back. */
     const gate = read("src/DesktopGate.tsx");
     expect(gate).toMatch(/HOSTED_SESSION_PROBE_MS/);
-    expect(gate).toMatch(/health\.signedIn === false/);
+    // The latch is the engine's own expiry verdict — NEVER bare signedIn:false, which an
+    // ordinary pre-auth engine also answers and which is not "you were signed out".
+    expect(gate).toMatch(/health\.sessionExpired === true/);
+    expect(gate).not.toMatch(/health\.signedIn === false\) setHostedSessionGone/);
     expect(gate).toMatch(/signed out of your hosted account/);
     expect(gate).toMatch(/actionLabel="Sign in"/);
+    // The way back is the IN-PLACE cloud sign-in, not a door re-pick that reconfigures the
+    // engine over the mirror it already has.
+    expect(gate).toMatch(/start="cloud"\s+cloudAction="signIn"/);
 
     const bridge = read("src/bridge-fetch.ts");
     expect(bridge).toMatch(/const REQUEST_COMMAND = "engine_request"/);

@@ -203,8 +203,13 @@ export function DesktopGate() {
       try {
         const res = await bridgeFetch("/health");
         if (!res.ok) return; // a dead ENGINE is the status path's story, not this one's
-        const health = (await res.json()) as { signedIn?: boolean };
-        if (!cancelled && health.signedIn === false) setHostedSessionGone(true);
+        // `sessionExpired` and never bare `signedIn: false`: a Cloud engine in ORDINARY
+        // pre-auth (a fresh door, an abandoned browser handoff, no sealed token) also answers
+        // signedIn:false, and telling that person "you were signed out" would be a lie about
+        // a session that never existed. The engine latches sessionExpired only on the hosted
+        // API's definitive refusal to renew — exactly the fact this notice states.
+        const health = (await res.json()) as { signedIn?: boolean; sessionExpired?: boolean };
+        if (!cancelled && health.sessionExpired === true) setHostedSessionGone(true);
       } catch {
         /* engine unreachable — the status path owns that */
       }
@@ -290,8 +295,14 @@ export function DesktopGate() {
      sign-in. */
   if (hostedSessionGone) {
     if (signInAfterExpiry) {
+      /* Straight to the CLOUD sign-in, in place — the same `start`/`cloudAction` pair the
+         Settings reauthentication overlay passes. The chooser's defaults would ask the person
+         to pick a door again and then RECONFIGURE the engine (which replaces the mirror);
+         an expired session needs a new session over the mirror it already has. */
       return (
         <DoorChooser
+          start="cloud"
+          cloudAction="signIn"
           onEntered={(r) => {
             setHostedSessionGone(false);
             setSignInAfterExpiry(false);
