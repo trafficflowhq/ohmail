@@ -102,6 +102,10 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // with a file and every real HTML body in an engine-bearing build. A German reader of the shipped
   // binary is exactly the person who would have found them still in English.
   "attachments", "mailBody",
+  // `folder` is the folder VIEW's namespace (the folders foundation, FOLDERS-SPEC.md) — three
+  // sentences: a count and the empty state naming where the folder list comes from. It is NOT
+  // the marketing "folders" namespace, which stays excluded below with the other site copy.
+  "folder",
   // `attachmentPreview` and `away` joined the list with the German translation, and by the ROUTE the
   // header above warns about rather than by a new `useTranslations` call. Both were local `COPY`
   // constants — a surface the catalogue cannot reach is a surface that stays English for ever — and

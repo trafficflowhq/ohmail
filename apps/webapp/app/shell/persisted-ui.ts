@@ -183,6 +183,15 @@ export function usePersistedChoice<T extends string>(
  */
 export const UI_KEYS = {
   tagsOpen: "ohmail.ui.rail.tagsOpen",
+  /** The rail's Folders group — `tagsOpen`'s sibling, one flag for the whole group. */
+  foldersOpen: "ohmail.ui.rail.foldersOpen",
+  /**
+   * The OPENED branches of the folder tree (FOLDERS-SPEC.md §15): keys are `mailboxId|path`,
+   * stored through {@link usePersistedIdSet} so the default needs no seeding — a branch never
+   * touched has no entry anywhere, and one the user opens stays open across sessions. Keys
+   * carry the mailbox id, so two accounts sharing a browser cannot collide.
+   */
+  foldersOpened: "ohmail.ui.rail.foldersOpened",
   /** Ids the reader chose to view in their ORIGINAL (light) rendering, despite a dark theme. */
   mailOriginal: "ohmail.ui.mail.original",
 } as const;

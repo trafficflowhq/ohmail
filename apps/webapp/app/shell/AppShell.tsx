@@ -50,6 +50,7 @@ import {
   type OhmailView,
   type WaterlineMeta,
   type SearchHit,
+  type FolderEntity,
   type TagDTO,
   type TriagePileEntry,
 } from "@ohmail/client-engine";
@@ -97,6 +98,9 @@ import { DormancyRow } from "./DormancyRow";
 import { useComposeAutosave } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
 import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
+import { FoldersRow } from "./FoldersRow";
+import { FoldersRailGroup } from "./FoldersRailGroup";
+import { folderUnreadCounts } from "./folders";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from "./ProfileImportCard";
@@ -149,7 +153,7 @@ import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField }
 import { senderHitOf } from "./sender-hit";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import {
-  go, goScreener, goSettings, goTag, goTriage, reflectMessage, useHashRoute,
+  go, goFolder, goScreener, goSettings, goTag, goTriage, reflectMessage, useHashRoute,
   type Route, type ScreenerSegmentId, type TriagePileId,
 } from "./routing";
 import { HistoryView } from "../views/HistoryView";
@@ -161,6 +165,7 @@ import { ScreenerView } from "../views/ScreenerView";
 import { SearchView } from "../views/SearchView";
 import { SettingsView, type MailboxEntity, type NotificationsMeta, type PaneId } from "../views/SettingsView";
 import { TagView } from "../views/TagView";
+import { FolderView } from "../views/FolderView";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
 import { DraftsView } from "../views/DraftsView";
@@ -1320,6 +1325,27 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     [consentView],
   );
   const tags = useMemo(() => reader.list<TagDTO>("tag"), [reader, version]);
+  /**
+   * THE MAILBOX'S OWN FOLDERS — `folder` entities off `/sync` (FOLDERS-SPEC.md §4), present in
+   * the mirror only while the account's "Use folders" flag is on, and gated AGAIN here on the
+   * consent answer: the flag is the authority, the entities are data. A tab that has not yet
+   * heard the flag renders the pre-feature rail; a tab whose mirror still holds entities after
+   * the flag went off renders none. Both directions err towards today's interface.
+   */
+  const folders = useMemo(
+    () => (consent.foldersEnabled ? reader.list<FolderEntity>("folder") : []),
+    [reader, version, consent.foldersEnabled],
+  );
+  /**
+   * Per-folder unread, ONE PASS over the presented mirror — the tag counts' derivation and the
+   * spec's "no server-side count column" decision. Keyed `mailboxId|path`; the rail rolls a
+   * collapsed parent's descendants up from this same map, so there is one source and no second
+   * number to drift.
+   */
+  const folderUnread = useMemo(
+    () => (consent.foldersEnabled ? folderUnreadCounts(presented.list<EngineMessage>("message")) : new Map<string, number>()),
+    [presented, version, consent.foldersEnabled],
+  );
   /** Every rule the consent gate has written, newest first. */
   const rules = useMemo(() => rulesList(reader), [reader, version]);
   const mailboxes = useMemo(
@@ -4373,10 +4399,12 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       },
       // TAGS ARE THEIR OWN GROUP, not a sub-item of Triage. They were nested under it, which
       // said the wrong thing about what they are: triage piles are three fixed places a
-      // message can sit, and tags are a cross-cutting dimension over every view (invariant:
-      // "Tags (never folders)"). Filing the second under the first made tags read as a fourth
-      // pile. Own group, own label, and it stands even when empty — a collapsed group with a
-      // count of zero is how someone learns the feature exists.
+      // message can sit, and tags are a cross-cutting dimension over every view. Filing the
+      // second under the first made tags read as a fourth pile. Own group, own label, and it
+      // stands even when empty — a collapsed group with a count of zero is how someone learns
+      // the feature exists. (This comment used to quote "Tags (never folders)"; that invariant
+      // was deliberately relaxed on 2026-08-22 — tags stay cross-cutting, and the mailbox's own
+      // FOLDERS became an optional, off-by-default sibling group directly below.)
       {
         // No group label: `TagsGroup` renders its own heading, so setting both printed
         // "Tags" twice in the rail. Caught in the live walkthrough.
@@ -4416,6 +4444,31 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
           },
         },
       },
+      /* FOLDERS — the mailbox's own folders, DIRECTLY BELOW TAGS, collapsible, unnumbered
+         (FOLDERS-SPEC.md §3 "the rail"; owner decision 3). Rendered ONLY while "Use folders"
+         is on: spread conditionally rather than as an empty group, so a flag-off rail is
+         BYTE-IDENTICAL to the pre-feature rail — no extra `.rgroup`, nothing — which is the
+         parity claim `test/folders-rail.test.tsx` pins. The group is a host-authored subtree
+         (`RailGroup.custom`) because its shape — a tree with an opened-set, roll-up counts,
+         mailbox sections, a filter past twelve roots — is this feature's, not the design
+         system's; it renders in the rail's own vocabulary. `numberNav` reads `items`, so the
+         group contributes nothing to the number keys, exactly as Tags does. */
+      ...(consent.foldersEnabled
+        ? [{
+            items: [],
+            custom: (
+              <FoldersRailGroup
+                folders={folders}
+                unread={folderUnread}
+                activeFolderId={route.view === "folder" ? (route.folderId ?? undefined) : undefined}
+                onNavigate={(id) => {
+                  setRailOpen(false);
+                  goFolder(id);
+                }}
+              />
+            ),
+          }]
+        : []),
       {
         items: [
           /**
@@ -4444,7 +4497,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         ],
       },
     ],
-    [t, ohbox.newForYou.length, allOhbox.length, readsNew, receiptsNew, screener.waitingCount, piles, tagGroups, tags, createTagAlone],
+    [
+      t, ohbox.newForYou.length, allOhbox.length, readsNew, receiptsNew, screener.waitingCount, piles,
+      tagGroups, tags, createTagAlone, consent.foldersEnabled, folders, folderUnread, route.view, route.folderId,
+    ],
   );
 
   /**
@@ -4532,7 +4588,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   );
 
   const activeRailId =
-    route.view === "tag"
+    route.view === "tag" || route.view === "folder"
       ? undefined
       : route.view === "triage"
         // The row for the pile that is actually open. Hard-coded to `"triage"` before, which
@@ -4557,11 +4613,30 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   const mobileTitle =
     route.view === "tag"
       ? (tagGroups.find((g) => g.tag.id === route.tagId)?.tag.name ?? t("rail.tags"))
-      : (viewTitles[route.view] ?? t("rail.ohbox"));
+      : route.view === "folder"
+        ? (folders.find((f) => f.id === route.folderId)?.name ?? t("rail.folders"))
+        : (viewTitles[route.view] ?? t("rail.ohbox"));
 
   /* ── views ── */
   const tagGroup =
     route.view === "tag" ? tagGroups.find((g) => g.tag.id === route.tagId) : undefined;
+  /** The open folder entity, and its mail — `tagGroup`'s twin. Absent ⇒ the Ohbox, below. */
+  const openFolder =
+    route.view === "folder" ? folders.find((f) => f.id === route.folderId) : undefined;
+  const folderMessages = useMemo(
+    () =>
+      openFolder
+        ? presented
+            .list<EngineMessage>("message")
+            .filter((m) => m.mailboxId === openFolder.mailboxId && m.folder === openFolder.name)
+            .sort((a, b) => {
+              const at = a.date ? new Date(a.date).getTime() : 0;
+              const bt = b.date ? new Date(b.date).getTime() : 0;
+              return bt - at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+            })
+        : [],
+    [presented, version, openFolder],
+  );
   /**
    * `"seed"` matches no view below, which is how the review screen TAKES the stage instead of
    * appearing above a pile. Stated here rather than by guarding each of the ten renders: a
@@ -4572,7 +4647,9 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     ? "seed"
     : route.view === "tag" && !tagGroup
       ? "ohbox"
-      : route.view;
+      : route.view === "folder" && !openFolder
+        ? "ohbox"
+        : route.view;
 
   const frFinished = fr != null && fr.step >= fr.items.length;
   const frItem = fr && !frFinished ? fr.items[fr.step] : undefined;
@@ -5210,6 +5287,24 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
               />
             ) : null}
 
+            {effectiveView === "folder" && openFolder ? (
+              <FolderView
+                threadParticipants={participantsOf}
+                absoluteTime={absoluteTime}
+                onToggleTime={toggleAbsoluteTime}
+                folder={openFolder}
+                messages={folderMessages}
+                tags={tags}
+                now={now}
+                /* IN PLACE — `setReaderFor`, TagView's reason: the folder IS the message's place,
+                   and `openMessage` would route it to a pile it does not present in. */
+                onOpen={(m) => setReaderFor(m.id)}
+                hydrateBody={hydrateBody}
+                onAction={onMessageAction}
+                onAddTag={openTagPicker}
+              />
+            ) : null}
+
             {effectiveView === "history" ? (
               <HistoryView
                 threadParticipants={participantsOf}
@@ -5267,8 +5362,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    pressed in, falling to the Ohbox when this tab's session began in Search. */
                 onExit={() => {
                   const back = searchFrom.current;
-                  if (!back || back.view === "search" || (back.view === "tag" && !back.tagId)) go("ohbox");
+                  if (!back || back.view === "search" || (back.view === "tag" && !back.tagId)
+                    || (back.view === "folder" && !back.folderId)) go("ohbox");
                   else if (back.view === "tag") goTag(back.tagId!);
+                  else if (back.view === "folder") goFolder(back.folderId!);
                   else if (back.view === "screener") goScreener(back.screenerSegment);
                   else if (back.view === "triage") goTriage(back.triagePile);
                   else go(back.view);
@@ -5403,6 +5500,18 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    `ScreeningSection` reaches an API client that is not in that build and renders
                    nothing at all, which is a Screener pane present in the nav and blank when
                    opened. See `AppShell`'s prop. */
+                /* "USE FOLDERS" — the folders feature's master toggle (FOLDERS-SPEC.md §6).
+                   Built here, not injected, for `dormancySection`'s reason: it must write through
+                   the SAME `useConsentState` the rail group and the folder views above are gated
+                   on, or a flipped switch would leave this tab's rail where it was. Gated on
+                   `consent.known` for the two rows' flash argument (a switch drawn before the
+                   server answered shows OFF to an account that turned it ON). Absent on the demo
+                   and on a standalone install (no consent row anywhere); present on the desktop's
+                   hosted door, where `known` becomes true through its transport — a LOCAL install
+                   organizes the same real IMAP folders. */
+                foldersSection={demo || !consent.known ? undefined : (
+                  <FoldersRow on={consent.foldersEnabled} setFoldersEnabled={consent.setFoldersEnabled} />
+                )}
                 screeningSection={demo ? undefined : (screeningSection ?? <ScreeningSection />)}
                 /* THE DORMANCY DIAL. Like `autoSuggestSection`, built here rather than injected from
                    `CloudShell` because it must write through the SAME `useConsentState` the

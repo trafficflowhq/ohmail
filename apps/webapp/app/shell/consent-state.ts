@@ -73,6 +73,7 @@ export interface ConsentTransport {
   setDormancyDays: (days: number | null) => Promise<{ dormancyDays: number }>;
   setBlockRemoteImages: (blocked: boolean) => Promise<{ blockRemoteImagesAt: string | null }>;
   setBlockAutoUnsubscribe: (blocked: boolean) => Promise<{ blockAutoUnsubscribeAt: string | null }>;
+  setFoldersEnabled: (enabled: boolean) => Promise<{ foldersEnabledAt: string | null }>;
 }
 
 /** The hosted transport — the browser talking to the API this app was written against. */
@@ -82,6 +83,7 @@ const CLOUD_CONSENT: ConsentTransport = {
   setDormancyDays: (days) => consentApi.setDormancyDays(days),
   setBlockRemoteImages: (blocked) => consentApi.setBlockRemoteImages(blocked),
   setBlockAutoUnsubscribe: (blocked) => consentApi.setBlockAutoUnsubscribe(blocked),
+  setFoldersEnabled: (enabled) => consentApi.setFoldersEnabled(enabled),
 };
 
 export interface ConsentState {
@@ -160,6 +162,19 @@ export interface ConsentState {
   autoUnsubscribe: boolean;
   /** When they turned it off, for the settings row that says so. Null while the pass runs. */
   blockAutoUnsubscribeAt: string | null;
+  /**
+   * ARE THE MAILBOX'S OWN FOLDERS SHOWN — "Use folders", the folders feature's master toggle
+   * (FOLDERS-SPEC.md §6; owner decision 1: fully optional, disabled by default).
+   *
+   * It starts FALSE and stays false unless the server said otherwise — `autoSuggest`'s
+   * direction, though for a weaker reason: this authorises no spend and no send, it only
+   * decides whether the rail grows a group, the folder views open and the Settings pane shows
+   * its content. An API too old to carry the field sends `undefined`, which reads as off — the
+   * pre-feature interface, byte for byte, which is the flag-off parity claim (spec §10).
+   */
+  foldersEnabled: boolean;
+  /** When it was turned on, for the settings row that says so. Null whenever it is off. */
+  foldersEnabledAt: string | null;
   /**
    * THE ACCOUNT'S INTERFACE LANGUAGE, or `null` for "this account has no preference".
    *
@@ -257,6 +272,11 @@ const RESTING: ConsentState = {
   // whether it happens, so the safe resting value is the one that describes what the server does.
   autoUnsubscribe: true,
   blockAutoUnsubscribeAt: null,
+  // OFF AT REST — the feature is disabled by default by design, and off is the safe direction:
+  // a tab that does not know renders the pre-feature rail, which is what every account without
+  // the flag has.
+  foldersEnabled: false,
+  foldersEnabledAt: null,
   // NOTHING FROM AN ACCOUNT. Unlike `blockRemoteImages` above, resting null is not a safe
   // *position* — it is the absence of one, and it leaves the language this device remembered in
   // charge. See {@link ConsentState.locale}.
@@ -289,6 +309,13 @@ interface ConsentBootCache {
   seedConfirmedAt: string | null;
   dormancyDays: number;
   screeningBaselineAt: string | null;
+  /**
+   * "Use folders", cached so the rail does not flash folderless on every warm boot of a
+   * folders-on account. INSIDE the authorisation boundary deliberately: the flag authorises no
+   * spend, no send and no content fetch — it gates chrome over data the mirror already holds.
+   * Absent from an older build's row ⇒ off until the live answer, exactly a no-cache boot.
+   */
+  foldersEnabledAt?: string | null;
 }
 
 /**
@@ -302,11 +329,16 @@ function acceptConsentCache(parsed: unknown): ConsentBootCache | null {
   if (typeof p.dormancyDays !== "number" || !Number.isFinite(p.dormancyDays)) return null;
   if (p.seedConfirmedAt !== null && typeof p.seedConfirmedAt !== "string") return null;
   if (p.screeningBaselineAt !== null && typeof p.screeningBaselineAt !== "string") return null;
+  // Optional and tolerant: a row written before the field existed reads as "off until the live
+  // answer", which is the same boot a tab with no cache has always had.
+  const foldersEnabledAt =
+    typeof p.foldersEnabledAt === "string" ? p.foldersEnabledAt : null;
   return {
     v: 1,
     seedConfirmedAt: p.seedConfirmedAt,
     dormancyDays: p.dormancyDays,
     screeningBaselineAt: p.screeningBaselineAt,
+    foldersEnabledAt,
   };
 }
 
@@ -363,6 +395,13 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
    * write did not land.
    */
   setBlockAutoUnsubscribe: (blocked: boolean) => Promise<boolean>;
+  /**
+   * Turn "Use folders" on or off and keep the local answer in step with the stored one.
+   *
+   * Resolves to what the DATABASE holds, set from the echo rather than the argument — a refused
+   * write must not draw a rail the account does not have. It rethrows so the row can say so.
+   */
+  setFoldersEnabled: (enabled: boolean) => Promise<boolean>;
 } {
   const [state, setState] = useState<ConsentState>(RESTING);
 
@@ -404,6 +443,8 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
                 seedConfirmedAt: cached.seedConfirmedAt,
                 dormancyDays: cached.dormancyDays,
                 screeningBaselineAt: cached.screeningBaselineAt,
+                foldersEnabled: (cached.foldersEnabledAt ?? null) != null,
+                foldersEnabledAt: cached.foldersEnabledAt ?? null,
                 known: true,
               },
         );
@@ -456,6 +497,11 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
           // server is going to unsubscribe and the interface has to say so.
           autoUnsubscribe: wire.blockAutoUnsubscribeAt == null,
           blockAutoUnsubscribeAt: wire.blockAutoUnsubscribeAt ?? null,
+          // `!= null` — null (off) and undefined (an API from before the folders feature) are
+          // the same answer to the only question asked: is there a stored opt-in. Off renders
+          // the pre-feature interface, which is what such a server serves anyway.
+          foldersEnabled: wire.foldersEnabledAt != null,
+          foldersEnabledAt: wire.foldersEnabledAt ?? null,
           // NORMALISED, not trusted. The column's CHECK and `consentSettings` both close the set,
           // so an unsupported string cannot arrive from a current server — and this is the boot
           // path, where a value that got through would make the client ask for a catalogue that
@@ -478,6 +524,7 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
             seedConfirmedAt: wire.seedConfirmedAt ?? null,
             dormancyDays: wire.dormancyDays,
             screeningBaselineAt: wire.screeningBaselineAt ?? null,
+            foldersEnabledAt: wire.foldersEnabledAt ?? null,
           };
           writeBootCache(CONSENT_BOOT_SCOPE, owner, next);
         }
@@ -516,6 +563,15 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
     return on;
   }, []);
 
+  const setFoldersEnabled = useCallback(async (enabled: boolean): Promise<boolean> => {
+    const res = await link.current.setFoldersEnabled(enabled);
+    const on = res.foldersEnabledAt != null;
+    // BOTH FIELDS FROM THE SAME ECHO — auto-suggest's rule: the boolean the shell gates on and
+    // the instant the row displays must move together or not at all.
+    setState((prev) => ({ ...prev, foldersEnabled: on, foldersEnabledAt: res.foldersEnabledAt ?? null }));
+    return on;
+  }, []);
+
   const setBlockAutoUnsubscribe = useCallback(async (blocked: boolean): Promise<boolean> => {
     const res = await link.current.setBlockAutoUnsubscribe(blocked);
     // `== null` ⇒ the pass runs. The same collapse as the read above, for the same reason, and it
@@ -542,5 +598,6 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
     setDormancyDays,
     setBlockRemoteImages,
     setBlockAutoUnsubscribe,
+    setFoldersEnabled,
   };
 }

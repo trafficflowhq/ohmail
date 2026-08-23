@@ -57,6 +57,7 @@ export {
   type SyncEntityType,
   type SyncResponse,
   type SyncSnapshotPage,
+  type FolderEntity,
   type TagDTO,
   type TriageItemDTO,
   type TriageState,

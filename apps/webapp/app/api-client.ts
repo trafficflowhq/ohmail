@@ -1082,6 +1082,13 @@ export interface ConsentStateWire {
    */
   blockRemoteImagesAt?: string | null;
   /**
+   * WHEN "Use folders" was turned on, or null for off — and `undefined` from an API deployed
+   * before the folders feature, which must read the same as null (the pre-feature interface is
+   * exactly what such a server serves). Optional in the type for `autoSuggestAt`'s reason: the
+   * two absent states collapse safely into "off".
+   */
+  foldersEnabledAt?: string | null;
+  /**
    * WHEN this account turned OFF auto-unsubscribe on screen-out, or null for the product default —
    * which is that screening a sender out, or marking them spam, also sends the sender's one-click
    * unsubscribe request.
@@ -1195,6 +1202,17 @@ export const consent = {
    * The route refuses anything that is not a real boolean, so a malformed body is a 400 rather
    * than a silently cleared opt-out.
    */
+  /**
+   * TURN "USE FOLDERS" ON OR OFF — the folders feature's master toggle (FOLDERS-SPEC.md §6), on
+   * the same route with `foldersEnabled` in the body (field-present ⇒ acted-on). It spends
+   * nothing and writes nothing into the mailbox; the response echoes what the DATABASE holds,
+   * and the caller updates from that rather than from what it asked for.
+   */
+  setFoldersEnabled: (enabled: boolean) =>
+    api<{ foldersEnabledAt: string | null }>("/consent/settings", {
+      method: "PATCH",
+      body: { foldersEnabled: enabled },
+    }),
   setBlockRemoteImages: (blocked: boolean) =>
     api<{ blockRemoteImagesAt: string | null }>("/consent/settings", {
       method: "PATCH",

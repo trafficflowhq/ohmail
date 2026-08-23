@@ -64,6 +64,11 @@ export const ICON_PATHS: Record<string, ReactElement> = {
     </>
   ),
   plus: <path d="M8 3.6v8.8M3.6 8h8.8" />,
+  /* The folder rows in the rail (FOLDERS-SPEC.md §14) — the prototype's 24-grid folder glyph,
+     redrawn on this set's 16 grid so it sits exactly where a tag's dot does. */
+  folder: (
+    <path d="M2.2 4.6a1.2 1.2 0 0 1 1.2-1.2h2.9l1.3 1.3h5a1.2 1.2 0 0 1 1.2 1.2v5.5a1.2 1.2 0 0 1-1.2 1.2H3.4a1.2 1.2 0 0 1-1.2-1.2z" />
+  ),
   chev: <path d="m6 3.8 4.2 4.2L6 12.2" />,
   pen: (
     <>

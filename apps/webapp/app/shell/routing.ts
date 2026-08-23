@@ -38,7 +38,13 @@ export const VIEWS = [
   "drafts",
   "settings",
 ] as const;
-export type ViewId = (typeof VIEWS)[number] | "tag";
+/**
+ * `"tag"` and `"folder"` are parameterized views — one tag, or one of the mailbox's own folders,
+ * across the URL as `#/tag/<id>` / `#/folder/<id>`. The folder id is the `folder` entity's id
+ * (an opaque row id), never the path: a canonical path contains `/`, which would collide with
+ * the `m/<messageId>` tail this router splits first.
+ */
+export type ViewId = (typeof VIEWS)[number] | "tag" | "folder";
 export type ScreenerSegmentId = "waiting" | "screened" | "spam";
 /**
  * WHICH TRIAGE PILE IS OPEN — the thing the route could not say.
@@ -72,7 +78,7 @@ export type TriagePileId = (typeof TRIAGE_PILES)[number];
  */
 export const PANE_IDS = [
   "general", "notifications", "mailboxes", "screener", "away", "billing", "invites", "tags", "rules",
-  "about", "security", "account", "desktop", "devices",
+  "folders", "about", "security", "account", "desktop", "devices",
 ] as const;
 export type PaneId = (typeof PANE_IDS)[number];
 
@@ -82,7 +88,7 @@ export type PaneId = (typeof PANE_IDS)[number];
  * unsent mail), and the Screener's rows are SENDERS, not messages, so a message id says
  * nothing its list can locate. A `m/<id>` tail on any of the excluded views normalizes away.
  */
-const MESSAGE_VIEWS: readonly string[] = ["ohbox", "reads", "receipts", "history", "search", "tag", "triage"];
+const MESSAGE_VIEWS: readonly string[] = ["ohbox", "reads", "receipts", "history", "search", "tag", "folder", "triage"];
 
 /**
  * Split a raw hash path from its `m/<id>` tail — the OPEN MESSAGE, when the URL names one.
@@ -103,6 +109,8 @@ function splitMessageTail(raw: string): { path: string; messageId: string | null
 export interface Route {
   view: ViewId;
   tagId: string | null;
+  /** The open folder's entity id when `view === "folder"` — `tagId`'s twin, `null` elsewhere. */
+  folderId: string | null;
   screenerSegment: ScreenerSegmentId;
   triagePile: TriagePileId;
   /**
@@ -137,13 +145,19 @@ export function parseHash(hash: string): Route {
   const withMsg = (route: Route): Route =>
     messageId !== null && MESSAGE_VIEWS.includes(route.view) ? { ...route, messageId } : route;
   if (raw.startsWith("tag/") && raw.slice(4)) {
-    return withMsg({ view: "tag", tagId: raw.slice(4), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null });
+    return withMsg({ view: "tag", tagId: raw.slice(4), folderId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null });
+  }
+  // `#/folder/<entityId>` — one of the mailbox's own folders (FOLDERS-SPEC.md §3, the rail).
+  // The tag branch's shape exactly: an id the mirror does not hold falls back in the shell.
+  if (raw.startsWith("folder/") && raw.slice(7)) {
+    return withMsg({ view: "folder", tagId: null, folderId: raw.slice(7), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null });
   }
   if (raw === "screener" || raw.startsWith("screener/")) {
     const sub = raw.split("/")[1];
     return {
       view: "screener",
       tagId: null,
+      folderId: null,
       screenerSegment: sub === "screened" || sub === "spam" ? sub : "waiting",
       triagePile: "reply",
       settingsPane: null,
@@ -157,6 +171,7 @@ export function parseHash(hash: string): Route {
     return withMsg({
       view: "triage",
       tagId: null,
+      folderId: null,
       screenerSegment: "waiting",
       triagePile: (TRIAGE_PILES as readonly string[]).includes(sub ?? "")
         ? (sub as TriagePileId)
@@ -174,6 +189,7 @@ export function parseHash(hash: string): Route {
     return {
       view: "settings",
       tagId: null,
+      folderId: null,
       screenerSegment: "waiting",
       triagePile: "reply",
       settingsPane: (PANE_IDS as readonly string[]).includes(sub ?? "") ? (sub as PaneId) : null,
@@ -181,7 +197,7 @@ export function parseHash(hash: string): Route {
     };
   }
   const view = (VIEWS as readonly string[]).includes(raw) ? (raw as ViewId) : "ohbox";
-  return withMsg({ view, tagId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null });
+  return withMsg({ view, tagId: null, folderId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null });
 }
 
 /**
@@ -195,6 +211,7 @@ export function canonicalHash(route: Route): string {
   const tail =
     route.messageId !== null && MESSAGE_VIEWS.includes(route.view) ? `/m/${route.messageId}` : "";
   if (route.view === "tag") return `#/tag/${route.tagId}${tail}`;
+  if (route.view === "folder") return `#/folder/${route.folderId}${tail}`;
   if (route.view === "screener")
     return route.screenerSegment === "waiting" ? "#/screener" : `#/screener/${route.screenerSegment}`;
   if (route.view === "triage")
@@ -247,12 +264,16 @@ export function useHashRoute(): Route {
   return useMemo(() => parseHash(hash), [hash]);
 }
 
-export function go(view: Exclude<ViewId, "tag">): void {
+export function go(view: Exclude<ViewId, "tag" | "folder">): void {
   window.location.hash = `#/${view}`;
 }
 
 export function goTag(tagId: string): void {
   window.location.hash = `#/tag/${tagId}`;
+}
+
+export function goFolder(folderId: string): void {
+  window.location.hash = `#/folder/${folderId}`;
 }
 
 export function goScreener(segment: ScreenerSegmentId): void {

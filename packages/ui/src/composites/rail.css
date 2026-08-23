@@ -129,3 +129,34 @@
 .rail-dock .dock-theme:hover{color:var(--ink)}
 .rail-dock + .rail-mail{margin-top:0}
 .rail-mail{margin-top:auto;padding:14px 8px 0;font-size:10.5px;color:var(--ink3)}
+
+/* ── FOLDER TREE ROWS — the rail's Folders group (FOLDERS-SPEC.md §14/§15) ─────────────────
+ *
+ * Transcribed from the feature's clickable prototype, which is the interaction reference.
+ * A folder row is a `.frow` FLEX line: a 14px twisty
+ * column (`.ftw` — a button on a branch, an empty spacer on a leaf, so labels align), then the
+ * ordinary `.ritem` the rest of the rail uses. The glyph sits exactly where a tag's dot does,
+ * so the two groups read as siblings.
+ */
+.frow{display:flex;align-items:center;min-width:0;position:relative}
+.frow .ritem{flex:1 1 auto;min-width:0}
+.ftw{flex:0 0 14px;width:14px;display:inline-flex;align-items:center;justify-content:center;
+  align-self:stretch;color:var(--ink3);border-radius:6px;padding:0;background:none;border:0}
+button.ftw{cursor:pointer}
+button.ftw:hover{color:var(--ink)}
+.ftw .chev{width:10px;height:10px;transition:transform .25s var(--spring)}
+.ftw.open .chev{transform:rotate(90deg)}
+/* the folder glyph sits exactly where a tag's dot does, so the two groups stay aligned */
+.fglyph{width:11px;height:11px;flex:none;color:var(--ink3);stroke:currentColor;fill:none;stroke-width:1.4;
+  stroke-linecap:round;stroke-linejoin:round}
+.ritem.on .fglyph{color:var(--accent-ink)}
+/* .flabel ellipsizes so a full path fits a 224px rail; .fpath is the muted parent-path prefix a
+   filtered match wears for context; .fscroll bounds a long list in its own scroll region so the
+   piles, tags and the dock never leave reach (the many-folders treatment, spec §15). */
+.flabel{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fpath{color:var(--ink3);font-weight:400}
+.fscroll{max-height:min(320px,42vh);overflow-y:auto;overscroll-behavior:contain;flex:none}
+/* the mailbox address label above each mailbox's tree — only when 2+ mailboxes exist */
+.rmblab{font-size:10.5px;font-weight:600;color:var(--ink3);padding:8px 8px 3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rmblab:first-child{padding-top:2px}

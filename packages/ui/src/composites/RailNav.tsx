@@ -68,6 +68,16 @@ export interface RailTagCreate {
 export interface RailGroup {
   label?: string;
   items: RailItem[];
+  /**
+   * A HOST-AUTHORED SUBTREE at the end of this group — the `dock` rule one level down: the
+   * content is the host's, written in the rail's own vocabulary (`.rgroup.rsub`, `.ritem`,
+   * `.frow`), and `RailNav` only gives it a place. The webapp's Folders group (FOLDERS-SPEC.md
+   * §3, "the rail") renders through this: its rows are account data with per-account persisted
+   * tree state, which is a host concern exactly as the tags group's collapse flag is — but its
+   * SHAPE (a tree with roll-up counts, mailbox sections, a filter) is one feature's, not the
+   * design system's. Optional and default-absent, so every existing rail is untouched.
+   */
+  custom?: ReactNode;
   /** Subordinate collapsible Tags group, nested under this group. */
   tags?: {
     label?: string;
@@ -287,6 +297,7 @@ export function RailNav({
               onNavigateTag={onNavigateTag}
             />
           ) : null}
+          {group.custom ?? null}
         </div>
       ))}
 

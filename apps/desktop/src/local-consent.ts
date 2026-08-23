@@ -88,7 +88,7 @@ async function patch<T>(body: Record<string, unknown>): Promise<T> {
 }
 
 /**
- * The five calls the shared hook makes, over the bridge.
+ * The six calls the shared hook makes, over the bridge.
  *
  * A constant rather than a factory: it holds no state, and one object per module is what lets the
  * hook keep a stable wire identity across renders.
@@ -101,4 +101,6 @@ export const consentOverBridge: ConsentTransport = {
     patch<{ blockRemoteImagesAt: string | null }>({ blockRemoteImages: blocked }),
   setBlockAutoUnsubscribe: (blocked) =>
     patch<{ blockAutoUnsubscribeAt: string | null }>({ blockAutoUnsubscribe: blocked }),
+  setFoldersEnabled: (enabled) =>
+    patch<{ foldersEnabledAt: string | null }>({ foldersEnabled: enabled }),
 };

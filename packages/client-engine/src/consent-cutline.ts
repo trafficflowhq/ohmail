@@ -114,6 +114,10 @@ export interface ConsentPartition {
    * Only messages whose presentation DIFFERS from their folder, plus every History message,
    * need to be consulted — but the map is total over the mirror so that a caller can never
    * silently fall through to the physical folder for a message this did consider.
+   *
+   * ONE exception to "null for History": a FOLDER-FILED row shown through the History LENS
+   * (spec §16.5) keeps its folder as its place, because the folder view must keep showing it.
+   * `history` is the authority on History's contents; `placeOf` is the authority on removal.
    */
   readonly placeOf: ReadonlyMap<string, Folder | null>;
   /** History's contents, newest first. Read mail only, by construction. */
@@ -359,6 +363,20 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const messages = reader.list<EngineMessage>("message");
   const index = consentIndex(rulesList(reader));
   const own = ownSet(reader, opts);
+  /* ── THE USER'S OWN FOLDERS, when "Use folders" is on (FOLDERS-SPEC.md §16.5) ────────────
+   *
+   * `/sync` emits `folder` entities ONLY while the account's flag is set, so this set is empty
+   * on every flag-off account and the partition below is byte-identical to the pre-feature
+   * build — the parity claim is structural, not a branch to keep in sync. Names, not ids: a
+   * message carries its folder as the canonical path, and that spelling is the join.
+   *
+   * Junk and Trash can never appear here — they are never watched, never ingested, and never
+   * emitted as entities — so the lens excludes them by construction rather than by filter. */
+  const userFolders = new Set<string>(
+    reader.list<{ name?: unknown }>("folder")
+      .map((f) => f.name)
+      .filter((n): n is string => typeof n === "string" && n.length > 0),
+  );
   const activity = senderActivity(messages, opts, own);
   // The same line {@link senderActivity} measures from, read here for outbound mail — see the
   // own-sent branch below. One call, so the two halves of the partition cannot disagree about
@@ -401,6 +419,34 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
      * a conversation is never in History while the other half is in the Ohbox.
      */
     if (!KNOWN_FOLDERS.has(m.folder)) {
+      /* ── FOLDER-FILED MAIL — the lens branch (spec §16.5), only while folders are on ─────
+       *
+       * A message living in one of the user's OWN folders is FILED: somebody (the user, their
+       * other client, years of Thunderbird) put it there, and an explicit placement is already
+       * an answer — the same rule `UNDECIDED_RESIDENCES` states for the organized folders. So
+       * it always KEEPS ITS PLACE: the folder view must show everything the server holds
+       * there, and a null place here would delete rows from a folder's own list.
+       *
+       * History then reads it as a LENS, never as a move: the old-and-read slice from senders
+       * nobody ever screened joins `historyIds` while `placeOf` stays the folder, so the same
+       * row presents in both — badged by its folder in History, in place in the folder view.
+       * Unread mail never joins (History is read-only by construction — the rail's no-badge
+       * argument), a decided sender's mail never joins (the cutline is about senders never
+       * screened, unchanged), and the user's own mail never joins. The thread rule below still
+       * applies: a lens row on a thread holding consented mail leaves History with the thread.
+       *
+       * With the flag OFF `userFolders` is empty and every row here falls through to the
+       * own-sent branch below, byte-for-byte the pre-feature partition. */
+      if (userFolders.has(m.folder)) {
+        placeOf.set(m.id, m.folder);
+        const key = senderKey(m.from.address);
+        if (!own.has(key) && !m.unread && !isResurfaced(m)) {
+          const decided = decidedDestination(index, m.from.address);
+          const ms = messageMs(m);
+          if (decided === null && ms !== null && ms < cutoff) historyIds.add(m.id);
+        }
+        continue;
+      }
       const sentMs = messageMs(m);
       if (!isResurfaced(m) && sentMs !== null && sentMs < cutoff) {
         placeOf.set(m.id, null);

@@ -384,6 +384,14 @@
     "tags": "Tags",
     "tagNew": "Neuer Tag",
     "tagEmpty": "Noch keine Tags.",
+    "folders": "Ordner",
+    "folderEmpty": "Noch keine Ordner auf deinem Mailserver.",
+    "folderFilter": "Ordner filtern",
+    "folderNoMatch": "Kein Ordner passt.",
+    "folderShowAll": "Alle {count} anzeigen…",
+    "folderShowFewer": "Weniger anzeigen",
+    "folderExpand": "{name} aufklappen",
+    "folderCollapse": "{name} zuklappen",
     "history": "Historie",
     "drafts": "Entwürfe",
     "historyTitle": "Alte Post von Absendern, die du nie entschieden hast",
@@ -743,6 +751,11 @@
     "deleteAsk": "„{name}“ löschen?",
     "deleteWhat": "{count, plural, =0 {Nichts trägt ihn. } one {Er hängt an 1 deiner Nachrichten. } other {Er hängt an # deiner Nachrichten. }}Die Nachrichten bleiben, wo sie sind."
   },
+  "folder": {
+    "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
+    "emptyTitle": "Nichts in diesem Ordner",
+    "emptyHint": "Er existiert auf deinem Mailserver und enthält keine Mail. Er erscheint hier, weil die Ordnerliste aus dem Postfach selbst kommt, nicht aus den Nachrichten darin."
+  },
   "search": {
     "title": "Suche",
     "placeholder": "Alles durchsuchen — Tippfehler sind erlaubt",
@@ -925,6 +938,15 @@
       "on": "Wer aussortiert wird, bekommt auch die Abmeldung geschickt — sofern der Absender Ein-Klick-Abmeldung anbietet.",
       "off": "Die Post wird einsortiert, geschickt wird nichts.",
       "microcopy": "Eine Anfrage pro Liste, einmal, von unseren Servern — deine Adresse und deine Lesezeiten bleiben so aus dem Log des Absenders heraus. Für Absender ohne Ein-Klick-Link wird nur einsortiert und nichts geschickt, und eine schon geschickte Anfrage lässt sich nicht zurückholen.",
+      "failed": "Das ließ sich nicht speichern — versuch es nochmal."
+    },
+    "folders": {
+      "nav": "Ordner",
+      "intro": "ohmail sortiert deine Mail in seine eigenen sechs Orte. Wenn du daneben eigene Ordner führst, holt dies sie in ohmail — die echten Ordner auf deinem Mailserver, keine Kopie. Aus, bis du es einschaltest.",
+      "useTitle": "Ordner verwenden",
+      "useOn": "Die Ordner deines Mailservers erscheinen im Menü, jeder öffnet sich als eigene Liste mit Ungelesen-Zähler.",
+      "useOff": "Deine Ordner bleiben ausgeblendet. ohmail liest sie weiterhin für Suche und Historie.",
+      "microcopy": "Einschalten zeigt nur, was ohnehin existiert — verschoben wird nichts. Ausschalten blendet die Ordner wieder aus, ohne deine Mail anzurühren.",
       "failed": "Das ließ sich nicht speichern — versuch es nochmal."
     },
     "dormancy": {

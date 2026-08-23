@@ -391,6 +391,7 @@ export function SettingsView({
   remoteImagesSection,
   autoUnsubscribeSection,
   awaySection,
+  foldersSection,
   desktopSection,
   devicesSection,
   defaultMailSection,
@@ -626,6 +627,19 @@ export function SettingsView({
    */
   awaySection?: ReactNode;
   /**
+   * THE FOLDERS PANE — "Use folders", the master toggle of the optional folders feature
+   * (FOLDERS-SPEC.md §6). This node IS the pane's content: absent ⇒ no pane and no nav entry.
+   *
+   * The same injection seam as {@link autoSuggestSection}: it writes `PATCH /consent/settings`
+   * through the shell's `useConsentState`, because the rail's Folders group and the folder
+   * views are gated on the SAME hook's answer — a pane with its own fetch would flip a switch
+   * the rail could not see. Listed on both surfaces the same way the neighbouring panes are: a
+   * LOCAL install organizes the same real IMAP folders, so wherever the shell can reach a
+   * consent row (the Cloud client, the desktop's hosted door) the pane exists; where it cannot
+   * (a standalone install, the demo) there is no entry rather than a dead switch.
+   */
+  foldersSection?: ReactNode;
+  /**
    * WHICH DOOR THIS INSTALL CAME IN BY — the desktop app's own pane, injected.
    *
    * The mirror image of {@link accountSection}. That one is absent on the desktop because a
@@ -741,6 +755,9 @@ export function SettingsView({
     // leading to an empty list on an account that HAS rules is the defect, not the fix.
     ...(rules ? [["rules", t("rules")] as [PaneId, string]] : []),
     ["tags", t("tags")],
+    // FOLDERS — directly after Tags, as in the rail (the feature's whole placement argument:
+    // under Tags, subordinate, optional). Present IFF the shell wired the node.
+    ...(foldersSection ? [["folders", t("folders.nav")] as [PaneId, string]] : []),
     // THIS INSTALL. Present only in a build that has a native shell behind it, which is the
     // desktop app — a browser tab passes no node and gets no entry. It opens the account
     // administration group because on that surface it IS the account: the door, the mailbox
@@ -1035,6 +1052,16 @@ export function SettingsView({
           {/* THE AWAY RESPONDER'S OWN PANE. One injected node, wrapped like every other list here —
               the node is a set of `SettingsRow`s and brings no section of its own. */}
           {shown === "away" ? <SettingsSection>{awaySection}</SettingsSection> : null}
+          {/* THE FOLDERS PANE — the honest intro first (these are the real folders on the mail
+              server, not a copy; off unless turned on), then the master toggle. Everything the
+              spec lists BELOW the toggle arrives in later stages and renders only while it is on;
+              the foundation ships the toggle alone. */}
+          {shown === "folders" ? (
+            <SettingsSection>
+              <p className="set-note-inline">{t("folders.intro")}</p>
+              {foldersSection}
+            </SettingsSection>
+          ) : null}
           {shown === "about" ? aboutSection : null}
           {shown === "security" ? securitySection : null}
           {shown === "account" ? accountSection : null}

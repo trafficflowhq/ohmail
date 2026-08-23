@@ -753,6 +753,32 @@ export interface TagDTO {
   updatedAt?: ISODateTime;
 }
 
+/**
+ * One of the mailbox's OWN folders — a `"folder"` entity off `/sync` (FOLDERS-SPEC.md §4).
+ *
+ * `name` is the CANONICAL `/`-joined path ("Projects/Acme") and the natural key — the same
+ * spelling `MessageDTO.folder` carries for mail living there, so a view can join the two with
+ * `===` and nothing else. The id is the server's inventory row id; it names the entity on the
+ * wire and in a URL (`#/folder/<id>`), never in the organizer profile.
+ *
+ * `mailboxId`/`mailbox` extend the spec's minimal `{ id, name }` deliberately: the rail sections
+ * folders BY MAILBOX when an account has more than one (spec §14), every folder-shaped menu is
+ * mailbox-scoped, and a live client has no other mirror source for the owning address — the
+ * `mailbox` entity type is fixture-world only (`/sync` never emits it).
+ *
+ * Emitted ONLY while the account's "Use folders" flag is on. A mirror with no `folder` entities
+ * is byte-identical to the pre-feature mirror, which is the flag-off parity claim (spec §10).
+ */
+export interface FolderEntity {
+  id: string;
+  /** Canonical `/`-joined path, exactly as messages carry it. */
+  name: string;
+  mailboxId: string;
+  /** The owning mailbox's address — the rail's section label when 2+ mailboxes exist. */
+  mailbox: string;
+  updatedAt?: ISODateTime;
+}
+
 export type ScreenerSegment = "waiting" | "screened_out" | "spam";
 
 export interface ScreenerHeldMail {
