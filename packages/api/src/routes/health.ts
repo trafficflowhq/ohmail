@@ -813,9 +813,8 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // `PATCH /consent/settings` — the entire consent surface, which onboarding runs through, not
   // just this knob (0054's entry records the same blast radius for its column) — and the /sync
   // snapshot's flag probe reads the same column. No worker half. Deploy order: migration → API.
-  // (Journal note: the entry is REISSUED after 0068 with a fresh-maximum `when` — it was first
-  // minted between two already-applied entries, which the single-watermark migrator skips
-  // forever on any database already at 0068.)
+  // (Journal note: 0069_folders_enabled_reissue re-runs this migration's one statement from
+  // above the journal maximum — see that file's header; this one marker covers both.)
   ["account_settings", "folders_enabled_at"],
 ] as const;
 
@@ -1402,15 +1401,17 @@ export const MAIL_EXPECTED_MARKERS =
  *
  * `0066_folders_enabled` is probed as `account_settings.folders_enabled_at` — the whole-row
  * `consentSettings` select means a too-early API takes out the entire consent surface, and the
- * marker names the migration instead. One column, no CHECK, no index, no worker half. It is
- * the TAG below despite the smaller number: the journal entry was reissued AFTER 0068 with a
- * fresh-maximum `when` (see the journal's README rule), so it is the newest entry in the mail
- * journal — which is exactly what this tag pins.
+ * marker names the migration instead. One column, no CHECK, no index, no worker half.
+ *
+ * `0069_folders_enabled_reissue` re-runs 0066's one idempotent statement from above the
+ * journal maximum (0066's original position was skippable on databases that migrated between
+ * two lanes' landings — the reissue file's header carries the account). Same column, so the
+ * 0066 marker covers it; it is the newest entry, so it is the tag below.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0066_folders_enabled";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0069_folders_enabled_reissue";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
