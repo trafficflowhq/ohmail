@@ -177,6 +177,13 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   ],
   // PRESENCE ONLY: the composite primary key, and nothing that makes a mailbox connectable.
   "public.mailbox_credentials": ["mailbox_id", "transport"],
+  // THE DEVICE-SYNC STALENESS ALERT'S INPUTS (mail 0064). Reliability data by the isolation
+  // rule's own words — ids, kinds and timestamps, the same class as `mailboxes.last_sync_at`
+  // four entries up. Deliberately NOT `label` (user-chosen text) and NOT `ip`. `sessions` gets
+  // exactly the two columns the alert's armed-check reads — never a token column, never a hash;
+  // the presence of a session row for a device the console already lists is not content.
+  "public.devices": ["id", "account_id", "kind", "last_synced_at"],
+  "public.sessions": ["device_id", "revoked_at"],
   // `public.folder_state`, `public.flag_state` and `public.change_log`: deliberately ABSENT. See
   // the block above `public.accounts`, and `scripts/harden-staff-role.sql` §7 and §8.
   "public.billing_customers": [

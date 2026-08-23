@@ -470,6 +470,13 @@
       "when": 1790982140531,
       "tag": "0067_device_sync_health",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1790982140532,
+      "tag": "0068_retire_device_sync_fn",
+      "breakpoints": true
     }
   ]
 }

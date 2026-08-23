@@ -1,7 +1,7 @@
-import { and, eq, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import {
-  alertState, billingEvents, billingReconciliationRuns, mailboxes, outboundSends,
-  workerHeartbeats,
+  alertState, billingEvents, billingReconciliationRuns, devices, mailboxes, outboundSends,
+  sessions, workerHeartbeats,
 } from "./schema.js";
 import { accountsWithSyncDisabled } from "./billing.js";
 import { accountsAtStorageCap } from "./storage-cloud.js";
@@ -596,56 +596,83 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // killed by refresh-reuse detection (no requests at all). The client cannot report either:
   // it retries on its own backoff and shows what it holds.
   //
-  // READ THROUGH `device_sync_stale_candidates` (mail 0067), NEVER the raw tables. The alert
-  // pass runs on the CONTENT-BLIND staff handle, which has no grant on `devices` or `sessions`
-  // and is deliberately refused `change_log` — a direct read here answered 42501 before any
-  // rule ran, and every other alert died with it: the pager went dark BECAUSE an alarm was
-  // added to it. The definer function carries only closed fields (ids, kinds, timestamps) and
-  // owns all four predicates — see the migration header for each one's argument.
+  // EVERY READ HERE IS A NAMED COLUMN ON THE STAFF ALLOWLIST — ids, kinds and timestamps
+  // (`staff-grants.ts`: devices id/account_id/kind/last_synced_at, sessions device_id/
+  // revoked_at), never a whole row and never a token column. This rule's first form was a
+  // SECURITY DEFINER carrier, and the staff attestation refused it by construction (a secdef
+  // the blind role can execute is a hole through every column grant): the pager went dark
+  // BECAUSE an alarm was added to it. Mail 0068 retired that function; the widened column
+  // allowlist is the designed mechanism.
   //
-  // THE ISOLATION IS PART OF THE RULE. A database without the function (a deployment between
-  // migration and API, an adopted database mid-catch-up) or a handle without EXECUTE must cost
-  // exactly this rule, never the pass: the pass dying wholesale is the failure mode this
-  // paragraph exists to record. Only the two codes that mean "this rule cannot run here" are
+  // THE "MOVED ON" GATE reads `mailboxes.last_sync_at` — the account has a mailbox the worker
+  // synced after the device's horizon, so there demonstrably was server-side motion the device
+  // never pulled. (`change_log` would be the sharper gate and is deliberately not readable by
+  // this role — row existence there is itself information. A mailbox that syncs and truly
+  // receives nothing for days keeps this rule armed; that is the acceptable direction.)
+  //
+  // THE ISOLATION IS PART OF THE RULE: a deployment whose provisioner has not yet granted the
+  // two new tables must cost exactly this rule, never the pass — the pass dying wholesale is
+  // the failure mode this paragraph exists to record. Only insufficient_privilege is
   // swallowed; anything else is a real fault and still fails the pass loudly.
   //
   // Per-device keys, like `worker_down:<shard>`: paired native devices are tens fleet-wide,
   // the remedy is per-device, and a grouped count would hide WHICH mirror is dead.
   const deviceStaleCut = new Date(now.getTime() - t.deviceSyncStaleMs);
   const deviceArmCut = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-  type StaleDeviceRow = { device_id: string; kind: string; last_synced_at: Date | string; newest_change_at: Date | string };
-  let staleDevices: StaleDeviceRow[] = [];
   try {
-    const res = await db.execute(
-      sql`select device_id, kind, last_synced_at, newest_change_at
-          from device_sync_stale_candidates(${deviceStaleCut}, ${deviceArmCut})`,
-    );
-    staleDevices = (Array.isArray(res) ? res : (res as { rows?: StaleDeviceRow[] }).rows ?? []) as StaleDeviceRow[];
+    const staleDevices = await db
+      .select({
+        id: devices.id,
+        accountId: devices.accountId,
+        kind: devices.kind,
+        lastSyncedAt: devices.lastSyncedAt,
+      })
+      .from(devices)
+      .where(and(
+        ne(devices.kind, "web"),
+        isNotNull(devices.lastSyncedAt),
+        lt(devices.lastSyncedAt, deviceStaleCut),
+      ));
+    for (const d of staleDevices) {
+      if (d.lastSyncedAt == null) continue; // isNotNull above; narrows the type
+      const movedOn = await db
+        .select({ id: mailboxes.id })
+        .from(mailboxes)
+        .where(and(eq(mailboxes.accountId, d.accountId), gt(mailboxes.lastSyncAt, d.lastSyncedAt)))
+        .limit(1);
+      if (movedOn.length === 0) continue;
+      const armed = await db
+        .select({ deviceId: sessions.deviceId })
+        .from(sessions)
+        .where(and(
+          eq(sessions.deviceId, d.id),
+          or(isNull(sessions.revokedAt), gt(sessions.revokedAt, deviceArmCut)),
+        ))
+        .limit(1);
+      if (armed.length === 0) continue;
+      const staleSeconds = secondsBetween(now, d.lastSyncedAt);
+      alerts.push({
+        key: `device_sync_stale:${d.id}`,
+        kind: "device_sync_stale",
+        // WARNING, not critical: mail is safe on the account and the webapp still shows it —
+        // what is broken is one device's mirror, and the person may not know.
+        severity: "warning",
+        title: `A paired ${d.kind} device has not synced in ${humanAge(staleSeconds)}`,
+        detail:
+          `Device ${d.id} (kind ${d.kind}) last reached the sync horizon ` +
+          `${humanAge(staleSeconds)} ago (threshold ${humanAge(Math.round(t.deviceSyncStaleMs / 1000))}), ` +
+          `and its account has newer changes it never received. Its session is still armed ` +
+          `(live, or revoked within 14 days) — the person in front of it is reading stale ` +
+          `mail and the client cannot say so.`,
+        count: 1,
+        oldestSeconds: staleSeconds,
+      });
+    }
   } catch (err) {
-    const code = (err as { code?: string })?.code;
-    // 42883 undefined_function (pre-0067 database), 42501 insufficient_privilege (a handle the
-    // grant has not reached). Both mean "not evaluable HERE"; everything else stays fatal.
-    if (code !== "42883" && code !== "42501") throw err;
-  }
-  for (const d of staleDevices) {
-    const lastSynced = new Date(d.last_synced_at as string);
-    const staleSeconds = secondsBetween(now, lastSynced);
-    alerts.push({
-      key: `device_sync_stale:${d.device_id}`,
-      kind: "device_sync_stale",
-      // WARNING, not critical: mail is safe on the account and the webapp still shows it —
-      // what is broken is one device's mirror, and the person may not know.
-      severity: "warning",
-      title: `A paired ${d.kind} device has not synced in ${humanAge(staleSeconds)}`,
-      detail:
-        `Device ${d.device_id} (kind ${d.kind}) last reached the sync horizon ` +
-        `${humanAge(staleSeconds)} ago (threshold ${humanAge(Math.round(t.deviceSyncStaleMs / 1000))}), ` +
-        `and its account has newer changes it never received. Its session is still armed ` +
-        `(live, or revoked within 14 days) — the person in front of it is reading stale ` +
-        `mail and the client cannot say so.`,
-      count: 1,
-      oldestSeconds: staleSeconds,
-    });
+    const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
+    // 42501 insufficient_privilege: a handle the provisioner's grants have not reached yet.
+    // Everything else stays fatal — a swallowed real fault is a silenced pager.
+    if (code !== "42501") throw err;
   }
 
   return alerts;

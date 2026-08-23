@@ -1389,7 +1389,10 @@ export const MAIL_EXPECTED_MARKERS =
  * the same migration transaction as the columns, so the column probes imply it (0030's rule).
  * No data statement, no index; deploy order migration → worker → API is the file's own header.
  */
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0065_junk_trash_delete";
+// 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
+// add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
+// tolerated state, not a schema fault a serving API should 503 over.
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0068_retire_device_sync_fn";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
