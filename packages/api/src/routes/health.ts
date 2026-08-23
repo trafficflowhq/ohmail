@@ -814,7 +814,8 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // just this knob (0054's entry records the same blast radius for its column) — and the /sync
   // snapshot's flag probe reads the same column. No worker half. Deploy order: migration → API.
   // (Journal note: 0069_folders_enabled_reissue re-runs this migration's one statement from
-  // above the journal maximum — see that file's header; this one marker covers both.)
+  // above the journal maximum — see REISSUED_ORIGINALS in db/src/baseline.ts; one marker,
+  // both entries.)
   ["account_settings", "folders_enabled_at"],
 ] as const;
 
@@ -1405,8 +1406,9 @@ export const MAIL_EXPECTED_MARKERS =
  *
  * `0069_folders_enabled_reissue` re-runs 0066's one idempotent statement from above the
  * journal maximum (0066's original position was skippable on databases that migrated between
- * two lanes' landings — the reissue file's header carries the account). Same column, so the
- * 0066 marker covers it; it is the newest entry, so it is the tag below.
+ * two lanes' landings — `REISSUED_ORIGINALS` in packages/db/src/baseline.ts carries the whole
+ * account, including why the file is a byte copy). Same column, so the 0066 marker covers it;
+ * it is the newest entry, so it is the tag below.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,

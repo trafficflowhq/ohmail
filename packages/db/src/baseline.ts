@@ -368,6 +368,77 @@ async function hashOf(spec: JournalSpec, tag: string): Promise<string> {
 }
 
 /**
+ * ENTRIES THAT EXIST TWICE IN ONE JOURNAL — a reissue re-running an original's statement from a
+ * fresh position — and the bookkeeping row the original is owed wherever only the reissue ran.
+ *
+ * The one case so far: mail `0066_folders_enabled` was first minted BETWEEN two entries another
+ * lane had already landed and applied, and drizzle's single-watermark migrator skips an entry at
+ * or below `max(created_at)` forever, silently. `0069_folders_enabled_reissue` re-runs the same
+ * idempotent statement from above the maximum (the file is a BYTE COPY of 0066's, deliberately:
+ * drizzle records the sha256 of the file it applied, and a database that ran the intermediate
+ * retimed repair holds a row at the reissue's `when` whose hash is 0066's file — identical bytes
+ * make that row describe the current journal entry exactly).
+ *
+ * What the reissue cannot do is give the SKIPPED population 0066's own bookkeeping row: such a
+ * database records the reissue's `when` and still has a hole at the original's, so
+ * `journalStatuses()` — which requires every journal `when` — would report the journal
+ * incomplete and abort the canonical setup path over a column the reissue just created. This
+ * adoption closes exactly that hole: once the REISSUE's row exists, the ORIGINAL's row is
+ * recorded too (same hash — the files are byte-identical), idempotently, under the same unique
+ * index on `created_at` that turns a race into a loud failure. It never runs ahead of the
+ * reissue, so a database that has genuinely applied neither stays honestly incomplete.
+ */
+const REISSUED_ORIGINALS: ReadonlyArray<{
+  journal: string;
+  original: { tag: string; when: number };
+  reissue: { when: number };
+}> = [
+  {
+    journal: "mail",
+    original: { tag: "0066_folders_enabled", when: 1790982140530 },
+    reissue: { when: 1791154940527 },
+  },
+];
+
+/**
+ * Record the original entry's row wherever only its reissue ran — see {@link REISSUED_ORIGINALS}.
+ * Runs AFTER the migrator pass (the reissue's row must exist first) and is a no-op everywhere
+ * else. Returns the tags recorded, `adoptBaseline`'s idempotency-proof shape.
+ */
+export async function adoptReissuedOriginals(
+  db: Executor & TxRunner,
+  spec: JournalSpec,
+  log: (msg: string) => void = () => {},
+): Promise<string[]> {
+  const mine = REISSUED_ORIGINALS.filter((r) => r.journal === spec.name);
+  if (mine.length === 0) return [];
+  const tableId = sql.raw(`"${spec.migrationsSchema}"."__drizzle_migrations"`);
+  // The unique index the ON CONFLICT below needs. `adoptBaseline` creates it on the adoption
+  // path, but a VIRGIN replay skips adoption entirely and drizzle's own table ships with no
+  // constraint at all — so it is ensured here too, idempotently, and it carries the same
+  // second job everywhere: a duplicate-`when` collision fails LOUDLY instead of the migrator
+  // skipping it in silence.
+  await db.execute(sql`create unique index if not exists
+    ${sql.raw(`"__drizzle_migrations_created_at_uq_${spec.migrationsSchema}"`)}
+    on ${tableId} (created_at)`);
+  const took: string[] = [];
+  for (const r of mine) {
+    const reissued = await rows<{ n: number | string }>(db, sql`
+      select count(*)::int as n from ${tableId} where created_at = ${r.reissue.when}`);
+    if (Number(reissued[0]?.n ?? 0) === 0) continue;
+    const hash = await hashOf(spec, r.original.tag);
+    const res = await db.execute(sql`
+      insert into ${tableId} ("hash", "created_at") values (${hash}, ${r.original.when})
+      on conflict (created_at) do nothing returning id`);
+    if (rowsOf(res).length > 0) {
+      took.push(r.original.tag);
+      log(`${spec.name}: recorded ${r.original.tag} — its reissue ran here, the original's row was owed`);
+    }
+  }
+  return took;
+}
+
+/**
  * Write the baseline rows for `spec`, idempotently. Returns the tags adopted (empty on a
  * re-run, which is the idempotency proof `setupProdDatabase` reports).
  *

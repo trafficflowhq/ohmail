@@ -2,7 +2,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { onNotice } from "./notices.js";
 import postgres from "postgres";
-import { adoptBaseline } from "./baseline.js";
+import { adoptBaseline, adoptReissuedOriginals } from "./baseline.js";
 import { assertNoActiveAddressDuplicates } from "./mailbox-dedup.js";
 import { JOURNALS } from "./journal-specs.js";
 
@@ -189,6 +189,11 @@ export async function runMigrations(
         try {
           await adoptBaseline(db, spec, log);
           await migrate(db, { migrationsFolder: spec.dir, migrationsSchema: spec.migrationsSchema });
+          // AFTER the pass: a journal entry that exists twice (an original plus its reissue)
+          // owes the original's bookkeeping row wherever only the reissue could run — the
+          // skipped-window population, whose watermark had already passed the original. See
+          // `REISSUED_ORIGINALS` in baseline.ts for the one case and the whole argument.
+          await adoptReissuedOriginals(db, spec, log);
         } catch (err) {
           if (done.length > 0) throw new PartialMigrationError(spec.name, done, err);
           throw err;

@@ -1,29 +1,44 @@
--- REISSUE of 0066_folders_enabled — same statement, new journal position (review round 2).
+-- "USE FOLDERS" — the folders feature's master toggle (FOLDERS-SPEC.md §6; owner decision 1,
+-- 2026-08-22: folders are FULLY OPTIONAL, DISABLED BY DEFAULT).
 --
--- ══ WHY A MIGRATION EXISTS TWICE ═══════════════════════════════════════════════════════════
+--   account_settings.folders_enabled_at  timestamptz NULL
 --
--- 0066's journal entry was first minted BETWEEN two entries another lane had already landed
--- and applied (0067/0068). drizzle's migrator is a single watermark — an entry at or below
--- max(created_at) is skipped FOREVER, silently — so any database that migrated in that window
--- (a local engine that updated between those commits) sits at 0068 with no
--- `folders_enabled_at`, and every whole-row read of `account_settings` answers 42703 across
--- the consent surface.
+-- NULL — and an absent row, and a failed read — all mean OFF, which is the `auto_suggest_at`
+-- idiom one column family over and the direction that matters here: OFF renders the pre-feature
+-- interface byte for byte (no `folder` entities on /sync, no rail group, no folder views), so
+-- there is no path from "I do not know" to a surface the account never asked for.
 --
--- The first repair retimed 0066 itself past the maximum. That healed the skip but mutated an
--- already-applied entry, which leaves every database that ran the ORIGINAL entry holding a
--- bookkeeping row the journal no longer describes. So: 0066 keeps its original entry exactly
--- as first shipped, and THIS entry re-runs the same idempotent statement from a position
--- strictly above the journal's maximum. Every class of database ends consistent:
+-- A timestamp rather than a boolean for `seed_confirmed_at`'s reason: "was this on before or
+-- after X" is a real support question. Read as IS NOT NULL, never as a deadline.
 --
---   · fresh replay        — 0066 creates the column, this applies as a no-op;
---   · skipped-0066 window — the watermark is past 0066, this one applies and heals it;
---   · already reissued    — this entry's `when` EQUALS the retimed row such a database
---                           recorded, so it is not applied again and rows match entries.
+-- ══ WHAT TURNING IT ON DOES — AND DELIBERATELY DOES NOT ════════════════════════════════════
 --
--- ══ ADDITIVE, IDEMPOTENT ═══════════════════════════════════════════════════════════════════
+-- ON makes the server materialize the mailbox's OWN folders (the passive-presence inventory in
+-- mailbox_folders, minus the organized six, the Sent folder and the ohmail namespace) as
+-- `folder` entities on /sync, and the write itself appends the corresponding change_log rows so
+-- a live client's rail fills without a re-bootstrap. It moves NO mail, creates NO folder,
+-- issues NO IMAP command — first render on a fifteen-year-old mailbox is a read-only act
+-- (spec §10). OFF appends delete tombstones for the same rows and the interface returns to
+-- today's, with nothing to migrate — the mail is in the user's own folders, where the user put
+-- it, which is the whole leave-anytime argument.
 --
--- The one statement is 0066's, verbatim: ADD COLUMN IF NOT EXISTS, nullable, no default, no
--- backfill, no CHECK, no index. Re-running it anywhere is a no-op. Column semantics, deploy
--- order and rollback are documented in 0066_folders_enabled.sql and do not change here.
+-- ══ ADDITIVE, IDEMPOTENT, NO CHECK, NO INDEX ═══════════════════════════════════════════════
+--
+-- ADD COLUMN IF NOT EXISTS, nullable, no default, no backfill (0054's refusal: an UPDATE here
+-- would be a truthful statement about nobody). No CHECK — a timestamp closes no set. No index:
+-- read off a row already fetched by primary key, never a predicate.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → API. `consentSettings` selects whole account_settings rows, so an API deployed
+-- ahead of this answers 42703 on the whole consent surface; the health marker
+-- ["account_settings","folders_enabled_at"] turns that into a 503 schema_incomplete naming this
+-- file. No worker half: the worker neither reads nor writes it (the /sync materialization is the
+-- API's). A CLIENT older than the API never sees the field and renders the pre-feature
+-- interface, which is exactly what the flag's NULL means anyway.
+--
+-- ROLLBACK is DROP COLUMN: every account returns to folders-off, nothing else moves — the
+-- feature's whole reversibility argument (spec §13). The API has to go back first, or the
+-- consent surface 42703s.
 
 ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "folders_enabled_at" timestamp with time zone;
