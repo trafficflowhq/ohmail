@@ -1,7 +1,7 @@
 import {
   buildSeedReview, confirmSeed, consentSettings, cutlineCounts,
   resetScreeningState, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
-  setDormancyDays, setLocale,
+  setDormancyDays, setFoldersEnabled, setLocale,
   unmovedReport,
   DEFAULT_DORMANCY_DAYS, SUPPORTED_LOCALES, ServiceError,
 } from "@trafficflow/services/mail";
@@ -71,6 +71,8 @@ interface ConsentSettingsBody {
   dormancyDays?: unknown;
   blockRemoteImages?: unknown;
   blockAutoUnsubscribe?: unknown;
+  /** "Use folders" — the folders foundation's master toggle (FOLDERS-SPEC.md §6). */
+  foldersEnabled?: unknown;
   locale?: unknown;
 }
 
@@ -105,18 +107,19 @@ async function applyConsentSettings(
   ctx: ReturnType<typeof serviceContext>, body: ConsentSettingsBody,
 ): Promise<{
   autoSuggestAt?: string | null; dormancyDays?: number; blockRemoteImagesAt?: string | null;
-  blockAutoUnsubscribeAt?: string | null; locale?: string | null;
+  blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null; locale?: string | null;
 }> {
   const hasAuto = "autoSuggest" in body;
   const hasDormancy = "dormancyDays" in body;
   const hasImages = "blockRemoteImages" in body;
   const hasAutoUnsub = "blockAutoUnsubscribe" in body;
+  const hasFolders = "foldersEnabled" in body;
   const hasLocale = "locale" in body;
-  if (!hasAuto && !hasDormancy && !hasImages && !hasAutoUnsub && !hasLocale) {
+  if (!hasAuto && !hasDormancy && !hasImages && !hasAutoUnsub && !hasFolders && !hasLocale) {
     throw new ServiceError(
       "validation_failed", 400,
-      "at least one of autoSuggest, dormancyDays, blockRemoteImages, blockAutoUnsubscribe or " +
-      "locale is required",
+      "at least one of autoSuggest, dormancyDays, blockRemoteImages, blockAutoUnsubscribe, " +
+      "foldersEnabled or locale is required",
     );
   }
 
@@ -166,6 +169,20 @@ async function applyConsentSettings(
     blockAutoUnsub = body.blockAutoUnsubscribe;
   }
   /**
+   * THE FOURTH BOOLEAN — "Use folders" (FOLDERS-SPEC.md §6). The consequence of coercion here is
+   * the mildest on this route (the flag gates chrome over data the mirror already holds — no
+   * spend, no send, no IMAP write), and it is refused anyway because one knob accepting `"true"`
+   * is how the next knob's stricter rule erodes: every boolean on this route takes exactly the
+   * two booleans, or the route has two contracts.
+   */
+  let folders: boolean | undefined;
+  if (hasFolders) {
+    if (typeof body.foldersEnabled !== "boolean") {
+      throw new ServiceError("validation_failed", 400, "foldersEnabled must be true or false");
+    }
+    folders = body.foldersEnabled;
+  }
+  /**
    * THE CLOSED SET AT THE WIRE, and `null` is a legal MEMBER of the request rather than an absence.
    *
    * "absent" and "null" mean different things on this route and this is the field where the
@@ -195,7 +212,7 @@ async function applyConsentSettings(
 
   const out: {
     autoSuggestAt?: string | null; dormancyDays?: number; blockRemoteImagesAt?: string | null;
-    blockAutoUnsubscribeAt?: string | null; locale?: string | null;
+    blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null; locale?: string | null;
   } = {};
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     const txCtx = { ...ctx, db: tx as unknown as typeof ctx.db };
@@ -211,6 +228,12 @@ async function applyConsentSettings(
     if (hasAutoUnsub) {
       out.blockAutoUnsubscribeAt =
         (await setBlockAutoUnsubscribe(txCtx, blockAutoUnsub!)).blockAutoUnsubscribeAt;
+    }
+    if (hasFolders) {
+      // Inside the shared transaction like its siblings; the service opens its own nested one
+      // (a savepoint) because its change rows and its column must land together even when a
+      // caller writes it alone.
+      out.foldersEnabledAt = (await setFoldersEnabled(txCtx, folders!)).foldersEnabledAt;
     }
     if (hasLocale) {
       out.locale = (await setLocale(txCtx, locale as string | null)).locale;
@@ -306,6 +329,11 @@ export const consentRoutes: Route[] = [
         // that sentence true. An older client that never sees the field keeps showing it, which is
         // also what the server is still doing.
         blockAutoUnsubscribeAt: settings.blockAutoUnsubscribeAt,
+        // "USE FOLDERS", as the instant it was turned on or `null` for off — `autoSuggestAt`'s
+        // shape for `autoSuggestAt`'s reasons: "when was this turned on" is a real fact, and
+        // `null`, absent, and a failed fetch all read as OFF on the client, which is the
+        // pre-feature interface byte for byte (FOLDERS-SPEC.md §10).
+        foldersEnabledAt: settings.foldersEnabledAt,
         // THE INTERFACE LANGUAGE — `'de'`, or `null` for "this account has no preference". Sent as
         // `null` rather than omitted, and normalised to the default rather than to a string, for
         // the same reason `blockRemoteImagesAt` is: the client has to be able to tell "this server

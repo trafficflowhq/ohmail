@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   accountSettings, contacts, mailboxes, messageBodies, messages, recordChanges, rules, type Tx,
 } from "@trafficflow/db";
+import { listUserFolders } from "./folders.js";
 import type { ServiceContext } from "./context.js";
 import { DEFAULT_DORMANCY_DAYS } from "./consent-cutline.js";
 import { ServiceError } from "./errors.js";
@@ -587,6 +588,7 @@ export async function consentSettings(
   autoSuggestAt: string | null;
   blockRemoteImagesAt: string | null;
   blockAutoUnsubscribeAt: string | null;
+  foldersEnabledAt: string | null;
   locale: string | null;
 }> {
   const [row] = await ctx.db.select().from(accountSettings)
@@ -621,6 +623,9 @@ export async function consentSettings(
     blockAutoUnsubscribeAt: row?.blockAutoUnsubscribeAt
       ? row.blockAutoUnsubscribeAt.toISOString()
       : null,
+    // NULL is OFF, and so is an absent row — `autoSuggestAt`'s spelling. OFF is the pre-feature
+    // interface byte for byte, which is the safe direction (FOLDERS-SPEC.md §10).
+    foldersEnabledAt: row?.foldersEnabledAt ? row.foldersEnabledAt.toISOString() : null,
     // NULL, an absent row and — unlike every other field here — an UNSUPPORTED value all answer
     // null, which the client reads as "this account has no preference, keep the device's language".
     // The `??` is what makes the third case true: `LOCALES` is closed by a CHECK, so an unsupported
@@ -676,6 +681,56 @@ export async function setAutoSuggest(
       set: { autoSuggestAt: at, updatedAt: ctx.now() },
     });
   return { autoSuggestAt: at ? at.toISOString() : null };
+}
+
+/**
+ * TURN "USE FOLDERS" ON OR OFF — the folders foundation's master toggle (FOLDERS-SPEC.md §6),
+ * a column-scoped upsert in {@link setAutoSuggest}'s shape PLUS the one thing no other consent
+ * knob does: THE TRANSITION RIDES THE DELTA FEED.
+ *
+ * `/sync` emits `folder` entities only while the flag is on, and the delta is strictly
+ * `change_log`-driven — so without change rows a live client would learn about the flip only on
+ * its next re-bootstrap, and the settings switch would appear to do nothing to the rail beside
+ * it. This writer therefore appends, in the SAME transaction as the column:
+ *
+ *   · ON  → one `folder` CREATE per user folder the account already has (the passive-presence
+ *           inventory, post-exclusion) — the rail fills on the next drain;
+ *   · OFF → one `folder` DELETE per user folder — the mirror forgets them, and the interface
+ *           returns to the pre-feature rail with nothing to migrate.
+ *
+ * Re-enabling re-emits creates; the client's apply is an upsert, so a replay is idempotent.
+ * Folders DISCOVERED WHILE ON do not stream yet — the worker's discovery writes no change rows
+ * (that hook is the sync lane's seam; see `folders.ts`'s hand-off comment) — so a brand-new
+ * external folder appears on the next re-bootstrap or re-toggle. Everything the account had
+ * when it flipped the switch is live immediately, which is the case that matters: first render
+ * of the feature is the fifteen-year-old mailbox, read-only (spec §10).
+ *
+ * One transaction for the same reason the route wraps its knobs in one: the column and the
+ * change rows must land together, or a crash between them leaves a flag whose rail never
+ * arrives. `recordChanges` requires a transaction anyway and this is it.
+ */
+export async function setFoldersEnabled(
+  ctx: ServiceContext, enabled: boolean,
+): Promise<{ foldersEnabledAt: string | null }> {
+  const at = enabled ? ctx.now() : null;
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, foldersEnabledAt: at })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { foldersEnabledAt: at, updatedAt: ctx.now() },
+      });
+    const rows = await listUserFolders(tx as unknown as typeof ctx.db, ctx.accountId);
+    if (rows.length > 0) {
+      await recordChanges(tx, rows.map((r) => ({
+        accountId: ctx.accountId,
+        entityType: "folder" as const,
+        entityId: r.id,
+        op: enabled ? ("create" as const) : ("delete" as const),
+      })));
+    }
+  });
+  return { foldersEnabledAt: at ? at.toISOString() : null };
 }
 
 /**

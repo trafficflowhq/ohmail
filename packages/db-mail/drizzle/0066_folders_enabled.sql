@@ -1,0 +1,44 @@
+-- "USE FOLDERS" — the folders feature's master toggle (FOLDERS-SPEC.md §6; owner decision 1,
+-- 2026-08-22: folders are FULLY OPTIONAL, DISABLED BY DEFAULT).
+--
+--   account_settings.folders_enabled_at  timestamptz NULL
+--
+-- NULL — and an absent row, and a failed read — all mean OFF, which is the `auto_suggest_at`
+-- idiom one column family over and the direction that matters here: OFF renders the pre-feature
+-- interface byte for byte (no `folder` entities on /sync, no rail group, no folder views), so
+-- there is no path from "I do not know" to a surface the account never asked for.
+--
+-- A timestamp rather than a boolean for `seed_confirmed_at`'s reason: "was this on before or
+-- after X" is a real support question. Read as IS NOT NULL, never as a deadline.
+--
+-- ══ WHAT TURNING IT ON DOES — AND DELIBERATELY DOES NOT ════════════════════════════════════
+--
+-- ON makes the server materialize the mailbox's OWN folders (the passive-presence inventory in
+-- mailbox_folders, minus the organized six, the Sent folder and the ohmail namespace) as
+-- `folder` entities on /sync, and the write itself appends the corresponding change_log rows so
+-- a live client's rail fills without a re-bootstrap. It moves NO mail, creates NO folder,
+-- issues NO IMAP command — first render on a fifteen-year-old mailbox is a read-only act
+-- (spec §10). OFF appends delete tombstones for the same rows and the interface returns to
+-- today's, with nothing to migrate — the mail is in the user's own folders, where the user put
+-- it, which is the whole leave-anytime argument.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO CHECK, NO INDEX ═══════════════════════════════════════════════
+--
+-- ADD COLUMN IF NOT EXISTS, nullable, no default, no backfill (0054's refusal: an UPDATE here
+-- would be a truthful statement about nobody). No CHECK — a timestamp closes no set. No index:
+-- read off a row already fetched by primary key, never a predicate.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → API. `consentSettings` selects whole account_settings rows, so an API deployed
+-- ahead of this answers 42703 on the whole consent surface; the health marker
+-- ["account_settings","folders_enabled_at"] turns that into a 503 schema_incomplete naming this
+-- file. No worker half: the worker neither reads nor writes it (the /sync materialization is the
+-- API's). A CLIENT older than the API never sees the field and renders the pre-feature
+-- interface, which is exactly what the flag's NULL means anyway.
+--
+-- ROLLBACK is DROP COLUMN: every account returns to folders-off, nothing else moves — the
+-- feature's whole reversibility argument (spec §13). The API has to go back first, or the
+-- consent surface 42703s.
+
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "folders_enabled_at" timestamp with time zone;

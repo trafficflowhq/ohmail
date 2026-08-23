@@ -1388,6 +1388,10 @@ export const MAIL_EXPECTED_MARKERS =
  * bootstrap and search predicates). The widened `message_bodies_withheld_reason` CHECK rides
  * the same migration transaction as the columns, so the column probes imply it (0030's rule).
  * No data statement, no index; deploy order migration → worker → API is the file's own header.
+ *
+ * `0066_folders_enabled` is probed as `account_settings.folders_enabled_at` — the whole-row
+ * `consentSettings` select means a too-early API takes out the entire consent surface, and the
+ * marker names the migration instead. One column, no CHECK, no index, no worker half.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,

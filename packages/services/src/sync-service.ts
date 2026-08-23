@@ -6,9 +6,11 @@ import {
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import {
-  approvalRowToDTO, draftRowToDTO, materialize, materializeMessages, materializeMessagesInOrder,
+  approvalRowToDTO, draftRowToDTO, folderRowToDTO, materialize, materializeMessages,
+  materializeMessagesInOrder,
   materializeThreads, messageStateRowToDTO, routingDecisionRowToDTO, ruleRowToDTO, tagRowToDTO,
 } from "./dto/materialize.js";
+import { foldersEnabled, listUserFolders } from "./folders.js";
 import type {
   ChangeOp, Folder, SnapshotResponse, SnapshotWindow, SyncChange, SyncResponse,
 } from "./dto/types.js";
@@ -354,10 +356,12 @@ export class SyncService {
    * window rather than to the account, so the two cannot disagree about what the client holds.
    * See the emit site for why cross-page duplicates are accepted rather than tracked.
    *
-   * `folder` is in the {@link EntityType} union and is deliberately absent from the reads below.
-   * Nothing in the product records a `folder` change and `materialize` has no case for one, so
-   * there is no live folder row to project — including a query for it would be a query that can
-   * only ever return nothing.
+   * `folder` joined the reads with the folders foundation (FOLDERS-SPEC.md §4): while the
+   * account's "Use folders" flag is on, page 1 carries the mailbox's own folders — small state
+   * for the tags' reason one step further out, because an EMPTY folder (just discovered,
+   * nothing in it) is visible in no message and a rail derived from messages alone could never
+   * show one. With the flag off the read is skipped entirely, so a flag-off account's snapshot
+   * is byte-identical to the pre-feature snapshot (the parity claim, spec §10).
    *
    * ── THE WINDOW, THEN THE LABELED TAIL ────────────────────────────────────────────────────
    *
@@ -439,6 +443,15 @@ export class SyncService {
       // and bounded by what a person typed, so there is nothing to page.
       const tagRows = await db.select().from(tags).where(eq(tags.accountId, accountId));
       for (const t of tagRows) emit("tag", t.id, tagRowToDTO(t), t.updatedAt.toISOString());
+
+      // THE MAILBOX'S OWN FOLDERS — live state, in full, on page 1, and ONLY while "Use
+      // folders" is on (see the header). Post-exclusion by construction: `listUserFolders`
+      // never answers the organized six, the Sent folder or the ohmail namespace.
+      if (await foldersEnabled(db, accountId)) {
+        for (const f of await listUserFolders(db, accountId)) {
+          emit("folder", f.id, folderRowToDTO(f), f.updatedAt.toISOString());
+        }
+      }
     }
 
     // ── The message window: newest first, keyset-paged on (date desc nulls last, id desc).

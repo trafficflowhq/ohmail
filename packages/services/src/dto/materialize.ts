@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
+import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import {
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
@@ -7,6 +8,7 @@ import {
 } from "@trafficflow/db";
 import type { Db } from "../context.js";
 import type {
+  FolderDTO,
   Folder, MessageDTO, MessageStateDTO, ThreadDTO, RoutingDecisionDTO, ApprovalDTO, RuleDTO,
   DraftDTO, DraftStatus, SensitivityFlags, TriageState, TagDTO,
 } from "./types.js";
@@ -447,9 +449,38 @@ export async function materializeTag(db: Db, accountId: string, id: string): Pro
   return t ? tagRowToDTO(t) : null;
 }
 
+/**
+ * One `mailbox_folders` row → the `folder` entity (FOLDERS-SPEC.md §4). Pure — the reads (the
+ * mailbox join, the exclusion, the flag) have already happened in `materializeFolder`.
+ */
+export function folderRowToDTO(r: UserFolderRow): FolderDTO {
+  return {
+    id: r.id,
+    name: r.folder,
+    mailboxId: r.mailboxId,
+    mailbox: r.address,
+    updatedAt: r.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * The delta materializer for `folder` change rows. THREE nulls, all deliberate and all drained
+ * as delete tombstones: the row is gone, the row is excluded (never a user folder), or the
+ * account's "Use folders" flag is OFF — the last one is what keeps a disable's tombstones and
+ * any straggler rows from re-materializing after the flag went off, so a flag-off account's
+ * delta carries no live `folder` entity ever (the parity claim, spec §10).
+ */
+async function materializeFolder(db: Db, accountId: string, id: string): Promise<FolderDTO | null> {
+  if (!(await foldersEnabled(db, accountId))) return null;
+
+  const row = await userFolderById(db, accountId, id);
+  return row ? folderRowToDTO(row) : null;
+}
+
 export function materialize(db: Db, accountId: string, type: EntityType, id: string): Promise<unknown | null> {
   switch (type) {
     case "message": return materializeMessage(db, accountId, id);
+    case "folder": return materializeFolder(db, accountId, id);
     case "tag": return materializeTag(db, accountId, id);
     case "message_state": return materializeMessageState(db, accountId, id);
     case "thread": return materializeThread(db, accountId, id);

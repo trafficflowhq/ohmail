@@ -81,10 +81,15 @@ export {
 export {
   SEED_SCAN_LIMIT, SUPPORTED_LOCALES,
   buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setBlockAutoUnsubscribe,
-  setBlockRemoteImages, setDormancyDays, setLocale,
+  setBlockRemoteImages, setDormancyDays, setFoldersEnabled, setLocale,
   isMachineSent, isRobotAddress, parseAddressList,
   type SeedCandidate, type SeedConfirmResult, type SeedExclusionReason, type SeedReview,
 } from "./consent-seed.js";
+// The folders foundation's inventory reads (FOLDERS-SPEC.md §4): which of the mailbox's own
+// folders exist, whether the account shows them, and why a path is excluded.
+export {
+  foldersEnabled, listUserFolders, userFolderById, userFolderExclusion, type UserFolderRow,
+} from "./folders.js";
 export {
   resetScreeningState, unmovedReport, type ResetResult, type UnmovedPile,
 } from "./consent-reset.js";

@@ -1974,6 +1974,24 @@ export const accountSettings = pgTable("account_settings", {
    */
   screenerAutoApplyAt: timestamp("screener_auto_apply_at", { withTimezone: true }),
   /**
+   * "USE FOLDERS" — when the account turned the optional folders feature on, or NULL for off
+   * (FOLDERS-SPEC.md §6; owner decision 1, 2026-08-22: fully optional, disabled by default).
+   *
+   * ON means: the mailbox's OWN folders — the passive-presence inventory in `mailbox_folders`,
+   * minus the organized six, the Sent folder and the `ohmail` namespace — are materialized as
+   * `folder` entities on /sync, so the client renders them in the rail with counts and opens
+   * them as views. It moves NO mail and issues NO IMAP command: first render on a
+   * fifteen-year-old mailbox is a read-only act (spec §10). The WRITE transition appends the
+   * matching `change_log` rows (creates on enable, delete tombstones on disable) so a live
+   * mirror follows without a re-bootstrap — see `setFoldersEnabled`.
+   *
+   * A timestamp for {@link autoSuggestAt}'s reason ("was this on before or after X" is a real
+   * question), read as `IS NOT NULL`, never as a deadline. **NULL, no row, and a failed read
+   * all mean OFF** — off is the pre-feature interface byte for byte, so there is no path from
+   * "I do not know" to a surface the account never asked for.
+   */
+  foldersEnabledAt: timestamp("folders_enabled_at", { withTimezone: true }),
+  /**
    * WHEN THIS ACCOUNT FINISHED SCREENING ITS BACKLOG (mail 0056) — the instant the dormancy
    * window is measured back from, instead of from `now()`.
    *

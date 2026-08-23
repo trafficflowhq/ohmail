@@ -153,6 +153,27 @@ export interface TagDTO {
 }
 
 /**
+ * ONE OF THE MAILBOX'S OWN FOLDERS — the `folder` entity `/sync` reserves and the folders
+ * foundation fills (FOLDERS-SPEC.md §4). Materialized from the worker's `mailbox_folders`
+ * inventory (post-exclusion: never the organized six, the Sent folder or the `ohmail`
+ * namespace), and emitted ONLY while the account's "Use folders" flag is on — a flag-off
+ * account's wire is byte-identical to the pre-feature wire.
+ *
+ * `name` is the CANONICAL `/`-joined path, exactly the spelling `MessageDTO.folder` carries for
+ * mail living there — the natural key, and the join the client renders with. `mailboxId` and
+ * `mailbox` (the address) extend the spec's minimal `{ id, name }` deliberately: the rail
+ * sections folders by mailbox when an account has more than one (spec §14), and a live client
+ * has no other mirror source for the owning address.
+ */
+export interface FolderDTO {
+  id: string;
+  name: string;
+  mailboxId: string;
+  mailbox: string;
+  updatedAt: ISODateTime;
+}
+
+/**
  * WHY a stored body holds no content, when that is POLICY rather than an empty message — the
  * client-facing projection of `message_bodies.withheld_reason`, verbatim, closed set:
  *

@@ -465,6 +465,13 @@
       "breakpoints": true
     },
     {
+      "idx": 66,
+      "version": "7",
+      "when": 1790982140530,
+      "tag": "0066_folders_enabled",
+      "breakpoints": true
+    },
+    {
       "idx": 67,
       "version": "7",
       "when": 1790982140531,
