@@ -135,27 +135,33 @@ export function useOlderMail(
    *    hard-prunes the live row — the fetched copy was thrown away and the id stayed banned,
    *    so an open folder silently omitted mail the server still holds.
    *
-   * So the fetched copies are all KEPT, and this predicate answers per render with THREE
-   * verdicts, because eviction and an authoritative removal must not read alike:
+   * So the fetched copies are all KEPT, and this predicate answers per render with FOUR
+   * verdicts, because eviction, an authoritative removal, and a render that cannot judge the
+   * scope must not read alike:
    *
-   *  · `"hide"` — the surface above renders the row right now; the tail stays quiet;
+   *  · `"hide"` — the mirror POSITIVELY shows the row in this scope (the surface above renders
+   *    it); the tail stays quiet, and any latch on the id clears — see below;
    *  · `"ban"`  — the mirror shows the row has LEFT this scope (moved elsewhere): the fetched
    *    pre-move copy is stale by the mirror's word, and the id is latched out, so a LATER
    *    hard-prune of the moved row cannot revive it here;
+   *  · `"hold"` — the render CANNOT JUDGE the scope (the folder entity is not in the mirror —
+   *    the flag mid-toggle, a tombstone render): the row stays out of the tail and the latch
+   *    is left exactly as it was, because a defensive hide is not an observation;
    *  · `"show"` — the mirror does not hold the row: evicted by the window's policy, or
    *    genuinely older mail. The fetched copy renders (unless latched).
    *
-   * The latch fires on OBSERVATION — a render that sees the moved row — and it CLEARS on the
-   * opposite observation: a render whose verdict is `"hide"` (the mirror holds the row in this
-   * scope again) deletes the ban, because the mirror the caller reads is overlay-aware and a
-   * pending optimistic move also answers `"ban"` — a hard-rejected move rolls the row back
-   * into the scope, and a row can be genuinely moved back, and neither may leave a stale latch
-   * that outlives a later eviction. The newest observed word wins in both directions. The one
-   * residual it cannot close is a change applied and hard-pruned inside a single render tick
-   * of an open scope, which no reader of the live mirror can distinguish from eviction; named
-   * here rather than papered over.
+   * The latch fires on OBSERVATION — a render that sees the moved row — and it CLEARS only on
+   * the OPPOSITE observation: a `"hide"`, the mirror holding the row in this scope again. The
+   * clear exists because the mirror the caller reads is overlay-aware and a pending optimistic
+   * move also answers `"ban"` — a hard-rejected move rolls the row back into the scope, and a
+   * row can be genuinely moved back, and neither may leave a stale latch that outlives a later
+   * eviction. `"hold"` is the reason the clear is safe: without it, the caller's defensive
+   * hides (folders toggled off and on over an open URL) would count as returns and release
+   * latches the scope never re-earned. The one residual the latch cannot close is a change
+   * applied and hard-pruned inside a single render tick of an open scope, which no reader of
+   * the live mirror can distinguish from eviction; named here rather than papered over.
    */
-  suppress?: (id: string) => "show" | "hide" | "ban",
+  suppress?: (id: string) => "show" | "hide" | "ban" | "hold",
 ): OlderMail {
   const available = engine.listOlderAvailable();
   const [page, setPage] = useState<Page>(EMPTY);
@@ -181,7 +187,7 @@ export function useOlderMail(
    */
   const cursor = useRef<string | null>(null);
   /** `suppress` behind a stable identity, so the memo's deps stay honest — consent-state's `link`. */
-  const suppressRef = useRef<((id: string) => "show" | "hide" | "ban") | undefined>(suppress);
+  const suppressRef = useRef<((id: string) => "show" | "hide" | "ban" | "hold") | undefined>(suppress);
   suppressRef.current = suppress;
   /** Ids OBSERVED leaving the scope — the `"ban"` latch, per scope. See `suppress`. */
   const banned = useRef(new Set<string>());
@@ -273,15 +279,17 @@ export function useOlderMail(
     if (page.items.length === 0) return page.items;
     const reader = engine.read();
     return page.items
-      // The per-render verdicts — see `suppress`: hide what the surface shows, LATCH what the
-      // mirror says has left the scope, show what the mirror no longer holds. A row observed
-      // BACK in the scope clears its latch first — the newest word wins in both directions.
+      // The per-render verdicts — see `suppress`: hide what the mirror shows in scope (and
+      // clear its latch — a row observed BACK wins over an observed leave), LATCH what the
+      // mirror says has left the scope, HOLD without judging when the scope itself is not
+      // readable, show what the mirror no longer holds.
       .filter((item) => {
         const verdict = suppressRef.current?.(item.id) ?? "show";
         if (verdict === "hide") {
           banned.current.delete(item.id);
           return false;
         }
+        if (verdict === "hold") return false;
         if (verdict === "ban") {
           banned.current.add(item.id);
           return false;

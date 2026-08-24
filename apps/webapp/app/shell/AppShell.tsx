@@ -1320,16 +1320,19 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   const folderOlder = useOlderMail(
     engine, "folder", version, folderIdForOlder, folderOlderBoundary,
     /* The per-render verdicts (see the hook's `suppress`): a row this folder shows above is
-       hidden; a row the mirror shows in ANOTHER place has been moved by the mailbox's own
-       word — banned, so a later prune of the moved row cannot revive the stale pre-move copy
-       here; a row the mirror does not hold (evicted, or genuinely older) shows its fetched
-       copy. Asked of the raw mirror, as it is now. */
+       hidden (and un-latched — it was observed BACK); a row the mirror shows in ANOTHER place
+       has been moved by the mailbox's own word — banned, so a later prune of the moved row
+       cannot revive the stale pre-move copy here; a row the mirror does not hold (evicted, or
+       genuinely older) shows its fetched copy. When the FOLDER ENTITY itself is not in the
+       mirror (the flag mid-toggle, a tombstone render), the scope cannot be judged: "hold" —
+       out of the tail, latches untouched — because counting that defensive hide as a return
+       would release bans the scope never re-earned. Asked of the raw mirror, as it is now. */
     (id) => {
       const m = reader.get<EngineMessage>("message", id);
       if (m === undefined) return "show";
-      if (!folderIdForOlder) return "hide";
+      if (!folderIdForOlder) return "hold";
       const entity = reader.get<FolderEntity>("folder", folderIdForOlder);
-      if (!entity) return "hide";
+      if (!entity) return "hold";
       return m.mailboxId === entity.mailboxId && m.folder === entity.name ? "hide" : "ban";
     },
   );
