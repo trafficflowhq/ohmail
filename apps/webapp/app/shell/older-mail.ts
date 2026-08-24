@@ -135,13 +135,22 @@ export function useOlderMail(
    *    hard-prunes the live row — the fetched copy was thrown away and the id stayed banned,
    *    so an open folder silently omitted mail the server still holds.
    *
-   * So the fetched copies are all KEPT, and this predicate answers per render — the folder
-   * scope's is "does the mirror hold this id at all": held-in-scope renders above (hide here),
-   * held-elsewhere was moved (a move must not resurface here), and NOT held — evicted, or
-   * genuinely older — shows the fetched copy. Eviction releases the row automatically because
-   * the question is asked of the mirror as it is now.
+   * So the fetched copies are all KEPT, and this predicate answers per render with THREE
+   * verdicts, because eviction and an authoritative removal must not read alike:
+   *
+   *  · `"hide"` — the surface above renders the row right now; the tail stays quiet;
+   *  · `"ban"`  — the mirror shows the row has LEFT this scope (moved elsewhere): the fetched
+   *    pre-move copy is stale by the mailbox's own word, and the id is latched out for the
+   *    scope's life, so a LATER hard-prune of the moved row cannot revive it here;
+   *  · `"show"` — the mirror does not hold the row: evicted by the window's policy, or
+   *    genuinely older mail. The fetched copy renders.
+   *
+   * The latch fires on OBSERVATION — a render that sees the moved row. The one residual it
+   * cannot close is an authoritative change applied and hard-pruned inside a single render
+   * tick of an open scope, which no reader of the live mirror can distinguish from eviction;
+   * named here rather than papered over.
    */
-  suppress?: (id: string) => boolean,
+  suppress?: (id: string) => "show" | "hide" | "ban",
 ): OlderMail {
   const available = engine.listOlderAvailable();
   const [page, setPage] = useState<Page>(EMPTY);
@@ -167,8 +176,10 @@ export function useOlderMail(
    */
   const cursor = useRef<string | null>(null);
   /** `suppress` behind a stable identity, so the memo's deps stay honest — consent-state's `link`. */
-  const suppressRef = useRef<((id: string) => boolean) | undefined>(suppress);
+  const suppressRef = useRef<((id: string) => "show" | "hide" | "ban") | undefined>(suppress);
   suppressRef.current = suppress;
+  /** Ids OBSERVED leaving the scope — the `"ban"` latch, per scope. See `suppress`. */
+  const banned = useRef(new Set<string>());
   /** The scope this hook's page state belongs to — returned EMPTY synchronously on mismatch,
    *  because the reset below is an effect and runs one render late: without this, switching
    *  folders rendered the previous folder's fetched rows under the new folder's title. */
@@ -190,6 +201,7 @@ export function useOlderMail(
     cursor.current = null;
     inFlight.current = false;
     done.current = false;
+    banned.current = new Set();
     pageScope.current = scope;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, view, folderId]);
@@ -256,10 +268,17 @@ export function useOlderMail(
     if (page.items.length === 0) return page.items;
     const reader = engine.read();
     return page.items
-      // The per-render hiding — see `suppress`. Evaluated against the mirror as it is NOW, so
-      // an evicted row's fetched copy returns and a moved row stays away, with no memory to go
-      // stale in either direction.
-      .filter((item) => !(suppressRef.current?.(item.id) ?? false))
+      // The per-render verdicts — see `suppress`: hide what the surface shows, LATCH what the
+      // mirror says has left the scope, show what the mirror no longer holds.
+      .filter((item) => {
+        if (banned.current.has(item.id)) return false;
+        const verdict = suppressRef.current?.(item.id) ?? "show";
+        if (verdict === "ban") {
+          banned.current.add(item.id);
+          return false;
+        }
+        return verdict === "show";
+      })
       .map((item) => reader.get<EngineMessage>("message", item.id) ?? item);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, page.items, version]);

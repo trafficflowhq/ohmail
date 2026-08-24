@@ -1319,11 +1319,19 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    */
   const folderOlder = useOlderMail(
     engine, "folder", version, folderIdForOlder, folderOlderBoundary,
-    /* The per-render hiding (see the hook's `suppress`): a fetched row the MIRROR still holds
-       stays out of the tail — held in this folder it renders above, held elsewhere it was
-       moved and must not resurface — and a row the windowed mirror has EVICTED is not held,
-       so its fetched copy returns. Asked of the raw mirror, as it is now, never remembered. */
-    (id) => reader.get<EngineMessage>("message", id) !== undefined,
+    /* The per-render verdicts (see the hook's `suppress`): a row this folder shows above is
+       hidden; a row the mirror shows in ANOTHER place has been moved by the mailbox's own
+       word — banned, so a later prune of the moved row cannot revive the stale pre-move copy
+       here; a row the mirror does not hold (evicted, or genuinely older) shows its fetched
+       copy. Asked of the raw mirror, as it is now. */
+    (id) => {
+      const m = reader.get<EngineMessage>("message", id);
+      if (m === undefined) return "show";
+      if (!folderIdForOlder) return "hide";
+      const entity = reader.get<FolderEntity>("folder", folderIdForOlder);
+      if (!entity) return "hide";
+      return m.mailboxId === entity.mailboxId && m.folder === entity.name ? "hide" : "ban";
+    },
   );
 
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
