@@ -345,7 +345,20 @@ export function ComposeAttach({
    * that shape as "un-flushed" resurrected the removed file.
    */
   const pendingFlush = useRef<readonly ComposeAttachment[] | null>(null);
-  if (pendingFlush.current === attachments) pendingFlush.current = null;
+  {
+    // Cleared on ELEMENTWISE identity, not array identity: a caller may clone the array prop
+    // every render (the reply panel does), and a marker that waited for the exact array object
+    // would never clear — leaving a later removal to be read as un-flushed and resurrected.
+    // The ROWS keep identity through a clone, so the elementwise test is the flush signal.
+    const pf = pendingFlush.current;
+    if (
+      pf !== null &&
+      (pf === attachments ||
+        (pf.length === attachments.length && pf.every((a, i) => a === attachments[i])))
+    ) {
+      pendingFlush.current = null;
+    }
+  }
   /**
    * THE CALLER'S HANDLER AND CAP, AS OF THE CURRENT RENDER — what every ASYNC commit goes
    * through, and the review finding that put them here: an async pass that called the `onChange`
@@ -613,6 +626,8 @@ export function ComposeAttach({
       // must be the one on screen at the moment of the pick, not the one a stale closure holds.
       const level = levelRef.current;
       let refused = false;
+      let acceptedPreBytes = 0;
+      const skippedEarly: string[] = [];
       const picked: Array<{
         attachment: ComposeAttachment;
         bytes: number;
@@ -628,15 +643,21 @@ export function ComposeAttach({
           // and a cap judged against the list as it stood at pick time would admit or refuse
           // against sizes that no longer exist.
           const picture = await compressImage(file, level);
-          // REFUSE THE IMPOSSIBLE BEFORE ENCODING IT. `readAsBase64` allocates ~4/3 of the file
-          // as a string, so a 500 MB pick must be turned away on its SIZE — known right here —
-          // rather than after the tab has paid to encode it (review finding). PER-FILE
-          // impossibility only: a file bigger than the whole cap can never be admitted whatever
-          // else changes. Batch and whole-list admission belong to the COMMIT below — a running
-          // pre-total here counted rows a removal had dropped and batch files a later dedupe
-          // would skip, and falsely refused files that fit (review finding). The residue is the
-          // transient encode of a batch the commit then trims, bounded by the pick's own size.
-          if (picture.bytes > maxTotalBytesRef.current) {
+          // REFUSE THE UNADMITTABLE BEFORE ENCODING IT. `readAsBase64` allocates ~4/3 of the
+          // file as a string, so what can never be admitted must be turned away on its SIZE —
+          // known right here — rather than after the tab has paid to encode it: a single file
+          // over the cap, and equally the tail of a batch whose accepted files already fill it
+          // (ten near-cap files would otherwise stage hundreds of MB of strings for a commit
+          // that admits one — review finding). The bound counts the LIVE list plus this pick's
+          // accepted files only: duplicates are detected right after their encode and never
+          // spend it, and removals reach `attachmentsRef` as they flush — so the earlier
+          // false-refusal defect (counting rows a dedupe or a removal drops) stays closed. The
+          // COMMIT below remains the authority on admission.
+          const capNow = maxTotalBytesRef.current;
+          if (
+            picture.bytes > capNow ||
+            totalBytes(attachmentsRef.current) + acceptedPreBytes + picture.bytes > capNow
+          ) {
             refused = true;
             continue;
           }
@@ -647,6 +668,19 @@ export function ComposeAttach({
             contentType: picture.contentType,
             contentBase64,
           };
+          /* THE SAME FILE TWICE IS A SKIP, NOT A SECOND ROW — detected the moment its bytes are
+             known, so a duplicate neither spends the memory bound above nor a slot below. The
+             commit re-checks against the list as it stands then; this early skip is what keeps
+             the bound honest. */
+          if (
+            [...attachmentsRef.current, ...picked.map((p) => p.attachment)].some(
+              (a) => a.filename === filename && a.contentBase64 === contentBase64,
+            )
+          ) {
+            skippedEarly.push(filename);
+            continue;
+          }
+          acceptedPreBytes += picture.bytes;
           // The pristine source, retained for the dial (see ATTACHMENT_SOURCES). When the
           // admitted bytes ARE the source (Original, or a file the shrink could not help), the
           // base64 in hand is the source's own encoding — cache it so a move never re-reads it.
@@ -677,7 +711,7 @@ export function ComposeAttach({
       const cap = maxTotalBytesRef.current;
       let running = totalBytes(latest);
       const admitted: ComposeAttachment[] = [];
-      const skipped: string[] = [];
+      const skipped: string[] = [...skippedEarly];
       let savedFrom = 0;
       let savedTo = 0;
       for (const p of picked) {
