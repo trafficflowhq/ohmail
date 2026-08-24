@@ -284,6 +284,18 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /** `conn.syncNow` behind a ref so the machine below keeps one identity across renders. */
   const syncNowRef = useRef(conn.syncNow);
   syncNowRef.current = conn.syncNow;
+  /** `conn.syncing` behind a ref, read at drain time — the machine's deps keep one identity. */
+  const syncingRef = useRef(conn.syncing);
+  syncingRef.current = conn.syncing;
+  /**
+   * A DRAIN THE MACHINE ASKED FOR WHILE ONE WAS RUNNING — owed, not dropped. `syncNow` is
+   * deliberately a no-op mid-drain (`connection.tsx`), and the toggle's PATCH routinely
+   * resolves while the session's own drain is in the air; that drain may have crossed the
+   * server's cutline BEFORE the flip's folder rows were written, so firing-and-forgetting
+   * here left a confirmed switch over a mirror with no folder entities until the next wake.
+   * The syncing-falling effect below pays the debt.
+   */
+  const drainOwed = useRef(false);
   /**
    * ONE {@link foldersFlag} MACHINE PER SESSION — closes over `session` at construction, so a
    * machine from a superseded session cannot write (`writeFoldersEnabled`/`readFoldersEnabled`
@@ -305,13 +317,19 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       read: () => readFoldersEnabled(session),
       write: (on) => writeFoldersEnabled(session, on),
       apply: (on) => { if (current.current === m) setFoldersOn(on); },
-      drain: () => { if (current.current === m) syncNowRef.current(); },
+      drain: () => {
+        if (current.current !== m) return;
+        // Mid-drain the ask is OWED (see `drainOwed`); otherwise it fires now.
+        if (syncingRef.current) drainOwed.current = true;
+        else syncNowRef.current();
+      },
     });
     return (current.current = m);
   }, [session]);
   useEffect(() => {
     setFoldersOn(false);
     setFoldersPending(false);
+    drainOwed.current = false; // the debt was the old session's; the new one owes nothing
     if (machine) void machine.refresh();
   }, [machine]);
   /*
@@ -323,7 +341,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * "no folders on your mail server"). One small GET per drain, epoch-guarded by the machine.
    */
   useEffect(() => {
-    if (!conn.syncing && machine) void machine.refresh();
+    if (conn.syncing || !machine) return;
+    // Pay the owed drain FIRST: `syncNow` is a no-op mid-drain, and the debt exists exactly
+    // because the flip's folder rows were behind the last drain's cutline.
+    if (drainOwed.current) {
+      drainOwed.current = false;
+      syncNowRef.current();
+    }
+    void machine.refresh();
   }, [conn.syncing, machine]);
   const setFoldersEnabled = useCallback(
     async (on: boolean): Promise<boolean> => {

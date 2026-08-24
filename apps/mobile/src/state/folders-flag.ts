@@ -47,12 +47,21 @@ export interface FoldersFlag {
 
 export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {
   let epoch = 0;
+  /**
+   * The NEWEST-issued read is the only one that may apply (codex round 2): two refreshes can
+   * overlap — the session's boot GET still in the air when a drain-completed refresh fires —
+   * and both capture the same epoch, so an older response arriving LAST would overwrite the
+   * fresher answer. Each read takes a sequence number; anything but the latest is discarded.
+   */
+  let readSeq = 0;
+  const refresh = async (): Promise<void> => {
+    const at = epoch;
+    const mine = ++readSeq;
+    const ans = await deps.read();
+    if (ans !== null && epoch === at && readSeq === mine) deps.apply(ans.on);
+  };
   return {
-    async refresh(): Promise<void> {
-      const at = epoch;
-      const ans = await deps.read();
-      if (ans !== null && epoch === at) deps.apply(ans.on);
-    },
+    refresh,
     async set(on: boolean): Promise<boolean> {
       epoch += 1;
       try {
@@ -61,6 +70,13 @@ export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {
         deps.drain();
         return true;
       } catch {
+        // The write invalidated every read in flight (the epoch bump above — deliberate, a
+        // read must not overwrite the user's act while the act is still possible), but a
+        // REJECTED write changed nothing on the server, so the invalidation left the UI on
+        // whatever it happened to hold. Re-ask under the current epoch: the authoritative
+        // value — the user's previous choice, exactly as the failure sentence claims — comes
+        // back on its own.
+        void refresh();
         return false;
       }
     },
