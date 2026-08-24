@@ -396,7 +396,14 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
          */
         const leftPile = ["reply_later", "set_aside", "bubbled_up", "muted"]
           .includes((msg.triage?.state as string | undefined) ?? "");
-        const rehomed = leftPile && !msg.unread ? { lastReadAt: msg.date ?? null } : {};
+        // The server's own scopes, mirrored (review round): a DATELESS row keeps its stamp
+        // (nulling it would file the row into the unstamped basement — the "lost" this exists
+        // to remove), and a stamp NEWER than the pile entry is a fresh deliberate act that
+        // wins (ISO strings compare lexicographically).
+        const rehomed = leftPile && !msg.unread && msg.date != null
+          && (msg.lastReadAt == null || (msg.triage?.setAt != null && msg.lastReadAt <= msg.triage.setAt))
+          ? { lastReadAt: msg.date }
+          : {};
         return [
           { type: "message_state", id: recordId, entity: null },
           { type: "message", id: msg.id, entity: { ...msg, triage: null, ...rehomed, updatedAt: iso } },

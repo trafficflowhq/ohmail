@@ -1,4 +1,4 @@
-import { and, asc, eq, gt } from "drizzle-orm";
+import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { messages, messageStates, folderState, claimIdempotencyKey, recordChange, type Tx } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -77,16 +77,24 @@ export class TriageService {
     }
 
     return asTx(ctx).transaction(async (tx) => {
-      // Cross-account guard: the message must belong to the caller's account. `unread` and
-      // `date` ride the same select for the un-park re-homing below.
-      const [msg] = await tx.select({ id: messages.id, unread: messages.unread, date: messages.date })
+      // Cross-account guard: the message must belong to the caller's account — and the select
+      // takes the MESSAGE ROW LOCK (`FOR UPDATE`), which is what serializes concurrent
+      // `setState` calls on one message: the prior-state read below classifies the transition,
+      // and a classification read beside an uncommitted sibling transition would mis-file the
+      // re-homing (a park committing under a stale clear left the clear reading `none` — a
+      // review caught it; the state row cannot carry the lock because a first park has no row
+      // to lock yet). `date` rides the same select for the re-homing below.
+      const [msg] = await tx.select({ id: messages.id, date: messages.date })
         .from(messages)
-        .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId))).limit(1);
+        .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)))
+        .limit(1)
+        .for("update");
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
 
-      // The state being LEFT — read before the upsert overwrites it. Only the `none`
-      // transition consumes it (the re-homing below); every other transition ignores it.
-      const [prior] = await tx.select({ state: messageStates.state }).from(messageStates)
+      // The state being LEFT — read before the upsert overwrites it (serialized by the message
+      // row lock above). Only the `none` transition consumes it (the re-homing below).
+      const [prior] = await tx.select({ state: messageStates.state, setAt: messageStates.setAt })
+        .from(messageStates)
         .where(eq(messageStates.messageId, messageId)).limit(1);
 
       const now = ctx.now();
@@ -127,10 +135,30 @@ export class TriageService {
        */
       const LEFT_PILE = prior !== undefined
         && ["reply_later", "set_aside", "bubbled_up", "muted"].includes(prior.state);
-      if (b.state === "none" && LEFT_PILE && !msg.unread) {
+      if (b.state === "none" && LEFT_PILE) {
+        /**
+         * The scopes live IN the row predicate, atomically (review round on this commit):
+         *  · `unread = false` — an unread row returns to "New for you"; a raced mark-unread
+         *    must not leave `unread = true` beside a fresh stamp;
+         *  · `date is not null` — a dateless row KEEPS whatever stamp it has rather than
+         *    being nulled into the unstamped basement (the very "lost" this fix removes);
+         *  · `last_read_at <= prior.setAt` — only the PARKED INTERLUDE's stamp (the glance
+         *    that preceded the parking press) is disowned. A stamp newer than the pile entry
+         *    is a fresh deliberate act — `resurface_done`'s un-awaited sibling `mark_seen`
+         *    landing first — and the later word wins whichever order the two commit in.
+         */
         await tx.update(messages)
           .set({ lastReadAt: msg.date, updatedAt: now })
-          .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)));
+          .where(and(
+            eq(messages.id, messageId),
+            eq(messages.accountId, ctx.accountId),
+            eq(messages.unread, false),
+            sql`${messages.date} is not null`,
+            // The bound value is an ISO STRING with an explicit cast, not a Date: postgres-js
+            // refuses a raw Date parameter inside a sql fragment (PGlite binds it happily —
+            // the standing PGlite-green-means-nothing trap, measured on this exact line).
+            sql`(${messages.lastReadAt} is null or ${messages.lastReadAt} <= ${prior.setAt.toISOString()}::timestamptz)`,
+          ));
       }
 
       /**
