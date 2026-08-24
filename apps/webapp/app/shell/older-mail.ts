@@ -206,8 +206,6 @@ export function useOlderMail(
   const banned = useRef(new Set<string>());
   /** The scope this hook's page state belongs to — see the SYNCHRONOUS reset below. */
   const scope = `${view}|${folderId ?? ""}|${scopeEpoch}`;
-  const pageScope = useRef(scope);
-  const lastEngine = useRef(engine);
   const inFlight = useRef(false);
   const done = useRef(false);
   /**
@@ -233,15 +231,23 @@ export function useOlderMail(
    *    folders sat unprobed until a manual press.
    *
    * A render-phase reset closes both: by the time any child renders (let alone mounts and
-   * probes), the refs are the new scope's and the page state is EMPTY. The render-phase
-   * `setPage` is React's documented same-component pattern — it re-runs this hook's component
-   * before children render — and the whole block is idempotent (the second pass sees
-   * `pageScope.current === scope` and skips), so StrictMode's double invoke cannot double-bump
-   * the generation.
+   * probes), the refs are the new scope's and the page state is EMPTY — the render-phase
+   * `setPage` is React's documented adjust-state-during-render pattern, which re-runs this
+   * hook's component before children render.
+   *
+   * THE GUARD IS STATE, NOT A REF, and that is load-bearing: React may DISCARD a render pass
+   * (StrictMode's second invoke, a concurrent render thrown away), and a discarded pass keeps
+   * its ref mutations while losing its queued state updates. A ref guard therefore desyncs —
+   * it remembers the new scope while the page state was never reset — and the replayed render
+   * skips the block: the previous folder's rows commit under the new folder's title, and the
+   * mount probe is swallowed again. With the guard in state, a replayed render still sees the
+   * OLD `resetFor` and re-runs the whole block; the ref side (generation bump included) is
+   * safe to re-apply, because the block only ever runs when the scope genuinely changed, and
+   * dropping an in-flight response across a scope change is its purpose.
    */
-  if (pageScope.current !== scope || lastEngine.current !== engine) {
-    pageScope.current = scope;
-    lastEngine.current = engine;
+  const [resetFor, setResetFor] = useState<{ scope: string; engine: OhmailEngine }>({ scope, engine });
+  if (resetFor.scope !== scope || resetFor.engine !== engine) {
+    setResetFor({ scope, engine });
     generation.current += 1;
     cursor.current = null;
     inFlight.current = false;
