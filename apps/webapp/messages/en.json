@@ -532,6 +532,24 @@
     "segWaiting": "Waiting",
     "segScreened": "Screened out",
     "segSpam": "Spam",
+    "segJunk": "Junk",
+    "junkLoading": "Reading your mail server's Junk folder…",
+    "junkFailed": "Junk couldn't be read just now — your mail server didn't answer.",
+    "junkRetry": "Try again",
+    "junkRetention": "Your mail server may delete junk on its own schedule — often within weeks, some never.",
+    "junkOriginVerdict": "your verdict",
+    "junkOriginProvider": "filed by your mail server",
+    "junkNotJunk": "Not junk",
+    "junkNotJunkNote": "Moves it back to your inbox on your own mail server. It arrives again like normal mail — a first-time sender waits in the Screener.",
+    "junkRescued": "Out of Junk — it arrives again like normal mail.",
+    "junkRescueGone": "That message is no longer in Junk — your mail server may have removed it.",
+    "junkRescueFailed": "That move couldn't be made — try again.",
+    "junkOlder": "Show older",
+    "junkOlderLoading": "Looking further back…",
+    "junkNoFolder": "{address} has no Junk folder of its own — there is nothing to show for it.",
+    "junkUnreachable": "{address} couldn't be read just now.",
+    "junkBodyLoading": "Reading the message from Junk…",
+    "junkBodyFailed": "The message couldn't be read from Junk.",
     "segAria": "Screener sections",
     "loading": "Loading your mail.",
     "empty": {
@@ -544,6 +562,11 @@
         "glyph": "🚪",
         "title": "No senders screened out.",
         "hint": "Screening out a waiting sender lists them here — reversible any time."
+      },
+      "junk": {
+        "glyph": "🕳",
+        "title": "Junk is empty.",
+        "hint": "Your spam verdicts file here, next to what your mail server catches on its own."
       },
       "spam": {
         "glyph": "🕳",

@@ -573,7 +573,44 @@ export const screener: {
         dryRun?: boolean;
         idempotencyKey?: string;
     }) => Promise<ScreenerSuggestWire>;
+    junkList: (opts?: {
+        cursor?: string;
+    }) => Promise<JunkPageWire>;
+    junkBody: (mailboxId: string, uid: number) => Promise<{
+        subject: string;
+        text: string;
+    }>;
+    junkRescue: (mailboxId: string, uid: number, uidValidity: string) => Promise<{
+        status: "rescued";
+    }>;
 } = absent;
+
+export interface JunkItemWire {
+    mailboxId: string;
+    uid: number;
+    uidValidity: string;
+    subject: string;
+    from: {
+        name: string | null;
+        address: string;
+    };
+    date: string | null;
+    messageIdHeader: string | null;
+    seen: boolean;
+    origin: "verdict" | "provider";
+}
+
+export interface JunkMailboxWire {
+    id: string;
+    address: string;
+    window: "ok" | "no_junk_folder" | "unreachable";
+}
+
+export interface JunkPageWire {
+    mailboxes: JunkMailboxWire[];
+    items: JunkItemWire[];
+    nextCursor: string | null;
+}
 
 export interface PublicKeyCredentialCreationOptionsJSON {
     challenge: string;

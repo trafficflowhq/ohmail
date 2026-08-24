@@ -532,6 +532,24 @@
     "segWaiting": "Wartend",
     "segScreened": "Aussortiert",
     "segSpam": "Spam",
+    "segJunk": "Junk",
+    "junkLoading": "Der Junk-Ordner deines Mailservers wird gelesen …",
+    "junkFailed": "Junk ließ sich gerade nicht lesen — dein Mailserver hat nicht geantwortet.",
+    "junkRetry": "Nochmal versuchen",
+    "junkRetention": "Dein Mailserver kann Junk nach eigenem Zeitplan löschen — oft innerhalb von Wochen, manchmal nie.",
+    "junkOriginVerdict": "dein Urteil",
+    "junkOriginProvider": "von deinem Mailserver einsortiert",
+    "junkNotJunk": "Kein Junk",
+    "junkNotJunkNote": "Verschiebt sie zurück in den Posteingang auf deinem eigenen Mailserver. Sie kommt wie normale Post wieder an — ein Erstabsender wartet im Screener.",
+    "junkRescued": "Raus aus Junk — sie kommt wie normale Post wieder an.",
+    "junkRescueGone": "Diese Nachricht ist nicht mehr im Junk-Ordner — dein Mailserver hat sie womöglich entfernt.",
+    "junkRescueFailed": "Das Verschieben hat nicht geklappt — versuch es nochmal.",
+    "junkOlder": "Ältere zeigen",
+    "junkOlderLoading": "Es wird weiter zurückgeschaut …",
+    "junkNoFolder": "{address} hat keinen eigenen Junk-Ordner — hier gibt es dafür nichts zu zeigen.",
+    "junkUnreachable": "{address} ließ sich gerade nicht lesen.",
+    "junkBodyLoading": "Die Nachricht wird aus Junk gelesen …",
+    "junkBodyFailed": "Die Nachricht ließ sich nicht aus Junk lesen.",
     "segAria": "Screener-Bereiche",
     "loading": "Deine Post wird geladen.",
     "empty": {
@@ -544,6 +562,11 @@
         "glyph": "🚪",
         "title": "Niemand aussortiert.",
         "hint": "Wer wartet und aussortiert wird, steht hier — jederzeit umkehrbar."
+      },
+      "junk": {
+        "glyph": "🕳",
+        "title": "Junk ist leer.",
+        "hint": "Deine Spam-Urteile landen hier, neben dem, was dein Mailserver selbst abfängt."
       },
       "spam": {
         "glyph": "🕳",

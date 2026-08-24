@@ -1473,7 +1473,59 @@ export const screener = {
       body: opts.dryRun ? { senders, dryRun: true } : { senders },
       ...(opts.idempotencyKey ? { headers: { "Idempotency-Key": opts.idempotencyKey } } : {}),
     }),
+
+  // ── The Junk window (FOLDERS-SPEC.md §16.2) — a LIVE view of the provider's own \Junk. ────
+  // Nothing here is mirror data: the server reads the folder itself, bounded (newest 50 per
+  // mailbox window), and never writes a mirror row. All three answer 409 `folders_disabled`
+  // until "Use folders" is on, so a flag-off client simply never calls them.
+
+  /** One merged newest-first page across the account's junk windows. `cursor` pages older. */
+  junkList: (opts: { cursor?: string } = {}) =>
+    api<JunkPageWire>(`/screener/junk${opts.cursor ? `?cursor=${encodeURIComponent(opts.cursor)}` : ""}`),
+
+  /** One junk message's body, fetched live and parsed to TEXT — never HTML, never stored. */
+  junkBody: (mailboxId: string, uid: number) =>
+    api<{ subject: string; text: string }>(
+      `/screener/junk/body?mailboxId=${encodeURIComponent(mailboxId)}&uid=${uid}`,
+    ),
+
+  /**
+   * "Not junk": ONE server-side move out of \Junk back to the inbox — the un-training gesture —
+   * after which the message re-enters through the NORMAL pipeline (a first-time sender waits in
+   * the Screener; an allowed one lands in the Ohbox). 410 when the provider removed it first.
+   */
+  junkRescue: (mailboxId: string, uid: number, uidValidity: string) =>
+    api<{ status: "rescued" }>("/screener/junk/rescue", {
+      method: "POST",
+      body: { mailboxId, uid, uidValidity },
+    }),
 };
+
+/** One row of the live Junk window — a header fact, never a mirror entity. */
+export interface JunkItemWire {
+  mailboxId: string;
+  uid: number;
+  uidValidity: string;
+  subject: string;
+  from: { name: string | null; address: string };
+  date: string | null;
+  messageIdHeader: string | null;
+  seen: boolean;
+  /** Who filed it: our recorded verdict/sweep, or the mail server's own filter. */
+  origin: "verdict" | "provider";
+}
+
+export interface JunkMailboxWire {
+  id: string;
+  address: string;
+  window: "ok" | "no_junk_folder" | "unreachable";
+}
+
+export interface JunkPageWire {
+  mailboxes: JunkMailboxWire[];
+  items: JunkItemWire[];
+  nextCursor: string | null;
+}
 
 // ── WebAuthn browser glue ────────────────────────────────────────────────────────────────
 

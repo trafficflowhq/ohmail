@@ -58,6 +58,35 @@ export function parseRef(ref: string): { uidValidity: string; uid: number } {
 }
 
 /**
+ * The Junk window's page bound — newest 50 headers per read.
+ * {@link ImapAdapter.listFolderPage} clamps every caller to it, so a Junk folder holding years
+ * of mail still answers one bounded page whatever a request asks for.
+ */
+export const FOLDER_PAGE_MAX = 50;
+
+/** One header row of a {@link ImapAdapter.listFolderPage} answer. Facts only, never a `Change`. */
+export interface FolderPageItem {
+  uid: number;
+  subject: string;
+  from: { name: string | null; address: string };
+  /** Sender's Date header, INTERNALDATE as the fallback; `null` when neither parses. */
+  date: string | null;
+  messageIdHeader: string | null;
+  seen: boolean;
+}
+
+/** A bounded, newest-first header page of one folder. See {@link ImapAdapter.listFolderPage}. */
+export interface FolderPage {
+  /** The folder's UIDVALIDITY at read time — a caller's cursor is void when this changes. */
+  uidValidity: string;
+  /** How many messages the folder holds in total (the page is at most {@link FOLDER_PAGE_MAX}). */
+  total: number;
+  items: FolderPageItem[];
+  /** Pass back as `beforeUid` for the next-older page; `null` when this page reached the end. */
+  nextBeforeUid: number | null;
+}
+
+/**
  * The slice of imapflow's `StatusObject` the passive skip reads — see
  * {@link ImapAdapter.unchangedPassive}. Named locally so a test fake can supply three numbers
  * without constructing the library's whole response shape.
@@ -1039,6 +1068,75 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         if (out.length >= limit) break;
       }
       return out;
+    } finally {
+      lock.release();
+    }
+  }
+
+  /**
+   * ONE BOUNDED HEADER PAGE of a named folder, newest first — the Junk window's list read
+   * (FOLDERS-SPEC.md §16.2: the Screener's third segment is a LIVE, UN-MIRRORED view of the
+   * provider's own `\Junk` folder; this method is the "list page" half of its bounded read
+   * shape, {@link fetchByUid} is the body-on-open half).
+   *
+   * READ-ONLY BY CONSTRUCTION: one mailbox lock, one UID SEARCH, one envelope/flags FETCH —
+   * envelope fetches never set `\Seen`, nothing is moved, flagged, appended or created. And it
+   * WRITES NOTHING ANYWHERE ELSE either — the window's defining property is that Junk never
+   * enters `messages` or any mirror, so this returns plain header facts and no `Change`s: a
+   * caller cannot ingest what it answers even by mistake, because the ingest pipeline's input
+   * shape is deliberately not produced.
+   *
+   * The page is `limit` (capped at {@link FOLDER_PAGE_MAX}) newest UIDs, optionally strictly
+   * BELOW `beforeUid` — the "Show older" cursor, stable across connections because UIDs are
+   * (per uidValidity, which the answer carries so a caller can spot a renumbered folder).
+   * `null` for a folder the server refuses to open (not present, `\Noselect`) — the honest
+   * "this mailbox has no such window" the degrade path renders, distinct from an EMPTY folder,
+   * which answers a real page of zero items.
+   */
+  async listFolderPage(
+    folder: string, opts: { limit?: number; beforeUid?: number } = {},
+  ): Promise<FolderPage | null> {
+    const limit = Math.max(1, Math.min(opts.limit ?? FOLDER_PAGE_MAX, FOLDER_PAGE_MAX));
+    let lock: { release(): void };
+    try {
+      lock = await this.client.getMailboxLock(this.toServerPath(folder));
+    } catch {
+      return null; // folder not present / not selectable — the caller's degrade branch
+    }
+    try {
+      const mb = this.client.mailbox as MailboxObject | false;
+      const uidValidity = mb && mb.uidValidity != null ? String(mb.uidValidity) : "0";
+      const total = mb ? mb.exists : 0;
+      if (!mb || total === 0) return { uidValidity, total: 0, items: [], nextBeforeUid: null };
+
+      // Every UID in the folder, from one server-side SEARCH — numbers only, no content. Sorted
+      // newest-first ourselves: imapflow returns ascending, and the contract here is ours.
+      const uids = ((await this.client.search({ all: true }, { uid: true })) || []) as number[];
+      uids.sort((a, b) => b - a);
+      const below = opts.beforeUid !== undefined ? uids.filter((u) => u < opts.beforeUid!) : uids;
+      const page = below.slice(0, limit);
+      if (page.length === 0) return { uidValidity, total, items: [], nextBeforeUid: null };
+
+      const byUid = new Map<number, FolderPageItem>();
+      for await (const m of this.client.fetch(
+        [...page], { uid: true, envelope: true, flags: true, internalDate: true }, { uid: true },
+      )) {
+        const from = m.envelope?.from?.[0];
+        const date = m.envelope?.date ?? m.internalDate;
+        byUid.set(m.uid, {
+          uid: m.uid,
+          subject: m.envelope?.subject ?? "",
+          from: { name: from?.name ?? null, address: from?.address?.trim().toLowerCase() ?? "" },
+          date: date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : null,
+          messageIdHeader: m.envelope?.messageId ?? null,
+          seen: m.flags?.has("\\Seen") ?? false,
+        });
+      }
+      // In the page's own (newest-first) order; a UID expunged between SEARCH and FETCH is
+      // simply absent rather than a hole — the window re-reads the live folder every visit.
+      const items = page.filter((u) => byUid.has(u)).map((u) => byUid.get(u)!);
+      const nextBeforeUid = below.length > page.length ? page[page.length - 1]! : null;
+      return { uidValidity, total, items, nextBeforeUid };
     } finally {
       lock.release();
     }
