@@ -80,6 +80,15 @@ export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {
       deps.apply(ans.on);
     }
   };
+  /**
+   * OVERLAPPING WRITES: the NEWEST is the user's standing act (codex round 6). The world
+   * layer's pending flag makes overlap unreachable through the UI, but the coordinator does
+   * not lean on its caller: an older write settling late may neither clear a newer write's
+   * barrier (the identity check in `finally`) nor apply its own echo over the newer choice
+   * (the sequence check before `apply`) — either would re-open the exact stale-read race the
+   * barrier exists to close.
+   */
+  let writeSeq = 0;
   return {
     refresh,
     async set(on: boolean): Promise<boolean> {
@@ -87,21 +96,30 @@ export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {
       // overwrite the user's act while the act is still possible. Reads asked for from here
       // on queue behind `settling` and run post-write.
       epoch += 1;
+      const mine = ++writeSeq;
       const attempt = deps.write(on);
-      settling = attempt.then(() => undefined, () => undefined);
+      const barrier = attempt.then(() => undefined, () => undefined);
+      settling = barrier;
       try {
         const ans = await attempt;
-        deps.apply(ans.on);
-        deps.drain();
+        // A superseded write's echo is an OLDER fact than the write that superseded it —
+        // the newer set() owns the state from here, whatever this one answered.
+        if (writeSeq === mine) {
+          deps.apply(ans.on);
+          deps.drain();
+        }
         return true;
       } catch {
         // A REJECTED write changed nothing on the server, but the epoch bump above had
         // invalidated the reads in flight — re-ask, so the authoritative value (the user's
         // previous choice, exactly as the failure sentence claims) comes back on its own.
-        void refresh();
+        // Superseded: the newer write answers for the state instead.
+        if (writeSeq === mine) void refresh();
         return false;
       } finally {
-        settling = null;
+        // Only the write the barrier still BELONGS to may clear it — an older write settling
+        // late must not open the gate while a newer one is still on the wire.
+        if (settling === barrier) settling = null;
       }
     },
   };
