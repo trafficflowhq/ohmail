@@ -240,7 +240,13 @@ export function composeAttachCap(
  * `originalBase64` is the source's own encoding, computed at most once — a move to Original and
  * every "this file cannot shrink" outcome reuse it instead of re-reading megabytes.
  */
-const ATTACHMENT_SOURCES = new WeakMap<ComposeAttachment, { blob: Blob; originalBase64?: string }>();
+const ATTACHMENT_SOURCES = new WeakMap<ComposeAttachment, {
+  blob: Blob;
+  originalBase64?: string;
+  /** The level the row's CURRENT encode was made at — what the mount-time convergence reads to
+      decide whether a pass is owed at all, without re-encoding anything to find out. */
+  encodedLevel: ImageQualityLevel;
+}>();
 
 /** Decoded byte length of a base64 string, without decoding it. */
 function base64Bytes(b64: string): number {
@@ -250,7 +256,7 @@ function base64Bytes(b64: string): number {
   return Math.floor((len * 3) / 4) - padding;
 }
 
-function totalBytes(items: ComposeAttachment[]): number {
+function totalBytes(items: readonly ComposeAttachment[]): number {
   return items.reduce((n, a) => n + base64Bytes(a.contentBase64), 0);
 }
 
@@ -464,15 +470,19 @@ export function ComposeAttach({
           contentBase64 = await readAsBase64(picture.blob);
         }
         if (gen !== requalifyGen.current) return; // superseded — the newer move owns the list
-        if (contentBase64 === att.contentBase64) continue; // already at this level — identity kept
+        if (contentBase64 === att.contentBase64) {
+          source.encodedLevel = nextLevel; // the bytes already ARE this level's — stamp and keep
+          continue;
+        }
         const next: ComposeAttachment = {
           filename: att.filename,
           contentType: picture.contentType,
           contentBase64,
         };
-        // The replacement inherits the SAME source record: the next move re-encodes from the
-        // same pristine bytes, and the cached original encoding rides along.
-        ATTACHMENT_SOURCES.set(next, source);
+        // The replacement inherits the SAME source record — the next move re-encodes from the
+        // same pristine bytes, the cached original encoding rides along — re-stamped with the
+        // level this encode was made at, which is what the mount-time convergence reads.
+        ATTACHMENT_SOURCES.set(next, { ...source, encodedLevel: nextLevel });
         replacements.set(att, {
           next,
           bytes: picture.bytes,
@@ -487,7 +497,20 @@ export function ComposeAttach({
       // and against the LATEST cap (see the refs above). Rows the user added or removed while
       // the encodes ran are respected. Admission projects the WHOLE-LIST total: shrinks first,
       // grows in list order while the projection stays under the cap — see the header note.
-      const latest = attachmentsRef.current;
+      //
+      // The hand-off outranks a ref the renderer has not caught up with: a kicked pass starts in
+      // the same tick as the intake's own commit, so the ref can still hold the list that commit
+      // EXTENDED. That exact case is recognisable — the ref is the hand-off's prefix — and only
+      // then is the hand-off the base; any other divergence means the user moved the list since,
+      // and the ref is the truth.
+      const refList = attachmentsRef.current;
+      const latest =
+        over !== undefined &&
+        refList !== over &&
+        over.length > refList.length &&
+        refList.every((a, i) => a === over[i])
+          ? over
+          : refList;
       const cap = maxTotalBytesRef.current;
       const deltaOf = (att: ComposeAttachment, bytes: number): number =>
         bytes - base64Bytes(att.contentBase64);
@@ -523,12 +546,47 @@ export function ComposeAttach({
         }
         return r.next;
       });
+      // CONVERGENCE COLLAPSES DUPLICATES. Two rows can arrive byte-identical under one name only
+      // through a race this pass just settled (a re-pick mid-move landing beside the row the move
+      // re-encoded) — the admit path forbids the pair up front — and a message carrying the same
+      // file twice is the exact defect the duplicate skip exists for. First occurrence stands.
+      const seen = new Set<string>();
+      const deduped = committed.filter((a) => {
+        const key = `${a.filename}\u0000${a.contentBase64}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
       setError(capKept ? t("attachQualityCap", { size: formatSize(cap) }) : null);
       setCompressed(savedFrom > 0 ? { from: savedFrom, to: savedTo } : null);
-      if (committed.some((a, i) => a !== latest[i])) onChangeRef.current(committed);
+      if (deduped.length !== latest.length || deduped.some((a, i) => a !== latest[i])) {
+        onChangeRef.current(deduped);
+      }
     },
     [t],
   );
+
+  /*
+   * CONVERGE WHAT NAVIGATION LEFT BEHIND — once, on mount. The list outlives this control (the
+   * shell keeps the form across views) while an unmount kills any in-flight re-encode pass — the
+   * discard guard, and deliberately so: a component cannot tell a navigation from a discard from
+   * the inside, and a stale pass resurrecting a thrown-away message is the worse failure. What
+   * navigation may therefore leave is rows encoded at a level the dial no longer shows. The
+   * source records carry the level each row's encode was made at, so this asks only when a row
+   * is actually behind, and the pass is the ordinary one — atomic, generation-guarded,
+   * identity-skipping rows already right. (A pick dropped mid-navigation is the accepted residue
+   * of the discard guard: the file never entered the list, the user watches it not appear, and
+   * re-picking costs one gesture — a resurrected discard costs a message they meant to destroy.)
+   */
+  useEffect(() => {
+    const stored = levelRef.current;
+    const behind = attachmentsRef.current.some((a) => {
+      const s = ATTACHMENT_SOURCES.get(a);
+      return s !== undefined && s.encodedLevel !== stored;
+    });
+    if (behind) void requalify(stored);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount, after the stored level lands above
+  }, []);
 
   const onFiles = useCallback(
     async (fileList: FileList | null) => {
@@ -540,6 +598,7 @@ export function ComposeAttach({
       // must be the one on screen at the moment of the pick, not the one a stale closure holds.
       const level = levelRef.current;
       let refused = false;
+      let preTotal = totalBytes(attachmentsRef.current);
       const picked: Array<{
         attachment: ComposeAttachment;
         bytes: number;
@@ -555,6 +614,16 @@ export function ComposeAttach({
           // and a cap judged against the list as it stood at pick time would admit or refuse
           // against sizes that no longer exist.
           const picture = await compressImage(file, level);
+          // REFUSE THE IMPOSSIBLE BEFORE ENCODING IT. `readAsBase64` allocates ~4/3 of the file
+          // as a string, so a 500 MB pick must be turned away on its SIZE — known right here —
+          // rather than after the tab has paid to encode it (review finding). A conservative
+          // pre-check against the running pick total; the commit below stays authoritative.
+          const capNow = maxTotalBytesRef.current;
+          if (picture.bytes > capNow || preTotal + picture.bytes > capNow) {
+            refused = true;
+            continue;
+          }
+          preTotal += picture.bytes;
           const contentBase64 = await readAsBase64(picture.blob);
           const filename = file.name || "attachment";
           const attachment: ComposeAttachment = {
@@ -567,6 +636,7 @@ export function ComposeAttach({
           // base64 in hand is the source's own encoding — cache it so a move never re-reads it.
           ATTACHMENT_SOURCES.set(attachment, {
             blob: file,
+            encodedLevel: level,
             ...(picture.blob === file ? { originalBase64: contentBase64 } : {}),
           });
           picked.push({
