@@ -112,14 +112,20 @@ function readerFacing(outcome: { error: string; code: string | null }): string {
   return outcome.code !== null && SPEAKS_TO_THE_READER.has(outcome.code) ? outcome.error : "";
 }
 
-export function useOlderMail(engine: OhmailEngine, view: OhmailView, version: number): OlderMail {
+export function useOlderMail(
+  engine: OhmailEngine,
+  view: OhmailView | "folder",
+  version: number,
+  /** With `view: "folder"`: the folder ENTITY id. Undefined reads as "no list" (unavailable). */
+  folderId?: string,
+): OlderMail {
   const available = engine.listOlderAvailable();
   const [page, setPage] = useState<Page>(EMPTY);
 
   // The view (or the engine) changed: a cursor into one list means nothing in another.
   useEffect(() => {
     setPage(EMPTY);
-  }, [engine, view]);
+  }, [engine, view, folderId]);
 
   /**
    * THE PAGING POSITION, AS REFS RATHER THAN AS STATE READ INSIDE `loadMore`.
@@ -152,7 +158,7 @@ export function useOlderMail(engine: OhmailEngine, view: OhmailView, version: nu
     cursor.current = null;
     inFlight.current = false;
     done.current = false;
-  }, [engine, view]);
+  }, [engine, view, folderId]);
 
   const loadMore = useCallback(() => {
     if (!available || inFlight.current || done.current) return;
@@ -161,7 +167,10 @@ export function useOlderMail(engine: OhmailEngine, view: OhmailView, version: nu
     setPage((p) => ({ ...p, loading: true, error: null }));
 
     void engine
-      .listOlder(view, cursor.current ? { cursor: cursor.current } : {})
+      .listOlder(view, {
+        ...(cursor.current ? { cursor: cursor.current } : {}),
+        ...(folderId ? { folderId } : {}),
+      })
       .then((outcome) => {
         if (mine !== generation.current) return; // answered a list that is no longer on screen
         inFlight.current = false;
@@ -195,7 +204,7 @@ export function useOlderMail(engine: OhmailEngine, view: OhmailView, version: nu
           };
         });
       });
-  }, [engine, view, available]);
+  }, [engine, view, available, folderId]);
 
   /**
    * MIRROR-PREFERRED BY ID, recomputed when the mirror changes.

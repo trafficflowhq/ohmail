@@ -32,6 +32,7 @@ import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { folderLeafOf, folderParentOf } from "../shell/folders";
 import { useListWindow } from "../shell/list-window";
+import type { OlderMail } from "../shell/older-mail";
 
 /** Below this the reading column is `display:none` (app.css), so a tap must open the sheet. */
 function readColumnHidden(): boolean {
@@ -44,6 +45,7 @@ export function FolderView({
   folder,
   messages,
   locateId,
+  older,
   tags,
   threadParticipants,
   absoluteTime,
@@ -64,6 +66,15 @@ export function FolderView({
    * closing the reader leaves the list at the top instead of at the hit.
    */
   locateId?: string | null;
+  /**
+   * MAIL FROM BEYOND WHAT THIS DEVICE KEPT — the Ohbox's own reach-past, pointed at this
+   * folder (the folders foundation: a fresh web mirror is a bootstrap WINDOW, and a folder's
+   * older, untagged mail lives entirely past it). Required for the same reason the Ohbox makes
+   * it required: without it the end of the list — and worse, an EMPTY list — is a claim about
+   * somebody's whole folder that this device cannot make. The empty state below renders only
+   * once this says the source is exhausted.
+   */
+  older: OlderMail;
   tags: TagDTO[];
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
   absoluteTime?: boolean;
@@ -85,8 +96,10 @@ export function FolderView({
   // TagView's reason: the list does not re-partition under it.
   const shown =
     messages.find((m) => m.id === selectedId)
+      ?? older.items.find((m) => m.id === selectedId)
       ?? (locateId ? messages.find((m) => m.id === locateId) : null)
       ?? messages[0]
+      ?? older.items[0]
       ?? null;
 
   useEffect(() => {
@@ -107,24 +120,51 @@ export function FolderView({
   const win = useListWindow({ scrollerRef, count: ordered.length });
 
   /**
+   * AN EMPTY MIRROR IS A QUESTION, NOT AN ANSWER — probe once. The reach-past never fires
+   * speculatively (older-mail.ts's rule: a person asks), and an empty list IS the ask: the
+   * surface is about to claim "nothing in this folder" about a device that keeps a window over
+   * a server holding everything. One page settles which sentence is true; everything past it
+   * stays on the explicit button below.
+   */
+  const mirrorEmpty = ordered.length === 0;
+  useEffect(() => {
+    if (mirrorEmpty && older.available && !older.exhausted && !older.loading
+      && older.items.length === 0 && older.error === null) {
+      older.loadMore();
+    }
+    // Keyed on the emptiness question, not on the paging state: one probe per empty arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mirrorEmpty, older.available]);
+
+  /**
    * REVEAL A TARGET THE WINDOW HAS NOT MOUNTED — the Ohbox window's own rule, verbatim in
    * spirit: the slice derives from `scrollTop`, so putting the row's offset in view mounts
-   * it, and the shell's locate pass then finds, centers and flashes it. Keyed on the target
-   * and a no-op when the row is already mounted, so it never fights the reader for the
-   * viewport and never re-runs on scroll.
+   * it, and the shell's locate pass then finds, centers and flashes it.
+   *
+   * Keyed on the target AND on whether the list holds it: on a cold restore the folder entity
+   * rides snapshot page 1 while an old target message can arrive on a LATER page, so the first
+   * run finds no index and a target-only dependency would never fire again. `locateFound`
+   * flips exactly once when the row enters the mirror, which re-runs the reveal without ever
+   * re-running on scroll or on ordinary list churn — the window's own fields are still read at
+   * fire time, so it cannot re-scroll the list under the user.
+   *
+   * The target also becomes the SELECTION, not merely a fallback: closing the reader clears
+   * the URL's `/m/<id>` tail (and with it `locateId`), and a fallback-only target would snap
+   * the wide layout's column back to the first row over a scroller still centered on the hit.
    */
+  const locateIdx = locateId ? ordered.findIndex((m) => m.id === locateId) : -1;
+  const locateFound = locateIdx >= 0;
   useEffect(() => {
-    const target = locateId ?? null;
-    if (!target) return;
-    const idx = ordered.findIndex((m) => m.id === target);
-    if (idx < 0) return;
+    if (!locateId || !locateFound) return;
+    setSelectedId(locateId);
+    const idx = ordered.findIndex((m) => m.id === locateId);
     if (idx >= win.start && idx < win.end) return;
     const el = scrollerRef.current;
     if (el) el.scrollTop = Math.max(0, idx * win.rowHeight - el.clientHeight / 2);
-    // Only the target: the window's fields are read at fire time, and re-running on every
-    // scroll-driven change would re-scroll the list under the user.
+    // Only the target and its arrival: the window's fields are read at fire time, and
+    // re-running on every scroll-driven change would re-scroll the list under the user.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locateId]);
+  }, [locateId, locateFound]);
 
   const parent = folderParentOf(folder.name);
 
@@ -178,6 +218,11 @@ export function FolderView({
               })}
               {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
             </>
+          ) : older.available && !older.exhausted ? (
+            // The mirror holds nothing AND the server has not finished answering: neither
+            // sentence may be said yet. The tail below carries the state (probing / failed /
+            // load more); this slot stays quiet rather than claiming emptiness early.
+            null
           ) : (
             <div className="empty">
               <span className="glyph">📁</span>
@@ -185,6 +230,66 @@ export function FolderView({
               {t("emptyHint")}
             </div>
           )}
+          {/* MAIL FROM BEYOND WHAT THIS DEVICE KEPT — the Ohbox tail, verbatim in idiom and in
+              copy (one namespace, so the two surfaces can never phrase the boundary apart).
+              Rendered below the window under its own label: rows that came from the server a
+              moment ago and are not in the mirror, never silently merged into "Earlier". */}
+          {older.items.length > 0 ? (
+            <>
+              <ListGroupLabel>{to("olderTitle")}</ListGroupLabel>
+              {older.items.map((m) => (
+                <MessageRow
+                  key={m.id}
+                  id={m.id}
+                  from={senderName(m)}
+                  address={rowAddress(m)}
+                  {...avatarOf(m)}
+                  {...rowStamp(m, now, absoluteTime, onToggleTime)}
+                  subject={m.subject}
+                  preview={m.snippet}
+                  amount={m.amount}
+                  unread={m.unread}
+                  seen={!m.unread}
+                  selected={shown?.id === m.id}
+                  threadCount={m.threadCount}
+                  hasAttachment={m.hasAttachments}
+                  protected={m.protected != null}
+                  tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
+                  onClick={() => openRow(m)}
+                />
+              ))}
+            </>
+          ) : null}
+          {older.available ? (
+            <div className="tail-row" role="status">
+              {older.error !== null ? (
+                <>
+                  {to("olderFailed", { reason: older.error })}{" "}
+                  <button type="button" className="btn ghost" onClick={older.loadMore}>
+                    {to("olderRetry")}
+                  </button>
+                </>
+              ) : older.loading ? (
+                <span className="mbx-wait">
+                  <span className="mbx-spin" aria-hidden="true" />
+                  {to("olderLoading")}
+                </span>
+              ) : (
+                <>
+                  {older.items.length > 0
+                    ? to("olderShowing", { count: older.items.length })
+                    : to("olderPrompt")}{" "}
+                  {older.exhausted ? (
+                    to("olderEnd")
+                  ) : (
+                    <button type="button" className="btn ghost" onClick={older.loadMore}>
+                      {to("olderAction")}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          ) : null}
         </ListRows>
       </ListPane>
       {/* The reading column — the Ohbox's own; no `onEnterReader`, TagView's reason. */}

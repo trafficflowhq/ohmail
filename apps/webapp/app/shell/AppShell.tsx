@@ -1296,7 +1296,16 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * Inert on a client whose mirror IS the mailbox: `listOlderAvailable()` is false for the demo
    * and for the standalone desktop client, and the view renders no control at all in that case.
    */
+  /** The open folder's entity id, for the reach-past hook below — route-derived, shell-early. */
+  const folderIdForOlder = route.view === "folder" ? (route.folderId ?? undefined) : undefined;
   const older = useOlderMail(engine, "ohbox", version);
+  /**
+   * The open FOLDER's reach past the mirror window (the folders foundation) — `older`'s twin,
+   * keyed to the folder entity id so leaving a folder resets its paging. Called with an
+   * undefined id whenever no folder is open, which the transport reads as "no list"
+   * (unavailable) — hooks must be unconditional, the scope may be absent.
+   */
+  const folderOlder = useOlderMail(engine, "folder", version, folderIdForOlder);
 
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
   const ohbox = useMemo(() => ohboxView(presented), [presented, version]);
@@ -5354,6 +5363,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 /* The URL's open message — the reveal target: a deep search hit must mount
                    and select its row, or the locator polls for a row the window never built. */
                 locateId={route.messageId}
+                /* The reach past this device's window, keyed to THIS folder — and the reason
+                   the empty state can be said at all (spec: never claim an empty folder until
+                   the source is exhausted). */
+                older={folderOlder}
                 now={now}
                 /* IN PLACE — `setReaderFor`, TagView's reason: the folder IS the message's place,
                    and `openMessage` would route it to a pile it does not present in. */

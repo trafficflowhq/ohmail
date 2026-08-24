@@ -154,8 +154,18 @@ export interface ListOlderWire {
  * behind the end of the list, and must be able to say so rather than spin.
  */
 export type ListOlderFn = (
-  view: OhmailView,
-  opts: { cursor?: string; limit?: number },
+  view: OhmailView | "folder",
+  opts: {
+    cursor?: string;
+    limit?: number;
+    /**
+     * One of the mailbox's own folders, by `folder` ENTITY id — required with `view: "folder"`
+     * and meaningless otherwise (the folders foundation: a fresh web mirror is a window, and a
+     * folder's older mail lives past it exactly as a pile's does). A transport that predates
+     * the feature ignores it and resolves `null`, which reads as "nothing further back".
+     */
+    folderId?: string;
+  },
 ) => Promise<ListOlderWire | null>;
 
 /**
@@ -2828,8 +2838,8 @@ export class OhmailEngine {
    * account, writes nothing, opens no socket and calls no metered third party.
    */
   async listOlder(
-    view: OhmailView,
-    opts: { cursor?: string; limit?: number } = {},
+    view: OhmailView | "folder",
+    opts: { cursor?: string; limit?: number; folderId?: string } = {},
   ): Promise<ListOlderOutcome> {
     const fn = this.listOlderFn;
     if (fn === null) return { state: "unavailable" };
@@ -2838,7 +2848,7 @@ export class OhmailEngine {
     // with, and a hand-picked delimiter is how two different pages come to share one key. It also
     // keeps the separator out of the SOURCE. A single invisible control character here is a
     // file-wide hazard: it makes tooling classify this whole file as binary and skip it.
-    const key = JSON.stringify([view, opts.cursor ?? null, opts.limit ?? null]);
+    const key = JSON.stringify([view, opts.cursor ?? null, opts.limit ?? null, opts.folderId ?? null]);
     const inFlight = this.olderPages.get(key);
     if (inFlight) return inFlight;
 

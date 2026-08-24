@@ -674,9 +674,24 @@ export class HttpAdapter implements EngineAdapter {
    * refused nor an error a surface would have to render.
    */
   async listMessages(
-    view: OhmailView,
-    opts: { cursor?: string; limit?: number } = {},
+    view: OhmailView | "folder",
+    opts: { cursor?: string; limit?: number; folderId?: string } = {},
   ): Promise<ListOlderWire | null> {
+    // A FOLDER page (the folders foundation): the entity id is the whole address — the server
+    // resolves it, scoped to the account and gated on the account's own "Use folders" flag.
+    if (view === "folder") {
+      if (!opts.folderId) return null;
+      const qf = new URLSearchParams({ view: "folder", folderId: opts.folderId });
+      if (opts.cursor) qf.set("cursor", opts.cursor);
+      if (opts.limit !== undefined) qf.set("limit", String(opts.limit));
+      const resf = await this.request("GET", `/messages?${qf.toString()}`);
+      if (!resf.ok) throw await this.rejectionOf(resf);
+      const wiref = (await resf.json()) as { items?: EngineMessage[]; nextCursor?: string | null };
+      return {
+        items: Array.isArray(wiref.items) ? wiref.items : [],
+        nextCursor: typeof wiref.nextCursor === "string" && wiref.nextCursor !== "" ? wiref.nextCursor : null,
+      };
+    }
     const serverView = SERVER_VIEW_OF[view];
     if (serverView === null) return null;
     const q = new URLSearchParams({ view: serverView });

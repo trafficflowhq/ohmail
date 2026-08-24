@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import {
   mailboxes, messages, folderState, messageBodies, messageStates, claimIdempotencyKey, recordChange,
   type LedgerTx, type Tx,
@@ -6,6 +6,7 @@ import {
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
 import { httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
+import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { upsertDesiredSeen } from "./flag-intent.js";
 import { materializeMessage } from "./dto/materialize.js";
@@ -59,9 +60,18 @@ const VIEW_UNREAD: Partial<Record<MessageView, boolean>> = {
 };
 
 export interface ListMessagesOptions {
-  view: string;          // validated against MessageView (400 on unknown)
+  view: string;          // validated against MessageView (400 on unknown), or "folder" + folderId
   cursor?: string;
   limit?: number;
+  /**
+   * With `view: "folder"`: one of the account's own folders by `folder` ENTITY id (the folders
+   * foundation). The read is gated on the account's "Use folders" flag and scoped through the
+   * mailbox join; an id that resolves to nothing — gone, excluded, another account's, or the
+   * flag off — answers an EMPTY final page rather than an error, because every one of those is
+   * a folder the interface no longer shows and a surface mid-transition must not render a
+   * refusal about it.
+   */
+  folderId?: string;
 }
 
 export interface MessagePatchBody {
@@ -203,6 +213,28 @@ export const BODIES_BYTE_BUDGET = 4 * 1024 * 1024;
  */
 export class MessageService {
   async list(ctx: ServiceContext, opts: ListMessagesOptions): Promise<Page<MessageDTO>> {
+    // ── ONE OF THE USER'S OWN FOLDERS (the folders foundation) ─────────────────────────────
+    // The same keyset walk the six views get, addressed by the folder ENTITY id and filtered
+    // on the folder's canonical path within its own mailbox — the exact list the folder view
+    // renders, continued past the client mirror's bootstrap window.
+    if (opts.view === "folder") {
+      if (typeof opts.folderId !== "string" || opts.folderId === "") {
+        throw new ServiceError("validation_failed", 400, "view=folder requires folderId");
+      }
+      if (!(await foldersEnabled(ctx.db, ctx.accountId))) return { items: [], nextCursor: null };
+      const uf = await userFolderById(ctx.db, ctx.accountId, opts.folderId);
+      if (uf === null) return { items: [], nextCursor: null };
+      return this.pageOf(ctx, {
+        limit: clampLimit(opts.limit),
+        cursor: opts.cursor,
+        filters: [
+          eq(messages.accountId, ctx.accountId),
+          eq(messages.mailboxId, uf.mailboxId),
+          eq(folderState.desiredFolder, uf.folder),
+          isNull(messages.deletedAt),
+        ],
+      });
+    }
     const view = this.validView(opts.view);
     const limit = clampLimit(opts.limit);
     const desiredFolder = VIEW_FOLDER[view];
@@ -238,6 +270,35 @@ export class MessageService {
     }
     const last = pageRows[pageRows.length - 1];
     const nextCursor = rows.length > limit && last ? encodeMsgCursor(last.date, last.id) : null;
+    return { items, nextCursor };
+  }
+
+  /**
+   * One keyset page over `messages ⋈ folder_state` — the view walk's exact body, shared with
+   * the folder branch so the two cannot fork on ordering, cursor shape or tombstone handling.
+   */
+  private async pageOf(
+    ctx: ServiceContext,
+    args: { limit: number; cursor?: string; filters: SQL[] },
+  ): Promise<Page<MessageDTO>> {
+    const filters = [...args.filters];
+    if (args.cursor) {
+      const c = decodeMsgCursor(args.cursor);
+      filters.push(or(lt(messages.date, c.date), and(eq(messages.date, c.date), lt(messages.id, c.id)))!);
+    }
+    const rows = await ctx.db.select({ id: messages.id, date: messages.date }).from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(and(...filters))
+      .orderBy(desc(messages.date), desc(messages.id))
+      .limit(args.limit + 1);
+    const pageRows = rows.slice(0, args.limit);
+    const items: MessageDTO[] = [];
+    for (const r of pageRows) {
+      const dto = await materializeMessage(ctx.db, ctx.accountId, r.id);
+      if (dto) items.push(dto);
+    }
+    const last = pageRows[pageRows.length - 1];
+    const nextCursor = rows.length > args.limit && last ? encodeMsgCursor(last.date, last.id) : null;
     return { items, nextCursor };
   }
 

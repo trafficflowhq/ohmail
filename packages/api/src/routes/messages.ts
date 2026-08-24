@@ -31,7 +31,9 @@ export const messageRoutes: Route[] = [
       const cursor = url.searchParams.get("cursor") ?? undefined;
       const limitRaw = url.searchParams.get("limit");
       const limit = limitRaw != null ? Number(limitRaw) : undefined;
-      const page = await message(deps).list(serviceContext(deps, req), { view, cursor, limit });
+      // `view=folder` (the folders foundation): the folder ENTITY id addresses the list.
+      const folderId = url.searchParams.get("folderId") ?? undefined;
+      const page = await message(deps).list(serviceContext(deps, req), { view, cursor, limit, folderId });
       return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
     },
   },

@@ -1,7 +1,8 @@
 import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { and, asc, eq, gt, isNull, ne, notInArray } from "drizzle-orm";
-import { recordChange } from "@trafficflow/db";
+import { recordChange , accountSettings,
+} from "@trafficflow/db";
 import {
   approvals, drafts, folderState, mailboxCredentials, mailboxFolders, mailboxes, messageBodies,
   messageFailures, messageInstances, messageStates, messages, messageTags, routingDecisions, rules,
@@ -112,7 +113,7 @@ export const CLOUD_SYNC_TYPES: readonly EntityType[] = [
  * the time the message carrying the assignment is applied.
  */
 const APPLY_ORDER: readonly EntityType[] = [
-  "tag", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
+  "folder", "tag", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
 ];
 
 const DEFAULT_PAGE_LIMIT = 500;
@@ -442,6 +443,7 @@ interface MarkSet {
 }
 
 interface BootstrapGen {
+  folder: MarkSet;
   thread: MarkSet;
   message: MarkSet;
   message_state: MarkSet;
@@ -469,7 +471,7 @@ function genPathFor(cursorPath: string): string {
 }
 
 const GEN_TYPES = [
-  "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision", "tag",
+  "folder", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision", "tag",
 ] as const;
 type GenType = (typeof GEN_TYPES)[number];
 
@@ -486,6 +488,7 @@ function genOver(path: string, sets: Record<GenType, Set<string>>): BootstrapGen
     has: (id: string): boolean => sets[t].has(id),
   });
   return {
+    folder: mark("folder"),
     thread: mark("thread"), message: mark("message"), message_state: mark("message_state"),
     rule: mark("rule"), draft: mark("draft"), approval: mark("approval"),
     routing_decision: mark("routing_decision"), tag: mark("tag"),
@@ -513,6 +516,7 @@ function genOver(path: string, sets: Record<GenType, Set<string>>): BootstrapGen
 }
 
 const emptyGenSets = (): Record<GenType, Set<string>> => ({
+  folder: new Set(),
   thread: new Set(), message: new Set(), message_state: new Set(), rule: new Set(),
   draft: new Set(), approval: new Set(), routing_decision: new Set(), tag: new Set(),
 });
@@ -797,6 +801,26 @@ async function applyUpsert(
   known: ReadonlySet<string>,
 ): Promise<boolean> {
   switch (ch.type) {
+    case "folder": {
+      // ONE OF THE MAILBOX'S OWN FOLDERS (the folders foundation). The local row takes the
+      // HOSTED entity's id verbatim — the local /sync materializes folder entities BY ROW ID
+      // and the shell deep-links `#/folder/<id>`, so hosted and local links are one namespace.
+      // Guarded on the mirrored mailbox exactly as messages are: never re-attributed, never
+      // invented. The local "Use folders" flag is reconciled after the page (see applyPage) —
+      // the local SyncService gates its folder reads on it, and the honest local value is
+      // derived from what the hosted feed actually sent.
+      const f = ch.entity as { id?: string; name?: string; mailboxId?: string } | undefined;
+      if (!f?.name || !f.mailboxId) return false;
+      if (!known.has(f.mailboxId)) return false;
+      await tx.insert(mailboxFolders).values({
+        id: ch.id, mailboxId: f.mailboxId, folder: f.name, updatedAt: now,
+      }).onConflictDoUpdate({
+        target: mailboxFolders.id,
+        set: { mailboxId: f.mailboxId, folder: f.name, updatedAt: now },
+      });
+      gen?.folder.add(ch.id);
+      return true;
+    }
     case "thread": {
       const t = ch.entity as ThreadDTO | undefined;
       if (!t) return false;
@@ -1062,6 +1086,12 @@ async function applyDelete(tx: Tx, ch: SyncChange): Promise<boolean> {
       await tx.delete(messages).where(eq(messages.id, ch.id));
       return true;
     }
+    case "folder":
+      // The inventory row alone: a folder entity's delete says "stop showing this folder", never
+      // anything about mail — the messages that lived there keep their own lifecycle (the
+      // hosted feed tombstones them separately if they go).
+      await tx.delete(mailboxFolders).where(eq(mailboxFolders.id, ch.id));
+      return true;
     case "tag":
       // Assignments first, for the same FK reason, and this is also what a deleted tag MEANS: the
       // messages stay, they simply stop carrying it.
@@ -1145,6 +1175,11 @@ async function applyPage(
         }
       }
     }
+    // A page that moved the folder inventory also settles the local flag it is read behind —
+    // same transaction, so the local /sync can never see rows the flag disowns or vice versa.
+    if (changes.some((c) => c.type === "folder")) {
+      await reconcileLocalFoldersFlag(tx, world, now);
+    }
     return applied;
   });
 }
@@ -1193,9 +1228,44 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
        `applyDelete` clears the assignments with it. */
     for (const r of await tx.select({ id: tags.id }).from(tags).where(eq(tags.accountId, world.accountId)))
       if (!gen.tag.has(r.id)) await sweepOne("tag", r.id);
+    /* Folder entities the bootstrap never named — a folder deleted (or the feature disabled)
+       while this mirror was offline. Scoped through the mirrored mailbox list: `mailbox_folders`
+       has no account column, and the mirrored mailboxes ARE this account's. */
+    for (const r of await tx.select({ id: mailboxFolders.id }).from(mailboxFolders)
+      .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+      .where(eq(mailboxes.accountId, world.accountId)))
+      if (!gen.folder.has(r.id)) await sweepOne("folder", r.id);
 
+    await reconcileLocalFoldersFlag(tx, world, now);
     return swept;
   });
+}
+
+/**
+ * THE LOCAL "USE FOLDERS" FLAG, derived from what the hosted feed actually sent. The local
+ * SyncService (cloud-read serves the shell from this database with the SAME service the hosted
+ * API uses) gates folder reads on `account_settings.folders_enabled_at` — and the honest local
+ * value is exactly "does this mirror hold folder entities": the hosted feed emits them ONLY
+ * while the hosted flag is on, and deletes them all on a disable. So: rows present ⇒ ensure the
+ * flag is set; none ⇒ ensure it is NULL. (An enabled-but-folderless hosted account mirrors to
+ * NULL here, which serves the same empty answer the hosted /sync gives — the shell's own switch
+ * reads the hosted /consent over the bridge and stays authoritative for the interface.)
+ */
+async function reconcileLocalFoldersFlag(tx: Tx, world: LocalWorld, now: Date): Promise<void> {
+  const [row] = await tx.select({ id: mailboxFolders.id }).from(mailboxFolders)
+    .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+    .where(eq(mailboxes.accountId, world.accountId)).limit(1);
+  const wantOn = row !== undefined;
+  const [settings] = await tx.select({ at: accountSettings.foldersEnabledAt })
+    .from(accountSettings).where(eq(accountSettings.accountId, world.accountId)).limit(1);
+  const isOn = (settings?.at ?? null) !== null;
+  if (wantOn === isOn) return;
+  await tx.insert(accountSettings)
+    .values({ accountId: world.accountId, foldersEnabledAt: wantOn ? now : null })
+    .onConflictDoUpdate({
+      target: accountSettings.accountId,
+      set: { foldersEnabledAt: wantOn ? now : null, updatedAt: now },
+    });
 }
 
 /**
