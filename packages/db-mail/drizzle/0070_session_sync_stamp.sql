@@ -1,0 +1,49 @@
+-- WHEN A SESSION'S `/sync` READ LAST REACHED THE ACCOUNT'S HORIZON — the per-SESSION twin of
+-- mail 0064's `devices.last_synced_at`.
+--
+-- ══ WHAT THIS FIXES ════════════════════════════════════════════════════════════════════════
+--
+-- 0064 stamped the DEVICE, and only a session that carries a `device_id` has one. Measured
+-- live, that left most real installs invisible: a desktop signed in through the browser-style
+-- door holds a plain deviceless session (`device_id IS NULL` — the deliberate 0061 shape), so
+-- its mirror could wedge for days while every device-level signal said "no such device". The
+-- incident this column exists for is exactly that: a signed-in desktop, session rotating
+-- happily, pulls never converging, and the `device_sync_stale` alert watching a population the
+-- install was never in.
+--
+-- The fix is the same stamp one level down: the last time THIS SESSION's `/sync` read presented
+-- the horizon cursor and got the empty tail — the client's own proof of a committed drain. The
+-- `session_sync_stale` alert reads it together with `last_seen_at`: a session that is still
+-- making requests (rotating, polling) but has not converged past the threshold is a wedged
+-- mirror with a person in front of it, whatever kind of install it is.
+--
+-- ══ THE COLUMN ═════════════════════════════════════════════════════════════════════════════
+--
+--   last_synced_at  timestamptz NULL
+--       NULL means "this session has never completed a drain" — the value every existing row
+--       gets, and the honest one. No backfill: a backfilled `now()` would assert a convergence
+--       nobody observed and silence the alert for exactly the sessions it exists for.
+--
+-- Written by the API's `GET /sync` handler alone, throttled in the statement itself (at most
+-- one write per session per five minutes), only on the empty tail. Device-backed sessions get
+-- BOTH stamps — the device row remains the named-device alert's population; this column is the
+-- one every authenticated session has.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO INDEX ═════════════════════════════════════════════════════════
+--
+-- One nullable `ADD COLUMN IF NOT EXISTS`, no default, no DML. The alert scan reads live
+-- sessions (hundreds fleet-wide) — no index earns its keep at that size. `ADD COLUMN` inherits
+-- the table's grants.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → API. Several auth reads select whole `sessions` rows through the drizzle schema
+-- (`listDevices`, `requireStepUp`, `rotateRefresh`), so an API deployed ahead of this answers
+-- 42703 across the auth surface; the health marker `["sessions","last_synced_at"]` turns that
+-- into `503 schema_incomplete` naming this file. No worker half: the sync host neither reads
+-- nor writes the column. Never projected into a DTO.
+--
+-- ROLLBACK is `ALTER TABLE sessions DROP COLUMN last_synced_at`. The cost is the session-level
+-- alert going blind again; no user data is involved.
+
+ALTER TABLE "sessions" ADD COLUMN IF NOT EXISTS "last_synced_at" timestamp with time zone;

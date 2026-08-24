@@ -42,8 +42,9 @@ function parseTypes(raw: string | null): EntityType[] | undefined {
 export const DEVICE_SYNC_STAMP_MIN_GAP_MS = 5 * 60_000;
 
 /**
- * Stamp `devices.last_synced_at` (mail 0064) for the session's device — the per-device "last
- * time this mirror was genuinely current" the `device_sync_stale` alert reads.
+ * Stamp `devices.last_synced_at` (mail 0064) for the session's device AND
+ * `sessions.last_synced_at` (mail 0070) for the session itself — the "last time this mirror
+ * was genuinely current" that `device_sync_stale` / `session_sync_stale` read.
  *
  * Called ONLY when the response is the EMPTY TAIL — no changes, `hasMore: false`, the cursor
  * handed back unchanged. That shape is the client's own proof of a COMMITTED horizon: both
@@ -54,7 +55,14 @@ export const DEVICE_SYNC_STAMP_MIN_GAP_MS = 5 * 60_000;
  * applied it; a client that keeps fetching that page and dying before its commit would have
  * looked current forever. A device paging a backlog (or stuck re-bootstrapping it — the
  * measured failure this column exists for) never presents the horizon and never stamps.
- * A deviceless session (a plain browser tab) matches no row and writes nothing.
+ *
+ * TWO STAMPS, because the two alerts watch two populations. A NAMED device (a pairing redeem,
+ * the desktop's native claim) has a device row and the device alert owns it. But most real
+ * installs are DEVICELESS on purpose (mail 0061: a browser-door desktop, a plain web tab hold
+ * `device_id IS NULL` sessions) — the incident this line exists for was exactly such a desktop,
+ * wedged for days while the device alert watched a population it was never in. So the SESSION
+ * is stamped for every authenticated caller; the device stamp additionally lands when the
+ * session names one. Same throttle on both, carried in each UPDATE's own predicate.
  *
  * FAILURE POSTURE: swallowed, deliberately, and the direction is fail-LOUD for the alert —
  * a stamp that stops landing lets `last_synced_at` age, which makes the staleness alert FIRE,
@@ -65,6 +73,12 @@ async function stampDeviceSynced(deps: ApiDeps): Promise<void> {
   if (!sessionId) return;
   try {
     const cutoff = new Date(deps.now().getTime() - DEVICE_SYNC_STAMP_MIN_GAP_MS);
+    await deps.db.update(sessions)
+      .set({ lastSyncedAt: deps.now() })
+      .where(and(
+        eq(sessions.id, sessionId),
+        or(isNull(sessions.lastSyncedAt), lt(sessions.lastSyncedAt, cutoff)),
+      ));
     await deps.db.update(devices)
       .set({ lastSyncedAt: deps.now() })
       .where(and(

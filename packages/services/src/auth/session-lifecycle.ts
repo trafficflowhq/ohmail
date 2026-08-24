@@ -8,7 +8,7 @@ import { surfaceTtls, type SurfaceTtls } from "./config.js";
 import type { SessionSurface } from "./config-types.js";
 import type { AuthConfig } from "./types.js";
 import type {
-  SessionEstablished, OAuthTokens, Device, SessionUser, TwofaEnrolled, AuthAuditEvent,
+  SessionEstablished, OAuthTokens, Device, DeviceKind, SessionUser, TwofaEnrolled, AuthAuditEvent,
 } from "./types.js";
 import type { SessionScope } from "./resolve-session.js";
 
@@ -52,9 +52,16 @@ import type { SessionScope } from "./resolve-session.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
-/** The closed set a paired device may declare itself as. `devices.kind`'s own vocabulary. */
-export type PairedDeviceKind = "web" | "macos";
-const PAIRED_DEVICE_KINDS: ReadonlySet<string> = new Set<PairedDeviceKind>(["web", "macos"]);
+/**
+ * The closed set a paired device may declare itself as — `devices.kind`'s own vocabulary,
+ * now the shared {@link DeviceKind} (see its doc for the legacy `"macos"` reading and why
+ * new kinds are server-side enablement until clients declare them).
+ */
+export type PairedDeviceKind = DeviceKind;
+export const PAIRED_DEVICE_KINDS: ReadonlySet<string> = new Set<PairedDeviceKind>([
+  "web", "macos", "desktop-linux", "desktop-macos", "desktop-windows",
+  "mobile-android", "mobile-ios",
+]);
 
 export interface SessionLifecycleDeps {
   config: AuthConfig;
@@ -193,7 +200,8 @@ export class SessionLifecycle {
     // The runtime whitelist behind the type, for JavaScript callers and wire input — the same
     // division `mintPairingToken` establishes for its grant.
     if (typeof b.kind !== "string" || !PAIRED_DEVICE_KINDS.has(b.kind)) {
-      throw new ServiceError("validation_failed", 400, 'device kind must be "web" or "macos"');
+      throw new ServiceError("validation_failed", 400,
+        `device kind must be one of ${[...PAIRED_DEVICE_KINDS].map((k) => `"${k}"`).join(", ")}`);
     }
     const db = asTx(ctx);
     const user = await this.loadUser(db, b.userId);
@@ -417,7 +425,7 @@ export class SessionLifecycle {
   protected async establish(
     ctx: ServiceContext, user: typeof users.$inferSelect,
     o: {
-      method?: AuthAuditEvent["method"]; kind: "web" | "macos"; ip?: string;
+      method?: AuthAuditEvent["method"]; kind: DeviceKind; ip?: string;
       familyId?: string; deviceId?: string;
       twofaAt: Date | null;
       /**
@@ -627,6 +635,19 @@ export class SessionLifecycle {
           if (renewable) return this.mintRotation(db, existing, now, ttls);
         }
         await this.revokeFamily(db, existing.familyId, now);
+        // THE SWEEP LEAVES A ROW, in the same transaction scope as the sweep itself. It used
+        // to leave nothing: the client just started getting 401s, and the only record of WHY
+        // was raw session rows an operator had to correlate by revoked_at after the fact —
+        // the Aug-21 incident, reconstructed exactly that way. Who (the user row), when (the
+        // event's own stamp), which family and session (the detail), what triggered it (the
+        // event name). The hosted tier writes `auth_events`; the lifecycle base records
+        // nothing, which is that tier's truth for every audit hook. The user read is
+        // DEFENSIVE, never `loadUser`: a vanished user must not turn this 401 into another
+        // error, and `audit` accepts null (the row keeps the family id either way).
+        const [reuseUser] = await db.select().from(users)
+          .where(eq(users.id, existing.userId)).limit(1);
+        await this.audit(db, reuseUser ?? null, "refresh_reuse_revoked", undefined, ctx,
+          `family=${existing.familyId} session=${existing.sessionId}`);
         throw new ServiceError("unauthorized", 401, "refresh token reuse detected");
       }
       throw new ServiceError("unauthorized", 401, "refresh token expired");
@@ -765,10 +786,17 @@ export class SessionLifecycle {
    * and a mail-only store has no such table, so the base records nothing: the same posture the
    * launch-session mint has always had (no audit row per launch). `AuthService` overrides this
    * with the real INSERT, so every hosted path writes exactly the rows it always wrote.
+   *
+   * `detail` is the optional MACHINE half of a row — a short `key=value` string the writer
+   * composes from ids it already holds (the reuse row's `family=… session=…`). The hosted
+   * override stores it in the row's `device` column IN PLACE of the user agent, for the events
+   * that have something more useful to say there than what client string presented. Callers
+   * that pass nothing keep the user-agent behaviour byte-for-byte.
    */
   protected async audit(
     _db: Tx, _user: typeof users.$inferSelect | null,
     _event: AuthAuditEvent["event"], _method: AuthAuditEvent["method"] | undefined, _ctx: ServiceContext,
+    _detail?: string,
   ): Promise<void> {
     /* no event table on the lifecycle half — see the doc comment */
   }

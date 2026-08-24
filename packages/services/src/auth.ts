@@ -40,7 +40,7 @@
  */
 
 export {
-  SessionLifecycle, makeSessionLifecycle,
+  SessionLifecycle, makeSessionLifecycle, PAIRED_DEVICE_KINDS,
   type SessionLifecycleDeps, type PairedDeviceKind,
 } from "./auth/session-lifecycle.js";
 export {

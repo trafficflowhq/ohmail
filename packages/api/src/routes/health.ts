@@ -817,6 +817,14 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // above the journal maximum — see REISSUED_ORIGINALS in db/src/baseline.ts; one marker,
   // both entries.)
   ["account_settings", "folders_enabled_at"],
+  // mail 0070_session_sync_stamp — the per-SESSION sync-horizon twin of 0064, for the installs
+  // that hold no device row (mail 0061's deliberate deviceless shape). It earns a marker on the
+  // whole-row-select rule with a wider blast radius than 0064's: `rotateRefresh`, `listDevices`
+  // and `requireStepUp` all `select().from(sessions)`, so an API ahead of the migration 42703s
+  // token refresh — the whole signed-in surface, not one panel. The sync route's stamp itself is
+  // a guarded UPDATE that would merely fail loudly. No worker half: the sync host neither reads
+  // nor writes the column. Deploy order: migration → API, no third step.
+  ["sessions", "last_synced_at"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1407,13 +1415,18 @@ export const MAIL_EXPECTED_MARKERS =
  * `0069_folders_enabled_reissue` re-runs 0066's one idempotent statement from above the
  * journal maximum (0066's original position was skippable on databases that migrated between
  * two lanes' landings — `REISSUED_ORIGINALS` in packages/db/src/baseline.ts carries the whole
- * account, including why the file is a byte copy). Same column, so the 0066 marker covers it;
- * it is the newest entry, so it is the tag below.
+ * account, including why the file is a byte copy). Same column, so the 0066 marker covers it.
+ *
+ * `0070_session_sync_stamp` is probed as `sessions.last_synced_at` — the per-SESSION sync
+ * horizon (0064's twin for deviceless installs). The whole-row-select blast radius is the
+ * AUTH surface: `rotateRefresh`, `listDevices` and `requireStepUp` all
+ * `select().from(sessions)`, so a too-early API 42703s token refresh itself. One column, no
+ * CHECK, no index, no worker half; it is the newest entry, so it is the tag below.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0069_folders_enabled_reissue";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0070_session_sync_stamp";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

@@ -571,18 +571,32 @@ GRANT SELECT (
 REVOKE ALL ON public.mailbox_credentials FROM ohmail_admin;
 GRANT SELECT (mailbox_id, transport) ON public.mailbox_credentials TO ohmail_admin;
 
--- `devices` / `sessions` — THE DEVICE-SYNC STALENESS ALERT'S INPUTS (mail 0064; alerts.ts
--- rule 8). Reliability data by the isolation rule's own words: ids, kinds and timestamps,
+-- `devices` / `sessions` — THE SYNC-STALENESS ALERTS' INPUTS (mail 0064 + 0070; alerts.ts
+-- rules 8/8b). Reliability data by the isolation rule's own words: ids, kinds and timestamps,
 -- the same class as `mailboxes.last_sync_at` above. Deliberately NOT `devices.label`
--- (user-chosen text) and NOT `devices.ip`; on `sessions` exactly the two columns the
--- armed-check reads — NEVER `access_token_hash`, `refresh_token_hmac_key` or any other
--- credential column. (The rule's first form was a SECURITY DEFINER carrier; §pre-flight
--- refuses those by construction, and mail 0068 retired it — these column grants are the
--- designed mechanism.)
+-- (user-chosen text) and NOT `devices.ip` — NEVER `access_token_hash`,
+-- `refresh_token_hmac_key` or any other credential column. (The rule's first form was a
+-- SECURITY DEFINER carrier; §pre-flight refuses those by construction, and mail 0068 retired
+-- it — these column grants are the designed mechanism.)
+--
+-- `devices.created_at` joined for the never-synced arm (a NULL stamp is measured from the
+-- pairing itself). `sessions` widened from `(device_id, revoked_at)` to what rule 8b reads:
+-- its own id (the alert key), the account (the moved-on gate), `scope` (a CHECK-constrained
+-- two-value token), and the two timestamps whose spread IS the alarm ("still requesting,
+-- not converging").
 REVOKE ALL ON public.devices FROM ohmail_admin;
-GRANT SELECT (id, account_id, kind, last_synced_at) ON public.devices TO ohmail_admin;
+GRANT SELECT (id, account_id, kind, created_at, last_synced_at) ON public.devices TO ohmail_admin;
 REVOKE ALL ON public.sessions FROM ohmail_admin;
-GRANT SELECT (device_id, revoked_at) ON public.sessions TO ohmail_admin;
+GRANT SELECT (id, account_id, device_id, scope, revoked_at, last_seen_at, last_synced_at) ON public.sessions TO ohmail_admin;
+
+-- `auth_events` — THE REUSE-REVOCATION ALERT'S INPUT (alerts.ts rule 9) and the admin account
+-- view's security row. Event NAMES and timestamps only: the `event` vocabulary is a closed
+-- application set written exclusively by `AuthService.audit`. Deliberately NOT `ip` and NOT
+-- `device` — `device` carries a client-chosen User-Agent string (or, on the reuse row, the
+-- family id), foreign input by the same argument that keeps `devices.label` out. Not `method`
+-- either; no reader here needs it.
+REVOKE ALL ON public.auth_events FROM ohmail_admin;
+GRANT SELECT (id, account_id, user_id, event, at) ON public.auth_events TO ohmail_admin;
 
 -- ── 7. `folder_state` / `flag_state` — NO GRANT. ──────────────────────────────────────────
 --
@@ -921,10 +935,13 @@ GRANT DELETE ON public.alert_state TO ohmail_admin;
 --                       `code_hash`
 --   workflows, workflow_runs, workflow_proposals   `steps`/`trigger` quote mail
 --   public.audit_log    reachable ONLY through admin.audit_log, above
---   sessions, credentials, webauthn_credentials, webauthn_challenges, totp_secrets,
---   recovery_codes, devices, refresh_tokens, login_tokens, oauth_auth_codes, auth_events,
+--   credentials, webauthn_credentials, webauthn_challenges, totp_secrets,
+--   recovery_codes, refresh_tokens, login_tokens, oauth_auth_codes,
 --   auth_throttle, idempotency_keys, push_subscriptions, account_sync_state
 --                       every one of these stores or gates a live credential
+--                       (`devices`, `sessions` and `auth_events` moved OUT of this census in
+--                       §6's stanza: named non-credential columns for the staleness and
+--                       reuse-revocation alerts, never a token, hash or key column)
 --
 -- None of them appears above, so step 2 leaves `ohmail_admin` holding nothing on any of them,
 -- and a future table is in the same position until somebody adds a stanza for it.

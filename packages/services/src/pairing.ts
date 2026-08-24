@@ -2,6 +2,7 @@ import { and, count, eq, gt, isNull, isNotNull, desc, type SQL } from "drizzle-o
 import { type Tx } from "@trafficflow/db";
 import { pairingTokens } from "@trafficflow/db";
 import { generateToken, hashToken } from "./auth/crypto.js";
+import { PAIRED_DEVICE_KINDS, type PairedDeviceKind } from "./auth/session-lifecycle.js";
 import type { ServiceContext } from "./context.js";
 import type { OAuthTokens } from "./auth/types.js";
 import { ServiceError } from "./errors.js";
@@ -363,7 +364,7 @@ export async function consumePairingToken(
  */
 export interface PairedDeviceSessionMinter {
   establishPairedDevice(
-    ctx: ServiceContext, b: { userId: string; label: string; kind: "web" | "macos" },
+    ctx: ServiceContext, b: { userId: string; label: string; kind: PairedDeviceKind },
   ): Promise<{ tokens: OAuthTokens }>;
 }
 
@@ -393,11 +394,16 @@ export interface PairedDeviceSessionMinter {
  * pretence one rotation deep).
  */
 export async function redeemDevicePair(
-  ctx: ServiceContext, auth: PairedDeviceSessionMinter, input: { token: string; kind?: "web" | "macos" },
+  ctx: ServiceContext, auth: PairedDeviceSessionMinter, input: { token: string; kind?: PairedDeviceKind },
 ): Promise<{ tokens: OAuthTokens }> {
   const kind = input.kind === undefined ? "web" : input.kind;
-  if (kind !== "web" && kind !== "macos") {
-    throw new ServiceError("validation_failed", 400, 'device kind must be "web" or "macos"');
+  // The same closed set `establishPairedDevice` enforces (it re-checks; this refusal is the
+  // one that matters because it happens BEFORE the burn — see the header). Platform-qualified
+  // kinds (desktop-linux, mobile-android, …) joined the vocabulary so the device list and the
+  // staleness alarm can say WHICH install a row is; `"macos"` stays as the legacy spelling.
+  if (!PAIRED_DEVICE_KINDS.has(kind)) {
+    throw new ServiceError("validation_failed", 400,
+      `device kind must be one of ${[...PAIRED_DEVICE_KINDS].map((k) => `"${k}"`).join(", ")}`);
   }
   return inTransaction(ctx, async (txCtx) => {
     const consumed = await consumePairingToken(txCtx, { token: input.token, grant: "device-pair" });

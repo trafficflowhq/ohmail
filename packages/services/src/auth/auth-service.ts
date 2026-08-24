@@ -2500,10 +2500,13 @@ export class AuthService extends SessionLifecycle {
   protected override async audit(
     db: Tx, user: typeof users.$inferSelect | null,
     event: AuthAuditEvent["event"], method: AuthAuditEvent["method"] | undefined, ctx: ServiceContext,
+    detail?: string,
   ): Promise<void> {
     await db.insert(authEvents).values({
       accountId: user?.accountId ?? null, userId: user?.id ?? null,
-      event, method: method ?? null, ip: ctx.ip ?? null, device: ctx.userAgent ?? null,
+      // `detail` displaces the user agent when the writer has something sharper for this slot
+      // (the reuse row's `family=… session=…`) — see the base hook's doc.
+      event, method: method ?? null, ip: ctx.ip ?? null, device: detail ?? ctx.userAgent ?? null,
     });
   }
 

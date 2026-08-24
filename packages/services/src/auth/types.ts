@@ -133,9 +133,30 @@ export interface RecoveryCodesResp {
   generatedAt: string;
 }
 
+/**
+ * `devices.kind`'s CLOSED vocabulary — what a device row says it is, so the staleness alarm
+ * and the admin/device views can name WHICH install went dark rather than "a macos".
+ *
+ * `"macos"` is the LEGACY spelling and stays admissible for ever: every pre-vocabulary device
+ * row carries it, the shipped desktop's link-claim still declares it, and a closed set that
+ * refuses its own history would 400 the installed base. It reads as "a native desktop of
+ * unrecorded platform". New clients declare the platform-qualified kinds; the server accepts
+ * both and never rewrites a row. `"web"` keeps its structural meaning everywhere (the one kind
+ * the device staleness alarm excludes — a closed browser is not an incident).
+ *
+ * The set is server-side ENABLEMENT only until clients declare the new values — the desktop
+ * app hardcodes its claim today and the pairing redeem defaults to `"web"`; teaching each
+ * client to say what it is is a client-side change, tracked separately.
+ */
+export type DeviceKind =
+  | "web"
+  | "macos"
+  | "desktop-linux" | "desktop-macos" | "desktop-windows"
+  | "mobile-android" | "mobile-ios";
+
 export interface Device {
   id: string;
-  kind: "web" | "macos";
+  kind: DeviceKind;
   label: string;
   createdAt: string;
   lastSeenAt: string;
@@ -172,7 +193,16 @@ export interface AuthAuditEvent {
     // would otherwise be the first and only sign that a second machine now has a rolling 400-day
     // credential. Seeing the pair — an issue here, a login from elsewhere moments later — is
     // what tells the account's owner whether that machine was theirs.
-    | "desktop_link_issued";
+    | "desktop_link_issued"
+    // Refresh-token REUSE DETECTION revoked a whole session family: a consumed token was
+    // presented again outside the concurrency grace (`rotateRefresh`'s reuse branch). Recorded
+    // because the sweep is otherwise SILENT on every surface — the client just starts getting
+    // 401s and the server keeps no record of why (the Aug-21 incident was reconstructed from
+    // raw session rows). Either a stolen token was replayed or a client's rotation is broken;
+    // both are worth a row. The `device` field carries `family=<id> session=<id>` — the
+    // machine-readable half an investigation starts from — instead of a user agent, which the
+    // reuse presentation does not reliably have.
+    | "refresh_reuse_revoked";
   method?: "webauthn" | "totp" | "recovery_code" | "password";
   ip: string;
   device?: string;

@@ -177,13 +177,27 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   ],
   // PRESENCE ONLY: the composite primary key, and nothing that makes a mailbox connectable.
   "public.mailbox_credentials": ["mailbox_id", "transport"],
-  // THE DEVICE-SYNC STALENESS ALERT'S INPUTS (mail 0064). Reliability data by the isolation
+  // THE SYNC-STALENESS ALERTS' INPUTS (mail 0064 + 0070). Reliability data by the isolation
   // rule's own words — ids, kinds and timestamps, the same class as `mailboxes.last_sync_at`
-  // four entries up. Deliberately NOT `label` (user-chosen text) and NOT `ip`. `sessions` gets
-  // exactly the two columns the alert's armed-check reads — never a token column, never a hash;
-  // the presence of a session row for a device the console already lists is not content.
-  "public.devices": ["id", "account_id", "kind", "last_synced_at"],
-  "public.sessions": ["device_id", "revoked_at"],
+  // four entries up. Deliberately NOT `label` (user-chosen text) and NOT `ip`.
+  //
+  // `devices.created_at` joined for the never-synced arm (a NULL stamp is measured from the
+  // pairing itself). `sessions` widened from the original two columns to what the
+  // `session_sync_stale` rule reads: its own id (the alert key), the account (the moved-on
+  // gate), `scope` (a CHECK-constrained two-value token), and the two timestamps whose spread
+  // IS the alarm ("still requesting, not converging"). Never a token column, never a hash;
+  // the presence and recency of a session row are not content.
+  "public.devices": ["id", "account_id", "kind", "created_at", "last_synced_at"],
+  "public.sessions": [
+    "id", "account_id", "device_id", "scope", "revoked_at", "last_seen_at", "last_synced_at",
+  ],
+  // THE REUSE-REVOCATION ALERT'S INPUT and the admin account view's security row. Event NAMES
+  // and timestamps only — the `event` vocabulary is a closed application set (`AuthAuditEvent`),
+  // written exclusively by `AuthService.audit`. Deliberately NOT `ip` and NOT `device`: `device`
+  // carries a client-chosen User-Agent string (or, on the reuse row, the family id) — foreign
+  // input by the same argument that keeps `devices.label` off this list. Not `method` either;
+  // no rule reads it, and the narrowest grant that serves the reader is the rule here.
+  "public.auth_events": ["id", "account_id", "user_id", "event", "at"],
   // `public.folder_state`, `public.flag_state` and `public.change_log`: deliberately ABSENT. See
   // the block above `public.accounts`, and `scripts/harden-staff-role.sql` §7 and §8.
   "public.billing_customers": [

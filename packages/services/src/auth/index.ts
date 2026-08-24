@@ -5,7 +5,7 @@ export {
 // The session MACHINERY `AuthService` extends — carved out in Phase 3 so the desktop engine
 // can run it without the ceremony. See `session-lifecycle.ts`'s header for the boundary.
 export {
-  SessionLifecycle, makeSessionLifecycle,
+  SessionLifecycle, makeSessionLifecycle, PAIRED_DEVICE_KINDS,
   type SessionLifecycleDeps, type PairedDeviceKind,
 } from "./session-lifecycle.js";
 // The stale-web-session reaper — HOSTED-barrel only, deliberately: `src/auth.ts` (the engine

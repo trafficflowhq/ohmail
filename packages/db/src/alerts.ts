@@ -1,7 +1,7 @@
 import { and, eq, gt, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import {
-  alertState, billingEvents, billingReconciliationRuns, devices, mailboxes, outboundSends,
-  sessions, workerHeartbeats,
+  alertState, authEvents, billingEvents, billingReconciliationRuns, devices, mailboxes,
+  outboundSends, sessions, workerHeartbeats,
 } from "./schema.js";
 import { accountsWithSyncDisabled } from "./billing.js";
 import { accountsAtStorageCap } from "./storage-cloud.js";
@@ -111,8 +111,36 @@ export type AlertKind =
    * stuck re-paging a backlog forever counts as quiet, exactly like one whose session died.
    * This is the alert a week of dead desktop sync did not have: the client retries on its own
    * backoff, its refresh family keeps rotating, and no other server-side signal moves.
+   *
+   * Two arms share this kind and its per-device key. A device that STAMPED once and went quiet
+   * is the original arm. A device that NEVER stamped (`last_synced_at IS NULL`) older than the
+   * threshold, with a LIVE session and an account that moved on, is the second — added after
+   * the first real incident showed the NULL exclusion was the exact blind spot: every wedged
+   * mirror is NULL right up until the first time it converges, so "never-synced asserts
+   * nothing" described precisely the population the alert existed for.
    */
-  | "device_sync_stale";
+  | "device_sync_stale"
+  /**
+   * A SESSION that used to reach the sync horizon is still making requests but has not
+   * converged past the threshold while its account kept changing. Read from
+   * `sessions.last_synced_at` (mail 0070) beside `sessions.last_seen_at`. This is the arm that
+   * covers DEVICELESS installs — the browser-door desktop, a long-lived web tab — which hold
+   * `device_id IS NULL` sessions (mail 0061) and are invisible to `device_sync_stale` by
+   * construction. "Still making requests" is the discriminator that keeps a closed tab silent:
+   * a wedged install rotates its refresh family and polls on its own backoff (the measured
+   * incident: four rotations an hour for five days), while a tab someone closed stops
+   * presenting anything and simply ages out.
+   */
+  | "session_sync_stale"
+  /**
+   * Refresh-token REUSE DETECTION revoked a session family inside the lookback window. Read
+   * from `auth_events` (`event = 'refresh_reuse_revoked'`, written by the rotation's reuse
+   * branch). Either a stolen token was replayed or a client's rotation is broken — both worth
+   * a page, and before this row existed the only record was the raw session rows an operator
+   * had to reconstruct after the fact (the Aug-21 incident). Keyed per account; auto-resolves
+   * when the window slides past the newest event.
+   */
+  | "session_reuse_revoked";
 
 export type AlertSeverity = "critical" | "warning";
 
@@ -141,8 +169,20 @@ export interface AlertThresholds {
    * has newer changes, is a dead mirror. Three days: a laptop closed over a weekend is not a
    * page, a desktop that died on a Monday pages before the week is out — measured against the
    * incident this exists for, which ran silent for seven.
+   *
+   * `session_sync_stale` reads the SAME threshold on purpose — the condition is the same
+   * quantity one level down ("a sync client that stopped converging"), and two knobs for one
+   * judgment is how a console ends up disagreeing with the pager. It doubles as the
+   * still-requesting bound: a session unseen for longer than this is a closed tab, not a
+   * wedged install.
    */
   deviceSyncStaleMs: number;
+  /**
+   * How far back the reuse-revocation rule looks in `auth_events`. 24 hours: long enough that
+   * an overnight incident is still on the console in the morning and pages once per repeat
+   * interval while fresh, short enough that a handled incident leaves the board by itself.
+   */
+  reuseRevokedWindowMs: number;
 }
 
 export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
@@ -151,6 +191,7 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   syncLagMs: 15 * 60 * 1000,
   reconcileStaleMs: 6 * 60 * 60 * 1000,
   deviceSyncStaleMs: 3 * 24 * 60 * 60 * 1000,
+  reuseRevokedWindowMs: 24 * 60 * 60 * 1000,
 };
 
 /**
@@ -668,10 +709,196 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
         oldestSeconds: staleSeconds,
       });
     }
+
+    // ── the NEVER-SYNCED arm — the exclusion the first real incident proved wrong ─────────
+    //
+    // The rule above requires `last_synced_at IS NOT NULL`, on the argument that never-synced
+    // asserts nothing. Then the first incident this alert existed for arrived exactly there:
+    // every wedged mirror is NULL right up until the first time it converges, so a desktop
+    // whose pulls never converged — or that died before 0064 ever stamped it — sat outside
+    // the population for ever. Both production device rows in the incident were NULL.
+    //
+    // So a NULL stamp older than the threshold IS an assertion, measured from the row's own
+    // `created_at`: paired that long ago, never once current, account moved on since pairing.
+    // The armed gate is deliberately NARROWER than the stamped arm's — a LIVE session only.
+    // A never-synced device whose session was revoked is a pairing that never worked and was
+    // already taken back (test fixtures are exactly this shape); nobody is reading stale mail
+    // from it, because it never showed mail at all. The stamped arm keeps its revoked-within-
+    // 14-days window because there a WORKING mirror went dark and its person does not know.
+    const neverSynced = await db
+      .select({
+        id: devices.id,
+        accountId: devices.accountId,
+        kind: devices.kind,
+        createdAt: devices.createdAt,
+      })
+      .from(devices)
+      .where(and(
+        ne(devices.kind, "web"),
+        isNull(devices.lastSyncedAt),
+        lt(devices.createdAt, deviceStaleCut),
+      ));
+    for (const d of neverSynced) {
+      const movedOn = await db
+        .select({ id: mailboxes.id })
+        .from(mailboxes)
+        .where(and(eq(mailboxes.accountId, d.accountId), gt(mailboxes.lastSyncAt, d.createdAt)))
+        .limit(1);
+      if (movedOn.length === 0) continue;
+      const armed = await db
+        .select({ deviceId: sessions.deviceId })
+        .from(sessions)
+        .where(and(eq(sessions.deviceId, d.id), isNull(sessions.revokedAt)))
+        .limit(1);
+      if (armed.length === 0) continue;
+      const staleSeconds = secondsBetween(now, d.createdAt);
+      alerts.push({
+        key: `device_sync_stale:${d.id}`,
+        kind: "device_sync_stale",
+        severity: "warning",
+        title: `A paired ${d.kind} device has NEVER completed a sync (paired ${humanAge(staleSeconds)} ago)`,
+        detail:
+          `Device ${d.id} (kind ${d.kind}) was paired ${humanAge(staleSeconds)} ago ` +
+          `(threshold ${humanAge(Math.round(t.deviceSyncStaleMs / 1000))}) and has never once reached ` +
+          `the sync horizon, while its account has changes it never received. Its session is live — ` +
+          `either the mirror has been wedged since pairing or the pairing never worked, and the ` +
+          `person in front of it is looking at an empty or frozen mailbox.`,
+        count: 1,
+        oldestSeconds: staleSeconds,
+      });
+    }
   } catch (err) {
     const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
     // 42501 insufficient_privilege: a handle the provisioner's grants have not reached yet.
     // Everything else stays fatal — a swallowed real fault is a silenced pager.
+    if (code !== "42501") throw err;
+  }
+
+  // ── 8b. a DEVICELESS session that stopped converging — the browser-door install ─────────
+  //
+  // The population `device_sync_stale` cannot see: sessions with `device_id IS NULL` (mail
+  // 0061's deliberate shape — the browser-door desktop, a plain web tab) plus sessions whose
+  // device row is kind 'web' (a paired phone browser; the device rule excludes that kind on
+  // purpose). Read from `sessions.last_synced_at` (mail 0070).
+  //
+  // THREE GATES, each carrying half the false-positive load:
+  //   · a NON-NULL stamp — the session PROVED it is a sync client once. A REST-only caller
+  //     (a script, an admin tool) never stamps and can never fire; the cost is that an install
+  //     wedged from its very first pull is invisible at this level (documented blind spot —
+  //     the device rule's never-synced arm covers NAMED devices there).
+  //   · `last_seen_at` inside the threshold — the install is STILL MAKING REQUESTS (rotation,
+  //     polls). A closed tab freezes both stamps together and ages out silently; the wedged
+  //     incident rotated four times an hour for five days and stays inside for ever.
+  //   · the account MOVED ON — same `mailboxes.last_sync_at` evidence as rule 8, same reason
+  //     `change_log` is not read (row existence there is information the blind role is
+  //     refused).
+  //
+  // Sessions revoked by reuse detection stop requesting and leave this rule's population at
+  // the revocation; rule 9 below is the signal for those, at the moment it happens.
+  //
+  // Same isolation posture as rule 8: the sessions columns this reads are staff-allowlist
+  // entries (`staff-grants.ts`), and a handle the provisioner has not reached yet must cost
+  // exactly this rule — only 42501 is swallowed.
+  try {
+    const staleSessions = await db
+      .select({
+        id: sessions.id,
+        accountId: sessions.accountId,
+        lastSyncedAt: sessions.lastSyncedAt,
+        deviceKind: devices.kind,
+      })
+      .from(sessions)
+      .leftJoin(devices, eq(sessions.deviceId, devices.id))
+      .where(and(
+        isNull(sessions.revokedAt),
+        eq(sessions.scope, "full"),
+        isNotNull(sessions.lastSyncedAt),
+        lt(sessions.lastSyncedAt, deviceStaleCut),
+        gt(sessions.lastSeenAt, deviceStaleCut),
+        or(isNull(sessions.deviceId), eq(devices.kind, "web")),
+      ));
+    for (const s of staleSessions) {
+      if (s.lastSyncedAt == null) continue; // isNotNull above; narrows the type
+      const movedOn = await db
+        .select({ id: mailboxes.id })
+        .from(mailboxes)
+        .where(and(eq(mailboxes.accountId, s.accountId), gt(mailboxes.lastSyncAt, s.lastSyncedAt)))
+        .limit(1);
+      if (movedOn.length === 0) continue;
+      const staleSeconds = secondsBetween(now, s.lastSyncedAt);
+      const shape = s.deviceKind === "web" ? "paired web device" : "deviceless install";
+      alerts.push({
+        key: `session_sync_stale:${s.id}`,
+        kind: "session_sync_stale",
+        // WARNING for rule 8's reason: the mail is safe, one install's mirror is what broke.
+        severity: "warning",
+        title: `A signed-in ${shape} has not synced in ${humanAge(staleSeconds)}`,
+        detail:
+          `Session ${s.id} (${shape}) last reached the sync horizon ${humanAge(staleSeconds)} ago ` +
+          `(threshold ${humanAge(Math.round(t.deviceSyncStaleMs / 1000))}), is still making requests, ` +
+          `and its account has newer changes it never received. The person in front of it is ` +
+          `reading stale mail and the client cannot say so.`,
+        count: 1,
+        oldestSeconds: staleSeconds,
+      });
+    }
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
+    if (code !== "42501") throw err;
+  }
+
+  // ── 9. refresh-token reuse revoked a family — an attack or a broken client, never routine ─
+  //
+  // `auth_events.event = 'refresh_reuse_revoked'`, written by `rotateRefresh`'s reuse branch
+  // in the same transaction as the family sweep. Before that row existed the only record was
+  // raw session rows (the Aug-21 incident was reconstructed from exactly those), and the
+  // person whose session died was told nothing by anybody.
+  //
+  // Keyed PER ACCOUNT, not per event: one broken client replaying one stale token can write a
+  // burst of rows, and the remedy (look at this account's sessions) is account-shaped. The
+  // window makes the rule self-resolving — `alert_state` keeps the incident's history after
+  // the key stops firing.
+  //
+  // Isolation posture: `auth_events` columns are on the staff allowlist (never `device`, which
+  // carries a client-chosen user-agent string, and never `ip`); a handle without the grant
+  // costs exactly this rule — only 42501 is swallowed.
+  try {
+    const reuseCut = new Date(now.getTime() - t.reuseRevokedWindowMs);
+    const reuseRows = await db
+      .select({ accountId: authEvents.accountId, at: authEvents.at })
+      .from(authEvents)
+      .where(and(eq(authEvents.event, "refresh_reuse_revoked"), gt(authEvents.at, reuseCut)));
+    const byAccount = new Map<string, { count: number; oldest: Date }>();
+    for (const r of reuseRows) {
+      const key = r.accountId ?? "unknown";
+      const cur = byAccount.get(key);
+      if (!cur) byAccount.set(key, { count: 1, oldest: r.at });
+      else {
+        cur.count += 1;
+        if (r.at < cur.oldest) cur.oldest = r.at;
+      }
+    }
+    for (const [accountId, agg] of byAccount) {
+      const oldestSeconds = secondsBetween(now, agg.oldest);
+      alerts.push({
+        key: `session_reuse_revoked:${accountId}`,
+        kind: "session_reuse_revoked",
+        // WARNING, not critical: the family is already dead — the defense fired. What needs a
+        // human is the QUESTION it leaves behind (stolen token, or a client rotating wrongly).
+        severity: "warning",
+        title: `Refresh-token reuse revoked ${agg.count === 1 ? "a session family" : `${agg.count} session families`}`,
+        detail:
+          `Reuse detection revoked ${agg.count} session ${agg.count === 1 ? "family" : "families"} ` +
+          `on account ${accountId} within the last ${humanAge(Math.round(t.reuseRevokedWindowMs / 1000))}. ` +
+          `A consumed refresh token was presented again outside the concurrency grace — either a ` +
+          `stolen token was replayed or a client's rotation is broken. The account's auth trail ` +
+          `(auth_events) carries the family id on each row.`,
+        count: agg.count,
+        oldestSeconds,
+      });
+    }
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
     if (code !== "42501") throw err;
   }
 

@@ -1262,6 +1262,13 @@ export const sessions = pgTable("sessions", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+  // mail 0070 — when this session's `/sync` read last reached the horizon (the empty tail).
+  // NULL = never completed a drain. The per-SESSION twin of `devices.last_synced_at` (0064):
+  // a deviceless install (the browser-door desktop, a plain web tab) has no device row, so
+  // this is the only place its convergence can be recorded. Stamped by the API's sync route
+  // alone, throttled in the statement; the `session_sync_stale` alert reads it beside
+  // `last_seen_at` (still requesting + not converging = a wedged mirror). Never in a DTO.
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
 }, (t) => ({
   ixUser: index("sessions_user_idx").on(t.userId),
   ixFamily: index("sessions_family_idx").on(t.familyId),

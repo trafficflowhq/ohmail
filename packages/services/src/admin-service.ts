@@ -3,6 +3,7 @@ import { accounts, auditLog, mailboxCredentials, mailboxes, users, isMailboxSync
 import {
   accountSuspensions,
   alertState,
+  authEvents,
   billingEvents,
   billingSubscriptions,
   creditBalances,
@@ -23,7 +24,7 @@ import type {
   AccountDetail, AccountPage, AccountQuery, AccountSummary, ActionCatalog, ActionSpec,
   AdminLedgerReason, AdminPlan, AdminSubscriptionStatus, AlertSummary, AuditEntry,
   BillingRevenue, BillingSnapshot, CreditLiability, FunnelSnapshot, FunnelStage,
-  LedgerEntry, MailboxHealth, StaleSend, WorkerInstanceHealth, WorkerSnapshot,
+  LedgerEntry, MailboxHealth, SecurityEvent, StaleSend, WorkerInstanceHealth, WorkerSnapshot,
 } from "./admin-dto.js";
 
 /**
@@ -875,6 +876,43 @@ async function loadAudit(db: AdminDb, accountId: string | null): Promise<AuditEn
   } satisfies AuditEntry));
 }
 
+/**
+ * The account's SECURITY events — today exactly one kind, `refresh_reuse_revoked` (the rotation's
+ * reuse branch writes it when a consumed refresh token is re-presented and the family is swept).
+ * Surfaced on the account view because the sweep is silent on every user surface, and the Aug-21
+ * incident was reconstructed from raw session rows for want of exactly this list.
+ *
+ * COLUMNS ARE THE STAFF ALLOWLIST'S (`staff-grants.ts`: auth_events id/account_id/user_id/
+ * event/at) — never `device` (a client-chosen user-agent string, or the reuse row's family id:
+ * both are investigation detail read over a privileged database connection, not console
+ * material) and never `ip`. The filter is `event = 'refresh_reuse_revoked'`, not "all auth
+ * events": login/logout traffic is activity, and this panel is for the rows that mean an
+ * incident.
+ *
+ * ISOLATION POSTURE, same as the alert rules': a staff handle the provisioner's widened grant
+ * has not reached yet answers 42501 — that must cost exactly this list (empty, and the page
+ * renders), never the account view. Anything else propagates.
+ */
+async function loadSecurityEvents(db: AdminDb, accountId: string): Promise<SecurityEvent[]> {
+  try {
+    const rows = await db
+      .select({ id: authEvents.id, event: authEvents.event, at: authEvents.at })
+      .from(authEvents)
+      .where(and(eq(authEvents.accountId, accountId), eq(authEvents.event, "refresh_reuse_revoked")))
+      .orderBy(desc(authEvents.at))
+      .limit(ADMIN_LIST_LIMIT);
+    return rows.map((r) => ({
+      id: r.id,
+      event: r.event as SecurityEvent["event"],
+      at: asDate(r.at).toISOString(),
+    }));
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
+    if (code === "42501") return [];
+    throw err;
+  }
+}
+
 export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Promise<AccountDetail | null> {
   // A malformed id must be a 404, not a Postgres `invalid input syntax for type uuid` 500 —
   // the path segment is whatever the caller typed.
@@ -889,6 +927,7 @@ export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Pr
   const mailboxList = await loadMailboxes(db, now, [id]);
   const ledger = await loadLedger(db, id);
   const audit = await loadAudit(db, id);
+  const securityEvents = await loadSecurityEvents(db, id);
 
   return {
     now: now.toISOString(),
@@ -906,6 +945,7 @@ export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Pr
     },
     ledger,
     audit,
+    securityEvents,
   };
 }
 

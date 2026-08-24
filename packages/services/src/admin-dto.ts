@@ -41,7 +41,8 @@
 export type AdminSeverity = "ok" | "warn" | "bad" | "idle";
 export type AdminAlertKind =
   | "worker_down" | "billing_events_failed" | "sends_stuck" | "sync_lag" | "storage_at_cap"
-  | "billing_reconciliation_divergence" | "billing_reconciliation_stale" | "device_sync_stale";
+  | "billing_reconciliation_divergence" | "billing_reconciliation_stale" | "device_sync_stale"
+  | "session_sync_stale" | "session_reuse_revoked";
 export type AdminMailboxStatus = "connected" | "error" | "disabled";
 export type AdminPlan = "solo" | "plus" | "pro";
 /** All eight `billing_subscriptions.status` values (migration 0018's CHECK) plus `none`. */
@@ -252,6 +253,22 @@ export interface AccountDetail {
   };
   ledger: LedgerEntry[];
   audit: AuditEntry[];
+  /**
+   * The account's SECURITY events — `auth_events` rows whose event names an incident rather
+   * than activity. Today that is exactly `refresh_reuse_revoked` (the rotation's reuse branch
+   * swept a session family: a stolen token replayed, or a client rotating wrongly — silent on
+   * every user surface, which is why it is on this one). Names and timestamps only, per the
+   * staff allowlist; the family id lives in the row's un-granted `device` column and is read
+   * over a privileged database connection when an investigation needs it. Newest first.
+   */
+  securityEvents: SecurityEvent[];
+}
+
+/** One row of {@link AccountDetail.securityEvents} — a closed event name and its moment. */
+export interface SecurityEvent {
+  id: string;
+  event: "refresh_reuse_revoked";
+  at: string;
 }
 
 /* ── billing ───────────────────────────────────────────────────────────────────────────── */
