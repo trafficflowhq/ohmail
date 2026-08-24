@@ -303,8 +303,8 @@ export async function listJunk(
   }
 
   // ── Per-mailbox cursors: from the lowest TAKEN seq; a lane with rows left (cut by the cap)
-  // resumes below what was taken; an untouched lane keeps its incoming watermark verbatim; a
-  // fully-drained lane leaves no entry. Every entry carries the epoch it belongs to.
+  // resumes below what was taken; an untouched lane keeps its incoming watermark verbatim.
+  // Every entry carries the epoch it belongs to.
   for (const lane of lanes) {
     const leftover = lane.at < lane.rows.length;
     if (lane.tookAny) {
@@ -319,6 +319,28 @@ export async function listJunk(
         : { v: lane.uidValidity, s: lane.rows[0]!.seq + 1 };
     } else if (lane.adapterNext !== null) {
       nextBefore[lane.boxId] = { v: lane.uidValidity, s: lane.adapterNext };
+    }
+  }
+  /**
+   * WHILE ANY LANE PAGINATES, EVERY READ LANE KEEPS AN EPOCH ENTRY — a DRAINED mailbox
+   * included (round 4's finding). Without one, the next "Show older" re-reads the drained
+   * mailbox cursorless: a folder recreated in the meantime would serve its new-epoch top page
+   * with NO reset stated (there is no held epoch to compare), and the client — which trusts
+   * the stated flag — would append fresh mail under stale rows. The drained entry's watermark
+   * is its own lowest taken seq (the next page below it is empty, so nothing repeats), or the
+   * incoming watermark / the-top for a lane that contributed nothing; what matters is the `v`,
+   * which is what lets the NEXT read detect the recreation and say `reset`.
+   */
+  if (Object.keys(nextBefore).length > 0) {
+    for (const lane of lanes) {
+      if (nextBefore[lane.boxId] !== undefined) continue;
+      const held = before[lane.boxId];
+      const s = lane.tookAny
+        ? lane.lowestTakenSeq
+        : held !== undefined && held.v === lane.uidValidity
+          ? held.s
+          : (lane.rows[0]?.seq ?? 0) + 1;
+      nextBefore[lane.boxId] = { v: lane.uidValidity, s: Math.max(1, s) };
     }
   }
 
