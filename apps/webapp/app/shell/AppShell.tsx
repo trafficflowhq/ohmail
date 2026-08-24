@@ -1299,28 +1299,17 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   /** The open folder's entity id, for the reach-past hook below — route-derived, shell-early. */
   const folderIdForOlder = route.view === "folder" ? (route.folderId ?? undefined) : undefined;
   /**
-   * THE MIRROR BOUNDARY for that folder — its oldest mirrored row as a keyset position, so the
-   * reach-past's first page starts where the mirror ends instead of re-serving the newest rows
-   * already on screen. Derived from the RAW mirror here (the shell's `folderMessages` memo
-   * lives later in the file); the folder view renders the same set, so the boundary and the
-   * window agree. Undefined when the folder holds nothing locally — page one then starts at
-   * the folder's newest, which is exactly the empty-mirror probe's question.
+   * DELIBERATELY NO CLIENT-DERIVED BOUNDARY for the folder reach-past. The obvious one — the
+   * folder's oldest mirrored row — is WRONG on a windowed mirror, whose held rows are not
+   * contiguous: the bootstrap window plus scattered outliers the mirror retains on purpose
+   * (pinned rows a draft references, the labeled tail's old tagged mail). An outlier below the
+   * window would become the boundary and every unmirrored row between the window's edge and it
+   * would be skipped by every page, permanently. So page one starts at the folder's newest and
+   * the view's id-filter drops what the mirror already renders — the Ohbox's own overlap-and-
+   * deduplicate shape, whose cost is extra presses and whose failure mode is none. The wire's
+   * `startBelow` stays for a future CONTIGUOUS-edge derivation; nothing arms it today.
    */
-  const folderOlderBoundary = useMemo(() => {
-    if (!folderIdForOlder || !consent.foldersEnabled) return undefined;
-    const entity = reader.get<FolderEntity>("folder", folderIdForOlder);
-    if (!entity) return undefined;
-    let oldest: EngineMessage | undefined;
-    for (const m of reader.list<EngineMessage>("message")) {
-      if (m.mailboxId !== entity.mailboxId || m.folder !== entity.name) continue;
-      if (!oldest) { oldest = m; continue; }
-      const a = m.date ? new Date(m.date).getTime() : -1;
-      const b = oldest.date ? new Date(oldest.date).getTime() : -1;
-      if (a < b || (a === b && m.id < oldest.id)) oldest = m;
-    }
-    return oldest ? { date: oldest.date ?? null, id: oldest.id } : undefined;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folderIdForOlder, consent.foldersEnabled, reader, version]);
+  const folderOlderBoundary = undefined;
   const older = useOlderMail(engine, "ohbox", version);
   /**
    * The open FOLDER's reach past the mirror window (the folders foundation) — `older`'s twin,

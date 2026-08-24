@@ -237,11 +237,20 @@ export class MessageService {
         isNull(messages.deletedAt),
       ];
       // The caller's mirror boundary, page one only — the same keyset predicate the cursor
-      // builds, from the client's oldest held row instead of a server-minted cursor.
+      // builds, from a client-named position instead of a server-minted cursor. VALIDATED at
+      // the wire: a non-UUID id would bind against the uuid column and surface as a Postgres
+      // 22P02 (a 500 for a malformed request), and an unparseable date silently selecting the
+      // null-date branch would answer the WRONG page while looking like a success.
       if (!opts.cursor && opts.before) {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(opts.before.id)) {
+          throw new ServiceError("validation_failed", 400, "beforeId must be a message id");
+        }
         const bd = opts.before.date === null ? null : new Date(opts.before.date);
+        if (bd !== null && Number.isNaN(bd.getTime())) {
+          throw new ServiceError("validation_failed", 400, "beforeDate must be an ISO instant");
+        }
         filters.push(
-          bd === null || Number.isNaN(bd.getTime())
+          bd === null
             ? and(isNull(messages.date), lt(messages.id, opts.before.id))!
             : or(lt(messages.date, bd), and(eq(messages.date, bd), lt(messages.id, opts.before.id)), isNull(messages.date))!,
         );

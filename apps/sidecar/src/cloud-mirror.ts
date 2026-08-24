@@ -1850,7 +1850,20 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       writeCursor(cfg.cursorPath, cursor);
       return 0;
     }
-    const snap = await fetchSnapshotPage();
+    let snap: SnapshotResponse | null = null;
+    try {
+      snap = await fetchSnapshotPage();
+    } catch (err) {
+      // Non-fatal by contract, like every other outcome of this one-time repair: a transport
+      // rejection must not fail an otherwise successful pull or mark the mirror offline. Not
+      // marked consumed — the next pull retries.
+      cfg.log?.("cloud_folder_backfill_deferred", {
+        err,
+        reason: "the one-time folder repair could not read the snapshot; the mirror is " +
+          "unaffected and the next pull retries",
+      });
+      return 0;
+    }
     if (!snap) return 0;   // did not answer → not marked; the next pull retries
     const folderChanges = snap.changes.filter((c) => c.type === "folder" && c.op !== "delete");
     let appliedCount = 0;
@@ -2175,6 +2188,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
          applied. This ordering is the whole reason the mirror can attribute mail honestly, and a
          version of it that ran AFTER the drain would skip every message of a mailbox added since
          the last pull — a first pull on a fresh install would land nothing at all. */
+      // The repairs' shared snapshot cache is PER PULL: a page-1 failure cached across pulls
+      // would return the same refusal forever and the promised next-pull retry would never dial.
+      snapshotPage1 = undefined;
       await refreshMailboxes();
       const { applied, sweep, cut } = await drainSync();
       // REACHABLE MEANS REACHABLE. The drain came back, so Cloud demonstrably answers — flip the
