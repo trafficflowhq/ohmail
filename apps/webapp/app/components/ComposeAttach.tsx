@@ -628,7 +628,13 @@ export function ComposeAttach({
       let refused = false;
       const skippedEarly: string[] = [];
       const picked: Array<{
-        attachment: ComposeAttachment;
+        /** Absent on a DEMOTED candidate: the cap dipped below it mid-batch, its base64 was
+            evicted for memory, and the COMMIT reconsiders it against the final cap — a dip that
+            restored must not cost a file it would admit. The source and its measured numbers
+            stay so the reconsideration can re-encode without guessing. */
+        attachment?: ComposeAttachment;
+        file: File;
+        filename: string;
         bytes: number;
         originalBytes: number;
         compressed: boolean;
@@ -656,19 +662,18 @@ export function ComposeAttach({
           // never stage. The COMMIT below remains the authority on admission.
           const capNow = maxTotalBytesRef.current;
           let projected = totalBytes(attachmentsRef.current);
-          for (let i = 0; i < picked.length; ) {
-            const p = picked[i]!;
-            if (projected + p.bytes <= capNow) {
+          for (const p of picked) {
+            if (p.attachment !== undefined && projected + p.bytes <= capNow) {
               projected += p.bytes;
-              i += 1;
-            } else {
-              // EVICTED, NOT MERELY EXCLUDED. A stranded candidate's base64 held in `picked`
-              // is exactly the allocation this guard exists to bound — leaving it resident
-              // while later files stage another cap's worth re-opens the OOM this closes
-              // (review finding). Admission is untouched (the projection already excluded it);
-              // this drops the bytes and reports the refusal the commit would have made.
-              picked.splice(i, 1);
-              refused = true;
+            } else if (p.attachment !== undefined) {
+              // DEMOTED, NOT DISCARDED. A stranded candidate's base64 held in `picked` is
+              // exactly the allocation this guard exists to bound — leaving it resident while
+              // later files stage another cap's worth re-opens the OOM this closes (review
+              // finding). But the CAP IS LIVE and may restore before the commit, so the bytes
+              // are dropped while the candidate stands: the commit reconsiders it against the
+              // final cap and re-encodes from its retained source if it fits (review finding —
+              // a permanent discard here made a transient dip cost an admissible file).
+              p.attachment = undefined;
             }
           }
           if (picture.bytes > capNow || projected + picture.bytes > capNow) {
@@ -688,7 +693,7 @@ export function ComposeAttach({
              the bound honest. */
           if (
             [...attachmentsRef.current, ...picked.map((p) => p.attachment)].some(
-              (a) => a.filename === filename && a.contentBase64 === contentBase64,
+              (a) => a !== undefined && a.filename === filename && a.contentBase64 === contentBase64,
             )
           ) {
             skippedEarly.push(filename);
@@ -704,6 +709,8 @@ export function ComposeAttach({
           });
           picked.push({
             attachment,
+            file,
+            filename,
             bytes: picture.bytes,
             originalBytes: picture.originalBytes,
             compressed: picture.compressed,
@@ -728,23 +735,46 @@ export function ComposeAttach({
       let savedFrom = 0;
       let savedTo = 0;
       for (const p of picked) {
+        let attachment = p.attachment;
+        if (attachment === undefined) {
+          /* DEMOTED mid-batch: the cap dipped below it and its bytes were evicted. The FINAL
+             live cap decides — a dip that restored re-admits the file, re-encoded from its
+             retained source at the level of its pick; a dip that held refuses it, which is the
+             answer the commit would have given anyway. */
+          if (running + p.bytes > cap) {
+            refused = true;
+            continue;
+          }
+          const picture = await compressImage(p.file, level);
+          const contentBase64 = await readAsBase64(picture.blob);
+          attachment = {
+            filename: p.filename,
+            contentType: picture.contentType,
+            contentBase64,
+          };
+          ATTACHMENT_SOURCES.set(attachment, {
+            blob: p.file,
+            encodedLevel: level,
+            ...(picture.blob === p.file ? { originalBase64: contentBase64 } : {}),
+          });
+        }
         /* THE SAME FILE TWICE IS A SKIP, NOT A SECOND ROW. Same name and byte-identical
            content is the same attachment, and two indistinguishable rows invite deleting the
            wrong one — or mailing both. Compared on the ADMITTED bytes, against the list the
            commit will actually extend. */
         if (
           [...latest, ...admitted].some(
-            (a) => a.filename === p.attachment.filename && a.contentBase64 === p.attachment.contentBase64,
+            (a) => a.filename === attachment!.filename && a.contentBase64 === attachment!.contentBase64,
           )
         ) {
-          skipped.push(p.attachment.filename);
+          skipped.push(attachment.filename);
           continue;
         }
         if (running + p.bytes > cap) {
           refused = true;
           continue;
         }
-        admitted.push(p.attachment);
+        admitted.push(attachment);
         running += p.bytes;
         if (p.compressed) {
           savedFrom += p.originalBytes;
