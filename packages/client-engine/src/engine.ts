@@ -1071,6 +1071,10 @@ export class OhmailEngine {
 
   private async drain(): Promise<void> {
     let rebootstrapped = false;
+    // The rules-first pass runs AT MOST ONCE per drain (re-owed by the 410 reset below): the
+    // completion stamp only lands when the whole drain settles, so without this latch every page
+    // of a multi-page first drain would re-open with a redundant rules request.
+    let rulesFirstDone = false;
     // A STALE resume converges its newest page FIRST — see the method for the whole argument.
     // Before the loop, once per drain: the 410 branch re-enters the loop with a wiped mirror,
     // where the bootstrap snapshot below already owns "newest first".
@@ -1082,6 +1086,13 @@ export class OhmailEngine {
       // that can present a cursor of "0": a first-ever `start()`, a `start()` over a mirror whose
       // last bootstrap crashed before its final page, and the 410 branch below — which resets to
       // "0" and `continue`s straight back here. See {@link OhmailEngine.runSnapshot}.
+      // A NON-ZERO CURSOR ON A MIRROR THAT HAS NEVER COMPLETED A DRAIN is an interrupted
+      // bootstrap resuming — an earlier session's `since=0` fallback (or post-snapshot catch-up)
+      // committed some pages and died. Read BEFORE the snapshot check, because a successful
+      // snapshot moves the cursor off "0" in this very iteration and must not read as a resume.
+      const resumedIncomplete = this.store.getCursor() !== "0"
+        && this.store.getMeta<string>(LAST_DRAIN_AT_META) === undefined;
+
       if (this.store.getCursor() === "0" && this.snapshotFn) await this.runSnapshot();
 
       // RULES BEFORE MAIL, on the degraded bootstrap. The snapshot path already delivers the
@@ -1092,20 +1103,38 @@ export class OhmailEngine {
       // rule as "undecided" and presents an already-screened sender in the Screener until the
       // replay reaches the rule. Unknown is not undecided, so the fallback earns the same ordering
       // the snapshot has: drain the rule type to its horizon first, rows only (the cursor stays
-      // "0"; the main replay re-delivers every rule change and the per-entity seq guard absorbs
+      // put; the main replay re-delivers every rule change and the per-entity seq guard absorbs
       // the repeat).
       //
-      // Gated on a snapshot route that FAILED (`snapshotUnavailable`), not on every snapshot-less
-      // adapter: the adapters with no route at all are the FixturesAdapter — the demo, which
-      // `AppShell` never partitions — and servers older than the route, which no longer exist.
-      // The live way onto the `since=0` path is a page-1 failure, and that is the drain that must
-      // not misclassify senders while it streams.
-      if (this.store.getCursor() === "0" && this.snapshotFn && this.snapshotUnavailable) {
-        await this.drainRulesFirst();
-      }
-
+      // TWO ways in, one per review round:
+      //  · a COLD mirror whose snapshot failed page 1 (`snapshotUnavailable`) — the live way onto
+      //    the `since=0` path, which must not misclassify senders while it streams;
+      //  · a RESUMED incomplete bootstrap (`resumedIncomplete`) — the pages an earlier session
+      //    committed may hold mail whose sender's rule sits beyond the interruption point, and
+      //    the resumed replay would serve that mail's stretch first. With a HEALTHY snapshot
+      //    route `freshenStaleResume()` has already applied page 1 (the whole rule set) before
+      //    this loop; this arm is the degraded completion of that heal, plus the belt for a
+      //    freshen that failed and swallowed. A post-snapshot catch-up that never stamped pays
+      //    one redundant rules page here, which is the cheap direction.
+      //
+      // Deliberately NOT before `hydrate()`: hydration is the offline-first paint of last
+      // session's persisted state — the same one-round-trip staleness the consent boot-cache
+      // documents — and holding it on a network drain would trade a bounded interim state for a
+      // blank screen on a dead network. The prefetch bounds the misclassification to the first
+      // drain's opening request instead of the whole resumed replay.
+      //
+      // Gated on a snapshot route EXISTING, not on every snapshot-less adapter: the adapters
+      // with no route at all are the FixturesAdapter — the demo, which `AppShell` never
+      // partitions — and servers older than the route, which no longer exist.
       let resp;
       try {
+        // INSIDE the try, deliberately: a later prefetch page can 410 exactly as the delta can
+        // (the horizon moves), and the recovery is the same one — reset, re-enter as a bootstrap.
+        if (this.snapshotFn && !rulesFirstDone
+            && (resumedIncomplete || (this.store.getCursor() === "0" && this.snapshotUnavailable))) {
+          rulesFirstDone = true;
+          await this.drainRulesFirst();
+        }
         resp = await this.adapter.sync({
           since: this.store.getCursor(),
           ...(this.syncLimit !== undefined ? { limit: this.syncLimit } : {}),
@@ -1118,6 +1147,8 @@ export class OhmailEngine {
           // It bounds the snapshot path too — at most one snapshot can follow a 410 per drain.
           rebootstrapped = true;
           await this.store.resetForBootstrap(); // cursor → "0"
+          // The wipe took the rules with it — the re-bootstrap owes the rules-first pass again.
+          rulesFirstDone = false;
           this.notify();
           // Back to the top: with a snapshot route the cursor of "0" selects the snapshot and the
           // delta drain then resumes from `asOfSeq`; without one it selects `since=0`, which is
