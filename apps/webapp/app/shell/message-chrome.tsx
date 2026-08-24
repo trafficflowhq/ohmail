@@ -55,6 +55,15 @@ export interface MessageChrome {
    */
   foldersEnabled?: boolean;
   /**
+   * DOES THE MIRROR HOLD THIS MESSAGE — the Delete verb's second gate. The reader can show
+   * rows the mirror deliberately does not hold (an off-mirror archive hit opened from Search),
+   * and `message_delete` is an engine mutation over a local row: offered there it would be a
+   * control that always fails (the engine rejects a mutation with no local effect before the
+   * wire). ABSENT means "assume held" — every mount that offers the verb wires it; the demo
+   * and provider-less mounts never reach it because `foldersEnabled` is already off there.
+   */
+  mirrorHolds?: (messageId: string) => boolean;
+  /**
    * ABSOLUTE-TIME DISPLAY — a session-and-view-scoped preference on the reader's stamps.
    *
    * Every stamp in the open message shows the relative form by default ("09:12", "Mon"), with the

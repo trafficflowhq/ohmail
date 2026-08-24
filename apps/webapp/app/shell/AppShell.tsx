@@ -4890,6 +4890,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       // The reader's Delete verb is gated on the folders foundation flag (§16.3/§16.7) — the
       // same server-confirmed value the rail's Folders group reads.
       foldersEnabled: consent.foldersEnabled,
+      // …and on the mirror actually HOLDING the row: an off-mirror archive hit (Search's
+      // reach-past reader) has no local row for `message_delete` to act on, so the verb is
+      // withheld there rather than offered and guaranteed to fail (review finding).
+      mirrorHolds: (id: string) => reader.get<EngineMessage>("message", id) != null,
       absoluteTime,
       onToggleAbsoluteTime: toggleAbsoluteTime,
       replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply,
@@ -4951,7 +4955,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       replyEnvelope, replyFromId, replyAttachments, sendSurfaceMaxTotalBytes, replyBook,
       openSenderMenu, ownNameOf, writeTo, openReply, openForward, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
-      consent.foldersEnabled],
+      consent.foldersEnabled, reader],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just

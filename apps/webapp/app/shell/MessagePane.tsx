@@ -5,7 +5,7 @@
  * from-line, subject, chips (routing rationale, tracker shield, tags,
  * add-affordance), body or the protected-OTP block, attachment, actions.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, isProtectedMessage, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, Icon, InfoNote, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
@@ -242,6 +242,12 @@ function ActionBar({
   const tr = useTranslations("screening");
   const press = useKeyPress();
   const chrome = useMessageChrome();
+  /** The delete confirm's focus target (Cancel — the safe answer) and its described note. */
+  const deleteCancelRef = useRef<HTMLButtonElement>(null);
+  const deleteNoteId = useId();
+  useEffect(() => {
+    if (panel === "delete") deleteCancelRef.current?.focus();
+  }, [panel]);
   /** Hoisted above `toggleRead`, which needs it to decide WHICH key it is standing in for. */
   const read = !message.unread;
   /**
@@ -524,14 +530,23 @@ function ActionBar({
    * un-delete on the wire, so the question is the ceremony and no Undo follows. The ONLY
    * dispatch site of `"delete"` is the confirm button here.
    */
-  if (panel === "delete" && chrome.foldersEnabled === true) {
+  if (panel === "delete" && chrome.foldersEnabled === true && chrome.mirrorHolds?.(message.id) !== false) {
     // Flag off with a stale "delete" panel falls THROUGH to the resting bar below — the strip
     // simply is not drawn, and nothing here writes state during render.
     return (
       <div className="abar">
-        <div className="abar-panel abar-delete" role="alertdialog" aria-label={t("deleteAsk")}>
+        {/* `aria-describedby` binds the consequence sentence to the dialog, and focus moves
+            INTO it (the safe answer, Cancel): the More item that opened this unmounts with the
+            menu, so without the move a keyboard user's focus fell to the document and the
+            destructive question was never reliably announced (review finding). */}
+        <div
+          className="abar-panel abar-delete"
+          role="alertdialog"
+          aria-label={t("deleteAsk")}
+          aria-describedby={deleteNoteId}
+        >
           <span className="abar-lab">{t("deleteAsk")}</span>
-          <span className="abar-note">{t("deleteNote")}</span>
+          <span className="abar-note" id={deleteNoteId}>{t("deleteNote")}</span>
           <button
             type="button"
             className="abar-b abar-solo abar-danger"
@@ -542,7 +557,7 @@ function ActionBar({
           >
             {t("actionDelete")}
           </button>
-          <button type="button" className="abar-b" onClick={() => onPanel(null)}>
+          <button type="button" className="abar-b" ref={deleteCancelRef} onClick={() => onPanel(null)}>
             {t("moveCancel")}
           </button>
         </div>
@@ -623,7 +638,7 @@ function ActionBar({
      * strip; only the strip dispatches (the one-dispatch-site rule the mobile parity test pins
      * on its side).
      */
-    ...(chrome.foldersEnabled === true
+    ...(chrome.foldersEnabled === true && chrome.mirrorHolds?.(message.id) !== false
       ? [{
           id: "delete",
           label: t("actionDelete"),
