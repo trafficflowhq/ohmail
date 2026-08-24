@@ -14,10 +14,21 @@ app to the welcome screen.
 
 Honest edges, stated here and on the screens themselves:
 
-- **Reply, forward and tags are live on an open message** — the same verbs the
-  web and desktop clients offer (reply, reply all, forward, the three triage
-  horizons with the resurface chooser, tag, screening, move, the read switch),
-  named the same and dispatched through the same engine mutations.
+- **Reply, forward, tags and delete are live on an open message** — the same
+  verbs the web and desktop clients offer (reply, reply all, forward, the three
+  triage horizons with the resurface chooser, tag, screening, move, the read
+  switch), named the same and dispatched through the same engine mutations.
+  Delete stands behind its own confirm and files the message to the Trash
+  folder on your own mail server — never an expunge, and ohmail never erases
+  mail.
+- **Your mail server's own folders show when you turn them on.** Off by
+  default; the switch in Settings reads and writes your account's consent on
+  the paired server. On, the More screen lists the folders as the tree they
+  already are on the server — first level by default, unread counts that roll
+  up into a collapsed branch — and each folder opens as its own list.
+  Read-only for now (no create, rename or move-to-folder), matching the web
+  client's foundation stage, and the folder screens say plainly that they show
+  what is on this phone's mirror rather than claiming a folder is empty.
 - **Compose from scratch, search and attachment-open are not built yet.** No
   control for them renders; the More screen and the About block say they
   arrive with later updates.
@@ -197,9 +208,10 @@ edge — the desktop dock's shape, at thumb height.
 | `/message/[id]` | Reading view: why it landed here, what was blocked, the protected-OTP block, the conversation, triage actions. Opening marks read through the engine and asks for the full text — the pane says when it is still showing the preview. |
 | `/servers` | The pairings this phone holds: switch, forget (which also revokes server-side), live sync status, and the three add choices. |
 | `/scan`, `/connect` | The QR scan and the by-hand fallback. One parser, one redeem ceremony. |
-| `/more` | The desktop rail's lower half: piles, settings, the pairing door — and one honest sentence about search arriving later. |
+| `/more` | The desktop rail's lower half: piles, the Folders group while "Use folders" is on, settings, the pairing door — and one honest sentence about search arriving later. |
+| `/folder/[id]` | One of the mailbox's own folders: New / Earlier over the mirror's rows, with a tail that states what is on this phone rather than claiming the folder is empty. |
 | `/triage` **Piles** | Answer Later · Parked · Resurface, counts derived from the items. |
-| `/settings` | Appearance, and an About block that states what is live on this build and names what is not. |
+| `/settings` | Appearance, the Use-folders switch (the server-confirmed answer, never an optimistic one), and an About block that states what is live on this build and names what is not. |
 
 Light and dark throughout; reduced motion honoured; 44/48 pt touch targets;
 every row and control carries an accessibility label.
