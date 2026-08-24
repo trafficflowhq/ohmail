@@ -1703,10 +1703,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * The bridge is deliberately exposed before the first pull (`main.ts` — the window must render
    * sign-in and locally-held mail with no network at all), so a client that connects between
    * process start and this pass landing can still read an interrupted bootstrap's message-only
-   * stretch — last session's state, which is what that client was already showing. Review round
-   * 1 proposed gating the read surface until this pass completes; refused, because the gate
-   * would hold LOCAL reads hostage to a NETWORK request — a dead network would blank a desktop
-   * whose whole promise is that the mail is on the device. What bounds the window instead is
+   * stretch — last session's state, which is what that client was already showing. Gating the
+   * read surface until this pass completes is the obvious remedy and is refused, because the
+   * gate would hold LOCAL reads hostage to a NETWORK request — a dead network would blank a
+   * desktop whose whole promise is that the mail is on the device. What bounds the window is
    * that this pass is the first thing the first pull does: the rules land in the local
    * change_log ahead of everything the resumed replay adds, so a connected client corrects on
    * its next delta poll (seconds), instead of at the end of the replay (minutes).

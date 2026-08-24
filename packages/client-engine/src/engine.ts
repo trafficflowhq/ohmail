@@ -1106,7 +1106,7 @@ export class OhmailEngine {
       // put; the main replay re-delivers every rule change and the per-entity seq guard absorbs
       // the repeat).
       //
-      // TWO ways in, one per review round:
+      // TWO ways in:
       //  · a COLD mirror whose snapshot failed page 1 (`snapshotUnavailable`) — the live way onto
       //    the `since=0` path, which must not misclassify senders while it streams;
       //  · a RESUMED incomplete bootstrap (`resumedIncomplete`) — the pages an earlier session
