@@ -55,11 +55,16 @@
  * standalone desktop, the demo — uses the account-less key, where every pre-scoping choice
  * already lives.
  *
- * AND WHAT A MOVE DOES NOT DO IS SAID ON SCREEN: files already in the list keep the bytes they
- * were admitted with — re-encoding them here would silently replace what the user was shown and
- * approved, and the originals are gone by design (only the admitted bytes are held). Moving the
- * dial while files are attached therefore states the scope in a visible note instead of leaving
- * the user to discover that the change did nothing to the rows above it.
+ * AND A MOVE RE-ENCODES THE PICTURES ALREADY ATTACHED — owner ruling, replacing the old
+ * "new picks only" scope. The pristine SOURCE bytes of every admitted file are retained (in
+ * memory, per attachment, for the life of the compose — see {@link ComposeAttach}'s `sources`),
+ * and a dial move re-runs the compression over each already-attached compressible picture FROM
+ * THAT SOURCE, never from the previous encode: re-compressing an encode is generational quality
+ * loss, and a move back to Original must recover the exact original bytes. Non-image and
+ * incompressible files are untouched, byte for byte and object for object. The pass is async and
+ * the composer stays responsive; its commit is ONE atomic list replacement, so a send that lands
+ * mid-pass sends the settled pre-move encodes and a send after it sends the settled new ones —
+ * never a torn mix. The visible note states this scope (it used to state the opposite).
  *
  * The options run Low → Medium → High → Original, ascending, with the default in the middle and
  * "Original" at the end anchoring what the scale is FOR (everything below it trades fidelity for
@@ -300,6 +305,33 @@ export function ComposeAttach({
   const levelId = useId();
   const [error, setError] = useState<string | null>(null);
   /**
+   * THE PRISTINE SOURCE of every admitted attachment, keyed by the attachment object itself.
+   *
+   * A dial move re-encodes the pictures already attached, and it must do so FROM THE PICKED
+   * BYTES: re-encoding the previous encode compounds the loss (each pass throws away fidelity the
+   * next pass cannot get back), and a move to Original must recover the exact file. So the source
+   * blob is retained per attachment until the compose lets go of it — a `WeakMap` on the
+   * attachment's identity, so a removed row (or a whole discarded form) releases its bytes with
+   * no bookkeeping, and a list the caller restored from a scratch buffer (which strips bytes on
+   * principle) simply has no sources and is left untouched by a move, which is the honest answer.
+   * `originalBase64` is the source's own encoding, computed at most once — a move to Original
+   * and every "this file cannot shrink" outcome reuse it instead of re-reading megabytes.
+   */
+  const sources = useRef(new WeakMap<ComposeAttachment, { blob: Blob; originalBase64?: string }>());
+  /**
+   * The list as of the CURRENT render — what a re-encode pass reconciles its commit against, so
+   * files picked or removed while the pass ran are respected rather than clobbered by a commit
+   * computed from a stale snapshot.
+   */
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+  /**
+   * Which dial move owns the commit. A pass checks it after every await and yields to a newer
+   * move: the newer pass re-encodes from the same sources, so the stale pass's work is simply
+   * superseded — committing it late would overwrite the level the user chose last.
+   */
+  const requalifyGen = useRef(0);
+  /**
    * THE ACCOUNT'S LEVEL — the dial's value, and what the next pick applies. Seeded with the
    * default and corrected to the STORED per-account preference post-mount, never read during
    * the first render: there is no `localStorage` on the server (and no cookie to read the
@@ -370,11 +402,19 @@ export function ComposeAttach({
             skipped.push(filename);
             continue;
           }
-          next.push({
+          const attachment: ComposeAttachment = {
             filename,
             contentType: picture.contentType,
             contentBase64,
+          };
+          // The pristine source, retained for the dial (see `sources`). When the admitted bytes
+          // ARE the source (Original, or a file the shrink could not help), the base64 in hand is
+          // the source's own encoding — cache it so a later move never re-reads it.
+          sources.current.set(attachment, {
+            blob: file,
+            ...(picture.blob === file ? { originalBase64: contentBase64 } : {}),
           });
+          next.push(attachment);
           running += picture.bytes;
           if (picture.compressed) {
             savedFrom += picture.originalBytes;
@@ -397,6 +437,113 @@ export function ComposeAttach({
       if (inputRef.current) inputRef.current.value = "";
     },
     [attachments, onChange, maxTotalBytes, t],
+  );
+
+  /**
+   * RE-ENCODE THE PICTURES ALREADY ATTACHED at the level the dial just moved to — the other half
+   * of the dial, and the half it long disclaimed ("files already attached keep their size").
+   * Owner ruling: the setting applies to what is on the message, not only to the next pick.
+   *
+   * ── FROM THE SOURCE, ALWAYS ────────────────────────────────────────────────────────────────
+   * Every candidate is re-run through {@link compressImage} over its retained PRISTINE source
+   * (see `sources`), never over the current encode: encode-of-encode is generational loss, and
+   * a move to Original must yield the exact picked bytes — which it does here, because
+   * `compressImage(source, "original")` answers the source identically. A file with no retained
+   * source (a list restored without bytes) and a file whose re-encode equals what it already
+   * carries are left untouched, OBJECT IDENTITY INCLUDED, so non-images and incompressible
+   * files pass through a move as if it never happened.
+   *
+   * ── ONE ATOMIC COMMIT, RECONCILED, GENERATION-GUARDED ──────────────────────────────────────
+   * The pass is async and the composer stays live under it, so three races are closed by
+   * construction rather than by luck:
+   *   · A SEND mid-pass reads the caller's state, which this pass has not touched yet — the
+   *     settled pre-move encodes. The commit is a single `onChange` carrying every replacement
+   *     at once, so no observable list ever mixes two levels for one source. Pinned by test.
+   *   · A PICK or REMOVE mid-pass lands in `attachmentsRef` before the commit reads it: the
+   *     commit maps over the LATEST list, replacing only rows it re-encoded and keeping
+   *     everything else — including rows added mid-pass, which the pick already encoded at the
+   *     new level (`onFiles` reads `levelRef` at pick time).
+   *   · A SECOND MOVE mid-pass bumps `requalifyGen`; the older pass notices and yields — its
+   *     superseded encodes are discarded, never committed over the newer level.
+   *
+   * ── THE CAP STILL GOVERNS ──────────────────────────────────────────────────────────────────
+   * A move UP (toward Original) can grow the total past `maxTotalBytes`. A row whose re-encode
+   * would cross the cap keeps its previous bytes — the least destructive honest answer (the
+   * file was admitted; a dial move must not eject it) — and the refusal is said on screen with
+   * the same number the send enforces.
+   */
+  const requalify = useCallback(
+    async (nextLevel: ImageQualityLevel) => {
+      const gen = ++requalifyGen.current;
+      const snapshot = attachmentsRef.current;
+      /** att → its re-encode and the numbers the notes render. */
+      const replacements = new Map<
+        ComposeAttachment,
+        { next: ComposeAttachment; bytes: number; originalBytes: number; compressed: boolean }
+      >();
+      for (const att of snapshot) {
+        const source = sources.current.get(att);
+        if (!source) continue;
+        const picture = await compressImage(source.blob, nextLevel);
+        if (gen !== requalifyGen.current) return; // superseded — the newer move owns the list
+        let contentBase64: string;
+        if (picture.blob === source.blob) {
+          // The source itself (Original, or "would not get smaller"): its encoding is cached
+          // once and reused, so toggling the dial never re-reads megabytes it already read.
+          source.originalBase64 ??= await readAsBase64(source.blob);
+          contentBase64 = source.originalBase64;
+        } else {
+          contentBase64 = await readAsBase64(picture.blob);
+        }
+        if (gen !== requalifyGen.current) return; // superseded — the newer move owns the list
+        if (contentBase64 === att.contentBase64) continue; // already at this level — identity kept
+        const next: ComposeAttachment = {
+          filename: att.filename,
+          contentType: picture.contentType,
+          contentBase64,
+        };
+        // The replacement inherits the SAME source record: the next move re-encodes from the
+        // same pristine bytes, and the cached original encoding rides along.
+        sources.current.set(next, source);
+        replacements.set(att, {
+          next,
+          bytes: picture.bytes,
+          originalBytes: picture.originalBytes,
+          compressed: picture.compressed,
+        });
+      }
+      if (gen !== requalifyGen.current) return; // superseded — the newer move owns the list
+      if (replacements.size === 0) return; // nothing compressible moved — the list stands
+
+      // THE COMMIT — one pass over the LATEST list, one `onChange`. Rows the user added or
+      // removed while the encodes ran are respected; the cap is applied in list order, exactly
+      // as a pick applies it.
+      const latest = attachmentsRef.current;
+      let running = 0;
+      let capKept = false;
+      let savedFrom = 0;
+      let savedTo = 0;
+      const committed = latest.map((att) => {
+        const r = replacements.get(att);
+        if (r) {
+          if (running + r.bytes <= maxTotalBytes) {
+            running += r.bytes;
+            if (r.compressed) {
+              savedFrom += r.originalBytes;
+              savedTo += r.bytes;
+            }
+            return r.next;
+          }
+          capKept = true; // the re-encode would cross the cap — the admitted bytes stay
+        }
+        running += base64Bytes(att.contentBase64);
+        return att;
+      });
+      setError(capKept ? t("attachQualityCap", { size: formatSize(maxTotalBytes) }) : null);
+      setCompressed(savedFrom > 0 ? { from: savedFrom, to: savedTo } : null);
+      if (committed.some((a, i) => a !== latest[i])) onChange(committed);
+    },
+    [maxTotalBytes, onChange, t],
   );
 
   /**
@@ -478,9 +625,9 @@ export function ComposeAttach({
         </span>
         {/* THE DIAL — the account's, remembered: a move here is what the next compose on this
             account opens at, and it is the same per-account value the Settings row edits (see
-            the header). It applies to the NEXT pick: files already in the list keep the bytes
-            they were admitted with, and moving the dial while any are attached says so in the
-            note below. */}
+            the header). It applies to the NEXT pick AND to the pictures already attached, which
+            are re-encoded from their retained sources (`requalify`); moving it while any are
+            attached says so in the note below. */}
         <label className="compose-attach-level" htmlFor={levelId}>
           {t("attachQualityLabel")}
           <select
@@ -495,7 +642,10 @@ export function ComposeAttach({
               writeImageQualityLevel(next, owner.current);
               levelRef.current = next;
               setLevel(next);
-              if (attachments.length > 0) setScopeNote(true);
+              if (attachments.length > 0) {
+                setScopeNote(true);
+                void requalify(next);
+              }
             }}
           >
             {LEVEL_CHOICES.map((id) => (
@@ -507,10 +657,10 @@ export function ComposeAttach({
         </label>
       </div>
 
-      {/* THE SCOPE, SAID WHERE THE DIAL MOVED: the new level is for picks from now on, and the
-          rows above keep the bytes the user was shown and approved. `role="status"` because the
-          change happens with focus on the select — a visible-only sentence would be silent for
-          exactly the person the silence misled. */}
+      {/* THE SCOPE, SAID WHERE THE DIAL MOVED: the new level takes the pictures already attached
+          with it — re-encoded from their originals, sizes updating in the rows above — and other
+          files stay as they are. `role="status"` because the change happens with focus on the
+          select — a visible-only sentence would be silent for exactly the person it informs. */}
       {scopeNote ? (
         <p className="compose-attach-scope" role="status">{t("attachQualityScope")}</p>
       ) : null}
