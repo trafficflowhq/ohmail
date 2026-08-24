@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EngineMessage, OhmailEngine, OhmailView } from "@ohmail/client-engine";
 
 /**
@@ -83,6 +83,17 @@ interface Page {
 }
 
 const EMPTY: Page = { items: [], cursor: null, loading: false, error: null, exhausted: false };
+
+/** One scope's paging position — see the `paging` ref inside {@link useOlderMail}. */
+interface Paging {
+  scope: string;
+  engine: OhmailEngine;
+  cursor: string | null;
+  inFlight: boolean;
+  done: boolean;
+  /** Ids OBSERVED leaving the scope — the `"ban"` latch. See `suppress`. */
+  banned: Set<string>;
+}
 
 /**
  * ERROR CODES WHOSE MESSAGE IS WRITTEN FOR THE PERSON, NOT FOR A LOG.
@@ -184,95 +195,90 @@ export function useOlderMail(
   const available = engine.listOlderAvailable();
   const [page, setPage] = useState<Page>(EMPTY);
 
-  /**
-   * THE PAGING POSITION, AS REFS RATHER THAN AS STATE READ INSIDE `loadMore`.
-   *
-   * Three reasons, and the third is the one that bites:
-   *
-   *  · `loadMore` is stable across renders — a list hangs it on a button and, if it wants, on an
-   *    intersection observer — so a cursor CLOSED OVER would be the one from the render that
-   *    created the callback, and every page would ask for page one;
-   *  · two calls in the same tick both read a `loading` React has not re-rendered yet. The engine
-   *    coalesces identical view+cursor requests, so the cost was never a duplicate fetch; it is
-   *    the same page APPENDED twice, which is the same mail on screen twice;
-   *  · a `setState` updater must be pure. Firing the request from inside one would issue it twice
-   *    under StrictMode's double-invoke, which is a real request against somebody's mailbox.
-   */
-  const cursor = useRef<string | null>(null);
   /** `suppress` behind a stable identity, so the memo's deps stay honest — consent-state's `link`. */
   const suppressRef = useRef<((id: string) => "show" | "hide" | "ban" | "hold") | undefined>(suppress);
   suppressRef.current = suppress;
-  /** Ids OBSERVED leaving the scope — the `"ban"` latch, per scope. See `suppress`. */
-  const banned = useRef(new Set<string>());
   /** The scope this hook's page state belongs to — see the SYNCHRONOUS reset below. */
   const scope = `${view}|${folderId ?? ""}|${scopeEpoch}`;
-  const inFlight = useRef(false);
-  const done = useRef(false);
+
   /**
-   * WHICH LIST A RESPONSE BELONGS TO.
+   * THE PAGING POSITION — cursor, in-flight, exhaustion and the ban latch — as ONE ref object
+   * KEYED BY ITS SCOPE, and NEVER touched during render.
    *
-   * The reset cannot cancel a request that is already out. Without a token, a page asked for
-   * in one view lands after the reset and is appended to a DIFFERENT view's list — mail from
-   * one pile rendered at the bottom of another, which is the one mistake this whole surface
-   * exists to avoid making. Bumped on every reset; a response carrying a stale token is dropped.
+   * A ref rather than state, for `loadMore`'s reasons: the callback is stable enough to hang on
+   * a button, two same-tick asks must see each other's `inFlight`, and a `setState` updater must
+   * stay pure. One OBJECT rather than parallel refs, because the object's identity is the
+   * response token: a page answered for one incarnation is recognized by `paging.current !== p`
+   * and dropped, which no counter can get wrong.
+   *
+   * NEVER MUTATED IN RENDER, and that is the review-earned part (three findings deep): React
+   * may discard a render pass — StrictMode's replay, a concurrent render preempted and thrown
+   * away — and a discarded pass keeps its ref mutations while losing its state updates. Any
+   * render-phase ref write therefore desyncs the two worlds: a speculative pass toward scope B
+   * that never commits must not clear scope A's cursor, kill A's in-flight response (a loader
+   * with no answer and no retry), or wipe A's latch. So the ref is reset LAZILY, by
+   * {@link pagingFor}, from event handlers and effects only — code that runs strictly after a
+   * commit, on behalf of the scope that actually committed.
    */
-  const generation = useRef(0);
+  const paging = useRef<Paging | null>(null);
+  /** The committed scope, written post-commit — the response validator's second half. */
+  const committed = useRef<{ scope: string; engine: OhmailEngine }>({ scope, engine });
+  useEffect(() => {
+    committed.current = { scope, engine };
+  });
+  /** POST-COMMIT ONLY (see `paging`): the current scope's paging state, reset lazily on entry. */
+  const pagingFor = (): Paging => {
+    const p = paging.current;
+    if (p === null || p.scope !== scope || p.engine !== engine) {
+      paging.current = { scope, engine, cursor: null, inFlight: false, done: false, banned: new Set() };
+    }
+    return paging.current!;
+  };
+
   /*
-   * THE SCOPE RESET, SYNCHRONOUS WITH THE RENDER THAT CHANGES THE SCOPE — deliberately not an
-   * effect, twice over:
+   * THE PAGE-STATE RESET, SYNCHRONOUS WITH THE RENDER THAT CHANGES THE SCOPE — deliberately
+   * not an effect, twice over:
    *
    *  · deferred to an effect, it ran one render LATE, so the mismatch render needed a guard to
    *    keep the previous folder's rows from rendering under the new folder's title;
    *  · worse, it ran AFTER children's effects — and the consumer that needs the reset most is
    *    exactly a child mount effect: FolderView mounts when a folder entity (re)enters the
    *    mirror and immediately probes an empty folder, so the probe read the PREVIOUS scope's
-   *    refs. A stale `done` swallowed it with no state change to ever re-run it; a stale
-   *    generation dropped its answer the moment the reset landed. Cold and re-enabled empty
-   *    folders sat unprobed until a manual press.
+   *    paging state. A stale exhaustion swallowed it with no state change to ever re-run it.
    *
-   * A render-phase reset closes both: by the time any child renders (let alone mounts and
-   * probes), the refs are the new scope's and the page state is EMPTY — the render-phase
-   * `setPage` is React's documented adjust-state-during-render pattern, which re-runs this
-   * hook's component before children render.
-   *
-   * THE GUARD IS STATE, NOT A REF, and that is load-bearing: React may DISCARD a render pass
-   * (StrictMode's second invoke, a concurrent render thrown away), and a discarded pass keeps
-   * its ref mutations while losing its queued state updates. A ref guard therefore desyncs —
-   * it remembers the new scope while the page state was never reset — and the replayed render
-   * skips the block: the previous folder's rows commit under the new folder's title, and the
-   * mount probe is swallowed again. With the guard in state, a replayed render still sees the
-   * OLD `resetFor` and re-runs the whole block; the ref side (generation bump included) is
-   * safe to re-apply, because the block only ever runs when the scope genuinely changed, and
-   * dropping an in-flight response across a scope change is its purpose.
+   * The render-phase `setPage` is React's documented adjust-state-during-render pattern; the
+   * guard is STATE (a replayed render still sees the old `resetFor` and re-runs the block,
+   * where a ref guard desyncs — see `paging`), and the block touches NOTHING but state: the
+   * paging ref belongs to post-commit code, and resets itself lazily there.
    */
   const [resetFor, setResetFor] = useState<{ scope: string; engine: OhmailEngine }>({ scope, engine });
   if (resetFor.scope !== scope || resetFor.engine !== engine) {
     setResetFor({ scope, engine });
-    generation.current += 1;
-    cursor.current = null;
-    inFlight.current = false;
-    done.current = false;
-    banned.current = new Set();
     setPage(EMPTY);
   }
 
   const loadMore = useCallback(() => {
-    if (!available || inFlight.current || done.current) return;
-    inFlight.current = true;
-    const mine = generation.current;
-    setPage((p) => ({ ...p, loading: true, error: null }));
+    if (!available) return;
+    const p = pagingFor();
+    if (p.inFlight || p.done) return;
+    p.inFlight = true;
+    setPage((prev) => ({ ...prev, loading: true, error: null }));
 
     void engine
       .listOlder(view, {
-        ...(cursor.current ? { cursor: cursor.current } : {}),
+        ...(p.cursor ? { cursor: p.cursor } : {}),
         ...(folderId ? { folderId } : {}),
-        ...(!cursor.current && startBelow ? { startBelow } : {}),
+        ...(!p.cursor && startBelow ? { startBelow } : {}),
       })
       .then((outcome) => {
-        if (mine !== generation.current) return; // answered a list that is no longer on screen
-        inFlight.current = false;
+        // The answer counts only if THIS paging incarnation is still the live one AND its scope
+        // is still the committed scope — a response for a list the UI has left changes nothing
+        // (its page state was already reset by the scope's own render).
+        if (paging.current !== p) return;
+        if (committed.current.scope !== p.scope || committed.current.engine !== p.engine) return;
+        p.inFlight = false;
         if (outcome.state === "unavailable") {
-          done.current = true;
+          p.done = true;
           setPage((prev) => ({ ...prev, loading: false, exhausted: true }));
           return;
         }
@@ -286,8 +292,8 @@ export function useOlderMail(
           setPage((prev) => ({ ...prev, loading: false, error: readerFacing(outcome) }));
           return;
         }
-        cursor.current = outcome.nextCursor;
-        done.current = outcome.nextCursor === null;
+        p.cursor = outcome.nextCursor;
+        p.done = outcome.nextCursor === null;
         setPage((prev) => {
           // Appended BY ID, so a page the server repeats cannot render the same mail twice.
           // Overlap with the caller's surface is NOT discarded here: the fetched copy must
@@ -304,7 +310,28 @@ export function useOlderMail(
           };
         });
       });
-  }, [engine, view, available, folderId, startBelow]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine, view, available, folderId, startBelow, scope]);
+
+  /**
+   * THE LATCH'S BOOKKEEPING, POST-COMMIT — the observations themselves happen in the memo
+   * below (per render, of the live mirror), but WRITING them into the ban set is deferred to
+   * this effect, because a discarded render's observations were never shown to anyone and must
+   * not move the latch (see `paging`). Between this commit and the next render the memo reads
+   * the previous commit's latch, which is exactly right: this render's "ban"s and "hide"s are
+   * already enforced by their own verdicts; the latch exists for FUTURE renders, and futures
+   * only follow commits.
+   */
+  useEffect(() => {
+    if (page.items.length === 0) return;
+    const p = pagingFor();
+    for (const item of page.items) {
+      const verdict = suppressRef.current?.(item.id) ?? "show";
+      if (verdict === "ban") p.banned.add(item.id);
+      else if (verdict === "hide") p.banned.delete(item.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine, page.items, version, scope]);
 
   /**
    * MIRROR-PREFERRED BY ID, recomputed when the mirror changes.
@@ -317,27 +344,23 @@ export function useOlderMail(
   const items = useMemo(() => {
     if (page.items.length === 0) return page.items;
     const reader = engine.read();
+    // The COMMITTED latch, read-only — this render's own "ban"/"hide" verdicts already hide
+    // their rows below; the set carries past observations forward, and is written only by the
+    // post-commit effect above. A paging object from another scope contributes nothing.
+    const p = paging.current;
+    const latched = p !== null && p.scope === scope && p.engine === engine ? p.banned : undefined;
     return page.items
-      // The per-render verdicts — see `suppress`: hide what the mirror shows in scope (and
-      // clear its latch — a row observed BACK wins over an observed leave), LATCH what the
-      // mirror says has left the scope, HOLD without judging when the scope itself is not
-      // readable, show what the mirror no longer holds.
+      // The per-render verdicts — see `suppress`: anything but "show" stays out of the tail
+      // right now ("hide" because the surface renders it, "ban" because the mirror says it
+      // left, "hold" because the scope is unreadable), and "show" still defers to the latch.
       .filter((item) => {
         const verdict = suppressRef.current?.(item.id) ?? "show";
-        if (verdict === "hide") {
-          banned.current.delete(item.id);
-          return false;
-        }
-        if (verdict === "hold") return false;
-        if (verdict === "ban") {
-          banned.current.add(item.id);
-          return false;
-        }
-        return !banned.current.has(item.id);
+        if (verdict !== "show") return false;
+        return !(latched?.has(item.id) ?? false);
       })
       .map((item) => reader.get<EngineMessage>("message", item.id) ?? item);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, page.items, version]);
+  }, [engine, page.items, version, scope]);
 
   // The synchronous reset above means the page state is ALWAYS the current scope's by the
   // time this returns — the mismatch guard that used to live here guarded a reset that ran
