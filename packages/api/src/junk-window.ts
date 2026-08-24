@@ -1,13 +1,17 @@
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   applyBodyBytesDelta, bodyBytesOf, mailboxes, messageBodies, messages, recordChange,
+  reserveBodyBytes,
 } from "@trafficflow/db";
 import {
   FOLDER_PAGE_MAX, MessageGoneError, makeRef,
   type FolderPage, type FolderPageItem,
 } from "@trafficflow/core/adapters/imap";
-import { normalizeMime, normalizeMessageId, prepareHtmlForStorage } from "@trafficflow/core";
-import { ServiceError, foldersEnabled } from "@trafficflow/services/mail";
+import {
+  UNMETERED_STORAGE_CAP, fingerprintDedupKey, messageFingerprint,
+  normalizeMime, normalizeMessageId, prepareHtmlForStorage,
+} from "@trafficflow/core";
+import { ServiceError, foldersEnabled, type ServiceContext } from "@trafficflow/services/mail";
 import { openMailboxImap } from "./attachments-adapter.js";
 import type { ApiDeps } from "./deps.js";
 
@@ -207,18 +211,34 @@ export async function listJunk(
       return null;
     }
     try {
-      const page = await withDeadline((async () => {
-        const opened = await openMailboxImap(deps, box.id);
+      /**
+       * The deadline CANCELS, it does not merely abandon: a race that walked away would leave
+       * the admitted IMAP slot and the socket held by a hung operation until the provider
+       * relented, and a couple of those turn every later junk/body/attachment request into
+       * `mailbox_busy` (a review caught the abandoning version). So the dial's own promise is
+       * closed the moment it resolves after a timeout, and a read that outlives its deadline
+       * has its connection closed under it — the close returns both slots and tears the
+       * socket, which is what actually ends the hung command.
+       */
+      const openedP = openMailboxImap(deps, box.id);
+      let opened: Awaited<typeof openedP> | null = null;
+      const page = await (async () => {
+        try {
+          opened = await withDeadline(openedP);
+        } catch (err) {
+          void openedP.then((o) => o.close()).catch(() => { /* never came up, or already closed */ });
+          throw err;
+        }
         try {
           const held = before[box.id];
-          return await opened.adapter.listFolderPage(box.junkFolder!, {
+          return await withDeadline(opened.adapter.listFolderPage(box.junkFolder!, {
             limit: FOLDER_PAGE_MAX,
             ...(held !== undefined ? { beforeSeq: held.s, expectUidValidity: held.v } : {}),
-          });
+          }));
         } finally {
           await opened.close().catch(() => { /* socket gone; the slot release has its own guard */ });
         }
-      })());
+      })();
       if (page === null) {
         // The recorded junk path no longer opens on a LIVE connection — the same honest
         // degrade as no folder (transport failures threw and land in the catch below).
@@ -360,9 +380,10 @@ export async function junkBody(
  * the module header for how each half re-enters the normal flow.
  */
 export async function rescueJunk(
-  deps: ApiDeps, accountId: string,
+  deps: ApiDeps, ctx: ServiceContext,
   args: { mailboxId: string; uid: number; uidValidity: string },
 ): Promise<{ status: "rescued" }> {
+  const accountId = ctx.accountId;
   await requireFolders(deps, accountId);
   const [box] = await junkMailboxesOf(deps, accountId, args.mailboxId);
   if (!box || box.junkFolder === null) {
@@ -438,9 +459,13 @@ export async function rescueJunk(
   if (husk !== undefined && raw !== null) {
     try {
       const fresh = await normalizeMime(raw);
+      // TWO independent identity witnesses, exactly `redacted-restore.ts#isSameMessage`: the
+      // normalized Message-ID, OR the canonical-content fingerprint against the husk's own
+      // dedup key — the fallback that lets a legitimately Message-ID-less verdict restore too.
       const sameMid = normalizeMessageId(husk.messageIdHeader) !== null
         && normalizeMessageId(husk.messageIdHeader) === normalizeMessageId(fresh.canonical.messageIdHeader);
-      if (sameMid) {
+      const sameFingerprint = fingerprintDedupKey(messageFingerprint(fresh)) === husk.dedupKey;
+      if (sameMid || sameFingerprint) {
         await deps.db.transaction(async (tx) => {
           const [live] = await tx
             .select({ text: messageBodies.text, html: messageBodies.html, withheld: messageBodies.withheldReason })
@@ -450,15 +475,33 @@ export async function rescueJunk(
           if (live?.withheld !== "junk_filed") return; // somebody else restored it first
           const storedHtml = prepareHtmlForStorage(fresh.htmlBody);
           const oldBytes = bodyBytesOf({ text: live.text ?? "", html: live.html ?? null });
+          const newBytes = bodyBytesOf({ text: fresh.textBody, html: storedHtml });
+          /**
+           * THE CAP HOLDS HERE TOO. The verdict's husk freed these bytes; putting them back is
+           * new stored content, and an at-cap account must not grow past its entitlement
+           * through repeated rescues (a review caught the uncapped version). `reserveBodyBytes`
+           * is ingest's own atomic reserve: a decline aborts the restore — the husk STANDS,
+           * with its marker still true (the bytes live on in the mailbox), which is exactly
+           * the state the storage-cap copy explains. An absent `storageCapOf` is the
+           * unmetered tier's declaration (local/self-host), same as `UNMETERED_STORAGE_CAP`.
+           */
+          const capOf = deps.services?.storageCapOf;
+          const cap = capOf !== undefined ? await capOf(ctx) : UNMETERED_STORAGE_CAP;
+          const capBytes = cap === UNMETERED_STORAGE_CAP ? null : cap;
+          const grow = newBytes - oldBytes;
+          if (grow > 0) {
+            if (!(await reserveBodyBytes(tx, accountId, grow, capBytes))) {
+              deps.logger?.warn?.("junk_rescue_unhusk_at_cap", { mailboxId: args.mailboxId });
+              return;
+            }
+          } else if (grow < 0) {
+            await applyBodyBytesDelta(tx, accountId, grow);
+          }
           await tx.update(messageBodies).set({
             text: fresh.textBody,
             html: storedHtml,
             withheldReason: null,
           }).where(eq(messageBodies.messageId, husk.id));
-          await applyBodyBytesDelta(
-            tx, accountId,
-            bodyBytesOf({ text: fresh.textBody, html: storedHtml }) - oldBytes,
-          );
           await tx.update(messages).set({
             snippet: fresh.textBody.replace(/\s+/g, " ").trim().slice(0, 200),
             updatedAt: deps.now?.() ?? new Date(),

@@ -127,8 +127,22 @@ export function useJunkWindow(active: boolean, toast: ToastFn): JunkWindowContro
     void screenerApi.junkList({ cursor: nextCursor }).then(
       (page) => {
         setOlderLoading(false);
-        // Appended, never re-sorted: the reader asked for OLDER, below what they have.
         setItems((cur) => {
+          /**
+           * AN EPOCH RESET IS A RESTART, NOT AN APPEND. The server discards a cursor whose
+           * UIDVALIDITY no longer matches and answers that mailbox's TOP page under the new
+           * epoch — appending that below the old rows would file the folder's NEWEST mail at
+           * the bottom of the window, under stale rows that no longer exist. So when any
+           * returned row's epoch differs from what this window holds for the same mailbox,
+           * the window starts over with the fresh answer.
+           */
+          const heldEpoch = new Map(cur.map((i) => [i.mailboxId, i.uidValidity]));
+          const reset = page.items.some((i) => {
+            const held = heldEpoch.get(i.mailboxId);
+            return held !== undefined && held !== i.uidValidity;
+          });
+          if (reset) return page.items;
+          // Appended, never re-sorted: the reader asked for OLDER, below what they have.
           const have = new Set(cur.map(junkKeyOf));
           return [...cur, ...page.items.filter((i) => !have.has(junkKeyOf(i)))];
         });

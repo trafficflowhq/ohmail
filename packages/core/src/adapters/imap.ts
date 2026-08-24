@@ -2654,19 +2654,29 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // source is necessarily still there. Only an atomic MOVE leaves it already gone.
     let sourceAwaitingDelete = false;
 
+    /**
+     * The epoch guard, called UNDER EVERY SOURCE LOCK this move takes — see `opts.requireEpoch`.
+     * Once is not enough: the locks are released between steps (imapflow locks are not
+     * re-entrant across the destination look), so a folder deleted and recreated mid-move would
+     * pass a step-1-only check and still reach `messageMove`/`messageDelete` addressing a
+     * recycled UID. Each re-acquisition re-opens the mailbox, so each check reads the epoch the
+     * NEXT command will actually run against.
+     */
+    const assertEpoch = (): void => {
+      if (!opts.requireEpoch) return;
+      const mb = this.client.mailbox as MailboxObject | false;
+      const current = mb && mb.uidValidity != null ? String(mb.uidValidity) : "0";
+      if (refEpoch !== "0" && current !== "0" && refEpoch !== current) {
+        throw new MessageGoneError(locator);
+      }
+    };
+
     // Step 1: under the SOURCE lock — probe existence and capture identity. NOTHING is written
     // here any more; the decision to write comes after the destination has been read.
     {
       const lock = await this.client.getMailboxLock(srcPath);
       try {
-        // The epoch guard, under the same lock the probe uses — see `opts.requireEpoch`.
-        if (opts.requireEpoch) {
-          const mb = this.client.mailbox as MailboxObject | false;
-          const current = mb && mb.uidValidity != null ? String(mb.uidValidity) : "0";
-          if (refEpoch !== "0" && current !== "0" && refEpoch !== current) {
-            throw new MessageGoneError(locator);
-          }
-        }
+        assertEpoch();
         const one = await this.client.fetchOne(
           String(uid),
           // The body is pulled only when the fallback could need it to tell two candidates apart.
@@ -2703,9 +2713,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       dstUid = look.matches[0]!;
       sourceAwaitingDelete = true;
     } else {
-      // Step 3: nothing of ours at the destination, so write. Under the SOURCE lock again.
+      // Step 3: nothing of ours at the destination, so write. Under the SOURCE lock again —
+      // and under the epoch guard again, because the lock was released in between.
       const lock = await this.client.getMailboxLock(srcPath);
       try {
+        assertEpoch();
         if (caps.move) {
           const res = await this.client.messageMove([uid], dstPath, { uid: true });
           if (res && typeof res !== "boolean") {
@@ -2744,6 +2756,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     if (sourceAwaitingDelete) {
       const lock = await this.client.getMailboxLock(srcPath);
       try {
+        assertEpoch(); // the expunge is the destructive half — never against a recycled UID
         await this.client.messageDelete([uid], { uid: true }); // \Deleted + EXPUNGE on source
       } finally {
         lock.release();

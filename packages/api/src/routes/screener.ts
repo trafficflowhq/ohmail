@@ -142,7 +142,7 @@ export const screenerRoutes: Route[] = [
       if (!mailboxId || !Number.isInteger(uid) || uid <= 0 || !uidValidity) {
         throw new ServiceError("validation_failed", 400, "mailboxId, uid and uidValidity are required");
       }
-      return jsonResponse(await rescueJunk(deps, ctx.accountId, { mailboxId, uid, uidValidity }));
+      return jsonResponse(await rescueJunk(deps, ctx, { mailboxId, uid, uidValidity }));
     },
   },
   {
