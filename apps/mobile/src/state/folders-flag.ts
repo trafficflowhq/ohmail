@@ -75,6 +75,13 @@ export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {
       epoch += 1;
       try {
         const ans = await deps.write(on);
+        // A CONFIRMED write supersedes every read issued BEFORE this confirmation (codex
+        // round 4): a drain-completed GET can start inside the PATCH window — after the bump
+        // above, so the epoch check alone would admit it — and read the PRE-write flag off
+        // the server. Resolving late, it would overwrite the confirmed write whenever the
+        // post-write refresh happens to fail. The second bump retires the whole window;
+        // reads issued from here on see the new epoch and may apply as usual.
+        epoch += 1;
         deps.apply(ans.on);
         deps.drain();
         return true;
