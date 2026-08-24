@@ -4,9 +4,9 @@ import { and, asc, eq, gt, isNull, ne, notInArray } from "drizzle-orm";
 import { recordChange , accountSettings,
 } from "@trafficflow/db";
 import {
-  approvals, drafts, folderState, mailboxCredentials, mailboxFolders, mailboxes, messageBodies,
-  messageFailures, messageInstances, messageStates, messages, messageTags, routingDecisions, rules,
-  tags, threads, unsubscribeRecords,
+  approvals, attachments, drafts, flagState, folderState, mailboxCredentials, mailboxFolders,
+  mailboxes, messageBodies, messageFailures, messageInstances, messageStates, messages, messageTags,
+  routingDecisions, rules, tags, threads, trackerEvents, unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
 import type {
@@ -1078,17 +1078,48 @@ async function applyUpsert(
   }
 }
 
-/** Apply one delete. Children of a message go first, so the message's own FKs are clear. */
+/**
+ * Apply one delete. Children of a message go first, so the message's own FKs are clear.
+ *
+ * ── EVERY `message_id` FOREIGN KEY, NOT JUST THE ONES THIS FILE WRITES ────────────────────────
+ *
+ * A delete that misses one FK-holder does not lose that one row — it ABORTS THE WHOLE PAGE
+ * TRANSACTION with 23503, the cursor never advances past the page, and the retry replays the
+ * identical page into the identical violation: the mirror is wedged for ever while looking like
+ * a transient network error. Measured live 2026-08-24 on a Linux install: one local draft whose
+ * `in_reply_to_message_id` named a message deleted on Cloud pinned the cursor for two days
+ * (`cloud_pull_failed` code 23503 on every poll), which the user experiences as "the desktop is
+ * stale". The hosted store never hits this because ITS delete is a `deleted_at` stamp — the row
+ * stays and every FK stays satisfied; the mirror's hard delete has to clear the children itself.
+ *
+ * So this clears every table `schema-mail.ts` points at `messages.id` — including the five the
+ * Cloud door never writes (instances, flag state, tracker events, attachments, unsubscribe
+ * records), for `mailboxReferenced`'s reason: this can run on a database that was a STANDALONE
+ * install before the door was switched, and those tables hold that era's rows.
+ *
+ * A replying draft is DETACHED (`in_reply_to_message_id` → NULL), not deleted: the draft is the
+ * user's writing and outlives its target, exactly as the hosted store keeps it when the message
+ * it answers goes to Trash. A re-emitted draft converges — the upsert guards that column on
+ * `messagePresent` and writes NULL for a target the mirror no longer holds.
+ */
 async function applyDelete(tx: Tx, ch: SyncChange): Promise<boolean> {
   switch (ch.type) {
     case "message": {
       if (!(await messagePresent(tx, ch.id))) return false;
+      await tx.update(drafts).set({ inReplyToMessageId: null })
+        .where(eq(drafts.inReplyToMessageId, ch.id));
       await tx.delete(folderState).where(eq(folderState.messageId, ch.id));
       await tx.delete(messageStates).where(eq(messageStates.messageId, ch.id));
       await tx.delete(messageBodies).where(eq(messageBodies.messageId, ch.id));
       await tx.delete(routingDecisions).where(eq(routingDecisions.messageId, ch.id));
       // The assignments hang off the message by FK, so they go before it.
       await tx.delete(messageTags).where(eq(messageTags.messageId, ch.id));
+      // The standalone era's children (see header) — empty on a pure Cloud-door database.
+      await tx.delete(messageInstances).where(eq(messageInstances.messageId, ch.id));
+      await tx.delete(flagState).where(eq(flagState.messageId, ch.id));
+      await tx.delete(trackerEvents).where(eq(trackerEvents.messageId, ch.id));
+      await tx.delete(attachments).where(eq(attachments.messageId, ch.id));
+      await tx.delete(unsubscribeRecords).where(eq(unsubscribeRecords.messageId, ch.id));
       await tx.delete(messages).where(eq(messages.id, ch.id));
       return true;
     }
@@ -1107,6 +1138,14 @@ async function applyDelete(tx: Tx, ch: SyncChange): Promise<boolean> {
     case "thread": {
       if (!(await threadPresent(tx, ch.id))) return false;
       await tx.delete(drafts).where(eq(drafts.threadId, ch.id));
+      // Same wedge as the message case, from the other side: `messages.thread_id` is an FK, and
+      // a hosted merge deletes the losing thread (`thread-service.ts#merge`). Ordinarily the same
+      // page re-points every message first (updates apply before deletes), but a message whose
+      // upsert was SKIPPED — unknown mailbox, or its update fell below the feed's retention
+      // horizon — still holds the old thread id, and one such row would pin the cursor for ever.
+      // Detach rather than delete: the message is real mail; its own next update re-threads it.
+      await tx.update(messages).set({ threadId: null })
+        .where(eq(messages.threadId, ch.id));
       await tx.delete(threads).where(eq(threads.id, ch.id));
       return true;
     }
