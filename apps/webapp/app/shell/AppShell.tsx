@@ -91,6 +91,7 @@ import { readBootCache, writeBootCache } from "./boot-cache";
 import { readOwner } from "./owner-cookie";
 import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
+import { useJunkWindow } from "./junk-window";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
@@ -1529,6 +1530,21 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * calling it every render is free.
    */
   const autoOptIn = suggestions.autoOptIn(screener.unsuggestedSenders);
+  /**
+   * THE LIVE JUNK WINDOW (FOLDERS-SPEC.md §16.2) — the Screener's third segment, flag-on.
+   *
+   * The hook is called unconditionally (it is a hook); what is CONDITIONAL is `active` — the
+   * first page is read lazily on the segment's first entry, and nothing is ever fetched while
+   * "Use folders" is off, in the demo, or away from the segment. The PROP below is gated the
+   * same way plus on `autoOptIn.supported` (the shell's one answer to "is there a server to
+   * ask", the same read the suggest control uses): absent, `ScreenerView` renders the
+   * flag-off segment byte-identically to before the window existed (§16.7).
+   */
+  const junkWindow = useJunkWindow(
+    !demo && consent.foldersEnabled && !seedOwed
+      && route.view === "screener" && route.screenerSegment === "spam",
+    toast,
+  );
   /**
    * IS THERE ANYWHERE FOR THE AWAY RESPONDER TO BE STORED — the one gate the control, its Ohbox
    * notice and its Settings entry all read, so those three can only agree.
@@ -5358,6 +5374,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 /* Unsubscribe, server-side, for the screened-out / spam previews. Absent on
                    the demo — the control is simply not offered where nothing can serve it. */
                 onUnsubscribe={onUnsubscribe}
+                /* The live Junk window — present only with "Use folders" on and a server to
+                   read it from (§16.2/§16.7). Absent, the segment is the flag-off Spam pile. */
+                junk={
+                  !demo && consent.foldersEnabled && autoOptIn.supported ? junkWindow : undefined
+                }
                 full={screenerFull}
                 onFull={setScreenerFull}
               />

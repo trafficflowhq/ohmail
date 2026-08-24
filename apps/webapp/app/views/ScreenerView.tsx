@@ -33,8 +33,9 @@ import {
   type DecisionDestination,
   type DecisionScope,
 } from "@ohmail/ui";
-import { messageOf } from "../api-client";
-import { avatarHue } from "../shell/format";
+import { messageOf, type JunkItemWire } from "../api-client";
+import { avatarHue, displayTime } from "../shell/format";
+import { junkKeyOf, type JunkWindowControl } from "../shell/junk-window";
 import { displayAddress, displayAddressee, displayAddressUnder, displayDomainLabel } from "../shell/idn";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
@@ -593,6 +594,7 @@ export function ScreenerView({
   hydrateBody,
   remoteImages,
   onUnsubscribe,
+  junk,
   full,
   onFull,
 }: {
@@ -657,6 +659,17 @@ export function ScreenerView({
    * than a dead one. A refusal rejects with the server's own sentence.
    */
   onUnsubscribe?: (id: string) => Promise<UnsubscribeResult | null>;
+  /**
+   * THE LIVE JUNK WINDOW (FOLDERS-SPEC.md §16.2) — present ONLY while "Use folders" is on and
+   * there is a server to read it from. With it, the third segment renames Spam → Junk and
+   * becomes a live, un-mirrored view of the provider's own \Junk folder: the control carries
+   * the page, the states, the session body cache and the "Not junk" rescue, all owned by
+   * `shell/junk-window.ts` — this view renders and dispatches, exactly as it does for the
+   * screener state. ABSENT (the flag off, the demo, the desktop shell, a bare test) the
+   * segment is byte-identical to what it was before the window existed: the Spam label over
+   * the mirror's quarantine rows (§16.7's flag-off parity).
+   */
+  junk?: JunkWindowControl;
   full: boolean;
   onFull: (full: boolean) => void;
 }) {
@@ -700,6 +713,14 @@ export function ScreenerView({
    */
   const activeFilter = filter !== null && filterCounts[filter] > 0 ? filter : null;
 
+  /**
+   * THE THIRD SEGMENT'S TWO FACES. With the junk control present the segment is the LIVE
+   * window — `items` is deliberately EMPTY so none of the mirror-row machinery below (the row
+   * renderer, `current`, `decidable`) ever sees a junk row, and the junk list drives j/k
+   * through `ids` alone. Without it, `state.spam` exactly as before the window existed.
+   */
+  const junkActive = segment === "spam" && junk !== undefined;
+  const junkItems: JunkItemWire[] = junkActive ? junk!.items : [];
   const items: Array<ScreenerSenderDTO | SpamRow> =
     segment === "waiting"
       ? activeFilter === null
@@ -710,11 +731,13 @@ export function ScreenerView({
           state.waiting.filter((w) => filterGroupOf(w) === activeFilter)
       : segment === "screened"
         ? state.screenedOut
-        : state.spam;
+        : junkActive
+          ? []
+          : state.spam;
 
   const idOf = (x: ScreenerSenderDTO | SpamRow) =>
     "pinned" in x ? x.sender.id : x.id;
-  const ids = items.map(idOf);
+  const ids = junkActive ? junkItems.map(junkKeyOf) : items.map(idOf);
   const activeId = (() => {
     const sel = selection[segment];
     // Exiting rows stay visible but are no longer selectable targets.
@@ -725,6 +748,10 @@ export function ScreenerView({
   })();
 
   const current = items.find((x) => idOf(x) === activeId) ?? null;
+  /** The junk window's selected row — the read column's subject while the segment is live. */
+  const junkCurrent = junkActive
+    ? junkItems.find((i) => junkKeyOf(i) === activeId) ?? null
+    : null;
   const scopeOf = (s: ScreenerSenderDTO): DecisionScope =>
     scopes.get(s.id) ?? s.scope ?? "sender";
 
@@ -745,6 +772,19 @@ export function ScreenerView({
   useEffect(() => {
     setChoosing(null);
   }, [activeId, segment]);
+
+  /**
+   * OPEN THE SELECTED JUNK ROW'S BODY — fetched live on open only, held in the hook's session
+   * cache so re-selecting costs nothing (§16.2's table). Keyed on the SELECTION: the control
+   * object is rebuilt per render, and `openBody` itself refuses a re-ask for anything already
+   * answered or in flight, so this fires work exactly once per row per session.
+   */
+  useEffect(() => {
+    if (!junkActive || activeId === null) return;
+    const item = junk!.items.find((i) => junkKeyOf(i) === activeId);
+    if (item) junk!.openBody(item);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [junkActive, activeId]);
 
   /**
    * OPEN THE PREVIEW AT THE LATEST HELD MESSAGE — and STAY there while the bodies arrive.
@@ -1186,8 +1226,12 @@ export function ScreenerView({
                 },
                 {
                   id: "spam",
-                  label: t("segSpam"),
-                  count: state.spam.length > 0 ? state.spam.length : "",
+                  /* Junk when the live window is on (§16.2's rename, behind the flag), the
+                     original Spam otherwise. NO count on the live form: the window holds one
+                     bounded page of a folder whose total it has not read, and a number that
+                     means "rows loaded so far" would read as "junk you have". */
+                  label: junk !== undefined ? t("segJunk") : t("segSpam"),
+                  count: junk !== undefined ? "" : state.spam.length > 0 ? state.spam.length : "",
                 },
               ]}
             />
@@ -1270,12 +1314,24 @@ export function ScreenerView({
         hints={<ShortcutHint />}
       >
         <ListRows>
-          {items.length ? items.map(row) : <Empty segment={segment} settled={settled} />}
+          {junkActive ? (
+            <JunkRows junk={junk!} activeKey={activeId} onSelect={(key) => onSelect("spam", key)} />
+          ) : items.length ? (
+            items.map(row)
+          ) : (
+            <Empty segment={segment} settled={settled} />
+          )}
         </ListRows>
       </ListPane>
 
       <div className="read-col scn-read">
-        {!current ? (
+        {junkActive ? (
+          // The live window's preview. Nothing to select — the list already says why (loading,
+          // failed, empty) — leaves the column empty, exactly as the mirror segments do.
+          junkCurrent ? (
+            <JunkPreview item={junkCurrent} junk={junk!} onBack={() => onFull(false)} />
+          ) : null
+        ) : !current ? (
           // SHOW THE EMPTY STATE ONCE. When the segment holds nothing, the list pane already
           // renders `<Empty>` at `ListRows` above — and on mobile the list is the only pane
           // visible until a sender is opened. A second `<Empty>` here put the same glyph, title
@@ -1973,6 +2029,156 @@ function SpamPreview({
             {...heldRemoteProps(remoteImages, h)}
           />
         ))}
+      </div>
+    </>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE LIVE JUNK WINDOW (FOLDERS-SPEC.md §16.2) — the third segment's flag-on face.
+   Presentational only: every fact and every dispatch comes through `JunkWindowControl`
+   (`shell/junk-window.ts`), exactly as the mirror segments read `ScreenerState`. The rows are
+   header facts read live from the provider's own \Junk folder; nothing here is mirror data.
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The window's list half: honest loading and failed states (§16.2's table — a window that
+ * cannot read SAYS so; an empty list is an answer, not a fallback), the origin marker per row
+ * ("your verdict" / "filed by your mail server"), per-mailbox degrades, explicit "Show older"
+ * pagination, and the digit-free retention sentence under it all.
+ */
+function JunkRows({
+  junk,
+  activeKey,
+  onSelect,
+}: {
+  junk: JunkWindowControl;
+  activeKey: string | null;
+  onSelect: (key: string) => void;
+}) {
+  const t = useTranslations("screener");
+  if (junk.phase === "loading") {
+    return (
+      <div className="empty" role="status" aria-busy="true">
+        <span className="mbx-wait">
+          <span className="mbx-spin" aria-hidden="true" />
+          <span>{t("junkLoading")}</span>
+        </span>
+      </div>
+    );
+  }
+  if (junk.phase === "failed") {
+    // FAILED, never empty: a dead dial has no business claiming the folder is clean. The
+    // retry is a human press (`reload`), not a loop.
+    return (
+      <div className="empty" role="status">
+        <span className="glyph" aria-hidden="true">🕳</span>
+        <b>{t("junkFailed")}</b>
+        <Button variant="ghost" onClick={junk.reload}>{t("junkRetry")}</Button>
+      </div>
+    );
+  }
+  const absent = junk.mailboxes.filter((m) => m.window !== "ok");
+  const now = new Date();
+  return (
+    <>
+      {junk.items.map((i) => (
+        <MessageRow
+          key={junkKeyOf(i)}
+          id={junkKeyOf(i)}
+          from={displayAddressee(i.from.name, i.from.address)}
+          address={displayAddressUnder(i.from.name, i.from.address)}
+          time={i.date ? displayTime({ date: i.date }, now) : undefined}
+          subject={i.subject}
+          avatarInitial={(i.from.name ?? i.from.address).trim().charAt(0).toUpperCase() || "?"}
+          avatarHue={avatarHue(i.from.address)}
+          /* THE ORIGIN MARKER (§16.2): who filed this into Junk. The same badge slot the
+             mirror's spam rows use for their detection label. */
+          detection={t(i.origin === "verdict" ? "junkOriginVerdict" : "junkOriginProvider")}
+          dull
+          selected={junkKeyOf(i) === activeKey}
+          onClick={() => onSelect(junkKeyOf(i))}
+        />
+      ))}
+      {junk.items.length === 0 ? (
+        <div className="empty">
+          <span className="glyph" aria-hidden="true">{t("empty.junk.glyph")}</span>
+          <b>{t("empty.junk.title")}</b>
+          {t("empty.junk.hint")}
+        </div>
+      ) : null}
+      {/* The per-mailbox degrades, stated instead of hidden: a mailbox with no native \Junk,
+          or one that could not be read just now, is named under whatever DID load. */}
+      {absent.map((m) => (
+        <p key={m.id} className="scn-junk-note">
+          {t(m.window === "no_junk_folder" ? "junkNoFolder" : "junkUnreachable", { address: m.address })}
+        </p>
+      ))}
+      {junk.nextCursor !== null ? (
+        <div className="scn-junk-older">
+          <Button variant="ghost" onClick={junk.loadOlder} disabled={junk.olderLoading}>
+            {junk.olderLoading ? t("junkOlderLoading") : t("junkOlder")}
+          </Button>
+        </div>
+      ) : null}
+      {/* The retention sentence — deliberately DIGIT-FREE in both languages (a number here
+          would be a claim about somebody else's cleanup job); pinned by test. */}
+      <p className="scn-junk-note scn-junk-retention">{t("junkRetention")}</p>
+    </>
+  );
+}
+
+/**
+ * The window's reading half: one junk message, body fetched live on open (the hook's session
+ * cache), rendered through the same {@link HeldMail} anatomy the mirror segments preview with —
+ * text only, never the sender's html, because junk is the one pile whose bodies are hostile by
+ * definition. The verb strip carries the rescue: "Not junk" is ONE server-side move back to the
+ * inbox, after which the message re-enters through the NORMAL pipeline (the note says exactly
+ * where it can land).
+ */
+function JunkPreview({
+  item,
+  junk,
+  onBack,
+}: {
+  item: JunkItemWire;
+  junk: JunkWindowControl;
+  onBack: () => void;
+}) {
+  const t = useTranslations("screener");
+  const body = junk.bodyFor(item);
+  const busy = junk.rescuing(item);
+  return (
+    <>
+      <div className="decide">
+        <button type="button" className="scn-back" onClick={onBack}>
+          <Icon name="chev" className="chev" /> {t("back")}
+        </button>
+        <div className="d-btns">
+          <Button onClick={() => junk.rescue(item)} disabled={busy}>
+            {t("junkNotJunk")}
+          </Button>
+        </div>
+        <div className="d-sub">
+          <span className="d-note">{t("junkNotJunkNote")}</span>
+        </div>
+      </div>
+      <div className="scn-mails">
+        <div className="scn-caption">
+          {t(item.origin === "verdict" ? "junkOriginVerdict" : "junkOriginProvider")}
+        </div>
+        <HeldMail
+          from={displayAddressee(item.from.name, item.from.address)}
+          address={displayAddressUnder(item.from.name, item.from.address)}
+          subject={item.subject}
+          time={item.date ? displayTime({ date: item.date }, new Date()) : undefined}
+          body={body.phase === "ready" ? body.text : ""}
+          bodyState={
+            body.phase === "ready" ? "full" : body.phase === "failed" ? "failed" : "loading"
+          }
+          onRetry={() => junk.openBody(item)}
+          dull
+        />
       </div>
     </>
   );

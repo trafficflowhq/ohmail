@@ -1400,6 +1400,22 @@ body.reading .shell {
   color: var(--ink3);
   margin: 0 0 10px;
 }
+/* The Junk window's footnotes — the per-mailbox degrades and the digit-free retention
+   sentence — quiet lines under the rows, in the caption's own voice, padded to the row gutter. */
+.scn-junk-note {
+  font-size: 11px;
+  color: var(--ink3);
+  margin: 10px 14px 0;
+}
+.scn-junk-retention {
+  margin-bottom: 12px;
+}
+/* "Show older" — an explicit press, centred so it reads as the list's foot and not a row. */
+.scn-junk-older {
+  display: flex;
+  justify-content: center;
+  margin: 10px 0 2px;
+}
 .hmail {
   background: var(--float);
   border-radius: 20px;
