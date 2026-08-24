@@ -32,6 +32,11 @@
  * expunge would promote it, and `messages.native_locator` keeps the Junk/Trash path as the last
  * known place — which is also what the ohmail-side rescue moves FROM.
  *
+ * A DELETE whose park promoted a survivor does NOT converge: the row is already tombstoned, the
+ * survivor is a known locator no scan will ever re-create, so completion keeps the folder_state
+ * PENDING at the survivor's folder and the next pass files that copy to Trash too — one copy per
+ * pass, until no watched instance remains. See the branch in {@link completeFiling}.
+ *
  * ── THE CLAIM FOLLOWS THE MOVE, NEVER THE OTHER WAY ─────────────────────────────────────────
  *
  * Everything here that says "this message is in Junk" — the husk's `junk_filed` marker, the
@@ -145,7 +150,32 @@ export async function completeFiling(
   // The park — see the header. `forgetInstanceAt` on the locator just written removes the
   // instance we cannot ever verify and promotes a surviving watched copy exactly as an observed
   // expunge would.
-  await r.forgetInstanceAt(mailboxId, newLoc);
+  const promoted = await r.forgetInstanceAt(mailboxId, newLoc);
+  // ── A DELETE WHOSE PARK PROMOTED A SURVIVOR IS NOT DONE ─────────────────────────────────────
+  //
+  // The API's delete has already tombstoned the row (`deleted_at` + the `delete` change), so a
+  // watched copy left behind would be SERVER-RESIDENT YET INVISIBLE FOR EVER: the survivor is a
+  // KNOWN locator, so no later scan emits the create that resurrects a tombstone, and a converged
+  // folder_state takes the row out of the reconciler's queue. The user deleted the MESSAGE, and
+  // every instance is a physical copy of it — the amended rule's user-commanded Trash write
+  // covers each one — so the completion keeps the pending row OPEN at the survivor's folder. The
+  // promotion has already repointed `messages.native_locator` at the survivor, which is exactly
+  // the locator `listPendingFolderStates` joins, so the next reconcile pass files that copy to
+  // Trash through the same seam; the loop parks one copy per pass and converges the row below
+  // once nothing watched remains.
+  //
+  // The SPAM park is deliberately not in this branch: its row is never tombstoned — it stays on
+  // the Quarantine pile in every client — so a surviving copy hides nothing, and re-filing it
+  // would widen the one user-commanded Junk write into a sweep this completion was never asked
+  // for. (`promoted != null`, not `!== null`: a fake that still answers void reads as "no
+  // survivor", which is the pre-existing behaviour and the safe direction.)
+  const deletePark = special.trashFolder !== null && p.desiredFolder === special.trashFolder;
+  if (deletePark && promoted != null) {
+    await r.upsertFolderState(p.messageId, {
+      desiredFolder: p.desiredFolder, observedFolder: promoted.folder, lastSetBy: "us",
+    });
+    return;
+  }
   await r.upsertFolderState(p.messageId, {
     desiredFolder: p.desiredFolder,
     observedFolder: physical,

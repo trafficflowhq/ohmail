@@ -173,8 +173,15 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * On `WorkerRepo` and not `RepoPort` because only the sync loop can observe it: a disappearance
    * arrives as the adapter's `deletes`, which the API tier never sees. See
    * {@link MoveEvidence} for why it is the only thing that authorises an adoption.
+   *
+   * ANSWERS THE PROMOTED SURVIVOR'S LOCATOR when removing the PRIMARY instance promoted a
+   * surviving watched copy, `null` otherwise (nothing at the locator, a non-primary removal, or
+   * no survivor). The delete filing's completion is why the answer exists: a promoted survivor
+   * means the message is still in watched space on the server, so the delete is not done — see
+   * `junk-filing.ts#completeFiling`. The sync loop's caller ignores it, correctly: an observed
+   * expunge with a survivor changes nothing about what any pending row still owes.
    */
-  forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<void>;
+  forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<NativeLocator | null>;
   /**
    * The mailbox's discovered native `\Junk`/`\Trash` paths (mail 0065) — what the reconciler
    * reads to know where a spam verdict physically files. OPTIONAL on {@link scanSentRecipients}'
@@ -786,8 +793,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * NO-OP when the deleted row was not primary, or when nothing survives — a message whose every
    * instance is gone is a message the server no longer holds, and inventing a locator for it would be
    * worse than leaving the last known one on the row for the reaper to find.
+   *
+   * Returns the promoted survivor's locator, or `null` when no promotion happened — the interface
+   * doc says who reads it and why.
    */
-  async forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<void> {
+  async forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<NativeLocator | null> {
     const removed = await this.db.delete(messageInstances).where(and(
       eq(messageInstances.mailboxId, mailboxId),
       eq(messageInstances.folder, locator.folder),
@@ -795,7 +805,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       eq(messageInstances.uid, parseUid(locator.ref)),
     )).returning({ messageId: messageInstances.messageId, isPrimary: messageInstances.isPrimary });
     const orphaned = removed.find((r) => r.isPrimary);
-    if (!orphaned) return;
+    if (!orphaned) return null;
     const [survivor] = await this.db.select({
       id: messageInstances.id,
       folder: messageInstances.folder,
@@ -805,15 +815,16 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .where(eq(messageInstances.messageId, orphaned.messageId))
       .orderBy(asc(messageInstances.firstSeenAt), asc(messageInstances.uid))
       .limit(1);
-    if (!survivor) return;
+    if (!survivor) return null;
+    const promoted: NativeLocator = {
+      folder: survivor.folder,
+      ref: `${String(survivor.uidvalidity)}:${survivor.uid}`,
+    };
     await this.db.update(messageInstances)
       .set({ isPrimary: true }).where(eq(messageInstances.id, survivor.id));
-    await this.db.update(messages).set({
-      nativeLocator: {
-        folder: survivor.folder,
-        ref: `${String(survivor.uidvalidity)}:${survivor.uid}`,
-      },
-    }).where(eq(messages.id, orphaned.messageId));
+    await this.db.update(messages).set({ nativeLocator: promoted })
+      .where(eq(messages.id, orphaned.messageId));
+    return promoted;
   }
 
   /** Mail 0065 — the two discovery columns, read as one pair. See the interface doc. */
