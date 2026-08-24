@@ -228,12 +228,17 @@ export function phaseFor(res: MutationResult): SendState {
 }
 
 /**
- * Which triage states a delivered reply discharges.
+ * Which triage states a delivered reply discharges WITH `triage_set: none`.
  *
  * `reply_later` (Answer Later) and `bubbled_up` (a Resurface that came due) are both "come
  * back to this", and replying IS coming back to it. `set_aside` (Parked) and `muted` are
  * statements about the message rather than an owed answer, and a reply is not an obvious
  * argument to undo either.
+ *
+ * `resurfaced` — the PIN — is deliberately NOT here, and it is not un-discharged: the settle
+ * answers it with a deliberate `mark_seen` instead (see the branch in `settle`), because the
+ * pin's own release mechanism is "reading spends the resurface" and a bare state-clear would
+ * put the answered row back in "New for you" unread.
  */
 export function clearsTriage(state: string | undefined): boolean {
   return state === "reply_later" || state === "bubbled_up";
@@ -326,8 +331,28 @@ export function useMailSend(
         // was out, and a send that failed must never clear a debt. A compose answers nothing,
         // so it discharges nothing — the branch is the whole difference between the two.
         const msg = engine.read().get<EngineMessage>("message", m.inReplyTo);
-        if (clearsTriage(msg?.triage?.state)) {
+        const state = msg?.triage?.state as string | undefined;
+        if (clearsTriage(state)) {
           void engine.mutate({ kind: "triage_set", messageId: m.inReplyTo, state: "none" });
+        } else if (state === "resurfaced") {
+          /**
+           * A REPLY TO A PINNED ROW IS THE ANSWER THE PIN WAS WAITING FOR — so it clears the
+           * resurface, automatically, through the ONE mechanism that already exists: a
+           * deliberate `mark_seen` (no `via`) spends the pin in the same transaction on both
+           * sides of the wire (`spendResurface` server-side, `spentResurface` in the overlay)
+           * and stamps `lastReadAt`, filing the row at the top of "Earlier" — exactly what the
+           * explicit "Done" verb (`resurface_done`) performs. `mark_seen`'s own doc has named
+           * "the settled reply that marks its parent read" a deliberate caller all along; this
+           * makes that sentence true for the pinned case, which nothing dispatched for:
+           * `OhboxView`'s replyDone effect acts only on rows in the NEW session order, and a
+           * pinned row is never there — so answering a resurfaced message left its pin
+           * standing, saying "deal with this" about mail the reader had just dealt with.
+           *
+           * Not `triage_set: none` like the branch above: that clears the STATE but leaves the
+           * row unread (the pin forces unread), so the answered message would come back bold in
+           * "New for you" — a claim of new attention the reader just spent. Answered = read.
+           */
+          void engine.mutate({ kind: "mark_seen", messageIds: [m.inReplyTo], unread: false });
         }
       }
 

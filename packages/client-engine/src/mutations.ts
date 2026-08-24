@@ -384,9 +384,22 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       // record stands would put the message in two piles at once for the whole round trip.
       const recordId = stateRecordIdOf(reader, m.messageId);
       if (m.state === "none") {
+        /**
+         * UN-PARKING RE-HOMES A READ ROW AT ITS OWN DATE — the overlay half of
+         * `TriageService.setState`'s re-homing (wire parity, the rule stated on `mark_seen`).
+         * The server re-stamps `lastReadAt = date` when a READ row leaves a bottom pile, so
+         * "Earlier" files it at its chronological position instead of wherever the pre-park
+         * glance stamped it; an overlay that kept the old stamp would show the row at the top
+         * of "Earlier" for exactly one drain and then jump it down — the visible reorder the
+         * parity rule exists to forbid. Same three scopes as the server: only `none`, only
+         * from a bottom pile, only a read row.
+         */
+        const leftPile = ["reply_later", "set_aside", "bubbled_up", "muted"]
+          .includes((msg.triage?.state as string | undefined) ?? "");
+        const rehomed = leftPile && !msg.unread ? { lastReadAt: msg.date ?? null } : {};
         return [
           { type: "message_state", id: recordId, entity: null },
-          { type: "message", id: msg.id, entity: { ...msg, triage: null, updatedAt: iso } },
+          { type: "message", id: msg.id, entity: { ...msg, triage: null, ...rehomed, updatedAt: iso } },
         ];
       }
       const state: MessageStateDTO = {

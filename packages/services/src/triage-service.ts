@@ -77,10 +77,17 @@ export class TriageService {
     }
 
     return asTx(ctx).transaction(async (tx) => {
-      // Cross-account guard: the message must belong to the caller's account.
-      const [msg] = await tx.select({ id: messages.id }).from(messages)
+      // Cross-account guard: the message must belong to the caller's account. `unread` and
+      // `date` ride the same select for the un-park re-homing below.
+      const [msg] = await tx.select({ id: messages.id, unread: messages.unread, date: messages.date })
+        .from(messages)
         .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
+
+      // The state being LEFT — read before the upsert overwrites it. Only the `none`
+      // transition consumes it (the re-homing below); every other transition ignores it.
+      const [prior] = await tx.select({ state: messageStates.state }).from(messageStates)
+        .where(eq(messageStates.messageId, messageId)).limit(1);
 
       const now = ctx.now();
       const [row] = await tx.insert(messageStates).values({
@@ -89,6 +96,42 @@ export class TriageService {
         target: messageStates.messageId,
         set: { state: b.state, bubbleUpAt, updatedAt: now },
       }).returning({ id: messageStates.id });
+
+      /**
+       * ── UN-PARKING RE-HOMES THE ROW AT ITS OWN DATE, NOT AT THE TOP OF "EARLIER" ─────────
+       *
+       * Owner-ratified (2026-08-24, the §16 UI wave): a message that LEAVES a bottom pile —
+       * un-queued from Answer Later, un-parked, a booking cleared — must return to the Ohbox's
+       * "Earlier" at its CHRONOLOGICAL position, not at the top and not lost. "Earlier" is
+       * ordered by `lastReadAt` (`ohboxView`), and both stamps a parked row can carry put it
+       * somewhere wrong: the glance that preceded the parking press stamps it NOW-ish, so a
+       * three-week-old message un-parked today surfaced ABOVE yesterday's mail; and a row read
+       * in another client carries no stamp at all, which files it under everything ever
+       * stamped — effectively lost. So leaving a pile disowns the parked interlude: the row is
+       * re-stamped as though it was read when it was SENT (`lastReadAt = date`) — its
+       * chronological slot, and the idiom `readTimeOf` already uses for the
+       * account's own sent mail, whose reading order IS its send order.
+       *
+       * Scoped three ways, each deliberate:
+       *  · only the `none` transition — entering a pile keeps every stamp;
+       *  · only FROM a bottom pile (`reply_later`/`set_aside`/`bubbled_up`/`muted`) — a stray
+       *    `none` over a stateless or pinned row must not move mail the user never parked
+       *    (`spendResurface`'s release deliberately keeps its just-read NOW stamp);
+       *  · only a READ row — an unread row returns to "New for you", whose order is arrival
+       *    date already, and writing a reading stamp onto unread mail would claim a reading
+       *    that never happened.
+       *
+       * The `message` change emitted below already carries the projection, so every mirror
+       * adopts the re-homed stamp on its next drain; the client overlay writes the same value
+       * for the round trip (`mutations.ts#triage_set`, wire parity).
+       */
+      const LEFT_PILE = prior !== undefined
+        && ["reply_later", "set_aside", "bubbled_up", "muted"].includes(prior.state);
+      if (b.state === "none" && LEFT_PILE && !msg.unread) {
+        await tx.update(messages)
+          .set({ lastReadAt: msg.date, updatedAt: now })
+          .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)));
+      }
 
       /**
        * ── RESURFACING RE-UNREADS, WHATEVER STARTED IT ─────────────────────────────────────
