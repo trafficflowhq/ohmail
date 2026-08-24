@@ -391,12 +391,26 @@ async function hashOf(spec: JournalSpec, tag: string): Promise<string> {
 const REISSUED_ORIGINALS: ReadonlyArray<{
   journal: string;
   original: { tag: string; when: number };
-  reissue: { when: number };
+  reissue: {
+    when: number;
+    /**
+     * FULL-FILE sha256s the reissue's row may carry from SUPERSEDED forms of the file — the
+     * one so far is the review-round intermediate whose file carried its own explanatory
+     * header before the byte-copy ruling. A row holding one of these is rewritten to the
+     * canonical hash (the byte-copy's, which is also the original file's), so every supported
+     * migration history ends with bookkeeping that describes the shipped journal — the same
+     * claim the adoption makes for the missing row, applied to the mis-described one.
+     */
+    priorHashes: readonly string[];
+  };
 }> = [
   {
     journal: "mail",
     original: { tag: "0066_folders_enabled", when: 1790982140530 },
-    reissue: { when: 1791154940527 },
+    reissue: {
+      when: 1791154940527,
+      priorHashes: ["ac41c89e9a966ad47bba888d5e867cd8950650ed842f61b4d6852cae487bd111"],
+    },
   },
 ];
 
@@ -427,6 +441,17 @@ export async function adoptReissuedOriginals(
       select count(*)::int as n from ${tableId} where created_at = ${r.reissue.when}`);
     if (Number(reissued[0]?.n ?? 0) === 0) continue;
     const hash = await hashOf(spec, r.original.tag);
+    // A row written by a SUPERSEDED form of the reissue file carries that form's hash; rewrite
+    // it to the canonical one (see `priorHashes`), so the row describes the shipped journal.
+    for (const prior of r.reissue.priorHashes) {
+      const healed = await db.execute(sql`
+        update ${tableId} set "hash" = ${hash}
+        where created_at = ${r.reissue.when} and "hash" = ${prior}
+        returning id`);
+      if (rowsOf(healed).length > 0) {
+        log(`${spec.name}: canonicalized the reissue row's hash at ${r.reissue.when}`);
+      }
+    }
     const res = await db.execute(sql`
       insert into ${tableId} ("hash", "created_at") values (${hash}, ${r.original.when})
       on conflict (created_at) do nothing returning id`);

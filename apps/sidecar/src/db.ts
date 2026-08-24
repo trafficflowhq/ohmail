@@ -4,7 +4,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { mailSchema } from "@trafficflow/db/mail";
-import { MAIL_JOURNAL, adoptBaseline } from "@trafficflow/db/journal";
+import { MAIL_JOURNAL, adoptBaseline, adoptReissuedOriginals } from "@trafficflow/db/journal";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -553,6 +553,12 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       migrationsFolder: MAIL_JOURNAL.dir,
       migrationsSchema: MAIL_JOURNAL.migrationsSchema,
     });
+    // AFTER the pass, exactly as the server runner orders it: a journal entry that exists
+    // twice (an original plus its reissue) owes the original's bookkeeping row wherever only
+    // the reissue could run — a local mirror that migrated in the skip window is that
+    // population too, and the journal README names the local engine as a first-class consumer.
+    // A no-op everywhere else (`REISSUED_ORIGINALS`, packages/db/src/baseline.ts).
+    await adoptReissuedOriginals(db, MAIL_JOURNAL);
     const migrateMs = Date.now() - tMigrate;
     // AFTER the migrator (the table must exist on a first launch) and BEFORE serving: a rewrite
     // holds an exclusive lock, and the one place that lock collides with nothing is here, where

@@ -47,7 +47,7 @@ export {
   MAIL_JOURNAL, CLOUD_JOURNAL, JOURNALS,
 } from "./journal-specs.js";
 export {
-  adoptBaseline, adoptionVerdict, baselineEntries, baselineObjects, readJournalOf,
+  adoptBaseline, adoptReissuedOriginals, adoptionVerdict, baselineEntries, baselineObjects, readJournalOf,
   findLegacyMigrationsTable, missingObjects, AdoptionRefused,
   LEGACY_CUTOFF_WHEN, LEGACY_JOURNAL_WHENS,
   type AdoptionVerdict, type BaselineObjects, type JournalEntry, type JournalSpec,
