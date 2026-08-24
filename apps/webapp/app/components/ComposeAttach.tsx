@@ -57,7 +57,7 @@
  *
  * AND A MOVE RE-ENCODES THE PICTURES ALREADY ATTACHED — owner ruling, replacing the old
  * "new picks only" scope. The pristine SOURCE bytes of every admitted file are retained (in
- * memory, per attachment, for the life of the compose — see {@link ComposeAttach}'s `sources`),
+ * memory, per attachment, for as long as the list holds it — {@link ATTACHMENT_SOURCES}),
  * and a dial move re-runs the compression over each already-attached compressible picture FROM
  * THAT SOURCE, never from the previous encode: re-compressing an encode is generational quality
  * loss, and a move back to Original must recover the exact original bytes. Non-image and
@@ -222,6 +222,26 @@ export function composeAttachCap(
   return bounds.length > 0 ? Math.min(...bounds) : COMPOSE_ATTACH_MAX_TOTAL_BYTES;
 }
 
+/**
+ * THE PRISTINE SOURCE of every admitted attachment, keyed by the attachment object itself —
+ * AT MODULE SCOPE, deliberately.
+ *
+ * A dial move re-encodes the pictures already attached, and it must do so FROM THE PICKED BYTES:
+ * re-encoding the previous encode compounds the loss (each pass throws away fidelity the next
+ * pass cannot get back), and a move to Original must recover the exact file. The map lives
+ * outside the component because the LIST does: `AppShell` owns `fields.attachments` precisely so
+ * the compose survives navigating away, and a map held in component state died with the unmount —
+ * after visiting another view and coming back, every source lookup missed and the dial silently
+ * did nothing while the note claimed otherwise (review finding). Keyed weakly on the attachment's
+ * identity, so a removed row, a discarded form, or a closed compose releases its bytes with no
+ * bookkeeping; a list restored WITHOUT bytes (a reload — the scratch buffer strips them) simply
+ * has no entries and is left untouched by a move, which is the honest answer.
+ *
+ * `originalBase64` is the source's own encoding, computed at most once — a move to Original and
+ * every "this file cannot shrink" outcome reuse it instead of re-reading megabytes.
+ */
+const ATTACHMENT_SOURCES = new WeakMap<ComposeAttachment, { blob: Blob; originalBase64?: string }>();
+
 /** Decoded byte length of a base64 string, without decoding it. */
 function base64Bytes(b64: string): number {
   const len = b64.length;
@@ -305,20 +325,6 @@ export function ComposeAttach({
   const levelId = useId();
   const [error, setError] = useState<string | null>(null);
   /**
-   * THE PRISTINE SOURCE of every admitted attachment, keyed by the attachment object itself.
-   *
-   * A dial move re-encodes the pictures already attached, and it must do so FROM THE PICKED
-   * BYTES: re-encoding the previous encode compounds the loss (each pass throws away fidelity the
-   * next pass cannot get back), and a move to Original must recover the exact file. So the source
-   * blob is retained per attachment until the compose lets go of it — a `WeakMap` on the
-   * attachment's identity, so a removed row (or a whole discarded form) releases its bytes with
-   * no bookkeeping, and a list the caller restored from a scratch buffer (which strips bytes on
-   * principle) simply has no sources and is left untouched by a move, which is the honest answer.
-   * `originalBase64` is the source's own encoding, computed at most once — a move to Original
-   * and every "this file cannot shrink" outcome reuse it instead of re-reading megabytes.
-   */
-  const sources = useRef(new WeakMap<ComposeAttachment, { blob: Blob; originalBase64?: string }>());
-  /**
    * The list as of the CURRENT render — what a re-encode pass reconciles its commit against, so
    * files picked or removed while the pass ran are respected rather than clobbered by a commit
    * computed from a stale snapshot.
@@ -326,11 +332,38 @@ export function ComposeAttach({
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
   /**
+   * THE CALLER'S HANDLER AND CAP, AS OF THE CURRENT RENDER — what every ASYNC commit goes
+   * through, and the review finding that put them here: an async pass that called the `onChange`
+   * captured when it STARTED invoked a caller closure holding that render's whole form
+   * (`ComposeView` spreads `...fields` around the new list), so a subject or recipient edited
+   * while encodes ran was silently written back to its pre-edit text. The ref hands the commit
+   * to the LATEST render's closure, whose spread carries the fields as they now stand. The cap
+   * moves for the same reason: an inline reply's From can switch to a stingier mailbox mid-pass,
+   * and bytes admitted against the old ceiling would be refused by the send.
+   */
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const maxTotalBytesRef = useRef(maxTotalBytes);
+  maxTotalBytesRef.current = maxTotalBytes;
+  /**
    * Which dial move owns the commit. A pass checks it after every await and yields to a newer
    * move: the newer pass re-encodes from the same sources, so the stale pass's work is simply
    * superseded — committing it late would overwrite the level the user chose last.
    */
   const requalifyGen = useRef(0);
+  /**
+   * A DISCARDED FORM STAYS DISCARDED: unmounting bumps the generation, so a pass still encoding
+   * when the compose was cancelled (or the reply settled) can never commit into the caller's
+   * cleared state and repopulate a message the user threw away.
+   */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true; // re-armed on every mount — StrictMode replays the cleanup once
+    return () => {
+      mounted.current = false;
+      requalifyGen.current += 1;
+    };
+  }, []);
   /**
    * THE ACCOUNT'S LEVEL — the dial's value, and what the next pick applies. Seeded with the
    * default and corrected to the STORED per-account preference post-mount, never read during
@@ -366,79 +399,6 @@ export function ComposeAttach({
     inputRef.current?.click();
   }, []);
 
-  const onFiles = useCallback(
-    async (fileList: FileList | null) => {
-      if (!fileList || fileList.length === 0) return;
-      setError(null);
-      setCompressed(null);
-      setDuplicates([]);
-      // THIS SURFACE'S DIAL, once per pick, off the ref — inside the handler because the level
-      // must be the one on screen at the moment of the pick, not the one a stale closure holds.
-      const level = levelRef.current;
-      let running = totalBytes(attachments);
-      const next = [...attachments];
-      let refused = false;
-      let savedFrom = 0;
-      let savedTo = 0;
-      const skipped: string[] = [];
-      for (const file of Array.from(fileList)) {
-        try {
-          // BEFORE THE CAP CHECK. The whole value of compressing on the client is that it changes
-          // which files are admissible, and it cannot do that from behind the check that refuses
-          // them. See the header note.
-          const picture = await compressImage(file, level);
-          if (running + picture.bytes > maxTotalBytes) {
-            refused = true;
-            continue;
-          }
-          const contentBase64 = await readAsBase64(picture.blob);
-          const filename = file.name || "attachment";
-          /* THE SAME FILE TWICE IS A SKIP, NOT A SECOND ROW. Same name and byte-identical
-             content is the same attachment, and two indistinguishable rows invite deleting the
-             wrong one — or mailing both. Compared on the ADMITTED bytes, so the same photo
-             deliberately re-picked at a different level still attaches: those rows differ in
-             the size column, which is the difference the user asked for. */
-          if (next.some((a) => a.filename === filename && a.contentBase64 === contentBase64)) {
-            skipped.push(filename);
-            continue;
-          }
-          const attachment: ComposeAttachment = {
-            filename,
-            contentType: picture.contentType,
-            contentBase64,
-          };
-          // The pristine source, retained for the dial (see `sources`). When the admitted bytes
-          // ARE the source (Original, or a file the shrink could not help), the base64 in hand is
-          // the source's own encoding — cache it so a later move never re-reads it.
-          sources.current.set(attachment, {
-            blob: file,
-            ...(picture.blob === file ? { originalBase64: contentBase64 } : {}),
-          });
-          next.push(attachment);
-          running += picture.bytes;
-          if (picture.compressed) {
-            savedFrom += picture.originalBytes;
-            savedTo += picture.bytes;
-          }
-        } catch {
-          refused = true;
-        }
-      }
-      if (refused) {
-        setError(t("attachRefused", { size: formatSize(maxTotalBytes) }));
-      }
-      // The totals of this pick, not of the list: the sentence explains what just happened to the
-      // files being added, and for the single-picture case — which is nearly all of them — the two
-      // numbers are that picture's own.
-      if (savedFrom > 0) setCompressed({ from: savedFrom, to: savedTo });
-      if (skipped.length > 0) setDuplicates(skipped);
-      onChange(next);
-      // Clear the native input so re-picking the same file fires `change` again.
-      if (inputRef.current) inputRef.current.value = "";
-    },
-    [attachments, onChange, maxTotalBytes, t],
-  );
-
   /**
    * RE-ENCODE THE PICTURES ALREADY ATTACHED at the level the dial just moved to — the other half
    * of the dial, and the half it long disclaimed ("files already attached keep their size").
@@ -466,23 +426,31 @@ export function ComposeAttach({
    *   · A SECOND MOVE mid-pass bumps `requalifyGen`; the older pass notices and yields — its
    *     superseded encodes are discarded, never committed over the newer level.
    *
-   * ── THE CAP STILL GOVERNS ──────────────────────────────────────────────────────────────────
-   * A move UP (toward Original) can grow the total past `maxTotalBytes`. A row whose re-encode
-   * would cross the cap keeps its previous bytes — the least destructive honest answer (the
-   * file was admitted; a dial move must not eject it) — and the refusal is said on screen with
-   * the same number the send enforces.
+   * ── THE CAP STILL GOVERNS, OVER THE WHOLE LIST ─────────────────────────────────────────────
+   * A move UP (toward Original) can grow the total past the cap. Admission is judged against the
+   * PROJECTED FINAL TOTAL of the whole list — a prefix walk admitted a grow before it had counted
+   * the untouched rows behind it, and the committed list then exceeded the cap the send enforces
+   * (review finding). Shrinks land first (they only make room), then grows in list order while
+   * the projection holds; a row whose re-encode would cross the cap keeps its previous bytes —
+   * the least destructive honest answer (the file was admitted; a dial move must not eject it) —
+   * and the refusal is said on screen with the same number the send enforces, read at COMMIT
+   * time, because an inline reply's mailbox can change under the pass.
    */
   const requalify = useCallback(
-    async (nextLevel: ImageQualityLevel) => {
+    async (nextLevel: ImageQualityLevel, over?: readonly ComposeAttachment[]) => {
       const gen = ++requalifyGen.current;
-      const snapshot = attachmentsRef.current;
+      // `over` is the intake's hand-off: its commit is a setState the renderer has not flushed
+      // yet, so a pass kicked in the same tick would enumerate a ref one commit behind and skip
+      // the rows the kick exists to re-encode. The COMMIT below still reconciles against the
+      // ref, which has caught up by then (the encodes cross real tasks).
+      const snapshot = over ?? attachmentsRef.current;
       /** att → its re-encode and the numbers the notes render. */
       const replacements = new Map<
         ComposeAttachment,
         { next: ComposeAttachment; bytes: number; originalBytes: number; compressed: boolean }
       >();
       for (const att of snapshot) {
-        const source = sources.current.get(att);
+        const source = ATTACHMENT_SOURCES.get(att);
         if (!source) continue;
         const picture = await compressImage(source.blob, nextLevel);
         if (gen !== requalifyGen.current) return; // superseded — the newer move owns the list
@@ -504,7 +472,7 @@ export function ComposeAttach({
         };
         // The replacement inherits the SAME source record: the next move re-encodes from the
         // same pristine bytes, and the cached original encoding rides along.
-        sources.current.set(next, source);
+        ATTACHMENT_SOURCES.set(next, source);
         replacements.set(att, {
           next,
           bytes: picture.bytes,
@@ -515,36 +483,165 @@ export function ComposeAttach({
       if (gen !== requalifyGen.current) return; // superseded — the newer move owns the list
       if (replacements.size === 0) return; // nothing compressible moved — the list stands
 
-      // THE COMMIT — one pass over the LATEST list, one `onChange`. Rows the user added or
-      // removed while the encodes ran are respected; the cap is applied in list order, exactly
-      // as a pick applies it.
+      // THE COMMIT — one pass over the LATEST list, one `onChange`, through the LATEST closure
+      // and against the LATEST cap (see the refs above). Rows the user added or removed while
+      // the encodes ran are respected. Admission projects the WHOLE-LIST total: shrinks first,
+      // grows in list order while the projection stays under the cap — see the header note.
       const latest = attachmentsRef.current;
-      let running = 0;
+      const cap = maxTotalBytesRef.current;
+      const deltaOf = (att: ComposeAttachment, bytes: number): number =>
+        bytes - base64Bytes(att.contentBase64);
+      let total = totalBytes(latest);
+      const landed = new Set<ComposeAttachment>();
+      for (const att of latest) {
+        const r = replacements.get(att);
+        if (r && deltaOf(att, r.bytes) <= 0) {
+          landed.add(att);
+          total += deltaOf(att, r.bytes);
+        }
+      }
       let capKept = false;
+      for (const att of latest) {
+        const r = replacements.get(att);
+        if (!r || landed.has(att)) continue;
+        const delta = deltaOf(att, r.bytes);
+        if (total + delta <= cap) {
+          landed.add(att);
+          total += delta;
+        } else {
+          capKept = true; // the re-encode would cross the cap — the admitted bytes stay
+        }
+      }
       let savedFrom = 0;
       let savedTo = 0;
       const committed = latest.map((att) => {
         const r = replacements.get(att);
-        if (r) {
-          if (running + r.bytes <= maxTotalBytes) {
-            running += r.bytes;
-            if (r.compressed) {
-              savedFrom += r.originalBytes;
-              savedTo += r.bytes;
-            }
-            return r.next;
-          }
-          capKept = true; // the re-encode would cross the cap — the admitted bytes stay
+        if (!r || !landed.has(att)) return att;
+        if (r.compressed) {
+          savedFrom += r.originalBytes;
+          savedTo += r.bytes;
         }
-        running += base64Bytes(att.contentBase64);
-        return att;
+        return r.next;
       });
-      setError(capKept ? t("attachQualityCap", { size: formatSize(maxTotalBytes) }) : null);
+      setError(capKept ? t("attachQualityCap", { size: formatSize(cap) }) : null);
       setCompressed(savedFrom > 0 ? { from: savedFrom, to: savedTo } : null);
-      if (committed.some((a, i) => a !== latest[i])) onChange(committed);
+      if (committed.some((a, i) => a !== latest[i])) onChangeRef.current(committed);
     },
-    [maxTotalBytes, onChange, t],
+    [t],
   );
+
+  const onFiles = useCallback(
+    async (fileList: FileList | null) => {
+      if (!fileList || fileList.length === 0) return;
+      setError(null);
+      setCompressed(null);
+      setDuplicates([]);
+      // THIS SURFACE'S DIAL, once per pick, off the ref — inside the handler because the level
+      // must be the one on screen at the moment of the pick, not the one a stale closure holds.
+      const level = levelRef.current;
+      let refused = false;
+      const picked: Array<{
+        attachment: ComposeAttachment;
+        bytes: number;
+        originalBytes: number;
+        compressed: boolean;
+      }> = [];
+      for (const file of Array.from(fileList)) {
+        try {
+          // BEFORE THE CAP CHECK. The whole value of compressing on the client is that it changes
+          // which files are admissible, and it cannot do that from behind the check that refuses
+          // them. See the header note. Admission itself is deferred to the COMMIT below, against
+          // the list as it stands then — a dial move can re-encode rows while these files decode,
+          // and a cap judged against the list as it stood at pick time would admit or refuse
+          // against sizes that no longer exist.
+          const picture = await compressImage(file, level);
+          const contentBase64 = await readAsBase64(picture.blob);
+          const filename = file.name || "attachment";
+          const attachment: ComposeAttachment = {
+            filename,
+            contentType: picture.contentType,
+            contentBase64,
+          };
+          // The pristine source, retained for the dial (see ATTACHMENT_SOURCES). When the
+          // admitted bytes ARE the source (Original, or a file the shrink could not help), the
+          // base64 in hand is the source's own encoding — cache it so a move never re-reads it.
+          ATTACHMENT_SOURCES.set(attachment, {
+            blob: file,
+            ...(picture.blob === file ? { originalBase64: contentBase64 } : {}),
+          });
+          picked.push({
+            attachment,
+            bytes: picture.bytes,
+            originalBytes: picture.originalBytes,
+            compressed: picture.compressed,
+          });
+        } catch {
+          refused = true;
+        }
+      }
+
+      // A pick landing after the compose was discarded must not repopulate it — see `mounted`.
+      if (!mounted.current) return;
+
+      // THE COMMIT — against the list as it stands NOW, in one `onChange` through the latest
+      // closure. `attachments` (the closure copy) may be a level behind: a re-encode pass can
+      // have replaced rows while these files decoded, and a commit built on the snapshot would
+      // silently revert them (review finding).
+      const latest = attachmentsRef.current;
+      const cap = maxTotalBytesRef.current;
+      let running = totalBytes(latest);
+      const admitted: ComposeAttachment[] = [];
+      const skipped: string[] = [];
+      let savedFrom = 0;
+      let savedTo = 0;
+      for (const p of picked) {
+        /* THE SAME FILE TWICE IS A SKIP, NOT A SECOND ROW. Same name and byte-identical
+           content is the same attachment, and two indistinguishable rows invite deleting the
+           wrong one — or mailing both. Compared on the ADMITTED bytes, against the list the
+           commit will actually extend. */
+        if (
+          [...latest, ...admitted].some(
+            (a) => a.filename === p.attachment.filename && a.contentBase64 === p.attachment.contentBase64,
+          )
+        ) {
+          skipped.push(p.attachment.filename);
+          continue;
+        }
+        if (running + p.bytes > cap) {
+          refused = true;
+          continue;
+        }
+        admitted.push(p.attachment);
+        running += p.bytes;
+        if (p.compressed) {
+          savedFrom += p.originalBytes;
+          savedTo += p.bytes;
+        }
+      }
+      if (refused) {
+        setError(t("attachRefused", { size: formatSize(cap) }));
+      }
+      // The totals of this pick, not of the list: the sentence explains what just happened to the
+      // files being added, and for the single-picture case — which is nearly all of them — the two
+      // numbers are that picture's own.
+      if (savedFrom > 0) setCompressed({ from: savedFrom, to: savedTo });
+      if (skipped.length > 0) setDuplicates(skipped);
+      if (admitted.length > 0) {
+        const committed = [...latest, ...admitted];
+        onChangeRef.current(committed);
+        // The dial may have moved while these files decoded — they were encoded at the level of
+        // their PICK, which is the level the user has since moved off. Land the whole list at
+        // the level chosen last: sources are retained, and the pass commits atomically like any
+        // other, so no observable list mixes levels longer than one pass. The just-committed
+        // list rides along because the renderer has not flushed it into the ref yet.
+        if (levelRef.current !== level) void requalify(levelRef.current, committed);
+      }
+      // Clear the native input so re-picking the same file fires `change` again.
+      if (inputRef.current) inputRef.current.value = "";
+    },
+    [t, requalify],
+  );
+
 
   /**
    * PASTE AND DROP, ON THE CALLER'S SURFACE. Native listeners rather than React props because
