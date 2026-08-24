@@ -159,6 +159,25 @@ export interface AlertThresholds {
   /** An on-duty mailbox not synced within this is lagging. Arch doc: 15 minutes. */
   syncLagMs: number;
   /**
+   * The SUSTAIN margin on top of {@link syncLagMs} before a lagging mailbox pages — the
+   * debounce a boundary measurement forced. Measured live (2026-08-24): every on-duty
+   * mailbox was one to four minutes fresh, yet the alert address kept receiving "1 mailbox
+   * behind by more than 15m", because the worker's serialized scan visits mailboxes in lanes
+   * and a healthy scan's TAIL routinely kisses the 15-minute threshold itself — the rule was
+   * paging on the scheduler's own period. One further full period is the discriminator: a
+   * mailbox the next scan picks up drops back to minutes and never pages; a mailbox no scan is
+   * advancing keeps aging straight through the margin. Fifteen minutes, i.e. the threshold
+   * again, because the tail IS the period.
+   */
+  syncLagSustainMs: number;
+  /**
+   * The CRITICAL tier for sync lag: the age at which "their owners are not receiving mail"
+   * stops being an overclaim and becomes the plain truth. Two hours is eight healthy scan
+   * periods — no scheduler artifact reaches it, and a person checking their inbox notices.
+   * Below it the warning tier says what is actually true at that lag: delivery is delayed.
+   */
+  syncLagCriticalMs: number;
+  /**
    * No completed apply-mode reconciliation run within this ⇒ the reconciler is dark. Six
    * hours against an hourly cron: five missed runs before a page, so one platform hiccup is
    * not a 3am mail, while a genuinely dead cron pages the same day it died.
@@ -189,6 +208,8 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   leaderStaleMs: 2 * 60 * 1000,
   stuckSendMs: 10 * 60 * 1000,
   syncLagMs: 15 * 60 * 1000,
+  syncLagSustainMs: 15 * 60 * 1000,
+  syncLagCriticalMs: 2 * 60 * 60 * 1000,
   reconcileStaleMs: 6 * 60 * 60 * 1000,
   deviceSyncStaleMs: 3 * 24 * 60 * 60 * 1000,
   reuseRevokedWindowMs: 24 * 60 * 60 * 1000,
@@ -398,12 +419,27 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // per-account: the group-by is what lets the parked accounts be subtracted before the count
   // is formed. The result set is one row per account with a lagging mailbox — bounded by the
   // account count even when a dead worker makes every mailbox lag.
-  const lagBefore = new Date(now.getTime() - t.syncLagMs);
+  //
+  // THE CUT IS THRESHOLD + SUSTAIN, not the threshold alone — the debounce. The evaluator is a
+  // pure read with no memory, so "lagging on two consecutive passes" is expressed as age: a
+  // healthy serialized scan's tail reaches `syncLagMs` itself (measured — see the threshold's
+  // doc), so a mailbox only counts once it has aged through one FULL further period without any
+  // scan advancing it. A mailbox at 15m30s that the next scan returns to minutes never appears
+  // here; a wedged one crosses this cut one period later and stays.
+  const lagBefore = new Date(now.getTime() - (t.syncLagMs + t.syncLagSustainMs));
+  const criticalBefore = new Date(now.getTime() - t.syncLagCriticalMs);
   const laggingByAccount = await db
     .select({
       accountId: mailboxes.accountId,
       count: sql<number>`count(*)::int`,
+      // The CRITICAL-tier members of the same population — counted per mailbox, not derived
+      // from the group's oldest, so the copy can say how many owners are genuinely cut off
+      // instead of ascribing the worst mailbox's state to all of them.
+      criticalCount: sql<number>`count(*) filter (where coalesce(${mailboxes.lastSyncAt}, ${mailboxes.createdAt}) < ${criticalBefore.toISOString()}::timestamptz)::int`,
       oldest: sql<Date | null>`min(coalesce(${mailboxes.lastSyncAt}, ${mailboxes.createdAt}))`,
+      // The warning tier's own oldest — the members NOT past the critical cut — so each row
+      // below reports the age of its own population rather than borrowing the other's.
+      oldestWarning: sql<Date | null>`min(coalesce(${mailboxes.lastSyncAt}, ${mailboxes.createdAt})) filter (where coalesce(${mailboxes.lastSyncAt}, ${mailboxes.createdAt}) >= ${criticalBefore.toISOString()}::timestamptz)`,
     })
     .from(mailboxes)
     .where(and(
@@ -427,31 +463,69 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     .filter((r) => parked.has(r.accountId))
     .reduce((n, r) => n + Number(r.count), 0);
 
-  if (lagCount > 0) {
-    const oldest = onDuty
-      .map((r) => (r.oldest ? new Date(r.oldest as unknown as string) : null))
-      .reduce<Date | null>((min, d) => (d && (!min || d < min) ? d : min), null);
-    const oldestSeconds = secondsBetween(now, oldest);
+  // THE TIER IS THE IDENTITY, because the sentence is a claim (claims are contracts) and the
+  // page schedule follows the key. "Their owners are not receiving mail" was the copy at EVERY
+  // lag; at thirty minutes it is an overclaim — delivery is delayed, not dead. Two ROWS now,
+  // each counting its own mailboxes (a review caught the grouped version re-smuggling the
+  // overclaim: one 3-hour mailbox beside a 35-minute one made the sentence cover both):
+  //
+  //  · `sync_lag` — the SUSTAINED-warning tier. A throttling provider or a slow scan tail
+  //    produces this and resolves itself; it becomes urgent by co-occurring with `worker_down`,
+  //    which is the alert a human should read first.
+  //  · `sync_lag:critical` — mailboxes past `syncLagCriticalMs`, where the strong sentence is
+  //    the plain truth. A SEPARATE KEY deliberately, not a severity flip on one key: crossing
+  //    the tier creates a NEW `alert_state` row, whose NULL `notified_at` the claim machinery
+  //    pages immediately, retries after a failed delivery, and survives a crash between passes
+  //    — the properties two review rounds showed a same-key escalation losing (first to the
+  //    repeat schedule, then to the failed-delivery restore path putting the warning's stamp
+  //    under a row already marked critical). Key splits ship to BOTH alert drivers in one
+  //    deploy window — the version-skew rule written out at the reconciliation rule's key.
+  const effectiveMs = t.syncLagMs + t.syncLagSustainMs;
+  const criticalCount = onDuty.reduce((n, r) => n + Number(r.criticalCount), 0);
+  const warningCount = lagCount - criticalCount;
+  const parkedSuffix = parkedCount > 0
+    // The exclusion is STATED, not silent. An operator who knows five mailboxes are stale
+    // and reads "3" must be able to see where the other two went without reading this file.
+    ? ` (${parkedCount} further stale mailbox(es) are parked by their subscription's ` +
+      `entitlement and are deliberately not synced — not counted.)`
+    : "";
+  const minDate = (ds: Array<Date | null>): Date | null =>
+    ds.reduce<Date | null>((min, d) => (d && (!min || d < min) ? d : min), null);
+  if (warningCount > 0) {
+    const oldestSeconds = secondsBetween(now, minDate(
+      onDuty.map((r) => (r.oldestWarning ? new Date(r.oldestWarning as unknown as string) : null)),
+    ));
     alerts.push({
       key: "sync_lag",
       kind: "sync_lag",
-      // WARNING, not critical: a worker restart or one throttling provider produces this for
-      // a few minutes and resolves itself. It becomes critical by co-occurring with
-      // `worker_down`, which is the alert a human should read first.
       severity: "warning",
-      title: `${lagCount} mailbox${lagCount === 1 ? "" : "es"} behind by more than ` +
-        `${humanAge(Math.round(t.syncLagMs / 1000))}`,
+      title: `${warningCount} mailbox${warningCount === 1 ? "" : "es"} behind by more than ` +
+        `${humanAge(Math.round(effectiveMs / 1000))}`,
       detail:
-        `${lagCount} mailbox(es) the worker is on duty for have not synced within ` +
-        `${humanAge(Math.round(t.syncLagMs / 1000))}; the worst is ${humanAge(oldestSeconds)} behind. ` +
-        `Their owners are not receiving mail.` +
-        // The exclusion is STATED, not silent. An operator who knows five mailboxes are stale
-        // and reads "3" must be able to see where the other two went without reading this file.
-        (parkedCount > 0
-          ? ` (${parkedCount} further stale mailbox(es) are parked by their subscription's ` +
-            `entitlement and are deliberately not synced — not counted.)`
-          : ""),
-      count: lagCount,
+        `${warningCount} mailbox(es) the worker is on duty for have not synced within ` +
+        `${humanAge(Math.round(effectiveMs / 1000))}; the worst of them is ` +
+        `${humanAge(oldestSeconds)} behind. Mail delivery to them is delayed.` + parkedSuffix,
+      count: warningCount,
+      oldestSeconds,
+    });
+  }
+  if (criticalCount > 0) {
+    const oldestSeconds = secondsBetween(now, minDate(
+      onDuty.map((r) => (r.oldest ? new Date(r.oldest as unknown as string) : null)),
+    ));
+    alerts.push({
+      key: "sync_lag:critical",
+      kind: "sync_lag",
+      severity: "critical",
+      title: `${criticalCount} mailbox${criticalCount === 1 ? "" : "es"} behind by more than ` +
+        `${humanAge(Math.round(t.syncLagCriticalMs / 1000))}`,
+      detail:
+        `${criticalCount} mailbox(es) the worker is on duty for have not synced within ` +
+        `${humanAge(Math.round(t.syncLagCriticalMs / 1000))}; the worst is ` +
+        `${humanAge(oldestSeconds)} behind. ` +
+        `${criticalCount === 1 ? "Its owner is" : "Their owners are"} not receiving mail.` +
+        parkedSuffix,
+      count: criticalCount,
       oldestSeconds,
     });
   }
@@ -555,7 +629,24 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       const ranSeconds = run ? secondsBetween(now, run.ranAt) : null;
       const found = Math.max(emitted + flaggedCount, healCount);
       alerts.push({
-        key: "billing_reconciliation_divergence",
+        // THE TIER IS THE IDENTITY, sync_lag's rule exactly (and found by the same review):
+        // a same-key severity flip sits on the warning's `notified_at` until the repeat
+        // interval, so a money-state alert going critical inside that window stayed muted.
+        // The critical tier's own key opens a NEW row whose NULL stamp pages at once; the
+        // warning row resolves in the same pass (it leaves the firing set), so the console
+        // shows one row per state, never two for one condition.
+        //
+        // KEY MIGRATIONS HAVE A DEPLOY RULE, stated here because this line is where the next
+        // one gets written: the two alert drivers (the worker's timer, the API's cron) deploy
+        // independently, and while they run DIFFERENT revisions each pass resolves — deletes —
+        // the other's spelling of a firing condition, re-opening it with a NULL stamp: a page
+        // per pass until the revisions converge. So a key split ships to BOTH drivers in one
+        // deploy window (the runbook's one-milestone rule), ideally while the condition is not
+        // firing. The residual is bounded to that window and LOUD (duplicate pages), never a
+        // silence — the acceptable direction, but not one to schedule casually.
+        key: unhealed > 0
+          ? "billing_reconciliation_divergence:unhealed"
+          : "billing_reconciliation_divergence",
         kind: "billing_reconciliation_divergence",
         severity: unhealed > 0 ? "critical" : "warning",
         // A truncation-only firing must not present itself as "0 divergences" — the incident
@@ -1554,6 +1645,14 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     })
     .from(alertState);
   const byKey = new Map(existing.map((r) => [r.alertKey, r]));
+
+  // NO ESCALATION ARM HERE, deliberately — it existed for one pass's lifetime and two review
+  // rounds killed it. A tier that must page immediately is a tier with its OWN KEY
+  // (`sync_lag:critical`): a new key's first observation has `notified_at` NULL, which the
+  // ordinary claim below pages at once, retries after a failed delivery (the restore path
+  // puts back NULL), and survives a crash between the upsert and the claim. A same-key
+  // severity flip had none of those properties without carrying extra notified-severity
+  // state.
 
   // ── record the observation (opened_at survives an UPSERT; last_seen_at advances) ──────
   //
