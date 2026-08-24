@@ -766,19 +766,20 @@ export function ComposeAttach({
           savedTo += p.bytes;
         }
       }
-      if (refusedAtCap !== null) {
-        // PAST-CONDITIONAL COPY, deliberately: the sentence describes the refusal DECISION under
-        // the cap in force when it was made. The cap is live, so a present-tense "must stay
-        // under X" beside a header already announcing the restored limit asserted two active
-        // limits at once (review finding) — the decision's number is history, and the copy says
-        // so by shape.
-        setError(t("attachRefused", { size: formatSize(refusedAtCap) }));
-      } else if (refused) {
-        // A file that could not be READ is not a size story: the size sentence over a small
-        // file that merely failed to open falsely attributes the failure to the cap (review
-        // finding). Its own sentence, with no number to be wrong about.
-        setError(t("attachUnreadable"));
-      }
+      /*
+       * EVERY FAILURE MODE THE PICK HAD IS SAID — both sentences on a mixed batch, never one
+       * standing in for the other (review finding: an exclusive branch left an unreadable file
+       * reading as a second size refusal).
+       *  · The cap sentence is PAST-CONDITIONAL, deliberately: it describes the refusal
+       *    DECISION under the cap in force when it was made — the cap is live, and a
+       *    present-tense "must stay under X" beside a header announcing a restored limit
+       *    asserted two active limits at once.
+       *  · The read sentence carries no number, because a read failure is not a size story.
+       */
+      const failures: string[] = [];
+      if (refusedAtCap !== null) failures.push(t("attachRefused", { size: formatSize(refusedAtCap) }));
+      if (refused) failures.push(t("attachUnreadable"));
+      if (failures.length > 0) setError(failures.join(" "));
       // The totals of this pick, not of the list: the sentence explains what just happened to the
       // files being added, and for the single-picture case — which is nearly all of them — the two
       // numbers are that picture's own.
