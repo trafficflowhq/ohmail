@@ -1310,11 +1310,28 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * `startBelow` stays for a future CONTIGUOUS-edge derivation; nothing arms it today.
    */
   const folderOlderBoundary = undefined;
-  /** Each folder entity's last-known (mailboxId, name) — written by `folderTailVerdict` while
-   *  the entity is in the mirror, read by it while the entity is not (the flag mid-toggle), so
-   *  an authoritative move-back during the gap still clears the tail's latch. Bounded by the
-   *  folders visited this mount; never a source of a ban. */
-  const folderTailKeys = useRef(new Map<string, { mailboxId: string; name: string }>());
+  /** The open folder entity, read ONCE per render for the reach-past pieces below: the verdicts
+   *  judge against it, and its absence marks the unjudgeable gap the epoch tracker watches. */
+  const folderEntityForOlder =
+    folderIdForOlder ? reader.get<FolderEntity>("folder", folderIdForOlder) : undefined;
+  /**
+   * THE FOLDER TAIL'S SCOPE EPOCH — bumps when the open folder's entity RE-ENTERS the mirror
+   * after an absence (the flag toggled off and on over an open folder URL). While the entity
+   * is absent every verdict is "hold" and no latch moves; moves that end in a window prune
+   * during that gap erase their own evidence, so when the entity returns the hook drops its
+   * pages and latches and the tail re-earns its rows from the server — the one authority the
+   * gap did not silence. A ref mutated in render, transition-edged so StrictMode's double
+   * invoke cannot double-bump; a folder change resets the tracker (the hook resets on the id
+   * change anyway).
+   */
+  const folderTailEpoch = useRef({ folderId: undefined as string | undefined, present: false, epoch: 0 });
+  {
+    const t = folderTailEpoch.current;
+    const present = folderEntityForOlder !== undefined;
+    if (t.folderId !== folderIdForOlder) folderTailEpoch.current = { folderId: folderIdForOlder, present, epoch: 0 };
+    else if (present && !t.present) { t.epoch += 1; t.present = true; }
+    else if (!present && t.present) t.present = false;
+  }
   const older = useOlderMail(engine, "ohbox", version);
   /**
    * The open FOLDER's reach past the mirror window (the folders foundation) — `older`'s twin,
@@ -1326,17 +1343,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     engine, "folder", version, folderIdForOlder, folderOlderBoundary,
     /* The per-render verdicts — `folderTailVerdict` is the pure, branch-tested word (see the
        hook's `suppress` for what each verdict does to the latch): in this folder ⇒ hidden and
-       un-latched (an observed return); shown elsewhere by the LIVE entity ⇒ banned; not held ⇒
-       the fetched copy shows. `folderTailKeys` remembers each folder's last-known mailbox+name
-       so a move-back stays observable while the entity is absent (the flag mid-toggle over an
-       open URL) — the cache CLEARS latches only, and never earns one. */
-    (id) =>
-      folderTailVerdict(
-        reader.get<EngineMessage>("message", id),
-        folderIdForOlder,
-        folderIdForOlder ? reader.get<FolderEntity>("folder", folderIdForOlder) : undefined,
-        folderTailKeys.current,
-      ),
+       un-latched (an observed return); shown elsewhere by the LIVE entity ⇒ banned; entity
+       absent ⇒ held, latches untouched; not held at all ⇒ the fetched copy shows. The
+       unjudgeable entity-absent gap is settled by `folderTailEpoch` above, not by memory. */
+    (id) => folderTailVerdict(reader.get<EngineMessage>("message", id), folderIdForOlder, folderEntityForOlder),
+    folderTailEpoch.current.epoch,
   );
 
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */

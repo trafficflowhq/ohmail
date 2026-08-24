@@ -143,32 +143,23 @@ export function folderMatches(path: string, query: string): boolean {
  * is testable (`older-mail.ts`'s `suppress` documents what each verdict does to the latch).
  *
  *  · the mirror does not hold the message → `"show"` (evicted, or genuinely older);
- *  · no folder scope, or a scope never yet seen → `"hold"` (out of the tail, latch untouched);
+ *  · no folder scope, or the folder ENTITY absent from the mirror (the flag mid-toggle over an
+ *    open URL) → `"hold"`: out of the tail, latches untouched — NOTHING is judged while the
+ *    scope itself is not readable. An earlier revision judged the gap from the entity's
+ *    last-known name; review retired it, because any move sequence that ends in a window
+ *    prune before the entity returns erases its own evidence, and every policy that keeps
+ *    latch state across the gap tells a lie in one direction or the other. The gap's END is
+ *    the answer instead: the caller bumps the hook's `scopeEpoch` when the entity returns,
+ *    dropping pages and latches so the tail re-earns its rows from the server;
  *  · the entity is PRESENT → the mirror's full word: in this folder `"hide"` (clears a latch —
- *    an observed return), elsewhere `"ban"` (an observed leave, latched);
- *  · the entity is ABSENT but was seen before (`cache` carries its last-known mailbox+name —
- *    the flag mid-toggle over an open folder URL): the held message row is still judgeable, and
- *    the ASYMMETRY is the point — a row observed back in the folder still answers `"hide"`, so
- *    an authoritative move-back during the gap clears the latch and a later prune cannot hide
- *    real mail for the scope's life; but a row observed elsewhere answers `"hold"`, never
- *    `"ban"`, because the cache is yesterday's word about the folder's name and a latch must
- *    only ever be earned from the mirror's live word.
- *
- * The `cache` is owned by the caller (a ref keyed by folder entity id) and is WRITTEN here when
- * the entity is present, so the last-known key can never drift from what was actually judged.
+ *    an observed return), elsewhere `"ban"` (an observed leave, latched).
  */
 export function folderTailVerdict(
   m: EngineMessage | undefined,
   folderId: string | undefined,
   entity: FolderEntity | undefined,
-  cache: Map<string, { mailboxId: string; name: string }>,
 ): "show" | "hide" | "ban" | "hold" {
   if (m === undefined) return "show";
-  if (!folderId) return "hold";
-  if (entity) cache.set(folderId, { mailboxId: entity.mailboxId, name: entity.name });
-  const key = cache.get(folderId);
-  if (!key) return "hold";
-  const inScope = m.mailboxId === key.mailboxId && m.folder === key.name;
-  if (inScope) return "hide";
-  return entity ? "ban" : "hold";
+  if (!folderId || !entity) return "hold";
+  return m.mailboxId === entity.mailboxId && m.folder === entity.name ? "hide" : "ban";
 }

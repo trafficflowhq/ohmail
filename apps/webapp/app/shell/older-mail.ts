@@ -157,19 +157,38 @@ export function useOlderMail(
    * row can be genuinely moved back, and neither may leave a stale latch that outlives a later
    * eviction. `"hold"` is the reason the clear is safe: without it, the caller's defensive
    * hides (folders toggled off and on over an open URL) would count as returns and release
-   * latches the scope never re-earned. The one residual the latch cannot close is a change
-   * applied and hard-pruned inside a single render tick of an open scope, which no reader of
-   * the live mirror can distinguish from eviction; named here rather than papered over.
+   * latches the scope never re-earned. What happens INSIDE such a gap is settled by
+   * `scopeEpoch` below — nothing is judged, and the gap's end resets the tail — because moves
+   * that end in a prune during the gap erase their own evidence. The one residual the latch
+   * cannot close is a change applied and hard-pruned inside a single render tick of an open
+   * scope, which no reader of the live mirror can distinguish from eviction; named here
+   * rather than papered over.
    */
   suppress?: (id: string) => "show" | "hide" | "ban" | "hold",
+  /**
+   * THE SCOPE'S EPOCH — bumped by the caller when the scope becomes JUDGEABLE again after a
+   * gap it could not judge (the folder entity re-entering the mirror after a feature toggle).
+   * A bump is a full reset: pages, cursor and latches are dropped and the tail re-earns its
+   * rows from the server, whose next pages are the authority the gap withheld.
+   *
+   * This exists because the gap is genuinely unjudgeable, not merely awkward. While the
+   * entity is absent every verdict is `"hold"`, and any move sequence that ends in a window
+   * prune before the entity returns erases its own evidence — a banned row moved back then
+   * pruned reads exactly like a shown row moved out then pruned, so ANY policy that keeps
+   * state across the gap tells one of the two lies (three review rounds each caught one).
+   * Refusing to remember and re-asking the server is the only answer that is right in both
+   * directions.
+   */
+  scopeEpoch: number = 0,
 ): OlderMail {
   const available = engine.listOlderAvailable();
   const [page, setPage] = useState<Page>(EMPTY);
 
-  // The view (or the engine) changed: a cursor into one list means nothing in another.
+  // The view (or the engine) changed — or the scope re-earned judgeability (`scopeEpoch`):
+  // a cursor into one list means nothing in another.
   useEffect(() => {
     setPage(EMPTY);
-  }, [engine, view, folderId]);
+  }, [engine, view, folderId, scopeEpoch]);
 
   /**
    * THE PAGING POSITION, AS REFS RATHER THAN AS STATE READ INSIDE `loadMore`.
@@ -194,7 +213,7 @@ export function useOlderMail(
   /** The scope this hook's page state belongs to — returned EMPTY synchronously on mismatch,
    *  because the reset below is an effect and runs one render late: without this, switching
    *  folders rendered the previous folder's fetched rows under the new folder's title. */
-  const scope = `${view}|${folderId ?? ""}`;
+  const scope = `${view}|${folderId ?? ""}|${scopeEpoch}`;
   const pageScope = useRef(scope);
   const inFlight = useRef(false);
   const done = useRef(false);
@@ -215,7 +234,7 @@ export function useOlderMail(
     banned.current = new Set();
     pageScope.current = scope;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, view, folderId]);
+  }, [engine, view, folderId, scopeEpoch]);
 
   const loadMore = useCallback(() => {
     if (!available || inFlight.current || done.current) return;
