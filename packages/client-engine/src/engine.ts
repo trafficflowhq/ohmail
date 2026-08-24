@@ -815,6 +815,15 @@ export const RENDERED_PINS = 64;
  */
 export const OPTIMISTIC_SENT_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * How many inherited parts a FORWARD's optimistic sent copy may list — the mirror of the send
+ * service's `FORWARD_MAX_PARTS`, kept as a literal because this bundle pulls in no server module
+ * (the same rule every compose-cap mirror follows). The send streams at most this many of the
+ * original's parts onto the outgoing mail, so a projection listing more would claim files the
+ * recipient never got.
+ */
+export const SENT_FORWARD_MAX_PARTS = 100;
+
 export class OhmailEngine {
   readonly store: MirrorStore;
   private readonly adapter: EngineAdapter;
@@ -951,7 +960,7 @@ export class OhmailEngine {
   }>();
   /** In-flight metadata reads by message id — single-flight, see {@link OhmailEngine.loadAttachments}. */
   private readonly attachmentListRequests = new Map<string, Promise<AttachmentsOutcome>>();
-  /** In-flight byte fetches by attachment id — see {@link OhmailEngine.openAttachment}. */
+  /** In-flight byte fetches by `messageId:attachmentId` — see {@link OhmailEngine.openAttachment}. */
   private readonly attachmentRequests = new Map<string, Promise<void>>();
   /**
    * `contentId → data: URI` per message — the embedded images already minted for the reader's
@@ -2879,7 +2888,13 @@ export class OhmailEngine {
       return true;
     }
     if (parent?.state !== "ready") return false;
-    const inherited: AttachmentItem[] = parent.items.map((i) => ({
+    // AT MOST WHAT THE SEND STREAMED. The server bounds a forward's inherited parts
+    // (`SEND_FORWARD_MAX_PARTS` mirrors `SendService.FORWARD_MAX_PARTS`), so projecting the
+    // parent's whole list onto a >cap original would claim files the recipient never got. The
+    // subset the server takes carries no explicit order, so for that pathological original this
+    // projection is the right SIZE and a best-effort membership — corrected when the real row
+    // is opened. Every ordinary forward is far below the cap and exact.
+    const inherited: AttachmentItem[] = parent.items.slice(0, SENT_FORWARD_MAX_PARTS).map((i) => ({
       id: i.id,
       filename: i.filename,
       mimeType: i.mimeType,
@@ -3354,13 +3369,22 @@ export class OhmailEngine {
    *     state, not a failure, because the answer is permanent and a Retry button would be a lie.
    *   · `failed`    — anything else, carrying the server's own sentence.
    *
-   * Single-flight per attachment id: a double-click is one fetch, not two IMAP connections.
+   * Single-flight per message and attachment: a double-click is one fetch, not two IMAP
+   * connections. (Per MESSAGE, because a forward's copy lists its parent's parts under the same
+   * ids — see the note at the flight key.)
    */
   async openAttachment(messageId: string, attachmentId: string, opts: { retry?: boolean } = {}): Promise<void> {
     const fetchOne = this.adapter.fetchAttachment;
     if (!fetchOne) return;
 
-    const inFlight = this.attachmentRequests.get(attachmentId);
+    // PER MESSAGE, not per attachment id alone: a forward's sent copy lists the parent's parts
+    // under their own ids, so the same id legitimately stands in two message lists at once. A
+    // flight keyed by the bare id would hand the second list the FIRST list's promise — whose
+    // completion patches only the first list — and the press on the copy would silently move
+    // nothing out of `idle`. The cost is one possible duplicate fetch of the same part across
+    // two messages, which is the rare case; the double-click on one message stays one fetch.
+    const flightKey = `${messageId}:${attachmentId}`;
+    const inFlight = this.attachmentRequests.get(flightKey);
     if (inFlight) return inFlight;
 
     const current = this.itemOf(messageId, attachmentId);
@@ -3396,10 +3420,10 @@ export class OhmailEngine {
         });
       })
       .finally(() => {
-        this.attachmentRequests.delete(attachmentId);
+        this.attachmentRequests.delete(flightKey);
       });
 
-    this.attachmentRequests.set(attachmentId, request);
+    this.attachmentRequests.set(flightKey, request);
     return request;
   }
 
@@ -3643,13 +3667,33 @@ export class OhmailEngine {
     // that copy back into the 404 the seed exists to answer. The seed's own lifecycle frees it —
     // `reconcileOptimisticSent` clears `live` when the copy retires (after which this release
     // works normally) and sweeps it at the copy's TTL. See {@link sentAttachmentSeeds}.
-    if (this.sentAttachmentSeeds.get(messageId)?.live) return;
+    const seed = this.sentAttachmentSeeds.get(messageId);
+    if (seed?.live) {
+      // …but a CARRIED FAILURE must not survive the release. A release followed by a re-load is
+      // the one gesture surfaces use to mean "the refusal's cause is gone — ask again" (the
+      // session-revival seam re-asks an auth-failed list exactly this way), and a forward copy's
+      // failure is the PARENT read's, which expires with whatever refused it there. So the
+      // failed states are dropped on both ids — the seeded bytes stay, and the next delegated
+      // read recomposes from the parent's fresh answer.
+      const held = this.attachmentLists.get(messageId);
+      if (held?.state === "failed") {
+        this.attachmentLists.delete(messageId);
+        if (seed.forwardOf && this.attachmentLists.get(seed.forwardOf)?.state === "failed") {
+          this.attachmentLists.delete(seed.forwardOf);
+        }
+        this.notify();
+      }
+      return;
+    }
     this.forceReleaseAttachments(messageId);
   }
 
-  /** Revoke everything, for a teardown that is losing the whole engine. Live seeds included. */
+  /** Revoke everything, for a teardown that is losing the whole engine. Live seeds included —
+   *  and seeds whose copy list was never published (a forward still waiting on its parent hold
+   *  minted compose URLs with no `attachmentLists` entry to find them under). */
   releaseAllAttachments(): void {
-    for (const messageId of [...this.attachmentLists.keys()]) this.forceReleaseAttachments(messageId);
+    const ids = new Set([...this.attachmentLists.keys(), ...this.sentAttachmentSeeds.keys()]);
+    for (const messageId of ids) this.forceReleaseAttachments(messageId);
   }
 
   /** The unconditional half of {@link OhmailEngine.releaseAttachments}. */

@@ -235,6 +235,9 @@ export {
   // How long an optimistic Sent copy (and its seeded attachment list) stands before the TTL
   // sweep. Exported so the seed-lifecycle guards read the shipped number, not a copy.
   OPTIMISTIC_SENT_TTL_MS,
+  // A forward copy's inherited-parts ceiling — the send service's own bound, mirrored. Exported
+  // for the same reason.
+  SENT_FORWARD_MAX_PARTS,
   type EngineOptions,
   type MutationResult,
   type MutationStatus,
