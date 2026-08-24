@@ -1298,6 +1298,29 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    */
   /** The open folder's entity id, for the reach-past hook below — route-derived, shell-early. */
   const folderIdForOlder = route.view === "folder" ? (route.folderId ?? undefined) : undefined;
+  /**
+   * THE MIRROR BOUNDARY for that folder — its oldest mirrored row as a keyset position, so the
+   * reach-past's first page starts where the mirror ends instead of re-serving the newest rows
+   * already on screen. Derived from the RAW mirror here (the shell's `folderMessages` memo
+   * lives later in the file); the folder view renders the same set, so the boundary and the
+   * window agree. Undefined when the folder holds nothing locally — page one then starts at
+   * the folder's newest, which is exactly the empty-mirror probe's question.
+   */
+  const folderOlderBoundary = useMemo(() => {
+    if (!folderIdForOlder || !consent.foldersEnabled) return undefined;
+    const entity = reader.get<FolderEntity>("folder", folderIdForOlder);
+    if (!entity) return undefined;
+    let oldest: EngineMessage | undefined;
+    for (const m of reader.list<EngineMessage>("message")) {
+      if (m.mailboxId !== entity.mailboxId || m.folder !== entity.name) continue;
+      if (!oldest) { oldest = m; continue; }
+      const a = m.date ? new Date(m.date).getTime() : -1;
+      const b = oldest.date ? new Date(oldest.date).getTime() : -1;
+      if (a < b || (a === b && m.id < oldest.id)) oldest = m;
+    }
+    return oldest ? { date: oldest.date ?? null, id: oldest.id } : undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folderIdForOlder, consent.foldersEnabled, reader, version]);
   const older = useOlderMail(engine, "ohbox", version);
   /**
    * The open FOLDER's reach past the mirror window (the folders foundation) — `older`'s twin,
@@ -1305,7 +1328,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * undefined id whenever no folder is open, which the transport reads as "no list"
    * (unavailable) — hooks must be unconditional, the scope may be absent.
    */
-  const folderOlder = useOlderMail(engine, "folder", version, folderIdForOlder);
+  const folderOlder = useOlderMail(engine, "folder", version, folderIdForOlder, folderOlderBoundary);
 
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
   const ohbox = useMemo(() => ohboxView(presented), [presented, version]);
@@ -5369,8 +5392,12 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 older={folderOlder}
                 now={now}
                 /* IN PLACE — `setReaderFor`, TagView's reason: the folder IS the message's place,
-                   and `openMessage` would route it to a pile it does not present in. */
-                onOpen={(m) => setReaderFor(m.id)}
+                   and `openMessage` would route it to a pile it does not present in. The row
+                   TRAVELS with the open (`setReaderOffMirror`): a reach-past row is not in the
+                   mirror, and a reader that can only resolve mirror ids would stay closed on
+                   exactly the mail the reach-past just fetched. The mirror's own row still wins
+                   whenever it exists — see `readerMessageFor`. */
+                onOpen={(m) => { setReaderOffMirror(m); setReaderFor(m.id); }}
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}

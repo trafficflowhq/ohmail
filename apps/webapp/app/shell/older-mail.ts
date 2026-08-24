@@ -118,6 +118,12 @@ export function useOlderMail(
   version: number,
   /** With `view: "folder"`: the folder ENTITY id. Undefined reads as "no list" (unavailable). */
   folderId?: string,
+  /**
+   * The caller's mirror boundary — the OLDEST row the mirror renders for this scope, as a
+   * (date, id) keyset position. Page one starts strictly below it, so the reach-past never
+   * re-serves the rows already on screen above it. Read once per scope, at the first ask.
+   */
+  startBelow?: { date: string | null; id: string },
 ): OlderMail {
   const available = engine.listOlderAvailable();
   const [page, setPage] = useState<Page>(EMPTY);
@@ -142,6 +148,11 @@ export function useOlderMail(
    *    under StrictMode's double-invoke, which is a real request against somebody's mailbox.
    */
   const cursor = useRef<string | null>(null);
+  /** The scope this hook's page state belongs to — returned EMPTY synchronously on mismatch,
+   *  because the reset below is an effect and runs one render late: without this, switching
+   *  folders rendered the previous folder's fetched rows under the new folder's title. */
+  const scope = `${view}|${folderId ?? ""}`;
+  const pageScope = useRef(scope);
   const inFlight = useRef(false);
   const done = useRef(false);
   /**
@@ -158,6 +169,8 @@ export function useOlderMail(
     cursor.current = null;
     inFlight.current = false;
     done.current = false;
+    pageScope.current = scope;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, view, folderId]);
 
   const loadMore = useCallback(() => {
@@ -170,6 +183,7 @@ export function useOlderMail(
       .listOlder(view, {
         ...(cursor.current ? { cursor: cursor.current } : {}),
         ...(folderId ? { folderId } : {}),
+        ...(!cursor.current && startBelow ? { startBelow } : {}),
       })
       .then((outcome) => {
         if (mine !== generation.current) return; // answered a list that is no longer on screen
@@ -204,7 +218,7 @@ export function useOlderMail(
           };
         });
       });
-  }, [engine, view, available, folderId]);
+  }, [engine, view, available, folderId, startBelow]);
 
   /**
    * MIRROR-PREFERRED BY ID, recomputed when the mirror changes.
@@ -221,12 +235,15 @@ export function useOlderMail(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, page.items, version]);
 
+  // A scope the reset effect has not caught up with yet returns the RESTING page, never the
+  // previous scope's rows — see `pageScope`.
+  const current = pageScope.current === scope;
   return {
     available,
-    items,
-    loading: page.loading,
-    error: page.error,
-    exhausted: page.exhausted,
+    items: current ? items : [],
+    loading: current ? page.loading : false,
+    error: current ? page.error : null,
+    exhausted: current ? page.exhausted : false,
     loadMore,
   };
 }

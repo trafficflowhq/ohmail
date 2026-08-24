@@ -227,6 +227,9 @@ interface CursorState {
    * mirrors bootstrapped while the drain still asked for eight of the feed's nine types.
    */
   tagBackfill: boolean;
+  /** The one-time folder backfill's consumed flag — `tagBackfill`'s shape, for the folder
+   *  entities the pre-folders apply loop dropped while the cursor advanced past them. */
+  folderBackfill: boolean;
   /**
    * Set once the one-time cap-marker repair has been CONSIDERED — see {@link repairCapMarkers}.
    * Absent from every cursor file written before that repair existed, which reads as `false`, and
@@ -375,6 +378,7 @@ interface CursorFile {
   bodies?: unknown;
   bootstrapping?: unknown;
   tagBackfill?: unknown;
+  folderBackfill?: unknown;
   capMarkerRepair?: unknown;
 }
 
@@ -390,6 +394,7 @@ function readCursor(path: string): CursorState {
       bodies: readBodiesWalk(j.bodies),
       bootstrapping: j.bootstrapping === true,
       tagBackfill: j.tagBackfill === true,
+      folderBackfill: j.folderBackfill === true,
       // `=== true`, never `?? true`: an absent key must read FALSE. The inverse would silently
       // exempt every install that HAS the defect and leave only fresh ones correct.
       capMarkerRepair: j.capMarkerRepair === true,
@@ -400,7 +405,7 @@ function readCursor(path: string): CursorState {
     // statement about mirrors that exist.
     return {
       version: CURSOR_VERSION, sync: "0", bodies: { phase: "unresolved" },
-      bootstrapping: false, tagBackfill: false,
+      bootstrapping: false, tagBackfill: false, folderBackfill: false,
       // A fresh install has no pre-marker rows and its walk writes markers from the start.
       capMarkerRepair: true,
     };
@@ -414,6 +419,7 @@ function writeCursor(path: string, state: CursorState): void {
     bodies: writeBodiesWalk(state.bodies),
     bootstrapping: state.bootstrapping,
     tagBackfill: state.tagBackfill,
+    folderBackfill: state.folderBackfill,
     capMarkerRepair: state.capMarkerRepair,
   };
   writeFileSync(path, JSON.stringify(onDisk));
@@ -1546,6 +1552,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       } else if (ch.type === "draft") {
         const d = ch.entity as DraftDTO | undefined;
         if (d?.mailboxId) out.add(d.mailboxId);
+      } else if (ch.type === "folder") {
+        // A page can name a NEW mailbox through its folder inventory alone — a just-connected
+        // mailbox whose first mirrored change is a folder entity. Without this the apply's
+        // known-mailbox guard dropped the folder while the cursor advanced past it, and no
+        // later refresh could recover it.
+        const f = ch.entity as { mailboxId?: string } | undefined;
+        if (f?.mailboxId) out.add(f.mailboxId);
       }
     }
     return out;
@@ -1728,11 +1741,20 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * Crash safety is the flag being the LAST write: a repair that commits and then dies re-probes on
    * the next launch, finds tags present, and skips at gate 2 — the apply is an upsert either way.
    */
+  /**
+   * THE FIRST SNAPSHOT PAGE, fetched at most once per pull across BOTH one-time repairs (tags,
+   * folders). `undefined` = not asked yet; `null` = asked and did not answer, so the second
+   * repair defers with the first instead of dialling again. The repairs are the only readers,
+   * and once both are marked consumed the cache is never consulted again.
+   */
+  let snapshotPage1: SnapshotResponse | null | undefined;
   const fetchSnapshotPage = async (pageCursor?: string): Promise<SnapshotResponse | null> => {
+    if (!pageCursor && snapshotPage1 !== undefined) return snapshotPage1;
     const q = new URLSearchParams({ limit: String(pageLimit) });
     if (pageCursor) q.set("cursor", pageCursor);
     const res = await cfg.auth.authedFetch(`/sync/snapshot?${q.toString()}`);
     if (!res.ok) {
+      if (!pageCursor) snapshotPage1 = null;
       cfg.log?.("cloud_tag_backfill_deferred", {
         status: res.status,
         reason: "a snapshot page for the one-time tag repair did not answer; the mirror is " +
@@ -1743,6 +1765,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     const snap = (await res.json()) as SnapshotResponse;
     // A wire boundary, so the shape is checked rather than assumed: marking the repair done off a
     // body that is not a snapshot would spend the one chance this install gets at it.
+    if (!pageCursor) snapshotPage1 = Array.isArray((snap as { changes?: unknown }).changes) ? snap : null;
     if (!Array.isArray(snap.changes)) {
       cfg.log?.("cloud_tag_backfill_deferred", {
         reason: "a snapshot page answered something that is not a snapshot; the mirror is " +
@@ -1801,6 +1824,62 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       });
       return 0;
     }
+  };
+
+  /**
+   * THE ONE-TIME FOLDER BACKFILL — `repairStaleTags`' shape, for `repairStaleTags`' reason with
+   * one difference in the gates. Between the drain first asking for `folder` entities and the
+   * apply loop learning to store them, a mirror could drain folder creates, drop them, and
+   * persist a cursor past them — a delta only ever looks forward, so no later pull re-delivers
+   * them and the desktop's Folders rail stays empty for the life of the install.
+   *
+   * Unlike tags, "no local folder rows" is AMBIGUOUS (the account may simply have folders off),
+   * so there is no present-rows gate: the snapshot's first page is the answer itself — it
+   * carries the account's folder entities IFF the hosted flag is on (they are live small state,
+   * page 1 only, never the tail) — and applying whatever it holds plus reconciling the local
+   * flag settles both readings. Marked considered only when the page was READ; a failed fetch
+   * retries on the next pull, and the apply is idempotent so a crash re-run converges.
+   */
+  const repairStaleFolders = async (bootstrapped: boolean): Promise<number> => {
+    if (cursor.folderBackfill) return 0;
+    // A pull that just BOOTSTRAPPED replayed the whole account through the folder-capable
+    // apply — the entities are already here natively, so the repair is consumed without a
+    // fetch. Only a mirror carrying a PRE-FOLDERS cursor forward has anything to recover.
+    if (bootstrapped) {
+      cursor.folderBackfill = true;
+      writeCursor(cfg.cursorPath, cursor);
+      return 0;
+    }
+    const snap = await fetchSnapshotPage();
+    if (!snap) return 0;   // did not answer → not marked; the next pull retries
+    const folderChanges = snap.changes.filter((c) => c.type === "folder" && c.op !== "delete");
+    let appliedCount = 0;
+    // The mirrored mailboxes as the DATABASE holds them — the drain's own known-set is a local
+    // of the pull and may not be populated on this path.
+    const knownRows = await cfg.db.select({ id: mailboxes.id }).from(mailboxes)
+      .where(eq(mailboxes.accountId, cfg.world.accountId));
+    const knownHere = new Set(knownRows.map((r) => r.id));
+    await cfg.db.transaction(async (tx) => {
+      for (const ch of folderChanges) {
+        if (await applyUpsert(tx, cfg.world, ch, now(), null, knownHere)) {
+          await recordChange(tx, {
+            accountId: cfg.world.accountId, entityType: "folder", entityId: ch.id, op: "create", meta: null,
+          });
+          appliedCount++;
+        }
+      }
+      await reconcileLocalFoldersFlag(tx, cfg.world, now());
+    });
+    cursor.folderBackfill = true;
+    writeCursor(cfg.cursorPath, cursor);
+    if (appliedCount > 0) {
+      cfg.log?.("cloud_folder_backfill_applied", {
+        folders: appliedCount,
+        reason: "this mirror drained folder entities before the apply loop stored them, so they " +
+          "sat below the cursor and no delta could ever re-deliver them",
+      });
+    }
+    return appliedCount;
   };
 
   /**
@@ -2154,6 +2233,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // AFTER the drain, so a bootstrap has already delivered the tags natively and is skipped by
       // the zero-tags gate rather than by a special case for it.
       await repairStaleTags();
+      await repairStaleFolders(sweep !== null && sweep !== undefined);
       await backfillBodies();
       // AFTER the body pass, deliberately: `backfillBodies` is what resolves the walk and moves it
       // to `complete`, and the repair defers (without marking) while it is still walking — so

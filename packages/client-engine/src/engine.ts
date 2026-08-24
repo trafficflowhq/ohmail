@@ -165,6 +165,12 @@ export type ListOlderFn = (
      * the feature ignores it and resolves `null`, which reads as "nothing further back".
      */
     folderId?: string;
+    /**
+     * Start the FIRST page strictly below this (date, id) keyset position — the caller's mirror
+     * boundary, so page one begins where the mirror ends instead of re-serving the newest rows
+     * the mirror already renders. Ignored once a cursor exists (the cursor IS the position).
+     */
+    startBelow?: { date: string | null; id: string };
   },
 ) => Promise<ListOlderWire | null>;
 
@@ -2839,7 +2845,7 @@ export class OhmailEngine {
    */
   async listOlder(
     view: OhmailView | "folder",
-    opts: { cursor?: string; limit?: number; folderId?: string } = {},
+    opts: { cursor?: string; limit?: number; folderId?: string; startBelow?: { date: string | null; id: string } } = {},
   ): Promise<ListOlderOutcome> {
     const fn = this.listOlderFn;
     if (fn === null) return { state: "unavailable" };
@@ -2848,7 +2854,10 @@ export class OhmailEngine {
     // with, and a hand-picked delimiter is how two different pages come to share one key. It also
     // keeps the separator out of the SOURCE. A single invisible control character here is a
     // file-wide hazard: it makes tooling classify this whole file as binary and skip it.
-    const key = JSON.stringify([view, opts.cursor ?? null, opts.limit ?? null, opts.folderId ?? null]);
+    const key = JSON.stringify([
+      view, opts.cursor ?? null, opts.limit ?? null, opts.folderId ?? null,
+      opts.startBelow ? [opts.startBelow.date, opts.startBelow.id] : null,
+    ]);
     const inFlight = this.olderPages.get(key);
     if (inFlight) return inFlight;
 

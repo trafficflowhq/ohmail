@@ -132,9 +132,19 @@ export function FolderView({
       && older.items.length === 0 && older.error === null) {
       older.loadMore();
     }
-    // Keyed on the emptiness question, not on the paging state: one probe per empty arrival.
+    // Keyed on the emptiness question AND the folder's identity: navigating straight from one
+    // empty folder to another changes neither `mirrorEmpty` nor `available`, and the second
+    // folder is owed the same one probe the first one got.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mirrorEmpty, older.available]);
+  }, [mirrorEmpty, older.available, folder.id]);
+
+  /**
+   * The reach-past rows the mirror does NOT already render — a belt on the server-side
+   * boundary: page one starts below the mirror's oldest row, but a row that arrives in the
+   * mirror AFTER it was fetched (a drain catching up) must not render twice.
+   */
+  const mirrorIds = new Set(ordered.map((m) => m.id));
+  const olderRows = older.items.filter((m) => !mirrorIds.has(m.id));
 
   /**
    * REVEAL A TARGET THE WINDOW HAS NOT MOUNTED — the Ohbox window's own rule, verbatim in
@@ -218,10 +228,10 @@ export function FolderView({
               })}
               {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
             </>
-          ) : older.available && !older.exhausted ? (
-            // The mirror holds nothing AND the server has not finished answering: neither
-            // sentence may be said yet. The tail below carries the state (probing / failed /
-            // load more); this slot stays quiet rather than claiming emptiness early.
+          ) : olderRows.length > 0 || (older.available && !older.exhausted) ? (
+            // The mirror holds nothing AND either fetched rows exist below (never claim empty
+            // over visible mail) or the server has not finished answering: neither sentence may
+            // be said yet. The tail below carries the state; this slot stays quiet.
             null
           ) : (
             <div className="empty">
@@ -234,10 +244,10 @@ export function FolderView({
               copy (one namespace, so the two surfaces can never phrase the boundary apart).
               Rendered below the window under its own label: rows that came from the server a
               moment ago and are not in the mirror, never silently merged into "Earlier". */}
-          {older.items.length > 0 ? (
+          {olderRows.length > 0 ? (
             <>
               <ListGroupLabel>{to("olderTitle")}</ListGroupLabel>
-              {older.items.map((m) => (
+              {olderRows.map((m) => (
                 <MessageRow
                   key={m.id}
                   id={m.id}

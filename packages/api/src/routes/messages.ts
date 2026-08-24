@@ -31,9 +31,16 @@ export const messageRoutes: Route[] = [
       const cursor = url.searchParams.get("cursor") ?? undefined;
       const limitRaw = url.searchParams.get("limit");
       const limit = limitRaw != null ? Number(limitRaw) : undefined;
-      // `view=folder` (the folders foundation): the folder ENTITY id addresses the list.
+      // `view=folder` (the folders foundation): the folder ENTITY id addresses the list, and
+      // the optional (beforeDate, beforeId) keyset is the caller's mirror boundary — page one
+      // starts strictly below it so a windowed client is never re-served what it already holds.
       const folderId = url.searchParams.get("folderId") ?? undefined;
-      const page = await message(deps).list(serviceContext(deps, req), { view, cursor, limit, folderId });
+      const beforeId = url.searchParams.get("beforeId") ?? undefined;
+      const beforeDate = url.searchParams.get("beforeDate") ?? undefined;
+      const page = await message(deps).list(serviceContext(deps, req), {
+        view, cursor, limit, folderId,
+        ...(beforeId ? { before: { date: beforeDate ?? null, id: beforeId } } : {}),
+      });
       return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
     },
   },

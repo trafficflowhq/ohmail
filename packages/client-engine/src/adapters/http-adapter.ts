@@ -675,7 +675,10 @@ export class HttpAdapter implements EngineAdapter {
    */
   async listMessages(
     view: OhmailView | "folder",
-    opts: { cursor?: string; limit?: number; folderId?: string } = {},
+    opts: {
+      cursor?: string; limit?: number; folderId?: string;
+      startBelow?: { date: string | null; id: string };
+    } = {},
   ): Promise<ListOlderWire | null> {
     // A FOLDER page (the folders foundation): the entity id is the whole address — the server
     // resolves it, scoped to the account and gated on the account's own "Use folders" flag.
@@ -683,6 +686,11 @@ export class HttpAdapter implements EngineAdapter {
       if (!opts.folderId) return null;
       const qf = new URLSearchParams({ view: "folder", folderId: opts.folderId });
       if (opts.cursor) qf.set("cursor", opts.cursor);
+      else if (opts.startBelow) {
+        // The mirror boundary: only meaningful on page one — a cursor supersedes it.
+        if (opts.startBelow.date !== null) qf.set("beforeDate", opts.startBelow.date);
+        qf.set("beforeId", opts.startBelow.id);
+      }
       if (opts.limit !== undefined) qf.set("limit", String(opts.limit));
       const resf = await this.request("GET", `/messages?${qf.toString()}`);
       if (!resf.ok) throw await this.rejectionOf(resf);

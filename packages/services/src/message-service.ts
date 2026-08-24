@@ -72,6 +72,12 @@ export interface ListMessagesOptions {
    * refusal about it.
    */
   folderId?: string;
+  /**
+   * With `view: "folder"` and NO cursor: start strictly below this keyset position — the
+   * client mirror's boundary, so page one begins where the mirror ends. A cursor supersedes
+   * it (the cursor is the position); the six fixed views ignore it entirely.
+   */
+  before?: { date: string | null; id: string };
 }
 
 export interface MessagePatchBody {
@@ -224,15 +230,26 @@ export class MessageService {
       if (!(await foldersEnabled(ctx.db, ctx.accountId))) return { items: [], nextCursor: null };
       const uf = await userFolderById(ctx.db, ctx.accountId, opts.folderId);
       if (uf === null) return { items: [], nextCursor: null };
+      const filters = [
+        eq(messages.accountId, ctx.accountId),
+        eq(messages.mailboxId, uf.mailboxId),
+        eq(folderState.desiredFolder, uf.folder),
+        isNull(messages.deletedAt),
+      ];
+      // The caller's mirror boundary, page one only — the same keyset predicate the cursor
+      // builds, from the client's oldest held row instead of a server-minted cursor.
+      if (!opts.cursor && opts.before) {
+        const bd = opts.before.date === null ? null : new Date(opts.before.date);
+        filters.push(
+          bd === null || Number.isNaN(bd.getTime())
+            ? and(isNull(messages.date), lt(messages.id, opts.before.id))!
+            : or(lt(messages.date, bd), and(eq(messages.date, bd), lt(messages.id, opts.before.id)), isNull(messages.date))!,
+        );
+      }
       return this.pageOf(ctx, {
         limit: clampLimit(opts.limit),
         cursor: opts.cursor,
-        filters: [
-          eq(messages.accountId, ctx.accountId),
-          eq(messages.mailboxId, uf.mailboxId),
-          eq(folderState.desiredFolder, uf.folder),
-          isNull(messages.deletedAt),
-        ],
+        filters,
       });
     }
     const view = this.validView(opts.view);
