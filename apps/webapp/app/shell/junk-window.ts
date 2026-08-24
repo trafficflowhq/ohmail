@@ -54,6 +54,15 @@ export type JunkBodyPhase =
   | { phase: "failed" };
 
 export interface JunkWindowControl {
+  /**
+   * IS THERE A SERVER BEHIND THIS CONTROL — `apiConfigured()`, answered by the module that
+   * owns the client (the shared shell never imports it). The shell passes the control to the
+   * view only when this is true: the hosted DESKTOP aliases the api client to a refusing stub
+   * while its suggest wire makes the broader "is there a server to ask" read true, and a
+   * control wired to a stub rendered a permanent loading state over the hidden Spam segment
+   * (review finding on this commit).
+   */
+  supported: boolean;
   /** The list read's own state — `failed` is rendered as failed, never as empty. */
   phase: "loading" | "ready" | "failed";
   items: JunkItemWire[];
@@ -65,7 +74,12 @@ export interface JunkWindowControl {
   loadOlder: () => void;
   /** The session body cache: opening twice costs one fetch; closing the app forgets it. */
   bodyFor: (item: JunkItemWire) => JunkBodyPhase;
-  openBody: (item: JunkItemWire) => void;
+  /**
+   * Fetch the body on open. `retry: true` REPLACES whatever the cache holds — the human's
+   * Retry after a stall must dispatch even while a hung first ask still shows `loading`
+   * (review finding: the automatic open refuses non-failed entries, so Retry did nothing).
+   */
+  openBody: (item: JunkItemWire, opts?: { retry?: boolean }) => void;
   /** "Not junk" — the rescue. The row leaves the list when the server confirmed the move. */
   rescue: (item: JunkItemWire) => void;
   rescuing: (item: JunkItemWire) => boolean;
@@ -91,7 +105,12 @@ export function useJunkWindow(active: boolean, toast: ToastFn): JunkWindowContro
   const generation = useRef(0);
 
   const fetchFirst = useCallback(() => {
-    if (!apiConfigured()) return;
+    if (!apiConfigured()) {
+      // No server behind this build: the honest resting state, never an eternal spinner. The
+      // shell also withholds the control entirely on `supported`, so this is the belt.
+      setPhase("failed");
+      return;
+    }
     const gen = ++generation.current;
     setPhase("loading");
     void screenerApi.junkList().then(
@@ -160,12 +179,14 @@ export function useJunkWindow(active: boolean, toast: ToastFn): JunkWindowContro
     [bodies],
   );
 
-  const openBody = useCallback((item: JunkItemWire) => {
+  const openBody = useCallback((item: JunkItemWire, opts: { retry?: boolean } = {}) => {
     const key = junkKeyOf(item);
     setBodies((cur) => {
       const held = cur.get(key);
       // One fetch per session per message — `ready` and in-flight `loading` are both answers.
-      if (held && held.phase !== "failed") return cur;
+      // A human RETRY overrides both: a hung first ask still reads `loading`, and refusing
+      // the press would leave Retry dead until a reload.
+      if (!opts.retry && held && held.phase !== "failed") return cur;
       void screenerApi.junkBody(item.mailboxId, item.uid, item.uidValidity).then(
         (b) => setBodies((m) => new Map(m).set(key, { phase: "ready", text: b.text })),
         () => setBodies((m) => new Map(m).set(key, { phase: "failed" })),
@@ -201,6 +222,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn): JunkWindowContro
   const rescuing = useCallback((item: JunkItemWire) => busy.has(junkKeyOf(item)), [busy]);
 
   return {
+    supported: apiConfigured(),
     phase, items, mailboxes: boxes, nextCursor, olderLoading,
     reload, loadOlder, bodyFor, openBody, rescue, rescuing,
   };

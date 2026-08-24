@@ -5375,9 +5375,13 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    the demo — the control is simply not offered where nothing can serve it. */
                 onUnsubscribe={onUnsubscribe}
                 /* The live Junk window — present only with "Use folders" on and a server to
-                   read it from (§16.2/§16.7). Absent, the segment is the flag-off Spam pile. */
+                   read it from (§16.2/§16.7). Absent, the segment is the flag-off Spam pile.
+                   `junkWindow.supported` is `apiConfigured()` answered by the hook's own
+                   module, NOT `autoOptIn.supported`: the hosted desktop's suggest wire makes
+                   the broader read true while its api client is the refusing stub, which
+                   rendered a permanent loading state over the hidden Spam segment. */
                 junk={
-                  !demo && consent.foldersEnabled && autoOptIn.supported ? junkWindow : undefined
+                  !demo && consent.foldersEnabled && junkWindow.supported ? junkWindow : undefined
                 }
                 full={screenerFull}
                 onFull={setScreenerFull}

@@ -781,10 +781,15 @@ export function ScreenerView({
    */
   useEffect(() => {
     if (!junkActive || activeId === null) return;
+    // BODY-ON-OPEN means on a preview somebody can SEE: on a narrow viewport the read column
+    // is hidden until `full`, and the selection's automatic fall-to-first must not spend a
+    // provider read for a pane that is not on screen (§16.2's bound; review finding). Opening
+    // the preview flips `full`, which re-runs this and fetches then.
+    if (!full && window.matchMedia("(max-width: 900px)").matches) return;
     const item = junk!.items.find((i) => junkKeyOf(i) === activeId);
     if (item) junk!.openBody(item);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [junkActive, activeId]);
+  }, [junkActive, activeId, full]);
 
   /**
    * OPEN THE PREVIEW AT THE LATEST HELD MESSAGE — and STAY there while the bodies arrive.
@@ -1315,7 +1320,10 @@ export function ScreenerView({
       >
         <ListRows>
           {junkActive ? (
-            <JunkRows junk={junk!} activeKey={activeId} onSelect={(key) => onSelect("spam", key)} />
+            /* Through `selectRow`, exactly like every mirror row: on a narrow viewport the
+               read column is hidden until `onFull(true)`, so a tap that only changed the
+               selection would open nothing (review finding on this commit). */
+            <JunkRows junk={junk!} activeKey={activeId} onSelect={selectRow} />
           ) : items.length ? (
             items.map(row)
           ) : (
@@ -2100,7 +2108,13 @@ function JunkRows({
           onClick={() => onSelect(junkKeyOf(i))}
         />
       ))}
-      {junk.items.length === 0 ? (
+      {junk.items.length === 0
+        && junk.mailboxes.length > 0
+        && junk.mailboxes.every((m) => m.window === "ok") ? (
+        /* "Junk is empty." is a claim about every window this account has — it renders only
+           when each one was actually READ. Zero items beside an unreachable mailbox is not
+           emptiness, it is the per-mailbox note below saying that mailbox could not be read
+           (review finding: the count-only check claimed clean over a failed read). */
         <div className="empty">
           <span className="glyph" aria-hidden="true">{t("empty.junk.glyph")}</span>
           <b>{t("empty.junk.title")}</b>
@@ -2176,7 +2190,7 @@ function JunkPreview({
           bodyState={
             body.phase === "ready" ? "full" : body.phase === "failed" ? "failed" : "loading"
           }
-          onRetry={() => junk.openBody(item)}
+          onRetry={() => junk.openBody(item, { retry: true })}
           dull
         />
       </div>
