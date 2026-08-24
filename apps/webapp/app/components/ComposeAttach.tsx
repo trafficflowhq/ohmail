@@ -767,6 +767,11 @@ export function ComposeAttach({
         }
       }
       if (refused || refusedAtCap !== null) {
+        // PAST-CONDITIONAL COPY, deliberately: the sentence describes the refusal DECISION under
+        // the cap in force when it was made. The cap is live, so a present-tense "must stay
+        // under X" beside a header already announcing the restored limit asserted two active
+        // limits at once (review finding) — the decision's number is history, and the copy says
+        // so by shape.
         setError(t("attachRefused", { size: formatSize(refusedAtCap ?? cap) }));
       }
       // The totals of this pick, not of the list: the sentence explains what just happened to the

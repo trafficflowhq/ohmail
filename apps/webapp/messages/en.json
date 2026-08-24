@@ -845,7 +845,7 @@
     "attach": "Attach files",
     "attachCap": "Up to {size} total",
     "attachUsed": "{used} of {total}",
-    "attachRefused": "Some files were not added — the total must stay under {size}.",
+    "attachRefused": "Some files were not added — they would have put the total over {size}.",
     "attachRemove": "Remove {filename}",
     "attachCompressed": "Pictures compressed: {from} → {to}",
     "attachQualityLabel": "Quality",
