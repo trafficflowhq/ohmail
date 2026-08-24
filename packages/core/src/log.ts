@@ -315,6 +315,14 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // reading `count` alone could not tell a repair that restored the tags and lit nothing from one
   // that worked.
   "tags", "messages",
+  // `folders` is the tag repair's twin for the folder rail: how many `folder` entity rows the
+  // one-time folder backfill (`apps/sidecar/src/cloud-mirror.ts`) restored on a mirror whose
+  // cursor had advanced past them before the apply loop stored that type. A `++` counter over a
+  // snapshot page, never a folder's NAME — a folder name is the user's own filing vocabulary,
+  // which is exactly the signal this census keeps off the line. Named rather than folded into
+  // `count` for the reason `tags` was: the event says the repair ran, this says whether the
+  // Folders rail came back.
+  "folders",
   // `changed` is the ONE non-identifying fact the Cloud mirror's owner-change reset
   // (`apps/sidecar/src/cloud-engine.ts`) puts on its line: a literal `true` meaning a foreign
   // mirror was discarded because the served address changed. The addresses themselves — whose
