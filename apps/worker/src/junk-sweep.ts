@@ -71,9 +71,11 @@ export async function junkSweepPass(opts: {
   }));
 
   // Read-only on both branches: one LIST, nothing created (findSpecialFolders' own contract).
+  // `sentFolder` null: the sweep files SPAM only, and the delete completion's Sent exclusion —
+  // the one reader of that field — is unreachable from a spam-pile desire.
   const special: SpecialFolderMap = typeof adapter.findSpecialFolders === "function"
-    ? await adapter.findSpecialFolders().then((f) => ({ junkFolder: f.junk, trashFolder: f.trash }))
-    : { junkFolder: null, trashFolder: null };
+    ? await adapter.findSpecialFolders().then((f) => ({ junkFolder: f.junk, trashFolder: f.trash, sentFolder: null }))
+    : { junkFolder: null, trashFolder: null, sentFolder: null };
 
   const result: JunkSweepResult = {
     candidates, junkFolder: special.junkFolder, moved: [], skipped: [], dryRun: !execute,

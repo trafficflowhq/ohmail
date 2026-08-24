@@ -35,7 +35,9 @@
  * A DELETE whose park promoted a survivor does NOT converge: the row is already tombstoned, the
  * survivor is a known locator no scan will ever re-create, so completion keeps the folder_state
  * PENDING at the survivor's folder and the next pass files that copy to Trash too — one copy per
- * pass, until no watched instance remains. See the branch in {@link completeFiling}.
+ * pass, until no watched instance remains. A \Sent survivor is the exception (never re-opened
+ * onto — evidence and product grounds, spelled out at the branch), and the re-open is reported
+ * to the caller so the scheduler re-kicks instead of waiting a poll. See {@link completeFiling}.
  *
  * ── THE CLAIM FOLLOWS THE MOVE, NEVER THE OTHER WAY ─────────────────────────────────────────
  *
@@ -61,20 +63,29 @@ export const SPAM_PILE = "ohmail/Quarantine";
 /** How many instanceless rows one cycle's reaper pass may tombstone. The ingest batch's number. */
 export const TOMBSTONE_MAX_PER_CYCLE = 200;
 
-/** The mailbox's discovered special folders, as `getMailboxSpecialFolders` answers them. */
-export interface SpecialFolderMap { junkFolder: string | null; trashFolder: string | null }
+/**
+ * The mailbox's discovered special folders, as `getMailboxSpecialFolders` answers them — plus
+ * the adapter's resolved \Sent path, which the delete completion's survivor branch reads.
+ * `sentFolder` comes from the ADAPTER (`ImapCapabilities.sentFolder`), not the repo discovery:
+ * only the connected adapter knows which folder its watermark enumeration governs, and `null`
+ * (a fake, a repo-only caller like the sweep) simply disables the Sent exclusion.
+ */
+export interface SpecialFolderMap {
+  junkFolder: string | null; trashFolder: string | null; sentFolder: string | null;
+}
 
 /** The neither-exists map — what a repo without the discovery methods answers. */
-export const NO_SPECIAL_FOLDERS: SpecialFolderMap = { junkFolder: null, trashFolder: null };
+export const NO_SPECIAL_FOLDERS: SpecialFolderMap = { junkFolder: null, trashFolder: null, sentFolder: null };
 
 /**
  * Load the map once per reconcile pass. Absence of the method — a fake, an older repo — reads
  * as "neither exists": the verdict falls back to Quarantine and a delete cannot have been
  * accepted by the API in the first place (it refuses up front on a NULL `trash_folder`).
+ * `sentFolder` is null here — the reconciler overlays the adapter's answer where it has one.
  */
 export async function specialFoldersOf(repo: WorkerRepo, mailboxId: string): Promise<SpecialFolderMap> {
   if (typeof repo.getMailboxSpecialFolders !== "function") return NO_SPECIAL_FOLDERS;
-  return repo.getMailboxSpecialFolders(mailboxId);
+  return { ...(await repo.getMailboxSpecialFolders(mailboxId)), sentFolder: null };
 }
 
 /**
@@ -130,6 +141,13 @@ export function junkAuditCode(
  * describes — the park, the satisfied folder_state, and (spam only) the `junk_filed` husk. The
  * husk runs before any `change_log` write a caller may add after this, per the lock-order rule
  * (`insertMessageBody` step 1: counter row, then seq row, always in that order).
+ *
+ * Returns TRUE when the completion RE-OPENED the pending row (the delete-survivor branch below):
+ * the pass that called this has just created more due filing work, and the caller owes that fact
+ * to the scheduler — `reconcileFolders` folds it into `owesMore`, which is what re-kicks the
+ * hosted worker and keeps the sidecar drain going. Without it a two-copy delete's second move
+ * waits for the next poll, and a drain that stops on backlog alone stops with the delete
+ * unfinished.
  */
 export async function completeFiling(
   r: WorkerRepo,
@@ -138,14 +156,14 @@ export async function completeFiling(
   p: PendingFolderState,
   newLoc: Locator,
   special: SpecialFolderMap,
-): Promise<void> {
+): Promise<boolean> {
   const physical = newLoc.folder;
   await r.updateLocator(p.messageId, newLoc);
   if (!parksLocator(p, physical, special)) {
     await r.upsertFolderState(p.messageId, {
       desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us",
     });
-    return;
+    return false;
   }
   // The park — see the header. `forgetInstanceAt` on the locator just written removes the
   // instance we cannot ever verify and promotes a surviving watched copy exactly as an observed
@@ -169,12 +187,35 @@ export async function completeFiling(
   // would widen the one user-commanded Junk write into a sweep this completion was never asked
   // for. (`promoted != null`, not `!== null`: a fake that still answers void reads as "no
   // survivor", which is the pre-existing behaviour and the safe direction.)
+  //
+  // ── AND A \Sent SURVIVOR IS NEVER RE-OPENED ONTO, on two grounds ──────────────────────────
+  //
+  //  1. EVIDENCE. Sent is the one folder read from a UID watermark, and a delete below that
+  //     watermark is deliberately never reported (`imap.ts#enumFloorUid`) — so a recorded Sent
+  //     instance is the one kind of row the enumeration cannot keep honest. Promoting a STALE
+  //     one (its `own_copy` recorded at send time, expunged since by another client) and then
+  //     re-opening the move onto it would retry `MessageGoneError` for ever: the stale row is
+  //     primary now, so `primaryInstanceVanished` stays false and `voidGoneFiling` never fires,
+  //     and the disappearance that would clear it is exactly the delete Sent never emits.
+  //     Every OTHER watched folder is enumerated end-to-end, so a stale row there is removed by
+  //     the next cycle's deletes and the pending row self-heals through the existing paths.
+  //  2. PRODUCT. The Sent copy is the record of what the user wrote. Every mainstream client
+  //     leaves it where it is when the received copy is deleted; sweeping it into Trash on the
+  //     strength of a delete pressed on the other copy would be inventing a decision.
+  //
+  //  The residual this accepts, stated: a mailbox holding THREE copies (primary + Sent + a
+  //  third watched copy) where the promotion happens to pick the Sent row converges here and
+  //  the third copy stays hidden — the pre-fix behaviour, reachable only from that compound
+  //  shape. A null `sentFolder` (no adapter answer) disables the exclusion, which is the
+  //  conservative direction for the hidden-mail defect this branch exists to close.
   const deletePark = special.trashFolder !== null && p.desiredFolder === special.trashFolder;
-  if (deletePark && promoted != null) {
+  const survivorActionable =
+    promoted != null && (special.sentFolder === null || promoted.folder !== special.sentFolder);
+  if (deletePark && promoted != null && survivorActionable) {
     await r.upsertFolderState(p.messageId, {
       desiredFolder: p.desiredFolder, observedFolder: promoted.folder, lastSetBy: "us",
     });
-    return;
+    return true;
   }
   await r.upsertFolderState(p.messageId, {
     desiredFolder: p.desiredFolder,
@@ -187,4 +228,5 @@ export async function completeFiling(
     // the body's bytes live on in the provider's Junk, which is the master. Real headers stay.
     await r.huskBody(accountId, p.messageId, "junk_filed");
   }
+  return false;
 }

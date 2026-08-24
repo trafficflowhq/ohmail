@@ -1213,7 +1213,12 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
 
   // Mail 0065 — where a spam verdict physically files. Read once per pass; a repo without the
   // discovery answers "neither exists", which keeps the pre-0065 behaviour byte-for-byte.
-  const special = await specialFoldersOf(repo, mailboxId);
+  // The adapter's resolved \Sent path is overlaid where it has one: the delete completion's
+  // survivor branch must never re-open a move onto a Sent instance (the watermark folder's
+  // deletes are never reported, so a recorded Sent row is the one kind the enumeration cannot
+  // keep honest — see `completeFiling`). A capabilities() that is absent or throws reads as
+  // "unknown", which merely disables that exclusion.
+  const special = { ...(await specialFoldersOf(repo, mailboxId)), ...(await sentFolderOf(deps)) };
   // ── ONLY USER-COMMANDED VERDICTS MAY FILE INTO THE PROVIDER'S JUNK ─────────────────────────
   //
   // `desired_folder = 'ohmail/Quarantine'` has three authors: a press, a rule (promoted by a
@@ -1261,31 +1266,57 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
     if (bucket) bucket.push(row); else groups.set(key, [row]);
   }
 
+  // A completion that RE-OPENED its row (the delete-survivor branch) has just created more due
+  // filing work inside this very pass. It has to reach the return value: `owesMore` was computed
+  // from the queue length BEFORE the pass, so without this a two-copy delete answers "nothing
+  // owed" and the surviving copy waits for the next poll — or, in a drain that stops on backlog
+  // alone, is never reached at all.
+  let reopened = false;
   for (const group of groups.values()) {
     for (let i = 0; i < group.length; i += FILING_BATCH_MAX) {
       const chunk = group.slice(i, i + FILING_BATCH_MAX);
-      if (await fileChunk(deps, chunk, special)) continue;
-      for (const p of chunk) await fileOne(deps, p, special);
+      const batched = await fileChunk(deps, chunk, special);
+      if (batched !== null) { reopened = reopened || batched.reopened; continue; }
+      for (const p of chunk) reopened = (await fileOne(deps, p, special)) || reopened;
     }
   }
-  return owesMore;
+  return owesMore || reopened;
 }
 
 /** A pending row plus the physical destination its group was keyed on (mail 0065). */
 type PendingPhysical = PendingFolderState & { physical: string };
 
 /**
+ * The adapter's resolved \Sent path as a one-field overlay for {@link SpecialFolderMap} —
+ * `{}` when the adapter does not answer (a fake, a pre-capabilities adapter, a throw), so the
+ * spread at the call site leaves `sentFolder: null` standing.
+ */
+async function sentFolderOf(deps: SyncDeps): Promise<{ sentFolder?: string | null }> {
+  const { adapter } = deps;
+  if (typeof adapter.capabilities !== "function") return {};
+  try {
+    return { sentFolder: (await adapter.capabilities()).sentFolder ?? null };
+  } catch {
+    return {};
+  }
+}
+
+/**
  * File one chunk in a batch, or report that it was not filed at all.
  *
- * `false` means NOTHING WAS WRITTEN TO THE DATABASE for this chunk and the caller owes every
+ * `null` means NOTHING WAS WRITTEN TO THE DATABASE for this chunk and the caller owes every
  * member to {@link fileOne}. That is true even when the adapter threw after moving some of them:
  * the per-message retry finds those gone from the source, raises {@link MessageGoneError}, and
  * leaves the row pending for `changesSince` to adopt — which is the same convergence the
  * per-message path has always relied on for a crash between the IMAP move and the DB write.
+ * A non-null answer carries `reopened` — whether any member's completion re-opened its row
+ * (the delete-survivor branch), which the caller owes to the scheduler.
  */
-async function fileChunk(deps: SyncDeps, chunk: PendingPhysical[], special: SpecialFolderMap): Promise<boolean> {
+async function fileChunk(
+  deps: SyncDeps, chunk: PendingPhysical[], special: SpecialFolderMap,
+): Promise<{ reopened: boolean } | null> {
   const { adapter, accountId, mailboxId, log } = deps;
-  if (typeof adapter.moveMany !== "function") return false;
+  if (typeof adapter.moveMany !== "function") return null;
   const first = chunk[0]!;
   const srcFolder = first.nativeLocator!.folder;
   // Mail 0065: the group was KEYED on its physical destination (a spam-pile desire maps to the
@@ -1294,12 +1325,12 @@ async function fileChunk(deps: SyncDeps, chunk: PendingPhysical[], special: Spec
   const toFolder = first.physical;
   // A locator already sitting at its destination is the per-message path's problem to reason
   // about, not a batch's: `moveMany` refuses a same-folder group outright.
-  if (srcFolder === toFolder) return false;
+  if (srcFolder === toFolder) return null;
   // Two rows naming ONE locator would collapse to a single UID in the batch and both would be
   // told they landed at the same place. It cannot arise from one mailbox's data, and if it ever
   // does, the per-message path gives each row its own answer.
   const refs = new Set(chunk.map((p) => p.nativeLocator!.ref));
-  if (refs.size !== chunk.length) return false;
+  if (refs.size !== chunk.length) return null;
 
   // The fence, BEFORE the IMAP command — the whole batch is one mutation. Outside the `try`
   // below deliberately: its refusal must abort the cycle, never degrade to the per-message path.
@@ -1308,20 +1339,22 @@ async function fileChunk(deps: SyncDeps, chunk: PendingPhysical[], special: Spec
   try {
     result = await adapter.moveMany(chunk.map((p) => p.nativeLocator!), toFolder);
   } catch {
-    return false;
+    return null;
   }
-  if (!result.batched) return false;
+  if (!result.batched) return null;
 
   // ONE WRITE GROUP for the whole chunk's bookkeeping — a transaction whether or not there is a
   // fence (see {@link fencedGroup}). It has to be: a chunk's worth of locator/state/audit writes
   // that half-commits leaves some of its members claiming a destination their `folder_state` still
   // disagrees with, and the batched path has no per-member retry to notice.
   //
-  // A failure of the group is contained rather than rethrown, and the chunk still answers TRUE.
+  // A failure of the group is contained rather than rethrown, and the chunk still answers
+  // HANDLED (non-null).
   // The moves LANDED — `moveMany` reported `batched`, which it only does for a group it performed
   // whole — so sending the members to `fileOne` would spend one round trip each rediscovering that
   // the source is gone. Nothing was written, every row is still pending and due, and the next
   // `changesSince` adopts what the server shows: the same convergence a crash here takes.
+  let reopened = false;
   try {
     await fencedGroup(deps, async (r) => {
       const audits: Array<{ action: string; payload: unknown; inverse: unknown }> = [];
@@ -1340,7 +1373,7 @@ async function fileChunk(deps: SyncDeps, chunk: PendingPhysical[], special: Spec
         // converge, the junk filing's satisfied/parked/husked shape, and the delete's park.
         // Written ONLY here, after `moveMany` reported the batch whole: the claim follows the
         // move (see junk-filing.ts's header, and the guard that reddens the other ordering).
-        await completeFiling(r, accountId, mailboxId, p, newLoc, special);
+        reopened = (await completeFiling(r, accountId, mailboxId, p, newLoc, special)) || reopened;
         // The audit rows are written together, AFTER the state they describe. One INSERT instead of
         // fifty, and the same rows a per-message pass would have written — the admin surface and the
         // inverse both read this table and neither can tell which path filed the mail.
@@ -1364,7 +1397,7 @@ async function fileChunk(deps: SyncDeps, chunk: PendingPhysical[], special: Spec
         "stays pending and due, and the next cycle adopts the completed moves",
     });
   }
-  return true;
+  return { reopened };
 }
 
 /** Fan an audit batch out to whichever of the two repo shapes this deployment has. */
@@ -1448,7 +1481,7 @@ async function voidGoneFiling(repo: WorkerRepo, accountId: string, p: PendingFol
  * `reconcile.move.failed` audit row asserting that a move which HAD succeeded was refused, and put
  * the correction to sleep behind it.
  */
-async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolderMap): Promise<void> {
+async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolderMap): Promise<boolean> {
   const { adapter, accountId, mailboxId, log } = deps;
   // Mail 0065: the physical destination was decided when the row was grouped — a spam verdict
   // files into the provider's native Junk when the mailbox has one and the placement was not
@@ -1469,7 +1502,7 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
       // changesSince adopts it. Expunged outright → nothing will ever adopt it; see
       // voidGoneFiling for how the two are told apart.
       await fencedGroup(deps, (r) => voidGoneFiling(r, accountId, p));
-      return;
+      return false;
     }
     if (isTransportFailure(err)) {
       // NOT EVIDENCE ABOUT THIS MESSAGE — the host is unreachable, or our own database is. The row
@@ -1486,7 +1519,7 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
       log?.warn("reconcile_move_transport_failure", {
         mailboxId, accountId, messageId: p.messageId, to: physical, err,
       });
-      return;
+      return false;
     }
     // ── ONE MESSAGE'S REFUSAL MUST NOT ABANDON THE PASS, AND MUST NOT REPEAT FOR EVER ────
     //
@@ -1529,17 +1562,18 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
       );
       await r.deferFolderReconcile(p.messageId, { attempts, nextAttemptAt });
     });
-    return;
+    return false;
   }
 
   // THE MOVE LANDED. Its completion is ONE FACT — locator, converged state and audit row commit
   // together or not at all. {@link fencedGroup} carries the argument, including which side leads
   // in the seam a transaction cannot cover (the server's, always).
+  let reopened = false;
   try {
     await fencedGroup(deps, async (r) => {
       // Mail 0065: the shared completion writer — see junk-filing.ts and fileChunk's note. The
       // claim ("this message is in Junk") is written only here, after the move returned.
-      await completeFiling(r, accountId, mailboxId, p, newLoc, special);
+      reopened = await completeFiling(r, accountId, mailboxId, p, newLoc, special);
       const junk = junkAuditCode(p.desiredFolder, newLoc.folder, special);
       await r.recordAudit(
         accountId, "reconcile.move",
@@ -1566,6 +1600,7 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
         "and due, and the next cycle adopts the completed move",
     });
   }
+  return reopened;
 }
 
 /**

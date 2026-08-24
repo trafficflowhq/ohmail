@@ -1766,12 +1766,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // would keep calling a model that is not answering, and the pipeline rethrows a
         // classifier fault by design — so the cursor would never advance and the mailbox would
         // stall behind the first message the rules could not settle.
-        const { hasBacklog } = await runSyncCycle({
+        // BOTH halves of "is there more to do": `hasBacklog` is inbound mail the adapter still
+        // owes, `owesFiling` is outbound intent the reconciler still owes — filing that hit the
+        // per-cycle budget, or a completion that RE-OPENED its own row (a delete whose park
+        // promoted a surviving copy files that copy on the next pass). A drain that stopped on
+        // backlog alone declared itself quiet with a move still pending, and a caller trusting
+        // `syncUntilQuiet()` then stopped with the delete unfinished until the next poll.
+        const { hasBacklog, owesFiling } = await runSyncCycle({
           ...syncDeps, ...screening, classifier: ai.classifierForCycle(),
         });
         cycleMs.push(Date.now() - cycleStart);
         cycles++;
-        if (!hasBacklog) { drained = true; break; }
+        if (!hasBacklog && !owesFiling) { drained = true; break; }
         // Yield, so a backlog drain cannot starve the request handler sharing this event loop.
         await new Promise((r) => setTimeout(r, 0));
       }
