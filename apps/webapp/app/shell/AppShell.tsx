@@ -1317,7 +1317,19 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * undefined id whenever no folder is open, which the transport reads as "no list"
    * (unavailable) — hooks must be unconditional, the scope may be absent.
    */
-  const folderOlder = useOlderMail(engine, "folder", version, folderIdForOlder, folderOlderBoundary);
+  const folderOlder = useOlderMail(
+    engine, "folder", version, folderIdForOlder, folderOlderBoundary,
+    /* The accept-time suppression: a fetched row the folder view already renders above (the
+       presented mirror holds it under this folder) is discarded once and for the scope's life —
+       see the hook's parameter for the two lies a render-time filter tells. */
+    (id) => {
+      if (!folderIdForOlder) return false;
+      const entity = reader.get<FolderEntity>("folder", folderIdForOlder);
+      if (!entity) return false;
+      const m = presented.get<EngineMessage>("message", id);
+      return m !== undefined && m.mailboxId === entity.mailboxId && m.folder === entity.name;
+    },
+  );
 
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
   const ohbox = useMemo(() => ohboxView(presented), [presented, version]);

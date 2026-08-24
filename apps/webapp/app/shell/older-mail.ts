@@ -124,6 +124,15 @@ export function useOlderMail(
    * re-serves the rows already on screen above it. Read once per scope, at the first ask.
    */
   startBelow?: { date: string | null; id: string },
+  /**
+   * "IS THIS ROW ALREADY ON SCREEN ABOVE?" — asked once per fetched row, AT ACCEPT TIME, and
+   * the verdict is remembered in a per-scope set. Without a boundary the first pages routinely
+   * overlap the mirror's window, and a render-time filter against the LIVE list gets both
+   * halves wrong: the count claims rows the filter hides, and a row later MOVED OUT of the
+   * scope drops from the live list and resurfaces down here wearing its updated folder. A
+   * suppressed id stays suppressed for the life of the scope.
+   */
+  suppress?: (id: string) => boolean,
 ): OlderMail {
   const available = engine.listOlderAvailable();
   const [page, setPage] = useState<Page>(EMPTY);
@@ -148,6 +157,11 @@ export function useOlderMail(
    *    under StrictMode's double-invoke, which is a real request against somebody's mailbox.
    */
   const cursor = useRef<string | null>(null);
+  /** `suppress` behind a stable identity, so `loadMore` keeps its deps — consent-state's `link`. */
+  const suppressRef = useRef<((id: string) => boolean) | undefined>(suppress);
+  suppressRef.current = suppress;
+  /** Ids suppressed for the life of the scope — see the `suppress` parameter. */
+  const suppressed = useRef(new Set<string>());
   /** The scope this hook's page state belongs to — returned EMPTY synchronously on mismatch,
    *  because the reset below is an effect and runs one render late: without this, switching
    *  folders rendered the previous folder's fetched rows under the new folder's title. */
@@ -169,6 +183,7 @@ export function useOlderMail(
     cursor.current = null;
     inFlight.current = false;
     done.current = false;
+    suppressed.current = new Set();
     pageScope.current = scope;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, view, folderId]);
@@ -206,9 +221,19 @@ export function useOlderMail(
         cursor.current = outcome.nextCursor;
         done.current = outcome.nextCursor === null;
         setPage((prev) => {
-          // Appended BY ID, so a page the server repeats cannot render the same mail twice.
+          // Appended BY ID, so a page the server repeats cannot render the same mail twice —
+          // and rows the caller's surface already shows are DISCARDED HERE, once, into the
+          // per-scope suppression set, so the count is the rows on screen and a row that later
+          // leaves the surface above cannot resurface down here.
           const seen = new Set(prev.items.map((m) => m.id));
-          const added = outcome.items.filter((m) => !seen.has(m.id));
+          const added = outcome.items.filter((m) => {
+            if (seen.has(m.id) || suppressed.current.has(m.id)) return false;
+            if (suppressRef.current?.(m.id)) {
+              suppressed.current.add(m.id);
+              return false;
+            }
+            return true;
+          });
           return {
             items: added.length === 0 ? prev.items : [...prev.items, ...added],
             cursor: outcome.nextCursor,

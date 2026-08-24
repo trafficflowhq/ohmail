@@ -286,8 +286,8 @@ export function FolderView({
                 </span>
               ) : (
                 <>
-                  {older.items.length > 0
-                    ? to("olderShowing", { count: older.items.length })
+                  {olderRows.length > 0
+                    ? to("olderShowing", { count: olderRows.length })
                     : to("olderPrompt")}{" "}
                   {older.exhausted ? (
                     to("olderEnd")
