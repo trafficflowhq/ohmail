@@ -576,7 +576,7 @@ export const screener: {
     junkList: (opts?: {
         cursor?: string;
     }) => Promise<JunkPageWire>;
-    junkBody: (mailboxId: string, uid: number) => Promise<{
+    junkBody: (mailboxId: string, uid: number, uidValidity: string) => Promise<{
         subject: string;
         text: string;
     }>;

@@ -117,10 +117,13 @@ export const screenerRoutes: Route[] = [
       const url = new URL(req.url);
       const mailboxId = url.searchParams.get("mailboxId") ?? "";
       const uid = Number(url.searchParams.get("uid"));
-      if (!mailboxId || !Number.isInteger(uid) || uid <= 0) {
-        throw new ServiceError("validation_failed", 400, "mailboxId and a positive integer uid are required");
+      // The row's epoch, REQUIRED: a UID names a message only within one UIDVALIDITY, and a
+      // renumbered folder must answer 410 — never the body of whatever now wears the number.
+      const uidValidity = url.searchParams.get("uidValidity") ?? "";
+      if (!mailboxId || !Number.isInteger(uid) || uid <= 0 || !uidValidity) {
+        throw new ServiceError("validation_failed", 400, "mailboxId, a positive integer uid and uidValidity are required");
       }
-      return jsonResponse(await junkBody(deps, ctx.accountId, { mailboxId, uid }));
+      return jsonResponse(await junkBody(deps, ctx.accountId, { mailboxId, uid, uidValidity }));
     },
   },
   {

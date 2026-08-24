@@ -67,6 +67,8 @@ export const FOLDER_PAGE_MAX = 50;
 /** One header row of a {@link ImapAdapter.listFolderPage} answer. Facts only, never a `Change`. */
 export interface FolderPageItem {
   uid: number;
+  /** The message's SEQUENCE number at read time — the pagination watermark, epoch-scoped. */
+  seq: number;
   subject: string;
   from: { name: string | null; address: string };
   /** Sender's Date header, INTERNALDATE as the fallback; `null` when neither parses. */
@@ -82,8 +84,11 @@ export interface FolderPage {
   /** How many messages the folder holds in total (the page is at most {@link FOLDER_PAGE_MAX}). */
   total: number;
   items: FolderPageItem[];
-  /** Pass back as `beforeUid` for the next-older page; `null` when this page reached the end. */
-  nextBeforeUid: number | null;
+  /**
+   * Pass back as `beforeSeq` (with this answer's `uidValidity` as `expectUidValidity`) for the
+   * next-older page; `null` when this page reached the folder's oldest message.
+   */
+  nextBeforeSeq: number | null;
 }
 
 /**
@@ -1094,37 +1099,61 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * which answers a real page of zero items.
    */
   async listFolderPage(
-    folder: string, opts: { limit?: number; beforeUid?: number } = {},
+    folder: string,
+    opts: { limit?: number; beforeSeq?: number; expectUidValidity?: string } = {},
   ): Promise<FolderPage | null> {
     const limit = Math.max(1, Math.min(opts.limit ?? FOLDER_PAGE_MAX, FOLDER_PAGE_MAX));
     let lock: { release(): void };
     try {
       lock = await this.client.getMailboxLock(this.toServerPath(folder));
-    } catch {
-      return null; // folder not present / not selectable — the caller's degrade branch
+    } catch (err) {
+      // ONLY a live connection's refusal of the SELECT means "no such window" (missing folder,
+      // `\Noselect`). A transport failure — the socket died, the open timed out and killed the
+      // connection — propagates, so the caller's honest states can tell "this mailbox has no
+      // Junk folder" from "the mailbox could not be read just now" (the §16.2 rule; a review
+      // caught the first version folding both into the first sentence, the misleading one).
+      if (!(this.client as unknown as { usable?: boolean }).usable) throw err;
+      return null;
     }
     try {
       const mb = this.client.mailbox as MailboxObject | false;
       const uidValidity = mb && mb.uidValidity != null ? String(mb.uidValidity) : "0";
       const total = mb ? mb.exists : 0;
-      if (!mb || total === 0) return { uidValidity, total: 0, items: [], nextBeforeUid: null };
+      if (!mb || total === 0) return { uidValidity, total: 0, items: [], nextBeforeSeq: null };
 
-      // Every UID in the folder, from one server-side SEARCH — numbers only, no content. Sorted
-      // newest-first ourselves: imapflow returns ascending, and the contract here is ours.
-      const uids = ((await this.client.search({ all: true }, { uid: true })) || []) as number[];
-      uids.sort((a, b) => b - a);
-      const below = opts.beforeUid !== undefined ? uids.filter((u) => u < opts.beforeUid!) : uids;
-      const page = below.slice(0, limit);
-      if (page.length === 0) return { uidValidity, total, items: [], nextBeforeUid: null };
+      /**
+       * A SEQUENCE WINDOW, and no SEARCH — the whole read is bounded by `limit`, not merely the
+       * response. The first version ran `SEARCH ALL` and sorted every UID in the folder, which
+       * made "one bounded page" true of the answer and false of the work: a decade of junk is a
+       * six-figure UID list per page. Message sequence numbers are 1..exists with no holes, so
+       * the newest `limit` messages are exactly the range `exists-limit+1 : exists` — one FETCH
+       * of at most `limit` envelopes, whatever the folder holds.
+       *
+       * The cursor is therefore a SEQ, not a UID, and it is meaningful only within one
+       * UIDVALIDITY epoch and one connection's view of the folder (an expunge between pages
+       * shifts numbers). `expectUidValidity` is the caller's cursor epoch: when it no longer
+       * matches the folder — recreated, renumbered — the cursor is DISCARDED and this serves
+       * the top page under the new epoch, which the caller detects by the changed
+       * `uidValidity` in the answer. Serving `beforeSeq` against a renumbered folder would
+       * silently skip everything above the stale watermark.
+       */
+      const paged =
+        opts.expectUidValidity !== undefined && opts.expectUidValidity !== uidValidity
+          ? undefined
+          : opts.beforeSeq;
+      const end = Math.min(paged !== undefined ? paged - 1 : total, total);
+      if (end < 1) return { uidValidity, total, items: [], nextBeforeSeq: null };
+      const start = Math.max(1, end - limit + 1);
 
-      const byUid = new Map<number, FolderPageItem>();
+      const rows: FolderPageItem[] = [];
       for await (const m of this.client.fetch(
-        [...page], { uid: true, envelope: true, flags: true, internalDate: true }, { uid: true },
+        `${start}:${end}`, { uid: true, envelope: true, flags: true, internalDate: true },
       )) {
         const from = m.envelope?.from?.[0];
         const date = m.envelope?.date ?? m.internalDate;
-        byUid.set(m.uid, {
+        rows.push({
           uid: m.uid,
+          seq: m.seq,
           subject: m.envelope?.subject ?? "",
           from: { name: from?.name ?? null, address: from?.address?.trim().toLowerCase() ?? "" },
           date: date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : null,
@@ -1132,11 +1161,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           seen: m.flags?.has("\\Seen") ?? false,
         });
       }
-      // In the page's own (newest-first) order; a UID expunged between SEARCH and FETCH is
-      // simply absent rather than a hole — the window re-reads the live folder every visit.
-      const items = page.filter((u) => byUid.has(u)).map((u) => byUid.get(u)!);
-      const nextBeforeUid = below.length > page.length ? page[page.length - 1]! : null;
-      return { uidValidity, total, items, nextBeforeUid };
+      // Newest first — by sequence, which IS the folder's arrival order.
+      rows.sort((a, b) => b.seq - a.seq);
+      return { uidValidity, total, items: rows, nextBeforeSeq: start > 1 ? start : null };
     } finally {
       lock.release();
     }
@@ -2590,9 +2617,31 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * is bounded: an authentication verdict is read once, from the bytes ingested at first sight,
    * and is never re-derived from a surviving copy.
    */
-  async move(locator: NativeLocator, toFolder: string): Promise<NativeLocator> {
+  async move(
+    locator: NativeLocator, toFolder: string,
+    opts: {
+      /**
+       * REFUSE THE MOVE WHEN THE SOURCE FOLDER'S UIDVALIDITY NO LONGER MATCHES THE REF'S.
+       *
+       * A UID names a message only within one UIDVALIDITY epoch: a folder that was deleted and
+       * recreated re-issues low UIDs, so a stale ref can silently address a DIFFERENT message.
+       * With this set, a ref whose epoch (the half of `ref` before the `:`) is real (non-"0")
+       * and differs from the opened source folder's current UIDVALIDITY throws
+       * {@link MessageGoneError} — the same honest "no longer what you looked at" signal an
+       * expunge produces — instead of moving whatever now wears that number.
+       *
+       * OPT-IN, not the default, deliberately: the Junk-window rescue sets it (its refs come
+       * from a live list of a folder ohmail never watches, so staleness is the NORMAL hazard
+       * there), while the worker's reconciler keeps its own epoch machinery and its own
+       * conventions — including test fixtures and cold-drain sentinels whose refs carry a
+       * placeholder epoch — and must not change behaviour under a guard written for a
+       * different caller.
+       */
+      requireEpoch?: boolean;
+    } = {},
+  ): Promise<NativeLocator> {
     const caps = await this.capabilities();
-    const { uid } = parseRef(locator.ref);
+    const { uid, uidValidity: refEpoch } = parseRef(locator.ref);
     const srcPath = this.toServerPath(locator.folder);
     const dstPath = this.toServerPath(toFolder);
 
@@ -2610,6 +2659,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     {
       const lock = await this.client.getMailboxLock(srcPath);
       try {
+        // The epoch guard, under the same lock the probe uses — see `opts.requireEpoch`.
+        if (opts.requireEpoch) {
+          const mb = this.client.mailbox as MailboxObject | false;
+          const current = mb && mb.uidValidity != null ? String(mb.uidValidity) : "0";
+          if (refEpoch !== "0" && current !== "0" && refEpoch !== current) {
+            throw new MessageGoneError(locator);
+          }
+        }
         const one = await this.client.fetchOne(
           String(uid),
           // The body is pulled only when the fallback could need it to tell two candidates apart.

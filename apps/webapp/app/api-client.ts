@@ -1483,10 +1483,14 @@ export const screener = {
   junkList: (opts: { cursor?: string } = {}) =>
     api<JunkPageWire>(`/screener/junk${opts.cursor ? `?cursor=${encodeURIComponent(opts.cursor)}` : ""}`),
 
-  /** One junk message's body, fetched live and parsed to TEXT — never HTML, never stored. */
-  junkBody: (mailboxId: string, uid: number) =>
+  /**
+   * One junk message's body, fetched live and parsed to TEXT — never HTML, never stored.
+   * Epoch-bound: `uidValidity` is the row's own, and a folder renumbered since answers 410
+   * rather than the body of whatever message now wears the UID.
+   */
+  junkBody: (mailboxId: string, uid: number, uidValidity: string) =>
     api<{ subject: string; text: string }>(
-      `/screener/junk/body?mailboxId=${encodeURIComponent(mailboxId)}&uid=${uid}`,
+      `/screener/junk/body?mailboxId=${encodeURIComponent(mailboxId)}&uid=${uid}&uidValidity=${encodeURIComponent(uidValidity)}`,
     ),
 
   /**

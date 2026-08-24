@@ -39,8 +39,13 @@ import {
   type JunkItemWire, type JunkMailboxWire,
 } from "../api-client";
 
-/** One row's stable key — a UID is only unique per mailbox. */
-export const junkKeyOf = (i: { mailboxId: string; uid: number }): string => `${i.mailboxId}:${i.uid}`;
+/**
+ * One row's stable key. EPOCH-SCOPED: a UID names a message only within one UIDVALIDITY, so a
+ * key without the epoch would alias a recreated folder's reused numbers onto the old rows'
+ * selection and session body cache — the stale body under the new subject.
+ */
+export const junkKeyOf = (i: { mailboxId: string; uidValidity: string; uid: number }): string =>
+  `${i.mailboxId}:${i.uidValidity}:${i.uid}`;
 
 export type JunkBodyPhase =
   | { phase: "idle" }
@@ -147,7 +152,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn): JunkWindowContro
       const held = cur.get(key);
       // One fetch per session per message — `ready` and in-flight `loading` are both answers.
       if (held && held.phase !== "failed") return cur;
-      void screenerApi.junkBody(item.mailboxId, item.uid).then(
+      void screenerApi.junkBody(item.mailboxId, item.uid, item.uidValidity).then(
         (b) => setBodies((m) => new Map(m).set(key, { phase: "ready", text: b.text })),
         () => setBodies((m) => new Map(m).set(key, { phase: "failed" })),
       );
