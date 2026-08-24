@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { EngineMessage, OhmailEngine, OhmailView } from "@ohmail/client-engine";
 
 /**
@@ -221,11 +221,8 @@ export function useOlderMail(
    * commit, on behalf of the scope that actually committed.
    */
   const paging = useRef<Paging | null>(null);
-  /** The committed scope, written post-commit — the response validator's second half. */
+  /** The committed scope — the response validator's second half. See the layout effect below. */
   const committed = useRef<{ scope: string; engine: OhmailEngine }>({ scope, engine });
-  useEffect(() => {
-    committed.current = { scope, engine };
-  });
   /** POST-COMMIT ONLY (see `paging`): the current scope's paging state, reset lazily on entry. */
   const pagingFor = (): Paging => {
     const p = paging.current;
@@ -234,6 +231,25 @@ export function useOlderMail(
     }
     return paging.current!;
   };
+  /*
+   * PUBLISHED DURING THE COMMIT — `useLayoutEffect`, not `useEffect`, and that is load-bearing
+   * twice over:
+   *
+   *  · the committed scope validates ASYNCHRONOUS answers, and a passive effect runs after
+   *    paint — a response settling in that window was validated against the PREVIOUS commit's
+   *    scope and queued into the new scope's freshly reset page. The layout phase runs
+   *    synchronously inside the commit, before any microtask can observe it;
+   *  · the previous paging incarnation is retired HERE, on every committed scope change — not
+   *    lazily on the next ask — because an A→B→A round trip in which B never asks must not
+   *    hand A back its old cursor (page one skipped), exhaustion (the empty-folder probe
+   *    no-ops, silently), in-flight flag (the button dead until reload) or latch, beside a
+   *    page state the round trip reset.
+   */
+  useLayoutEffect(() => {
+    committed.current = { scope, engine };
+    void pagingFor();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine, scope]);
 
   /*
    * THE PAGE-STATE RESET, SYNCHRONOUS WITH THE RENDER THAT CHANGES THE SCOPE — deliberately
