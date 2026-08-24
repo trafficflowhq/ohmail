@@ -102,7 +102,14 @@ export class TriageService {
         accountId: ctx.accountId, messageId, state: b.state, bubbleUpAt, setAt: now, updatedAt: now,
       }).onConflictDoUpdate({
         target: messageStates.messageId,
-        set: { state: b.state, bubbleUpAt, updatedAt: now },
+        // `setAt` REFRESHES with every transition: it is "when THIS state was set", and the
+        // re-homing predicate below compares reading stamps against it — a second park that
+        // kept the first cycle's instant would call a stamp from between the cycles "newer
+        // than the pile entry" and skip the re-homing (review round). The overlay has always
+        // written a fresh `setAt` per transition; this makes the server agree. The one writer
+        // that deliberately PRESERVES `setAt` is `spendResurface` — a release, not a
+        // transition into a state — on both sides of the wire.
+        set: { state: b.state, bubbleUpAt, setAt: now, updatedAt: now },
       }).returning({ id: messageStates.id });
 
       /**
