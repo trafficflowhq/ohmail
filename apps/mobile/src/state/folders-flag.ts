@@ -61,17 +61,23 @@ export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {
   let readSeq = 0;
   let appliedSeq = 0;
   /**
-   * The unsettled write, or `null`. READS ORDER BEHIND IT (codex rounds 4 and 5): a read that
-   * runs while the write is on the wire is AMBIGUOUS — it can observe the pre-write value
-   * (round 4: resolving late, it undid the confirmed write) or, just as legitimately, a value
-   * some OTHER client committed after ours (round 5: discarding it left the phone stale). No
-   * stamp can tell those apart from here, so the read simply waits: issued after the write
-   * settles, its answer is post-write and authoritative by construction. Waiting is ordering,
-   * not blocking — the write always settles, and the wait is one request's round trip.
+   * WRITES SERIALIZE, AND READS RUN ONLY WHILE NO WRITE IS UNSETTLED (codex rounds 4–7, one
+   * mechanism). A read that runs while any write is on the wire is AMBIGUOUS — it can observe
+   * the pre-write value (round 4: resolving late, it undid the confirmed write) or a value
+   * some other client committed after ours (round 5: discarding it left the phone stale) —
+   * and no client-side stamp can tell those apart, so reads wait until the write queue is
+   * empty. Writes queue behind each other for the same reason (rounds 6–7): with overlap
+   * allowed, every per-case guard left another corner — an older write clearing a newer one's
+   * barrier, a superseded echo, a survivor discarded when its successor failed. Serialized,
+   * settle order IS issue order: each write's confirmed echo applies and drains as it lands,
+   * a rejected write changes nothing and re-asks, and there is no overlap left to arbitrate.
+   * Waiting is ordering, not blocking — every request settles, and the UI's pending flag
+   * keeps a second toggle from even being asked for while one is on the wire.
    */
-  let settling: Promise<void> | null = null;
+  let unsettled = 0;
+  let tail: Promise<void> = Promise.resolve();
   const refresh = async (): Promise<void> => {
-    while (settling !== null) await settling;
+    while (unsettled > 0) await tail;
     const at = epoch;
     const mine = ++readSeq;
     const ans = await deps.read();
@@ -80,46 +86,40 @@ export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {
       deps.apply(ans.on);
     }
   };
-  /**
-   * OVERLAPPING WRITES: the NEWEST is the user's standing act (codex round 6). The world
-   * layer's pending flag makes overlap unreachable through the UI, but the coordinator does
-   * not lean on its caller: an older write settling late may neither clear a newer write's
-   * barrier (the identity check in `finally`) nor apply its own echo over the newer choice
-   * (the sequence check before `apply`) — either would re-open the exact stale-read race the
-   * barrier exists to close.
-   */
-  let writeSeq = 0;
   return {
     refresh,
     async set(on: boolean): Promise<boolean> {
       // Reads already in the air captured the PRE-bump epoch and are out: a read must not
       // overwrite the user's act while the act is still possible. Reads asked for from here
-      // on queue behind `settling` and run post-write.
+      // on run only once the write queue is empty.
       epoch += 1;
-      const mine = ++writeSeq;
-      const attempt = deps.write(on);
-      const barrier = attempt.then(() => undefined, () => undefined);
-      settling = barrier;
+      const queued = unsettled > 0;
+      unsettled += 1;
+      const prev = tail;
+      // The PATCH waits for every earlier write to settle — dispatch order is commit order,
+      // so the last set() pressed is the last value the server holds. With an empty queue it
+      // dispatches synchronously: the ordinary single toggle pays no deferral at all.
+      const run = queued
+        ? (async () => {
+            await prev;
+            return deps.write(on);
+          })()
+        : deps.write(on);
+      tail = run.then(() => undefined, () => undefined);
       try {
-        const ans = await attempt;
-        // A superseded write's echo is an OLDER fact than the write that superseded it —
-        // the newer set() owns the state from here, whatever this one answered.
-        if (writeSeq === mine) {
-          deps.apply(ans.on);
-          deps.drain();
-        }
+        const ans = await run;
+        deps.apply(ans.on);
+        deps.drain();
         return true;
       } catch {
         // A REJECTED write changed nothing on the server, but the epoch bump above had
-        // invalidated the reads in flight — re-ask, so the authoritative value (the user's
-        // previous choice, exactly as the failure sentence claims) comes back on its own.
-        // Superseded: the newer write answers for the state instead.
-        if (writeSeq === mine) void refresh();
+        // invalidated the reads in flight — re-ask (behind any writes still queued), so the
+        // authoritative value — the user's previous surviving choice, exactly as the failure
+        // sentence claims — comes back on its own.
+        void refresh();
         return false;
       } finally {
-        // Only the write the barrier still BELONGS to may clear it — an older write settling
-        // late must not open the gate while a newer one is still on the wire.
-        if (settling === barrier) settling = null;
+        unsettled -= 1;
       }
     },
   };
