@@ -60,7 +60,18 @@ export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {
    */
   let readSeq = 0;
   let appliedSeq = 0;
+  /**
+   * The unsettled write, or `null`. READS ORDER BEHIND IT (codex rounds 4 and 5): a read that
+   * runs while the write is on the wire is AMBIGUOUS — it can observe the pre-write value
+   * (round 4: resolving late, it undid the confirmed write) or, just as legitimately, a value
+   * some OTHER client committed after ours (round 5: discarding it left the phone stale). No
+   * stamp can tell those apart from here, so the read simply waits: issued after the write
+   * settles, its answer is post-write and authoritative by construction. Waiting is ordering,
+   * not blocking — the write always settles, and the wait is one request's round trip.
+   */
+  let settling: Promise<void> | null = null;
   const refresh = async (): Promise<void> => {
+    while (settling !== null) await settling;
     const at = epoch;
     const mine = ++readSeq;
     const ans = await deps.read();
@@ -72,28 +83,25 @@ export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {
   return {
     refresh,
     async set(on: boolean): Promise<boolean> {
+      // Reads already in the air captured the PRE-bump epoch and are out: a read must not
+      // overwrite the user's act while the act is still possible. Reads asked for from here
+      // on queue behind `settling` and run post-write.
       epoch += 1;
+      const attempt = deps.write(on);
+      settling = attempt.then(() => undefined, () => undefined);
       try {
-        const ans = await deps.write(on);
-        // A CONFIRMED write supersedes every read issued BEFORE this confirmation (codex
-        // round 4): a drain-completed GET can start inside the PATCH window — after the bump
-        // above, so the epoch check alone would admit it — and read the PRE-write flag off
-        // the server. Resolving late, it would overwrite the confirmed write whenever the
-        // post-write refresh happens to fail. The second bump retires the whole window;
-        // reads issued from here on see the new epoch and may apply as usual.
-        epoch += 1;
+        const ans = await attempt;
         deps.apply(ans.on);
         deps.drain();
         return true;
       } catch {
-        // The write invalidated every read in flight (the epoch bump above — deliberate, a
-        // read must not overwrite the user's act while the act is still possible), but a
-        // REJECTED write changed nothing on the server, so the invalidation left the UI on
-        // whatever it happened to hold. Re-ask under the current epoch: the authoritative
-        // value — the user's previous choice, exactly as the failure sentence claims — comes
-        // back on its own.
+        // A REJECTED write changed nothing on the server, but the epoch bump above had
+        // invalidated the reads in flight — re-ask, so the authoritative value (the user's
+        // previous choice, exactly as the failure sentence claims) comes back on its own.
         void refresh();
         return false;
+      } finally {
+        settling = null;
       }
     },
   };
