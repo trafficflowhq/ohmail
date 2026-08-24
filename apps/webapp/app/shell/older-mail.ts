@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { EngineMessage, OhmailEngine, OhmailView } from "@ohmail/client-engine";
 
 /**
@@ -184,12 +184,6 @@ export function useOlderMail(
   const available = engine.listOlderAvailable();
   const [page, setPage] = useState<Page>(EMPTY);
 
-  // The view (or the engine) changed — or the scope re-earned judgeability (`scopeEpoch`):
-  // a cursor into one list means nothing in another.
-  useEffect(() => {
-    setPage(EMPTY);
-  }, [engine, view, folderId, scopeEpoch]);
-
   /**
    * THE PAGING POSITION, AS REFS RATHER THAN AS STATE READ INSIDE `loadMore`.
    *
@@ -210,31 +204,51 @@ export function useOlderMail(
   suppressRef.current = suppress;
   /** Ids OBSERVED leaving the scope — the `"ban"` latch, per scope. See `suppress`. */
   const banned = useRef(new Set<string>());
-  /** The scope this hook's page state belongs to — returned EMPTY synchronously on mismatch,
-   *  because the reset below is an effect and runs one render late: without this, switching
-   *  folders rendered the previous folder's fetched rows under the new folder's title. */
+  /** The scope this hook's page state belongs to — see the SYNCHRONOUS reset below. */
   const scope = `${view}|${folderId ?? ""}|${scopeEpoch}`;
   const pageScope = useRef(scope);
+  const lastEngine = useRef(engine);
   const inFlight = useRef(false);
   const done = useRef(false);
   /**
    * WHICH LIST A RESPONSE BELONGS TO.
    *
-   * The reset below cannot cancel a request that is already out. Without a token, a page asked
-   * for in one view lands after the reset and is appended to a DIFFERENT view's list — mail from
+   * The reset cannot cancel a request that is already out. Without a token, a page asked for
+   * in one view lands after the reset and is appended to a DIFFERENT view's list — mail from
    * one pile rendered at the bottom of another, which is the one mistake this whole surface
    * exists to avoid making. Bumped on every reset; a response carrying a stale token is dropped.
    */
   const generation = useRef(0);
-  useEffect(() => {
+  /*
+   * THE SCOPE RESET, SYNCHRONOUS WITH THE RENDER THAT CHANGES THE SCOPE — deliberately not an
+   * effect, twice over:
+   *
+   *  · deferred to an effect, it ran one render LATE, so the mismatch render needed a guard to
+   *    keep the previous folder's rows from rendering under the new folder's title;
+   *  · worse, it ran AFTER children's effects — and the consumer that needs the reset most is
+   *    exactly a child mount effect: FolderView mounts when a folder entity (re)enters the
+   *    mirror and immediately probes an empty folder, so the probe read the PREVIOUS scope's
+   *    refs. A stale `done` swallowed it with no state change to ever re-run it; a stale
+   *    generation dropped its answer the moment the reset landed. Cold and re-enabled empty
+   *    folders sat unprobed until a manual press.
+   *
+   * A render-phase reset closes both: by the time any child renders (let alone mounts and
+   * probes), the refs are the new scope's and the page state is EMPTY. The render-phase
+   * `setPage` is React's documented same-component pattern — it re-runs this hook's component
+   * before children render — and the whole block is idempotent (the second pass sees
+   * `pageScope.current === scope` and skips), so StrictMode's double invoke cannot double-bump
+   * the generation.
+   */
+  if (pageScope.current !== scope || lastEngine.current !== engine) {
+    pageScope.current = scope;
+    lastEngine.current = engine;
     generation.current += 1;
     cursor.current = null;
     inFlight.current = false;
     done.current = false;
     banned.current = new Set();
-    pageScope.current = scope;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, view, folderId, scopeEpoch]);
+    setPage(EMPTY);
+  }
 
   const loadMore = useCallback(() => {
     if (!available || inFlight.current || done.current) return;
@@ -319,15 +333,16 @@ export function useOlderMail(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, page.items, version]);
 
-  // A scope the reset effect has not caught up with yet returns the RESTING page, never the
-  // previous scope's rows — see `pageScope`.
-  const current = pageScope.current === scope;
+  // The synchronous reset above means the page state is ALWAYS the current scope's by the
+  // time this returns — the mismatch guard that used to live here guarded a reset that ran
+  // one render late, and the render-phase `setPage(EMPTY)` re-runs this hook before anything
+  // renders the previous scope's rows.
   return {
     available,
-    items: current ? items : [],
-    loading: current ? page.loading : false,
-    error: current ? page.error : null,
-    exhausted: current ? page.exhausted : false,
+    items,
+    loading: page.loading,
+    error: page.error,
+    exhausted: page.exhausted,
     loadMore,
   };
 }
