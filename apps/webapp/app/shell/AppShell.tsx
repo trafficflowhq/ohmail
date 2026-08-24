@@ -100,7 +100,7 @@ import { RemoteImagesRow } from "./RemoteImagesRow";
 import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
 import { FoldersRow } from "./FoldersRow";
 import { FoldersRailGroup } from "./FoldersRailGroup";
-import { folderUnreadCounts } from "./folders";
+import { folderTailVerdict, folderUnreadCounts } from "./folders";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from "./ProfileImportCard";
@@ -1310,6 +1310,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * `startBelow` stays for a future CONTIGUOUS-edge derivation; nothing arms it today.
    */
   const folderOlderBoundary = undefined;
+  /** Each folder entity's last-known (mailboxId, name) — written by `folderTailVerdict` while
+   *  the entity is in the mirror, read by it while the entity is not (the flag mid-toggle), so
+   *  an authoritative move-back during the gap still clears the tail's latch. Bounded by the
+   *  folders visited this mount; never a source of a ban. */
+  const folderTailKeys = useRef(new Map<string, { mailboxId: string; name: string }>());
   const older = useOlderMail(engine, "ohbox", version);
   /**
    * The open FOLDER's reach past the mirror window (the folders foundation) — `older`'s twin,
@@ -1319,22 +1324,19 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    */
   const folderOlder = useOlderMail(
     engine, "folder", version, folderIdForOlder, folderOlderBoundary,
-    /* The per-render verdicts (see the hook's `suppress`): a row this folder shows above is
-       hidden (and un-latched — it was observed BACK); a row the mirror shows in ANOTHER place
-       has been moved by the mailbox's own word — banned, so a later prune of the moved row
-       cannot revive the stale pre-move copy here; a row the mirror does not hold (evicted, or
-       genuinely older) shows its fetched copy. When the FOLDER ENTITY itself is not in the
-       mirror (the flag mid-toggle, a tombstone render), the scope cannot be judged: "hold" —
-       out of the tail, latches untouched — because counting that defensive hide as a return
-       would release bans the scope never re-earned. Asked of the raw mirror, as it is now. */
-    (id) => {
-      const m = reader.get<EngineMessage>("message", id);
-      if (m === undefined) return "show";
-      if (!folderIdForOlder) return "hold";
-      const entity = reader.get<FolderEntity>("folder", folderIdForOlder);
-      if (!entity) return "hold";
-      return m.mailboxId === entity.mailboxId && m.folder === entity.name ? "hide" : "ban";
-    },
+    /* The per-render verdicts — `folderTailVerdict` is the pure, branch-tested word (see the
+       hook's `suppress` for what each verdict does to the latch): in this folder ⇒ hidden and
+       un-latched (an observed return); shown elsewhere by the LIVE entity ⇒ banned; not held ⇒
+       the fetched copy shows. `folderTailKeys` remembers each folder's last-known mailbox+name
+       so a move-back stays observable while the entity is absent (the flag mid-toggle over an
+       open URL) — the cache CLEARS latches only, and never earns one. */
+    (id) =>
+      folderTailVerdict(
+        reader.get<EngineMessage>("message", id),
+        folderIdForOlder,
+        folderIdForOlder ? reader.get<FolderEntity>("folder", folderIdForOlder) : undefined,
+        folderTailKeys.current,
+      ),
   );
 
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
