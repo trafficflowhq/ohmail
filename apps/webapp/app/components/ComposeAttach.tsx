@@ -626,7 +626,6 @@ export function ComposeAttach({
       // must be the one on screen at the moment of the pick, not the one a stale closure holds.
       const level = levelRef.current;
       let refused = false;
-      let acceptedPreBytes = 0;
       const skippedEarly: string[] = [];
       const picked: Array<{
         attachment: ComposeAttachment;
@@ -648,16 +647,19 @@ export function ComposeAttach({
           // known right here — rather than after the tab has paid to encode it: a single file
           // over the cap, and equally the tail of a batch whose accepted files already fill it
           // (ten near-cap files would otherwise stage hundreds of MB of strings for a commit
-          // that admits one — review finding). The bound counts the LIVE list plus this pick's
-          // accepted files only: duplicates are detected right after their encode and never
-          // spend it, and removals reach `attachmentsRef` as they flush — so the earlier
-          // false-refusal defect (counting rows a dedupe or a removal drops) stays closed. The
-          // COMMIT below remains the authority on admission.
+          // that admits one — review finding). The bound is REPROJECTED per file against the
+          // cap and the list AS THEY STAND NOW, never a running reservation: a reservation
+          // treats tentative staging as final admission, so a cap lowered (or a row removed)
+          // mid-batch kept charging for a staged file the commit was going to refuse and turned
+          // away a later file that fit (review finding). A staged candidate counts only while
+          // the current cap would still admit it; duplicates were skipped at their encode and
+          // never stage. The COMMIT below remains the authority on admission.
           const capNow = maxTotalBytesRef.current;
-          if (
-            picture.bytes > capNow ||
-            totalBytes(attachmentsRef.current) + acceptedPreBytes + picture.bytes > capNow
-          ) {
+          let projected = totalBytes(attachmentsRef.current);
+          for (const p of picked) {
+            if (projected + p.bytes <= capNow) projected += p.bytes;
+          }
+          if (picture.bytes > capNow || projected + picture.bytes > capNow) {
             refused = true;
             continue;
           }
@@ -680,7 +682,6 @@ export function ComposeAttach({
             skippedEarly.push(filename);
             continue;
           }
-          acceptedPreBytes += picture.bytes;
           // The pristine source, retained for the dial (see ATTACHMENT_SOURCES). When the
           // admitted bytes ARE the source (Original, or a file the shrink could not help), the
           // base64 in hand is the source's own encoding — cache it so a move never re-reads it.
