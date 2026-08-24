@@ -626,6 +626,17 @@ export function ComposeAttach({
       // must be the one on screen at the moment of the pick, not the one a stale closure holds.
       const level = levelRef.current;
       let refused = false;
+      /**
+       * THE STRICTEST CAP ANY REFUSAL WAS MADE UNDER — what the error line formats. The cap is
+       * live, so a candidate stranded at a dipped cap and a commit refusal at the restored one
+       * are refusals under DIFFERENT numbers; formatting the commit-time cap claimed a limit
+       * the refused files actually fit (review finding). `refused` alone remains for failures
+       * with no cap of their own (an unreadable file).
+       */
+      let refusedAtCap: number | null = null;
+      const refuseAt = (c: number): void => {
+        refusedAtCap = refusedAtCap === null ? c : Math.min(refusedAtCap, c);
+      };
       const skippedEarly: string[] = [];
       const picked: Array<{
         attachment: ComposeAttachment;
@@ -672,11 +683,11 @@ export function ComposeAttach({
                  dip mid-batch is a From switch inside one pick's encode loop; its cost here is
                  one stated refusal and one re-pick, never a silent loss. */
               picked.splice(i, 1);
-              refused = true;
+              refuseAt(capNow);
             }
           }
           if (picture.bytes > capNow || projected + picture.bytes > capNow) {
-            refused = true;
+            refuseAt(capNow);
             continue;
           }
           const contentBase64 = await readAsBase64(picture.blob);
@@ -745,7 +756,7 @@ export function ComposeAttach({
           continue;
         }
         if (running + p.bytes > cap) {
-          refused = true;
+          refuseAt(cap);
           continue;
         }
         admitted.push(p.attachment);
@@ -755,8 +766,8 @@ export function ComposeAttach({
           savedTo += p.bytes;
         }
       }
-      if (refused) {
-        setError(t("attachRefused", { size: formatSize(cap) }));
+      if (refused || refusedAtCap !== null) {
+        setError(t("attachRefused", { size: formatSize(refusedAtCap ?? cap) }));
       }
       // The totals of this pick, not of the list: the sentence explains what just happened to the
       // files being added, and for the single-picture case — which is nearly all of them — the two
