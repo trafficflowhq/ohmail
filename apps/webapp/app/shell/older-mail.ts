@@ -140,15 +140,20 @@ export function useOlderMail(
    *
    *  · `"hide"` — the surface above renders the row right now; the tail stays quiet;
    *  · `"ban"`  — the mirror shows the row has LEFT this scope (moved elsewhere): the fetched
-   *    pre-move copy is stale by the mailbox's own word, and the id is latched out for the
-   *    scope's life, so a LATER hard-prune of the moved row cannot revive it here;
+   *    pre-move copy is stale by the mirror's word, and the id is latched out, so a LATER
+   *    hard-prune of the moved row cannot revive it here;
    *  · `"show"` — the mirror does not hold the row: evicted by the window's policy, or
-   *    genuinely older mail. The fetched copy renders.
+   *    genuinely older mail. The fetched copy renders (unless latched).
    *
-   * The latch fires on OBSERVATION — a render that sees the moved row. The one residual it
-   * cannot close is an authoritative change applied and hard-pruned inside a single render
-   * tick of an open scope, which no reader of the live mirror can distinguish from eviction;
-   * named here rather than papered over.
+   * The latch fires on OBSERVATION — a render that sees the moved row — and it CLEARS on the
+   * opposite observation: a render whose verdict is `"hide"` (the mirror holds the row in this
+   * scope again) deletes the ban, because the mirror the caller reads is overlay-aware and a
+   * pending optimistic move also answers `"ban"` — a hard-rejected move rolls the row back
+   * into the scope, and a row can be genuinely moved back, and neither may leave a stale latch
+   * that outlives a later eviction. The newest observed word wins in both directions. The one
+   * residual it cannot close is a change applied and hard-pruned inside a single render tick
+   * of an open scope, which no reader of the live mirror can distinguish from eviction; named
+   * here rather than papered over.
    */
   suppress?: (id: string) => "show" | "hide" | "ban",
 ): OlderMail {
@@ -269,15 +274,19 @@ export function useOlderMail(
     const reader = engine.read();
     return page.items
       // The per-render verdicts — see `suppress`: hide what the surface shows, LATCH what the
-      // mirror says has left the scope, show what the mirror no longer holds.
+      // mirror says has left the scope, show what the mirror no longer holds. A row observed
+      // BACK in the scope clears its latch first — the newest word wins in both directions.
       .filter((item) => {
-        if (banned.current.has(item.id)) return false;
         const verdict = suppressRef.current?.(item.id) ?? "show";
+        if (verdict === "hide") {
+          banned.current.delete(item.id);
+          return false;
+        }
         if (verdict === "ban") {
           banned.current.add(item.id);
           return false;
         }
-        return verdict === "show";
+        return !banned.current.has(item.id);
       })
       .map((item) => reader.get<EngineMessage>("message", item.id) ?? item);
     // eslint-disable-next-line react-hooks/exhaustive-deps
