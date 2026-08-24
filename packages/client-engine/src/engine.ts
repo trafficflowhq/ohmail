@@ -6,6 +6,7 @@ import type { AttachmentWire, EngineAdapter, MutationOutcome } from "./adapters/
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SearchIndex, type LocalSearchResult } from "./search.js";
 import { isResurfaced, sendingMailboxId } from "./selectors.js";
+import { flattenResponse } from "./apply.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
 import {
   CursorExpiredError,
@@ -1083,6 +1084,26 @@ export class OhmailEngine {
       // "0" and `continue`s straight back here. See {@link OhmailEngine.runSnapshot}.
       if (this.store.getCursor() === "0" && this.snapshotFn) await this.runSnapshot();
 
+      // RULES BEFORE MAIL, on the degraded bootstrap. The snapshot path already delivers the
+      // account's whole rule set in page 1 (`sync-service.ts` — "a partial rule set is worse than
+      // none"), so a render mid-bootstrap never sees a message whose sender's decision is missing.
+      // The `since=0` replay has no such property: it interleaves by seq, and a sender decided
+      // AFTER their mail arrived replays as mail-first — the consent cutline then reads the absent
+      // rule as "undecided" and presents an already-screened sender in the Screener until the
+      // replay reaches the rule. Unknown is not undecided, so the fallback earns the same ordering
+      // the snapshot has: drain the rule type to its horizon first, rows only (the cursor stays
+      // "0"; the main replay re-delivers every rule change and the per-entity seq guard absorbs
+      // the repeat).
+      //
+      // Gated on a snapshot route that FAILED (`snapshotUnavailable`), not on every snapshot-less
+      // adapter: the adapters with no route at all are the FixturesAdapter — the demo, which
+      // `AppShell` never partitions — and servers older than the route, which no longer exist.
+      // The live way onto the `since=0` path is a page-1 failure, and that is the drain that must
+      // not misclassify senders while it streams.
+      if (this.store.getCursor() === "0" && this.snapshotFn && this.snapshotUnavailable) {
+        await this.drainRulesFirst();
+      }
+
       let resp;
       try {
         resp = await this.adapter.sync({
@@ -1127,6 +1148,35 @@ export class OhmailEngine {
       await this.store.setMeta(LAST_DRAIN_AT_META, this.now().toISOString());
       return;
     }
+  }
+
+  /**
+   * Drain `?types=rule` from seq 0 to its horizon, ROWS ONLY — the `since=0` fallback's opening
+   * move (see the call site in {@link OhmailEngine.drain} for the whole argument). The cursor is
+   * never touched: the main replay that follows re-delivers every one of these changes at the
+   * same seqs and the per-entity guard skips them, so a crash between the two passes costs
+   * nothing and converges exactly as a crashed bootstrap always has.
+   *
+   * A failure here is a failure of the SAME wire the main drain is about to use, so it is left
+   * to propagate on the main drain's own path rather than being swallowed into an unordered
+   * bootstrap — swallowing would silently reintroduce the misclassification this exists to stop,
+   * in exactly the flaky conditions that made the fallback fire.
+   */
+  private async drainRulesFirst(): Promise<void> {
+    // An engine configured to sync a type list that excludes rules has no decisions to order.
+    if (this.types && !this.types.includes("rule")) return;
+    let since = "0";
+    for (;;) {
+      const resp = await this.adapter.sync({
+        since,
+        types: ["rule"],
+        ...(this.syncLimit !== undefined ? { limit: this.syncLimit } : {}),
+      });
+      await this.store.applyChanges(flattenResponse(resp));
+      since = resp.cursor;
+      if (!resp.hasMore) break;
+    }
+    this.notify();
   }
 
   // ── eager recent-window hydration ──────────────────────────────────────────

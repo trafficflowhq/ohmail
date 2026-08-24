@@ -1670,6 +1670,53 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
+   * RULES BEFORE MAIL — the bootstrap's one ordering promise.
+   *
+   * A `since=0` replay interleaves by hosted seq, and a sender the account decided AFTER their
+   * mail arrived replays as mail-first: for the whole stretch between the mail's seqs and the
+   * rule's, the mirror holds messages whose sender looks undecided. Every reader downstream —
+   * the shell's snapshot off this database, its delta off the local `change_log` — inherits that
+   * order, and the consent cutline reads the absent rule as "no decision", so already-screened
+   * senders present in the Screener until the replay catches up. Measured live on a desktop
+   * initial sync; unknown is not undecided.
+   *
+   * So a drain that is a bootstrap first drains `?types=rule` from zero to its horizon, applied
+   * through the SAME `applyPage` (local change-log rows and generation marks included), without
+   * ever touching the drain's committed cursor. Two consequences, both deliberate:
+   *
+   *  · the local `change_log` carries every rule before any message, so a client that snapshots
+   *    this mirror mid-bootstrap gets the full rule set on page 1 and one that tails the delta
+   *    gets rules first — the ordering holds at every interleaving;
+   *  · the main replay re-delivers every rule change at its natural seq and re-applies it
+   *    (idempotent — the DTO is re-materialized CURRENT state on both passes), which also
+   *    re-marks it in the generation, so the trailing sweep needs nothing special.
+   *
+   * It re-runs on a RESUMED bootstrap too: rules decided while the install was interrupted sit
+   * above the committed cursor, and the remaining replay would otherwise serve their senders'
+   * mail first. The pass is cheap — rules are the smallest type in the feed.
+   *
+   * A failure is a failure of the same wire the main drain uses, so it propagates as any drain
+   * page failure does rather than degrading to an unordered bootstrap.
+   */
+  const drainRulesFirst = async (gen: BootstrapGen | null): Promise<{ applied: number; cut: boolean }> => {
+    let applied = 0;
+    let since = "0";
+    for (;;) {
+      if (aborted) return { applied, cut: true };
+      const q = new URLSearchParams({ since, limit: String(pageLimit), types: "rule" });
+      const res = await cfg.auth.authedFetch(`/sync?${q.toString()}`);
+      if (!res.ok) throw new Error(`the hosted /sync answered HTTP ${res.status} to the rules-first pass`);
+      const body = (await res.json()) as SyncResponse;
+      applied += await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes);
+      gen?.flush();
+      reachable = true;
+      since = body.cursor;
+      if (!body.hasMore) break;
+    }
+    return { applied, cut: false };
+  };
+
+  /**
    * Drain `GET /sync` to the horizon. Returns what it applied and, when the drain was a `since=0`
    * bootstrap, the generation it marked so the caller can sweep phantoms afterwards.
    *
@@ -1728,12 +1775,21 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     }
     /** One refetch per drain — see the pre-scan below. */
     let refetched = false;
+    // A bootstrap (fresh, resumed, re-keyed — anything that set `sweep`) owes the rules-first
+    // pass before its first page; the 410 branch below re-owes it with the fresh generation.
+    let rulesFirstOwed = sweep !== null;
     for (;;) {
       // BETWEEN PAGES, so a quit costs at most the page already in flight. `sweep: null` is the
       // load-bearing half: a bootstrap generation that stopped early has marked only part of the
       // account, and sweeping against it would delete rows the feed simply had not reached yet.
       // `cursor.bootstrapping` is left SET, so the next launch restarts the bootstrap in full.
       if (aborted) return { applied, sweep: null, cut: true };
+      if (rulesFirstOwed) {
+        rulesFirstOwed = false;
+        const rf = await drainRulesFirst(sweep);
+        applied += rf.applied;
+        if (rf.cut) return { applied, sweep: null, cut: true };
+      }
       const q = new URLSearchParams({
         since: cursor.sync || "0",
         limit: String(pageLimit),
@@ -1763,6 +1819,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         // is untrustworthy, and that verdict covers any marks it made from that position.
         sweep = newBootstrapGen(genPath);
         applied = 0;
+        // The re-bootstrap owes the rules-first pass again, against the fresh generation.
+        rulesFirstOwed = true;
         cfg.log?.("cloud_cursor_expired", { reason: "410 from /sync; re-bootstrapping from since=0 with mark-and-sweep" });
         continue;
       }
