@@ -2889,11 +2889,11 @@ export class OhmailEngine {
     }
     if (parent?.state !== "ready") return false;
     // AT MOST WHAT THE SEND STREAMED. The server bounds a forward's inherited parts
-    // (`SEND_FORWARD_MAX_PARTS` mirrors `SendService.FORWARD_MAX_PARTS`), so projecting the
+    // (`SENT_FORWARD_MAX_PARTS` mirrors `SendService.FORWARD_MAX_PARTS`), so projecting the
     // parent's whole list onto a >cap original would claim files the recipient never got. The
-    // subset the server takes carries no explicit order, so for that pathological original this
-    // projection is the right SIZE and a best-effort membership — corrected when the real row
-    // is opened. Every ordinary forward is far below the cap and exact.
+    // MEMBERSHIP matches too: the send's capped query and the metadata list are both ordered by
+    // attachment id (`send-service.ts` says why from its side), so this prefix names exactly the
+    // parts the send streamed, over-cap originals included.
     const inherited: AttachmentItem[] = parent.items.slice(0, SENT_FORWARD_MAX_PARTS).map((i) => ({
       id: i.id,
       filename: i.filename,

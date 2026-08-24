@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import {
   attachments, drafts, mailboxes, messageBodies, messages, outboundSends, recordChange, threads, type Tx,
 } from "@trafficflow/db";
@@ -1018,11 +1018,17 @@ export class SendService {
         fwdText = quoted.text;
         fwdHtml = quoted.html;
         // The original's attachment parts — metadata only; bytes stream at send. Capped so a huge
-        // forward cannot OOM the serverless function (the same bound `download-all` needs).
+        // forward cannot OOM the serverless function (the same bound `download-all` needs), and
+        // ORDERED BY ID, which is load-bearing beyond determinism: `AttachmentsService
+        // .listForMessage` orders the same way, and the client's optimistic sent copy projects a
+        // forward's inherited parts as the first `FORWARD_MAX_PARTS` of that list — a capped
+        // SELECT with no ORDER BY is free to pick a different subset, and the projection would
+        // then name a file the recipient never got while omitting one they did.
         const attRows = await tx.select({
           filename: attachments.filename, contentType: attachments.contentType,
           partId: attachments.partId, contentId: attachments.contentId, inline: attachments.inline,
-        }).from(attachments).where(eq(attachments.messageId, orig.id)).limit(FORWARD_MAX_PARTS);
+        }).from(attachments).where(eq(attachments.messageId, orig.id))
+          .orderBy(asc(attachments.id)).limit(FORWARD_MAX_PARTS);
         forward = {
           mailboxId: orig.mailboxId,
           locator: orig.locator as NativeLocator,
