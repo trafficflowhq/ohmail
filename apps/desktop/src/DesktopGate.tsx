@@ -155,6 +155,13 @@ export function DesktopGate() {
   const onStatus = useCallback((next: EngineStatus) => {
     setShell({ kind: "status", status: next });
     setOverlay(null);
+    /* Every status delivered here follows an engine-lifecycle act — a door entered, a sign-in,
+       a reconfigure — any of which may have REPLACED the engine behind the bridge. The auth
+       answer below is keyed on this counter, so bumping it makes whatever /health said about
+       the PREVIOUS engine unusable and the gate withholds the mail app until the new engine's
+       own first answer lands. Same door or not: `engine_configure` restarts the engine either
+       way, and a fresh engine's session is a fact to be read, never remembered. */
+    setAuthEpoch((n) => n + 1);
   }, []);
 
   /* At the TOP, above every early return: this is a hook, and a hook called from inside the JSX
@@ -181,34 +188,46 @@ export function DesktopGate() {
   const door = shell?.kind === "status" ? (shell.status.mode ?? null) : null;
 
   /**
-   * THE HOSTED SESSION'S LIVE TRUTH, asked of the engine rather than remembered from launch.
+   * THE HOSTED SESSION'S LIVE TRUTH, asked of the engine rather than remembered from launch —
+   * and never remembered ACROSS ENGINES either, which is what the key below enforces.
    *
-   * `hostedSessionGone` latches when the cloud door's engine answers `signedIn: false` — the
-   * state it enters when the hosted API definitively refused to renew the session. The gate
-   * then replaces the mail client with an honest sentence and the sign-in surface, instead of
-   * a mailbox that silently stopped moving (the engine also refuses reads in that state, so
-   * staying mounted would mean error toasts over stale mail). `signInAfterExpiry` is the
-   * person taking the offered action.
+   * `authEpoch` counts engine-lifecycle acts (every status `onStatus` delivers — a door entered,
+   * a sign-in, a reconfigure), and `authKey` names the exact (door, epoch) an answer was earned
+   * under. An answer is BELIEVED only while its key matches the current one, so leaving the
+   * cloud door, coming back to it, or replacing the engine under the same door each mint a key
+   * no stored answer matches — the auth state is structurally PENDING again and the mail app is
+   * withheld until the NEW engine's own first `/health` lands. The stale-latch failure this
+   * closes: a Cloud probe answered once, the person switched to local and back (or re-entered
+   * the door over a replaced engine), and the gate mounted `AppShell` on the old answer before
+   * the new engine reported pre-auth or expiry — mail routes refusing under a mounted client.
+   *
+   * `gone` latches on the engine's own expiry verdict (`sessionExpired`, the hosted API's
+   * definitive refusal to renew): the gate replaces the mail client with an honest sentence and
+   * the sign-in surface, instead of a mailbox that silently stopped moving. `preAuth` is
+   * signedIn:false WITHOUT that verdict — a pre-auth engine (relaunch after an expiry already
+   * removed the seal, an abandoned handoff): the sign-in surface with no "you were signed out"
+   * sentence, because for a session that never existed that sentence would be a lie.
+   * `signInAfterExpiry` is the person taking the offered action.
    */
-  const [hostedSessionGone, setHostedSessionGone] = useState(false);
-  /** signedIn:false WITHOUT the expiry verdict — a pre-auth engine (relaunch after an expiry
-      already removed the seal, an abandoned handoff). The mail app must not mount over it: its
-      mail routes refuse, and the honest surface is the sign-in — with no "you were signed out"
-      sentence, because for a session that never existed that sentence would be a lie. */
-  const [hostedPreAuth, setHostedPreAuth] = useState(false);
-  /** TRUE once the probe's first `/health` answer for this door has been read. Until then a
-      cloud door's auth state is PENDING and the mail app is withheld — React would otherwise
-      commit `AppShell` once, before the asynchronous probe responds, over an engine whose mail
-      routes refuse. Non-cloud doors and bridge-less environments never consult it. */
-  const [hostedAuthKnown, setHostedAuthKnown] = useState(false);
+  const [authEpoch, setAuthEpoch] = useState(0);
+  const authKey = door === "cloud" && bridgeAvailable() ? `cloud:${authEpoch}` : null;
+  const [hostedAuth, setHostedAuth] = useState<{ key: string; gone: boolean; preAuth: boolean } | null>(null);
+  /** TRUE once the CURRENT engine's first `/health` answer has been read — pending otherwise.
+      Until then the mail app is withheld: React would otherwise commit `AppShell` once, before
+      the asynchronous probe responds, over an engine whose mail routes refuse. Non-cloud doors
+      and bridge-less environments never consult it. */
+  const hostedAuthKnown = hostedAuth !== null && hostedAuth.key === authKey;
+  const hostedSessionGone = hostedAuthKnown && hostedAuth.gone;
+  const hostedPreAuth = hostedAuthKnown && hostedAuth.preAuth;
   const [signInAfterExpiry, setSignInAfterExpiry] = useState(false);
   useEffect(() => {
-    if (door !== "cloud" || !bridgeAvailable()) {
-      setHostedSessionGone(false);
-      setHostedPreAuth(false);
-      setSignInAfterExpiry(false);
-      return;
-    }
+    // A new key is a new engine (or no cloud engine at all): the expiry flow's held step is
+    // about an answer that no longer exists. The stored answer itself needs no reset — a stale
+    // key already reads as pending.
+    setSignInAfterExpiry(false);
+  }, [authKey]);
+  useEffect(() => {
+    if (authKey === null) return;
     let cancelled = false;
     const probe = async (): Promise<void> => {
       try {
@@ -220,13 +239,11 @@ export function DesktopGate() {
         // client — the difference is the sentence over the sign-in, never whether it shows.
         const health = (await res.json()) as { signedIn?: boolean; sessionExpired?: boolean };
         if (cancelled) return;
-        setHostedAuthKnown(true);
-        if (health.sessionExpired === true) setHostedSessionGone(true);
-        else if (health.signedIn === false) setHostedPreAuth(true);
-        else {
-          setHostedSessionGone(false);
-          setHostedPreAuth(false);
-        }
+        setHostedAuth({
+          key: authKey,
+          gone: health.sessionExpired === true,
+          preAuth: health.sessionExpired !== true && health.signedIn === false,
+        });
       } catch {
         /* engine unreachable — the status path owns that; the fast first-answer loop retries */
       }
@@ -239,12 +256,13 @@ export function DesktopGate() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [door]);
+  }, [authKey]);
   /* UNTIL THE FIRST ANSWER, ask fast: the door's auth state is pending and the app is withheld,
      and the ask is one local stdio call answered in milliseconds once the engine serves. This
-     loop exists only while the state is unknown — the flip to known unmounts it. */
+     loop exists only while the state is unknown — the flip to known unmounts it, and a new
+     `authKey` (a replaced engine) re-mounts it because the stored answer stops matching. */
   useEffect(() => {
-    if (door !== "cloud" || !bridgeAvailable() || hostedAuthKnown) return;
+    if (authKey === null || hostedAuthKnown) return;
     let cancelled = false;
     const probe = async (): Promise<void> => {
       try {
@@ -252,9 +270,11 @@ export function DesktopGate() {
         if (!res.ok) return;
         const health = (await res.json()) as { signedIn?: boolean; sessionExpired?: boolean };
         if (cancelled) return;
-        setHostedAuthKnown(true);
-        if (health.sessionExpired === true) setHostedSessionGone(true);
-        else if (health.signedIn === false) setHostedPreAuth(true);
+        setHostedAuth({
+          key: authKey,
+          gone: health.sessionExpired === true,
+          preAuth: health.sessionExpired !== true && health.signedIn === false,
+        });
       } catch {
         /* engine still starting — the next tick asks again */
       }
@@ -264,7 +284,7 @@ export function DesktopGate() {
       cancelled = true;
       clearInterval(fast);
     };
-  }, [door, hostedAuthKnown]);
+  }, [authKey, hostedAuthKnown]);
   useEffect(() => {
     if (door !== "local") {
       setAi(null);
@@ -338,10 +358,12 @@ export function DesktopGate() {
      sentence, and offer the way back — never a mailbox that silently stopped moving. The
      mirrored mail is kept on disk (sign-out freezes the directory) and returns with the
      sign-in. */
-  /* THE CLOUD DOOR'S AUTH STATE IS PENDING: the probe's first answer has not landed. Withhold
-     the mail app — React would otherwise commit it once, over an engine whose mail routes
-     refuse — and draw the same skeleton a starting engine draws. Resolved in milliseconds. */
-  if (door === "cloud" && bridgeAvailable() && !hostedAuthKnown) {
+  /* THE CLOUD DOOR'S AUTH STATE IS PENDING: the CURRENT engine's first answer has not landed —
+     a first launch, or an engine just replaced/re-entered whose predecessor's answer no longer
+     counts. Withhold the mail app — React would otherwise commit it once, over an engine whose
+     mail routes refuse — and draw the same skeleton a starting engine draws. Resolved in
+     milliseconds. */
+  if (authKey !== null && !hostedAuthKnown) {
     return <BootSkeleton active />;
   }
 
@@ -353,7 +375,9 @@ export function DesktopGate() {
         start="cloud"
         cloudAction="signIn"
         onEntered={(r) => {
-          setHostedPreAuth(false);
+          /* Back to PENDING, never to "signed in": the fresh probe against the engine the
+             sign-in just touched is the only thing allowed to say what its session is. */
+          setHostedAuth(null);
           if (r.status) onStatus(r.status);
           else void refresh();
         }}
@@ -372,8 +396,7 @@ export function DesktopGate() {
           start="cloud"
           cloudAction="signIn"
           onEntered={(r) => {
-            setHostedSessionGone(false);
-            setHostedPreAuth(false);
+            setHostedAuth(null);
             setSignInAfterExpiry(false);
             if (r.status) onStatus(r.status);
             else void refresh();
