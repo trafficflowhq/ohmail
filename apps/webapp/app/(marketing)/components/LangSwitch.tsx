@@ -88,8 +88,21 @@ const LANDING: Record<AppLocale, string> = { en: "/", de: "/de" };
 export function LangSwitch({
   className,
   landmarkClassName,
+  compact,
 }: {
   className: string;
+  /**
+   * THE NAV'S FORM: the other locale's two-letter mark ("DE" on the English page, "EN" on the
+   * German one) instead of the full language name — the header is a crowded row and "Deutsch"
+   * was the widest utility in it (owner ask, 2026-08-24: subtle in the nav, the full switcher
+   * stays in the footer). The label rule survives the shortening in the accessible name:
+   * `aria-label` and `title` carry the language's own word for itself, from the same
+   * `settings.languageName` pair, so a reader scanning by screen reader or tooltip still meets
+   * "Deutsch"/"English" — only the VISIBLE footprint shrinks. Everything else is identical: the
+   * same real `<a href>`, the same `hrefLang`/`lang` pair, the same `rememberLocale` writes,
+   * the same session gate. Omitted (the footer) renders the full name exactly as before.
+   */
+  compact?: boolean;
   /**
    * WHEN THE SWITCH IS A LANDMARK OF ITS OWN, IT OWNS THE LANDMARK — because it can now
    * disappear, and an empty named region is worse than no region.
@@ -117,16 +130,18 @@ export function LangSwitch({
   /* After every hook, never before one: an early return above `useLocale` would change the
      hook order between the stranger render and the signed-in one. */
   if (presence === "present") return null;
+  const name = other === "de" ? t("languageName.de") : t("languageName.en");
   const link = (
     <a
-      className={className}
+      className={compact ? `${className} l-lang-mark` : className}
       href={LANDING[other]}
       hrefLang={other}
       lang={other}
+      {...(compact ? { "aria-label": name, title: name } : {})}
       onClick={() => rememberLocale(other)}
       onAuxClick={(event) => { if (event.button === 1) rememberLocale(other); }}
     >
-      {other === "de" ? t("languageName.de") : t("languageName.en")}
+      {compact ? other.toUpperCase() : name}
     </a>
   );
   if (landmarkClassName === undefined) return link;

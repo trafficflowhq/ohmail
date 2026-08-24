@@ -70,6 +70,15 @@ export const ICON_PATHS: Record<string, ReactElement> = {
     <path d="M2.2 4.6a1.2 1.2 0 0 1 1.2-1.2h2.9l1.3 1.3h5a1.2 1.2 0 0 1 1.2 1.2v5.5a1.2 1.2 0 0 1-1.2 1.2H3.4a1.2 1.2 0 0 1-1.2-1.2z" />
   ),
   chev: <path d="m6 3.8 4.2 4.2L6 12.2" />,
+  /* The reader's Delete verb (a move to the provider's own Trash folder, never an expunge) —
+     drawn thin on the 16 grid like the rest of the set. */
+  trash: (
+    <>
+      <path d="M3 4.4h10M6.4 4.4V3.2a.8.8 0 0 1 .8-.8h1.6a.8.8 0 0 1 .8.8v1.2" />
+      <path d="m4.2 4.4.7 8a1.2 1.2 0 0 0 1.2 1.1h3.8a1.2 1.2 0 0 0 1.2-1.1l.7-8" />
+      <path d="M6.6 7v4M9.4 7v4" />
+    </>
+  ),
   pen: (
     <>
       <path d="m3.2 12.8.7-2.9 7.2-7.2a1.45 1.45 0 0 1 2.05 2.05l-7.2 7.2-2.75.85z" />

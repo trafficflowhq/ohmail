@@ -3434,6 +3434,26 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
           toast(t("ohbox.toastResurface", { when: resurfaceLabel(when) }));
           break;
         }
+        case "delete": {
+          /**
+           * THE DELETE VERB — a move to the provider's native \Trash, NEVER an expunge
+           * (FOLDERS-SPEC.md §16.3; `packages/core/src/adapters/imap-types.ts`, the third
+           * user-commanded write). Dispatched ONLY from the confirm strip the ⋯ menu opens
+           * (`MessagePane.ActionBar`), which is the whole ceremony: there is no un-delete on
+           * the wire, so the ask happens BEFORE the act and no Undo is offered after it —
+           * the same confirm-no-undo shape the mobile reader ships.
+           *
+           * The result is AWAITED for the toast, unlike the fire-and-forget verbs above,
+           * because the two honest sentences differ: the overlay tombstones the row the
+           * instant this dispatches, and a rejection (a mailbox with no \Trash folder answers
+           * 422 `no_trash_folder`) rolls that overlay back whole — the message is back where
+           * it was, and the toast must say so rather than claim a move that did not happen.
+           */
+          void engine.mutate({ kind: "message_delete", messageId: m.id }).then((res) => {
+            toast(res.status === "rolled_back" ? t("ohbox.deleteFailed") : t("ohbox.toastDeleted"));
+          });
+          break;
+        }
         case "resurface_now":
           /**
            * "NOW" IS A STATE, NOT A DATE, and that is the only thing separating this arm from
@@ -4502,7 +4522,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         ],
       },
       {
-        label: t("rail.triage"),
+        /* NO HEADING over the three horizons — owner decision, 2026-08-22 (FOLDERS-SPEC.md
+           §16.4): the group's spacing differentiates it, exactly as it does for the Ohbox and
+           Screener groups above. The `rail.triage` KEY is deliberately still in both catalogues —
+           `viewTitles` below titles the mobile view with it, so the locale files keep their
+           shape. */
         items: [
           { id: "triage", label: t("rail.replyLater"), count: piles.replyLater.length },
           { id: "triage-aside", label: t("rail.setAside"), count: piles.setAside.length },
@@ -4847,6 +4871,9 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   const chrome = useMemo(
     () => ({
       ownAddresses,
+      // The reader's Delete verb is gated on the folders foundation flag (§16.3/§16.7) — the
+      // same server-confirmed value the rail's Folders group reads.
+      foldersEnabled: consent.foldersEnabled,
       absoluteTime,
       onToggleAbsoluteTime: toggleAbsoluteTime,
       replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply,
@@ -4907,7 +4934,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       replyEnvelope, replyFromId, replyAttachments, sendSurfaceMaxTotalBytes, replyBook,
       openSenderMenu, ownNameOf, writeTo, openReply, openForward, openSubjectRule,
-      conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages],
+      conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
+      consent.foldersEnabled],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just

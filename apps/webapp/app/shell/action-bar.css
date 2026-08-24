@@ -309,6 +309,21 @@
   padding-right: 2px;
   white-space: nowrap;
 }
+/* The delete confirm's sentence — the ceremony's honest half ("It moves to the Trash folder on
+   your own mail server…"). It WRAPS: the panel is flex-wrap for exactly this, and a nowrap here
+   would clip the one line the ask depends on. Flexible width so the two buttons keep their size. */
+.abar-note {
+  font-size: 11px;
+  color: var(--ink3);
+  flex: 1 1 220px;
+  min-width: 0;
+}
+/* The confirm button of the one destructive verb — the token where a theme defines it, the
+   `.mbx-bad` idiom. Color only: the shape stays the bar's own capsule, because the ceremony is
+   the ask, not a louder button. */
+.abar-danger {
+  color: var(--danger, #b3261e);
+}
 /* A panel section is a grouping for the container queries below and NOT a box: its buttons
    must be flex children of the panel itself, or they would lay out as one unbreakable unit
    and reintroduce the clipping this change removes. */

@@ -44,6 +44,7 @@ import {
   recipientRows,
   rowAddress,
   senderName,
+  withheldCopyKey,
   type RecipientRowChip,
 } from "./format";
 import { displayAddress } from "./idn";
@@ -399,7 +400,9 @@ export function MessageCard({
    * in the mailbox on the user's own server.
    */
   const withheldNote: ReactNode =
-    body.state === "withheld" ? <p className="hm-state">{tb("withheld")}</p> : null;
+    // Per MARKER, not one sentence for the state: which policy emptied the stored body decides
+    // what is true to say (storage cap / junk verdict / expunged) — `withheldCopyKey`.
+    body.state === "withheld" ? <p className="hm-state">{tb(withheldCopyKey(body.withheld))}</p> : null;
   const failedNote: ReactNode =
     body.state === "failed" || (stalled && waiting) ? (
       <p className="hm-state warn">

@@ -351,8 +351,9 @@ export const Copy = {
   /*
    * DELETE — the product rule verbatim (packages/core/src/adapters/imap-types.ts, mail 0065):
    * delete files the message to the provider's own \Trash and NEVER expunges. The webapp's
-   * reading pane does not carry this verb yet, so there is no catalogue string to mirror —
-   * these sentences state exactly what the engine's `message_delete` does, and no more. There
+   * reading pane carries the verb too now (the §16 UI wave), and its catalogue mirrors these
+   * exact sentences (`ohbox.actionDelete` family in `messages/en.json`) —
+   * `test/folders-parity.test.ts` pins the two word for word. There
    * is no un-delete on the wire, so the ceremony is a confirm, never an undo the product
    * could not honour.
    */

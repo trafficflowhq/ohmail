@@ -409,7 +409,7 @@
   },
   "ohbox": {
     "title": "Ohbox",
-    "meta": "{unread, number} unread of {total, plural, one {1 message} other {# messages}}",
+    "meta": "{count, number} new",
     "newForYou": "New",
     "previouslySeen": "Earlier",
     "resurfacedGroup": "Resurfaced",
@@ -457,6 +457,11 @@
     "moveLabel": "move to",
     "moveCancel": "Cancel",
     "toastMoved": "Moved to {place}.",
+    "actionDelete": "Delete",
+    "deleteAsk": "Delete this message?",
+    "deleteNote": "It moves to the Trash folder on your own mail server — ohmail never erases mail. Your mail server's Trash rules apply from there.",
+    "toastDeleted": "Moved to Trash.",
+    "deleteFailed": "That delete could not be saved — the message is where it was.",
     "toastDownloadAllFailed": "Those files couldn't be fetched from your mailbox. Try one at a time.",
     "doorbell": "{count, plural, =0 {<b>All clear</b>} one {<b>1</b> waiting} other {<b>#</b> waiting}}",
     "doorbellAction": "Screener ›",
@@ -543,7 +548,7 @@
       "spam": {
         "glyph": "🕳",
         "title": "No spam held.",
-        "hint": "Auto-detected spam lands here for review — nothing is deleted unseen."
+        "hint": "Auto-detected spam lands here for review — ohmail deletes nothing on its own."
       }
     },
     "applyAll": "Apply {count} — {piles}",
@@ -917,7 +922,7 @@
       "postureOn": "Real people and the service mail you act on stay in the Ohbox. Newsletters and promotions go to Reads, receipts to Receipts.",
       "postureOff": "Everything from a sender you've written to reaches your Ohbox, promotions included.",
       "autoApplyTitle": "File obvious bulk out of my Screener for me",
-      "autoApplyDescription": "When a first-time sender is plainly a newsletter or a receipt, file it to Reads or Receipts instead of holding it for you. Deterministic rules only — no AI, and it never spends. Security codes and other sensitive mail are never moved, and first-time people always wait for you. You can move anything back; nothing is deleted. Off by default.",
+      "autoApplyDescription": "When a first-time sender is plainly a newsletter or a receipt, file it to Reads or Receipts instead of holding it for you. Deterministic rules only — no AI, and it never spends. Security codes and other sensitive mail are never moved, and first-time people always wait for you. You can move anything back; ohmail deletes nothing on its own. Off by default.",
       "barLabel": "In your words, what belongs in your Ohbox",
       "defaultBar": "Keep my Ohbox for real people writing to me and the service mail I actually act on — a delivery, a security alert, something that needs a reply. File the newsletters and promotions in Reads, the receipts and confirmations in Receipts, and hold first-time strangers in the Screener.",
       "save": "Save",
@@ -1106,7 +1111,9 @@
     "sessionEnded": "Your session ended, so the full message couldn't load.",
     "signIn": "Sign in",
     "retry": "Retry",
-    "withheld": "Not stored here — within your storage space, older stored copies give way to newer mail, and this one gave way (or space was full when it arrived). The message itself is safe in your mailbox on your mail server; this is the preview."
+    "withheld": "Not stored here — within your storage space, older stored copies give way to newer mail, and this one gave way (or space was full when it arrived). The message itself is safe in your mailbox on your mail server; this is the preview. A bigger plan adds storage space.",
+    "withheldJunk": "Not stored here — your spam verdict filed this message to the Junk folder on your own mail server. It lives on there; this is the preview.",
+    "withheldExpunged": "No stored copy left — every copy of this message is gone from the folders ohmail reads on your mail server: deleted there, or moved elsewhere by another mail app. This preview is what remains."
   },
   "message": {
     "toLabel": "To",

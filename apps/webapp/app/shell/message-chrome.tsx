@@ -42,6 +42,19 @@ export interface MessageChrome {
    */
   ownAddresses: readonly string[];
   /**
+   * THE FOLDERS FOUNDATION FLAG, as the shell knows it (`consent.foldersEnabled`) — the gate on
+   * the reader's Delete verb (FOLDERS-SPEC.md §16.3/§16.7: the verb ships behind "Use folders";
+   * flag-off is the pre-verb reader, byte-identical to before the verb existed).
+   *
+   * It rides the chrome for the reason everything here does: `MessagePane` is mounted from six
+   * surfaces and holds no consent hook of its own. OPTIONAL, and absent means OFF — a
+   * provider-less mount (the desktop shell, a bare test) renders no destructive verb, which is
+   * the honest degradation and exactly the flag-off ceremony. Both halves of the verb — the
+   * menu entry and the confirm strip — gate on it independently, so a stale open confirm cannot
+   * dispatch after the flag goes off (the mobile reader holds the same pair).
+   */
+  foldersEnabled?: boolean;
+  /**
    * ABSOLUTE-TIME DISPLAY — a session-and-view-scoped preference on the reader's stamps.
    *
    * Every stamp in the open message shows the relative form by default ("09:12", "Mon"), with the

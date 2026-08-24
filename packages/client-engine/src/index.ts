@@ -43,6 +43,10 @@ export {
   type ScreenDest,
   type BodyState,
   type MessageBody,
+  // The closed set behind `MessageBody.withheld` — exported because the surface owes each
+  // member its own sentence (the reading pane's per-marker copy), and a surface that cannot
+  // name the type re-derives it as string literals that drift.
+  type WithheldMarker,
   type MessageBodyRecord,
   type MessageBodyBatchWire,
   type MessageBodyWire,

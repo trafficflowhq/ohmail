@@ -15,7 +15,7 @@ import { opensInSystemViewer } from "./open-attachment";
 import { MessageBody } from "../components/MessageBody";
 import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
-import { PLACE_LABEL, dayNine, dayValue, hueOf, nextWeekNine, tagsOfMessage, tomorrowNine } from "./format";
+import { PLACE_LABEL, dayNine, dayValue, hueOf, nextWeekNine, tagsOfMessage, tomorrowNine, withheldCopyKey } from "./format";
 import { replyAllRecipients } from "./compose-from";
 import { InlineReply } from "./InlineReply";
 import { inlineForwardKey } from "./mail-send";
@@ -88,6 +88,17 @@ export type MessageAction =
   | "resurface_done"
   | "draft"
   | "unread"
+  /**
+   * DELETE — the one destructive verb, and it is a MOVE: the engine's `message_delete` files
+   * the message to the provider's own \Trash folder and NEVER expunges (FOLDERS-SPEC.md §16.3;
+   * the product rule lives at `packages/core/src/adapters/imap-types.ts`, the third
+   * user-commanded write). Gated on the folders foundation flag (`chrome.foldersEnabled`) and
+   * dispatched ONLY from the confirm strip the ⋯ menu opens — there is no un-delete on the
+   * wire, so the ceremony is a confirm, never an undo the product could not honour. The mobile
+   * reader ships the identical ceremony, and a parity test on its side pins the two surfaces'
+   * wording to this catalogue, word for word.
+   */
+  | "delete"
   | `move:${MoveTarget}`;
 
 /** The DecisionBar's vocabulary, so filing means the same thing everywhere. */
@@ -134,7 +145,7 @@ export type BulkAction =
  * ({@link MoreMenu}), anchored to the button that opened it. What is left here is exactly the
  * two ceremonies.
  */
-type BarPanel = "move" | "resurface";
+type BarPanel = "move" | "resurface" | "delete";
 
 /**
  * A verb's keycap, READ FROM THE LIVE REGISTRY.
@@ -506,6 +517,40 @@ function ActionBar({
   }
 
   /**
+   * THE DELETE CONFIRM — the second flag conditional, deliberately its own and not folded into
+   * the menu item's: a stale open strip must not be able to dispatch after "Use folders" goes
+   * off (the mobile reader holds the same pair of gates, and its parity test watched exactly
+   * this defect red). The ask and the note render IN the strip, before the act: there is no
+   * un-delete on the wire, so the question is the ceremony and no Undo follows. The ONLY
+   * dispatch site of `"delete"` is the confirm button here.
+   */
+  if (panel === "delete" && chrome.foldersEnabled === true) {
+    // Flag off with a stale "delete" panel falls THROUGH to the resting bar below — the strip
+    // simply is not drawn, and nothing here writes state during render.
+    return (
+      <div className="abar">
+        <div className="abar-panel abar-delete" role="alertdialog" aria-label={t("deleteAsk")}>
+          <span className="abar-lab">{t("deleteAsk")}</span>
+          <span className="abar-note">{t("deleteNote")}</span>
+          <button
+            type="button"
+            className="abar-b abar-solo abar-danger"
+            onClick={() => {
+              onPanel(null);
+              onAction("delete");
+            }}
+          >
+            {t("actionDelete")}
+          </button>
+          <button type="button" className="abar-b" onClick={() => onPanel(null)}>
+            {t("moveCancel")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /**
    * WHAT IS BEHIND "MORE" — the same verbs, in the same order they stand in the row.
    *
    * `group` is what keeps the rule "a verb is in the row or in the menu, never both": the
@@ -570,6 +615,22 @@ function ActionBar({
       icon: <Icon name="spark" size={13} />,
       run: () => { closeMenu(); onAction("draft"); },
     },
+    /**
+     * DELETE — last, menu-only, and flag-gated (FOLDERS-SPEC.md §16.3/§16.7): the verb ships
+     * behind "Use folders", and with the flag off this reader is the pre-verb reader. The item
+     * carries NO `group`, like Draft reply, so no bar tier ever surfaces it as a row button —
+     * a destructive verb does not belong where a stray click can land. It opens the CONFIRM
+     * strip; only the strip dispatches (the one-dispatch-site rule the mobile parity test pins
+     * on its side).
+     */
+    ...(chrome.foldersEnabled === true
+      ? [{
+          id: "delete",
+          label: t("actionDelete"),
+          icon: <Icon name="trash" size={13} />,
+          run: () => { closeMenu(); onPanel("delete"); },
+        } as MoreMenuItem]
+      : []),
   ];
 
   return (
@@ -1309,11 +1370,12 @@ export function MessagePane({
   const bodyNote =
     isProtected || body.state === "full" ? undefined : body.state === "withheld" ? (
       /* ── WITHHELD IS ANSWERED, NOT FAILED — so no Retry and no spinner. ─────────────────────
-         The server said it holds no content for this message (the account's storage space was
-         full when it arrived), which a retry cannot change and a "couldn't load" would misstate:
-         nothing failed, and the mail itself is untouched in the mailbox on the user's own
-         server. One plain sentence; the preview above it is real (the snippet is stored). */
-      tb("withheld")
+         The server said it holds no content for this message, which a retry cannot change and
+         a "couldn't load" would misstate: nothing failed. WHICH policy emptied it decides the
+         sentence (`withheldCopyKey`): the storage cap's copy points at the mailbox and the
+         plan, the junk verdict's at the provider's Junk folder, the expunge says the copies
+         are gone. The preview above it is real either way (the snippet is stored). */
+      tb(withheldCopyKey(body.withheld))
     ) : body.state === "failed" || stalled ? (
       sessionDead ? (
         <>

@@ -1918,17 +1918,24 @@ export function OhboxView({
       <ListPane
         title={t("title")}
         scrollerRef={listScrollerRef}
-        /* "0 unread of 0 messages" IS A CLAIM ABOUT THE MAILBOX, not a description of the
-           list — and it was on screen, beside "Nothing in your Ohbox.", over an account that
+        /* "0 new" IS A CLAIM ABOUT THE MAILBOX, not a description of the
+           list — and its predecessor ("0 unread of 0 messages") was on screen, beside
+           "Nothing in your Ohbox.", over an account that
            was not empty, for as long as the first drain took. While the mirror has not
            been read there is no count to state, so none is stated: no dash, no zero, no
            substitute. A count that returns the moment there is one to give is not a gap; a
            wrong count is a lie. Any NON-zero total is a real observation whatever the drain is
-           doing, so only the empty case is withheld. */
+           doing, so only the empty case is withheld.
+
+           THE FORM IS THE READS HEADER'S — "{count} new", one compact line with the action
+           right-aligned beside it: the long "unread of N messages" tail made the header wrap
+           to three lines. The fuller noun sentence — an earlier report asked the two header
+           counts to name their nouns — lives on in the rail tooltip (`rail.ohboxTitle`),
+           which still says "N unread of M messages". */
         meta={
           !settled && all.length === 0
             ? undefined
-            : t("meta", { unread: unreadIds.length, total: all.length })
+            : t("meta", { count: unreadIds.length })
         }
         action={
           onMarkAllRead ? (

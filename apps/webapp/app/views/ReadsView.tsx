@@ -26,7 +26,7 @@ import {
 } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
-import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, withheldCopyKey } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
 import { type MessageAction } from "../shell/MessagePane";
@@ -564,7 +564,6 @@ export function ReadsView({
   );
   const loadingLabel = tb("loading");
   const failedLabel = tb("failed");
-  const withheldLabel = tb("withheld");
 
   /* One memoized card per MOUNTED message — the memo keeps an apply that touched nothing from
      re-rendering the run, and the run itself keeps a switch from mounting the pile. `bodyOf` is
@@ -588,7 +587,8 @@ export function ReadsView({
         bodyLoadedRemote={body.loadedRemoteContent}
         loadingLabel={loadingLabel}
         failedLabel={failedLabel}
-        withheldLabel={withheldLabel}
+        /* Per MARKER (`withheldCopyKey`): which policy emptied the body decides the sentence. */
+        withheldLabel={tb(withheldCopyKey(body.withheld))}
         onSelect={onCur}
         onToggle={onToggle}
         onAction={onAction}

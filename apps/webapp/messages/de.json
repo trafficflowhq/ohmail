@@ -409,7 +409,7 @@
   },
   "ohbox": {
     "title": "Ohbox",
-    "meta": "{unread, number} ungelesen von {total, plural, one {1 Nachricht} other {# Nachrichten}}",
+    "meta": "{count, number} neu",
     "newForYou": "Neu",
     "previouslySeen": "Gesehen",
     "resurfacedGroup": "Wieder aufgetaucht",
@@ -457,6 +457,11 @@
     "moveLabel": "verschieben nach",
     "moveCancel": "Abbrechen",
     "toastMoved": "Nach {place} verschoben.",
+    "actionDelete": "Löschen",
+    "deleteAsk": "Diese Nachricht löschen?",
+    "deleteNote": "Sie wandert in den Papierkorb-Ordner auf deinem eigenen Mailserver — ohmail löscht nie unwiderruflich. Ab dort gelten die Papierkorb-Regeln deines Mailservers.",
+    "toastDeleted": "In den Papierkorb verschoben.",
+    "deleteFailed": "Das Löschen konnte nicht gespeichert werden — die Nachricht ist noch an ihrem Platz.",
     "toastDownloadAllFailed": "Diese Dateien ließen sich nicht aus deinem Postfach holen. Versuch es einzeln.",
     "doorbell": "{count, plural, =0 {<b>Alles klar</b>} one {<b>1</b> wartet} other {<b>#</b> warten}}",
     "doorbellAction": "Screener ›",
@@ -543,7 +548,7 @@
       "spam": {
         "glyph": "🕳",
         "title": "Kein Spam zurückgehalten.",
-        "hint": "Automatisch erkannter Spam landet hier zum Nachsehen — gelöscht wird nichts unbesehen."
+        "hint": "Automatisch erkannter Spam landet hier zum Nachsehen — von sich aus löscht ohmail nichts."
       }
     },
     "applyAll": "{count} übernehmen — {piles}",
@@ -917,7 +922,7 @@
       "postureOn": "Echte Menschen und die Service-Post, mit der du etwas tust, bleiben in der Ohbox. Newsletter und Werbung gehen nach Reads, Quittungen und Rechnungen in die Belege.",
       "postureOff": "Alles von einem Absender, dem du geschrieben hast, kommt in deine Ohbox — Werbung eingeschlossen.",
       "autoApplyTitle": "Offensichtliche Massenpost für mich aus dem Screener einsortieren",
-      "autoApplyDescription": "Wenn ein Erstabsender ganz klar ein Newsletter oder ein Beleg ist, wird er nach Reads oder in die Belege einsortiert, statt für dich zurückgehalten zu werden. Nur feste Regeln — keine KI, und es kostet nie etwas. Sicherheitscodes und andere sensible Post werden nie verschoben, und Erstabsender aus Fleisch und Blut warten immer auf dich. Du kannst alles zurückholen; gelöscht wird nichts. Standardmäßig aus.",
+      "autoApplyDescription": "Wenn ein Erstabsender ganz klar ein Newsletter oder ein Beleg ist, wird er nach Reads oder in die Belege einsortiert, statt für dich zurückgehalten zu werden. Nur feste Regeln — keine KI, und es kostet nie etwas. Sicherheitscodes und andere sensible Post werden nie verschoben, und Erstabsender aus Fleisch und Blut warten immer auf dich. Du kannst alles zurückholen; von sich aus löscht ohmail nichts. Standardmäßig aus.",
       "barLabel": "In deinen Worten: was gehört in deine Ohbox",
       "defaultBar": "Halte meine Ohbox frei für echte Menschen, die mir schreiben, und für die Service-Post, mit der ich wirklich etwas tue — eine Lieferung, eine Sicherheitswarnung, etwas, das eine Antwort braucht. Sortiere Newsletter und Werbung nach Reads, Quittungen und Bestätigungen in die Belege, und lass unbekannte Erstabsender im Screener warten.",
       "save": "Speichern",
@@ -1106,7 +1111,9 @@
     "sessionEnded": "Deine Sitzung ist beendet, darum ließ sich die vollständige Nachricht nicht laden.",
     "signIn": "Anmelden",
     "retry": "Erneut versuchen",
-    "withheld": "Hier nicht gespeichert — innerhalb Ihres Speicherplatzes weichen ältere gespeicherte Kopien neuerer Post, und diese ist gewichen (oder der Platz war beim Eintreffen voll). Die Nachricht selbst liegt sicher in Ihrem Postfach auf Ihrem Mailserver; dies ist die Vorschau."
+    "withheld": "Hier nicht gespeichert — innerhalb deines Speicherplatzes weichen ältere gespeicherte Kopien neuerer Post, und diese ist gewichen (oder der Platz war beim Eintreffen voll). Die Nachricht selbst liegt sicher in deinem Postfach auf deinem Mailserver; das hier ist die Vorschau. Ein größerer Tarif bringt mehr Speicherplatz.",
+    "withheldJunk": "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Junk-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
+    "withheldExpunged": "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Diese Vorschau ist, was bleibt."
   },
   "message": {
     "toLabel": "An",

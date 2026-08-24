@@ -23,7 +23,7 @@ import type { EngineMessage, MessageBody, TagDTO, WaterlineMeta } from "@ohmail/
 import { ListPane, ListRows, MessageRow, Waterline } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
-import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, waterlineStamp } from "../shell/format";
+import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, waterlineStamp, withheldCopyKey } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useListWindow } from "../shell/list-window";
 import { type MessageAction } from "../shell/MessagePane";
@@ -343,7 +343,6 @@ export function ReceiptsView({
   );
   const loadingLabel = tb("loading");
   const failedLabel = tb("failed");
-  const withheldLabel = tb("withheld");
 
   /* One memoized card per MOUNTED message — same shape as `ReadsView.card`. */
   const card = (m: EngineMessage) => {
@@ -362,7 +361,8 @@ export function ReceiptsView({
         bodyLoadedRemote={body.loadedRemoteContent}
         loadingLabel={loadingLabel}
         failedLabel={failedLabel}
-        withheldLabel={withheldLabel}
+        /* Per MARKER (`withheldCopyKey`): which policy emptied the body decides the sentence. */
+        withheldLabel={tb(withheldCopyKey(body.withheld))}
         onSelect={onCur}
         onToggle={onToggle}
         onAction={onAction}

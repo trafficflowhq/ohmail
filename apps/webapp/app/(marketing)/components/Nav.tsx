@@ -55,12 +55,14 @@ export function Nav() {
         </nav>
         <div className="l-nav-actions">
           {/* The other language, at the head of the action cluster and one weight quieter
-              than everything in it: a reader who needs it is looking for their own word for
-              their language, and a reader who does not must be able to skip past it. It is
+              than everything in it — COMPACT here (the "DE"/"EN" mark; owner ask, 2026-08-24):
+              the bar is a crowded row and the full word was its widest utility, while a reader
+              who needs the language still meets their own word for it in the tooltip and the
+              accessible name, and in full in the footer's switcher. It is
               the only control here that changes the ADDRESS rather than the page, which is
-              why it is a link with an hreflang rather than a toggle. Hidden below 480px,
+              why it is a link with an hreflang rather than a toggle. Hidden below 760px,
               where the bar is stripped to the ask — the footer's copy carries it there. */}
-          <LangSwitch className="l-nav-lang" />
+          <LangSwitch className="l-nav-lang" compact />
           {/* The source, in the bar — the one outbound link the menu carries. The star
               count is a build-time constant (see ../github.ts); when the build had no
               usable count the number is simply absent, never guessed. */}

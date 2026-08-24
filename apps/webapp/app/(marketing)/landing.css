@@ -224,6 +224,19 @@ a.btn {
 .l-nav-lang:hover {
   color: var(--ink);
 }
+/* the compact locale mark ("DE"/"EN") the nav renders instead of the full word — the same
+   quiet link, narrower: small, letterspaced, one weight up so two letters still read as a
+   control. Same vertical padding as the word it replaces, so nothing in the row moves. */
+.l-nav-lang.l-lang-mark {
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: 0.09em;
+}
+.l-nav-lang:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
 /* sign in — the returning customer's door. Same quiet weight as the demo
    link: it must be findable next to the capsule without competing with it. */
 .l-nav-signin {

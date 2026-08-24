@@ -14,6 +14,7 @@ import {
   type EmailAddress,
   type EngineMessage,
   type TagDTO,
+  type WithheldMarker,
 } from "@ohmail/client-engine";
 import { TAG_HUES, type TagHueName } from "@ohmail/ui";
 import { displayAddress } from "./idn";
@@ -126,6 +127,43 @@ export const PLACE_LABEL: Record<string, string> = liveCopy("place", PLACE_EN);
 export function placeLabel(folder: string): string {
   const view = VIEW_OF_FOLDER[folder as keyof typeof VIEW_OF_FOLDER];
   return (view && PLACE_LABEL[view]) || folderLeaf(folder);
+}
+
+/**
+ * WHICH SENTENCE A WITHHELD BODY GETS — the `body.*` catalogue key per marker.
+ *
+ * `MessageBody.withheld` is the server's closed set (mail 0065 widened it from the storage cap
+ * alone), and the selector deliberately carries the member through so "the surface owes each
+ * member its own sentence" is writable: the storage cap names the space and the way to more of
+ * it, the junk filing names the verdict and where the bytes live, the expunge says the copies
+ * are gone. ONE resolver for the three surfaces that render the state (the focused pane, a
+ * conversation sibling, a stream card) — a per-surface copy of this mapping is three ways for
+ * the same marker to get two different sentences.
+ *
+ * An ABSENT marker (`null`/`undefined`) degrades to the storage sentence: it is the only member
+ * that existed before the set widened, so it is exactly what a record written before the
+ * widening means. A genuinely new member cannot slip through silently — the parameter is the
+ * engine's closed `WithheldMarker`, so widening the set is a type error at this mapping until
+ * the new policy gets its own sentence.
+ */
+export function withheldCopyKey(
+  marker: WithheldMarker | null | undefined,
+): "withheld" | "withheldJunk" | "withheldExpunged" {
+  switch (marker) {
+    case "junk_filed":
+      return "withheldJunk";
+    case "expunged":
+      return "withheldExpunged";
+    case "storage_cap":
+    case null:
+    case undefined:
+      return "withheld";
+    default: {
+      // The exhaustiveness proof the doc block promises: a widened set fails to compile here.
+      const unreachable: never = marker;
+      return unreachable;
+    }
+  }
 }
 
 
