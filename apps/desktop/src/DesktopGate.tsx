@@ -680,7 +680,22 @@ export function DesktopGate() {
              re-configuring it would replace the engine — taking somebody's mail off the screen
              for the length of a restart to change nothing. */
           cloudAction={overlay === "cloud" ? "signIn" : "configure"}
-          onCancel={() => setOverlay(null)}
+          onCancel={() => {
+            /* CANCEL IS NOT "NOTHING HAPPENED". A door attempt inside this overlay may have
+               already REPLACED the engine (`engine_configure` runs before the credential step —
+               a rejected password, an abandoned browser handoff) without ever reaching
+               `onEntered`, so no status was delivered and the epoch never moved: the stored
+               /health answer still matches the current key while describing the PREVIOUS
+               engine. Closing the overlay is the reveal moment — the mail client underneath
+               would render on that stale answer — so the answer goes back to PENDING here, and
+               the gate withholds the app until the engine actually behind the bridge gives its
+               own first /health (milliseconds; and a cancel that truly changed nothing costs
+               one local probe). `refresh()` re-reads the shell for the same reason: the door
+               state itself may have moved under an abandoned attempt. */
+            setHostedAuth(null);
+            setOverlay(null);
+            void refresh();
+          }}
           onEntered={(r) => { if (r.status) onStatus(r.status); else void refresh(); }}
         />
         </div>

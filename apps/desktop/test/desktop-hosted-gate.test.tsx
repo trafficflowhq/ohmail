@@ -294,4 +294,17 @@ describe("the auth key, pinned at the source", () => {
     // And the pending gate withholds the app on the KEYED answer, not on a bare boolean.
     expect(src).toMatch(/if \(authKey !== null && !hostedAuthKnown\)/);
   });
+
+  it("cancelling the door overlay invalidates the answer — an abandoned configure has no epoch", () => {
+    /* `engine_configure` runs BEFORE the credential step, so a rejected password or an abandoned
+       browser handoff can have replaced the engine without any status ever reaching `onStatus` —
+       the epoch never moves and the stored answer still matches. Closing the overlay is the
+       moment the mail client underneath would render on that stale answer, so the cancel handler
+       must reset the answer to pending. Pinned at the source because the overlay only opens from
+       flows this harness does not mount. */
+    const cancel = /onCancel=\{\(\) => \{[\s\S]*?\}\}/.exec(src)?.[0] ?? "";
+    expect(cancel, "the overlay's cancel handler must reset the hosted auth answer")
+      .toMatch(/setHostedAuth\(null\)/);
+    expect(cancel).toMatch(/setOverlay\(null\)/);
+  });
 });
