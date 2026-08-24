@@ -1116,6 +1116,28 @@ async function applyUpsert(
  */
 interface DetachedSurvivor { type: "message" | "draft"; id: string }
 
+/**
+ * How many survivor announcements one `recordChanges` call may carry.
+ *
+ * PGlite 0.2.17 accepts at most 32,767 bind parameters per statement, and a change-log insert
+ * spends six per row — so a single unchunked batch THROWS (`RangeError: Invalid array length`) at
+ * exactly 5,462 rows, measured. The failure mode is the one this whole slice removes: the page
+ * transaction rolls back, the cursor never advances, and every poll replays the same tombstone —
+ * a thread hoarding 5,462 stale messages would wedge the mirror by being repaired. 1,000 rows is
+ * 6,000 parameters: comfortably under the cap, still ~5 statements for the largest plausible
+ * thread instead of three per survivor.
+ */
+const DETACHED_BATCH_MAX = 1000;
+
+/** Announce detached survivors on the local change log, in parameter-safe slices. */
+async function recordDetached(tx: Tx, world: LocalWorld, detached: readonly DetachedSurvivor[]): Promise<void> {
+  for (let i = 0; i < detached.length; i += DETACHED_BATCH_MAX) {
+    await recordChanges(tx, detached.slice(i, i + DETACHED_BATCH_MAX).map((d) => ({
+      accountId: world.accountId, entityType: d.type, entityId: d.id, op: "update" as const, meta: null,
+    })));
+  }
+}
+
 async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]): Promise<boolean> {
   switch (ch.type) {
     case "message": {
@@ -1250,12 +1272,9 @@ async function applyPage(
           await record(type, ch.id, "delete");
           // The survivors the delete DETACHED (a draft losing its reply target, a message losing
           // its thread) changed too, and the feed did not name them — see applyDelete's header.
-          // ONE batched allocation: the list is not bounded by the page limit (a large stale
-          // thread detaches every message it still holds), and a per-row loop would hold the
-          // account's seq counter locked for its whole length.
-          await recordChanges(tx, detached.map((d) => ({
-            accountId: world.accountId, entityType: d.type, entityId: d.id, op: "update" as const, meta: null,
-          })));
+          // Batched (not a per-row loop holding the seq counter), and CHUNKED (not one statement
+          // that dies on PGlite's bind-parameter cap) — see DETACHED_BATCH_MAX.
+          await recordDetached(tx, world, detached);
           applied++;
         }
       }
@@ -1292,11 +1311,10 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
       if (await applyDelete(tx, ch, detached)) {
         await recordChange(tx, { accountId: world.accountId, entityType: type, entityId: id, op: "delete", meta: null });
         // Survivors the sweep detached are announced exactly as the incremental path announces
-        // them — a change the projection never hears about is a row it never redraws. Batched,
-        // for the incremental path's reason: the list is unbounded and the seq counter is a lock.
-        await recordChanges(tx, detached.map((d) => ({
-          accountId: world.accountId, entityType: d.type, entityId: d.id, op: "update" as const, meta: null,
-        })));
+        // them — a change the projection never hears about is a row it never redraws. Batched
+        // and chunked for the incremental path's reasons (the seq counter is a lock; the bind
+        // parameters are a cap) — see DETACHED_BATCH_MAX.
+        await recordDetached(tx, world, detached);
         swept++;
       }
     };
