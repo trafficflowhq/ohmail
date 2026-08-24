@@ -6,7 +6,8 @@ import { recordChange , accountSettings,
 import {
   approvals, attachments, drafts, flagState, folderState, mailboxCredentials, mailboxFolders,
   mailboxes, messageBodies, messageFailures, messageInstances, messageStates, messages, messageTags,
-  routingDecisions, rules, tags, threads, trackerEvents, unsubscribeRecords,
+  outboundSends, routingDecisions, rules, tags, threadNotes, threads, trackerEvents,
+  unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
 import type {
@@ -1100,14 +1101,30 @@ async function applyUpsert(
  * A replying draft is DETACHED (`in_reply_to_message_id` → NULL), not deleted: the draft is the
  * user's writing and outlives its target, exactly as the hosted store keeps it when the message
  * it answers goes to Trash. A re-emitted draft converges — the upsert guards that column on
- * `messagePresent` and writes NULL for a target the mirror no longer holds.
+ * `messagePresent` and writes NULL for a target the mirror no longer holds. A draft on a DELETED
+ * THREAD is detached the same way (`thread_id` → NULL), never deleted with it: the hosted store
+ * still holds that draft, and a mirror that destroyed it would resurrect it only on its next
+ * hosted edit — a draft at rest emits nothing.
+ *
+ * ── AND EVERY DETACH IS REPORTED, so the projection hears about the survivor ─────────────────
+ *
+ * A detach is a real change to a row the incoming feed did not name. The local `/sync` is
+ * `change_log` over this database, so a detach nothing records is a detach the window never
+ * redraws — a message still grouped under a deleted thread, for as long as that message stays at
+ * rest. `detached` collects the survivors; the caller appends one local `update` change-log row
+ * per entry in the same transaction, exactly as it records the delete itself.
  */
-async function applyDelete(tx: Tx, ch: SyncChange): Promise<boolean> {
+interface DetachedSurvivor { type: "message" | "draft"; id: string }
+
+async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]): Promise<boolean> {
   switch (ch.type) {
     case "message": {
       if (!(await messagePresent(tx, ch.id))) return false;
+      const replying = await tx.select({ id: drafts.id }).from(drafts)
+        .where(eq(drafts.inReplyToMessageId, ch.id));
       await tx.update(drafts).set({ inReplyToMessageId: null })
         .where(eq(drafts.inReplyToMessageId, ch.id));
+      for (const d of replying) detached?.push({ type: "draft", id: d.id });
       await tx.delete(folderState).where(eq(folderState.messageId, ch.id));
       await tx.delete(messageStates).where(eq(messageStates.messageId, ch.id));
       await tx.delete(messageBodies).where(eq(messageBodies.messageId, ch.id));
@@ -1137,15 +1154,26 @@ async function applyDelete(tx: Tx, ch: SyncChange): Promise<boolean> {
       return true;
     case "thread": {
       if (!(await threadPresent(tx, ch.id))) return false;
-      await tx.delete(drafts).where(eq(drafts.threadId, ch.id));
+      // The thread's drafts are DETACHED, never deleted with it (see the header): the hosted
+      // store still holds them, and their send records (`outbound_sends.draft_id`, standalone
+      // era) would otherwise be one more foreign key wedging the page. A later hosted edit of
+      // the draft re-points it — the upsert's own thread stub covers a thread that is gone.
+      const orphaned = await tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.threadId, ch.id));
+      await tx.update(drafts).set({ threadId: null }).where(eq(drafts.threadId, ch.id));
+      for (const d of orphaned) detached?.push({ type: "draft", id: d.id });
+      // Notes hang off the thread by a NOT NULL FK (standalone era; the Cloud door writes none),
+      // so they cannot be detached — they go with the thread they annotate.
+      await tx.delete(threadNotes).where(eq(threadNotes.threadId, ch.id));
       // Same wedge as the message case, from the other side: `messages.thread_id` is an FK, and
       // a hosted merge deletes the losing thread (`thread-service.ts#merge`). Ordinarily the same
       // page re-points every message first (updates apply before deletes), but a message whose
       // upsert was SKIPPED — unknown mailbox, or its update fell below the feed's retention
       // horizon — still holds the old thread id, and one such row would pin the cursor for ever.
       // Detach rather than delete: the message is real mail; its own next update re-threads it.
+      const unthreaded = await tx.select({ id: messages.id }).from(messages).where(eq(messages.threadId, ch.id));
       await tx.update(messages).set({ threadId: null })
         .where(eq(messages.threadId, ch.id));
+      for (const m of unthreaded) detached?.push({ type: "message", id: m.id });
       await tx.delete(threads).where(eq(threads.id, ch.id));
       return true;
     }
@@ -1156,6 +1184,9 @@ async function applyDelete(tx: Tx, ch: SyncChange): Promise<boolean> {
       await tx.delete(rules).where(eq(rules.id, ch.id));
       return true;
     case "draft":
+      // Send records reference the draft (standalone era; the Cloud door proxies sends to the
+      // hosted account and writes none locally).
+      await tx.delete(outboundSends).where(eq(outboundSends.draftId, ch.id));
       await tx.delete(drafts).where(eq(drafts.id, ch.id));
       return true;
     case "approval":
@@ -1214,8 +1245,12 @@ async function applyPage(
     for (const type of [...APPLY_ORDER].reverse()) {
       for (const ch of deletes) {
         if (ch.type !== type) continue;
-        if (await applyDelete(tx, ch)) {
+        const detached: DetachedSurvivor[] = [];
+        if (await applyDelete(tx, ch, detached)) {
           await record(type, ch.id, "delete");
+          // The survivors the delete DETACHED (a draft losing its reply target, a message losing
+          // its thread) changed too, and the feed did not name them — see applyDelete's header.
+          for (const d of detached) await record(d.type, d.id, "update");
           applied++;
         }
       }
@@ -1236,7 +1271,8 @@ async function applyPage(
  * FK-safe, children before parents: routing decisions, approvals, drafts, message states and rules
  * first (each can be an independent phantom hanging off a SURVIVING message when only that child was
  * removed on Cloud), then messages — whose delete cascades folder_state, bodies, states and routing
- * decisions exactly as a tombstone would — and threads last, whose delete cascades their drafts.
+ * decisions exactly as a tombstone would — and threads last, whose delete detaches their surviving
+ * drafts and messages rather than taking user writing with it.
  *
  * Each swept entity appends a local DELETE change-log row, so the Swift projection's own `/sync`
  * drops it too; a sweep the reader never hears about would leave the phantom on screen. `applyDelete`
@@ -1247,8 +1283,13 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
     let swept = 0;
     const sweepOne = async (type: EntityType, id: string): Promise<void> => {
       const ch: SyncChange = { type, op: "delete", id, seq: 0, updatedAt: now.toISOString() };
-      if (await applyDelete(tx, ch)) {
+      const detached: DetachedSurvivor[] = [];
+      if (await applyDelete(tx, ch, detached)) {
         await recordChange(tx, { accountId: world.accountId, entityType: type, entityId: id, op: "delete", meta: null });
+        // Survivors the sweep detached are announced exactly as the incremental path announces
+        // them — a change the projection never hears about is a row it never redraws.
+        for (const d of detached)
+          await recordChange(tx, { accountId: world.accountId, entityType: d.type, entityId: d.id, op: "update", meta: null });
         swept++;
       }
     };
