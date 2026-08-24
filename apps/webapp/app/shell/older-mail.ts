@@ -125,12 +125,21 @@ export function useOlderMail(
    */
   startBelow?: { date: string | null; id: string },
   /**
-   * "IS THIS ROW ALREADY ON SCREEN ABOVE?" — asked once per fetched row, AT ACCEPT TIME, and
-   * the verdict is remembered in a per-scope set. Without a boundary the first pages routinely
-   * overlap the mirror's window, and a render-time filter against the LIVE list gets both
-   * halves wrong: the count claims rows the filter hides, and a row later MOVED OUT of the
-   * scope drops from the live list and resurfaces down here wearing its updated folder. A
-   * suppressed id stays suppressed for the life of the scope.
+   * "MUST THIS FETCHED ROW STAY OUT OF THE TAIL RIGHT NOW?" — asked per render, of the LIVE
+   * mirror, never remembered. Without a boundary the first pages routinely overlap the
+   * mirror's window, and each wrong shape of hiding tells its own lie:
+   *
+   *  · a filter against the surface's own list resurfaces a row MOVED out of the scope (it
+   *    leaves the list, so the filter releases it) and counts rows it hides;
+   *  · a remembered accept-time discard makes mail VANISH when the windowed mirror later
+   *    hard-prunes the live row — the fetched copy was thrown away and the id stayed banned,
+   *    so an open folder silently omitted mail the server still holds.
+   *
+   * So the fetched copies are all KEPT, and this predicate answers per render — the folder
+   * scope's is "does the mirror hold this id at all": held-in-scope renders above (hide here),
+   * held-elsewhere was moved (a move must not resurface here), and NOT held — evicted, or
+   * genuinely older — shows the fetched copy. Eviction releases the row automatically because
+   * the question is asked of the mirror as it is now.
    */
   suppress?: (id: string) => boolean,
 ): OlderMail {
@@ -157,11 +166,9 @@ export function useOlderMail(
    *    under StrictMode's double-invoke, which is a real request against somebody's mailbox.
    */
   const cursor = useRef<string | null>(null);
-  /** `suppress` behind a stable identity, so `loadMore` keeps its deps — consent-state's `link`. */
+  /** `suppress` behind a stable identity, so the memo's deps stay honest — consent-state's `link`. */
   const suppressRef = useRef<((id: string) => boolean) | undefined>(suppress);
   suppressRef.current = suppress;
-  /** Ids suppressed for the life of the scope — see the `suppress` parameter. */
-  const suppressed = useRef(new Set<string>());
   /** The scope this hook's page state belongs to — returned EMPTY synchronously on mismatch,
    *  because the reset below is an effect and runs one render late: without this, switching
    *  folders rendered the previous folder's fetched rows under the new folder's title. */
@@ -183,7 +190,6 @@ export function useOlderMail(
     cursor.current = null;
     inFlight.current = false;
     done.current = false;
-    suppressed.current = new Set();
     pageScope.current = scope;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, view, folderId]);
@@ -221,19 +227,12 @@ export function useOlderMail(
         cursor.current = outcome.nextCursor;
         done.current = outcome.nextCursor === null;
         setPage((prev) => {
-          // Appended BY ID, so a page the server repeats cannot render the same mail twice —
-          // and rows the caller's surface already shows are DISCARDED HERE, once, into the
-          // per-scope suppression set, so the count is the rows on screen and a row that later
-          // leaves the surface above cannot resurface down here.
+          // Appended BY ID, so a page the server repeats cannot render the same mail twice.
+          // Overlap with the caller's surface is NOT discarded here: the fetched copy must
+          // survive a later mirror prune of the live row (see the `suppress` parameter), so
+          // hiding is the per-render predicate's job, never the accept's.
           const seen = new Set(prev.items.map((m) => m.id));
-          const added = outcome.items.filter((m) => {
-            if (seen.has(m.id) || suppressed.current.has(m.id)) return false;
-            if (suppressRef.current?.(m.id)) {
-              suppressed.current.add(m.id);
-              return false;
-            }
-            return true;
-          });
+          const added = outcome.items.filter((m) => !seen.has(m.id));
           return {
             items: added.length === 0 ? prev.items : [...prev.items, ...added],
             cursor: outcome.nextCursor,
@@ -256,7 +255,12 @@ export function useOlderMail(
   const items = useMemo(() => {
     if (page.items.length === 0) return page.items;
     const reader = engine.read();
-    return page.items.map((item) => reader.get<EngineMessage>("message", item.id) ?? item);
+    return page.items
+      // The per-render hiding — see `suppress`. Evaluated against the mirror as it is NOW, so
+      // an evicted row's fetched copy returns and a moved row stays away, with no memory to go
+      // stale in either direction.
+      .filter((item) => !(suppressRef.current?.(item.id) ?? false))
+      .map((item) => reader.get<EngineMessage>("message", item.id) ?? item);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, page.items, version]);
 

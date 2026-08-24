@@ -1319,16 +1319,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    */
   const folderOlder = useOlderMail(
     engine, "folder", version, folderIdForOlder, folderOlderBoundary,
-    /* The accept-time suppression: a fetched row the folder view already renders above (the
-       presented mirror holds it under this folder) is discarded once and for the scope's life —
-       see the hook's parameter for the two lies a render-time filter tells. */
-    (id) => {
-      if (!folderIdForOlder) return false;
-      const entity = reader.get<FolderEntity>("folder", folderIdForOlder);
-      if (!entity) return false;
-      const m = presented.get<EngineMessage>("message", id);
-      return m !== undefined && m.mailboxId === entity.mailboxId && m.folder === entity.name;
-    },
+    /* The per-render hiding (see the hook's `suppress`): a fetched row the MIRROR still holds
+       stays out of the tail — held in this folder it renders above, held elsewhere it was
+       moved and must not resurface — and a row the windowed mirror has EVICTED is not held,
+       so its fetched copy returns. Asked of the raw mirror, as it is now, never remembered. */
+    (id) => reader.get<EngineMessage>("message", id) !== undefined,
   );
 
   /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
