@@ -656,8 +656,20 @@ export function ComposeAttach({
           // never stage. The COMMIT below remains the authority on admission.
           const capNow = maxTotalBytesRef.current;
           let projected = totalBytes(attachmentsRef.current);
-          for (const p of picked) {
-            if (projected + p.bytes <= capNow) projected += p.bytes;
+          for (let i = 0; i < picked.length; ) {
+            const p = picked[i]!;
+            if (projected + p.bytes <= capNow) {
+              projected += p.bytes;
+              i += 1;
+            } else {
+              // EVICTED, NOT MERELY EXCLUDED. A stranded candidate's base64 held in `picked`
+              // is exactly the allocation this guard exists to bound — leaving it resident
+              // while later files stage another cap's worth re-opens the OOM this closes
+              // (review finding). Admission is untouched (the projection already excluded it);
+              // this drops the bytes and reports the refusal the commit would have made.
+              picked.splice(i, 1);
+              refused = true;
+            }
           }
           if (picture.bytes > capNow || projected + picture.bytes > capNow) {
             refused = true;
