@@ -1,7 +1,7 @@
 import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { and, asc, eq, gt, isNull, ne, notInArray } from "drizzle-orm";
-import { recordChange , accountSettings,
+import { recordChange, recordChanges, accountSettings,
 } from "@trafficflow/db";
 import {
   approvals, attachments, drafts, flagState, folderState, mailboxCredentials, mailboxFolders,
@@ -1250,7 +1250,12 @@ async function applyPage(
           await record(type, ch.id, "delete");
           // The survivors the delete DETACHED (a draft losing its reply target, a message losing
           // its thread) changed too, and the feed did not name them — see applyDelete's header.
-          for (const d of detached) await record(d.type, d.id, "update");
+          // ONE batched allocation: the list is not bounded by the page limit (a large stale
+          // thread detaches every message it still holds), and a per-row loop would hold the
+          // account's seq counter locked for its whole length.
+          await recordChanges(tx, detached.map((d) => ({
+            accountId: world.accountId, entityType: d.type, entityId: d.id, op: "update" as const, meta: null,
+          })));
           applied++;
         }
       }
@@ -1287,9 +1292,11 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
       if (await applyDelete(tx, ch, detached)) {
         await recordChange(tx, { accountId: world.accountId, entityType: type, entityId: id, op: "delete", meta: null });
         // Survivors the sweep detached are announced exactly as the incremental path announces
-        // them — a change the projection never hears about is a row it never redraws.
-        for (const d of detached)
-          await recordChange(tx, { accountId: world.accountId, entityType: d.type, entityId: d.id, op: "update", meta: null });
+        // them — a change the projection never hears about is a row it never redraws. Batched,
+        // for the incremental path's reason: the list is unbounded and the seq counter is a lock.
+        await recordChanges(tx, detached.map((d) => ({
+          accountId: world.accountId, entityType: d.type, entityId: d.id, op: "update" as const, meta: null,
+        })));
         swept++;
       }
     };
