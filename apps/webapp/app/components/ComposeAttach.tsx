@@ -766,13 +766,18 @@ export function ComposeAttach({
           savedTo += p.bytes;
         }
       }
-      if (refused || refusedAtCap !== null) {
+      if (refusedAtCap !== null) {
         // PAST-CONDITIONAL COPY, deliberately: the sentence describes the refusal DECISION under
         // the cap in force when it was made. The cap is live, so a present-tense "must stay
         // under X" beside a header already announcing the restored limit asserted two active
         // limits at once (review finding) — the decision's number is history, and the copy says
         // so by shape.
-        setError(t("attachRefused", { size: formatSize(refusedAtCap ?? cap) }));
+        setError(t("attachRefused", { size: formatSize(refusedAtCap) }));
+      } else if (refused) {
+        // A file that could not be READ is not a size story: the size sentence over a small
+        // file that merely failed to open falsely attributes the failure to the cap (review
+        // finding). Its own sentence, with no number to be wrong about.
+        setError(t("attachUnreadable"));
       }
       // The totals of this pick, not of the list: the sentence explains what just happened to the
       // files being added, and for the single-picture case — which is nearly all of them — the two

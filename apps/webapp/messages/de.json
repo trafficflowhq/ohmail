@@ -846,6 +846,7 @@
     "attachCap": "Bis zu {size} insgesamt",
     "attachUsed": "{used} von {total}",
     "attachRefused": "Einige Dateien wurden nicht hinzugefügt — sie hätten das Total über {size} gebracht.",
+    "attachUnreadable": "Einige Dateien konnten nicht gelesen werden und wurden nicht hinzugefügt.",
     "attachRemove": "{filename} entfernen",
     "attachCompressed": "Bilder komprimiert: {from} → {to}",
     "attachQualityLabel": "Qualität",
