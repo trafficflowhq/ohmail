@@ -28,7 +28,7 @@
  */
 import { useEffect } from "react";
 import { View } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
 import { useWorld, type WorldMail } from "../../src/state/world";
@@ -96,7 +96,9 @@ function MessageBody() {
 
   return (
     <Screen>
-      <DetailBar title={placeName(m.place)} />
+      {/* A message in one of the user's OWN folders is titled by that folder's leaf — the
+          place-name fallback would say "Ohbox" about mail that is not there. */}
+      <DetailBar title={m.folderLeaf ?? placeName(m.place)} />
       {/* `.msg{padding:20px 20px 40px}` in the ≤900px block — the message needs
           air above the from-line, or the back bar reads as part of the mail. */}
       <Scroller contentStyle={{ paddingHorizontal: 0 }}>
@@ -172,8 +174,10 @@ function MessageBody() {
         </View>
       </Scroller>
       {/* The action bar pins to the bottom — where the thumb is, like the Screener's decision
-          bar — and carries the webapp's verbs; the rest stand one press away in its sheets. */}
-      <MessageActions m={m} />
+          bar — and carries the webapp's verbs; the rest stand one press away in its sheets.
+          A confirmed delete leaves this screen at once: the tombstone already dropped the row,
+          and "no longer here" over the reader's own act would read as a failure. */}
+      <MessageActions m={m} onDeleted={() => router.back()} />
     </Screen>
   );
 }

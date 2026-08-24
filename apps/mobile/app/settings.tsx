@@ -13,6 +13,7 @@
  * and one sentence with no control when it does not. Which of the two appears is
  * a fact read from the device, never a build-time assumption.
  */
+import { useState } from "react";
 import { View } from "react-native";
 import { Copy } from "../src/copy";
 import { type WakeState } from "../src/net/push";
@@ -136,6 +137,20 @@ function SettingsBody() {
           )}
         </Panel>
 
+        {/*
+          FOLDERS — the feature's master toggle (FOLDERS-SPEC.md §6; owner decision 1: fully
+          optional, off by default). The control renders the value the SERVER last answered
+          with, never the optimistic pick — a refused write must not draw a folders group the
+          account does not have (the webapp FoldersRow's rule; the world layer holds it). A
+          plain switch and not a confirm: ON is a read-only act on the mailbox — it shows
+          folders that already exist and moves nothing.
+        */}
+        <FoldersPanel
+          on={w.folders.enabled}
+          pending={w.folders.pending}
+          setEnabled={w.folders.setEnabled}
+        />
+
         {/* about — one sentence, true of the session on screen */}
         <Panel style={{ paddingVertical: 18, marginBottom: 10 }}>
           <View style={{ paddingHorizontal: 20, gap: 6 }}>
@@ -147,5 +162,56 @@ function SettingsBody() {
         </Panel>
       </Scroller>
     </Screen>
+  );
+}
+
+/**
+ * The Folders pane: the description states the current answer (`useOn`/`useOff` — the webapp
+ * catalogue's own sentences), the control moves it, and a refusal is one visible sentence
+ * with the control back on the server's value. `pending` guards the double-write exactly
+ * like the wake rows above.
+ */
+function FoldersPanel({
+  on,
+  pending,
+  setEnabled,
+}: {
+  on: boolean;
+  pending: boolean;
+  setEnabled: (on: boolean) => Promise<boolean>;
+}) {
+  const [failed, setFailed] = useState(false);
+  const write = (next: "on" | "off") => {
+    if (pending) return;
+    setFailed(false);
+    void setEnabled(next === "on").then((ok) => {
+      if (!ok) setFailed(true);
+    });
+  };
+  return (
+    <Panel style={{ paddingVertical: 18, marginBottom: 14 }}>
+      <View style={{ paddingHorizontal: 20, gap: 6 }}>
+        <Txt variant="settingsLabel">{Copy.foldersUseTitle}</Txt>
+        <Txt variant="note" tone="ink2">{on ? Copy.foldersUseOn : Copy.foldersUseOff}</Txt>
+      </View>
+      <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
+        <Segmented<"on" | "off">
+          value={on ? "on" : "off"}
+          onChange={write}
+          segments={[
+            { value: "off", label: "Off" },
+            { value: "on", label: "On" },
+          ]}
+        />
+        <Txt variant="caption" tone="ink3" style={{ marginTop: 10 }}>
+          {Copy.foldersMicrocopy}
+        </Txt>
+        {failed ? (
+          <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
+            {Copy.foldersFailed}
+          </Txt>
+        ) : null}
+      </View>
+    </Panel>
   );
 }

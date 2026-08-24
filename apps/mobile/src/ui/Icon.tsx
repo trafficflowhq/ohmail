@@ -45,6 +45,12 @@ const PATHS = {
   receipts: "M3.6 13.6V3.1a.6.6 0 0 1 .6-.6h7.6a.6.6 0 0 1 .6.6v10.5l-1.5-1-1.5 1-1.4-1-1.4 1-1.5-1zM6 5.6h4M6 8.2h2.4",
   /** more: the rail itself — three stacked destinations. */
   more: "M3 3.6h10M3 8h10M3 12.4h6",
+
+  /* — the delete + folders wave, same grid, same stroke — */
+  /** trash: the bin the delete verb names — a lid, a body, two staves. */
+  trash: "M3.4 4.6h9.2M6.4 4.6V3.4a.7.7 0 0 1 .7-.7h1.8a.7.7 0 0 1 .7.7v1.2M4.6 4.6l.6 8a.8.8 0 0 0 .8.7h4a.8.8 0 0 0 .8-.7l.6-8M6.7 7.2v3.6M9.3 7.2v3.6",
+  /** folder: one of the mailbox's own folders — the tab carries the identity. */
+  folder: "M2.5 12.6V4.1a.7.7 0 0 1 .7-.7h3l1.4 1.7h5.2a.7.7 0 0 1 .7.7v6.8a.7.7 0 0 1-.7.7H3.2a.7.7 0 0 1-.7-.7z",
 } as const;
 
 /** Icons that need a circle the path cannot carry — kept beside the path data. */

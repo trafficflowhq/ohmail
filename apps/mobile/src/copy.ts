@@ -160,6 +160,43 @@ export const Copy = {
   resurface: "Resurface",
   pileEmpty: "Nothing here yet.",
 
+  /* --------------------------------------------------------------- folders */
+
+  /*
+   * THE FOLDERS GROUP — the webapp rail's own strings (`en.json` rail.folder*), so the
+   * feature is named the same on the phone as in the browser. The list renders ONLY while the
+   * account's "Use folders" flag is on (FOLDERS-SPEC.md §6/§10 — off is the pre-feature
+   * interface, byte for byte). `test/folders-parity.test.ts` holds the equalities.
+   */
+  folders: "Folders",
+  folderEmpty: "No folders on your mail server yet.",
+  folderFilter: "Filter folders",
+  folderNoMatch: "No folder matches.",
+  folderShowAll: (n: number) => `Show all ${n}…`,
+  folderShowFewer: "Show fewer",
+  folderExpand: (name: string) => `Expand ${name}`,
+  folderCollapse: (name: string) => `Collapse ${name}`,
+  /**
+   * The folder screen's tail and empty state — PHONE-SPECIFIC wording, deliberately not the
+   * webapp's `folder.emptyTitle` ("Nothing in this folder"): the webapp earns that sentence
+   * with a reach-past that asks the server for mail beyond the device's mirror, and this
+   * build has no reach-past on any screen. A phone that has not fetched a folder's older
+   * mail may not claim the folder is empty — it says what it holds instead.
+   */
+  folderTail: (n: number) => `${n} message${n === 1 ? "" : "s"} from this folder on this phone.`,
+  folderEmptyTitle: "No mail from this folder is on this phone.",
+  folderEmptyHint:
+    "This phone mirrors your server's recent mail. The folder itself lives on your mail server and may hold older mail there.",
+
+  /** Settings → Folders — the webapp catalogue's own strings (`settings.folders.*`). */
+  foldersUseTitle: "Use folders",
+  foldersUseOn:
+    "Your mail server's own folders show in the menu, each opening as its own list with unread counts.",
+  foldersUseOff: "Your folders stay hidden. ohmail still reads them for search and history.",
+  foldersMicrocopy:
+    "Turning this on only shows what already exists — nothing is moved. Turning it off hides the folders again without touching your mail.",
+  foldersFailed: "Couldn't save that — try again.",
+
   /* ---------------------------------------------------------------- search */
 
   search: "Search",
@@ -311,6 +348,20 @@ export const Copy = {
   actionMarkUnread: "Mark unread",
   actionDone: "Done",
   actionMore: "More",
+  /*
+   * DELETE — the product rule verbatim (packages/core/src/adapters/imap-types.ts, mail 0065):
+   * delete files the message to the provider's own \Trash and NEVER expunges. The webapp's
+   * reading pane does not carry this verb yet, so there is no catalogue string to mirror —
+   * these sentences state exactly what the engine's `message_delete` does, and no more. There
+   * is no un-delete on the wire, so the ceremony is a confirm, never an undo the product
+   * could not honour.
+   */
+  actionDelete: "Delete",
+  deleteAsk: "Delete this message?",
+  deleteNote:
+    "It moves to the Trash folder on your own mail server — ohmail never erases mail. Your mail server's Trash rules apply from there.",
+  toastDeleted: "Moved to Trash.",
+  deleteFailed: "That delete could not be saved — the message is where it was.",
   /** The resurface horizon chooser (`ohbox.resurface*`). */
   resurfaceWhen: "Resurface when?",
   resurfaceNow: "Now",

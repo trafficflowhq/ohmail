@@ -53,9 +53,22 @@ type Open =
   | "move"
   | "tag"
   | "screening"
+  | "delete"
   | { compose: "reply" | "replyAll" | "forward" };
 
-export function MessageActions({ m }: { m: WorldMail }) {
+export function MessageActions({
+  m,
+  onDeleted,
+}: {
+  m: WorldMail;
+  /**
+   * Called the moment a CONFIRMED delete is dispatched — the optimistic tombstone has already
+   * dropped the row from every view, so the screen behind this bar is about to say "no longer
+   * here" over a message the reader just acted on. The caller navigates away instead; a
+   * rollback re-lists the row where it was, under the failure toast.
+   */
+  onDeleted?: () => void;
+}) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
   const w = useWorld();
@@ -159,6 +172,28 @@ export function MessageActions({ m }: { m: WorldMail }) {
         ) : (
           <SheetRow icon="x" label={Copy.actionMarkUnread} onPress={() => { close(); a.markSeen(m.id, true); }} />
         )}
+        <Rule inset={14} />
+        {/* Delete stands LAST and opens its own confirm — a destructive verb never fires off a
+            scrolled thumb. Move-to-Trash on the server, never an expunge (mail 0065); there is
+            no un-delete on the wire, so the ceremony is a confirm rather than an undo the
+            product could not honour. */}
+        <SheetRow icon="trash" label={Copy.actionDelete} onPress={() => setOpen("delete")} />
+      </Sheet>
+
+      {/* ── Delete: the one destructive verb, behind its own stated confirm ─────────────── */}
+      <Sheet open={open === "delete"} onClose={close} label={Copy.deleteAsk}>
+        <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+          {Copy.deleteAsk}
+        </Txt>
+        <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
+          {Copy.deleteNote}
+        </Txt>
+        <SheetRow
+          icon="trash"
+          label={Copy.actionDelete}
+          onPress={() => { close(); a.deleteMessage(m.id); onDeleted?.(); }}
+        />
+        <CancelRow onPress={close} />
       </Sheet>
 
       {/* ── Resurface: the horizon chooser — Now / Tomorrow / Next week / Pick a date ────── */}

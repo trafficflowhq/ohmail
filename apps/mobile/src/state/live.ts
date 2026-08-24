@@ -63,6 +63,7 @@ import {
   type EntityReader,
   type FeedView,
   type Folder,
+  type FolderEntity,
   type MutationResult,
   type OhmailEngine,
   type RuleDTO,
@@ -71,6 +72,7 @@ import {
   type TagDTO,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
+import { folderLeafOf, folderUnreadCounts } from "./folders";
 import {
   destDone,
   domainOf,
@@ -93,6 +95,16 @@ export interface WorldView {
   /** IANA zone. REQUIRED by `messageDisplayTime` — see its header for why there is no default. */
   zone: string;
   locale?: string;
+  /**
+   * Is "Use folders" ON for this account — the consent answer (`GET /consent`,
+   * `foldersEnabledAt != null`), read by the world layer through `src/net/consent.ts`. Passed
+   * into `consentPartition` exactly as the webapp shell passes it (`AppShell` → the consent
+   * options), because the cutline DROPS a dormant folder-filed row from the presented list
+   * unless the folder lens is on (spec §16.5) — without this flag a folder view loses read
+   * mail from quiet senders, which is most of what an archive folder holds. Absent ⇒ `false`,
+   * the pre-feature partition byte for byte.
+   */
+  foldersEnabled?: boolean;
 }
 
 /** The phone's own zone, once — `Intl` on Hermes; UTC where the runtime cannot say. */
@@ -110,8 +122,8 @@ export function readerZone(): string {
  * Default options: the phone has no `GET /consent` read yet, so the cutline runs on
  * `DEFAULT_DORMANCY_DAYS` with no baseline — the standalone desktop's own posture.
  */
-export function presentedOf(reader: EntityReader, now: Date): EntityReader {
-  return presentationReader(reader, consentPartition(reader, { now }));
+export function presentedOf(reader: EntityReader, now: Date, foldersEnabled = false): EntityReader {
+  return presentationReader(reader, consentPartition(reader, { now, foldersEnabled }));
 }
 
 /* ───────────────────────────────────────────────────────────── row mapping */
@@ -159,6 +171,14 @@ export type WorldMail = Mail & {
   noForward: boolean;
   /** The tag ids on this message — what the tag sheet shows as checked. */
   labels: string[];
+  /**
+   * Set EXACTLY when the message physically lives in one of the user's OWN folders (a path
+   * `VIEW_OF_FOLDER` does not know): the last path segment, the only safe face for a raw
+   * folder string (the engine's own narrow-UI rule). The message screen titles itself with
+   * this instead of a place name — a folder-filed message headed "Ohbox" was the fallback lie
+   * `placeOfFolder`'s ohbox-default would otherwise tell.
+   */
+  folderLeaf?: string;
 };
 
 function placeOfFolder(folder: Folder): Place {
@@ -193,7 +213,11 @@ function displayName(r: EmailAddress): string {
 function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail {
   const body = bodyOf(reader, m);
   const env = replyAllRecipients(m, NO_OWN_ADDRESSES);
+  const physical = physicalFolderOf(m);
   return {
+    // A message in one of the user's OWN folders (no view owns its path) names itself by its
+    // leaf — see {@link WorldMail.folderLeaf}.
+    ...(VIEW_OF_FOLDER[physical as Folder] === undefined ? { folderLeaf: folderLeafOf(physical) } : {}),
     id: m.id,
     place: placeOfFolder(m.folder),
     // The PHYSICAL folder, not the presented one: this reader is the projection, which
@@ -202,7 +226,7 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
     // the raw mirror — a presented folder here offered a destination the move then refused.
     // (`physicalFolderOf` answers `physicalFolder ?? folder`, both `Folder` values on the
     // wire; its `string` return is the DTO's optional field being untyped, not a new shape.)
-    folder: physicalFolderOf(m) as Folder,
+    folder: physical as Folder,
     // The wire's `name` is nullable; the row shape's is not — a nameless sender reads as
     // their address, exactly as every list row already renders one.
     from: { name: m.from.name || m.from.address, address: m.from.address },
@@ -326,6 +350,52 @@ export function liveTags(reader: EntityReader): WorldTag[] {
     .list<TagDTO>("tag")
     .map((t) => ({ id: t.id, name: t.name, hue: t.hue }))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * THE MAILBOX'S OWN FOLDERS — `folder` entities off `/sync` (FOLDERS-SPEC.md §4), present in
+ * the mirror only while the account's "Use folders" flag is on, and gated AGAIN on the consent
+ * answer by the caller (the webapp shell's own double gate: the flag is the authority, the
+ * entities are data — a mirror still holding entities after a disable renders none).
+ */
+export function liveFolders(reader: EntityReader): FolderEntity[] {
+  return reader.list<FolderEntity>("folder");
+}
+
+/**
+ * Per-folder unread over the PROJECTED mirror, keyed `mailboxId|name` — the webapp shell's
+ * `folderUnreadCounts` feed (one pass, no stored counts; spec §4). Here rather than in the
+ * world layer because reading the engine's message rows is this module's licence
+ * (`test/privacy.test.ts` ENGINE_IMPORTERS), and `folders.ts` stays structural.
+ */
+export function liveFolderUnread(pres: EntityReader): Map<string, number> {
+  return folderUnreadCounts(pres.list<EngineMessage>("message"));
+}
+
+/**
+ * ONE FOLDER'S MAIL, as the folder screen renders it — the webapp shell's `folderMessages`
+ * derivation verbatim in intent: the PRESENTED mirror filtered on `(mailboxId, name)` (the
+ * §16.5 lens keeps a folder-filed row placed at its folder when the caller's view carries
+ * `foldersEnabled`), newest first, then flattened unread-before-read exactly as
+ * `FolderView.tsx` orders its window. `unread` counts the fresh half so the screen's meta and
+ * its group sizes cannot disagree.
+ */
+export function liveFolder(
+  pres: EntityReader,
+  folder: FolderEntity,
+  v: WorldView,
+): { fresh: WorldMail[]; seen: WorldMail[]; unread: number; total: number } {
+  const rows = pres
+    .list<EngineMessage>("message")
+    .filter((m) => m.mailboxId === folder.mailboxId && m.folder === (folder.name as Folder))
+    .sort((a, b) => {
+      const at = a.date ? new Date(a.date).getTime() : 0;
+      const bt = b.date ? new Date(b.date).getTime() : 0;
+      return bt - at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+    });
+  const fresh = rows.filter((m) => m.unread).map((m) => toMail(pres, m, v));
+  const seen = rows.filter((m) => !m.unread).map((m) => toMail(pres, m, v));
+  return { fresh, seen, unread: fresh.length, total: rows.length };
 }
 
 /* ──────────────────────────────────────────────────────────── the surfaces */
@@ -544,7 +614,10 @@ export function livePiles(pres: EntityReader, v: WorldView): WorldPile[] {
  * already mints, matching the webapp and the download names.
  */
 export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): WorldMail | undefined {
-  const pres = presentedOf(engine.read(), v.now);
+  // The view's own folder flag rides into the projection — a folder-filed message opened from
+  // the folder screen is otherwise a History drop (`placeOf` null ⇒ `get` answers undefined)
+  // and the reader says "no longer here" over mail the list just showed.
+  const pres = presentedOf(engine.read(), v.now, v.foldersEnabled === true);
   const m = pres.get<EngineMessage>("message", id);
   if (!m) return undefined;
   const row = toMail(pres, m, v);
@@ -786,6 +859,14 @@ export interface LiveWorldActions {
   markSeen(messageId: string, unread: boolean): Promise<boolean>;
   /** Move THIS message to a view — `POST /messages/:id/move`, the same verb every list uses. */
   move(messageId: string, dest: MoveTarget): Promise<boolean>;
+  /**
+   * DELETE — `message_delete` (`DELETE /messages/:id`, mail 0065): the message rides to the
+   * provider's native `\Trash` on the server, NEVER an expunge, and the optimistic tombstone
+   * drops it from every living view at the press. A mailbox with no Trash folder is the
+   * server's 422 refusal, which rolls the row back whole — the one honest screen for a delete
+   * that cannot happen. The confirm ceremony is the sheet's job; this arm dispatches.
+   */
+  deleteMessage(messageId: string): Promise<boolean>;
   /** Reply (or reply all) — `mail_send` with `inReplyTo`; the engine derives the envelope. */
   sendReply(messageId: string, body: string, all: boolean): Promise<SendResult>;
   /** Forward — `mail_send` with `forwardOf`, recipients the USER typed, the user's note as body. */
@@ -1147,6 +1228,22 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   /**
+   * DELETE, stated on the optimistic apply like every triage verb — the tombstone drops the
+   * row the instant the sentence is spoken, and a rejection (422 `no_trash_folder`, a 404)
+   * overrides it with the failure sentence over the restored row. No `via`, no read verb: a
+   * delete is not a read, and the pin arithmetic is the engine's (`spentResurface` rides the
+   * same mutation effects).
+   */
+  const deleteMessage = async (messageId: string): Promise<boolean> => {
+    const m = messageOf(messageId);
+    if (!m) return false;
+    toast(Copy.toastDeleted);
+    const ok = await watched(engine.mutate({ kind: "message_delete", messageId }));
+    if (!ok) toast(Copy.deleteFailed);
+    return ok;
+  };
+
+  /**
    * A SEND'S THREE HONEST OUTCOMES — narrower than {@link watched}, deliberately.
    *
    * For triage and moves, `queued` leaving the optimistic view standing is truthful. For a
@@ -1325,7 +1422,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   return {
     openMessage, hydrateMessage, hydrateHeld, sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, move,
-    sendReply, sendForward, tagToggle, tagCreate, screenSender,
+    deleteMessage, sendReply, sendForward, tagToggle, tagCreate, screenSender,
   };
 }
 
@@ -1357,6 +1454,8 @@ export interface WorldActions {
   resurfaceDone(messageId: string): void;
   markSeen(messageId: string, unread: boolean): void;
   move(messageId: string, dest: MoveTarget): void;
+  /** Delete — to the provider's native Trash, never an expunge. See {@link LiveWorldActions.deleteMessage}. */
+  deleteMessage(messageId: string): void;
   /** Resolves to the send's result: `sent` closes, `failed` re-arms, `queued` locks the composer. */
   sendReply(messageId: string, body: string, all: boolean): Promise<SendResult>;
   sendForward(messageId: string, to: EmailAddress[], body: string): Promise<SendResult>;
@@ -1398,6 +1497,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     resurfaceDone: (id) => void current().resurfaceDone(id),
     markSeen: (id, unread) => void current().markSeen(id, unread),
     move: (id, dest) => void current().move(id, dest),
+    deleteMessage: (id) => void current().deleteMessage(id),
     sendReply: (id, body, all) => current().sendReply(id, body, all),
     sendForward: (id, to, body) => current().sendForward(id, to, body),
     sendOutcome: (key) => current().sendOutcome(key),
@@ -1467,6 +1567,9 @@ export function whenLabel(iso: string, zone: string): string {
   }
 }
 
-/* Re-exported so the world layer and the suite spell the vocabulary identically. */
+/* Re-exported so the world layer and the suite spell the vocabulary identically. `FolderEntity`
+ * rides through here because `live.ts` is the one state module on the engine's import
+ * allow-list (`test/privacy.test.ts`) — the world layer and the screens take the type from
+ * this seam, never from the package. */
 export { destDone, isPlace };
-export type { Destination, Held, Mail, PileItem, PileKind, Place, Scope };
+export type { Destination, FolderEntity, Held, Mail, PileItem, PileKind, Place, Scope };

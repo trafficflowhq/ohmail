@@ -13,6 +13,7 @@ import { useTheme } from "../../src/theme";
 import { useWorld } from "../../src/state/world";
 import { Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
+import { FoldersGroup } from "../../src/ui/FoldersGroup";
 import { Icon } from "../../src/ui/Icon";
 
 export default function MoreScreen() {
@@ -48,6 +49,18 @@ export default function MoreScreen() {
             count={pileCountOf("resurface")}
             onPress={() => router.push("/triage")}
           />
+
+          {/* THE FOLDERS GROUP — rendered ONLY while the account's "Use folders" flag is on
+              (the server's consent answer), so the flag-off screen is the pre-feature screen
+              (FOLDERS-SPEC.md §10). The rail's own placement: below the piles, above the
+              utility rows — the webapp puts it under Tags, which this screen does not have. */}
+          {w.folders.enabled ? (
+            <FoldersGroup
+              folders={w.folders.list}
+              unread={w.folders.unread}
+              onOpen={(id) => router.push(`/folder/${encodeURIComponent(id)}`)}
+            />
+          ) : null}
 
           <Rule inset={20} />
 

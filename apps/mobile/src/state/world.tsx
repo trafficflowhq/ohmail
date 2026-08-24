@@ -38,10 +38,14 @@ import {
 } from "react";
 import { Copy } from "../copy";
 import { useConnection } from "../net/connection";
+import { readFoldersEnabled, writeFoldersEnabled } from "../net/consent";
 import * as Crypto from "expo-crypto";
 import {
   flushQueued,
   liveActions,
+  liveFolder,
+  liveFolders,
+  liveFolderUnread,
   liveMessage,
   liveOhbox,
   livePiles,
@@ -52,6 +56,7 @@ import {
   presentedOf,
   readerZone,
   stableActions,
+  type FolderEntity,
   type ScreenerRow,
   type WorldActions,
   type WorldMail,
@@ -61,7 +66,7 @@ import {
 } from "./live";
 import type { Scope } from "./model";
 
-export type { MoveTarget, ScreenerRow, WorldActions, WorldMail, WorldPile, WorldTag } from "./live";
+export type { FolderEntity, MoveTarget, ScreenerRow, WorldActions, WorldMail, WorldPile, WorldTag } from "./live";
 
 export interface World {
   live: boolean;
@@ -102,6 +107,27 @@ export interface World {
   pilesMeta: string;
   /** The account's tags, for the message screen's tag sheet — the mirror's `tag` entities. */
   tags: WorldTag[];
+  /**
+   * THE FOLDERS SURFACE (FOLDERS-SPEC.md; stage-1 read-only parity with the webapp's
+   * foundation). `enabled` is the SERVER's consent answer (`GET /consent`,
+   * `foldersEnabledAt != null`), fetched once per session and re-written only by a confirmed
+   * `setEnabled` — never an optimistic pick, the webapp `FoldersRow`'s own rule. With the flag
+   * off, `list` is empty whatever `folder` entities a stale mirror still holds (the flag is
+   * the authority, the entities are data), so the off state is the pre-feature interface.
+   */
+  folders: {
+    enabled: boolean;
+    list: FolderEntity[];
+    /** Per-folder unread over the projection, keyed `mailboxId|name`. */
+    unread: ReadonlyMap<string, number>;
+    byId(id: string): FolderEntity | undefined;
+    /** One folder's mail as the folder screen renders it — unread first, newest first. */
+    items(id: string): { fresh: WorldMail[]; seen: WorldMail[]; unread: number; total: number };
+    /** A toggle write is in flight — the Settings control disables rather than double-writing. */
+    pending: boolean;
+    /** Resolves `true` when the server confirmed the write; `false` is the failure sentence's cue. */
+    setEnabled(on: boolean): Promise<boolean>;
+  };
   message(id: string): WorldMail | undefined;
   /**
    * WHAT BECAME OF A QUEUED SEND — how a locked composer settles. `pending` while the key
@@ -154,6 +180,7 @@ const NO_ACTIONS: WorldActions = {
   resurfaceDone: () => undefined,
   markSeen: () => undefined,
   move: () => undefined,
+  deleteMessage: () => undefined,
   // The empty world cannot send; the composer treats `failed` as the refusal it is.
   sendReply: () => Promise.resolve({ outcome: "failed" as const }),
   sendForward: () => Promise.resolve({ outcome: "failed" as const }),
@@ -176,6 +203,15 @@ function emptyWorld(actions: WorldActions): World {
     piles: [],
     pilesMeta: "",
     tags: [],
+    folders: {
+      enabled: false,
+      list: [],
+      unread: new Map(),
+      byId: () => undefined,
+      items: () => ({ fresh: [], seen: [], unread: 0, total: 0 }),
+      pending: false,
+      setEnabled: () => Promise.resolve(false),
+    },
     message: () => undefined,
     sendOutcome: () => "unknown",
     actions,
@@ -232,6 +268,47 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     setScopes({});
     setToastQueue([]);
   }, [sessionKey]);
+
+  /*
+   * ── "USE FOLDERS" — the consent answer, per session ──────────────────────────────────────
+   *
+   * OFF until the SERVER says otherwise: the pre-feature interface is the safe branch in both
+   * directions (FOLDERS-SPEC.md §10), so a session that cannot be asked renders no folders.
+   * Read once per session through the consent seam; a stale answer from a superseded session
+   * is discarded (the cleanup's flag), and a switch write lands only on the session it was
+   * asked on — account A's folders must never draw account B's rail.
+   */
+  const [foldersOn, setFoldersOn] = useState(false);
+  const [foldersPending, setFoldersPending] = useState(false);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  useEffect(() => {
+    setFoldersOn(false);
+    setFoldersPending(false);
+    if (!session) return;
+    let stale = false;
+    void readFoldersEnabled(session).then((ans) => {
+      // `null` is "could not ask" — keep off (the last known answer), never guess on.
+      if (!stale && ans !== null) setFoldersOn(ans.on);
+    });
+    return () => { stale = true; };
+  }, [session]);
+  const setFoldersEnabled = useCallback(async (on: boolean): Promise<boolean> => {
+    const s = sessionRef.current;
+    if (s === null) return false;
+    setFoldersPending(true);
+    try {
+      const ans = await writeFoldersEnabled(s, on);
+      // The SERVER-CONFIRMED value, and only onto the session that asked — a refused or
+      // superseded write draws nothing (the webapp FoldersRow's rule, verbatim in intent).
+      if (sessionRef.current === s) setFoldersOn(ans.on);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      if (sessionRef.current === s) setFoldersPending(false);
+    }
+  }, []);
 
   const zone = useMemo(readerZone, []);
   const acts = useMemo(
@@ -357,6 +434,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           resurfaceDone: (id) => void acts.resurfaceDone(id),
           markSeen: (id, unread) => void acts.markSeen(id, unread),
           move: (id, dest) => void acts.move(id, dest),
+          deleteMessage: (id) => void acts.deleteMessage(id),
           sendReply: (id, body, all) => acts.sendReply(id, body, all),
           sendForward: (id, to, body) => acts.sendForward(id, to, body),
           sendOutcome: (key) => outcomeOf(key),
@@ -370,8 +448,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   const world = useMemo<World>(() => {
     if (engine === null || session === null) return emptyWorld(actions);
-    const v: WorldView = { now: new Date(), zone };
-    const pres = presentedOf(engine.read(), v.now);
+    const v: WorldView = { now: new Date(), zone, foldersEnabled: foldersOn };
+    const pres = presentedOf(engine.read(), v.now, foldersOn);
     const ohbox = liveOhbox(pres, v);
     const reads = liveReads(pres, v);
     const receipts = liveReceipts(pres, v);
@@ -407,7 +485,24 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       pilesMeta: `${pileTotal} item${pileTotal === 1 ? "" : "s"}`,
       // The RAW mirror, like the webapp's `reader.list<TagDTO>("tag")` — tags are not projected.
       tags: liveTags(engine.read()),
-      message: (id) => liveMessage(engine, id, { now: new Date(), zone }),
+      folders: (() => {
+        // Gated TWICE, the webapp shell's own double gate: the flag is the authority, the
+        // entities are data — a mirror still holding `folder` rows after a disable lists none.
+        const list = foldersOn ? liveFolders(engine.read()) : [];
+        return {
+          enabled: foldersOn,
+          list,
+          unread: foldersOn ? liveFolderUnread(pres) : new Map<string, number>(),
+          byId: (id: string) => list.find((f) => f.id === id),
+          items: (id: string) => {
+            const f = list.find((x) => x.id === id);
+            return f ? liveFolder(pres, f, v) : { fresh: [], seen: [], unread: 0, total: 0 };
+          },
+          pending: foldersPending,
+          setEnabled: setFoldersEnabled,
+        };
+      })(),
+      message: (id) => liveMessage(engine, id, { now: new Date(), zone, foldersEnabled: foldersOn }),
       sendOutcome: outcomeOf,
       actions,
     };
@@ -416,7 +511,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // re-derives it when a reconnect flush settles a queued key, so a locked composer's
     // settle effect fires without a mirror change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, session, scopes, zone, actions, version, outcomeSeq, outcomeOf]);
+  }, [engine, session, scopes, zone, actions, version, outcomeSeq, outcomeOf,
+    foldersOn, foldersPending, setFoldersEnabled]);
 
   return (
     <WorldContext.Provider value={world}>
