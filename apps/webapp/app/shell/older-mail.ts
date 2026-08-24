@@ -123,6 +123,17 @@ function readerFacing(outcome: { error: string; code: string | null }): string {
   return outcome.code !== null && SPEAKS_TO_THE_READER.has(outcome.code) ? outcome.error : "";
 }
 
+/**
+ * `useLayoutEffect` in a browser; `useEffect` where there is nothing to lay out — `engine.tsx`'s
+ * `useAfterHydration`, chosen ONCE at module scope for the same two reasons: hooks must be the
+ * same hook on every render, and a bare `useLayoutEffect` in a server render is a
+ * `console.error` (Next pre-renders client components), which the zero-console-errors rule
+ * refuses. On the server there is no commit, no paint and no microtask racing a response, so
+ * the passive fallback loses nothing there; in the browser the layout phase is the point — see
+ * the commit-scope effect below.
+ */
+const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
 export function useOlderMail(
   engine: OhmailEngine,
   view: OhmailView | "folder",
@@ -232,8 +243,8 @@ export function useOlderMail(
     return paging.current!;
   };
   /*
-   * PUBLISHED DURING THE COMMIT — `useLayoutEffect`, not `useEffect`, and that is load-bearing
-   * twice over:
+   * PUBLISHED DURING THE COMMIT — `useCommitEffect` (the browser's `useLayoutEffect`), not a
+   * passive `useEffect`, and that is load-bearing twice over:
    *
    *  · the committed scope validates ASYNCHRONOUS answers, and a passive effect runs after
    *    paint — a response settling in that window was validated against the PREVIOUS commit's
@@ -245,7 +256,7 @@ export function useOlderMail(
    *    no-ops, silently), in-flight flag (the button dead until reload) or latch, beside a
    *    page state the round trip reset.
    */
-  useLayoutEffect(() => {
+  useCommitEffect(() => {
     committed.current = { scope, engine };
     void pagingFor();
     // eslint-disable-next-line react-hooks/exhaustive-deps
