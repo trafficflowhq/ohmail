@@ -935,8 +935,20 @@ export class OhmailEngine {
    * re-open of the still-standing copy back into the 404), and {@link reconcileOptimisticSent}
    * clears `live` when the copy retires — after which the pane's ordinary release frees the bytes,
    * with the TTL sweep as the backstop for a send nobody opened.
+   *
+   * `forwardOf` marks the copy of a FORWARD, whose delivered message carries parts this client
+   * never held: the server streams the original's attachments onto the outgoing mail
+   * (`SendService.streamForwardParts`). A seed for one is composed from `composeItems` PLUS the
+   * parent's own metadata list — see {@link OhmailEngine.recomposeForwardSeed} — and the copy's
+   * metadata reads delegate to the parent's REAL id, which is the one id on this subject a server
+   * can answer for.
    */
-  private readonly sentAttachmentSeeds = new Map<string, { live: boolean; expiresAtMs: number }>();
+  private readonly sentAttachmentSeeds = new Map<string, {
+    live: boolean;
+    expiresAtMs: number;
+    forwardOf?: string;
+    composeItems: AttachmentItem[];
+  }>();
   /** In-flight metadata reads by message id — single-flight, see {@link OhmailEngine.loadAttachments}. */
   private readonly attachmentListRequests = new Map<string, Promise<AttachmentsOutcome>>();
   /** In-flight byte fetches by attachment id — see {@link OhmailEngine.openAttachment}. */
@@ -2755,7 +2767,7 @@ export class OhmailEngine {
     const expiresAtMs = this.now().getTime() + OPTIMISTIC_SENT_TTL_MS;
     this.overlays.set(overlayId, [{ type: "message", id: sent.id, entity: sent }]);
     this.optimisticSent.set(overlayId, { header, expiresAtMs });
-    this.seedSentAttachments(sent.id, m.attachments ?? [], expiresAtMs);
+    this.seedSentAttachments(sent.id, m.attachments ?? [], expiresAtMs, m.forwardOf ?? undefined);
     return true;
   }
 
@@ -2793,8 +2805,9 @@ export class OhmailEngine {
     messageId: string,
     attachments: readonly ComposeAttachment[],
     expiresAtMs: number,
+    forwardOf?: string,
   ): void {
-    const items: AttachmentItem[] = attachments.map((a, i) => {
+    const composeItems: AttachmentItem[] = attachments.map((a, i) => {
       const bytes = base64ToBytes(a.contentBase64);
       const mimeType = a.contentType || "application/octet-stream";
       const minted = bytes
@@ -2808,14 +2821,89 @@ export class OhmailEngine {
         filename: a.filename?.trim() || `attachment-${i + 1}.bin`,
         mimeType,
         sizeBytes: bytes?.length ?? 0,
-        state: "ready",
+        state: "ready" as const,
         inline: false,
         contentId: null,
         ...(minted ? { objectUrl: minted.url, blob: minted.blob } : {}),
       };
     });
+    this.sentAttachmentSeeds.set(messageId, { live: true, expiresAtMs, forwardOf, composeItems });
+
+    if (!forwardOf) {
+      // A compose or reply: the mutation's files ARE the delivered files, so the list is complete.
+      this.attachmentLists.set(messageId, { state: "ready", items: composeItems });
+      return;
+    }
+
+    /*
+     * A FORWARD'S DELIVERED MESSAGE CARRIES MORE THAN THE MUTATION DID: the server streams the
+     * original's parts onto the outgoing mail. Publishing `composeItems` alone as `ready` would
+     * be a complete-looking list missing every inherited file — for the copy's whole lifetime,
+     * because a ready list is never re-read. So the copy's list is COMPOSED from the parent's
+     * (compose files + the original's parts, under their real server ids): immediately when the
+     * parent's metadata is already in hand — the common case, the forward was pressed on an open
+     * message — and otherwise as one ordinary indexed read of the PARENT's list, whose answer
+     * recomposes the copy and notifies the open view. Until it answers, the copy's list stays
+     * unpublished (`loading`, the silent state) rather than confidently incomplete.
+     */
+    if (!this.recomposeForwardSeed(messageId)) {
+      void this.loadAttachments(forwardOf).then(() => {
+        if (this.recomposeForwardSeed(messageId)) this.notify();
+      });
+    }
+  }
+
+  /**
+   * Compose a FORWARD copy's attachment list from its seed and its parent's held list.
+   *
+   * The parent's items ride in as fresh `idle` rows under their REAL attachment ids — the byte
+   * routes resolve an attachment id alone (`GET /attachments/:id`), and the forward streamed the
+   * SAME parts, so a press fetches exactly the delivered bytes. Deliberately WITHOUT the parent's
+   * byte state: an object URL shared between two lists dies for both when either message is
+   * released. A parent list held `failed` is carried over as that same failure — the true sentence,
+   * with the server's own code — and a retry from the copy's strip delegates back to the parent
+   * (see {@link OhmailEngine.loadAttachments}), the one id a server can answer for.
+   *
+   * Also settles the overlay row's own paperclip: a forward's `hasAttachments`/`attachmentCount`
+   * cannot be derived from the mutation (the inherited parts are not in it), so they are written
+   * here, from the composed list, counting real files the way ingest does.
+   *
+   * Returns whether the copy's list is now published (ready or failed).
+   */
+  private recomposeForwardSeed(messageId: string): boolean {
+    const seed = this.sentAttachmentSeeds.get(messageId);
+    if (!seed?.forwardOf) return false;
+    const parent = this.attachmentLists.get(seed.forwardOf);
+    if (parent?.state === "failed") {
+      this.attachmentLists.set(messageId, parent);
+      return true;
+    }
+    if (parent?.state !== "ready") return false;
+    const inherited: AttachmentItem[] = parent.items.map((i) => ({
+      id: i.id,
+      filename: i.filename,
+      mimeType: i.mimeType,
+      sizeBytes: i.sizeBytes,
+      state: "idle" as const,
+      inline: i.inline,
+      contentId: i.contentId,
+    }));
+    const items = [...seed.composeItems, ...inherited];
     this.attachmentLists.set(messageId, { state: "ready", items });
-    this.sentAttachmentSeeds.set(messageId, { live: true, expiresAtMs });
+
+    // The paperclip on the overlay row itself — real files only, the ingest rule.
+    const overlay = this.overlays.get(`sent:${messageId}`);
+    const entity = overlay?.[0]?.entity as EngineMessage | undefined;
+    if (overlay && entity) {
+      const files = items.filter((i) => !i.inline).length;
+      this.overlays.set(`sent:${messageId}`, [{
+        type: "message",
+        id: messageId,
+        entity: { ...entity, hasAttachments: files > 0, attachmentCount: files },
+      }]);
+      this.overlayRev++;
+    }
+    return true;
   }
 
   /**
@@ -3179,6 +3267,25 @@ export class OhmailEngine {
   async loadAttachments(messageId: string, opts: { retry?: boolean } = {}): Promise<AttachmentsOutcome> {
     const list = this.adapter.listAttachments;
     if (!list || !this.attachmentsAvailable()) return { state: "unavailable" };
+
+    /*
+     * A FORWARD'S SENT COPY DELEGATES TO ITS PARENT. The copy's id was minted client-side and
+     * exists on no server — a wire read against it can only 404 — while the parent's id is real
+     * and its list names the exact parts the forward streamed. So the copy's read (the pane's
+     * mount effect, and its strip's own Retry) is answered by reading the PARENT and composing:
+     * a held-ready copy answers directly, a retry re-asks the parent under the same human-press
+     * rule every retry obeys, and the composed outcome — including a carried failure — is what
+     * the copy's surface renders. See {@link recomposeForwardSeed}.
+     */
+    const seed = this.sentAttachmentSeeds.get(messageId);
+    if (seed?.forwardOf) {
+      const held = this.attachmentLists.get(messageId);
+      if (held?.state !== "ready") {
+        await this.loadAttachments(seed.forwardOf, opts);
+        if (this.recomposeForwardSeed(messageId)) this.notify();
+      }
+      return this.attachmentsOf(messageId);
+    }
 
     const inFlight = this.attachmentListRequests.get(messageId);
     if (inFlight) return inFlight.then(() => this.attachmentsOf(messageId));
@@ -3547,7 +3654,14 @@ export class OhmailEngine {
 
   /** The unconditional half of {@link OhmailEngine.releaseAttachments}. */
   private forceReleaseAttachments(messageId: string): void {
-    this.sentAttachmentSeeds.delete(messageId);
+    const seed = this.sentAttachmentSeeds.get(messageId);
+    if (seed) {
+      // The seed's compose items hold minted URLs even when the copy's list was never published
+      // (a forward still waiting on its parent) — revoke them here or they outlive everything.
+      // Revoking one twice is a no-op, so the held-list pass below stays as it is.
+      for (const item of seed.composeItems) this.revokeUrl(item.objectUrl);
+      this.sentAttachmentSeeds.delete(messageId);
+    }
     const held = this.attachmentLists.get(messageId);
     if (held?.state === "ready") {
       for (const item of held.items) this.revokeUrl(item.objectUrl);
