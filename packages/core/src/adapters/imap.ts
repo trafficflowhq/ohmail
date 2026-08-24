@@ -977,6 +977,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       idle: c.has("IDLE"),
       specialUse: c.has("SPECIAL-USE"),
       sentFolder: this.sentFolder,
+      // The path the scan WATCHES — the name fallback where SPECIAL-USE gave nothing. See the
+      // interface doc for who reads it and why `sentFolder` alone would miss those providers.
+      watchedSentFolder: this.sentFolder ?? this.scanSentFolder,
     };
     return { ...base, ...this.opts.capabilityOverrides };
   }

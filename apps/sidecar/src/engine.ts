@@ -1739,6 +1739,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       let cycles = 0;
       /** Did a cycle report an empty backlog, or did the loop simply run out of cycles? */
       let drained = false;
+      /** The INBOUND half alone — did any cycle report an empty adapter backlog? The import
+          stamp below reads THIS, never `drained`: `initial_import_completed_at`'s contract (and
+          the hosted worker's behaviour) is "the inbound backlog emptied", independent of any
+          outbound filing the reconciler still owes — a re-opened delete filing or a budget-capped
+          queue must extend the DRAIN without withholding the import stamp. */
+      let inboundDrained = false;
       // ── ONCE PER DRAIN, BESIDE THE LEASE AND FOR THE SAME REASON ───────────────────────────
       //
       // A drain is one logical pass over a backlog the adapter hands over in bounded batches, and
@@ -1777,6 +1783,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         });
         cycleMs.push(Date.now() - cycleStart);
         cycles++;
+        if (!hasBacklog) inboundDrained = true;
         if (!hasBacklog && !owesFiling) { drained = true; break; }
         // Yield, so a backlog drain cannot starve the request handler sharing this event loop.
         await new Promise((r) => setTimeout(r, 0));
@@ -1808,11 +1815,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       await backfillStoredNames();
       /* HOW FAR THIS MAILBOX HAS GOT, WRITTEN DOWN. On a hosted account these two columns are the
          worker's; here this process IS the worker, and the window's sync line reads them to tell a
-         first import apart from a settled mailbox. `drained` is the distinction that matters for
-         the second stamp: a drain that ran out of CYCLES has not finished the import, and saying it
-         had would tell somebody their mailbox was complete with half of it still on its way. See
-         `sync-stamp.ts`. */
-      if (cycles > 0) await stampSynced(db, world.mailboxId, now(), drained);
+         first import apart from a settled mailbox. `inboundDrained` is the distinction that
+         matters for the second stamp: a drain that ran out of CYCLES with inbound mail still owed
+         has not finished the import, and saying it had would tell somebody their mailbox was
+         complete with half of it still on its way — while outbound filing the reconciler still
+         owes (the OTHER reason the loop keeps going) is not import and must not withhold the
+         stamp. See `sync-stamp.ts`. */
+      if (cycles > 0) await stampSynced(db, world.mailboxId, now(), inboundDrained);
       /* ── CHECKPOINT BEHIND EVERY DRAIN THAT WROTE, so the log never holds more than one drain. ──
 
          The periodic checkpointer (`db.ts`) bounds the write-ahead log to five MINUTES of churn,

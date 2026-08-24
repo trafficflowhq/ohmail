@@ -1295,7 +1295,13 @@ async function sentFolderOf(deps: SyncDeps): Promise<{ sentFolder?: string | nul
   const { adapter } = deps;
   if (typeof adapter.capabilities !== "function") return {};
   try {
-    return { sentFolder: (await adapter.capabilities()).sentFolder ?? null };
+    const caps = await adapter.capabilities();
+    // `watchedSentFolder` first: on a no-SPECIAL-USE server the Sent path the scan watches is
+    // resolved by NAME (`findSentForScan`) and lives only there — reading `sentFolder` alone
+    // would leave exactly those providers open to the stale-Sent-row wedge the exclusion
+    // closes. The fallback is warm by the time this runs: `changesSince` resolves it, and the
+    // reconcile pass runs after ingest in every cycle.
+    return { sentFolder: caps.watchedSentFolder ?? caps.sentFolder ?? null };
   } catch {
     return {};
   }

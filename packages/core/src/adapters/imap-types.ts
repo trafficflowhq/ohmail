@@ -652,6 +652,19 @@ export interface ImapCapabilities {
   idle: boolean;         // RFC 2177 IDLE
   specialUse: boolean;   // RFC 6154 SPECIAL-USE
   sentFolder: string | null; // resolved \Sent path (canonical name)
+  /**
+   * The Sent path the SCAN actually watches — `sentFolder` when SPECIAL-USE answered, otherwise
+   * the name-fallback resolution (`findSentForScan`), which is memoised on the first
+   * `changesSince`. OPTIONAL, for adapter fakes; consumers treat absence as `sentFolder`.
+   *
+   * A SEPARATE field rather than folding the fallback into `sentFolder`, because that field is
+   * where the SEND path appends and a read must never redirect it (the adapter's own rule at
+   * `scanSentFolder`). The reader that needs THIS one is the delete completion's Sent exclusion:
+   * on a no-SPECIAL-USE server the watched Sent lives only in the fallback, and excluding
+   * against `sentFolder` alone would leave exactly those providers open to the stale-Sent-row
+   * retry wedge the exclusion closes.
+   */
+  watchedSentFolder?: string | null;
 }
 
 /**
