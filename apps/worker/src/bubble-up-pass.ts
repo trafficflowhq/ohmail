@@ -126,7 +126,11 @@ export async function bubbleUpPass(
         .where(eq(messages.id, row.messageId)).for("update");
       const updated = await tx
         .update(messageStates)
-        .set({ state: "resurfaced", bubbleUpAt: null, updatedAt: now })
+        // `setAt` refreshes here too: it is "when the CURRENT state was set", and this flip
+        // SETS `resurfaced` — a row scheduled at t1 and fired at t2 must sync setAt = t2, or
+        // the DTO's timestamp differs by transition path (the direct `resurface_now` stamps
+        // its own instant). `spendResurface` stays the one deliberate preserver.
+        .set({ state: "resurfaced", bubbleUpAt: null, setAt: now, updatedAt: now })
         .where(and(eq(messageStates.id, row.id), eq(messageStates.state, "bubbled_up")))
         .returning({ id: messageStates.id });
       if (updated.length === 0) return false;
