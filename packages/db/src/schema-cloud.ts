@@ -137,12 +137,20 @@ export const authEvents = pgTable("auth_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id"),                   // null for pre-account events
   userId: uuid("user_id"),                         // null for unknown-email attempts
-  event: text("event").notNull(),                  // login|login_failed|2fa_verified|2fa_failed|logout|device_revoked|recovery_used|lockout
+  event: text("event").notNull(),                  // AuthAuditEvent["event"] — login|login_failed|2fa_verified|2fa_failed|logout|device_revoked|recovery_used|lockout|enrollment_started|email_verified|desktop_link_issued|refresh_reuse_revoked
   method: text("method"),                          // webauthn|totp|recovery_code|password
   ip: text("ip"),
   device: text("device"),
   at: timestamp("at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({ ixUserAt: index("auth_events_user_at_idx").on(t.userId, t.at) }));
+}, (t) => ({
+  ixUserAt: index("auth_events_user_at_idx").on(t.userId, t.at),
+  // cloud 0024 — PARTIAL on the reuse-sweep event, so it holds the rare revocation rows and
+  // never the login ledger. The `session_reuse_revoked` alert rule (`event + at`, every alert
+  // pass) and the admin account view's security row (`account_id + event`) both scan by it;
+  // `(user_id, at)` above serves neither predicate.
+  ixReuseAccountAt: index("auth_events_reuse_account_at_idx").on(t.accountId, t.at)
+    .where(sql`"event" = 'refresh_reuse_revoked'`),
+}));
 
 export const authThrottle = pgTable("auth_throttle", {
   id: uuid("id").defaultRandom().primaryKey(),

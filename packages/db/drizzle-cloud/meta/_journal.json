@@ -169,6 +169,13 @@
       "when": 1791068540527,
       "tag": "0023_billing_reconciliation",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791327740527,
+      "tag": "0024_auth_events_reuse_index",
+      "breakpoints": true
     }
   ]
 }

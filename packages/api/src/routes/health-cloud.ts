@@ -225,6 +225,13 @@ export const CLOUD_INDEX_MARKERS: ReadonlyArray<string> = [
   // probed by column below; the index rides the same journal entry, and a database that took
   // the table by hand without it would page correctly and scan for it.
   "billing_recon_runs_ran_at_idx",
+  // cloud 0024_auth_events_reuse_index — the migration's WHOLE content, so this marker is what
+  // vouches for the file having run (cloud 0013_ledger_integrity's rule exactly). Partial on
+  // `event = 'refresh_reuse_revoked'`: the `session_reuse_revoked` alert rule scans it every
+  // pass and the admin account view's security row reads it per account; without it both fall
+  // back to walking the unbounded login ledger — correct, and increasingly slow, which for the
+  // pass that pages a human is the failure this class exists to catch.
+  "auth_events_reuse_account_at_idx",
 ] as const;
 
 /**
@@ -348,10 +355,14 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * keeping: of its consumers, the one whose too-early failure is SILENT is the worker's cap read,
  * whose fail-open would quietly unmeter managed storage.
  *
+ * `0024_auth_events_reuse_index` is one partial index and nothing else, so its INDEX marker in
+ * {@link CLOUD_INDEX_MARKERS} is its whole probe — `0013_ledger_integrity`'s shape exactly,
+ * argued at its entry.
+ *
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0023_billing_reconciliation";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0024_auth_events_reuse_index";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

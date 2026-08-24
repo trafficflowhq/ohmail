@@ -634,20 +634,34 @@ export class SessionLifecycle {
               || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
           if (renewable) return this.mintRotation(db, existing, now, ttls);
         }
-        await this.revokeFamily(db, existing.familyId, now);
-        // THE SWEEP LEAVES A ROW, in the same transaction scope as the sweep itself. It used
-        // to leave nothing: the client just started getting 401s, and the only record of WHY
-        // was raw session rows an operator had to correlate by revoked_at after the fact —
-        // the Aug-21 incident, reconstructed exactly that way. Who (the user row), when (the
-        // event's own stamp), which family and session (the detail), what triggered it (the
-        // event name). The hosted tier writes `auth_events`; the lifecycle base records
-        // nothing, which is that tier's truth for every audit hook. The user read is
-        // DEFENSIVE, never `loadUser`: a vanished user must not turn this 401 into another
-        // error, and `audit` accepts null (the row keeps the family id either way).
-        const [reuseUser] = await db.select().from(users)
-          .where(eq(users.id, existing.userId)).limit(1);
-        await this.audit(db, reuseUser ?? null, "refresh_reuse_revoked", undefined, ctx,
-          `family=${existing.familyId} session=${existing.sessionId}`);
+        // THE SWEEP LEAVES A ROW, and sweep + row are ONE TRANSACTION. It used to leave
+        // nothing: the client just started getting 401s, and the only record of WHY was raw
+        // session rows an operator had to correlate by revoked_at after the fact — the Aug-21
+        // incident, reconstructed exactly that way. Who (the user row), when (the event's own
+        // stamp), which family and session (the detail), what triggered it (the event name).
+        //
+        // ATOMIC, and the direction of the failure trade was chosen, not inherited (a review
+        // asked): the refresh routes run on a top-level autocommitting handle, so a sweep and
+        // a separate insert could die between the two — a family revoked with NO record, which
+        // is PERMANENT silence (the next presentation of this token hits `revokedAt` and takes
+        // the plain-401 arm; nothing ever writes the missing row). One transaction makes the
+        // failure the other way around: if the bookkeeping cannot commit, the sweep rolls back
+        // too and this call errors — and that state RETRIES ITSELF, because the client (or the
+        // thief) re-presenting the consumed token re-runs this branch on the next poll. A
+        // bounded fail-open with built-in retry beats an unbounded silent success.
+        //
+        // The hosted tier writes `auth_events`; the lifecycle base records nothing, which is
+        // that tier's truth for every audit hook. The user read is DEFENSIVE, never
+        // `loadUser`: a vanished user must not turn this 401 into another error, and `audit`
+        // accepts null (the row keeps the family id either way).
+        await this.inTransaction(ctx, async (txCtx) => {
+          const tx = asTx(txCtx);
+          await this.revokeFamily(tx, existing.familyId, now);
+          const [reuseUser] = await tx.select().from(users)
+            .where(eq(users.id, existing.userId)).limit(1);
+          await this.audit(tx, reuseUser ?? null, "refresh_reuse_revoked", undefined, txCtx,
+            `family=${existing.familyId} session=${existing.sessionId}`);
+        });
         throw new ServiceError("unauthorized", 401, "refresh token reuse detected");
       }
       throw new ServiceError("unauthorized", 401, "refresh token expired");

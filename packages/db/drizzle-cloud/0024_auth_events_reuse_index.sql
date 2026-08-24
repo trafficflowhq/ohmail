@@ -1,0 +1,36 @@
+-- THE REUSE-REVOCATION READS' INDEX — one partial index, nothing else.
+--
+-- ══ WHAT THIS FIXES ════════════════════════════════════════════════════════════════════════
+--
+-- Two new readers filter `auth_events` on `event = 'refresh_reuse_revoked'`:
+--
+--   · the `session_reuse_revoked` alert rule (`alerts.ts` rule 9) — `event = … AND at > cutoff`,
+--     on EVERY alert pass, every minute, from two drivers (the worker's timer and the API cron);
+--   · the admin account view's security row (`admin-service.ts:loadSecurityEvents`) —
+--     `account_id = … AND event = …`, newest first.
+--
+-- The table's only index is `(user_id, at)`, which serves neither predicate, and the table is
+-- an UNBOUNDED login/logout ledger — every sign-in appends. Without this, the alert rule's cost
+-- grows with total auth history and the pass that pages a human is the thing that slows down.
+--
+-- ══ THE INDEX ══════════════════════════════════════════════════════════════════════════════
+--
+--   auth_events_reuse_account_at_idx  ON (account_id, at)  WHERE event = 'refresh_reuse_revoked'
+--
+-- PARTIAL on the one event value both readers name, so the index holds only reuse rows —
+-- rare by construction (each marks a swept session family) — and stays a few pages however
+-- large the login history grows. `(account_id, at)` serves the account view's predicate
+-- directly; the alert's account-less `at > cutoff` scan walks the whole partial index, which
+-- is exactly the rare-row set it wants. One index for both reads, instead of one each.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO DATA ══════════════════════════════════════════════════════════
+--
+-- `CREATE INDEX IF NOT EXISTS`, no DML, no lock worth naming at this table's write rate.
+-- Deploy order: migration → nothing. Both readers are correct without it (the predicate is
+-- the same; only the plan changes), so there is no serving-order constraint — the health
+-- marker (`CLOUD_INDEX_MARKERS`) is what vouches for the file having run.
+--
+-- ROLLBACK is `DROP INDEX auth_events_reuse_account_at_idx`. The cost is the scans going
+-- sequential again; no data is involved.
+
+CREATE INDEX IF NOT EXISTS "auth_events_reuse_account_at_idx" ON "auth_events" ("account_id", "at") WHERE "event" = 'refresh_reuse_revoked';

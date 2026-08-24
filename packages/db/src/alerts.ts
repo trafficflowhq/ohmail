@@ -886,13 +886,18 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
         // WARNING, not critical: the family is already dead — the defense fired. What needs a
         // human is the QUESTION it leaves behind (stolen token, or a client rotating wrongly).
         severity: "warning",
-        title: `Refresh-token reuse revoked ${agg.count === 1 ? "a session family" : `${agg.count} session families`}`,
+        // DETECTIONS, deliberately not "families" (a review caught the overstatement): several
+        // consumed tokens of ONE family replayed concurrently write one row each, and the
+        // family id lives in the un-granted `device` column this handle cannot read — so the
+        // honest number this query CAN produce is how many times the detector fired.
+        title: `Refresh-token reuse detected ${agg.count === 1 ? "once" : `${agg.count} times`} on one account`,
         detail:
-          `Reuse detection revoked ${agg.count} session ${agg.count === 1 ? "family" : "families"} ` +
-          `on account ${accountId} within the last ${humanAge(Math.round(t.reuseRevokedWindowMs / 1000))}. ` +
-          `A consumed refresh token was presented again outside the concurrency grace — either a ` +
-          `stolen token was replayed or a client's rotation is broken. The account's auth trail ` +
-          `(auth_events) carries the family id on each row.`,
+          `Reuse detection fired ${agg.count === 1 ? "once" : `${agg.count} times`} on account ` +
+          `${accountId} within the last ${humanAge(Math.round(t.reuseRevokedWindowMs / 1000))}, ` +
+          `revoking the presented token's session family each time (several detections can name ` +
+          `one family). A consumed refresh token was presented again outside the concurrency ` +
+          `grace — either a stolen token was replayed or a client's rotation is broken. The ` +
+          `account's auth trail (auth_events) carries the family id on each row.`,
         count: agg.count,
         oldestSeconds,
       });
