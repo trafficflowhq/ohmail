@@ -1463,7 +1463,14 @@ export async function adminWorker(db: AdminDb, now: Date): Promise<WorkerSnapsho
     // The alerter's own numbers, not a second opinion — the UI states the rule it is judging by.
     thresholds: {
       staleSendSeconds: Math.round(DEFAULT_ALERT_THRESHOLDS.stuckSendMs / 1000),
-      syncLagSeconds: Math.round(DEFAULT_ALERT_THRESHOLDS.syncLagMs / 1000),
+      // The EFFECTIVE sync-lag rule — threshold PLUS the sustain margin — because that sum is
+      // what the pager actually fires at (alerts.ts rule 4's debounce: a healthy serialized
+      // scan's tail reaches the bare threshold on its own, so the bare number here made the
+      // console mark red exactly the boundary kiss the alerter declares healthy — a console
+      // disagreeing with the pager, which is the drift this projection exists to prevent).
+      syncLagSeconds: Math.round(
+        (DEFAULT_ALERT_THRESHOLDS.syncLagMs + DEFAULT_ALERT_THRESHOLDS.syncLagSustainMs) / 1000,
+      ),
       leaderStaleSeconds: Math.round(DEFAULT_ALERT_THRESHOLDS.leaderStaleMs / 1000),
     },
   };
