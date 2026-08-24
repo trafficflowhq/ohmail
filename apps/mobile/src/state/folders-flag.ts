@@ -48,17 +48,26 @@ export interface FoldersFlag {
 export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {
   let epoch = 0;
   /**
-   * The NEWEST-issued read is the only one that may apply (codex round 2): two refreshes can
-   * overlap — the session's boot GET still in the air when a drain-completed refresh fires —
-   * and both capture the same epoch, so an older response arriving LAST would overwrite the
-   * fresher answer. Each read takes a sequence number; anything but the latest is discarded.
+   * READS ARE ORDERED BY ISSUE, AND A NEWER *VALID* ANSWER SUPERSEDES (codex rounds 2 and 3):
+   * two refreshes can overlap — the session's boot GET still in the air when a drain-completed
+   * refresh fires — and both capture the same epoch, so an older response arriving LAST would
+   * overwrite the fresher answer. Each read takes a sequence number and applies only while no
+   * newer read has APPLIED — issuance alone supersedes nothing, because a newer read that
+   * FAILS (`null` — any transport or non-200 outcome) is not an answer, and letting it
+   * invalidate the older request discarded the only valid response the session had: a boot
+   * GET answering "on" was thrown away because a post-drain GET timed out, and the folders
+   * stayed off until another drain.
    */
   let readSeq = 0;
+  let appliedSeq = 0;
   const refresh = async (): Promise<void> => {
     const at = epoch;
     const mine = ++readSeq;
     const ans = await deps.read();
-    if (ans !== null && epoch === at && readSeq === mine) deps.apply(ans.on);
+    if (ans !== null && epoch === at && mine > appliedSeq) {
+      appliedSeq = mine;
+      deps.apply(ans.on);
+    }
   };
   return {
     refresh,
