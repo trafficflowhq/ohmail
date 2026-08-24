@@ -14,13 +14,14 @@ app to the welcome screen.
 
 Honest edges, stated here and on the screens themselves:
 
-- **Reply, forward, tags and delete are live on an open message** — the same
-  verbs the web and desktop clients offer (reply, reply all, forward, the three
-  triage horizons with the resurface chooser, tag, screening, move, the read
-  switch), named the same and dispatched through the same engine mutations.
-  Delete stands behind its own confirm and files the message to the Trash
-  folder on your own mail server — never an expunge, and ohmail never erases
-  mail.
+- **Reply, forward and tags are live on an open message** — the same verbs the
+  web and desktop clients offer (reply, reply all, forward, the three triage
+  horizons with the resurface chooser, tag, screening, move, the read switch),
+  named the same and dispatched through the same engine mutations. With
+  "Use folders" on, the message sheet also carries **Delete**, behind its own
+  confirm: it files the message to the Trash folder on your own mail server —
+  never an expunge, and ohmail never erases mail. With the switch off, the
+  reader is the previous reader, with no Delete verb.
 - **Your mail server's own folders show when you turn them on.** Off by
   default; the switch in Settings reads and writes your account's consent on
   the paired server. On, the More screen lists the folders as the tree they

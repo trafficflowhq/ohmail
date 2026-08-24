@@ -172,29 +172,38 @@ export function MessageActions({
         ) : (
           <SheetRow icon="x" label={Copy.actionMarkUnread} onPress={() => { close(); a.markSeen(m.id, true); }} />
         )}
-        <Rule inset={14} />
         {/* Delete stands LAST and opens its own confirm — a destructive verb never fires off a
             scrolled thumb. Move-to-Trash on the server, never an expunge (mail 0065); there is
             no un-delete on the wire, so the ceremony is a confirm rather than an undo the
-            product could not honour. */}
-        <SheetRow icon="trash" label={Copy.actionDelete} onPress={() => setOpen("delete")} />
+            product could not honour. GATED ON THE FOUNDATION FLAG with the confirm sheet below:
+            the reader Delete verb ships behind "Use folders" (FOLDERS-SPEC.md §16.3/§16.7 —
+            flag-off is the pre-feature reader, "no Delete verb", byte for byte), so with the
+            flag off neither the row nor a stale confirm can dispatch. */}
+        {w.folders.enabled ? (
+          <>
+            <Rule inset={14} />
+            <SheetRow icon="trash" label={Copy.actionDelete} onPress={() => setOpen("delete")} />
+          </>
+        ) : null}
       </Sheet>
 
       {/* ── Delete: the one destructive verb, behind its own stated confirm ─────────────── */}
-      <Sheet open={open === "delete"} onClose={close} label={Copy.deleteAsk}>
-        <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
-          {Copy.deleteAsk}
-        </Txt>
-        <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
-          {Copy.deleteNote}
-        </Txt>
-        <SheetRow
-          icon="trash"
-          label={Copy.actionDelete}
-          onPress={() => { close(); a.deleteMessage(m.id); onDeleted?.(); }}
-        />
-        <CancelRow onPress={close} />
-      </Sheet>
+      {w.folders.enabled ? (
+        <Sheet open={open === "delete"} onClose={close} label={Copy.deleteAsk}>
+          <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+            {Copy.deleteAsk}
+          </Txt>
+          <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
+            {Copy.deleteNote}
+          </Txt>
+          <SheetRow
+            icon="trash"
+            label={Copy.actionDelete}
+            onPress={() => { close(); a.deleteMessage(m.id); onDeleted?.(); }}
+          />
+          <CancelRow onPress={close} />
+        </Sheet>
+      ) : null}
 
       {/* ── Resurface: the horizon chooser — Now / Tomorrow / Next week / Pick a date ────── */}
       <Sheet open={open === "resurface" || open === "pick"} onClose={close} label={Copy.resurfaceWhen}>

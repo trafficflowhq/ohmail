@@ -40,6 +40,7 @@ import { Copy } from "../copy";
 import { useConnection } from "../net/connection";
 import { readFoldersEnabled, writeFoldersEnabled } from "../net/consent";
 import * as Crypto from "expo-crypto";
+import { foldersFlag } from "./folders-flag";
 import {
   flushQueued,
   liveActions,
@@ -280,35 +281,65 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const [foldersOn, setFoldersOn] = useState(false);
   const [foldersPending, setFoldersPending] = useState(false);
-  const sessionRef = useRef(session);
-  sessionRef.current = session;
+  /** `conn.syncNow` behind a ref so the machine below keeps one identity across renders. */
+  const syncNowRef = useRef(conn.syncNow);
+  syncNowRef.current = conn.syncNow;
+  /**
+   * ONE {@link foldersFlag} MACHINE PER SESSION — closes over `session` at construction, so a
+   * machine from a superseded session cannot write (`writeFoldersEnabled`/`readFoldersEnabled`
+   * take the session they were built with, not a ref that could have moved on). Rebuilt only
+   * when the session identity changes; `useMemo` rather than a ref because the machine's own
+   * epoch must reset to "no write yet" for a fresh session, exactly like `foldersOn` below.
+   *
+   * `apply` is gated on IDENTITY, not merely on the machine's own epoch: a session swap builds
+   * a NEW machine and this effect resets `foldersOn` to false, but the OLD machine's in-flight
+   * read or write can still resolve afterwards — its own epoch says nothing about a session it
+   * has no idea replaced it. `current` always names the live machine, so a stale settle applies
+   * nothing to a session it does not belong to (the same discipline the outcome ledger and the
+   * reconnect flush already carry for exactly this shape).
+   */
+  const current = useRef<ReturnType<typeof foldersFlag> | null>(null);
+  const machine = useMemo(() => {
+    if (!session) return (current.current = null);
+    const m = foldersFlag({
+      read: () => readFoldersEnabled(session),
+      write: (on) => writeFoldersEnabled(session, on),
+      apply: (on) => { if (current.current === m) setFoldersOn(on); },
+      drain: () => { if (current.current === m) syncNowRef.current(); },
+    });
+    return (current.current = m);
+  }, [session]);
   useEffect(() => {
     setFoldersOn(false);
     setFoldersPending(false);
-    if (!session) return;
-    let stale = false;
-    void readFoldersEnabled(session).then((ans) => {
-      // `null` is "could not ask" — keep off (the last known answer), never guess on.
-      if (!stale && ans !== null) setFoldersOn(ans.on);
-    });
-    return () => { stale = true; };
-  }, [session]);
-  const setFoldersEnabled = useCallback(async (on: boolean): Promise<boolean> => {
-    const s = sessionRef.current;
-    if (s === null) return false;
-    setFoldersPending(true);
-    try {
-      const ans = await writeFoldersEnabled(s, on);
-      // The SERVER-CONFIRMED value, and only onto the session that asked — a refused or
-      // superseded write draws nothing (the webapp FoldersRow's rule, verbatim in intent).
-      if (sessionRef.current === s) setFoldersOn(ans.on);
-      return true;
-    } catch {
-      return false;
-    } finally {
-      if (sessionRef.current === s) setFoldersPending(false);
-    }
-  }, []);
+    if (machine) void machine.refresh();
+  }, [machine]);
+  /*
+   * THE FLAG IS RE-READ AFTER EVERY COMPLETED DRAIN — the flush effect's own signal
+   * (`conn.syncing` falling). The toggle is per-ACCOUNT, and another client's flip writes
+   * folder creates/deletes into the very delta feed this drain just applied; holding the
+   * boot-time answer for the session's whole life would show a populated mirror under a
+   * stale "off" (folders invisible) or an emptied mirror under a stale "on" (a false
+   * "no folders on your mail server"). One small GET per drain, epoch-guarded by the machine.
+   */
+  useEffect(() => {
+    if (!conn.syncing && machine) void machine.refresh();
+  }, [conn.syncing, machine]);
+  const setFoldersEnabled = useCallback(
+    async (on: boolean): Promise<boolean> => {
+      const m = machine;
+      if (!m) return false;
+      setFoldersPending(true);
+      try {
+        return await m.set(on);
+      } finally {
+        // Only the session that started the write clears its own pending flag — a session
+        // swap already reset it once (the effect above) and owns it from there.
+        if (current.current === m) setFoldersPending(false);
+      }
+    },
+    [machine],
+  );
 
   const zone = useMemo(readerZone, []);
   const acts = useMemo(
