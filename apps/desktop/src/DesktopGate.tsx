@@ -376,8 +376,12 @@ export function DesktopGate() {
         cloudAction="signIn"
         onEntered={(r) => {
           /* Back to PENDING, never to "signed in": the fresh probe against the engine the
-             sign-in just touched is the only thing allowed to say what its session is. */
-          setHostedAuth(null);
+             sign-in just touched is the only thing allowed to say what its session is. The
+             EPOCH bump (not a bare clear) also retires any probe already in flight against the
+             old engine — a late answer under a still-current key would re-store the stale
+             state. `onStatus` bumps again for its own reason; a double bump is two re-keys and
+             costs nothing. */
+          setAuthEpoch((n) => n + 1);
           if (r.status) onStatus(r.status);
           else void refresh();
         }}
@@ -396,7 +400,7 @@ export function DesktopGate() {
           start="cloud"
           cloudAction="signIn"
           onEntered={(r) => {
-            setHostedAuth(null);
+            setAuthEpoch((n) => n + 1);
             setSignInAfterExpiry(false);
             if (r.status) onStatus(r.status);
             else void refresh();
@@ -687,12 +691,17 @@ export function DesktopGate() {
                `onEntered`, so no status was delivered and the epoch never moved: the stored
                /health answer still matches the current key while describing the PREVIOUS
                engine. Closing the overlay is the reveal moment — the mail client underneath
-               would render on that stale answer — so the answer goes back to PENDING here, and
-               the gate withholds the app until the engine actually behind the bridge gives its
-               own first /health (milliseconds; and a cancel that truly changed nothing costs
-               one local probe). `refresh()` re-reads the shell for the same reason: the door
-               state itself may have moved under an abandoned attempt. */
-            setHostedAuth(null);
+               would render on that stale answer — so the EPOCH advances here, which does what
+               merely clearing the stored answer cannot: a /health probe already in flight holds
+               the OLD key in its closure (and the shell deliberately lets requests finish
+               against the engine being replaced), so a late old-engine answer would re-store
+               under a still-current key. The bump re-keys the gate, retires both probe effects
+               (their cleanup cancels the in-flight read), and withholds the app until the
+               engine actually behind the bridge gives its own first /health — milliseconds, and
+               a cancel that truly changed nothing costs one local probe. `refresh()` re-reads
+               the shell for the same reason: the door state itself may have moved under an
+               abandoned attempt. */
+            setAuthEpoch((n) => n + 1);
             setOverlay(null);
             void refresh();
           }}

@@ -295,16 +295,22 @@ describe("the auth key, pinned at the source", () => {
     expect(src).toMatch(/if \(authKey !== null && !hostedAuthKnown\)/);
   });
 
-  it("cancelling the door overlay invalidates the answer — an abandoned configure has no epoch", () => {
+  it("cancelling the door overlay ADVANCES THE EPOCH — an abandoned configure has none of its own", () => {
     /* `engine_configure` runs BEFORE the credential step, so a rejected password or an abandoned
        browser handoff can have replaced the engine without any status ever reaching `onStatus` —
        the epoch never moves and the stored answer still matches. Closing the overlay is the
-       moment the mail client underneath would render on that stale answer, so the cancel handler
-       must reset the answer to pending. Pinned at the source because the overlay only opens from
-       flows this harness does not mount. */
+       moment the mail client underneath would render on that stale answer. The handler must
+       advance the EPOCH, not merely clear the stored answer: a probe already in flight holds the
+       old key in its closure, and a late answer from the replaced engine would re-store under a
+       still-current key — the bump re-keys the gate and retires the in-flight read with the
+       effect it belongs to. Pinned at the source because the overlay only opens from flows this
+       harness does not mount. */
     const cancel = /onCancel=\{\(\) => \{[\s\S]*?\}\}/.exec(src)?.[0] ?? "";
-    expect(cancel, "the overlay's cancel handler must reset the hosted auth answer")
-      .toMatch(/setHostedAuth\(null\)/);
+    expect(cancel, "the overlay's cancel handler must re-key the hosted auth answer")
+      .toMatch(/setAuthEpoch\(\(n\) => n \+ 1\)/);
     expect(cancel).toMatch(/setOverlay\(null\)/);
+    // And no surface anywhere clears the stored answer WITHOUT re-keying — a bare clear is the
+    // in-flight-probe race the round above closed.
+    expect(src).not.toMatch(/setHostedAuth\(null\)/);
   });
 });
