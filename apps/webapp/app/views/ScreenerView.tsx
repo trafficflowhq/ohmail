@@ -774,6 +774,23 @@ export function ScreenerView({
   }, [activeId, segment]);
 
   /**
+   * IS THE SPLIT'S READ COLUMN OFF SCREEN — the ≤900px breakpoint, SUBSCRIBED rather than
+   * sampled: a rotation or window-resize reveals `.scn-read` without touching any other
+   * dependency of the body-open effect, and a sampled value left the newly visible preview
+   * idle until its stall face appeared (review round on the mobile gating).
+   */
+  const [narrow, setNarrow] = useState<boolean>(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 900px)");
+    const on = (): void => setNarrow(mq.matches);
+    on();
+    mq.addEventListener?.("change", on);
+    return () => mq.removeEventListener?.("change", on);
+  }, []);
+
+  /**
    * OPEN THE SELECTED JUNK ROW'S BODY — fetched live on open only, held in the hook's session
    * cache so re-selecting costs nothing (§16.2's table). Keyed on the SELECTION: the control
    * object is rebuilt per render, and `openBody` itself refuses a re-ask for anything already
@@ -784,12 +801,12 @@ export function ScreenerView({
     // BODY-ON-OPEN means on a preview somebody can SEE: on a narrow viewport the read column
     // is hidden until `full`, and the selection's automatic fall-to-first must not spend a
     // provider read for a pane that is not on screen (§16.2's bound; review finding). Opening
-    // the preview flips `full`, which re-runs this and fetches then.
-    if (!full && window.matchMedia("(max-width: 900px)").matches) return;
+    // the preview — or the viewport widening — re-runs this and fetches then.
+    if (!full && narrow) return;
     const item = junk!.items.find((i) => junkKeyOf(i) === activeId);
     if (item) junk!.openBody(item);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [junkActive, activeId, full]);
+  }, [junkActive, activeId, full, narrow]);
 
   /**
    * OPEN THE PREVIEW AT THE LATEST HELD MESSAGE — and STAY there while the bodies arrive.
@@ -2182,13 +2199,28 @@ function JunkPreview({
           {t(item.origin === "verdict" ? "junkOriginVerdict" : "junkOriginProvider")}
         </div>
         <HeldMail
+          /* REMOUNTED PER ASK: the stall face (`useBodyStalled`) keys on its mount, so a retry
+             that reused it kept "failed" painted over the live second request. And IDLE is not
+             LOADING — a hidden narrow-viewport preview holds `idle` with NO request in flight,
+             and mapping it to `loading` started a stall countdown against nothing (both from
+             the review round on this commit). */
+          key={`${junkKeyOf(item)}:${body.phase === "loading" ? body.attempt : 0}`}
           from={displayAddressee(item.from.name, item.from.address)}
           address={displayAddressUnder(item.from.name, item.from.address)}
           subject={item.subject}
           time={item.date ? displayTime({ date: item.date }, new Date()) : undefined}
           body={body.phase === "ready" ? body.text : ""}
           bodyState={
-            body.phase === "ready" ? "full" : body.phase === "failed" ? "failed" : "loading"
+            body.phase === "ready"
+              ? "full"
+              : body.phase === "failed"
+                ? "failed"
+                : body.phase === "loading"
+                  ? "loading"
+                  : /* IDLE — no request exists, so no waiting face and NO stall timer:
+                       `undefined` is HeldMail's "nothing pending" arm ("snippet" still counts
+                       as may-yet-arrive and arms the countdown against nothing). */
+                    undefined
           }
           onRetry={() => junk.openBody(item, { retry: true })}
           dull

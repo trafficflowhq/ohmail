@@ -49,7 +49,12 @@ export const junkKeyOf = (i: { mailboxId: string; uidValidity: string; uid: numb
 
 export type JunkBodyPhase =
   | { phase: "idle" }
-  | { phase: "loading" }
+  /**
+   * `attempt` numbers each ask for one row, so the preview can REMOUNT its body anatomy per
+   * try — a retry that reused the mount kept the expired stall timer's "failed" face over the
+   * live second request (review round on the retry).
+   */
+  | { phase: "loading"; attempt: number }
   | { phase: "ready"; text: string }
   | { phase: "failed" };
 
@@ -98,6 +103,8 @@ export function useJunkWindow(active: boolean, toast: ToastFn): JunkWindowContro
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [olderLoading, setOlderLoading] = useState(false);
   const [bodies, setBodies] = useState<Map<string, JunkBodyPhase>>(() => new Map());
+  /** Per-row ask generation — a superseded ask's completion must not overwrite its successor's. */
+  const bodyGen = useRef(new Map<string, number>());
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
   /** Has THIS session read page one yet? Lazily, once, on segment entry. */
   const asked = useRef(false);
@@ -187,11 +194,18 @@ export function useJunkWindow(active: boolean, toast: ToastFn): JunkWindowContro
       // A human RETRY overrides both: a hung first ask still reads `loading`, and refusing
       // the press would leave Retry dead until a reload.
       if (!opts.retry && held && held.phase !== "failed") return cur;
+      // Each ask takes the row's NEXT generation; a completion landing after a newer ask took
+      // over is DROPPED — a hung first request's late rejection must not overwrite the
+      // retry's delivered body with "failed" (review round on the retry).
+      const gen = (bodyGen.current.get(key) ?? 0) + 1;
+      bodyGen.current.set(key, gen);
       void screenerApi.junkBody(item.mailboxId, item.uid, item.uidValidity).then(
-        (b) => setBodies((m) => new Map(m).set(key, { phase: "ready", text: b.text })),
-        () => setBodies((m) => new Map(m).set(key, { phase: "failed" })),
+        (b) => setBodies((m) =>
+          bodyGen.current.get(key) === gen ? new Map(m).set(key, { phase: "ready", text: b.text }) : m),
+        () => setBodies((m) =>
+          bodyGen.current.get(key) === gen ? new Map(m).set(key, { phase: "failed" }) : m),
       );
-      return new Map(cur).set(key, { phase: "loading" });
+      return new Map(cur).set(key, { phase: "loading", attempt: gen });
     });
   }, []);
 
