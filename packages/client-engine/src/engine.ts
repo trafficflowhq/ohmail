@@ -14,6 +14,7 @@ import {
   MutationRejectedError,
   encodeSeqCursor,
   isProtectedMessage,
+  type ComposeAttachment,
   type EngineDraft,
   type EngineMessage,
   type EngineMutation,
@@ -619,6 +620,25 @@ async function mintInlineDataUrl(blob: Blob): Promise<string | null> {
 }
 
 /**
+ * The inverse codec of {@link mintInlineDataUrl}'s encode half, for the sent-copy attachment seed:
+ * the compose surface read the picked bytes INTO base64 (`ComposeAttachment.contentBase64`), and
+ * the seed reads them back out to hold the same Blob a real fetch would have minted. `atob` for the
+ * same reason `btoa` above — present in every browser and in node ≥ 16, so the engine stays free of
+ * `Buffer`. `null` for anything undecodable rather than a throw: the caller degrades to a
+ * metadata-only item, never to a failed send overlay.
+ */
+function base64ToBytes(b64: string): Uint8Array | null {
+  try {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * WHEN A RESUMING MIRROR STOPS BEING "CURRENT" AND STARTS BEING "STALE" — the age of the last
  * completed drain beyond which the next drain fetches the newest page before replaying its
  * backlog. See {@link OhmailEngine.freshenStaleResume} for the whole mechanism.
@@ -902,6 +922,21 @@ export class OhmailEngine {
    * this to the tab is what makes "fetched on demand, held for the session" true.
    */
   private readonly attachmentLists = new Map<string, AttachmentsOutcome>();
+  /**
+   * THE SENT-COPY SEEDS — which entries in {@link attachmentLists} were written by
+   * {@link OhmailEngine.materializeSentOverlay} from the send's own bytes, keyed by the optimistic
+   * Sent copy's message id, with the same expiry as its {@link optimisticSent} entry.
+   *
+   * The copy's id exists on no server, so a metadata read against it can only 404 — which is what
+   * used to happen: a reader opening the message they had just sent watched its attachment vanish
+   * until the real Sent row (a different id) was opened instead. The seed is the answer the engine
+   * already holds, and this map is its LIFECYCLE: while `live`, {@link
+   * OhmailEngine.releaseAttachments} declines to drop the seed (a pane unmount must not turn a
+   * re-open of the still-standing copy back into the 404), and {@link reconcileOptimisticSent}
+   * clears `live` when the copy retires — after which the pane's ordinary release frees the bytes,
+   * with the TTL sweep as the backstop for a send nobody opened.
+   */
+  private readonly sentAttachmentSeeds = new Map<string, { live: boolean; expiresAtMs: number }>();
   /** In-flight metadata reads by message id — single-flight, see {@link OhmailEngine.loadAttachments}. */
   private readonly attachmentListRequests = new Map<string, Promise<AttachmentsOutcome>>();
   /** In-flight byte fetches by attachment id — see {@link OhmailEngine.openAttachment}. */
@@ -2717,12 +2752,70 @@ export class OhmailEngine {
     const sent = sentOverlayMessage(this.read(), m, header, { now: this.now, uuid: this.uuid });
     if (!sent) return false;
     const overlayId = `sent:${sent.id}`;
+    const expiresAtMs = this.now().getTime() + OPTIMISTIC_SENT_TTL_MS;
     this.overlays.set(overlayId, [{ type: "message", id: sent.id, entity: sent }]);
-    this.optimisticSent.set(overlayId, {
-      header,
-      expiresAtMs: this.now().getTime() + OPTIMISTIC_SENT_TTL_MS,
-    });
+    this.optimisticSent.set(overlayId, { header, expiresAtMs });
+    this.seedSentAttachments(sent.id, m.attachments ?? [], expiresAtMs);
     return true;
+  }
+
+  /**
+   * HOLD THE SENT COPY'S ATTACHMENTS AS THE LIST THE READER WILL ASK FOR — the send path emitting
+   * the attachment-bearing update the open view subscribes to.
+   *
+   * The copy above claims `hasAttachments`/`attachmentCount`, and the reader that opens it asks
+   * `loadAttachments(copy.id)` — an id minted HERE, which no server has a row for. That read can
+   * only 404 (or answer nothing), so the one message a person is most likely to open next — the
+   * one they just sent — rendered its attachment strip as a failure or as silence until the REAL
+   * Sent row, a different id, was opened instead. Observed live as "the attachment appears only
+   * after navigating away and back".
+   *
+   * The engine is holding the complete answer at this very moment: `m.attachments` is the exact
+   * set of files the server just confirmed it delivered and appended to Sent. So the list is
+   * seeded `ready` from those bytes — each item fetched-in-advance (`ready`, with the same
+   * type-downgraded Blob + object URL a real fetch would mint), because the bytes are in hand and
+   * a tile that offered a press against a fabricated id would 404 the way the list used to.
+   * `loadAttachments` then answers from the held list (its ordinary ready short-circuit) and
+   * never puts the fabricated id on the wire.
+   *
+   * SEEDED FOR THE NO-ATTACHMENT SEND TOO — an empty `ready` list, deliberately: without it,
+   * opening any just-sent message drew the metadata read's 404 as "Couldn't load this message's
+   * files" over a message that has none. Empty-ready is the true statement and renders as the
+   * ordinary nothing.
+   *
+   * Lifecycle is {@link sentAttachmentSeeds}'s: alive while the copy stands, released by the
+   * pane once the copy has retired, swept at the copy's own TTL otherwise. A decode or minting
+   * environment failure (no `URL.createObjectURL` — SSR, bare node) degrades to items without
+   * byte-backing rather than to a missing list: the strip still names the files, which is the
+   * whole repro.
+   */
+  private seedSentAttachments(
+    messageId: string,
+    attachments: readonly ComposeAttachment[],
+    expiresAtMs: number,
+  ): void {
+    const items: AttachmentItem[] = attachments.map((a, i) => {
+      const bytes = base64ToBytes(a.contentBase64);
+      const mimeType = a.contentType || "application/octet-stream";
+      const minted = bytes
+        ? this.mintObjectUrl(new Blob([bytes as BlobPart], { type: mimeType }), mimeType)
+        : undefined;
+      return {
+        // A local id, namespaced so it can never collide with a server row id. It is only ever
+        // resolved against this held list; `openAttachment` short-circuits on `ready` + URL, so
+        // the id reaches no wire while the bytes stand.
+        id: `${messageId}:sent-att:${i}`,
+        filename: a.filename?.trim() || `attachment-${i + 1}.bin`,
+        mimeType,
+        sizeBytes: bytes?.length ?? 0,
+        state: "ready",
+        inline: false,
+        contentId: null,
+        ...(minted ? { objectUrl: minted.url, blob: minted.blob } : {}),
+      };
+    });
+    this.attachmentLists.set(messageId, { state: "ready", items });
+    this.sentAttachmentSeeds.set(messageId, { live: true, expiresAtMs });
   }
 
   /**
@@ -2735,8 +2828,11 @@ export class OhmailEngine {
    * copy is outstanding, which is the rare case.
    */
   private reconcileOptimisticSent(): void {
-    if (this.optimisticSent.size === 0) return;
     const nowMs = this.now().getTime();
+    // The seed sweep runs even with no copy outstanding: a seed outlives its copy by design (the
+    // pane may still be rendering it off-mirror), and the TTL is what bounds one nobody released.
+    this.sweepSentAttachmentSeeds(nowMs);
+    if (this.optimisticSent.size === 0) return;
     // BOTH sides through `messageIdKey`: the confirmation carries `<id@domain>`, the ingested row
     // carries `id@domain`, and the raw compare that stood here retired copies by TTL alone — see
     // the helper's docblock in `mutations.ts`.
@@ -2749,7 +2845,21 @@ export class OhmailEngine {
       if (landed.has(messageIdKey(meta.header)) || nowMs >= meta.expiresAtMs) {
         this.overlays.delete(overlayId);
         this.optimisticSent.delete(overlayId);
+        // The copy is retired, so its attachment seed stops being load-bearing: clearing `live`
+        // hands the seed to the ordinary release path (the pane frees it on unmount; the sweep
+        // above frees one nobody opened). NOT released here — a reader may be looking at the
+        // copy at this very moment, and yanking its strip mid-read is the defect's mirror image.
+        const seed = this.sentAttachmentSeeds.get(overlayId.slice("sent:".length));
+        if (seed) seed.live = false;
       }
+    }
+  }
+
+  /** Free every sent-copy attachment seed whose TTL has passed. See {@link sentAttachmentSeeds}. */
+  private sweepSentAttachmentSeeds(nowMs: number): void {
+    if (this.sentAttachmentSeeds.size === 0) return;
+    for (const [messageId, seed] of this.sentAttachmentSeeds) {
+      if (nowMs >= seed.expiresAtMs) this.forceReleaseAttachments(messageId);
     }
   }
 
@@ -3421,6 +3531,23 @@ export class OhmailEngine {
    * the same released bytes.
    */
   releaseAttachments(messageId: string): void {
+    // A LIVE sent-copy seed declines the release: the optimistic Sent copy is still standing in
+    // the mirror, its id exists on no server, and dropping the seed would turn the next open of
+    // that copy back into the 404 the seed exists to answer. The seed's own lifecycle frees it —
+    // `reconcileOptimisticSent` clears `live` when the copy retires (after which this release
+    // works normally) and sweeps it at the copy's TTL. See {@link sentAttachmentSeeds}.
+    if (this.sentAttachmentSeeds.get(messageId)?.live) return;
+    this.forceReleaseAttachments(messageId);
+  }
+
+  /** Revoke everything, for a teardown that is losing the whole engine. Live seeds included. */
+  releaseAllAttachments(): void {
+    for (const messageId of [...this.attachmentLists.keys()]) this.forceReleaseAttachments(messageId);
+  }
+
+  /** The unconditional half of {@link OhmailEngine.releaseAttachments}. */
+  private forceReleaseAttachments(messageId: string): void {
+    this.sentAttachmentSeeds.delete(messageId);
     const held = this.attachmentLists.get(messageId);
     if (held?.state === "ready") {
       for (const item of held.items) this.revokeUrl(item.objectUrl);
@@ -3429,11 +3556,6 @@ export class OhmailEngine {
     this.inlineImages.delete(messageId);
     this.calendarTexts.delete(messageId);
     this.notify();
-  }
-
-  /** Revoke everything, for a teardown that is losing the whole engine. */
-  releaseAllAttachments(): void {
-    for (const messageId of [...this.attachmentLists.keys()]) this.releaseAttachments(messageId);
   }
 
   private itemOf(messageId: string, attachmentId: string): AttachmentItem | undefined {

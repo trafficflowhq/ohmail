@@ -232,6 +232,9 @@ export {
   // The eager recent-window hydration bounds. Exported so the guards read the shipped numbers.
   EAGER_BODIES_MAX,
   EAGER_BODIES_SLICE,
+  // How long an optimistic Sent copy (and its seeded attachment list) stands before the TTL
+  // sweep. Exported so the seed-lifecycle guards read the shipped number, not a copy.
+  OPTIMISTIC_SENT_TTL_MS,
   type EngineOptions,
   type MutationResult,
   type MutationStatus,
