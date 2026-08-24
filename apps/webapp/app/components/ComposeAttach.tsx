@@ -338,6 +338,15 @@ export function ComposeAttach({
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
   /**
+   * THE INTAKE'S UN-FLUSHED HAND-OFF — the exact list the intake just committed, until the render
+   * that receives it clears the mark. A pass kicked in the intake's own tick reads THIS to know
+   * the ref is one commit behind; it is an explicit marker, never a shape test, because a user
+   * clearing the list's tail mid-pass leaves the ref a prefix of the hand-off too, and reading
+   * that shape as "un-flushed" resurrected the removed file.
+   */
+  const pendingFlush = useRef<readonly ComposeAttachment[] | null>(null);
+  if (pendingFlush.current === attachments) pendingFlush.current = null;
+  /**
    * THE CALLER'S HANDLER AND CAP, AS OF THE CURRENT RENDER — what every ASYNC commit goes
    * through, and the review finding that put them here: an async pass that called the `onChange`
    * captured when it STARTED invoked a caller closure holding that render's whole form
@@ -495,28 +504,45 @@ export function ComposeAttach({
 
       // THE COMMIT — one pass over the LATEST list, one `onChange`, through the LATEST closure
       // and against the LATEST cap (see the refs above). Rows the user added or removed while
-      // the encodes ran are respected. Admission projects the WHOLE-LIST total: shrinks first,
-      // grows in list order while the projection stays under the cap — see the header note.
+      // the encodes ran are respected.
       //
       // The hand-off outranks a ref the renderer has not caught up with: a kicked pass starts in
       // the same tick as the intake's own commit, so the ref can still hold the list that commit
-      // EXTENDED. That exact case is recognisable — the ref is the hand-off's prefix — and only
-      // then is the hand-off the base; any other divergence means the user moved the list since,
-      // and the ref is the truth.
+      // EXTENDED. Recognised EXPLICITLY — the intake marks its committed list pending and the
+      // render that receives it clears the mark — never inferred from shapes: a user clearing
+      // the list's tail mid-pass also leaves the ref a prefix of the hand-off, and a shape test
+      // read that removal as an unflushed render and resurrected the removed file (review
+      // finding).
       const refList = attachmentsRef.current;
-      const latest =
-        over !== undefined &&
-        refList !== over &&
-        over.length > refList.length &&
-        refList.every((a, i) => a === over[i])
-          ? over
-          : refList;
+      const latest = over !== undefined && pendingFlush.current === over ? over : refList;
+
+      // CONVERGENCE COLLAPSES DUPLICATES FIRST, on the TARGET encodes, before the cap projects:
+      // rows whose targets are byte-identical twins under one name exist only through a race
+      // this pass settles (a re-pick mid-move beside the row the move re-encoded — the admit
+      // path forbids the pair up front). Collapsing AFTER admission was incomplete: a
+      // cap-refused grow keeps its old bytes, the keys then differ, and the same file rides the
+      // send twice (review finding). First occurrence stands; the cap projects over what will
+      // be kept.
+      const targetOf = (att: ComposeAttachment): ComposeAttachment =>
+        replacements.get(att)?.next ?? att;
+      const seenTargets = new Set<string>();
+      const rows: ComposeAttachment[] = [];
+      for (const att of latest) {
+        const target = targetOf(att);
+        const key = `${target.filename}\u0000${target.contentBase64}`;
+        if (seenTargets.has(key)) continue; // the race's twin — dropped before it can diverge
+        seenTargets.add(key);
+        rows.push(att);
+      }
+
+      // Admission projects the WHOLE-LIST total: shrinks first (they only make room), grows in
+      // list order while the projection stays under the cap — see the header note.
       const cap = maxTotalBytesRef.current;
       const deltaOf = (att: ComposeAttachment, bytes: number): number =>
         bytes - base64Bytes(att.contentBase64);
-      let total = totalBytes(latest);
+      let total = totalBytes(rows);
       const landed = new Set<ComposeAttachment>();
-      for (const att of latest) {
+      for (const att of rows) {
         const r = replacements.get(att);
         if (r && deltaOf(att, r.bytes) <= 0) {
           landed.add(att);
@@ -524,7 +550,7 @@ export function ComposeAttach({
         }
       }
       let capKept = false;
-      for (const att of latest) {
+      for (const att of rows) {
         const r = replacements.get(att);
         if (!r || landed.has(att)) continue;
         const delta = deltaOf(att, r.bytes);
@@ -537,7 +563,7 @@ export function ComposeAttach({
       }
       let savedFrom = 0;
       let savedTo = 0;
-      const committed = latest.map((att) => {
+      const committed = rows.map((att) => {
         const r = replacements.get(att);
         if (!r || !landed.has(att)) return att;
         if (r.compressed) {
@@ -546,21 +572,10 @@ export function ComposeAttach({
         }
         return r.next;
       });
-      // CONVERGENCE COLLAPSES DUPLICATES. Two rows can arrive byte-identical under one name only
-      // through a race this pass just settled (a re-pick mid-move landing beside the row the move
-      // re-encoded) — the admit path forbids the pair up front — and a message carrying the same
-      // file twice is the exact defect the duplicate skip exists for. First occurrence stands.
-      const seen = new Set<string>();
-      const deduped = committed.filter((a) => {
-        const key = `${a.filename}\u0000${a.contentBase64}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
       setError(capKept ? t("attachQualityCap", { size: formatSize(cap) }) : null);
       setCompressed(savedFrom > 0 ? { from: savedFrom, to: savedTo } : null);
-      if (deduped.length !== latest.length || deduped.some((a, i) => a !== latest[i])) {
-        onChangeRef.current(deduped);
+      if (committed.length !== latest.length || committed.some((a, i) => a !== latest[i])) {
+        onChangeRef.current(committed);
       }
     },
     [t],
@@ -598,7 +613,6 @@ export function ComposeAttach({
       // must be the one on screen at the moment of the pick, not the one a stale closure holds.
       const level = levelRef.current;
       let refused = false;
-      let preTotal = totalBytes(attachmentsRef.current);
       const picked: Array<{
         attachment: ComposeAttachment;
         bytes: number;
@@ -616,14 +630,16 @@ export function ComposeAttach({
           const picture = await compressImage(file, level);
           // REFUSE THE IMPOSSIBLE BEFORE ENCODING IT. `readAsBase64` allocates ~4/3 of the file
           // as a string, so a 500 MB pick must be turned away on its SIZE — known right here —
-          // rather than after the tab has paid to encode it (review finding). A conservative
-          // pre-check against the running pick total; the commit below stays authoritative.
-          const capNow = maxTotalBytesRef.current;
-          if (picture.bytes > capNow || preTotal + picture.bytes > capNow) {
+          // rather than after the tab has paid to encode it (review finding). PER-FILE
+          // impossibility only: a file bigger than the whole cap can never be admitted whatever
+          // else changes. Batch and whole-list admission belong to the COMMIT below — a running
+          // pre-total here counted rows a removal had dropped and batch files a later dedupe
+          // would skip, and falsely refused files that fit (review finding). The residue is the
+          // transient encode of a batch the commit then trims, bounded by the pick's own size.
+          if (picture.bytes > maxTotalBytesRef.current) {
             refused = true;
             continue;
           }
-          preTotal += picture.bytes;
           const contentBase64 = await readAsBase64(picture.blob);
           const filename = file.name || "attachment";
           const attachment: ComposeAttachment = {
@@ -698,6 +714,7 @@ export function ComposeAttach({
       if (skipped.length > 0) setDuplicates(skipped);
       if (admitted.length > 0) {
         const committed = [...latest, ...admitted];
+        pendingFlush.current = committed; // cleared by the render that receives it — see the ref
         onChangeRef.current(committed);
         // The dial may have moved while these files decoded — they were encoded at the level of
         // their PICK, which is the level the user has since moved off. Land the whole list at
