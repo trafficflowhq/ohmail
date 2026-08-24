@@ -127,21 +127,21 @@ export function useJunkWindow(active: boolean, toast: ToastFn): JunkWindowContro
     void screenerApi.junkList({ cursor: nextCursor }).then(
       (page) => {
         setOlderLoading(false);
+        /**
+         * AN EPOCH RESET IS A RESTART, NOT AN APPEND. The server STATES which mailbox's cursor
+         * it discarded (`reset` on the mailbox row — stated, not inferred, because a reset
+         * folder that is now EMPTY contributes no row to infer from). That mailbox's rows in
+         * this answer are its new TOP page; appending them under the old rows would file the
+         * folder's newest mail at the bottom of the window, and splicing per mailbox would
+         * leave the OTHER mailboxes' pages half-consumed. So the window starts over with a
+         * real cursorless first page — `reload()` — which is correct for every mailbox at
+         * once (round 3's finding on the single-mailbox restart).
+         */
+        if (page.mailboxes.some((m) => m.reset === true)) {
+          fetchFirst();
+          return;
+        }
         setItems((cur) => {
-          /**
-           * AN EPOCH RESET IS A RESTART, NOT AN APPEND. The server discards a cursor whose
-           * UIDVALIDITY no longer matches and answers that mailbox's TOP page under the new
-           * epoch — appending that below the old rows would file the folder's NEWEST mail at
-           * the bottom of the window, under stale rows that no longer exist. So when any
-           * returned row's epoch differs from what this window holds for the same mailbox,
-           * the window starts over with the fresh answer.
-           */
-          const heldEpoch = new Map(cur.map((i) => [i.mailboxId, i.uidValidity]));
-          const reset = page.items.some((i) => {
-            const held = heldEpoch.get(i.mailboxId);
-            return held !== undefined && held !== i.uidValidity;
-          });
-          if (reset) return page.items;
           // Appended, never re-sorted: the reader asked for OLDER, below what they have.
           const have = new Set(cur.map(junkKeyOf));
           return [...cur, ...page.items.filter((i) => !have.has(junkKeyOf(i)))];
@@ -153,7 +153,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn): JunkWindowContro
         toast(t("junkFailed"));
       },
     );
-  }, [nextCursor, olderLoading, toast, t]);
+  }, [nextCursor, olderLoading, toast, t, fetchFirst]);
 
   const bodyFor = useCallback(
     (item: JunkItemWire): JunkBodyPhase => bodies.get(junkKeyOf(item)) ?? { phase: "idle" },

@@ -1523,6 +1523,8 @@ export interface JunkMailboxWire {
   id: string;
   address: string;
   window: "ok" | "no_junk_folder" | "unreachable";
+  /** This mailbox's cursor was discarded (UIDVALIDITY changed) — its rows are a fresh TOP page. */
+  reset?: boolean;
 }
 
 export interface JunkPageWire {

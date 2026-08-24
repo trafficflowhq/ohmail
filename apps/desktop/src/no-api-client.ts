@@ -604,6 +604,7 @@ export interface JunkMailboxWire {
     id: string;
     address: string;
     window: "ok" | "no_junk_folder" | "unreachable";
+    reset?: boolean;
 }
 
 export interface JunkPageWire {

@@ -103,6 +103,13 @@ export interface JunkMailboxState {
    * empty list is never substituted for it).
    */
   window: "ok" | "no_junk_folder" | "unreachable";
+  /**
+   * THIS mailbox's pagination cursor was DISCARDED — its UIDVALIDITY changed (the folder was
+   * purged/recreated), so the rows in this answer are its new TOP page, not a continuation.
+   * The client restarts its window on seeing one (an epoch change with an EMPTY new folder has
+   * no row to detect it by, which is why this is stated rather than inferred).
+   */
+  reset?: boolean;
 }
 
 export interface JunkPage {
@@ -171,11 +178,11 @@ async function junkMailboxesOf(
   return rows;
 }
 
-/** Race a read against {@link JUNK_READ_TIMEOUT_MS}; a timeout is an ordinary failure. */
-async function withDeadline<T>(work: Promise<T>): Promise<T> {
+/** Race a step against the mailbox read's REMAINING budget; a timeout is an ordinary failure. */
+async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("junk window read timed out")), JUNK_READ_TIMEOUT_MS);
+    timer = setTimeout(() => reject(new Error("junk window read timed out")), ms);
     (timer as unknown as { unref?: () => void }).unref?.();
   });
   try {
@@ -212,31 +219,39 @@ export async function listJunk(
     }
     try {
       /**
-       * The deadline CANCELS, it does not merely abandon: a race that walked away would leave
-       * the admitted IMAP slot and the socket held by a hung operation until the provider
-       * relented, and a couple of those turn every later junk/body/attachment request into
-       * `mailbox_busy` (a review caught the abandoning version). So the dial's own promise is
-       * closed the moment it resolves after a timeout, and a read that outlives its deadline
-       * has its connection closed under it — the close returns both slots and tears the
-       * socket, which is what actually ends the hung command.
+       * The deadline CANCELS, it does not merely abandon — and it is ONE budget for the whole
+       * mailbox read, dial included (two fresh 20 s timers were a 40 s read; a review counted).
+       * A race that walked away would leave the admitted IMAP slot and the socket held by a
+       * hung operation until the provider relented, and a couple of those turn every later
+       * junk/body/attachment request into `mailbox_busy`. So: the dial's own promise is
+       * FORCE-closed if it resolves after its slice of the budget, and a read that outlives
+       * the deadline has `forceClose()` run under it — the socket is destroyed (a graceful
+       * LOGOUT would queue exactly behind the hung command, which round 3 caught) and both
+       * admission slots return, independent of anything the provider still owes.
        */
+      const startedAt = Date.now();
+      const remaining = (): number => Math.max(1, JUNK_READ_TIMEOUT_MS - (Date.now() - startedAt));
       const openedP = openMailboxImap(deps, box.id);
-      let opened: Awaited<typeof openedP> | null = null;
+      let opened: Awaited<typeof openedP>;
+      try {
+        opened = await withDeadline(openedP, remaining());
+      } catch (err) {
+        void openedP.then((o) => o.forceClose()).catch(() => { /* never came up */ });
+        throw err;
+      }
       const page = await (async () => {
         try {
-          opened = await withDeadline(openedP);
-        } catch (err) {
-          void openedP.then((o) => o.close()).catch(() => { /* never came up, or already closed */ });
-          throw err;
-        }
-        try {
           const held = before[box.id];
-          return await withDeadline(opened.adapter.listFolderPage(box.junkFolder!, {
+          const got = await withDeadline(opened.adapter.listFolderPage(box.junkFolder!, {
             limit: FOLDER_PAGE_MAX,
             ...(held !== undefined ? { beforeSeq: held.s, expectUidValidity: held.v } : {}),
-          }));
-        } finally {
+          }), remaining());
           await opened.close().catch(() => { /* socket gone; the slot release has its own guard */ });
+          return got;
+        } catch (err) {
+          // The abandon path — never the graceful close, which waits behind the hang.
+          await opened.forceClose().catch(() => { /* already down */ });
+          throw err;
         }
       })();
       if (page === null) {
@@ -245,7 +260,11 @@ export async function listJunk(
         states.push({ id: box.id, address: box.address, window: "no_junk_folder" });
         return null;
       }
-      states.push({ id: box.id, address: box.address, window: "ok" });
+      const held = before[box.id];
+      states.push({
+        id: box.id, address: box.address, window: "ok",
+        ...(held !== undefined && held.v !== page.uidValidity ? { reset: true } : {}),
+      });
       return { boxId: box.id, page };
     } catch (err) {
       deps.logger?.warn?.("junk_window_read_failed", { mailboxId: box.id, err: String(err) });
@@ -486,7 +505,14 @@ export async function rescueJunk(
            * unmetered tier's declaration (local/self-host), same as `UNMETERED_STORAGE_CAP`.
            */
           const capOf = deps.services?.storageCapOf;
-          const cap = capOf !== undefined ? await capOf(ctx) : UNMETERED_STORAGE_CAP;
+          if (capOf === undefined) {
+            // ABSENT is a host nobody has read — the `ApiServices.storageCapOf` contract: the
+            // unmetered tiers DECLARE the symbol, so undefined must refuse rather than infer
+            // unmetered (round 3's finding). The husk stands; the rescue itself has landed.
+            deps.logger?.warn?.("junk_rescue_unhusk_no_cap_resolver", { mailboxId: args.mailboxId });
+            return;
+          }
+          const cap = await capOf(ctx);
           const capBytes = cap === UNMETERED_STORAGE_CAP ? null : cap;
           const grow = newBytes - oldBytes;
           if (grow > 0) {

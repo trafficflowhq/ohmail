@@ -182,6 +182,8 @@ function giveLocalSlot(mailboxId: string, gate: MailboxGate): void {
 export interface OpenedMailboxImap {
   adapter: ImapAdapter;
   close(): Promise<void>;
+  /** Destroy the socket NOW (no LOGOUT — that queues behind a hung command) and free the slots. */
+  forceClose(): Promise<void>;
 }
 
 /**
@@ -328,6 +330,16 @@ async function openImapUnderCap(
       close: async () => {
         try {
           await adapter.close();
+        } finally {
+          await release();
+        }
+      },
+      // The abandon path: a caller escaping a HUNG command must not wait behind it — a graceful
+      // LOGOUT queues exactly there. The socket is destroyed synchronously (which is what ends
+      // the hung command), then both slots go back; settles independently of anything queued.
+      forceClose: async () => {
+        try {
+          adapter.forceClose();
         } finally {
           await release();
         }

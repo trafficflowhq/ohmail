@@ -1001,6 +1001,21 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     this.established = false;
   }
 
+  /**
+   * Tear the connection down NOW — no LOGOUT. imapflow serializes commands, so a graceful
+   * `logout()` queues BEHIND whatever command is currently hung; a caller abandoning a
+   * timed-out operation that then awaited {@link close} would wait exactly as long as the hang
+   * it was escaping (the Junk window's deadline reviews caught this). `client.close()` destroys
+   * the socket, which is also what actually ENDS the hung command. For deliberate teardown of a
+   * healthy connection, {@link close} remains the polite path.
+   */
+  forceClose(): void {
+    this.closing = true;
+    try { this.client?.close(); } catch { /* already down */ }
+    this.transporter?.close();
+    this.established = false;
+  }
+
   async capabilities(): Promise<ImapCapabilities> {
     const c = this.client.capabilities;
     const base: ImapCapabilities = {
