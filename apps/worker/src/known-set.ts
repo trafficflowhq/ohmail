@@ -155,12 +155,30 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   "getFolderState", "listRules", "knownSenders", "findThreadParent", "listThreadBacklog",
   "isGraduated", "getMailbox", "listScreenerBacklog", "getMailboxFolders", "listKnownLocators",
   "listPendingFolderStates", "listPendingFlagStates",
+  // the mail-0065 junk/delete wave's reads — special-folder discovery, the AI-authored
+  // quarantine probe, and the junk-restore pass's candidate read (bodies joined to instances,
+  // projecting nothing new). These landed UNCLASSIFIED and the guard suite was red in HEAD from
+  // that wave until the 0071 slice ran it again — the dirty-by-default rule did its job late.
+  "getMailboxSpecialFolders", "listAiAutoAppliedQuarantine", "listJunkFiledHusks",
   // writes to tables this projection does not read
   "markKickstarted", "upsertContacts", "upsertMailboxFolder", "recordMessageFailure",
   "claimMessageFailures", "resolveMessageFailure", "upgradeDedupKey", "insertMessageBody",
   "insertAttachments", "upsertFolderState", "setFolderConflict", "deferFolderReconcile",
   "deferFlagReconcile", "recordAudit", "recordAuditMany", "recordChange", "upsertThread",
   "mergeThreadMessage", "setMessageThread", "recordRoutingDecision", "enqueueApproval",
+  // the mail-0065 wave's writes, none of which touch a projected field (the projection is
+  // message_instances + messages.unread/message_id_header + flag_state.observed_seen):
+  //  · setMailboxSpecialFolders — mailboxes.junk_folder/trash_folder, a discovery stamp
+  //  · huskBody / restoreWithheldBody — message_bodies + the storage counter
+  //  · clearDeletedOnAdopt / tombstoneInstanceless — messages.deleted_at (+ husk + change_log);
+  //    a tombstoned row is by definition INSTANCELESS, so no instance row can be moved by it
+  "setMailboxSpecialFolders", "huskBody", "restoreWithheldBody",
+  "clearDeletedOnAdopt", "tombstoneInstanceless",
+  // the junk-restore rewrite: message_bodies + messages.snippet/updated_at + one change_log row —
+  // never a locator, never an instance, so it cannot move the projection. It runs on every cycle
+  // that finds a candidate, which is exactly why it must be named here: unclassified it would
+  // drop the memo once per restore and re-read listKnownLocators for the whole mailbox.
+  "unhuskJunkFiledBody",
   // the pass-through
   "transaction",
 ]);

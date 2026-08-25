@@ -51,34 +51,57 @@ import type { JunkFiledHuskRow, WorkerRepo } from "@trafficflow/core/adapters/dr
  *
  * ── BOUNDED PER CYCLE, RESUMABLE, AND IT NEVER THROWS FOR A POLICY OUTCOME ──────────────────
  *
- * Two bounds, both per cycle: rows EXAMINED (`JUNK_RESTORE_MAX_PER_CYCLE`, the reaper's 200)
- * and messages RE-READ from the server (`JUNK_RESTORE_FETCHES_PER_CYCLE`, `redacted-restore`'s
- * 50 — every one is a full-body FETCH). The SQL walk is keyset-paged on `messages.id` within a
- * cycle, because a refused row keeps its husk and stays a candidate: a cursorless page would
- * re-offer the same refusals for ever (`redacted-restore.ts#selectCandidates`, verbatim). Across
- * cycles the walk restarts from the top, and the in-memory {@link refusedFor} set keeps a row
- * this PROCESS already declined (over the ceiling, identity mismatch, at cap, unparseable) from
- * costing a FETCH every cycle; a restart retries them, which is the right granularity for
- * outcomes that change only with a new build or a freed cap.
+ * Three bounds, all per cycle: SQL pages walked (`JUNK_RESTORE_MAX_PAGES` — a bound, not
+ * `while (true)`, `redacted-restore.ts`'s shape), messages RE-READ from the server
+ * (`JUNK_RESTORE_FETCHES_PER_CYCLE`, its 50 — every one is a full-body FETCH), and bytes in
+ * flight per FETCH (`JUNK_RESTORE_FETCH_CHUNK` locators per adapter call — the adapter
+ * accumulates every source buffer of one call before returning, so a 50-wide ask at the 8 MiB
+ * ceiling could hold ~400 MiB; four at a time caps one call at ingest's own 32 MiB batch
+ * bound, and each chunk's buffers release before the next is read — a review round caught the
+ * unchunked version). The walk is keyset-paged on `messages.id` within a cycle, because a
+ * refused row keeps its husk and stays a candidate: a cursorless page would re-offer the same
+ * refusals for ever (`redacted-restore.ts#selectCandidates`, verbatim). Rows this process
+ * already declined are SKIPPED WITHOUT A FETCH and — deliberately — without consuming the walk:
+ * the page bound is the only thing they cost, so a mailbox whose first two hundred candidates
+ * are all remembered refusals still reaches the fresh candidate behind them in the same cycle
+ * (the same review round caught the examined-based bound starving exactly that row).
  *
- * What is NOT refused, only deferred to a later cycle: an epoch mismatch (the instance row is
- * stale — a UID means nothing outside the epoch that issued it, and the scan owns re-numbering)
- * and a UID the server no longer holds there (moved or expunged since the instance was written;
- * the scan's next delete observation forgets the instance and the predicate self-heals). Both
- * are the scan's evidence to record, not this pass's, so neither is remembered.
+ * The refusal memory has two shelves, because two different things can change a verdict:
+ *  · {@link refusedFor} — per process, for outcomes only a NEW BUILD changes: over the
+ *    ceiling, unparseable, identity mismatch. A restart retries them.
+ *  · {@link capDeferredFor} — per process WITH A CLOCK (`AT_CAP_RETRY_MS`): an at-cap decline
+ *    is retried after the interval, because the CAP side changes under a running worker (mail
+ *    deleted, a tier upgraded) and a permanent memo would leave the body empty until a
+ *    redeploy on an account that has long since made room.
+ *
+ * What is NOT remembered at all, only deferred to a later cycle: an epoch mismatch (the
+ * instance row is stale — a UID means nothing outside the epoch that issued it, and the scan
+ * owns re-numbering) and a UID the server no longer holds there (moved or expunged since the
+ * instance was written; the scan's next delete observation forgets the instance and the
+ * predicate self-heals). Both are the scan's evidence to record, not this pass's.
  *
  * It reads with the adapter's targeted fetch and NOTHING ELSE: no move, no flag, no delete. The
  * only writes are the shared rewrite's — body, snippet, marker, one `change_log` `update`.
  */
 
-/** Candidate rows one cycle may examine. The reaper's per-cycle number (`TOMBSTONE_MAX_PER_CYCLE`). */
-export const JUNK_RESTORE_MAX_PER_CYCLE = 200;
+/** SQL pages one cycle may walk before giving up and saying so. A bound, not `while (true)`. */
+export const JUNK_RESTORE_MAX_PAGES = 20;
 
 /** Messages re-read from the mail server per cycle — `redacted-restore.ts`'s heartbeat bound. */
 export const JUNK_RESTORE_FETCHES_PER_CYCLE = 50;
 
 /** Rows per SQL page inside the walk. Held in memory across the per-folder network reads. */
 export const JUNK_RESTORE_PAGE = 50;
+
+/**
+ * Locators per adapter FETCH. The adapter holds every source buffer of one call until it
+ * returns, so this times {@link JUNK_RESTORE_MAX_BYTES} is the in-flight ceiling of one call:
+ * 4 × 8 MiB = 32 MiB, ingest's own batch bound. Chunks release between calls.
+ */
+export const JUNK_RESTORE_FETCH_CHUNK = 4;
+
+/** How long an at-cap decline is remembered before the cap-aware rewrite is retried. */
+export const AT_CAP_RETRY_MS = 60 * 60 * 1000;
 
 /**
  * Per-message byte ceiling for the re-read. Over it the husk stands (its bytes are the one thing
@@ -89,12 +112,22 @@ export const JUNK_RESTORE_PAGE = 50;
 export const JUNK_RESTORE_MAX_BYTES = 8 * 1024 * 1024;
 
 const refusedByMailbox = new Map<string, Set<string>>();
-/** The per-process memory of rows this pass has declined for a mailbox — see the header. */
+/** The per-process memory of rows a new BUILD might change — see the header's two shelves. */
 export function refusedFor(mailboxId: string): Set<string> {
   const hit = refusedByMailbox.get(mailboxId);
   if (hit) return hit;
   const fresh = new Set<string>();
   refusedByMailbox.set(mailboxId, fresh);
+  return fresh;
+}
+
+const capDeferredByMailbox = new Map<string, Map<string, number>>();
+/** messageId → epoch ms after which an at-cap decline is retried — the CLOCK shelf. */
+export function capDeferredFor(mailboxId: string): Map<string, number> {
+  const hit = capDeferredByMailbox.get(mailboxId);
+  if (hit) return hit;
+  const fresh = new Map<string, number>();
+  capDeferredByMailbox.set(mailboxId, fresh);
   return fresh;
 }
 
@@ -113,12 +146,17 @@ export interface JunkRestoreDeps {
    */
   write: <T>(fn: (r: WorkerRepo) => Promise<T>) => Promise<T>;
   log?: Logger;
-  maxPerCycle?: number;
+  now?: () => Date;
+  maxPages?: number;
   fetchesPerCycle?: number;
   page?: number;
+  fetchChunk?: number;
   maxBytes?: number;
-  /** Test seam for the in-memory refusal set. */
+  capRetryMs?: number;
+  /** Test seam for the in-memory refusal set (the per-build shelf). */
   refused?: Set<string>;
+  /** Test seam for the at-cap deferral map (the clock shelf). */
+  capDeferred?: Map<string, number>;
 }
 
 export interface JunkRestoreResult {
@@ -159,40 +197,53 @@ export async function junkRestorePass(deps: JunkRestoreDeps): Promise<JunkRestor
   const listHusks = repo.listJunkFiledHusks.bind(repo);
   const fetchByUid = adapter.fetchByUid.bind(adapter);
 
-  const maxPerCycle = deps.maxPerCycle ?? JUNK_RESTORE_MAX_PER_CYCLE;
+  const maxPages = deps.maxPages ?? JUNK_RESTORE_MAX_PAGES;
   const fetchBudget = deps.fetchesPerCycle ?? JUNK_RESTORE_FETCHES_PER_CYCLE;
   const pageSize = deps.page ?? JUNK_RESTORE_PAGE;
+  const fetchChunk = deps.fetchChunk ?? JUNK_RESTORE_FETCH_CHUNK;
   const maxBytes = deps.maxBytes ?? JUNK_RESTORE_MAX_BYTES;
+  const capRetryMs = deps.capRetryMs ?? AT_CAP_RETRY_MS;
+  const now = deps.now ?? (() => new Date());
   const capBytes = deps.storageCap === UNMETERED_STORAGE_CAP ? null : deps.storageCap;
   const refused = deps.refused ?? refusedFor(mailboxId);
+  const capDeferred = deps.capDeferred ?? capDeferredFor(mailboxId);
 
   const result: JunkRestoreResult = { ...EMPTY };
   let after: string | undefined;
 
-  outer: for (;;) {
-    const room = maxPerCycle - result.examined;
-    if (room <= 0) { result.capped = true; break; }
+  outer: for (let pages = 0; ; pages++) {
+    if (pages >= maxPages || result.fetched >= fetchBudget) { result.capped = true; break; }
     const page = await listHusks(accountId, mailboxId, {
-      limit: Math.min(pageSize, room), ...(after !== undefined ? { afterId: after } : {}),
+      limit: pageSize, ...(after !== undefined ? { afterId: after } : {}),
     });
     if (page.length === 0) break;
     result.examined += page.length;
     after = page[page.length - 1]!.messageId;
 
-    // One targeted FETCH per folder per page, the retry pass's grouping — never one per row.
+    // One targeted FETCH per folder per chunk, the retry pass's grouping — never one per row.
+    // Both refusal shelves are skipped HERE, before any grouping, and deliberately cost the
+    // walk nothing but the page read: an examined-based budget once let two hundred remembered
+    // refusals starve the fresh candidate sorted behind them, for ever.
     const byFolder = new Map<string, JunkFiledHuskRow[]>();
+    const nowMs = now().getTime();
     for (const row of page) {
       if (refused.has(row.messageId)) { result.skipped++; continue; }
+      const retryAt = capDeferred.get(row.messageId);
+      if (retryAt !== undefined) {
+        if (nowMs < retryAt) { result.skipped++; continue; }
+        capDeferred.delete(row.messageId);   // the clock ran out — retry the cap-aware rewrite
+      }
       const arr = byFolder.get(row.folder) ?? [];
       arr.push(row);
       byFolder.set(row.folder, arr);
     }
 
     for (const [folder, all] of byFolder) {
+      for (let i = 0; i < all.length;) {
       const budget = fetchBudget - result.fetched;
       if (budget <= 0) { result.capped = true; break outer; }
-      const rows = all.slice(0, budget);
-      if (rows.length < all.length) result.capped = true;
+      const rows = all.slice(i, i + Math.min(fetchChunk, budget));
+      i += rows.length;
 
       let found: Awaited<ReturnType<typeof fetchByUid>>;
       try {
@@ -269,18 +320,22 @@ export async function junkRestorePass(deps: JunkRestoreDeps): Promise<JunkRestor
             });
             break;
           case "at_cap":
-            refused.add(row.messageId);
+            // The CLOCK shelf, not the per-build one: the cap side changes under a running
+            // worker (mail deleted, a tier upgraded), so the decline is retried after the
+            // interval rather than remembered until a redeploy.
+            capDeferred.set(row.messageId, nowMs + capRetryMs);
             result.refused++;
             log?.warn("junk_restore_at_cap", {
               mailboxId, accountId, messageId: row.messageId,
               reason: "the account is at its storage cap; the husk stands with its marker true — " +
-                "the bytes live on in the mailbox, and a restart retries once room is made",
+                "the bytes live on in the mailbox, and the rewrite is retried once the interval passes",
             });
             break;
         }
       }
+      }
     }
-    if (page.length < Math.min(pageSize, room)) break;
+    if (page.length < pageSize) break;
   }
 
   if (result.restored > 0 || result.fetched > 0) {
