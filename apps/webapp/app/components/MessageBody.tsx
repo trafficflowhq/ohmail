@@ -1172,9 +1172,18 @@ function stripCssComments(css: string): string {
   let i = 0;
   while (i < css.length) {
     const c = css[i];
+    // A top-level escape consumes the NEXT character whatever it is — `\'` and `\"` are ident
+    // characters to CSS, not string openers, and treating one as a string swallowed everything
+    // to EOF and left a live comment "inside" it for the rule scan to read as CSS.
+    if (c === "\\") {
+      i += 2;
+      continue;
+    }
     if (c === '"' || c === "'") {
       let j = i + 1;
-      while (j < css.length && css[j] !== c) {
+      // CSS Syntax §4.3.5: an unescaped newline is a bad-string and ENDS the token there —
+      // a scanner that kept skipping would hide real rules behind one stray quote.
+      while (j < css.length && css[j] !== c && css[j] !== "\n" && css[j] !== "\r" && css[j] !== "\f") {
         if (css[j] === "\\") j += 1;
         j += 1;
       }
@@ -1210,16 +1219,42 @@ function stripCssComments(css: string): string {
  * (no braces) never reach this function at all: the element loop in {@link isDesignedLayout}
  * reads those, and it already walks only {@link CANVAS_TAGS}.
  */
+/** A selector list that targets images — `img` as a TAG token; `.imgwrap` is a class and is not. */
+const IMG_SELECTOR = /(?:^|[\s,>+~(])img\b/i;
+
 function sheetDeclaresResponsiveCanvas(styleText: string): boolean {
   // Comments go FIRST, for two reasons that are both real CSS: `/* img defaults */ .card{…}`
   // would put the token `img` into the captured selector and skip a genuine canvas rule, and a
   // brace inside a comment would misalign every rule after it. See {@link stripCssComments}
   // for why this is a forward scan and not a regex.
   const sheet = stripCssComments(styleText);
-  const rule = /([^{}]+)\{([^{}]*)\}/g;
-  for (let m = rule.exec(sheet); m; m = rule.exec(sheet)) {
-    if (/(?:^|[\s,>+~(])img\b/i.test(m[1]!)) continue;
-    if (declaresResponsiveCanvas(m[2]!)) return true;
+  // ── ONE PASS OVER THE BRACES, NOT A RULE REGEX ────────────────────────────────────────
+  // `([^{}]+)\{` re-scans a long brace-free span from every offset while searching for a `{`
+  // that is not there — the `url(` scanner's quadratic shape, reachable here through a quoted
+  // token the comment stripper rightly preserves. A "rule" is what that regex matched: an
+  // open brace whose PREVIOUS brace is not another open (the selector is the text between the
+  // two), closed by the next close brace with nothing bracey between — exactly the innermost
+  // pairs, so a media query contributes its inner rules under their own selectors, never its
+  // prelude. Tracking the last two braces in one forward walk gives the same pairs in O(n).
+  let prevBrace = -1;
+  let prevBraceIsOpen = false;
+  let braceBeforeOpen = -1;
+  for (let j = 0; j < sheet.length; j += 1) {
+    const ch = sheet[j];
+    if (ch === "{") {
+      braceBeforeOpen = prevBrace;
+      prevBrace = j;
+      prevBraceIsOpen = true;
+    } else if (ch === "}") {
+      if (prevBraceIsOpen) {
+        const sel = sheet.slice(braceBeforeOpen + 1, prevBrace);
+        if (!IMG_SELECTOR.test(sel) && declaresResponsiveCanvas(sheet.slice(prevBrace + 1, j))) {
+          return true;
+        }
+      }
+      prevBrace = j;
+      prevBraceIsOpen = false;
+    }
   }
   return false;
 }
