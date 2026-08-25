@@ -2183,16 +2183,11 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
    * actually lives.
    */
   let styleText = "";
-  // The SAME sheets, kept apart: a browser tokenizes each `<style>` at its own EOF, so the
-  // designed-mail classifier must read them one by one — an unterminated token in one element
-  // must not eat the next element's rules. See {@link sheetDeclaresResponsiveCanvas}.
-  const styleSheets: string[] = [];
   for (const el of parsed.querySelectorAll("style")) {
     el.textContent = neutraliseCss(el.textContent ?? "", (u) => cssUrl(u), recordSheet);
     // Accumulated for {@link effectiveBackground} only, and it is the NEUTRALISED text — the
     // sheet the frame is going to get — so the paper this reads is the paper the reader sees.
     styleText += `${el.textContent}\n`;
-    styleSheets.push(el.textContent ?? "");
   }
 
   /**
@@ -2273,7 +2268,15 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // the frame at all. Both readings come from the one sanitized document, never from a second
   // parse.
   const rigid = isRigidLayout(sanitized, styleText);
-  const designed = rigid || isDesignedLayout(sanitized, styleSheets);
+  // The sheets are read off the SANITIZED document — the document the frame will build — for
+  // the same reason `rigid` and `light` are: DOMPurify drops a `<style>` whose text smells of
+  // markup (its own mXSS rule), and a canvas living only in a dropped sheet is a canvas the
+  // rendered document has not got. One element per entry, because a browser tokenizes each
+  // `<style>` at its own EOF — see {@link sheetDeclaresResponsiveCanvas}.
+  const designed = rigid || isDesignedLayout(
+    sanitized,
+    [...sanitized.querySelectorAll("style")].map((s) => s.textContent ?? ""),
+  );
   return {
     html: sanitized.innerHTML,
     blocked,
