@@ -1190,35 +1190,46 @@ function pastCssEscape(css: string, backslash: number): number {
 }
 
 function stripCssComments(css: string): string {
-  if (!css.includes("/*")) return css;
   let out = "";
   let copied = 0;
   let i = 0;
   while (i < css.length) {
     const c = css[i];
-    // A top-level escape consumes the NEXT character whatever it is — `\'` and `\"` are ident
-    // characters to CSS, not string openers, and treating one as a string swallowed everything
-    // to EOF and left a live comment "inside" it for the rule scan to read as CSS.
+    // A top-level escape consumes its WHOLE token ({@link pastCssEscape}) — `\'` and `\"` are
+    // ident characters to CSS, not string openers, and treating one as a string swallowed
+    // everything to EOF and left a live comment "inside" it for the rule scan to read as CSS.
     if (c === "\\") {
       i = pastCssEscape(css, i);
       continue;
     }
+    // ── A STRING'S CONTENTS ARE DATA, AND THE CLASSIFIER VIEW BLANKS THEM ────────────────
+    // Not merely SKIPPED: a preserved string can hold rule-shaped text — braces, a max-width
+    // declaration, comment delimiters — and every downstream reader (the brace walk, the
+    // declaration regex) would need its own string awareness to avoid reading it as CSS.
+    // Emitting an EMPTY string token instead closes the whole family at one seam: no string
+    // byte survives into the view the classifier reads, and a string never carries a live
+    // declaration, so blanking one can never hide a real canvas. Escapes are consumed whole,
+    // and CSS Syntax §4.3.5's bad-string rule ends the token at an unescaped newline (which
+    // stays in the output — it was never part of the string).
     if (c === '"' || c === "'") {
+      out += css.slice(copied, i) + c + c;
       let j = i + 1;
-      // CSS Syntax §4.3.5: an unescaped newline is a bad-string and ENDS the token there —
-      // a scanner that kept skipping would hide real rules behind one stray quote.
       while (j < css.length && css[j] !== c && css[j] !== "\n" && css[j] !== "\r" && css[j] !== "\f") {
         if (css[j] === "\\") { j = pastCssEscape(css, j); continue; }
         j += 1;
       }
-      i = j + 1;
+      i = j < css.length && css[j] === c ? j + 1 : j;
+      copied = i;
       continue;
     }
-    // A url token is data to CSS from `url(` to its `)` — a comment-open inside one is part of
-    // the url, and treating it as a comment ate every live rule up to the next comment-close-
-    // lookalike in a later url. `continuesIdent` keeps `xurl(` from matching, and `@`/`#` are
-    // rejected by name: `@url(` is an at-keyword and `#url(` an id selector, not url tokens, so
-    // their parenthesised text is ordinary CSS the comment rules still govern.
+    // An UNQUOTED url token is data to CSS from `url(` to its `)` — a comment-open inside one
+    // is part of the url, and treating it as a comment ate every live rule up to the next
+    // comment-close-lookalike in a later url. Blanked to `url()` for the string rationale
+    // above: url data can hold braces too. `continuesIdent` keeps `xurl(` from matching, and
+    // `@`/`#` are rejected by name: `@url(` is an at-keyword and `#url(` an id selector, whose
+    // parenthesised text is ordinary CSS the comment rules still govern. The QUOTED form —
+    // `url( "…" )` — is NOT taken here: its argument is a string the branch above blanks, and
+    // between the argument and the function's `)` ordinary CSS rules apply again.
     if (
       (c === "u" || c === "U") &&
       /^url\(/i.test(css.slice(i, i + 4)) &&
@@ -1227,27 +1238,17 @@ function stripCssComments(css: string): string {
     ) {
       let j = i + 4;
       while (j < css.length && (css[j] === " " || css[j] === "\t")) j += 1;
-      const q = css[j];
-      if (q === '"' || q === "'") {
-        // `url( "…" )` is a FUNCTION whose argument is a STRING — the string may hold a literal
-        // `)`, so it is scanned as a string (escapes, and CSS's bad-string newline rule), and
-        // then the OUTER scanner resumes: between the argument and the function's `)` ordinary
-        // CSS rules apply again, so a genuine comment there is still a comment rather than
-        // "url data" whose braces the rule walk would read as live.
-        j += 1;
-        while (j < css.length && css[j] !== q && css[j] !== "\n" && css[j] !== "\r" && css[j] !== "\f") {
-          if (css[j] === "\\") { j = pastCssEscape(css, j); continue; }
-          j += 1;
-        }
-        i = j + 1;
+      if (css[j] === '"' || css[j] === "'") {
+        i = j; // the string branch blanks the argument; the outer scan resumes after it
         continue;
       }
-      // The UNQUOTED form is a url TOKEN: data to its `)`, comment-opens included.
+      out += css.slice(copied, i) + "url(";
       while (j < css.length && css[j] !== ")") {
         if (css[j] === "\\") { j = pastCssEscape(css, j); continue; }
         j += 1;
       }
-      i = j + 1;
+      i = j;
+      copied = i;
       continue;
     }
     if (c === "/" && css[i + 1] === "*") {
@@ -1299,6 +1300,9 @@ function sheetDeclaresResponsiveCanvas(styleText: string): boolean {
   let prevBrace = -1;
   let prevBraceIsOpen = false;
   let braceBeforeOpen = -1;
+  // The walk reads PLAIN BRACES, and may: the classifier view it walks has no string or url
+  // CONTENTS left (see {@link stripCssComments} — string and unquoted-url tokens are blanked,
+  // not merely skipped), so every brace here is structure the browser would also see.
   for (let j = 0; j < sheet.length; j += 1) {
     const ch = sheet[j];
     if (ch === "{") {
