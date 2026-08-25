@@ -1146,6 +1146,55 @@ function declaresResponsiveCanvas(css: string): boolean {
 }
 
 /**
+ * CSS comments out, in ONE forward pass — quote-aware, and linear by construction.
+ *
+ * The obvious lazy global regex (comment-open, anything, comment-close) fails both of this
+ * file's standing rules at once — and its delimiters cannot even be written in THIS comment
+ * without ending it, which is the trap in miniature. It is QUADRATIC on hostile input: a
+ * stylesheet of repeated comment-opens that never close makes the lazy quantifier re-scan the
+ * remainder from every start — the `url(` regex's failure shape (measured there at
+ * 125 KB → 6.1 s), on the same render thread, reachable within the 512 KiB cap. And it is
+ * blind to STRINGS: a `content` property may hold a comment-open in one quoted value and a
+ * comment-close in another, both text to CSS, and a regex that cannot know that deletes every
+ * real rule between them.
+ *
+ * So: one scan, every terminator found with `indexOf` from a position that only moves forward.
+ * A quoted string is copied whole (escapes honoured); an unterminated string runs to EOF, which
+ * can only make this find FEWER canvases — the safe direction, prose. An unterminated comment
+ * runs to EOF too, which is CSS Syntax's own rule for it, and is also what the browser will do
+ * to whatever "rules" sit inside it — they were never live CSS, so hiding them from the
+ * classifier tells no lies.
+ */
+function stripCssComments(css: string): string {
+  if (!css.includes("/*")) return css;
+  let out = "";
+  let copied = 0;
+  let i = 0;
+  while (i < css.length) {
+    const c = css[i];
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < css.length && css[j] !== c) {
+        if (css[j] === "\\") j += 1;
+        j += 1;
+      }
+      i = j + 1;
+      continue;
+    }
+    if (c === "/" && css[i + 1] === "*") {
+      out += css.slice(copied, i) + " ";
+      const close = css.indexOf("*/", i + 2);
+      if (close === -1) { copied = css.length; break; }
+      i = close + 2;
+      copied = i;
+      continue;
+    }
+    i += 1;
+  }
+  return copied === 0 ? css : out + css.slice(copied);
+}
+
+/**
  * The STYLESHEET half of the same question — rule-wise, because a sheet's declarations belong
  * to selectors and a canvas is a property of LAYOUT elements. An ordinary letter that pastes
  * `img.hero { max-width:600px }` is capping a PICTURE, which is exactly the reflow-that-costs-
@@ -1164,8 +1213,9 @@ function declaresResponsiveCanvas(css: string): boolean {
 function sheetDeclaresResponsiveCanvas(styleText: string): boolean {
   // Comments go FIRST, for two reasons that are both real CSS: `/* img defaults */ .card{…}`
   // would put the token `img` into the captured selector and skip a genuine canvas rule, and a
-  // brace inside a comment would misalign every rule after it.
-  const sheet = styleText.replace(/\/\*[\s\S]*?\*\//g, " ");
+  // brace inside a comment would misalign every rule after it. See {@link stripCssComments}
+  // for why this is a forward scan and not a regex.
+  const sheet = stripCssComments(styleText);
   const rule = /([^{}]+)\{([^{}]*)\}/g;
   for (let m = rule.exec(sheet); m; m = rule.exec(sheet)) {
     if (/(?:^|[\s,>+~(])img\b/i.test(m[1]!)) continue;
