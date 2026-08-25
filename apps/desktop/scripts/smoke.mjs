@@ -649,20 +649,27 @@ const dom = new JSDOM(classic, {
 const { window } = dom;
 
 /* THE GATE, UNDER HARNESS CONTROL — see `healthHeld`. Wait for the window's own first `/health`
-   ask (the same 2 s budget the render gets below; a gate that never asks is the first red), then
-   hold the verdict through a settle window and record what the window did meanwhile: a gate that
-   mounts the mail app while the verdict is pending shows itself here as a `/sync` recorded before
-   the release, however long it takes to get there. Only then is the answer released, and the
-   render wait below begins. Timer turns, not a wall clock, like the wait below. */
+   ask (a gate that never asks is the first red), then hold the verdict PENDING for the whole of
+   `RENDER_TURNS` and record what the window did meanwhile: a gate that mounts the mail app while
+   the verdict is pending shows itself here as a `/sync` recorded before the release. The negative
+   observation is completed — counted — BEFORE the verdict is released; the release only enables
+   the positive checks below.
+
+   WHY THIS LONG AND NOT LONGER. Any "nothing happened" observation is bounded, and the bound has to
+   be justified rather than picked: the pending window is exactly the budget the render gets below
+   (`RENDER_TURNS` timer turns), because an optimistic mount that reached its first `/sync` later
+   than that could not have drawn mail inside the render budget either — the smoke would already
+   call that build broken. Timer turns, not a wall clock, like the render wait. */
+const RENDER_TURNS = 80;
 const isHealthAsk = (i) => i.command === "engine_request" && String(i.payload?.url ?? "") === "/health";
 const isMailAsk = (i) => i.command === "engine_request" && String(i.payload?.url ?? "").startsWith("/sync");
-for (let i = 0; i < 80 && !invoked.some(isHealthAsk); i++) await new Promise((r) => setTimeout(r, 25));
+for (let i = 0; i < RENDER_TURNS && !invoked.some(isHealthAsk); i++) await new Promise((r) => setTimeout(r, 25));
 const askedHealth = invoked.some(isHealthAsk);
-for (let i = 0; i < 40; i++) await new Promise((r) => setTimeout(r, 25));
+for (let i = 0; i < RENDER_TURNS; i++) await new Promise((r) => setTimeout(r, 25));
 const mailWhilePending = invoked.filter(isMailAsk).length;
 releaseHealth();
 
-for (let i = 0; i < 80; i++) await new Promise((r) => setTimeout(r, 25));
+for (let i = 0; i < RENDER_TURNS; i++) await new Promise((r) => setTimeout(r, 25));
 
 const doc = window.document;
 const root = doc.getElementById("root");
