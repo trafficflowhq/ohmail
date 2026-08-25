@@ -2402,15 +2402,22 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // value `findSentForScan` memoises for the connection's life. The watched-set guard is
     // `foldersToScan`'s own, byte for byte, so the `ownAuthored` stamp below is unchanged.
     const nowMs = Date.now();
-    if (this.targetedSent === null || nowMs - this.targetedSent.at > ImapAdapter.TARGETED_SENT_TTL_MS) {
+    // A POSITIVE resolution the adapter already holds OUTRANKS a cached negative: the scan or
+    // the send path can learn the Sent folder inside the TTL window, and a retry from that
+    // folder must reach `planChange` WITH the `ownAuthored` stamp — un-stamped, the user's own
+    // outbound mail routes as inbound (round 4's finding). `findSentForScan` answers a known
+    // positive from its fields without a LIST, so honouring it costs nothing.
+    const knownPositive = this.sentFolder ?? this.scanSentFolder;
+    let sent: string | null;
+    if (knownPositive !== null || this.targetedSent === null
+      || nowMs - this.targetedSent.at > ImapAdapter.TARGETED_SENT_TTL_MS) {
       const resolvedSent = await this.findSentForScan();
-      this.targetedSent = {
-        value: resolvedSent !== null && !(WATCHED_FOLDERS as readonly string[]).includes(resolvedSent)
-          ? resolvedSent : null,
-        at: nowMs,
-      };
+      sent = resolvedSent !== null && !(WATCHED_FOLDERS as readonly string[]).includes(resolvedSent)
+        ? resolvedSent : null;
+      this.targetedSent = { value: sent, at: nowMs };
+    } else {
+      sent = this.targetedSent.value;
     }
-    const sent = this.targetedSent.value;
     if (wanted.length === 0) return { uidValidity: "0", creates: [], absent: [], oversize: [] };
 
     const lock = await this.client.getMailboxLock(this.toServerPath(folder));
