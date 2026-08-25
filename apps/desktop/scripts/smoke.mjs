@@ -411,6 +411,27 @@ function installShellStub(window) {
       if (command === "engine_request") {
         const url = String(payload?.url ?? "");
         if (url.startsWith("/sync")) return Promise.resolve(frame(200, "OK", syncPage()));
+        /* `GET /health` — THE FIRST ROUTE THE CLOUD-DOOR WINDOW ASKS FOR, BEFORE ANY MAIL.
+           The gate keys its signed-in answer to the engine behind the bridge and withholds the
+           whole mail app until that engine's own first `/health` lands — so a stub that 404s
+           this is not a laxer world, it is a window that never opens: the fast pre-answer loop
+           retries forever and every check below starves. This entry was added AFTER the check
+           named it red, which is the drift the `unmodelled` list exists to say out loud.
+           The answer is the engine's own signed-in resting shape (`cloud-engine.ts`'s handler):
+           `signedIn: true` because the rest of this stub serves a mailbox full of somebody's
+           mail — a pre-auth or expired answer would render the sign-in surface over a world
+           these checks then assert is on screen, a contradiction the run could not read. */
+        if (url === "/health" && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(frame(200, "OK", {
+            ok: true,
+            mode: "cloud",
+            schemaTier: "mail",
+            mailboxId: MAILBOX_ID,
+            signedIn: true,
+            online: true,
+            sessionExpired: false,
+          }));
+        }
         /* Exact, or with a query — and NOT a `startsWith("/mailboxes")`, which would also swallow
            `/mailboxes/:id` and the organizer, takeover and resync routes under it. Those are
            mutations this window has no business making at boot, and a prefix match would answer
