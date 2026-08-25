@@ -477,6 +477,16 @@ export const alertState = pgTable("alert_state", {
   notifiedAt: timestamp("notified_at", { withTimezone: true }),
   notifyCount: integer("notify_count").notNull().default(0),
   detail: text("detail"),
+  /**
+   * The CONDITION SIGNATURE of the last claimed/confirmed notification — what "unchanged"
+   * means for the renotify policy (mail 0025 of this journal). An UNCHANGED standing condition
+   * re-pages on a long interval; a signature that differs from the firing alert's re-pages at
+   * once. Written at claim time (so a concurrent driver's signature arm cannot double-page)
+   * and restored on release, exactly like `notified_at`. NULL = never notified with a
+   * signature (pre-migration rows), which reads as "unchanged" — a deploy must not page every
+   * standing alert once just because the column arrived.
+   */
+  notifiedSignature: text("notified_signature"),
 }, (t) => ({ ixLastSeen: index("alert_state_last_seen_idx").on(t.lastSeenAt) }));
 
 /**

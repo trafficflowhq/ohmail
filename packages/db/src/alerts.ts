@@ -216,14 +216,32 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
 };
 
 /**
- * How long a firing alert waits before it pages again.
+ * How long a firing CRITICAL alert waits before it pages again.
  *
  * Not zero (that is the alert address people learn to filter) and not infinite (a fault
  * nobody fixed must resurface). One hour: long enough that a night of a broken worker is six
  * mails and not three hundred, short enough that an alert seen and forgotten comes back
  * before the customer notices.
+ *
+ * CRITICAL only, since the renotify policy below split the tiers: a standing critical is a
+ * production outage and the hourly nag is deliberate; everything else holds for
+ * {@link DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS} while UNCHANGED and re-pages at once on a state
+ * change (see {@link Alert.signature}).
  */
 export const DEFAULT_ALERT_REPEAT_MS = 60 * 60 * 1000;
+
+/**
+ * How long an UNCHANGED standing non-critical alert waits before it pages again.
+ *
+ * The measured failure this exists for: a true `device_sync_stale` warning for one dead
+ * pairing was emailed on every repeat interval for fifteen days, and the only thing that
+ * changed between the mails was the age in the sentence. A warning is by its own definition
+ * ("mail is safe, one install broke") not a page that earns hourly repetition — once, then a
+ * daily reminder while it stands, is the whole of what it owes. Any REAL movement in the
+ * condition (count, severity — the {@link Alert.signature}) re-pages immediately, so holding
+ * the unchanged case costs no latency on the case that matters.
+ */
+export const DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS = 24 * 60 * 60 * 1000;
 
 /**
  * One firing condition.
@@ -244,6 +262,21 @@ export interface Alert {
   count: number;
   /** Age of the oldest affected row, or of the staleness itself. */
   oldestSeconds: number | null;
+  /**
+   * The CONDITION SIGNATURE — what has to differ for a standing alert to count as CHANGED and
+   * re-page ahead of the unchanged-renotify interval. Optional; absent, the pass derives
+   * `"<severity>|<count>"`, which is the honest default: severity and the affected count are
+   * state, while `oldestSeconds` and the ages interpolated into `title`/`detail` grow on every
+   * evaluation and are exactly what a signature must NOT include (an ever-growing age re-paging
+   * a warning each pass is the measured failure the renotify policy exists for). A rule whose
+   * state has more dimensions than that names them here itself.
+   */
+  signature?: string;
+}
+
+/** The effective signature of a firing alert — {@link Alert.signature}'s documented default. */
+export function alertSignature(a: Alert): string {
+  return a.signature ?? `${a.severity}|${a.count}`;
 }
 
 /* ════════════════════════════════════════════════════════════════════════════════════════
@@ -811,11 +844,20 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     //
     // So a NULL stamp older than the threshold IS an assertion, measured from the row's own
     // `created_at`: paired that long ago, never once current, account moved on since pairing.
-    // The armed gate is deliberately NARROWER than the stamped arm's — a LIVE session only.
-    // A never-synced device whose session was revoked is a pairing that never worked and was
-    // already taken back (test fixtures are exactly this shape); nobody is reading stale mail
-    // from it, because it never showed mail at all. The stamped arm keeps its revoked-within-
-    // 14-days window because there a WORKING mirror went dark and its person does not know.
+    // The armed gate is deliberately NARROWER than the stamped arm's — a LIVE session that is
+    // STILL MAKING REQUESTS (`last_seen_at` inside the same threshold the staleness itself
+    // uses; one judgment, not two). Both halves are load-bearing:
+    //  · a never-synced device whose session was revoked is a pairing that never worked and
+    //    was already taken back (test fixtures are exactly this shape); nobody is reading
+    //    stale mail from it, because it never showed mail at all;
+    //  · a never-synced device whose session is unrevoked but FROZEN — `last_seen_at` at its
+    //    own creation instant, weeks old — is a dead pairing handshake, not a person at a
+    //    wedged mailbox. The measured incident: a pairing whose one session was last seen the
+    //    millisecond it was minted paged on every interval for fifteen days, and the only true
+    //    sentence in the page was the age. `session_sync_stale` next door already carries this
+    //    gate for the same reason; the arm inherits it rather than re-arguing it.
+    // The stamped arm keeps its wider revoked-within-14-days window because there a WORKING
+    // mirror went dark and its person does not know.
     const neverSynced = await db
       .select({
         id: devices.id,
@@ -839,7 +881,13 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       const armed = await db
         .select({ deviceId: sessions.deviceId })
         .from(sessions)
-        .where(and(eq(sessions.deviceId, d.id), isNull(sessions.revokedAt)))
+        .where(and(
+          eq(sessions.deviceId, d.id),
+          isNull(sessions.revokedAt),
+          // STILL MAKING REQUESTS — the gate the header argues. A live-but-frozen session
+          // (last seen at its own mint, weeks back) is a dead handshake and fires nothing.
+          gt(sessions.lastSeenAt, deviceStaleCut),
+        ))
         .limit(1);
       if (armed.length === 0) continue;
       const staleSeconds = secondsBetween(now, d.createdAt);
@@ -851,9 +899,9 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
         detail:
           `Device ${d.id} (kind ${d.kind}) was paired ${humanAge(staleSeconds)} ago ` +
           `(threshold ${humanAge(Math.round(t.deviceSyncStaleMs / 1000))}) and has never once reached ` +
-          `the sync horizon, while its account has changes it never received. Its session is live — ` +
-          `either the mirror has been wedged since pairing or the pairing never worked, and the ` +
-          `person in front of it is looking at an empty or frozen mailbox.`,
+          `the sync horizon, while its account has changes it never received. Its session is live ` +
+          `and still making requests — the mirror has been wedged since pairing, and the person ` +
+          `in front of it is looking at an empty or frozen mailbox.`,
         count: 1,
         oldestSeconds: staleSeconds,
       });
@@ -1474,8 +1522,18 @@ export interface SinkDegradation {
 
 export interface AlertPassOptions extends EvaluateOptions {
   sinks?: readonly AlertSink[];
-  /** How long a still-firing alert waits before paging again. Default one hour. */
+  /**
+   * How long a still-firing CRITICAL alert waits before paging again. Default one hour.
+   * Non-critical tiers hold for {@link renotifyUnchangedMs} while their signature is
+   * unchanged; a signature change re-pages every tier immediately.
+   */
   repeatMs?: number;
+  /**
+   * How long an UNCHANGED standing non-critical alert waits before paging again. Default
+   * {@link DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS} (24 h). "Unchanged" is the alert's
+   * {@link Alert.signature} matching the one recorded at the last notification.
+   */
+  renotifyUnchangedMs?: number;
   /**
    * Where the consecutive-failure count for this driver lives. Omit and the pass still
    * reports every failure, but nothing escalates — an occasional one-shot caller has no
@@ -1589,33 +1647,51 @@ export function sinkHealthOf(
  * notify-once semantics were never enforced by the database, only by the assumption of a
  * single writer, and that assumption is exactly what the external observer removes.
  *
- * So the decision to notify is a CLAIM — one conditional UPDATE, which Postgres serialises on
- * the row:
+ * So the decision to notify is a CLAIM — one row lock, the due decision, one UPDATE, all
+ * inside a transaction that spans microseconds and zero I/O:
  *
  * ```
- *   UPDATE alert_state SET notified_at = <lease>
- *    WHERE alert_key = $k AND (notified_at IS NULL OR notified_at <= $now - repeatMs)
+ *   BEGIN;
+ *   SELECT notified_at, notified_signature, claimed_until
+ *     FROM alert_state WHERE alert_key = $k FOR UPDATE;
+ *   -- leased? refuse. due? (never notified / past the tier's interval / changed past the floor)
+ *   UPDATE alert_state SET claimed_until = <now + ttl> WHERE alert_key = $k;
+ *   COMMIT;
  * ```
  *
- * The winner gets a row back and notifies; the loser blocks on the row lock, re-checks the
- * predicate against the committed new value, matches nothing, and stays quiet. No advisory
- * lock and no surrounding transaction, deliberately: {@link deliver} does network I/O, and
- * holding a Postgres transaction open across an HTTP call is the `idle in transaction`
- * pathology that caused the outage this observer exists to catch.
+ * The winner claims and notifies; the loser blocks on the row lock, reads the committed lease,
+ * and stays quiet. The claim writes THE LEASE AND NOTHING ELSE — `notified_at` and
+ * `notified_signature` move only on the guarded confirm, so a failed delivery, a crashed pass
+ * and a never-was are all one state: the row exactly as it stood before the claim, minus a
+ * lease that has expired or been cleared. No advisory lock, and no transaction ACROSS
+ * DELIVERY, deliberately: {@link deliver} does network I/O, and holding a Postgres transaction
+ * open across an HTTP call is the `idle in transaction` pathology that caused the outage this
+ * observer exists to catch — the claim's own two-statement transaction holds no such thing.
  *
- * ## The claim is a LEASE, so a pass that dies mid-delivery does not swallow the page
+ * ## The claim is a LEASE (`claimed_until`), so a pass that dies mid-delivery does not swallow
+ * ## the page — and `notified_at` means exactly one thing
  *
- * `notified_at` is not stamped with `now` at claim time — it is stamped `now - repeatMs +
- * claimTtlMs`, a value that is past the due cutoff (so no concurrent pass can claim it) and
- * that becomes due again exactly `claimTtlMs` later. Then:
+ * The lease used to be ENCODED in `notified_at` (a value just past the due cutoff). That was
+ * sound with one reader; the renotify policy's changed-condition arm compares the last
+ * confirm's AGE against a much shorter floor, and to that reader a live lease — deliberately
+ * placed near the far cutoff — read as an old confirmation, so a second driver with a
+ * different signature could reclaim a mid-delivery row, page a duplicate and orphan the first
+ * claim's settlement (review-caught before it shipped a page). `claimed_until` states the
+ * lease as itself: every due arm refuses a future lease outright, `notified_at` is always the
+ * last CONFIRMED notification, and then:
  *
- *  · at least one sink accepted ⇒ **confirm**: `notified_at = now`, `notify_count + 1`;
- *  · nothing accepted ⇒ **release**: `notified_at` goes back to what it was;
- *  · the pass dies in between ⇒ nobody writes anything, and the lease expires on its own.
+ *  · at least one sink accepted ⇒ **confirm**: `notified_at = now`, `notified_signature =
+ *    <sig>`, `notify_count + 1`, `claimed_until = NULL` — the confirm is the ONLY writer of
+ *    the stamp and the signature, so the row always says "this condition, told at this time";
+ *  · nothing accepted ⇒ **release**: `claimed_until = NULL` and nothing else — the claim
+ *    wrote nothing else, so the retry re-fires by construction;
+ *  · the pass dies in between ⇒ nobody writes anything, and the lease expires on its own —
+ *    `claimTtlMs` later the row is claimable again with its true confirm history intact,
+ *    which is the release's exact state: crash and failed delivery are one case.
  *
- * Both writes are guarded by `notified_at = <the lease value we wrote>`, so a pass can only
- * ever undo its OWN claim — if the condition resolved and the row was deleted underneath, or
- * another driver re-claimed after the lease expired, the guard matches nothing and that is the
+ * Both settles are guarded by `claimed_until = <the lease value we wrote>`, so a pass can only
+ * ever settle its OWN claim — if the condition resolved and the row was deleted underneath, or
+ * another driver claimed after the lease expired, the guard matches nothing and that is the
  * correct outcome.
  *
  * The direction of every failure is preserved and is the one a pager needs: an undelivered
@@ -1630,6 +1706,7 @@ export function sinkHealthOf(
 export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise<AlertPassResult> {
   const now = opts.now ?? new Date();
   const repeatMs = opts.repeatMs ?? DEFAULT_ALERT_REPEAT_MS;
+  const renotifyUnchangedMs = opts.renotifyUnchangedMs ?? DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS;
   const claimTtlMs = opts.claimTtlMs ?? DEFAULT_CLAIM_TTL_MS;
   const shards = opts.shards ?? [0];
   const sinks = opts.sinks ?? [];
@@ -1641,18 +1718,23 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       alertKey: alertState.alertKey,
       kind: alertState.kind,
       notifiedAt: alertState.notifiedAt,
+      notifiedSignature: alertState.notifiedSignature,
       notifyCount: alertState.notifyCount,
     })
     .from(alertState);
   const byKey = new Map(existing.map((r) => [r.alertKey, r]));
 
-  // NO ESCALATION ARM HERE, deliberately — it existed for one pass's lifetime and two review
-  // rounds killed it. A tier that must page immediately is a tier with its OWN KEY
-  // (`sync_lag:critical`): a new key's first observation has `notified_at` NULL, which the
-  // ordinary claim below pages at once, retries after a failed delivery (the restore path
-  // puts back NULL), and survives a crash between the upsert and the claim. A same-key
-  // severity flip had none of those properties without carrying extra notified-severity
-  // state.
+  // NO same-key ESCALATION ARM by severity flip alone — that existed for one pass's lifetime
+  // and two review rounds killed it, because without carried state it lacked the claim's three
+  // properties (page-at-once, retry-after-failure, crash-survival). A tier that must page
+  // immediately is a tier with its OWN KEY (`sync_lag:critical`): a new key's first
+  // observation has `notified_at` NULL, which the ordinary claim below pages at once. What DOES
+  // exist now is the SIGNATURE arm, which is that old idea rebuilt WITH the state it lacked:
+  // `notified_signature` is the last CONFIRMED condition (written only by the guarded confirm
+  // — a claim writes nothing but its `claimed_until` lease, and the lease is what stops two
+  // drivers from both seeing "changed"), so a failed delivery retries and a crashed pass
+  // costs `claimTtlMs`, not the interval. A severity flip changes the default signature and
+  // therefore pages once the change-arm floor passes — through the claim, not around it.
 
   // ── record the observation (opened_at survives an UPSERT; last_seen_at advances) ──────
   //
@@ -1680,33 +1762,89 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
 
   // ── CLAIM the notifications this pass is allowed to send ──────────────────────────────
   //
-  // One conditional UPDATE per firing alert, and the row it does or does not return IS the
-  // decision. See the header: the predicate is the old in-memory `due` test moved into the
-  // database, which is what makes it safe against a second driver running the same pass.
+  // One SHORT transaction per firing alert — `SELECT … FOR UPDATE`, the due decision, one
+  // UPDATE — and the row it does or does not claim IS the decision. The lock is held across
+  // two statements and zero I/O: the header's rule against a surrounding transaction is about
+  // holding one open across DELIVERY (the `idle in transaction` pathology), and this is
+  // microseconds on one row. What the lock buys over the single-UPDATE form is that the due
+  // decision and the lease write are one atomic act over the row's committed values — a
+  // concurrent driver blocks on the lock and then reads the lease this claim just wrote.
   //
-  // Drizzle COLUMN operators, never a raw `sql` fragment with a `Date` in it — the rule the
-  // sync-lag rule above states at length. The column on the left is what lets drizzle bind
-  // these as timestamptz instead of letting postgres-js describe the parameter as TEXT.
-  const dueBefore = new Date(now.getTime() - repeatMs);
-  const lease = new Date(dueBefore.getTime() + claimTtlMs);
-  const claimed: Array<{ alert: Alert; prior: Date | null }> = [];
+  // AN ACTIVE LEASE REFUSES EVERY ARM. `claimed_until` in the future means another driver's
+  // page for this key is in flight; whatever this pass's alert says — even a changed
+  // signature — the row is not claimable until that settles or expires. This is the guard the
+  // encoded-lease scheme could not express (see the header): a changed condition observed
+  // mid-delivery is simply picked up by a following pass, one cadence later.
+  //
+  // THREE ARMS then make an alert due, judged from the TRUE last confirm (`notified_at`):
+  //   · never notified (`notified_at IS NULL`) — a first observation pages at once;
+  //   · the tier's interval has passed — hourly for critical (`repeatMs`), the long
+  //     unchanged-hold for everything else (`renotifyUnchangedMs`): a standing warning owes
+  //     one page and a daily reminder, not an hourly restatement of its own age;
+  //   · the CONDITION CHANGED — the firing alert's signature differs from the recorded one
+  //     and the last confirm is at least `claimTtlMs` old. That floor is the stale-evaluation
+  //     guard: two drivers overlap, the slower one's alert was computed from an older firing
+  //     snapshot, and without the floor its unequal signature would reclaim a condition a
+  //     newer pass had just confirmed — paging stale numbers, then paging again when the
+  //     fresh ones differ. A pass's evaluate-to-claim span is seconds, so a real change still
+  //     pages within one pass cadence plus the floor.
+  //     `notified_signature IS NULL` (pre-column rows) deliberately reads as UNCHANGED — a
+  //     deploy must not page every standing alert once because the column arrived.
+  //
+  // THE SIGNATURE PERSISTS ONLY ON A CONFIRM. A claim writes the lease and nothing else:
+  // concurrent duplicates are the lease's job now, and a signature written at claim time was
+  // the crash hole — a pass dying mid-delivery would leave the NEW signature standing under an
+  // expired lease, and the next pass would read the changed condition as already notified,
+  // suppressing it for the whole tier interval instead of retrying after the TTL. With the
+  // signature moving only on the guarded confirm, a crash and a failed delivery leave the row
+  // byte-identical to before the claim (minus the expired lease), so the retry re-fires by
+  // construction.
+  //
+  // The due decision is taken in JS over the LOCKED row's own values — Date compares on
+  // `getTime()`, no SQL fragment with a `Date` in it, which retires this block's old binding
+  // hazard along with the race.
+  const leaseUntil = new Date(now.getTime() + claimTtlMs);
+  const claimed: Alert[] = [];
   for (const alert of firing) {
-    const won = await db
-      .update(alertState)
-      .set({ notifiedAt: lease })
-      .where(and(
-        eq(alertState.alertKey, alert.key),
-        or(isNull(alertState.notifiedAt), lte(alertState.notifiedAt, dueBefore)),
-      ))
-      .returning({ alertKey: alertState.alertKey });
-    if (won.length === 0) continue;
-    // What to put back if nothing accepts this alert. Read at the top of the pass, and safe
-    // to use precisely BECAUSE the claim succeeded: any concurrent confirm would have moved
-    // `notified_at` past `dueBefore` and this UPDATE would have matched nothing.
-    const priorRaw = byKey.get(alert.key)?.notifiedAt ?? null;
-    claimed.push({ alert, prior: priorRaw ? new Date(priorRaw as unknown as string) : null });
+    const intervalMs = alert.severity === "critical" ? repeatMs : renotifyUnchangedMs;
+    const dueBefore = new Date(now.getTime() - intervalMs);
+    // The stale-evaluation floor for the change arm — see the header bullet.
+    const changeBefore = new Date(now.getTime() - claimTtlMs);
+    const sig = alertSignature(alert);
+    const won = await db.transaction(async (tx) => {
+      const [cur] = await tx
+        .select({
+          notifiedAt: alertState.notifiedAt,
+          notifiedSignature: alertState.notifiedSignature,
+          claimedUntil: alertState.claimedUntil,
+        })
+        .from(alertState)
+        .where(eq(alertState.alertKey, alert.key))
+        .limit(1)
+        .for("update");
+      if (!cur) return false; // resolved underneath this pass — nothing to page
+      const heldUntil = cur.claimedUntil ? new Date(cur.claimedUntil as unknown as string) : null;
+      if (heldUntil !== null && heldUntil.getTime() > now.getTime()) return false; // in flight
+      const notifiedAt = cur.notifiedAt ? new Date(cur.notifiedAt as unknown as string) : null;
+      const due =
+        notifiedAt === null ||
+        notifiedAt.getTime() <= dueBefore.getTime() ||
+        (cur.notifiedSignature !== null &&
+          cur.notifiedSignature !== sig &&
+          notifiedAt.getTime() <= changeBefore.getTime());
+      if (!due) return false;
+      // THE LEASE AND NOTHING ELSE — see the signature bullet above: a claim that wrote the
+      // signature would suppress a crashed changed-condition page for the whole tier
+      // interval. `notified_at` and `notified_signature` move only on the guarded confirm.
+      await tx
+        .update(alertState)
+        .set({ claimedUntil: leaseUntil })
+        .where(eq(alertState.alertKey, alert.key));
+      return true;
+    });
+    if (won) claimed.push(alert);
   }
-  const toNotify = claimed.map((c) => c.alert);
+  const toNotify = claimed;
 
   // ── resolve what is no longer firing ──────────────────────────────────────────────────
   //
@@ -1826,21 +1964,31 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
 
   // ── settle every claim: CONFIRM if something accepted, otherwise RELEASE ───────────────
   //
-  // Guarded by `notified_at = lease` so a pass can only undo its own claim. A row that was
-  // deleted as resolved, or re-claimed by another driver after this lease expired, matches
-  // nothing — and in both cases doing nothing is right.
+  // Guarded by `claimed_until = <this pass's lease>` so a pass can only settle its own claim.
+  // A row that was deleted as resolved, or claimed by another driver after this lease
+  // expired, matches nothing — and in both cases doing nothing is right.
   //
   // Releasing is what keeps a misconfigured webhook self-correcting rather than a silent
   // hole, and `notify_count` moves ONLY on a confirm, so it counts pages that were actually
-  // accepted by a sink and never claims that failed.
-  for (const { alert, prior } of claimed) {
+  // accepted by a sink and never claims that failed. A CONFIRM is where `notified_at` and
+  // `notified_signature` land, together — the row then says "this condition, told at this
+  // time". A RELEASE clears the lease and nothing else: the claim wrote nothing else, so the
+  // row is byte-identical to before the claim and the retry re-fires by construction — the
+  // exact state an EXPIRED lease (a crashed pass) leaves too, which is what makes the crash
+  // path and the failed-delivery path one case instead of two.
+  for (const alert of claimed) {
     const settle = delivered.length > 0
-      ? { notifiedAt: now, notifyCount: sql`${alertState.notifyCount} + 1` }
-      : { notifiedAt: prior };
+      ? {
+        notifiedAt: now,
+        notifiedSignature: alertSignature(alert),
+        notifyCount: sql`${alertState.notifyCount} + 1`,
+        claimedUntil: null,
+      }
+      : { claimedUntil: null };
     await db
       .update(alertState)
       .set(settle)
-      .where(and(eq(alertState.alertKey, alert.key), eq(alertState.notifiedAt, lease)));
+      .where(and(eq(alertState.alertKey, alert.key), eq(alertState.claimedUntil, leaseUntil)));
   }
 
   return {

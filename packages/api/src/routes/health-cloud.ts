@@ -162,6 +162,14 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // at the deploy gate rather than as an `alert_pass_failed` loop — the pager breaking is the
   // one failure mode this table must never have, since it exists to page.
   ["billing_reconciliation_runs", "ran_at"],
+  // cloud 0025_alert_renotify_signature — the renotify policy's condition signature on
+  // `alert_state`. The migration IS this column, and its absence is LOUD in the worst place:
+  // `runAlertPass`'s claim UPDATE names it, so a database missing the migration 42703s the
+  // claim on every pass, every minute, from both drivers — an `alert_pass_failed` loop, which
+  // is the pager breaking, the one failure this table must never have (0023's sentence, one
+  // row up, and the same reason the deploy gate must refuse it first). Deploy order:
+  // migration → API + worker.
+  ["alert_state", "notified_signature"],
 ] as const;
 
 /**
@@ -359,10 +367,15 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * {@link CLOUD_INDEX_MARKERS} is its whole probe — `0013_ledger_integrity`'s shape exactly,
  * argued at its entry.
  *
+ * `0025_alert_renotify_signature` is the easy case — one added nullable column on
+ * `alert_state` — and takes an ordinary column marker above; its entry carries the loudness
+ * argument (the alert pass's claim UPDATE names the column, so too-early code is an
+ * `alert_pass_failed` loop — the pager breaking).
+ *
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0024_auth_events_reuse_index";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0025_alert_renotify_signature";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

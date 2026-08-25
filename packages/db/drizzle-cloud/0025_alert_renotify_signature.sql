@@ -1,0 +1,23 @@
+-- THE RENOTIFY POLICY'S ONE COLUMN — what "unchanged" means for a standing alert.
+--
+-- ══ WHAT THIS FIXES ════════════════════════════════════════════════════════════════════════
+--
+-- A TRUE standing warning re-paged every repeat interval for ever: `alert_state.notified_at`
+-- only encodes WHEN the last page went out, so the pass could hold an alert for an hour but
+-- had no way to ask "is this the SAME condition I already reported?". The measured shape was
+-- a `device_sync_stale` warning for one dead pairing, emailed on every interval with nothing
+-- about it changed but the age in the sentence.
+--
+-- `notified_signature` records the condition signature (severity + count by default; a rule
+-- may provide its own) of the last claimed/confirmed notification. The pass then re-pages an
+-- UNCHANGED standing condition on a long interval only, and a CHANGED one — count moved,
+-- severity moved — at once. The column is written at claim time and restored on release, with
+-- the same lease discipline `notified_at` has, so two concurrent drivers still page once.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO DATA ══════════════════════════════════════════════════════════
+--
+-- One nullable column on a bookkeeping table the condition-clear DELETEs from anyway. NULL —
+-- every pre-migration row — reads as "unchanged", deliberately: the deploy must not re-page
+-- every standing alert once just because the column arrived. Deploy order: migration → code;
+-- the old code ignores the column, the new code treats its absence in old rows as NULL.
+ALTER TABLE "alert_state" ADD COLUMN IF NOT EXISTS "notified_signature" text;
