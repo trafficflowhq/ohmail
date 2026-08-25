@@ -1730,10 +1730,11 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // immediately is a tier with its OWN KEY (`sync_lag:critical`): a new key's first
   // observation has `notified_at` NULL, which the ordinary claim below pages at once. What DOES
   // exist now is the SIGNATURE arm, which is that old idea rebuilt WITH the state it lacked:
-  // `notified_signature` is written inside the claim (so two drivers cannot both see "changed"),
-  // restored on release (so a failed delivery retries), and leased like `notified_at` (so a
-  // crashed pass costs `claimTtlMs`, not the interval). A severity flip changes the default
-  // signature and therefore pages immediately — through the claim, not around it.
+  // `notified_signature` is the last CONFIRMED condition (written only by the guarded confirm
+  // — a claim writes nothing but its `claimed_until` lease, and the lease is what stops two
+  // drivers from both seeing "changed"), so a failed delivery retries and a crashed pass
+  // costs `claimTtlMs`, not the interval. A severity flip changes the default signature and
+  // therefore pages once the change-arm floor passes — through the claim, not around it.
 
   // ── record the observation (opened_at survives an UPSERT; last_seen_at advances) ──────
   //

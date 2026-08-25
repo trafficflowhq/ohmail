@@ -478,11 +478,15 @@ export const alertState = pgTable("alert_state", {
   notifyCount: integer("notify_count").notNull().default(0),
   detail: text("detail"),
   /**
-   * The CONDITION SIGNATURE of the last claimed/confirmed notification — what "unchanged"
-   * means for the renotify policy (cloud 0025). An UNCHANGED standing condition re-pages on a
-   * long interval; a signature that differs from the firing alert's re-pages once the floor
-   * passes. Written at claim time (so a concurrent driver's signature arm cannot double-page)
-   * and restored on release. NULL = never notified with a signature (pre-migration rows),
+   * The CONDITION SIGNATURE of the last CONFIRMED notification — what "unchanged" means for
+   * the renotify policy (cloud 0025). An UNCHANGED standing condition re-pages on a long
+   * interval; a signature that differs from the firing alert's re-pages once the change-arm
+   * floor passes. Written ONLY by the guarded confirm, beside `notified_at` — a claim writes
+   * nothing but its lease, so a failed delivery and a crashed pass leave the confirmed
+   * condition standing and the retry re-fires by construction (a signature written at claim
+   * time read as "already told them" after a mid-delivery death — the crash-swallow the
+   * confirm-only rule exists to refuse). Concurrent duplicate claims are `claimed_until`'s
+   * job, not this column's. NULL = never notified with a signature (pre-migration rows),
    * which reads as "unchanged" — a deploy must not page every standing alert once just
    * because the column arrived.
    */
