@@ -2267,16 +2267,17 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // the column's width, with no reader-drawn table borders because no reader CSS exists inside
   // the frame at all. Both readings come from the one sanitized document, never from a second
   // parse.
-  const rigid = isRigidLayout(sanitized, styleText);
-  // The sheets are read off the SANITIZED document — the document the frame will build — for
-  // the same reason `rigid` and `light` are: DOMPurify drops a `<style>` whose text smells of
-  // markup (its own mXSS rule), and a canvas living only in a dropped sheet is a canvas the
-  // rendered document has not got. One element per entry, because a browser tokenizes each
-  // `<style>` at its own EOF — see {@link sheetDeclaresResponsiveCanvas}.
-  const designed = rigid || isDesignedLayout(
-    sanitized,
-    [...sanitized.querySelectorAll("style")].map((s) => s.textContent ?? ""),
-  );
+  // BOTH layout classifiers read the SANITIZED document's own sheets — the document the frame
+  // will build. DOMPurify drops a `<style>` whose text smells of markup (its own mXSS rule),
+  // and a canvas living only in a dropped sheet — fixed `width` or responsive `max-width`
+  // alike — is a canvas the rendered document has not got: classifying from the pre-sanitize
+  // aggregate framed (or scaled) a letter for a rule the frame never receives. The designed
+  // scan takes the sheets one element per entry, because a browser tokenizes each `<style>` at
+  // its own EOF ({@link sheetDeclaresResponsiveCanvas}); the rigid scan's regex is boundary-
+  // insensitive and takes the same sheets joined.
+  const sanitizedSheets = [...sanitized.querySelectorAll("style")].map((s) => s.textContent ?? "");
+  const rigid = isRigidLayout(sanitized, sanitizedSheets.join("\n"));
+  const designed = rigid || isDesignedLayout(sanitized, sanitizedSheets);
   return {
     html: sanitized.innerHTML,
     blocked,
