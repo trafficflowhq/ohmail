@@ -1015,8 +1015,9 @@ function isCanvasPx(n: number | null): boolean {
  * would have dropped a genuine design out of the rigid class because of the debris beside it.
  * A canvas is a thing a document CONTAINS; a maximum is not the way to ask whether it does.
  *
- * Anchored at a declaration boundary (`;`, `{`, or the start of a style attribute), which is
- * what keeps two near-misses out:
+ * Anchored at a declaration boundary (`;`, `{`, or the start of a style attribute or of a
+ * rule's block, which is where {@link sheetsDeclare} slices), which is what keeps two
+ * near-misses out:
  *   `max-width:600px`            a cap, not a canvas — `-` is not a boundary, so it never matches.
  *   `@media (max-width:620px)`   a QUERY about the viewport, inside `(`, which is not a
  *                                boundary either. Every responsive newsletter contains one.
@@ -1096,9 +1097,18 @@ function widthAttrPx(v: string | null): number | null {
  * Exported so the classification can be watched directly against real mail rather than
  * inferred from a rendered frame — see the reflow guards in `test/message-body.test.ts` and the
  * prose guards in `test/message-body-prose.test.ts`. It is the ONLY classifier behind both.
+ *
+ * `styleText` is the sanitized document's `<style>` texts — one entry per element, the same
+ * union {@link isDesignedLayout} takes — and it is read through the same rule-wise walk
+ * ({@link sheetsDeclare}): each sheet its own tokenizer run, a declaration counted only inside
+ * a selector's block. The flat declaration regex stays for inline `style` ATTRIBUTES, where a
+ * bare `width:600px` really is a declaration; in a SHEET the same text outside a rule is one
+ * no browser applies, and a flat read of the sheets — joined, or even one element at a time —
+ * turned ruleless fragments, comment text and string data into canvas evidence the rendered
+ * document has not got. Four review rounds circled that one seam; the walk is the seam's close.
  */
-export function isRigidLayout(root: Element, styleText: string): boolean {
-  if (declaresCanvas(styleText)) return true;
+export function isRigidLayout(root: Element, styleText: string | readonly string[]): boolean {
+  if (sheetsDeclare(styleText, declaresCanvas)) return true;
   for (const el of root.querySelectorAll(CANVAS_TAGS)) {
     if (isCanvasPx(widthAttrPx(el.getAttribute("width")))) return true;
     const style = el.getAttribute("style");
@@ -1283,28 +1293,39 @@ function stripCssComments(css: string): string {
  *
  * The rule regex cannot cross braces, so a media query's PRELUDE is never read as a block —
  * only the rules inside it are, each under its own selector — and inline `style` attributes
- * (no braces) never reach this function at all: the element loop in {@link isDesignedLayout}
- * reads those, and it already walks only {@link CANVAS_TAGS}.
+ * (no braces) never reach this function at all: the element loops in {@link isRigidLayout} and
+ * {@link isDesignedLayout} read those, and both already walk only {@link CANVAS_TAGS}.
+ *
+ * BOTH canvas predicates read sheets through this one walk — the responsive scan
+ * ({@link declaresResponsiveCanvas}) and the fixed-width one ({@link declaresCanvas}) — because
+ * everything above is about what a SHEET is, not about which width property is asked after.
+ * The walk takes the predicate as a parameter rather than existing twice, so the two scans
+ * cannot drift apart again one review round at a time.
  */
 /** A selector list that targets images — `img` as a TAG token; `.imgwrap` is a class and is not. */
 const IMG_SELECTOR = /(?:^|[\s,>+~(])img\b/i;
 
-function sheetDeclaresResponsiveCanvas(styleText: string | readonly string[]): boolean {
+function sheetsDeclare(
+  styleText: string | readonly string[],
+  declares: (block: string) => boolean,
+): boolean {
   // ── EACH `<style>` ELEMENT IS ITS OWN TOKENIZER RUN ─────────────────────────────────────
   // A browser ends every sheet at its own EOF: an unterminated string or comment in one
   // element cannot eat the next element's rules. A single concatenated scan CAN — one sheet
   // ending with a backslash inside an unterminated string consumed the separator and blanked
-  // the following sheet's genuine canvas — so the caller hands the sheets as an ARRAY and each
-  // is stripped and walked on its own. The plain-string form remains for a caller (or test)
+  // the following sheet's genuine canvas — and a JOIN also manufactures evidence the other way:
+  // `.a{` ending one sheet and `width:600px` opening the next read as a declaration inside a
+  // rule that exists in neither. So the caller hands the sheets as an ARRAY and each is
+  // stripped and walked on its own. The plain-string form remains for a caller (or test)
   // holding one sheet.
   const sheets = typeof styleText === "string" ? [styleText] : styleText;
   for (const one of sheets) {
-    if (oneSheetDeclaresResponsiveCanvas(one)) return true;
+    if (oneSheetDeclares(one, declares)) return true;
   }
   return false;
 }
 
-function oneSheetDeclaresResponsiveCanvas(styleText: string): boolean {
+function oneSheetDeclares(styleText: string, declares: (block: string) => boolean): boolean {
   // Comments go FIRST, for two reasons that are both real CSS: `/* img defaults */ .card{…}`
   // would put the token `img` into the captured selector and skip a genuine canvas rule, and a
   // brace inside a comment would misalign every rule after it. See {@link stripCssComments}
@@ -1340,7 +1361,7 @@ function oneSheetDeclaresResponsiveCanvas(styleText: string): boolean {
         if (
           sel.trim() !== "" &&
           !IMG_SELECTOR.test(sel) &&
-          declaresResponsiveCanvas(sheet.slice(prevBrace + 1, j))
+          declares(sheet.slice(prevBrace + 1, j))
         ) {
           return true;
         }
@@ -1381,7 +1402,7 @@ function oneSheetDeclaresResponsiveCanvas(styleText: string): boolean {
  * document shapes directly (`test/message-body-designed.test.ts`), not inferred from a frame.
  */
 export function isDesignedLayout(root: Element, styleText: string | readonly string[]): boolean {
-  if (sheetDeclaresResponsiveCanvas(styleText)) return true;
+  if (sheetsDeclare(styleText, declaresResponsiveCanvas)) return true;
   for (const el of root.querySelectorAll(CANVAS_TAGS)) {
     const style = el.getAttribute("style");
     if (style && declaresResponsiveCanvas(style)) return true;
@@ -2271,12 +2292,14 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // will build. DOMPurify drops a `<style>` whose text smells of markup (its own mXSS rule),
   // and a canvas living only in a dropped sheet — fixed `width` or responsive `max-width`
   // alike — is a canvas the rendered document has not got: classifying from the pre-sanitize
-  // aggregate framed (or scaled) a letter for a rule the frame never receives. The designed
-  // scan takes the sheets one element per entry, because a browser tokenizes each `<style>` at
-  // its own EOF ({@link sheetDeclaresResponsiveCanvas}); the rigid scan's regex is boundary-
-  // insensitive and takes the same sheets joined.
+  // aggregate framed (or scaled) a letter for a rule the frame never receives. BOTH scans take
+  // the sheets ONE ELEMENT PER ENTRY — a browser tokenizes each `<style>` at its own EOF — and
+  // both read them rule-wise through the one walk ({@link sheetsDeclare}): a joined view
+  // manufactured declarations across sheet EOFs (`.a{` + `width:600px`), and a flat per-sheet
+  // regex read ruleless fragments, comment text and string data as canvas evidence. No joined
+  // view of the sheets exists on this path at all.
   const sanitizedSheets = [...sanitized.querySelectorAll("style")].map((s) => s.textContent ?? "");
-  const rigid = isRigidLayout(sanitized, sanitizedSheets.join("\n"));
+  const rigid = isRigidLayout(sanitized, sanitizedSheets);
   const designed = rigid || isDesignedLayout(sanitized, sanitizedSheets);
   return {
     html: sanitized.innerHTML,
