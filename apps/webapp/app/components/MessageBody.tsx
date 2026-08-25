@@ -1237,7 +1237,13 @@ function stripCssComments(css: string): string {
         (!continuesIdent(css.charCodeAt(i - 1)) && css[i - 1] !== "@" && css[i - 1] !== "#"))
     ) {
       let j = i + 4;
-      while (j < css.length && (css[j] === " " || css[j] === "\t")) j += 1;
+      // ALL of CSS's whitespace — a template may break the line after `url(` before a quoted
+      // argument, and a skip that only knew space/tab would misread the quoted form as
+      // unquoted data and stop at a `)` inside the string.
+      while (
+        j < css.length &&
+        (css[j] === " " || css[j] === "\t" || css[j] === "\n" || css[j] === "\r" || css[j] === "\f")
+      ) j += 1;
       if (css[j] === '"' || css[j] === "'") {
         i = j; // the string branch blanks the argument; the outer scan resumes after it
         continue;
@@ -1283,7 +1289,22 @@ function stripCssComments(css: string): string {
 /** A selector list that targets images — `img` as a TAG token; `.imgwrap` is a class and is not. */
 const IMG_SELECTOR = /(?:^|[\s,>+~(])img\b/i;
 
-function sheetDeclaresResponsiveCanvas(styleText: string): boolean {
+function sheetDeclaresResponsiveCanvas(styleText: string | readonly string[]): boolean {
+  // ── EACH `<style>` ELEMENT IS ITS OWN TOKENIZER RUN ─────────────────────────────────────
+  // A browser ends every sheet at its own EOF: an unterminated string or comment in one
+  // element cannot eat the next element's rules. A single concatenated scan CAN — one sheet
+  // ending with a backslash inside an unterminated string consumed the separator and blanked
+  // the following sheet's genuine canvas — so the caller hands the sheets as an ARRAY and each
+  // is stripped and walked on its own. The plain-string form remains for a caller (or test)
+  // holding one sheet.
+  const sheets = typeof styleText === "string" ? [styleText] : styleText;
+  for (const one of sheets) {
+    if (oneSheetDeclaresResponsiveCanvas(one)) return true;
+  }
+  return false;
+}
+
+function oneSheetDeclaresResponsiveCanvas(styleText: string): boolean {
   // Comments go FIRST, for two reasons that are both real CSS: `/* img defaults */ .card{…}`
   // would put the token `img` into the captured selector and skip a genuine canvas rule, and a
   // brace inside a comment would misalign every rule after it. See {@link stripCssComments}
@@ -1359,7 +1380,7 @@ function sheetDeclaresResponsiveCanvas(styleText: string): boolean {
  * Exported for the same reason {@link isRigidLayout} is: the classification is watched against
  * document shapes directly (`test/message-body-designed.test.ts`), not inferred from a frame.
  */
-export function isDesignedLayout(root: Element, styleText: string): boolean {
+export function isDesignedLayout(root: Element, styleText: string | readonly string[]): boolean {
   if (sheetDeclaresResponsiveCanvas(styleText)) return true;
   for (const el of root.querySelectorAll(CANVAS_TAGS)) {
     const style = el.getAttribute("style");
@@ -2162,11 +2183,16 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
    * actually lives.
    */
   let styleText = "";
+  // The SAME sheets, kept apart: a browser tokenizes each `<style>` at its own EOF, so the
+  // designed-mail classifier must read them one by one — an unterminated token in one element
+  // must not eat the next element's rules. See {@link sheetDeclaresResponsiveCanvas}.
+  const styleSheets: string[] = [];
   for (const el of parsed.querySelectorAll("style")) {
     el.textContent = neutraliseCss(el.textContent ?? "", (u) => cssUrl(u), recordSheet);
     // Accumulated for {@link effectiveBackground} only, and it is the NEUTRALISED text — the
     // sheet the frame is going to get — so the paper this reads is the paper the reader sees.
     styleText += `${el.textContent}\n`;
+    styleSheets.push(el.textContent ?? "");
   }
 
   /**
@@ -2247,7 +2273,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // the frame at all. Both readings come from the one sanitized document, never from a second
   // parse.
   const rigid = isRigidLayout(sanitized, styleText);
-  const designed = rigid || isDesignedLayout(sanitized, styleText);
+  const designed = rigid || isDesignedLayout(sanitized, styleSheets);
   return {
     html: sanitized.innerHTML,
     blocked,
