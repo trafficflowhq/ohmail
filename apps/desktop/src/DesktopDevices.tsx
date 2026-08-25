@@ -606,7 +606,7 @@ export function DesktopDevices() {
       case "desktop-linux": return t("kindLinux");
       case "desktop-windows": return t("kindWindows");
       case "mobile-android": return t("kindAndroid");
-      case "mobile-ios": return t("kindIphone");
+      case "mobile-ios": return t("kindIos");
       default: return t("kindOther");
     }
   };
