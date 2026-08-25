@@ -1190,15 +1190,31 @@ function stripCssComments(css: string): string {
       i = j + 1;
       continue;
     }
-    // An UNQUOTED url token is data to CSS from `url(` to its `)` — a comment-open inside one
-    // is part of the url, and treating it as a comment ate every live rule up to the next
-    // comment-close-lookalike in a later url. `continuesIdent` keeps `xurl(` from matching.
+    // A url token is data to CSS from `url(` to its `)` — a comment-open inside one is part of
+    // the url, and treating it as a comment ate every live rule up to the next comment-close-
+    // lookalike in a later url. `continuesIdent` keeps `xurl(` from matching, and `@`/`#` are
+    // rejected by name: `@url(` is an at-keyword and `#url(` an id selector, not url tokens, so
+    // their parenthesised text is ordinary CSS the comment rules still govern.
     if (
       (c === "u" || c === "U") &&
       /^url\(/i.test(css.slice(i, i + 4)) &&
-      (i === 0 || !continuesIdent(css.charCodeAt(i - 1)))
+      (i === 0 ||
+        (!continuesIdent(css.charCodeAt(i - 1)) && css[i - 1] !== "@" && css[i - 1] !== "#"))
     ) {
       let j = i + 4;
+      // `url( "…" )` wraps its argument in a STRING, and that string may hold a literal `)` —
+      // so an opening quote (after optional whitespace) is scanned as a string first, with
+      // escapes and CSS's bad-string newline rule, before the closing paren is looked for.
+      while (j < css.length && (css[j] === " " || css[j] === "\t")) j += 1;
+      const q = css[j];
+      if (q === '"' || q === "'") {
+        j += 1;
+        while (j < css.length && css[j] !== q && css[j] !== "\n" && css[j] !== "\r" && css[j] !== "\f") {
+          if (css[j] === "\\") j += 1;
+          j += 1;
+        }
+        j += 1;
+      }
       while (j < css.length && css[j] !== ")") {
         if (css[j] === "\\") j += 1;
         j += 1;
