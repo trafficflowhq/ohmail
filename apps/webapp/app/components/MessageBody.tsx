@@ -1305,182 +1305,6 @@ function stripCssComments(css: string): string {
 /** A selector list that targets images — `img` as a TAG token; `.imgwrap` is a class and is not. */
 const IMG_SELECTOR = /(?:^|[\s,>+~(])img\b/i;
 
-/**
- * IMG as a decoded TAG token — `i\6dg` spells `img` in CSS escapes and must read as it.
- *
- * The decode PRESERVES TOKEN BOUNDARIES, which a plain decode does not (a review finding from
- * each direction): an escape that decodes to a letter or digit keeps its identity, so the
- * escaped img spelling matches; any other decoded character becomes a word placeholder, so an
- * escaped combinator stays identifier DATA — `.foo\+img` is a class named `foo+img`, and a
- * plain decode would hand {@link IMG_SELECTOR} a `+` boundary with an img tag behind it. The
- * placeholder is a letter for the same reason in miniature: a non-word character after a
- * decoded `img` would satisfy the regex's word boundary and forge the match the escape was
- * preventing.
- */
-function selectsImage(selector: string): boolean {
-  if (!selector.includes("\\")) return IMG_SELECTOR.test(selector);
-  const preserved = selector.replace(
-    /\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|([^\n\r\f]))/g,
-    (_m, hex: string | undefined, literal: string | undefined) => {
-      let ch = "";
-      if (hex === undefined) ch = literal ?? "";
-      else {
-        const cp = Number.parseInt(hex, 16);
-        if (Number.isFinite(cp) && cp > 0 && cp <= 0x10ffff) {
-          try { ch = String.fromCodePoint(cp); } catch { ch = ""; }
-        }
-      }
-      return /^[A-Za-z0-9]$/.test(ch) ? ch : "x";
-    },
-  );
-  return IMG_SELECTOR.test(preserved);
-}
-
-/**
- * What a rule's selector is EVIDENCE-wise, for the canvas scans:
- *   · `"live"`  — its declarations may be canvas evidence;
- *   · `"image"` — a real rule whose subject is an image: its declarations are picture sizing,
- *                 never canvas evidence, but rules NESTED in it can still resolve to live
- *                 subjects beside the image;
- *   · `"gone"`  — unmatchable (a descendant of an image, or nested in something unmatchable).
- *                 Nothing nested inside comes back: a sibling of a nonexistent element does
- *                 not exist either — reviving these was a review finding.
- */
-type Evidence = "live" | "image" | "gone";
-
-/**
- * Resolve a selector NESTED in an image-subject rule. Substring heuristics failed review here
- * twice, in both directions at once, so this is the real (small) decision: per
- * comma-alternative, resolve the implicit parent and read the SUBJECT — with CSS escapes
- * respected, because `\&` is identifier data (not a nesting token) and `i\6dg` decodes to
- * the `img` tag (another review round's pair of findings).
- *
- *   · `.card`            → implicit `& .card` — a descendant of an image: `"gone"`.
- *   · `& + .card`        → a live canvas BESIDE the image: `"live"`.
- *   · `+ .card`          → relative nesting, the same selector with the `&` implicit.
- *   · `& + .card &`      → the subject resolves back to the image: `"image"`.
- *   · `& + img.hero`     → the subject IS an image: `"image"`.
- *   · `.foo\&bar + .card` → no nesting token at all — implicit descendant: `"gone"`.
- *
- * Aggregation over alternatives is by permissiveness: any live alternative makes the rule
- * live; else any image-subject alternative keeps it escapable; else it is gone. A parent
- * reference inside a functional pseudo-class (`:is(& + .x)`) reads as parent-in-subject and
- * therefore `"image"` — conservative, costing one designed mail read as a letter in a shape
- * mail never uses. Splitting respects escapes, parens and brackets, so `:is(a, b)` is one
- * compound and `[data-x~=y]` is data.
- */
-function nestedEvidence(sel: string): Evidence {
-  const alternatives: string[] = [];
-  {
-    let depth = 0;
-    let buf = "";
-    for (let i = 0; i < sel.length; i += 1) {
-      const ch = sel[i]!;
-      if (ch === "\\") {
-        const past = pastCssEscape(sel, i);
-        buf += sel.slice(i, past);
-        i = past - 1;
-        continue;
-      }
-      if (ch === "(" || ch === "[") depth += 1;
-      else if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
-      if (ch === "," && depth === 0) {
-        alternatives.push(buf);
-        buf = "";
-        continue;
-      }
-      buf += ch;
-    }
-    alternatives.push(buf);
-  }
-  let best: Evidence = "gone";
-  for (const raw of alternatives) {
-    const alt = raw.trim();
-    if (alt === "") continue;
-    // Tokenize into compounds — each knowing whether it holds an UNESCAPED `&` — with the
-    // combinator BEFORE each (null before the first, unless the alternative is RELATIVE and
-    // leads with one).
-    type Compound = { text: string; amp: boolean };
-    const compounds: Compound[] = [];
-    const combs: (string | null)[] = [];
-    let depth = 0;
-    let buf = "";
-    let amp = false;
-    let nextComb: string | null = null;
-    let combBefore: string | null = null;
-    const close = () => {
-      if (buf === "") return;
-      compounds.push({ text: buf, amp });
-      combs.push(combBefore);
-      buf = "";
-      amp = false;
-    };
-    for (let i = 0; i < alt.length; i += 1) {
-      const ch = alt[i]!;
-      if (ch === "\\") {
-        const past = pastCssEscape(alt, i);
-        if (buf === "") { combBefore = nextComb; nextComb = null; }
-        buf += alt.slice(i, past); // escape data: never a nesting token
-        i = past - 1;
-        continue;
-      }
-      if (depth > 0) {
-        if (ch === "(" || ch === "[") depth += 1;
-        else if (ch === ")" || ch === "]") depth -= 1;
-        if (ch === "&") amp = true;
-        buf += ch;
-        continue;
-      }
-      if (ch === "(" || ch === "[") {
-        depth += 1;
-        if (buf === "") { combBefore = nextComb; nextComb = null; }
-        buf += ch;
-        continue;
-      }
-      if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f") {
-        if (buf !== "") { close(); nextComb = " "; }
-        continue;
-      }
-      if (ch === ">" || ch === "+" || ch === "~") {
-        if (buf !== "") close();
-        nextComb = ch;
-        continue;
-      }
-      if (buf === "") { combBefore = nextComb; nextComb = null; }
-      if (ch === "&") amp = true;
-      buf += ch;
-    }
-    close();
-    if (compounds.length === 0) continue;
-    if (!compounds.some((c) => c.amp)) {
-      // Implicit parent: relative nesting keeps its leading combinator; otherwise descendant.
-      if (combs[0] === null) combs[0] = " ";
-      compounds.unshift({ text: "&", amp: true });
-      combs.unshift(null);
-    }
-    // Reachability first: a parent-bearing compound followed by a descendant or child
-    // combinator requires an element INSIDE an image, so the whole alternative matches
-    // nothing, whatever its subject says.
-    let unreachable = false;
-    for (let i = 0; i < compounds.length - 1; i += 1) {
-      if (!compounds[i]!.amp) continue;
-      const after = combs[i + 1] ?? " ";
-      if (after === " " || after === ">") {
-        unreachable = true;
-        break;
-      }
-    }
-    if (unreachable) continue; // "gone" — the floor best already holds
-    const subject = compounds[compounds.length - 1]!;
-    if (subject.amp || selectsImage(subject.text)) {
-      if (best === "gone") best = "image";
-      continue;
-    }
-    return "live";
-  }
-  return best;
-}
-
 function sheetsDeclare(
   styleText: string | readonly string[],
   declares: (block: string) => boolean,
@@ -1522,22 +1346,12 @@ function oneSheetDeclares(styleText: string, declares: (block: string) => boolea
   //   · CSS nesting (`.card{width:600px;.child{color:red}}`) — the outer rule's own
   //     declarations count even though an inner block sits beside them.
   // Whether a block's OWN declaration text is read follows the browser's attribution:
-  //   · a STYLE RULE reads it under its selector — unless the rule is dead, and there are TWO
-  //     kinds of dead which must not be conflated (conflating them was a review finding):
-  //     PARSE-dead — an empty selector (string debris like `content:"{{…}"` can produce one)
-  //     is a parse error, the browser drops the rule WHOLE, and nothing nested inside it can
-  //     come back; and EVIDENCE-skipped — a selector list naming `img` as a tag token
-  //     ({@link IMG_SELECTOR} — a picture cap is not a canvas, the same rule
-  //     {@link CANVAS_TAGS} applies to `width` attributes) is real, applying CSS whose
-  //     declarations just are not canvas evidence. A rule NESTED in an img rule is implicitly
-  //     `& <sel>` — a descendant of an image, which cannot exist — and that scope is GONE:
-  //     nothing nested inside an unmatchable rule comes back, because a sibling of a
-  //     nonexistent element does not exist either. An IMAGE-subject scope is different — real
-  //     CSS, escapable: `img{& + .card{width:600px}}` → `img + .card`, a live canvas, and the
-  //     relative spelling `img{+ .card{…}}` resolves the same way. What decides is the
-  //     RESOLVED SUBJECT with escapes read as CSS reads them (`\&` is identifier data,
-  //     `i\6dg` is the img tag) — see {@link nestedEvidence} and {@link Evidence}. Nothing
-  //     escapes a PARSE-dead ancestor.
+  //   · a STYLE RULE reads it under its selector — unless the rule is DEAD: an empty selector
+  //     (string debris like `content:"{{…}"` can produce one), a selector list naming `img`
+  //     as a tag token ({@link IMG_SELECTOR} — a picture cap is not a canvas, the same rule
+  //     {@link CANVAS_TAGS} applies to `width` attributes), or any dead ancestor. A dead
+  //     rule's descendants die with it: `img{.card{width:600px}}` applies to nothing an image
+  //     can contain.
   //   · an at-rule is TRANSPARENT: `@media` neither owns declarations nor kills the rules
   //     inside it. Its direct declaration text belongs to the nearest enclosing STYLE rule
   //     (`.card{@media (…){width:600px}}` sets the card's width), and at the top level —
@@ -1553,18 +1367,14 @@ function oneSheetDeclares(styleText: string, declares: (block: string) => boolea
   type Level = {
     /** May this level's own declaration text be evaluated (and under a live selector)? */
     evalDecls: boolean;
-    /** Browser-level: false under a parse-dead (empty-selector) rule — nothing comes back. */
-    parseAlive: boolean;
-    /** Evidence state — see {@link Evidence}: image scopes are escapable, gone ones are not. */
-    evidence: Evidence;
+    /** Are style rules OPENED inside this level live at all? */
+    scopeAlive: boolean;
     /** The level's direct declaration text, nested blocks excluded. */
     decl: string;
     /** Text since the last `;` / block boundary — the next block's selector candidate. */
     pending: string;
   };
-  const stack: Level[] = [
-    { evalDecls: false, parseAlive: true, evidence: "live", decl: "", pending: "" },
-  ];
+  const stack: Level[] = [{ evalDecls: false, scopeAlive: true, decl: "", pending: "" }];
   const closeTop = (): boolean => {
     const level = stack.pop()!;
     return level.evalDecls && declares(level.decl + level.pending);
@@ -1582,32 +1392,12 @@ function oneSheetDeclares(styleText: string, declares: (block: string) => boolea
     } else if (ch === "{") {
       const sel = cur.pending.trim();
       cur.pending = "";
-      if (sel.startsWith("@")) {
-        stack.push({
-          evalDecls: cur.evalDecls,
-          parseAlive: cur.parseAlive,
-          evidence: cur.evidence,
-          decl: "",
-          pending: "",
-        });
-      } else {
-        const parseAlive = cur.parseAlive && sel !== "";
-        const evidence: Evidence =
-          cur.evidence === "live"
-            ? selectsImage(sel)
-              ? "image"
-              : "live"
-            : cur.evidence === "image"
-              ? nestedEvidence(sel)
-              : "gone";
-        stack.push({
-          evalDecls: parseAlive && evidence === "live",
-          parseAlive,
-          evidence,
-          decl: "",
-          pending: "",
-        });
-      }
+      const ruleAlive = cur.scopeAlive && sel !== "" && !IMG_SELECTOR.test(sel);
+      stack.push(
+        sel.startsWith("@")
+          ? { evalDecls: cur.evalDecls, scopeAlive: cur.scopeAlive, decl: "", pending: "" }
+          : { evalDecls: ruleAlive, scopeAlive: ruleAlive, decl: "", pending: "" },
+      );
     } else if (ch === "}") {
       if (stack.length > 1) {
         if (closeTop()) return true;
