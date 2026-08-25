@@ -138,12 +138,52 @@ export class PrivacyService {
       .from(messageBodies)
       .where(eq(messageBodies.messageId, messageId))
       .limit(1);
-    if (body?.loaded !== true && !(await this.imagesLoadAutomatically(ctx))) {
+    const grants = await this.imageGrants(ctx);
+    if (body?.loaded !== true && !grants.auto) {
       throw new ServiceError(
         "remote_content_not_loaded", 403,
         "remote content for this message has not been loaded by the reader",
         undefined, false,
       );
+    }
+
+    /**
+     * ── THE PIXEL PREFERENCE IS ENFORCED BEFORE THE FETCH, FOR THE TRACKERS THE SERVER
+     *    KNOWS ─────────────────────────────────────────────────────────────────────────
+     *
+     * The client's own pixel refusal reads the message (declared 1×1s, beacon-shaped
+     * urls) and cannot know this list; a tracker url that declares no dimensions and
+     * wears no beacon path — an ESP's click/open host serving `r/abc.jpg` — sails past
+     * it and arrives here as "a picture". Classifying it AFTER `remote.fetch`, which is
+     * what this method used to do with the knowledge, refuses the caller the bytes and
+     * has already told the sender about the open — the one event "Block tracking pixels"
+     * exists to prevent, defeated for exactly the trackers we can name in advance.
+     *
+     * So a server-known tracker host or beacon-shaped url is refused the FETCH itself
+     * while the account's pixel switch stands (mail 0072), whatever the images grant
+     * says. The reader is handed the same transparent stub a fetched 1×1 gets — the
+     * client believed this was a picture, and a broken glyph would punish the reader
+     * for the sender's tracker — and the event is recorded so the feed can say who
+     * tried. An account that turned the switch OFF takes the fetch branch below,
+     * exactly as it asked to.
+     *
+     * The post-fetch dimension check stays: it is the half of the classification that
+     * needs the bytes (an unknown host's undeclared 1×1), and by then the open has been
+     * reported only for senders NO list could have named — the honest limit of the
+     * feature, which the switch's copy states.
+     */
+    const host = hostOf(url);
+    const trackerByUrl = isKnownTracker(host) || isBeaconUrl(url);
+    if (trackerByUrl && !grants.pixels) {
+      await asTx(ctx).insert(trackerEvents).values({
+        accountId: ctx.accountId,
+        messageId,
+        kind: isBeaconUrl(url) ? "pixel" : "remote_image",
+        trackerHost: host || null,
+        url,
+        detectedAt: ctx.now(),
+      });
+      return { contentType: "image/gif", body: TRANSPARENT_GIF };
     }
 
     // The SSRF gate. Refuses userinfo, odd ports, `.onion`/`.local`, and any
@@ -169,8 +209,6 @@ export class PrivacyService {
       throw new ServiceError("upstream_failed", 502, `remote image responded ${fetched.status}`);
     }
 
-    const host = hostOf(url);
-    const trackerByUrl = isKnownTracker(host) || isBeaconUrl(url);
     const dims = imageDimensions(fetched.body);
     const pixelByDims = dims != null && dims.w <= 1 && dims.h <= 1;
     const detected = trackerByUrl || pixelByDims;
@@ -195,19 +233,26 @@ export class PrivacyService {
   }
 
   /**
-   * DOES THIS ACCOUNT LOAD REMOTE IMAGES WITHOUT A PRESS? The server-side reading of mail
-   * 0048's opt-out: NULL — and an ABSENT ROW, which is every account that never changed
-   * anything — is the product default, auto. Kept as one method because two call sites
-   * (the proxy gate and the tracker feed's `blocked` flag) must answer identically or the
-   * feed lies about what the gate did.
+   * THE ACCOUNT'S TWO GRANTS, IN ONE READ. `auto` is mail 0048's opt-out inverted: NULL —
+   * and an ABSENT ROW, which is every account that never changed anything — is the product
+   * default, images load without a press. `pixels` is mail 0072's opt-out read straight:
+   * NULL/absent means tracking pixels are refused, a stored instant means the account asked
+   * for them. Kept as one method because two call sites (the proxy gate and the tracker
+   * feed's `blocked` flag) must answer identically or the feed lies about what the gate did.
    */
-  private async imagesLoadAutomatically(ctx: ServiceContext): Promise<boolean> {
+  private async imageGrants(ctx: ServiceContext): Promise<{ auto: boolean; pixels: boolean }> {
     const [row] = await ctx.db
-      .select({ blockedAt: accountSettings.blockRemoteImagesAt })
+      .select({
+        blockedAt: accountSettings.blockRemoteImagesAt,
+        pixelsAt: accountSettings.loadTrackingPixelsAt,
+      })
       .from(accountSettings)
       .where(eq(accountSettings.accountId, ctx.accountId))
       .limit(1);
-    return (row?.blockedAt ?? null) === null;
+    return {
+      auto: (row?.blockedAt ?? null) === null,
+      pixels: (row?.pixelsAt ?? null) !== null,
+    };
   }
 
   /**
@@ -259,10 +304,12 @@ export class PrivacyService {
       .limit(limit + 1);
 
     const pageRows = rows.slice(0, limit);
-    // The SAME two grants the proxy gate checks, so `blocked` reports what the gate actually
-    // did: an image fetched under the account's auto mode must not be shown as "blocked".
-    const auto = pageRows.length > 0 ? await this.imagesLoadAutomatically(ctx) : false;
-    const items = pageRows.map((r) => toDTO(r, auto));
+    // The SAME grants the proxy gate checks, so `blocked` states the account's CURRENT posture
+    // toward this tracker: refused unless an images grant exists AND the pixel switch is off.
+    const grants = pageRows.length > 0
+      ? await this.imageGrants(ctx)
+      : { auto: false, pixels: false };
+    const items = pageRows.map((r) => toDTO(r, grants));
     const last = pageRows[pageRows.length - 1];
     const nextCursor = rows.length > limit && last
       ? encodeCursor(last.detectedAt, last.id)
@@ -297,7 +344,7 @@ const KIND_MAP: Record<string, TrackerEventDTO["kind"]> = {
 function toDTO(r: {
   id: string; messageId: string; kind: string; trackerHost: string | null;
   detectedAt: Date; fromAddress: string; loaded: boolean | null;
-}, accountAuto: boolean): TrackerEventDTO {
+}, grants: { auto: boolean; pixels: boolean }): TrackerEventDTO {
   return {
     id: r.id,
     messageId: r.messageId,
@@ -305,9 +352,11 @@ function toDTO(r: {
     pixelHost: r.trackerHost ?? "",
     detectedAt: r.detectedAt.toISOString(),
     kind: KIND_MAP[r.kind] ?? "remote_beacon",
-    // The proxy gate's two grants, re-derived at read time: the per-message press OR the
-    // account's auto mode. `!loaded` alone reported auto-mode fetches as "blocked".
-    blocked: !((r.loaded ?? false) || accountAuto),
+    // The gate's own arithmetic, re-derived at read time: a tracker is currently blocked for
+    // this account unless an images grant exists (the press or auto mode) AND the pixel switch
+    // is off. `!loaded` alone reported auto-mode fetches as "blocked"; images grants alone
+    // would report a pixel the gate refuses pre-fetch as loaded.
+    blocked: !(((r.loaded ?? false) || grants.auto) && grants.pixels),
   };
 }
 

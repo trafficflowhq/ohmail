@@ -1162,8 +1162,12 @@ function declaresResponsiveCanvas(css: string): boolean {
  * reads those, and it already walks only {@link CANVAS_TAGS}.
  */
 function sheetDeclaresResponsiveCanvas(styleText: string): boolean {
+  // Comments go FIRST, for two reasons that are both real CSS: `/* img defaults */ .card{…}`
+  // would put the token `img` into the captured selector and skip a genuine canvas rule, and a
+  // brace inside a comment would misalign every rule after it.
+  const sheet = styleText.replace(/\/\*[\s\S]*?\*\//g, " ");
   const rule = /([^{}]+)\{([^{}]*)\}/g;
-  for (let m = rule.exec(styleText); m; m = rule.exec(styleText)) {
+  for (let m = rule.exec(sheet); m; m = rule.exec(sheet)) {
     if (/(?:^|[\s,>+~(])img\b/i.test(m[1]!)) continue;
     if (declaresResponsiveCanvas(m[2]!)) return true;
   }
