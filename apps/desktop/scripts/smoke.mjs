@@ -668,6 +668,14 @@ for (let i = 0; i < RENDER_TURNS && !invoked.some(isHealthAsk); i++) await new P
 const askedHealth = invoked.some(isHealthAsk);
 for (let i = 0; i < RENDER_TURNS; i++) await new Promise((r) => setTimeout(r, 25));
 const mailWhilePending = invoked.filter(isMailAsk).length;
+/* RUN A'S OWN EVIDENCE, snapshotted BEFORE the close so the teardown's noise is not in it — and
+   before the reset below erases it unread. A defect specific to the pending state — the
+   connecting surface throwing, a guarded API leaking, a route the stub has never seen — happens
+   only while the verdict is held, and run B (released at once) may never reproduce it. Asserted
+   beside the gate check in section 5. */
+const pendingFaults = [...uncaught, ...consoleErrors];
+const pendingLeaks = [...leaked];
+const pendingUnmodelled = [...unmodelled];
 pendingRun.window.close();
 /* Run A's traffic and teardown noise must not reach run B's checks: its /health asks are still
    pending by design, and closing a window can log. Reset every shared recorder. */
@@ -827,6 +835,16 @@ check("no collapsed-mail placeholder", collapsed == null, collapsed?.[0] ?? "");
     `asked /health: ${askedHealth}; mail asks while pending: ${mailWhilePending}; `
       + `released at #${healthReleasedAt}, first /sync at #${firstSyncAt}: `
       + asked.map((i) => i.payload?.url).join(", "),
+  );
+
+  /* AND THE PENDING STATE RAN CLEAN — run A's own recorders, snapshotted before its close. The
+     connecting surface is a real surface: an exception, a console error, a guarded-API leak or an
+     unmodelled route that happens only while the verdict is held would otherwise be erased by the
+     reset between the runs and never reproduced by run B, which releases at once. */
+  check(
+    "the pending-verdict window ran clean",
+    pendingFaults.length === 0 && pendingLeaks.length === 0 && pendingUnmodelled.length === 0,
+    [...pendingFaults, ...pendingLeaks, ...pendingUnmodelled].slice(0, 3).join(" | "),
   );
 
   /* A route the stub does not model would be answered 404 and would surface as a
