@@ -7,10 +7,14 @@ import {
   FOLDER_PAGE_MAX, MessageGoneError, makeRef,
   type FolderPage, type FolderPageItem,
 } from "@trafficflow/core/adapters/imap";
+/* `core/mail`, never the default barrel: the barrel re-exports `ai/workflows/*`, whose workflow runner
+ * imports the db cloud barrel — so one barrel import here pulls the hosted schema (billing,
+ * credits, staff grants) into the LOCAL ENGINE bundle this module is part of. The mail subpath
+ * is the same surface minus `ai/*`; every name below lives outside it. */
 import {
   UNMETERED_STORAGE_CAP, fingerprintDedupKey, messageFingerprint,
   normalizeMime, normalizeMessageId, prepareHtmlForStorage,
-} from "@trafficflow/core";
+} from "@trafficflow/core/mail";
 import { ServiceError, foldersEnabled, type ServiceContext } from "@trafficflow/services/mail";
 import { openMailboxImap } from "./attachments-adapter.js";
 import type { ApiDeps } from "./deps.js";
