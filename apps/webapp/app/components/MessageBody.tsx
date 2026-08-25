@@ -1202,19 +1202,23 @@ function stripCssComments(css: string): string {
         (!continuesIdent(css.charCodeAt(i - 1)) && css[i - 1] !== "@" && css[i - 1] !== "#"))
     ) {
       let j = i + 4;
-      // `url( "…" )` wraps its argument in a STRING, and that string may hold a literal `)` —
-      // so an opening quote (after optional whitespace) is scanned as a string first, with
-      // escapes and CSS's bad-string newline rule, before the closing paren is looked for.
       while (j < css.length && (css[j] === " " || css[j] === "\t")) j += 1;
       const q = css[j];
       if (q === '"' || q === "'") {
+        // `url( "…" )` is a FUNCTION whose argument is a STRING — the string may hold a literal
+        // `)`, so it is scanned as a string (escapes, and CSS's bad-string newline rule), and
+        // then the OUTER scanner resumes: between the argument and the function's `)` ordinary
+        // CSS rules apply again, so a genuine comment there is still a comment rather than
+        // "url data" whose braces the rule walk would read as live.
         j += 1;
         while (j < css.length && css[j] !== q && css[j] !== "\n" && css[j] !== "\r" && css[j] !== "\f") {
           if (css[j] === "\\") j += 1;
           j += 1;
         }
-        j += 1;
+        i = j + 1;
+        continue;
       }
+      // The UNQUOTED form is a url TOKEN: data to its `)`, comment-opens included.
       while (j < css.length && css[j] !== ")") {
         if (css[j] === "\\") j += 1;
         j += 1;
