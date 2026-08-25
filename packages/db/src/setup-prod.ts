@@ -4,7 +4,7 @@ import postgres from "postgres";
 import { readJournalOf, type JournalEntry, type JournalSpec } from "./baseline.js";
 import { onNotice } from "./notices.js";
 import { runMigrations, JOURNALS } from "./migrate.js";
-import { ensureSearchExtensions } from "./search-setup.js";
+import { ensureSearchExtensions, ensureWithheldProvenanceIndex } from "./search-setup.js";
 import { transactionPoolerReason, sessionUrlRejection } from "./session-url.js";
 import {
   applySupabaseLockdown, closeDataApiEndpoint, dataApiBindingProblems, dataApiBindingUnprovable,
@@ -385,6 +385,20 @@ export async function setupProdDatabase(
       );
       await applySupabaseLockdown(pre, hostRoles);
     }
+
+    // ── MAIL 0071's INDEX, BUILT CONCURRENTLY BEFORE THE MIGRATOR CAN BUILD IT BLOCKING ────
+    //
+    // The standing rule (0047_read_order's, restated when the away responder's candidate index
+    // was deferred for exactly this reason): a plain CREATE INDEX
+    // over the schema's largest table never runs as a journal statement — it blocks writes for
+    // the length of the build, and CONCURRENTLY cannot run inside the migrator's transaction.
+    // Mail 0071 carries the statement with IF NOT EXISTS, so building it HERE first — on this
+    // autocommit session connection, without a write lock — turns the journal statement into a
+    // no-op for exactly the population at risk: an existing install with a large mailbox
+    // upgrading past 0071. See `ensureWithheldProvenanceIndex` for the three populations and
+    // the invalid-leftover cleanup.
+    log("ensuring the withheld-provenance index (concurrently, ahead of the migrator)");
+    await ensureWithheldProvenanceIndex(preDb, { log: (m) => log(m) });
   } finally {
     await pre.end({ timeout: 5 });
   }

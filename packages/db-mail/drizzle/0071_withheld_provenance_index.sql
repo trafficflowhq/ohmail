@@ -39,12 +39,19 @@
 -- serve reads that touch almost none of them — the same argument 0041's retry probe and 0043's
 -- move-to-Ohbox probe made.
 --
--- ══ ADDITIVE, IDEMPOTENT, NO DML ═══════════════════════════════════════════════════════════
+-- ══ ADDITIVE, IDEMPOTENT, NO DML — AND THE BLOCKING BUILD IS PRE-EMPTED ════════════════════
 --
 -- One `CREATE INDEX IF NOT EXISTS`, no column, no CHECK, no backfill. The migrator runs each
--- file in a transaction, so this is a plain (non-CONCURRENT) build — the husk population is
--- small and the table's write lock is held for one index build, which is how every earlier
--- index in this journal was created.
+-- file in a transaction, where CONCURRENTLY cannot run — and the standing rule
+-- (0047_read_order's, restated when the away responder's candidate index was deferred for
+-- exactly this reason) is that a blocking index build over the
+-- schema's largest table must not ride the journal. So the SETUP CLI builds this exact index
+-- CONCURRENTLY *before* the migrator runs (`ensureWithheldProvenanceIndex`,
+-- packages/db/src/search-setup.ts — the two statements must stay byte-equivalent), and this
+-- statement then no-ops via IF NOT EXISTS. On a FRESH database the table is empty at this
+-- point in the replay, so the in-transaction build here is instant; the one database that
+-- applied this file before the pre-step existed (the managed production db) measured the
+-- build in seconds at 85k rows.
 --
 -- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
 --
