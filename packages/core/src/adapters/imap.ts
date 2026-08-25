@@ -805,6 +805,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * on the next process restart.
    */
   private scanSentFolder: string | null = null;
+  /**
+   * {@link fetchByUid}'s OWN memo of the resolved Sent path — and unlike {@link scanSentFolder}
+   * it holds a NEGATIVE answer too, behind a clock. The scan deliberately re-asks a null every
+   * cycle so a mailbox that grows a Sent folder starts being watched on the next cycle; a
+   * TARGETED fetch has no such discovery duty per call, and on a no-Sent server the re-ask made
+   * every chunked fetch pay a full inventory LIST (review round 3 — round 2's fix covered only
+   * the positive path). The TTL keeps discovery honest: a Sent folder created mid-connection
+   * reaches the `ownAuthored` stamp within {@link ImapAdapter.TARGETED_SENT_TTL_MS}.
+   */
+  private targetedSent: { value: string | null; at: number } | null = null;
+  private static readonly TARGETED_SENT_TTL_MS = 5 * 60 * 1000;
   /** {@link findSpecialFolders}' memo — positive answers only, a null is re-asked. */
   private specialJunk: string | null = null;
   private specialTrash: string | null = null;
@@ -2390,9 +2401,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // (the junk-restore pass, review round 2) was paying one full LIST per four messages for a
     // value `findSentForScan` memoises for the connection's life. The watched-set guard is
     // `foldersToScan`'s own, byte for byte, so the `ownAuthored` stamp below is unchanged.
-    const resolvedSent = await this.findSentForScan();
-    const sent = resolvedSent !== null && !(WATCHED_FOLDERS as readonly string[]).includes(resolvedSent)
-      ? resolvedSent : null;
+    const nowMs = Date.now();
+    if (this.targetedSent === null || nowMs - this.targetedSent.at > ImapAdapter.TARGETED_SENT_TTL_MS) {
+      const resolvedSent = await this.findSentForScan();
+      this.targetedSent = {
+        value: resolvedSent !== null && !(WATCHED_FOLDERS as readonly string[]).includes(resolvedSent)
+          ? resolvedSent : null,
+        at: nowMs,
+      };
+    }
+    const sent = this.targetedSent.value;
     if (wanted.length === 0) return { uidValidity: "0", creates: [], absent: [], oversize: [] };
 
     const lock = await this.client.getMailboxLock(this.toServerPath(folder));
