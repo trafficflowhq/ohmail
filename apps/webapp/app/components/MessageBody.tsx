@@ -1165,6 +1165,30 @@ function declaresResponsiveCanvas(css: string): boolean {
  * to whatever "rules" sit inside it — they were never live CSS, so hiding them from the
  * classifier tells no lies.
  */
+/**
+ * The index just past ONE CSS escape whose backslash sits at `backslash` (CSS Syntax §4.3.7):
+ * one to six hex digits consume an OPTIONAL single whitespace terminator (`\r\n` counting as
+ * one); any other character is consumed literally; a backslash at EOF consumes nothing more.
+ * The terminator is the half a naive "skip one char" misses — `\61` ended by a line feed keeps
+ * that line feed INSIDE the escape, so a scanner that surfaced it re-entered the outer scan
+ * from the middle of a string.
+ */
+function pastCssEscape(css: string, backslash: number): number {
+  let j = backslash + 1;
+  if (j >= css.length) return j;
+  let hex = 0;
+  while (hex < 6 && j < css.length && /[0-9a-fA-F]/.test(css[j]!)) {
+    j += 1;
+    hex += 1;
+  }
+  if (hex === 0) return j + 1;
+  if (css[j] === "\r" && css[j + 1] === "\n") return j + 2;
+  if (css[j] === " " || css[j] === "\t" || css[j] === "\n" || css[j] === "\r" || css[j] === "\f") {
+    return j + 1;
+  }
+  return j;
+}
+
 function stripCssComments(css: string): string {
   if (!css.includes("/*")) return css;
   let out = "";
@@ -1176,7 +1200,7 @@ function stripCssComments(css: string): string {
     // characters to CSS, not string openers, and treating one as a string swallowed everything
     // to EOF and left a live comment "inside" it for the rule scan to read as CSS.
     if (c === "\\") {
-      i += 2;
+      i = pastCssEscape(css, i);
       continue;
     }
     if (c === '"' || c === "'") {
@@ -1184,7 +1208,7 @@ function stripCssComments(css: string): string {
       // CSS Syntax §4.3.5: an unescaped newline is a bad-string and ENDS the token there —
       // a scanner that kept skipping would hide real rules behind one stray quote.
       while (j < css.length && css[j] !== c && css[j] !== "\n" && css[j] !== "\r" && css[j] !== "\f") {
-        if (css[j] === "\\") j += 1;
+        if (css[j] === "\\") { j = pastCssEscape(css, j); continue; }
         j += 1;
       }
       i = j + 1;
@@ -1212,7 +1236,7 @@ function stripCssComments(css: string): string {
         // "url data" whose braces the rule walk would read as live.
         j += 1;
         while (j < css.length && css[j] !== q && css[j] !== "\n" && css[j] !== "\r" && css[j] !== "\f") {
-          if (css[j] === "\\") j += 1;
+          if (css[j] === "\\") { j = pastCssEscape(css, j); continue; }
           j += 1;
         }
         i = j + 1;
@@ -1220,7 +1244,7 @@ function stripCssComments(css: string): string {
       }
       // The UNQUOTED form is a url TOKEN: data to its `)`, comment-opens included.
       while (j < css.length && css[j] !== ")") {
-        if (css[j] === "\\") j += 1;
+        if (css[j] === "\\") { j = pastCssEscape(css, j); continue; }
         j += 1;
       }
       i = j + 1;
