@@ -131,6 +131,17 @@ export function capDeferredFor(mailboxId: string): Map<string, number> {
   return fresh;
 }
 
+/**
+ * WHERE A CAPPED CYCLE LEFT OFF — mailboxId → the keyset cursor to resume from, making the walk
+ * a ROTATION rather than a restart. Without this, `maxPages × pageSize` remembered refusals
+ * sorting first would make every cycle walk and skip the same prefix and exit at the page cap,
+ * so the fresh candidate behind them was never reached (review round 2's finding — round 1's
+ * fix had only RAISED the starvation threshold). A cycle that completes the walk (a short or
+ * empty page) CLEARS the entry, so the next cycle starts from the top and newly un-junked
+ * messages with low ids wait at most one rotation.
+ */
+const resumeAfterByMailbox = new Map<string, string>();
+
 export interface JunkRestoreDeps {
   repo: WorkerRepo;
   adapter: MailboxAdapter;
@@ -157,6 +168,8 @@ export interface JunkRestoreDeps {
   refused?: Set<string>;
   /** Test seam for the at-cap deferral map (the clock shelf). */
   capDeferred?: Map<string, number>;
+  /** Test seam for the rotation cursor (mailboxId → resume-after keyset position). */
+  resume?: Map<string, string>;
 }
 
 export interface JunkRestoreResult {
@@ -207,12 +220,17 @@ export async function junkRestorePass(deps: JunkRestoreDeps): Promise<JunkRestor
   const capBytes = deps.storageCap === UNMETERED_STORAGE_CAP ? null : deps.storageCap;
   const refused = deps.refused ?? refusedFor(mailboxId);
   const capDeferred = deps.capDeferred ?? capDeferredFor(mailboxId);
+  const resume = deps.resume ?? resumeAfterByMailbox;
 
   const result: JunkRestoreResult = { ...EMPTY };
-  let after: string | undefined;
+  // THE ROTATION — see {@link resumeAfterByMailbox}: a bounded exit left a cursor, resume there.
+  let after: string | undefined = resume.get(mailboxId);
 
   outer: for (let pages = 0; ; pages++) {
     if (pages >= maxPages || result.fetched >= fetchBudget) { result.capped = true; break; }
+    // Where this page started — a mid-page budget exit resumes HERE, so the page's unprocessed
+    // remainder is re-offered next cycle rather than waiting out a whole rotation.
+    const pageStart = after;
     const page = await listHusks(accountId, mailboxId, {
       limit: pageSize, ...(after !== undefined ? { afterId: after } : {}),
     });
@@ -241,7 +259,7 @@ export async function junkRestorePass(deps: JunkRestoreDeps): Promise<JunkRestor
     for (const [folder, all] of byFolder) {
       for (let i = 0; i < all.length;) {
       const budget = fetchBudget - result.fetched;
-      if (budget <= 0) { result.capped = true; break outer; }
+      if (budget <= 0) { result.capped = true; after = pageStart; break outer; }
       const rows = all.slice(i, i + Math.min(fetchChunk, budget));
       i += rows.length;
 
@@ -337,6 +355,12 @@ export async function junkRestorePass(deps: JunkRestoreDeps): Promise<JunkRestor
     }
     if (page.length < pageSize) break;
   }
+
+  // THE ROTATION'S BOOKKEEPING: a bounded exit resumes at `after` next cycle; a completed walk
+  // (an empty or short page — the only non-capped exits) clears the cursor so the next cycle
+  // starts from the top and newly un-junked low-id messages wait at most one rotation.
+  if (result.capped && after !== undefined) resume.set(mailboxId, after);
+  else resume.delete(mailboxId);
 
   if (result.restored > 0 || result.fetched > 0) {
     log?.info("sync_junk_bodies_restored", {

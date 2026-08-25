@@ -2385,8 +2385,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   ): Promise<TargetedFetch> {
     const wanted = [...new Set(uids)].filter((u) => Number.isInteger(u) && u > 0);
     // The Sent path BEFORE the lock: `findSentForScan` may issue LIST, and imapflow's mailbox lock
-    // is not re-entrant.
-    const { sent } = await this.foldersToScan();
+    // is not re-entrant. Resolved DIRECTLY rather than through `foldersToScan`, whose LIST-STATUS
+    // arm re-lists the whole folder inventory on every call — a caller that fetches in chunks
+    // (the junk-restore pass, review round 2) was paying one full LIST per four messages for a
+    // value `findSentForScan` memoises for the connection's life. The watched-set guard is
+    // `foldersToScan`'s own, byte for byte, so the `ownAuthored` stamp below is unchanged.
+    const resolvedSent = await this.findSentForScan();
+    const sent = resolvedSent !== null && !(WATCHED_FOLDERS as readonly string[]).includes(resolvedSent)
+      ? resolvedSent : null;
     if (wanted.length === 0) return { uidValidity: "0", creates: [], absent: [], oversize: [] };
 
     const lock = await this.client.getMailboxLock(this.toServerPath(folder));
