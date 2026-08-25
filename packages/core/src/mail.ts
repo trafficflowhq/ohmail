@@ -38,6 +38,10 @@ export * from "./dedup.js";
 export * from "./reconciler.js";
 export * from "./threading.js";
 export * from "./pipeline.js";
+// The junk-husk verify/rewrite BOTH restore doors share — the API's "Not junk" rescue and the
+// worker's convergence pass. Mail-half by the same test as `pipeline.js` beside it: it names no
+// model and imports only the mail schema and this package's own identity/mime vocabulary.
+export * from "./husk-restore.js";
 // The seams only — see the header. Never `./ai/classify.js` or `./ai/draft.js`, which are the
 // implementations: those name a model, carry the prompts, and are the private half wholesale.
 // A consumer of this entry point can be HANDED a classifier or a drafter and can describe one;

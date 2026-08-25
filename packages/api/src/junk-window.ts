@@ -1,8 +1,5 @@
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
-import {
-  applyBodyBytesDelta, bodyBytesOf, mailboxes, messageBodies, messages, recordChange,
-  reserveBodyBytes,
-} from "@trafficflow/db";
+import { mailboxes, messageBodies, messages } from "@trafficflow/db";
 import {
   FOLDER_PAGE_MAX, MessageGoneError, makeRef,
   type FolderPage, type FolderPageItem,
@@ -11,10 +8,7 @@ import {
  * imports the db cloud barrel — so one barrel import here pulls the hosted schema (billing,
  * credits, staff grants) into the LOCAL ENGINE bundle this module is part of. The mail subpath
  * is the same surface minus `ai/*`; every name below lives outside it. */
-import {
-  UNMETERED_STORAGE_CAP, fingerprintDedupKey, messageFingerprint,
-  normalizeMime, normalizeMessageId, prepareHtmlForStorage,
-} from "@trafficflow/core/mail";
+import { UNMETERED_STORAGE_CAP, normalizeMime, unhuskJunkFiledBody } from "@trafficflow/core/mail";
 import { ServiceError, foldersEnabled, type ServiceContext } from "@trafficflow/services/mail";
 import { openMailboxImap } from "./attachments-adapter.js";
 import type { ApiDeps } from "./deps.js";
@@ -497,71 +491,39 @@ export async function rescueJunk(
     await opened.close().catch(() => { /* socket gone; the slot release has its own guard */ });
   }
 
-  // ── The verdict's reversal made whole: put the husked body back, exactly the
-  // fetch-verify-rewrite `redacted-restore.ts` performs (same identity witness, same byte
-  // accounting, same one `message` delta). Best-effort AFTER the move — a failure here leaves
-  // the rescue done and the husk standing, which the next verdict surface states honestly.
+  // ── The verdict's reversal made whole: put the husked body back through the ONE shared
+  // verify/rewrite (`core/husk-restore.ts` — the identity witness, the lock-and-recheck, the
+  // at-cap posture; the worker's convergence pass for a message that leaves Junk WITHOUT this
+  // verb ends at the same function, which is what keeps the two doors from drifting).
+  // Best-effort AFTER the move — a failure here leaves the rescue done and the husk standing,
+  // which the next verdict surface states honestly.
   if (husk !== undefined && raw !== null) {
     try {
       const fresh = await normalizeMime(raw);
-      // TWO independent identity witnesses, exactly `redacted-restore.ts#isSameMessage`: the
-      // normalized Message-ID, OR the canonical-content fingerprint against the husk's own
-      // dedup key — the fallback that lets a legitimately Message-ID-less verdict restore too.
-      const sameMid = normalizeMessageId(husk.messageIdHeader) !== null
-        && normalizeMessageId(husk.messageIdHeader) === normalizeMessageId(fresh.canonical.messageIdHeader);
-      const sameFingerprint = fingerprintDedupKey(messageFingerprint(fresh)) === husk.dedupKey;
-      if (sameMid || sameFingerprint) {
-        await deps.db.transaction(async (tx) => {
-          const [live] = await tx
-            .select({ text: messageBodies.text, html: messageBodies.html, withheld: messageBodies.withheldReason })
-            .from(messageBodies)
-            .where(eq(messageBodies.messageId, husk.id))
-            .for("update");
-          if (live?.withheld !== "junk_filed") return; // somebody else restored it first
-          const storedHtml = prepareHtmlForStorage(fresh.htmlBody);
-          const oldBytes = bodyBytesOf({ text: live.text ?? "", html: live.html ?? null });
-          const newBytes = bodyBytesOf({ text: fresh.textBody, html: storedHtml });
-          /**
-           * THE CAP HOLDS HERE TOO. The verdict's husk freed these bytes; putting them back is
-           * new stored content, and an at-cap account must not grow past its entitlement
-           * through repeated rescues (a review caught the uncapped version). `reserveBodyBytes`
-           * is ingest's own atomic reserve: a decline aborts the restore — the husk STANDS,
-           * with its marker still true (the bytes live on in the mailbox), which is exactly
-           * the state the storage-cap copy explains. An absent `storageCapOf` is the
-           * unmetered tier's declaration (local/self-host), same as `UNMETERED_STORAGE_CAP`.
-           */
-          const capOf = deps.services?.storageCapOf;
-          if (capOf === undefined) {
-            // ABSENT is a host nobody has read — the `ApiServices.storageCapOf` contract: the
-            // unmetered tiers DECLARE the symbol, so undefined must refuse rather than infer
-            // unmetered (round 3's finding). The husk stands; the rescue itself has landed.
-            deps.logger?.warn?.("junk_rescue_unhusk_no_cap_resolver", { mailboxId: args.mailboxId });
-            return;
-          }
-          const cap = await capOf(ctx);
-          const capBytes = cap === UNMETERED_STORAGE_CAP ? null : cap;
-          const grow = newBytes - oldBytes;
-          if (grow > 0) {
-            if (!(await reserveBodyBytes(tx, accountId, grow, capBytes))) {
-              deps.logger?.warn?.("junk_rescue_unhusk_at_cap", { mailboxId: args.mailboxId });
-              return;
-            }
-          } else if (grow < 0) {
-            await applyBodyBytesDelta(tx, accountId, grow);
-          }
-          await tx.update(messageBodies).set({
-            text: fresh.textBody,
-            html: storedHtml,
-            withheldReason: null,
-          }).where(eq(messageBodies.messageId, husk.id));
-          await tx.update(messages).set({
-            snippet: fresh.textBody.replace(/\s+/g, " ").trim().slice(0, 200),
-            updatedAt: deps.now?.() ?? new Date(),
-          }).where(and(eq(messages.id, husk.id), eq(messages.accountId, accountId)));
-          await recordChange(tx, {
-            accountId, entityType: "message", entityId: husk.id, op: "update", meta: null,
-          });
+      /**
+       * THE CAP HOLDS HERE TOO — resolved HERE, because `storageCapOf` is this host's seam. An
+       * absent resolver is a host nobody has read — the `ApiServices.storageCapOf` contract: the
+       * unmetered tiers DECLARE the symbol, so undefined must refuse rather than infer unmetered
+       * (round 3's finding). The husk stands; the rescue itself has landed.
+       */
+      const capOf = deps.services?.storageCapOf;
+      if (capOf === undefined) {
+        deps.logger?.warn?.("junk_rescue_unhusk_no_cap_resolver", { mailboxId: args.mailboxId });
+      } else {
+        const cap = await capOf(ctx);
+        const nowAt = deps.now?.();
+        const outcome = await unhuskJunkFiledBody(deps.db, {
+          accountId,
+          husk: { id: husk.id, dedupKey: husk.dedupKey, messageIdHeader: husk.messageIdHeader },
+          fresh,
+          capBytes: cap === UNMETERED_STORAGE_CAP ? null : cap,
+          ...(nowAt !== undefined ? { now: nowAt } : {}),
         });
+        if (outcome === "at_cap") {
+          // The decline is the design: the husk STANDS, with its marker still true (the bytes
+          // live on in the mailbox), which is exactly the state the storage-cap copy explains.
+          deps.logger?.warn?.("junk_rescue_unhusk_at_cap", { mailboxId: args.mailboxId });
+        }
       }
     } catch (err) {
       deps.logger?.warn?.("junk_rescue_unhusk_failed", { mailboxId: args.mailboxId, err: String(err) });

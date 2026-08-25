@@ -13,6 +13,7 @@ export * from "./dedup.js";
 export * from "./reconciler.js";
 export * from "./threading.js";
 export * from "./pipeline.js";
+export * from "./husk-restore.js";
 export * from "./ai/classify.js";
 export * from "./ai/anthropic-client.js";
 export * from "./ai/draft.js";

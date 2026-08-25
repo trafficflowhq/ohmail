@@ -24,6 +24,7 @@ import {
   completeFiling, junkAuditCode, physicalDestination, specialFoldersOf,
   SPAM_PILE, TOMBSTONE_MAX_PER_CYCLE, type SpecialFolderMap,
 } from "./junk-filing.js";
+import { junkRestorePass } from "./junk-restore.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -809,6 +810,25 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // AFTER the cursor writes, and skipped entirely when anything is deferred — see
   // `retryFailedMessages` for both reasons.
   if (deferred.size === 0) await retryFailedMessages(deps, deadLetters, version);
+
+  // THE SECOND DOOR OUT OF JUNK — refill `junk_filed` husks whose message this scan can see
+  // alive in a watched folder (the user moved it back in another client, or the provider
+  // un-junked it, and the adoption-time refill did not close it). Same placement rules as the
+  // targeted retry above, same verify/rewrite as the API's rescue (`core/husk-restore.ts`);
+  // the module header carries the whole argument. Never throws except a fence refusal, which
+  // must stop the cycle unreclassified.
+  if (deferred.size === 0) {
+    try {
+      await junkRestorePass({
+        repo, adapter, accountId, mailboxId, storageCap,
+        ...(log !== undefined ? { log } : {}),
+        write: (fn) => fencedGroup(deps, fn),
+      });
+    } catch (err) {
+      rethrowFenced(err);
+      log?.warn("junk_restore_pass_failed", { mailboxId, accountId, err });
+    }
+  }
 
   const { owesMore } = await reconcileMailbox(deps);
   if (firstDeferredError !== null) throw firstDeferredError;

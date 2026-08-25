@@ -10,6 +10,11 @@ import type {
   // default barrel re-exports the model half beside it — so naming it here would put the
   // classifier and the drafter into the import graph of every artifact that stores a message.
 } from "../mail.js";
+import type { NormalizedMessage } from "../types.js";
+import {
+  unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
+  type JunkHuskIdentity, type JunkUnhuskOutcome,
+} from "../husk-restore.js";
 import { effectForDestination } from "../rules.js";
 import { providerAuthservIds } from "../authserv-ids.js";
 
@@ -73,6 +78,21 @@ export interface ThreadBacklogRow {
   date: Date | null;
   /** `message_bodies.headers`, lowercased names → raw values. `{}` when the body row is absent. */
   headers: Record<string, string[]>;
+}
+
+/**
+ * ONE `junk_filed` husk the worker's restore pass may refill: the husk row's identity (what the
+ * verify witness checks against) plus the live PRIMARY instance's locator — the watched copy the
+ * scan observed, which is where the bytes are re-read from. See {@link WorkerRepo.listJunkFiledHusks}.
+ */
+export interface JunkFiledHuskRow {
+  messageId: string;
+  dedupKey: string;
+  messageIdHeader: string | null;
+  /** The primary instance's site — the folder the message is demonstrably alive in. */
+  folder: string;
+  uidValidity: string;
+  uid: number;
 }
 
 /** A `flag_state` row still owed an IMAP write, joined to the locator the write needs. */
@@ -223,6 +243,32 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * wrong ONLY toward the narrower action (fakes never junk-file at all unless they opt in).
    */
   listAiAutoAppliedQuarantine?(accountId: string, messageIds: readonly string[]): Promise<string[]>;
+  /**
+   * `junk_filed` husks whose message the scan can SEE ALIVE IN WATCHED SPACE — a live primary
+   * instance row, `deleted_at` clear — which is exactly the population the rescue verb never
+   * touched: the user moved the message out of Junk in another client, or the provider un-junked
+   * it, and the adoption-time refill (`pipeline.ts` → `restoreWithheldBody`) either predated the
+   * husk, carried no body, or was declined at cap. The instance witness is structural: instances
+   * exist only for enumerated folders and the filing completion `forgetInstanceAt`s the parked
+   * junk locator, so "has a primary instance" IS "alive outside Junk" — no junk-path comparison
+   * to drift. Ordered by message id, bounded, and keyset-paged on `afterId` — a refused row (an
+   * at-cap decline, an identity mismatch) keeps its husk and stays a candidate, so a cursorless
+   * page would re-offer the same refusals for ever (`redacted-restore.ts#selectCandidates`'s
+   * argument, verbatim). OPTIONAL so every fake keeps compiling; absence reads as "no
+   * candidates", never a wrong restore.
+   */
+  listJunkFiledHusks?(
+    accountId: string, mailboxId: string, opts: { limit: number; afterId?: string },
+  ): Promise<JunkFiledHuskRow[]>;
+  /**
+   * VERIFY + REWRITE one `junk_filed` husk from bytes the caller re-read off the mail server —
+   * the shared seam (`husk-restore.ts`) both restore doors end at; see its header for the
+   * identity witness, the lock-and-recheck idempotency and the at-cap posture. On the repo so
+   * the worker's fence transaction is the one it runs inside. OPTIONAL, as above.
+   */
+  unhuskJunkFiledBody?(
+    accountId: string, husk: JunkHuskIdentity, fresh: NormalizedMessage, capBytes: number | null,
+  ): Promise<JunkUnhuskOutcome>;
   /**
    * Every UID of this mailbox that is still owed — failed, and neither ingested nor written off as
    * void. Read at the top of every cycle and merged into the adapter's known-set, which is what
@@ -939,6 +985,49 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       return false;
     }
     return true;
+  }
+
+  /** See the interface doc — the instance witness is the predicate, mail 0071's index the read. */
+  async listJunkFiledHusks(
+    accountId: string, mailboxId: string, opts: { limit: number; afterId?: string },
+  ): Promise<JunkFiledHuskRow[]> {
+    const rows = await this.db.select({
+      messageId: messages.id,
+      dedupKey: messages.dedupKey,
+      messageIdHeader: messages.messageIdHeader,
+      folder: messageInstances.folder,
+      uidValidity: messageInstances.uidvalidity,
+      uid: messageInstances.uid,
+    }).from(messageBodies)
+      .innerJoin(messages, eq(messages.id, messageBodies.messageId))
+      .innerJoin(messageInstances, and(
+        eq(messageInstances.messageId, messages.id),
+        eq(messageInstances.isPrimary, true),
+      ))
+      .where(and(
+        eq(messageBodies.withheldReason, "junk_filed"),
+        eq(messages.accountId, accountId),
+        eq(messages.mailboxId, mailboxId),
+        isNull(messages.deletedAt),
+        ...(opts.afterId !== undefined ? [sql`${messages.id} > ${opts.afterId}::uuid`] : []),
+      ))
+      .orderBy(asc(messages.id))
+      .limit(opts.limit);
+    return rows.map((r) => ({
+      messageId: r.messageId,
+      dedupKey: r.dedupKey,
+      messageIdHeader: r.messageIdHeader,
+      folder: r.folder,
+      uidValidity: String(r.uidValidity),
+      uid: r.uid,
+    }));
+  }
+
+  /** The shared verify/rewrite, on this repo's connection — the worker's fence tx when fenced. */
+  async unhuskJunkFiledBody(
+    accountId: string, husk: JunkHuskIdentity, fresh: NormalizedMessage, capBytes: number | null,
+  ): Promise<JunkUnhuskOutcome> {
+    return unhuskJunkFiledBodyTx(this.db, { accountId, husk, fresh, capBytes });
   }
 
   /**
