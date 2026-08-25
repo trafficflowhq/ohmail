@@ -16,6 +16,40 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+### Designed mail renders as its sender designed it
+
+The reading pane sets ordinary letters in the app's own type, and that class was
+too greedy: a designed message whose template declares its width the responsive
+way (`max-width` on a full-width table) or builds its layout from nested tables
+was treated as a letter, and the app's table styling drew a border around every
+layout cell — a box around each nesting level of a design that draws none. Such
+messages now keep their frame: the sender's own presentation, laid out at the
+column's width, with sanitization unchanged. Plain letters keep the app's
+typography exactly as before, and "Show original" still flips any letter to the
+sender's rendering.
+
+### A first sync fills from the top
+
+A fresh install of the Cloud door used to mirror the account oldest-first: the
+replay of the account's change history runs in the order it happened, so the
+mail at the top of the Ohbox — this week's — was the last to arrive, hours in on
+a large account. The first sync now opens with the newest window of mail (the
+same recent window the web client boots from — ninety days, and never fewer
+than five thousand messages — rules first, then the newest messages), and only
+then replays the rest of the history behind it.
+The first screenful is current within seconds; the archive fills in underneath.
+Interrupting the app in either phase resumes where it left off — the window at
+its last committed page, the replay at its committed cursor — with nothing
+re-fetched from the start.
+
+The text of the mail now fills from the top too. The one-time body fill walks
+the account in storage order — an order that has nothing to do with the list —
+so the newest message could open blank until the walk happened to reach it.
+Each pass now fetches the first screenful's message text ahead of that walk,
+and a catch-up after time offline starts with the newest missing messages
+instead of arbitrary ones. The walk itself is unchanged: same pages, same
+resume, same finish line.
+
 ## [0.11.1] — 2026-08-25
 
 Deleting mail is safe for synced devices now, the Cloud mirror survives its own

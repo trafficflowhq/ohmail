@@ -88,6 +88,60 @@ import type { Diagnostic } from "./log.js";
  * a LOCAL seq unrelated to the Cloud cursor — and that is what makes the projection's `/sync`
  * advance. Message bodies are the exception: they are not a `/sync` entity (the client hydrates
  * them separately), so they are upserted without a change-log row.
+ *
+ * ── NEWEST FIRST: A BOOTSTRAP OPENS WITH THE SNAPSHOT WINDOW, THEN REPLAYS THE FEED ───────────
+ *
+ * A hosted `/sync?since=0` replay is `change_log` in seq order, which is the account's history
+ * OLDEST-first: on a fresh install the mail a person opened the app for — this week's — is what
+ * the replay reaches LAST, hours in on a large account, and the top of the Ohbox fills from the
+ * bottom of the archive. Measured on the first sync of a 73k-message account. The feed cannot be
+ * asked for the other order — a seq replay is inherently oldest-first, and the resumable cursor
+ * depends on it staying so.
+ *
+ * The newest-first door that exists is `GET /sync/snapshot` (`sync-service.ts`), the browser
+ * client's own bootstrap: page 1 carries the account's live small state (every rule, message
+ * state, pending decision, approval, draft, tag and folder) plus the newest page of messages, and
+ * the pages after it walk the message stream newest-first through a 90-day / 5,000-row window and
+ * a labeled tail. So a bootstrap here runs in TWO PHASES, and the invariant is:
+ *
+ *   THE WINDOW LANDS BEFORE THE REPLAY'S FIRST PAGE, AND NEITHER PHASE ADOPTS THE OTHER'S CURSOR.
+ *
+ *  · Phase 1, THE WINDOW ({@link drainWindowFirst}): every snapshot page, applied through the SAME
+ *    {@link applyPage} as a feed page — local change-log rows, FK guards, folder reconciliation and
+ *    generation marks included — with its own progress persisted in the cursor file's `window`
+ *    field (the hosted snapshot cursor of the NEXT page), so a kill inside the window resumes at
+ *    that page against the same generation. `cursor.sync` is NOT written: the snapshot's `asOfSeq`
+ *    is not adopted as the feed cursor, because this mirror is COMPLETE where the browser's is
+ *    windowed — the replay that follows still owes every row outside the window, and the sweep
+ *    needs the marks of the whole feed, not of the window.
+ *  · Phase 2, THE REPLAY: the `since=0` seq drain exactly as before, cursor committed per page,
+ *    marks flushed before the cursor moves. It re-delivers the window's rows at their natural seqs,
+ *    and both passes re-materialize CURRENT state (`getChanges` projects the live entity per row,
+ *    never the historical one), so the replay can never walk a window row backwards; a row deleted
+ *    on Cloud between the phases arrives as the tombstone the replay emits for its create.
+ *
+ * The rules-first pass still opens the bootstrap AHEAD of the window. Page 1 carries the rules
+ * too, but the pass is the ordering promise the consent cutline depends on and it is kept first
+ * on its own terms. The first screenful therefore lands after three requests and one page apply
+ * (mailboxes, rules, snapshot page 1), with the archive filling in behind it for as long as it
+ * takes — and the mirror's cursor never claims a horizon it has not applied, because the window
+ * writes no feed cursor and the replay writes only the cursor of the page it just committed.
+ *
+ * Resume, in either phase, is the same cursor/mark semantics as before: `bootstrapping` set with
+ * `window` mid-page ⇒ continue the window against the loaded marks; `bootstrapping` set with the
+ * feed cursor off zero ⇒ continue the replay (the window is by then complete for this generation,
+ * or — for a cursor an earlier build wrote — still owed, and run first, which is idempotent and
+ * only brings the newest mail forward). A 410 from the replay restarts the whole bootstrap with a
+ * fresh generation as it always has; a 410 to a persisted snapshot cursor re-reads the window from
+ * page 1 inside the same generation. Marks made by an interrupted window are safe to keep: every
+ * marked row was written, and one Cloud has since deleted is tombstoned by the replay, which
+ * always drains to the horizon before the sweep runs.
+ *
+ * And the window is an ORDERING, not a row the mirror owes: a snapshot route that will not answer
+ * — no such route (404) at once, any other refusal after {@link WINDOW_REFUSALS_MAX} consecutive
+ * pulls — degrades that bootstrap to the plain replay, which still converges, and says so. The
+ * alternative, retrying the window for ever, would turn a broken snapshot query into a desktop that
+ * never finishes its first sync; the browser's engine makes the same call for the same route.
  */
 
 /**
@@ -177,6 +231,55 @@ function readBodiesWalk(raw: unknown): BodiesWalk {
 }
 
 /**
+ * THE ON-DISK MARKER FOR A FINISHED OPENING WINDOW — {@link BODIES_WALK_COMPLETE}'s trick, for its
+ * reason: every other value in the cursor file's `window` field is a hosted snapshot cursor
+ * (base64url JSON, which cannot spell this word), so the two can never be confused, and a build
+ * from before the field existed ignores it altogether.
+ */
+export const WINDOW_PASS_COMPLETE = "complete";
+
+/**
+ * WHERE THE BOOTSTRAP'S OPENING WINDOW HAS GOT TO — the header's NEWEST FIRST section. Persisted
+ * after every landed page so a kill inside the window resumes at the page after the last committed
+ * one, against the same generation's marks, instead of re-reading the window from page 1.
+ */
+type WindowPass =
+  /** Not started: a fresh generation, or a cursor file written before the pass existed. */
+  | { phase: "pending" }
+  /** Mid-window. `next` is the hosted snapshot cursor of the page to fetch next. */
+  | { phase: "paging"; next: string }
+  /** Every page of this generation's window has landed; the replay owns the rest. */
+  | { phase: "complete" };
+
+/** The on-disk `window` field for a pass state. The inverse of {@link readWindowPass}. */
+function writeWindowPass(w: WindowPass): string | null {
+  switch (w.phase) {
+    case "complete":
+      return WINDOW_PASS_COMPLETE;
+    case "paging":
+      return w.next;
+    default:
+      return null;
+  }
+}
+
+/** A cursor file's `window` field as a pass state. The inverse of {@link writeWindowPass}. */
+function readWindowPass(raw: unknown): WindowPass {
+  if (raw === WINDOW_PASS_COMPLETE) return { phase: "complete" };
+  if (typeof raw === "string" && raw !== "") return { phase: "paging", next: raw };
+  return { phase: "pending" };
+}
+
+/**
+ * How many CONSECUTIVE pulls may be refused at the opening window before the bootstrap proceeds
+ * without it. Three, on the reconnect ladder's 1 s / 2 s steps: a cold query or a blip clears well
+ * inside that, and a route that is still refusing after three asks is not going to answer this
+ * launch — holding the whole first sync on it would be the failure the window exists to shorten.
+ * A 404 is definitive and skips at once. See {@link drainWindowFirst}.
+ */
+export const WINDOW_REFUSALS_MAX = 3;
+
+/**
  * THE CURSOR FILE'S FORMAT VERSION — **and an ABSENT version means 0, which means RE-KEY.**
  *
  * The mirror's rows changed meaning when mailbox attribution stopped being the synthetic local id
@@ -221,6 +324,15 @@ interface CursorState {
    * horizon, and the mirror silently serves week-old mail forever while every retry looks alive.
    */
   bootstrapping: boolean;
+  /**
+   * The opening window's progress inside the CURRENT bootstrap generation — see {@link WindowPass}
+   * and the header's NEWEST FIRST section. Meaningful only while `bootstrapping` is set: reset to
+   * pending whenever a generation starts (fresh, 410, re-key) and when the bootstrap completes.
+   * Absent from every cursor file written before the pass existed, which reads as pending — so an
+   * install upgraded mid-replay runs the window once before continuing its replay, which costs the
+   * window's pages and brings forward the newest mail the replay was otherwise hours from reaching.
+   */
+  window: WindowPass;
   /**
    * Set once the one-time stale-mirror tag repair has been CONSIDERED — see {@link CloudMirrorConfig}
    * and the repair in {@link createCloudMirror}. Absent from every cursor file written before that
@@ -378,6 +490,8 @@ interface CursorFile {
   sync?: unknown;
   bodies?: unknown;
   bootstrapping?: unknown;
+  /** The serialized {@link WindowPass}; absent on every file from before the opening window. */
+  window?: unknown;
   tagBackfill?: unknown;
   folderBackfill?: unknown;
   capMarkerRepair?: unknown;
@@ -394,6 +508,7 @@ function readCursor(path: string): CursorState {
       sync: typeof j.sync === "string" && j.sync !== "" ? j.sync : "0",
       bodies: readBodiesWalk(j.bodies),
       bootstrapping: j.bootstrapping === true,
+      window: readWindowPass(j.window),
       tagBackfill: j.tagBackfill === true,
       folderBackfill: j.folderBackfill === true,
       // `=== true`, never `?? true`: an absent key must read FALSE. The inverse would silently
@@ -406,7 +521,7 @@ function readCursor(path: string): CursorState {
     // statement about mirrors that exist.
     return {
       version: CURSOR_VERSION, sync: "0", bodies: { phase: "unresolved" },
-      bootstrapping: false, tagBackfill: false, folderBackfill: false,
+      bootstrapping: false, window: { phase: "pending" }, tagBackfill: false, folderBackfill: false,
       // A fresh install has no pre-marker rows and its walk writes markers from the start.
       capMarkerRepair: true,
     };
@@ -419,6 +534,7 @@ function writeCursor(path: string, state: CursorState): void {
     sync: state.sync,
     bodies: writeBodiesWalk(state.bodies),
     bootstrapping: state.bootstrapping,
+    window: writeWindowPass(state.window),
     tagBackfill: state.tagBackfill,
     folderBackfill: state.folderBackfill,
     capMarkerRepair: state.capMarkerRepair,
@@ -1730,6 +1846,140 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
+   * One refetch of the mailbox list per drain — see {@link landPage}'s pre-scan. Reset at the top
+   * of every drain, and shared by the window and the replay because both land pages of one pull.
+   */
+  let refetched = false;
+  /**
+   * Consecutive pulls refused at the opening window — see {@link drainWindowFirst}. Reset by a
+   * landed window page; never persisted, so a relaunch gets its own {@link WINDOW_REFUSALS_MAX}.
+   */
+  let windowRefusals = 0;
+
+  /**
+   * LAND ONE PAGE OF ENTITIES — the half the window and the replay share, so the mailbox guard, the
+   * FK-detaching delete path, the folder reconciliation and the generation marks behave identically
+   * whichever phase delivered the page. Returns what it applied; the CALLER owns the cursor write
+   * that follows, which is why the marks are flushed here and no cursor is.
+   */
+  const landPage = async (body: SyncResponse, gen: BootstrapGen | null): Promise<number> => {
+    /* A MAILBOX ADDED SINCE THE REFRESH AT THE TOP OF THIS PULL. The page is scanned BEFORE it is
+       applied, so the extra request happens outside the page transaction rather than inside one —
+       a network call under an open transaction is how a slow hop becomes a held lock. Once per
+       drain: a page that still names an unknown mailbox after a fresh list is naming one the
+       account does not have, and asking again per page would turn that into a request storm. */
+    const named = mailboxIdsNamedBy(body);
+    const unknown = [...named].filter((id) => !knownMailboxes.has(id));
+    if (unknown.length > 0 && !refetched) {
+      refetched = true;
+      await refreshMailboxes();
+    }
+    const stillUnknown = [...named].filter((id) => !knownMailboxes.has(id));
+    if (stillUnknown.length > 0) {
+      cfg.log?.("cloud_mirror_unattributable", {
+        count: stillUnknown.length,
+        reason: "the feed carried mail for a mailbox the account did not list, so it is skipped " +
+          "rather than filed under a different address; a later refresh picks it up",
+      });
+    }
+    /* A TOMBSTONE IN THIS PAGE INVALIDATES THE HELD COUNTS — see `sawDeletes`. Noted BEFORE the
+       apply, so a crash between the two leaves the counts dropped rather than believed: the
+       safe error is forgetting a number, never keeping one that is too high. */
+    if (body.changes.deletes.length > 0) {
+      sawDeletes = true;
+      hostedCounts = new Map();
+    }
+    const applied = await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes);
+    // AFTER the commit: the generation's marks land BEFORE either cursor moves past the page they
+    // describe — the ordering {@link BootstrapGen.flush} rests on.
+    gen?.flush();
+    return applied;
+  };
+
+  /**
+   * THE OPENING WINDOW — phase 1 of a bootstrap. The header's NEWEST FIRST section is the contract;
+   * this is the mechanism.
+   *
+   * Pages `GET /sync/snapshot` from wherever the cursor file says this generation's window got to,
+   * lands each page through {@link landPage} as a feed page of creates — which is what a snapshot
+   * page is: every row `op: "create"` at `seq = asOfSeq` — and persists the NEXT page's hosted
+   * cursor only after the page committed and its marks flushed, the barrier the replay puts between
+   * a page and its cursor. `cursor.sync` is never written here. Page 1's small state lands as far
+   * as its parents allow: a state or pending decision whose message is older than the window is
+   * skipped by the upsert's `messagePresent` guard and arrives with the replay at its natural seq.
+   *
+   * Three answers are not the page that was asked for, and they are told apart on purpose:
+   *  · 410 to a PERSISTED cursor — the server refuses the position (a deploy that changed the
+   *    cursor's grammar): the window is re-read from page 1 inside the same generation, once per
+   *    drain. The marks it made stay, for the header's reason. A 410 to a cursorless page cannot be
+   *    recovered by starting over and counts as a refusal like any other;
+   *  · 404 — a server with no snapshot route (a self-hosted server older than this client): the
+   *    window is skipped at once and the bootstrap degrades to the plain replay, which still
+   *    converges — oldest-first is a slower door, not a wrong one;
+   *  · anything else non-OK, or a 200 that is not a snapshot — a REFUSAL. The first
+   *    {@link WINDOW_REFUSALS_MAX}−1 propagate as a drain failure does (the poll retries on backoff,
+   *    the window resumes from its committed page, so a cold query gets its seconds); the one after
+   *    skips the window as a 404 does. Never applied as an empty page. A transport failure (the fetch
+   *    itself throwing) is the same wire the replay uses and simply propagates — the replay would die
+   *    on it too.
+   * The skip is NOT persisted here: `complete` rides the replay's first cursor write, so a kill
+   * before that write lets the next launch try the window again with a fresh count.
+   */
+  const drainWindowFirst = async (gen: BootstrapGen | null): Promise<{ applied: number; cut: boolean }> => {
+    let applied = 0;
+    let restarted = false;
+    for (;;) {
+      if (aborted) return { applied, cut: true };
+      const w = cursor.window;
+      if (w.phase === "complete") return { applied, cut: false };
+      const q = new URLSearchParams({ limit: String(pageLimit) });
+      if (w.phase === "paging") q.set("cursor", w.next);
+      const res = await cfg.auth.authedFetch(`/sync/snapshot?${q.toString()}`);
+      if (res.status === 410 && w.phase === "paging" && !restarted) {
+        restarted = true;
+        cursor.window = { phase: "pending" };
+        cfg.log?.("cloud_window_restarted", {
+          reason: "the hosted snapshot refused the window's persisted page cursor; the window is " +
+            "re-read from its first page inside the same bootstrap generation",
+        });
+        continue;
+      }
+      const snap = res.ok ? ((await res.json()) as SnapshotResponse) : null;
+      if (snap === null || !Array.isArray(snap.changes)) {
+        windowRefusals = res.status === 404 ? WINDOW_REFUSALS_MAX : windowRefusals + 1;
+        if (windowRefusals < WINDOW_REFUSALS_MAX) {
+          throw new Error(`the hosted /sync/snapshot answered HTTP ${res.status} to the opening window`);
+        }
+        cursor.window = { phase: "complete" };
+        cfg.log?.("cloud_window_skipped", {
+          status: res.status,
+          reason: "the hosted snapshot did not answer the opening window (no such route, or refused " +
+            "on consecutive pulls), so this bootstrap fills oldest-first from the feed alone; the " +
+            "mirror converges the same, only later at the top",
+        });
+        return { applied, cut: false };
+      }
+      windowRefusals = 0;
+      const page: SyncResponse = {
+        changes: { creates: snap.changes, updates: [], moves: [], deletes: [] },
+        cursor: cursor.sync,
+        hasMore: snap.nextCursor !== null,
+        serverTime: now().toISOString(),
+      };
+      applied += await landPage(page, gen);
+      // The window's position moves only after the page committed and its marks flushed. A
+      // `nextCursor` that is not a non-empty string is the end of the window, not a page to ask
+      // for: `cursor=undefined` would 410, restart, and loop.
+      cursor.window = typeof snap.nextCursor === "string" && snap.nextCursor !== ""
+        ? { phase: "paging", next: snap.nextCursor }
+        : { phase: "complete" };
+      writeCursor(cfg.cursorPath, cursor);
+      // A page LANDED, so Cloud demonstrably answers — the replay's own rule, from the first page.
+      reachable = true;
+    }
+  };
+
+  /**
    * Drain `GET /sync` to the horizon. Returns what it applied and, when the drain was a `since=0`
    * bootstrap, the generation it marked so the caller can sweep phantoms afterwards.
    *
@@ -1762,7 +2012,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // interruption never finished on a real mailbox. (`bootstrapping` is only ever true for a
       // replay that STARTED from zero, so resuming it cannot skip the re-key's early pages; the
       // version stamp still lands only when the sweep completes.)
-      const resumed = cursor.bootstrapping && !isBootstrapCursor(cursor.sync)
+      // A window still paging is the OTHER shape an interrupted bootstrap takes: the feed cursor
+      // is still zero (phase 1 never writes it) and the marks on disk are the window's. Resumed on
+      // the same terms — against the loaded generation — never re-read from page 1.
+      const resumed = cursor.bootstrapping && (!isBootstrapCursor(cursor.sync) || cursor.window.phase !== "pending")
         ? loadBootstrapGen(genPath)
         : null;
       if (resumed) {
@@ -1783,14 +2036,19 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         }
         cursor.sync = "0";
         cursor.bootstrapping = true;
+        // A new generation owes the whole window, whatever an older file said about an earlier one.
+        cursor.window = { phase: "pending" };
         sweep = newBootstrapGen(genPath);
       }
     }
-    /** One refetch per drain — see the pre-scan below. */
-    let refetched = false;
+    refetched = false;
     // A bootstrap (fresh, resumed, re-keyed — anything that set `sweep`) owes the rules-first
     // pass before its first page; the 410 branch below re-owes it with the fresh generation.
     let rulesFirstOwed = sweep !== null;
+    // …and, after the rules, the opening window. The header's NEWEST FIRST section is the contract.
+    // A replay resumed past its window owes nothing here: `drainWindowFirst` reads the persisted
+    // `complete` and returns without an ask, so the file is the one place that decision lives.
+    let windowOwed = sweep !== null;
     for (;;) {
       // BETWEEN PAGES, so a quit costs at most the page already in flight. `sweep: null` is the
       // load-bearing half: a bootstrap generation that stopped early has marked only part of the
@@ -1802,6 +2060,12 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         const rf = await drainRulesFirst(sweep);
         applied += rf.applied;
         if (rf.cut) return { applied, sweep: null, cut: true };
+      }
+      if (windowOwed) {
+        windowOwed = false;
+        const w = await drainWindowFirst(sweep);
+        applied += w.applied;
+        if (w.cut) return { applied, sweep: null, cut: true };
       }
       const q = new URLSearchParams({
         since: cursor.sync || "0",
@@ -1832,44 +2096,21 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         // is untrustworthy, and that verdict covers any marks it made from that position.
         sweep = newBootstrapGen(genPath);
         applied = 0;
-        // The re-bootstrap owes the rules-first pass again, against the fresh generation.
+        // The re-bootstrap owes the rules-first pass AND the window again, against the fresh
+        // generation — whatever the last window had got to describes marks that no longer exist.
         rulesFirstOwed = true;
+        cursor.window = { phase: "pending" };
+        windowOwed = true;
         cfg.log?.("cloud_cursor_expired", { reason: "410 from /sync; re-bootstrapping from since=0 with mark-and-sweep" });
         continue;
       }
       if (!res.ok) throw new Error(`the hosted /sync answered HTTP ${res.status}`);
       const body = (await res.json()) as SyncResponse;
-      /* A MAILBOX ADDED SINCE THE REFRESH AT THE TOP OF THIS PULL. The page is scanned BEFORE it is
-         applied, so the extra request happens outside the page transaction rather than inside one —
-         a network call under an open transaction is how a slow hop becomes a held lock. Once per
-         drain: a page that still names an unknown mailbox after a fresh list is naming one the
-         account does not have, and asking again per page would turn that into a request storm. */
-      const named = mailboxIdsNamedBy(body);
-      const unknown = [...named].filter((id) => !knownMailboxes.has(id));
-      if (unknown.length > 0 && !refetched) {
-        refetched = true;
-        await refreshMailboxes();
-      }
-      const stillUnknown = [...named].filter((id) => !knownMailboxes.has(id));
-      if (stillUnknown.length > 0) {
-        cfg.log?.("cloud_mirror_unattributable", {
-          count: stillUnknown.length,
-          reason: "the feed carried mail for a mailbox the account did not list, so it is skipped " +
-            "rather than filed under a different address; a later refresh picks it up",
-        });
-      }
-      /* A TOMBSTONE IN THIS PAGE INVALIDATES THE HELD COUNTS — see `sawDeletes`. Noted BEFORE the
-         apply, so a crash between the two leaves the counts dropped rather than believed: the
-         safe error is forgetting a number, never keeping one that is too high. */
-      if (body.changes.deletes.length > 0) {
-        sawDeletes = true;
-        hostedCounts = new Map();
-      }
-      applied += await applyPage(cfg.db, cfg.world, body, now(), sweep, knownMailboxes);
-      // AFTER the commit: a crash before this line re-applies the page next launch, which converges.
-      // The generation's marks land BEFORE the cursor moves past the page they describe — the
-      // ordering {@link BootstrapGen.flush} rests on.
-      sweep?.flush();
+      // The pre-scan, the apply and the marks flush are {@link landPage}'s — the window's pages
+      // go through the identical sequence, which is what keeps the two phases one mirror.
+      applied += await landPage(body, sweep);
+      // AFTER the commit and the flush: a crash before this line re-applies the page next launch,
+      // which converges, and the marks are already on disk ahead of the cursor that names them.
       cursor.sync = body.cursor;
       writeCursor(cfg.cursorPath, cursor);
       // A page LANDED, so Cloud demonstrably answers: reachable heals per page, not only when
@@ -2401,6 +2642,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         // this is the point where a re-key has finished, and until it lands the next launch
         // correctly starts over.
         cursor.bootstrapping = false;
+        // The window belonged to the generation that just finished; the next bootstrap owes its own.
+        cursor.window = { phase: "pending" };
         cursor.version = CURSOR_VERSION;
         writeCursor(cfg.cursorPath, cursor);
         // The generation completed and swept: its marks have no further reader. AFTER the cursor
