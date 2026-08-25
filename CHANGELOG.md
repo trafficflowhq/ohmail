@@ -30,6 +30,14 @@ Interrupting the app in either phase resumes where it left off — the window at
 its last committed page, the replay at its committed cursor — with nothing
 re-fetched from the start.
 
+The text of the mail now fills from the top too. The one-time body fill walks
+the account in storage order — an order that has nothing to do with the list —
+so the newest message could open blank until the walk happened to reach it.
+Each pass now fetches the first screenful's message text ahead of that walk,
+and a catch-up after time offline starts with the newest missing messages
+instead of arbitrary ones. The walk itself is unchanged: same pages, same
+resume, same finish line.
+
 ## [0.11.1] — 2026-08-25
 
 Deleting mail is safe for synced devices now, the Cloud mirror survives its own

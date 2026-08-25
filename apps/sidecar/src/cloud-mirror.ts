@@ -1,6 +1,6 @@
 import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { and, asc, eq, gt, isNull, ne, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, ne, notInArray, sql } from "drizzle-orm";
 import { recordChange, recordChanges, accountSettings,
 } from "@trafficflow/db";
 import {
@@ -181,6 +181,13 @@ const DEFAULT_BODIES_LIMIT = 100;
  * for a week catches up over several polls instead of firing hundreds of requests at once.
  */
 const BODIES_CATCHUP_MAX = 10 * BODIES_IDS_MAX;
+
+/**
+ * How many of the NEWEST body-less messages each pull asks for ahead of the first body walk's
+ * turn — five `?ids=` requests at the server's cap, roughly the first screenful of a list. See
+ * `backfillBodies` for why this runs beside the walk rather than reordering it.
+ */
+export const NEWEST_BODIES_FIRST = 5 * BODIES_IDS_MAX;
 
 /**
  * THE ON-DISK MARKER FOR A FINISHED BODY WALK. Written into the cursor file's `bodies` field, where
@@ -2511,13 +2518,29 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     return written;
   };
 
-  const fetchMissingBodies = async (): Promise<number> => {
+  /**
+   * ── NEWEST FIRST, HERE TOO — the gap is filled from the top of the list down ─────────────────
+   *
+   * Which body-less messages a pull asks for first is this mirror's choice, and it used to be
+   * uuid order — a random permutation of the mailbox, so the message at the top of the list
+   * could get its body LAST. After the newest-first bootstrap (the header's NEWEST FIRST section)
+   * the LIST is current within seconds while the bodies still arrived in that random order, so a
+   * newest message opened blank until the fill happened to reach it. The order is now the list's
+   * own — `date desc nulls last, id desc`, the snapshot window's exact sort
+   * (`sync-service.ts`) — so the first screenful's bodies land first. Ordering ONLY: the same
+   * gap predicate, the same `BODIES_CATCHUP_MAX` bound, the same `unanswered` filter, the same
+   * `askForIds` writer; a pull that drains the newest gap moves on to the next-newest on the
+   * pull after, exactly as it did through uuid space.
+   */
+  const NEWEST_FIRST = [sql`${messages.date} desc nulls last`, desc(messages.id)];
+
+  const fetchMissingBodies = async (limit: number = BODIES_CATCHUP_MAX): Promise<number> => {
     const rows = await cfg.db.select({ id: messages.id })
       .from(messages)
       .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
       .where(and(eq(messages.accountId, cfg.world.accountId), isNull(messageBodies.messageId)))
-      .orderBy(asc(messages.id))
-      .limit(BODIES_CATCHUP_MAX);
+      .orderBy(...NEWEST_FIRST)
+      .limit(limit);
     const wanted = rows.map((r) => r.id).filter((id) => !unanswered.has(id));
     if (wanted.length === 0) return 0;
     return askForIds(wanted);
@@ -2608,13 +2631,40 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     return written;
   };
 
-  /** The body pass: walk the account once, then keep only the newcomers topped up. */
+  /**
+   * The body pass: walk the account once, then keep only the newcomers topped up.
+   *
+   * ── WHILE THE WALK RUNS, THE NEWEST SCREENFUL GOES FIRST ────────────────────────────────────
+   *
+   * `walkAllBodies` is a keyset walk in the SERVER's order — `messages.id`, a uuid, which is a
+   * random permutation of the mailbox — and it has to stay that: the `after` cursor is what
+   * makes an interrupted walk resume instead of restart, and the server pages by it. So during
+   * a bootstrap the list (newest-first, the header's NEWEST FIRST section) is current within
+   * seconds while the bodies of the messages at the TOP of it arrive whenever uuid space happens
+   * to reach them — a newest message opened blank for the walk's whole life.
+   *
+   * The fix is not to reorder the walk but to put a bounded newest-first ask IN FRONT of each
+   * of its turns: {@link fetchMissingBodies}, in the list's order, capped at
+   * {@link NEWEST_BODIES_FIRST} ids — five `?ids=` requests — then the walk proceeds exactly as
+   * before. Every pull while walking repeats it, and because the gap predicate excludes rows the
+   * previous turn filled, each repeat takes the NEXT newest screenful: a newest-first drain
+   * running beside the uuid walk, and the two converge on the same set. The walk will re-send
+   * the bodies this ask already stored (`storeBodies` upserts; the walk's pages are the
+   * server's, not ours), which is the bounded price — at most `NEWEST_BODIES_FIRST` bodies per
+   * pull — of a list whose top opens readable while the rest is still filling.
+   *
+   * The walk's own state is untouched: same cursor, same `complete` marker, same resume.
+   */
   const backfillBodies = async (): Promise<number> => {
     if (cursor.bodies.phase === "unresolved") {
       cursor.bodies = await resolveBodiesWalk();
       writeCursor(cfg.cursorPath, cursor);
     }
-    if (cursor.bodies.phase === "walking") return walkAllBodies();
+    if (cursor.bodies.phase === "walking") {
+      const newest = await fetchMissingBodies(NEWEST_BODIES_FIRST);
+      if (aborted) return newest;
+      return newest + await walkAllBodies();
+    }
     return fetchMissingBodies();
   };
 
