@@ -744,6 +744,24 @@ check("no collapsed-mail placeholder", collapsed == null, collapsed?.[0] ?? "");
     asked.map((i) => i.payload?.url).join(", "),
   );
 
+  /* AND FOR THE CLOUD DOOR'S GATE, which is the sharper case of the same rule. `GET /health` is the
+     route the window asks BEFORE any mail: the gate keys its signed-in answer to the engine behind
+     the bridge and withholds the mail app until that engine's own first `/health` lands. Its stub
+     route was added after this check named the 404 red — so a gate that is removed or bypassed
+     mounts the app at once, asks nothing, and leaves every render check above green over a window
+     that no longer re-earns its auth answer per engine. `unmodelled` cannot see an unused route.
+     Named, AND ORDERED: the first `/health` has to precede the first `/sync`, because a gate that
+     has been bypassed still probes `/health` once a minute from inside the mounted app, and mere
+     presence would read that later probe as the gate. */
+  const firstAsk = (test) => asked.findIndex((i) => test(String(i.payload?.url ?? "")));
+  const healthAt = firstAsk((u) => u === "/health");
+  const syncAt = firstAsk((u) => u.startsWith("/sync"));
+  check(
+    "the window asked the engine's /health before it asked for any mail",
+    healthAt !== -1 && syncAt !== -1 && healthAt < syncAt,
+    asked.map((i) => i.payload?.url).join(", "),
+  );
+
   /* A route the stub does not model would be answered 404 and would surface as a
      product failure in section 1. Named here instead, so "the stub is out of
      date" and "the bundle is broken" are different sentences. */
