@@ -1655,15 +1655,15 @@ export function sinkHealthOf(
  *   SELECT notified_at, notified_signature, claimed_until
  *     FROM alert_state WHERE alert_key = $k FOR UPDATE;
  *   -- leased? refuse. due? (never notified / past the tier's interval / changed past the floor)
- *   UPDATE alert_state SET claimed_until = <now + ttl>, notified_signature = <sig>
- *    WHERE alert_key = $k;
+ *   UPDATE alert_state SET claimed_until = <now + ttl> WHERE alert_key = $k;
  *   COMMIT;
  * ```
  *
  * The winner claims and notifies; the loser blocks on the row lock, reads the committed lease,
- * and stays quiet. The lock also pins THE PRIOR: the signature a failed delivery restores is
- * read under the same lock that admits the claim, so a release can never write back a snapshot
- * a concurrent confirm had already superseded. No advisory lock, and no transaction ACROSS
+ * and stays quiet. The claim writes THE LEASE AND NOTHING ELSE — `notified_at` and
+ * `notified_signature` move only on the guarded confirm, so a failed delivery, a crashed pass
+ * and a never-was are all one state: the row exactly as it stood before the claim, minus a
+ * lease that has expired or been cleared. No advisory lock, and no transaction ACROSS
  * DELIVERY, deliberately: {@link deliver} does network I/O, and holding a Postgres transaction
  * open across an HTTP call is the `idle in transaction` pathology that caused the outage this
  * observer exists to catch — the claim's own two-statement transaction holds no such thing.
@@ -1680,12 +1680,14 @@ export function sinkHealthOf(
  * lease as itself: every due arm refuses a future lease outright, `notified_at` is always the
  * last CONFIRMED notification, and then:
  *
- *  · at least one sink accepted ⇒ **confirm**: `notified_at = now`, `notify_count + 1`,
- *    `claimed_until = NULL`;
- *  · nothing accepted ⇒ **release**: the signature goes back, `claimed_until = NULL`
- *    (`notified_at` was never touched);
+ *  · at least one sink accepted ⇒ **confirm**: `notified_at = now`, `notified_signature =
+ *    <sig>`, `notify_count + 1`, `claimed_until = NULL` — the confirm is the ONLY writer of
+ *    the stamp and the signature, so the row always says "this condition, told at this time";
+ *  · nothing accepted ⇒ **release**: `claimed_until = NULL` and nothing else — the claim
+ *    wrote nothing else, so the retry re-fires by construction;
  *  · the pass dies in between ⇒ nobody writes anything, and the lease expires on its own —
- *    `claimTtlMs` later the row is claimable again with its true confirm history intact.
+ *    `claimTtlMs` later the row is claimable again with its true confirm history intact,
+ *    which is the release's exact state: crash and failed delivery are one case.
  *
  * Both settles are guarded by `claimed_until = <the lease value we wrote>`, so a pass can only
  * ever settle its OWN claim — if the condition resolved and the row was deleted underneath, or
@@ -1763,10 +1765,9 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // UPDATE — and the row it does or does not claim IS the decision. The lock is held across
   // two statements and zero I/O: the header's rule against a surrounding transaction is about
   // holding one open across DELIVERY (the `idle in transaction` pathology), and this is
-  // microseconds on one row. What the lock buys over the single-UPDATE form is the PRIOR: the
-  // signature a failed delivery must restore is read under the same lock that admits the
-  // claim, so a release can never write back a snapshot that a concurrent driver's confirm
-  // had already superseded (which would have re-armed an alert that was successfully paged).
+  // microseconds on one row. What the lock buys over the single-UPDATE form is that the due
+  // decision and the lease write are one atomic act over the row's committed values — a
+  // concurrent driver blocks on the lock and then reads the lease this claim just wrote.
   //
   // AN ACTIVE LEASE REFUSES EVERY ARM. `claimed_until` in the future means another driver's
   // page for this key is in flight; whatever this pass's alert says — even a changed
@@ -1785,17 +1786,24 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   //     snapshot, and without the floor its unequal signature would reclaim a condition a
   //     newer pass had just confirmed — paging stale numbers, then paging again when the
   //     fresh ones differ. A pass's evaluate-to-claim span is seconds, so a real change still
-  //     pages within one pass cadence plus the floor. The claim WRITES the new signature, so
-  //     a concurrent driver's change arm finds it equal and stays quiet; the release below
-  //     restores the lock-read prior, so a failed delivery retries.
+  //     pages within one pass cadence plus the floor.
   //     `notified_signature IS NULL` (pre-column rows) deliberately reads as UNCHANGED — a
   //     deploy must not page every standing alert once because the column arrived.
+  //
+  // THE SIGNATURE PERSISTS ONLY ON A CONFIRM. A claim writes the lease and nothing else:
+  // concurrent duplicates are the lease's job now, and a signature written at claim time was
+  // the crash hole — a pass dying mid-delivery would leave the NEW signature standing under an
+  // expired lease, and the next pass would read the changed condition as already notified,
+  // suppressing it for the whole tier interval instead of retrying after the TTL. With the
+  // signature moving only on the guarded confirm, a crash and a failed delivery leave the row
+  // byte-identical to before the claim (minus the expired lease), so the retry re-fires by
+  // construction.
   //
   // The due decision is taken in JS over the LOCKED row's own values — Date compares on
   // `getTime()`, no SQL fragment with a `Date` in it, which retires this block's old binding
   // hazard along with the race.
   const leaseUntil = new Date(now.getTime() + claimTtlMs);
-  const claimed: Array<{ alert: Alert; priorSignature: string | null }> = [];
+  const claimed: Alert[] = [];
   for (const alert of firing) {
     const intervalMs = alert.severity === "critical" ? repeatMs : renotifyUnchangedMs;
     const dueBefore = new Date(now.getTime() - intervalMs);
@@ -1813,9 +1821,9 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
         .where(eq(alertState.alertKey, alert.key))
         .limit(1)
         .for("update");
-      if (!cur) return null; // resolved underneath this pass — nothing to page
+      if (!cur) return false; // resolved underneath this pass — nothing to page
       const heldUntil = cur.claimedUntil ? new Date(cur.claimedUntil as unknown as string) : null;
-      if (heldUntil !== null && heldUntil.getTime() > now.getTime()) return null; // in flight
+      if (heldUntil !== null && heldUntil.getTime() > now.getTime()) return false; // in flight
       const notifiedAt = cur.notifiedAt ? new Date(cur.notifiedAt as unknown as string) : null;
       const due =
         notifiedAt === null ||
@@ -1823,20 +1831,19 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
         (cur.notifiedSignature !== null &&
           cur.notifiedSignature !== sig &&
           notifiedAt.getTime() <= changeBefore.getTime());
-      if (!due) return null;
+      if (!due) return false;
+      // THE LEASE AND NOTHING ELSE — see the signature bullet above: a claim that wrote the
+      // signature would suppress a crashed changed-condition page for the whole tier
+      // interval. `notified_at` and `notified_signature` move only on the guarded confirm.
       await tx
         .update(alertState)
-        .set({ claimedUntil: leaseUntil, notifiedSignature: sig })
+        .set({ claimedUntil: leaseUntil })
         .where(eq(alertState.alertKey, alert.key));
-      // THE PRIOR, from under the lock — exactly what this claim displaced, whatever any
-      // other driver did before it. `notified_at` is untouched by a claim, so the release
-      // has nothing to restore there.
-      return { priorSignature: cur.notifiedSignature };
+      return true;
     });
-    if (!won) continue;
-    claimed.push({ alert, priorSignature: won.priorSignature });
+    if (won) claimed.push(alert);
   }
-  const toNotify = claimed.map((c) => c.alert);
+  const toNotify = claimed;
 
   // ── resolve what is no longer firing ──────────────────────────────────────────────────
   //
@@ -1962,14 +1969,21 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   //
   // Releasing is what keeps a misconfigured webhook self-correcting rather than a silent
   // hole, and `notify_count` moves ONLY on a confirm, so it counts pages that were actually
-  // accepted by a sink and never claims that failed. The SIGNATURE settles with the lease:
-  // confirmed, the claim's value stands (it already names the notified condition); released,
-  // the lock-read prior comes back so the change arm re-fires on the retry. `notified_at`
-  // moves only on a confirm — a claim never touched it, so a release has nothing to restore.
-  for (const { alert, priorSignature } of claimed) {
+  // accepted by a sink and never claims that failed. A CONFIRM is where `notified_at` and
+  // `notified_signature` land, together — the row then says "this condition, told at this
+  // time". A RELEASE clears the lease and nothing else: the claim wrote nothing else, so the
+  // row is byte-identical to before the claim and the retry re-fires by construction — the
+  // exact state an EXPIRED lease (a crashed pass) leaves too, which is what makes the crash
+  // path and the failed-delivery path one case instead of two.
+  for (const alert of claimed) {
     const settle = delivered.length > 0
-      ? { notifiedAt: now, notifyCount: sql`${alertState.notifyCount} + 1`, claimedUntil: null }
-      : { notifiedSignature: priorSignature, claimedUntil: null };
+      ? {
+        notifiedAt: now,
+        notifiedSignature: alertSignature(alert),
+        notifyCount: sql`${alertState.notifyCount} + 1`,
+        claimedUntil: null,
+      }
+      : { claimedUntil: null };
     await db
       .update(alertState)
       .set(settle)
