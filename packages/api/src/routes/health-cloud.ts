@@ -170,6 +170,12 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // row up, and the same reason the deploy gate must refuse it first). Deploy order:
   // migration → API + worker.
   ["alert_state", "notified_signature"],
+  // cloud 0026_alert_claim_lease — the notify claim's lease as its own column, so
+  // `notified_at` means exactly "the last confirmed notification". Same failure shape as
+  // 0025, one row up: the claim's SELECT and UPDATE both name it, so a database missing the
+  // migration is an `alert_pass_failed` loop from both drivers. Deploy order: migration →
+  // API + worker.
+  ["alert_state", "claimed_until"],
 ] as const;
 
 /**
@@ -367,15 +373,15 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * {@link CLOUD_INDEX_MARKERS} is its whole probe — `0013_ledger_integrity`'s shape exactly,
  * argued at its entry.
  *
- * `0025_alert_renotify_signature` is the easy case — one added nullable column on
- * `alert_state` — and takes an ordinary column marker above; its entry carries the loudness
- * argument (the alert pass's claim UPDATE names the column, so too-early code is an
- * `alert_pass_failed` loop — the pager breaking).
+ * `0025_alert_renotify_signature` and `0026_alert_claim_lease` are the easy case — one added
+ * nullable column on `alert_state` each — and take ordinary column markers above; their
+ * entries carry the loudness argument (the alert pass's claim names both columns, so
+ * too-early code is an `alert_pass_failed` loop — the pager breaking).
  *
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0025_alert_renotify_signature";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0026_alert_claim_lease";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

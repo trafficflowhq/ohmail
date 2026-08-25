@@ -904,18 +904,20 @@ GRANT SELECT (id, account_id, status, created_at) ON public.outbound_sends TO oh
 -- whole rows, so there is nothing to scope. It is in the list at all because `runAlertPass`
 -- resolves an alert by DELETING its row: without it every clearing alert raises 42501 and the
 -- pass 503s exactly as the incident ends.
--- `notified_signature` (cloud 0025) is the renotify policy's condition signature — the ninth
--- column, added by the explicit three-place decision this file demands: the pass's claim
--- UPDATE names it and the settle restores it, so the API driver's pass raises 42501 on every
--- run without all three verbs. The value is composed by `alerts.ts` from an alert's severity
--- and count, never from content; no staff RESPONSE projects it (`listOpenAlerts` names its own
--- columns), so the console remains exactly as blind as before.
+-- `notified_signature` (cloud 0025) is the renotify policy's condition signature and
+-- `claimed_until` (cloud 0026) is the notify claim's lease — the ninth and tenth columns,
+-- each added by the explicit three-place decision this file demands: the pass's claim names
+-- both and the settle writes both, so the API driver's pass raises 42501 on every run without
+-- all three verbs on each. The signature is composed by `alerts.ts` from an alert's severity
+-- and count, the lease is a computed timestamp; neither carries content, and no staff
+-- RESPONSE projects either (`listOpenAlerts` names its own columns), so the console remains
+-- exactly as blind as before.
 REVOKE ALL ON public.alert_state FROM ohmail_admin;
-GRANT SELECT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature)
+GRANT SELECT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until)
   ON public.alert_state TO ohmail_admin;
-GRANT INSERT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature)
+GRANT INSERT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until)
   ON public.alert_state TO ohmail_admin;
-GRANT UPDATE (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature)
+GRANT UPDATE (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until)
   ON public.alert_state TO ohmail_admin;
 GRANT DELETE ON public.alert_state TO ohmail_admin;
 

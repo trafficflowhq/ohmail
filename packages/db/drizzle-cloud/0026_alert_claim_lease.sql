@@ -1,0 +1,26 @@
+-- THE CLAIM LEASE GETS ITS OWN COLUMN — `notified_at` goes back to meaning one thing.
+--
+-- ══ WHAT THIS FIXES ════════════════════════════════════════════════════════════════════════
+--
+-- The notify claim used to encode its lease INSIDE `notified_at` (a value just past the due
+-- cutoff, so the time arm could not re-claim and an abandoned claim expired on its own). That
+-- was sound while the time arm was the only reader. The renotify policy added a second reader
+-- — the condition-changed arm compares the LAST CONFIRM's age against a much shorter floor —
+-- and to that reader a live lease (deliberately placed near the far cutoff) is
+-- indistinguishable from an old confirmation: a second driver with a different condition
+-- signature could reclaim a row whose page was mid-delivery, send a duplicate, and orphan the
+-- first claim's settlement.
+--
+-- `claimed_until` is the lease, stated as itself: the claim sets it to claim-time + TTL, the
+-- settle (confirm or release) clears it, and every due arm refuses a row whose lease is still
+-- in the future. `notified_at` is now ALWAYS the last confirmed notification (or NULL), which
+-- is what both the interval arms and the changed-condition floor actually mean to read.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO DATA ══════════════════════════════════════════════════════════
+--
+-- One nullable column on a bookkeeping table whose rows the condition-clear DELETEs anyway.
+-- NULL — every pre-migration row — reads as "not leased", which is true of any row not
+-- mid-claim; a lease from the pre-migration code shape lives in `notified_at` and simply
+-- expires under the old rule. Deploy order: migration → API + worker, promptly together (a
+-- mixed window can at worst duplicate one page, never swallow one).
+ALTER TABLE "alert_state" ADD COLUMN IF NOT EXISTS "claimed_until" timestamptz;

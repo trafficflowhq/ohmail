@@ -479,14 +479,22 @@ export const alertState = pgTable("alert_state", {
   detail: text("detail"),
   /**
    * The CONDITION SIGNATURE of the last claimed/confirmed notification — what "unchanged"
-   * means for the renotify policy (mail 0025 of this journal). An UNCHANGED standing condition
-   * re-pages on a long interval; a signature that differs from the firing alert's re-pages at
-   * once. Written at claim time (so a concurrent driver's signature arm cannot double-page)
-   * and restored on release, exactly like `notified_at`. NULL = never notified with a
-   * signature (pre-migration rows), which reads as "unchanged" — a deploy must not page every
-   * standing alert once just because the column arrived.
+   * means for the renotify policy (cloud 0025). An UNCHANGED standing condition re-pages on a
+   * long interval; a signature that differs from the firing alert's re-pages once the floor
+   * passes. Written at claim time (so a concurrent driver's signature arm cannot double-page)
+   * and restored on release. NULL = never notified with a signature (pre-migration rows),
+   * which reads as "unchanged" — a deploy must not page every standing alert once just
+   * because the column arrived.
    */
   notifiedSignature: text("notified_signature"),
+  /**
+   * The notify claim's LEASE (cloud 0026): claim-time + claimTtlMs while a pass holds the
+   * claim, cleared by its settle (confirm or release), expired by the clock if the pass dies.
+   * Every due arm refuses a row whose lease is in the future. Its existence is what lets
+   * `notified_at` mean exactly "the last confirmed notification" — the lease used to be
+   * encoded there, and the changed-condition arm misread a live lease as an old confirm.
+   */
+  claimedUntil: timestamp("claimed_until", { withTimezone: true }),
 }, (t) => ({ ixLastSeen: index("alert_state_last_seen_idx").on(t.lastSeenAt) }));
 
 /**

@@ -278,6 +278,10 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
     // moment the column ships. The three-place decision the harden script demands: here,
     // `harden-staff-role.sql`'s three column-scoped grants, and the census equality.
     "notified_signature",
+    // The notify claim's lease (cloud 0026) — a timestamp `alerts.ts` computes, carrying
+    // nothing but "a page for this key is in flight until then". Same three-place decision,
+    // same reason: the claim's SELECT and UPDATE both name it.
+    "claimed_until",
   ],
   // The `security_barrier` view, and the ONLY route to `audit_log`. Four named scalars: no
   // `payload`, no `inverse`. The bags are never granted, in any shape.

@@ -183,6 +183,13 @@
       "when": 1791327800527,
       "tag": "0025_alert_renotify_signature",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791327860527,
+      "tag": "0026_alert_claim_lease",
+      "breakpoints": true
     }
   ]
 }
