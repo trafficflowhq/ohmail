@@ -2093,6 +2093,23 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         const w = await drainWindowFirst(sweep);
         applied += w.applied;
         if (w.cut) return { applied, sweep: null, cut: true };
+        // ── THE FIRST SCREENFUL'S TEXT, BEFORE THE REPLAY — not after it ────────────────────
+        //
+        // The replay behind this point can run for HOURS on a large account, and the body pass
+        // (`backfillBodies`) only runs after `drainSync` returns — so without this ask the
+        // window's messages sat bodiless for the replay's whole life, opening blank in exactly
+        // the period the newest-first bootstrap exists to make usable (a review round held the
+        // CHANGELOG's sentence against the code, which is the standard the sentence is written
+        // to). One bounded newest-first ask, and best-effort: a failure costs nothing the walk
+        // does not still owe, so it is logged and the replay proceeds.
+        try {
+          await fetchMissingBodies(NEWEST_BODIES_FIRST);
+        } catch (err) {
+          cfg.log?.("cloud_window_bodies_deferred", {
+            reason: "the window's first-screenful body ask failed; the body walk still owes every body",
+            err: String(err),
+          });
+        }
       }
       const q = new URLSearchParams({
         since: cursor.sync || "0",
