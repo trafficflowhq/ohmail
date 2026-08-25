@@ -135,14 +135,24 @@ const invoked = [];
 /** `engine_request` URLs this stub has no answer for. Asserted empty — see below. */
 const unmodelled = [];
 /**
- * THE INDEX IN `invoked` AT WHICH THE FIRST `/health` ANSWER WAS RELEASED — the gate's verdict
- * landing. The stub HOLDS that answer for `HEALTH_HOLD_MS` so that "asked before the verdict" and
- * "asked after it" are different positions in the log; section 5 reads this to prove no mail was
- * asked for while the verdict was still pending. An instant answer could not tell the two apart,
- * because a request is recorded before its promise settles. -1 until the answer lands.
+ * THE `/health` VERDICT IS HELD BY THIS HARNESS, and released on its say-so — not by the stub, and
+ * not by a timer. Every `/health` ask awaits `healthHeld`; the main flow waits for the gate to ASK,
+ * holds the answer through a settle window while recording what the window does meanwhile, and
+ * only then calls `releaseHealth()`, which stamps the position in `invoked` at which the verdict
+ * landed. Section 5 reads both: no `/sync` may be recorded while the verdict was pending, and the
+ * first one must sit at or after the release. An instant answer could not tell "waited for the
+ * verdict" from "mounted optimistically while it was pending" — a request is recorded before its
+ * promise settles — and a timed release could not either, for an app that reaches its first
+ * `/sync` after the timer fires. -1 until released.
  */
 let healthReleasedAt = -1;
-const HEALTH_HOLD_MS = 120;
+let releaseHealth = () => {};
+const healthHeld = new Promise((resolve) => {
+  releaseHealth = () => {
+    if (healthReleasedAt === -1) healthReleasedAt = invoked.length;
+    resolve();
+  };
+});
 
 const encoder = new TextEncoder();
 function frame(status, statusText, body) {
@@ -440,15 +450,10 @@ function installShellStub(window) {
             online: true,
             sessionExpired: false,
           });
-          /* HELD, not resolved on the spot — see `healthReleasedAt`. The hold is what lets the
-             gate check below tell a window that waited for the verdict from one that mounted
-             optimistically while it was pending. */
-          return new Promise((resolve) => {
-            setTimeout(() => {
-              if (healthReleasedAt === -1) healthReleasedAt = invoked.length;
-              resolve(answer);
-            }, HEALTH_HOLD_MS);
-          });
+          /* HELD until the harness releases it — see `healthHeld`. The hold is what lets the gate
+             check tell a window that waited for the verdict from one that mounted optimistically
+             while it was pending. */
+          return healthHeld.then(() => answer);
         }
         /* Exact, or with a query — and NOT a `startsWith("/mailboxes")`, which would also swallow
            `/mailboxes/:id` and the organizer, takeover and resync routes under it. Those are
@@ -642,6 +647,21 @@ const dom = new JSDOM(classic, {
    bridge. These are TIMER TURNS and not a wall clock, so a loaded runner
    stretches them along with everything else. */
 const { window } = dom;
+
+/* THE GATE, UNDER HARNESS CONTROL — see `healthHeld`. Wait for the window's own first `/health`
+   ask (the same 2 s budget the render gets below; a gate that never asks is the first red), then
+   hold the verdict through a settle window and record what the window did meanwhile: a gate that
+   mounts the mail app while the verdict is pending shows itself here as a `/sync` recorded before
+   the release, however long it takes to get there. Only then is the answer released, and the
+   render wait below begins. Timer turns, not a wall clock, like the wait below. */
+const isHealthAsk = (i) => i.command === "engine_request" && String(i.payload?.url ?? "") === "/health";
+const isMailAsk = (i) => i.command === "engine_request" && String(i.payload?.url ?? "").startsWith("/sync");
+for (let i = 0; i < 80 && !invoked.some(isHealthAsk); i++) await new Promise((r) => setTimeout(r, 25));
+const askedHealth = invoked.some(isHealthAsk);
+for (let i = 0; i < 40; i++) await new Promise((r) => setTimeout(r, 25));
+const mailWhilePending = invoked.filter(isMailAsk).length;
+releaseHealth();
+
 for (let i = 0; i < 80; i++) await new Promise((r) => setTimeout(r, 25));
 
 const doc = window.document;
@@ -768,21 +788,22 @@ check("no collapsed-mail placeholder", collapsed == null, collapsed?.[0] ?? "");
      route was added after this check named the 404 red — so a gate that is removed or bypassed
      mounts the app at once, asks nothing, and leaves every render check above green over a window
      that no longer re-earns its auth answer per engine. `unmodelled` cannot see an unused route.
-     Named, and ORDERED AGAINST THE ANSWER, not the ask: the stub holds the first `/health` answer
-     for `HEALTH_HOLD_MS` and records where in the log it was released, and no `/sync` may sit
-     before that point. Ordering the asks alone would not do — a gate that mounts optimistically
-     while the verdict is pending still asks `/health` first (a request is recorded before its
-     promise settles), and a bypassed gate still probes `/health` once a minute from inside the
-     mounted app. Watched red by holding the answer past the render wait: no `/sync` at all. */
-  const healthAt = asked.findIndex((i) => String(i.payload?.url ?? "") === "/health");
+     Named, and ORDERED AGAINST THE ANSWER, not the ask: the harness held the `/health` verdict
+     (see `healthHeld`) through a settle window after the gate asked, counted the mail asks made
+     while it was pending, and recorded where in the log it was released; that count must be zero
+     and the first `/sync` must sit at or after the release. Ordering the asks alone would not do —
+     a gate that mounts optimistically while the verdict is pending still asks `/health` first (a
+     request is recorded before its promise settles), a bypassed gate still probes `/health` once a
+     minute from inside the mounted app, and a timed release would miss an optimistic mount that
+     reaches its first `/sync` after the timer. Watched red by never releasing the verdict: no
+     `/sync` at all, and no mail on screen. */
   /* `invoked` indices, not `asked` ones: `healthReleasedAt` is a position in the FULL log. */
-  const firstSyncAt = invoked.findIndex(
-    (i) => i.command === "engine_request" && String(i.payload?.url ?? "").startsWith("/sync"),
-  );
+  const firstSyncAt = invoked.findIndex(isMailAsk);
   check(
-    "the window asked for no mail until the engine's /health answer had landed",
-    healthAt !== -1 && healthReleasedAt !== -1 && firstSyncAt !== -1 && firstSyncAt >= healthReleasedAt,
-    `/health released at #${healthReleasedAt}, first /sync at #${firstSyncAt}: `
+    "the window asked for no mail while the engine's /health verdict was pending",
+    askedHealth && mailWhilePending === 0 && firstSyncAt !== -1 && firstSyncAt >= healthReleasedAt,
+    `asked /health: ${askedHealth}; mail asks while pending: ${mailWhilePending}; `
+      + `released at #${healthReleasedAt}, first /sync at #${firstSyncAt}: `
       + asked.map((i) => i.payload?.url).join(", "),
   );
 
