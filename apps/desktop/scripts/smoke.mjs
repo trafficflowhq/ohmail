@@ -136,23 +136,28 @@ const invoked = [];
 const unmodelled = [];
 /**
  * THE `/health` VERDICT IS HELD BY THIS HARNESS, and released on its say-so — not by the stub, and
- * not by a timer. Every `/health` ask awaits `healthHeld`; the main flow waits for the gate to ASK,
- * holds the answer through a settle window while recording what the window does meanwhile, and
- * only then calls `releaseHealth()`, which stamps the position in `invoked` at which the verdict
- * landed. Section 5 reads both: no `/sync` may be recorded while the verdict was pending, and the
- * first one must sit at or after the release. An instant answer could not tell "waited for the
- * verdict" from "mounted optimistically while it was pending" — a request is recorded before its
- * promise settles — and a timed release could not either, for an app that reaches its first
- * `/sync` after the timer fires. -1 until released.
+ * not by a timer. Every `/health` ask awaits the CURRENT `healthHeld`; the two-run block below says
+ * who releases it and when: run A's gate is NEVER released (its DOM is closed still waiting), and
+ * run B's is released the moment the gate asks. `armHealthGate` mints a fresh, unreleased gate per
+ * run, and `releaseHealth` stamps the position in `invoked` at which the verdict landed (-1 until
+ * then). An instant answer could not tell "waited for the verdict" from "mounted optimistically
+ * while it was pending" — a request is recorded before its promise settles — and any timed release
+ * inside ONE DOM leaves the band past the timer for an optimistic mount to land in unnoticed,
+ * which is why there are two runs rather than a longer timer.
  */
 let healthReleasedAt = -1;
 let releaseHealth = () => {};
-const healthHeld = new Promise((resolve) => {
-  releaseHealth = () => {
-    if (healthReleasedAt === -1) healthReleasedAt = invoked.length;
-    resolve();
-  };
-});
+let healthHeld = Promise.resolve();
+const armHealthGate = () => {
+  healthReleasedAt = -1;
+  healthHeld = new Promise((resolve) => {
+    releaseHealth = () => {
+      if (healthReleasedAt === -1) healthReleasedAt = invoked.length;
+      resolve();
+    };
+  });
+};
+armHealthGate();
 
 const encoder = new TextEncoder();
 function frame(status, statusText, body) {
@@ -557,7 +562,7 @@ const uncaught = [];
 /** Anything the page managed to send before the guard sealed the API. */
 const leaked = [];
 
-const dom = new JSDOM(classic, {
+const bootWindow = () => new JSDOM(classic, {
   url: pathToFileURL(path.join(DIST, "index.html")).href,
   runScripts: "dangerously",
   resources: new DistOnlyLoader(),
@@ -641,32 +646,42 @@ const dom = new JSDOM(classic, {
   },
 });
 
-/* The engine boots in an effect and drains its first page asynchronously. Give
-   the microtask queue and a few timer turns a chance rather than guessing: a
-   status call, then the client engine's hydrate, then a full drain over the
-   bridge. These are TIMER TURNS and not a wall clock, so a loaded runner
-   stretches them along with everything else. */
-const { window } = dom;
+/* ── THE TWO RUNS, AND WHY TWO ─────────────────────────────────────────────
+   The gate check needs a NEGATIVE observation (no mail while the /health verdict is pending) and a
+   POSITIVE one (mail on screen once the verdict lands), and one DOM cannot host both honestly: the
+   release moment splits its timeline, and work an optimistic mount started before the release
+   inherits the post-release render budget as a place to land unnoticed. Two runs cover every band:
+   a mount that would ask for mail within the render budget is caught in RUN A, whose verdict is
+   never released; one that would ask later than the render budget cannot draw mail inside RUN B's
+   render wait either, and fails its render checks. There is no delay that slips both.
 
-/* THE GATE, UNDER HARNESS CONTROL — see `healthHeld`. Wait for the window's own first `/health`
-   ask (a gate that never asks is the first red), then hold the verdict PENDING for the whole of
-   `RENDER_TURNS` and record what the window did meanwhile: a gate that mounts the mail app while
-   the verdict is pending shows itself here as a `/sync` recorded before the release. The negative
-   observation is completed — counted — BEFORE the verdict is released; the release only enables
-   the positive checks below.
-
-   WHY THIS LONG AND NOT LONGER. Any "nothing happened" observation is bounded, and the bound has to
-   be justified rather than picked: the pending window is exactly the budget the render gets below
-   (`RENDER_TURNS` timer turns), because an optimistic mount that reached its first `/sync` later
-   than that could not have drawn mail inside the render budget either — the smoke would already
-   call that build broken. Timer turns, not a wall clock, like the render wait. */
+   RUN A — the pending-verdict window. Boot the bundle, wait for the gate's own first /health ask
+   (a gate that never asks is the first red), then observe for the full render budget with the
+   verdict still pending, and count the mail asks. Counted BEFORE anything is released; the DOM is
+   then closed, and every recorder it shared is reset for run B. Timer turns throughout, not a wall
+   clock, so a loaded runner stretches them along with everything else. */
 const RENDER_TURNS = 80;
 const isHealthAsk = (i) => i.command === "engine_request" && String(i.payload?.url ?? "") === "/health";
 const isMailAsk = (i) => i.command === "engine_request" && String(i.payload?.url ?? "").startsWith("/sync");
+const pendingRun = bootWindow();
 for (let i = 0; i < RENDER_TURNS && !invoked.some(isHealthAsk); i++) await new Promise((r) => setTimeout(r, 25));
 const askedHealth = invoked.some(isHealthAsk);
 for (let i = 0; i < RENDER_TURNS; i++) await new Promise((r) => setTimeout(r, 25));
 const mailWhilePending = invoked.filter(isMailAsk).length;
+pendingRun.window.close();
+/* Run A's traffic and teardown noise must not reach run B's checks: its /health asks are still
+   pending by design, and closing a window can log. Reset every shared recorder. */
+for (const list of [invoked, unmodelled, leaked, uncaught, consoleErrors]) list.length = 0;
+armHealthGate();
+
+/* RUN B — the served window. The verdict is released the moment the gate asks, its position in the
+   log recorded, and the render checks below hold the bundle to the same budget run A observed for.
+   The engine boots in an effect and drains its first page asynchronously — a status call, the
+   client engine's hydrate, then a full drain over the bridge — so the wait is timer turns, not a
+   guess. */
+const dom = bootWindow();
+const { window } = dom;
+for (let i = 0; i < RENDER_TURNS && !invoked.some(isHealthAsk); i++) await new Promise((r) => setTimeout(r, 25));
 releaseHealth();
 
 for (let i = 0; i < RENDER_TURNS; i++) await new Promise((r) => setTimeout(r, 25));
@@ -795,15 +810,15 @@ check("no collapsed-mail placeholder", collapsed == null, collapsed?.[0] ?? "");
      route was added after this check named the 404 red — so a gate that is removed or bypassed
      mounts the app at once, asks nothing, and leaves every render check above green over a window
      that no longer re-earns its auth answer per engine. `unmodelled` cannot see an unused route.
-     Named, and ORDERED AGAINST THE ANSWER, not the ask: the harness held the `/health` verdict
-     (see `healthHeld`) through a settle window after the gate asked, counted the mail asks made
-     while it was pending, and recorded where in the log it was released; that count must be zero
-     and the first `/sync` must sit at or after the release. Ordering the asks alone would not do —
-     a gate that mounts optimistically while the verdict is pending still asks `/health` first (a
-     request is recorded before its promise settles), a bypassed gate still probes `/health` once a
-     minute from inside the mounted app, and a timed release would miss an optimistic mount that
-     reaches its first `/sync` after the timer. Watched red by never releasing the verdict: no
-     `/sync` at all, and no mail on screen. */
+     Named, and ORDERED AGAINST THE ANSWER, not the ask: run A held the verdict for the whole
+     render budget and counted the mail asks made while it was pending (see the two-run block for
+     why one DOM cannot make this observation honestly); run B released it at the gate's first ask
+     and recorded where in the log that landed. The count must be zero and run B's first `/sync`
+     must sit at or after its release. Ordering the asks alone would not do — a gate that mounts
+     optimistically while the verdict is pending still asks `/health` first (a request is recorded
+     before its promise settles), and a bypassed gate still probes `/health` once a minute from
+     inside the mounted app. Watched red by releasing run A's verdict at boot — the mail the mount
+     then asks for lands squarely in the pending count. */
   /* `invoked` indices, not `asked` ones: `healthReleasedAt` is a position in the FULL log. */
   const firstSyncAt = invoked.findIndex(isMailAsk);
   check(
