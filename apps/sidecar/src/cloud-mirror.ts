@@ -133,7 +133,8 @@ import type { Diagnostic } from "./log.js";
  * or — for a cursor an earlier build wrote — still owed, and run first, which is idempotent and
  * only brings the newest mail forward). A 410 from the replay restarts the whole bootstrap with a
  * fresh generation as it always has; a 410 to a persisted snapshot cursor re-reads the window from
- * page 1 inside the same generation. Marks made by an interrupted window are safe to keep: every
+ * page 1 inside the same generation, once — a second gives the window up for this bootstrap. Marks
+ * made by an interrupted window are safe to keep: every
  * marked row was written, and one Cloud has since deleted is tombstoned by the replay, which
  * always drains to the horizon before the sweep runs.
  *
@@ -1910,13 +1911,16 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    *
    * Three answers are not the page that was asked for, and they are told apart on purpose:
    *  · 410 to a PERSISTED cursor — the server refuses the position (a deploy that changed the
-   *    cursor's grammar): the window is re-read from page 1 inside the same generation, once per
-   *    drain. The marks it made stay, for the header's reason. A 410 to a cursorless page cannot be
-   *    recovered by starting over and counts as a refusal like any other;
+   *    cursor's grammar): the window is re-read from page 1 inside the same generation, ONCE per
+   *    drain. The marks it made stay, for the header's reason. A second 410 in the same drain — the
+   *    server refusing the cursor its own page 1 just issued — and a 410 to a cursorless page are
+   *    DEFINITIVE: skipped at once, like a 404, never counted (a landed page 1 would reset the
+   *    count and the drain would loop restart → page 1 → 410 on every pull);
    *  · 404 — a server with no snapshot route (a self-hosted server older than this client): the
    *    window is skipped at once and the bootstrap degrades to the plain replay, which still
    *    converges — oldest-first is a slower door, not a wrong one;
-   *  · anything else non-OK, or a 200 that is not a snapshot — a REFUSAL. The first
+   *  · anything else non-OK, or a 200 that is not a snapshot (a body that is not JSON included) — a
+   *    REFUSAL. The first
    *    {@link WINDOW_REFUSALS_MAX}−1 propagate as a drain failure does (the poll retries on backoff,
    *    the window resumes from its committed page, so a cold query gets its seconds); the one after
    *    skips the window as a 404 does. Never applied as an empty page. A transport failure (the fetch
@@ -1944,9 +1948,25 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         });
         continue;
       }
-      const snap = res.ok ? ((await res.json()) as SnapshotResponse) : null;
+      /* A 200 whose body is not JSON — an HTML fallback page, an empty 204 — is a REFUSAL like a
+         non-snapshot body, not a transport failure: `res.json()` rejecting here would propagate past
+         the count below and retry the window for ever on exactly the broken route the count exists
+         to give up on. */
+      let snap: SnapshotResponse | null = null;
+      if (res.ok) {
+        try {
+          snap = (await res.json()) as SnapshotResponse;
+        } catch {
+          snap = null;
+        }
+      }
       if (snap === null || !Array.isArray(snap.changes)) {
-        windowRefusals = res.status === 404 ? WINDOW_REFUSALS_MAX : windowRefusals + 1;
+        /* DEFINITIVE refusals skip at once: a 404 (no such route), and a 410 the one restart above
+           did not cure — the server refusing the cursor it just issued, or refusing a cursorless
+           page 1. Counting a 410 instead would let the restart's landed page 1 reset the count, and
+           the drain would restart → page 1 → 410 → fail on every pull without ever reaching the
+           replay. */
+        windowRefusals = res.status === 404 || res.status === 410 ? WINDOW_REFUSALS_MAX : windowRefusals + 1;
         if (windowRefusals < WINDOW_REFUSALS_MAX) {
           throw new Error(`the hosted /sync/snapshot answered HTTP ${res.status} to the opening window`);
         }
