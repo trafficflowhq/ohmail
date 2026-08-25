@@ -433,6 +433,7 @@ export function MessageCard({
                 ? () => chrome.remoteImages!.consent(message.id)
                 : undefined
             }
+            loadTrackingPixels={chrome.remoteImages?.loadPixels ?? false}
           />
         </div>
         {loadingNote}

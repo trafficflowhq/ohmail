@@ -98,6 +98,7 @@ import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
 import { useComposeAutosave } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
+import { TrackingPixelsRow } from "./TrackingPixelsRow";
 import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
 import { FoldersRow } from "./FoldersRow";
 import { FoldersRailGroup } from "./FoldersRailGroup";
@@ -2091,6 +2092,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   const remoteImages = useRemoteImages({
     onFailed: (message) => toast(message),
     mode: consent.blockRemoteImages ? "manual" : "auto",
+    // The pixel switch rides the same hook for the same reason `mode` does: the Settings row and
+    // the open message read one `useConsentState`, so flipping it re-sanitizes what is on screen.
+    // `blockTrackingPixels` rests TRUE, so every unknown arrives as "do not load".
+    loadPixels: !consent.blockTrackingPixels,
   });
 
   /**
@@ -5273,6 +5278,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 onLeaveSeen={commitReadsSeen}
                 bodyOf={bodyOfMessage}
                 hydrateBody={hydrateBody}
+                remoteImages={remoteImages}
                 jumpTo={jump?.view === "reads" ? jump.id : null}
                 onJumped={() => setJump(null)}
                 closeTo={closeCard?.view === "reads" ? closeCard.id : null}
@@ -5302,6 +5308,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 onLeaveSeen={commitReceiptsSeen}
                 bodyOf={bodyOfMessage}
                 hydrateBody={hydrateBody}
+                remoteImages={remoteImages}
                 jumpTo={jump?.view === "receipts" ? jump.id : null}
                 onJumped={() => setJump(null)}
                 closeTo={closeCard?.view === "receipts" ? closeCard.id : null}
@@ -5717,10 +5724,21 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    change no picture. `cloudClient` is exactly that build fact, and it is checked
                    rather than `remoteImages !== undefined` only because it names WHY. */
                 remoteImagesSection={demo || !consent.known || !consent.cloudClient ? undefined : (
-                  <RemoteImagesRow
-                    blocked={consent.blockRemoteImages}
-                    setBlockRemoteImages={consent.setBlockRemoteImages}
-                  />
+                  <>
+                    <RemoteImagesRow
+                      blocked={consent.blockRemoteImages}
+                      setBlockRemoteImages={consent.setBlockRemoteImages}
+                    />
+                    {/* THE PIXEL SWITCH, under the same gate for the same reasons: it governs the
+                        proxy's treatment of a beacon, and a window with no proxy has nothing for
+                        it to govern. Rests ON (blocked), so the `known` guard here protects the
+                        opposite flash from the row above: drawing it before the server answers
+                        would show ON to an account that turned it off. */}
+                    <TrackingPixelsRow
+                      blocked={consent.blockTrackingPixels}
+                      setBlockTrackingPixels={consent.setBlockTrackingPixels}
+                    />
+                  </>
                 )}
                 /* AUTO-UNSUBSCRIBE ON SCREEN-OUT. Gated on BOTH `consent.known` and
                    `autoOptIn.supported`, and each gate answers a different question.

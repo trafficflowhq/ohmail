@@ -81,7 +81,7 @@ export {
 export {
   SEED_SCAN_LIMIT, SUPPORTED_LOCALES,
   buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setBlockAutoUnsubscribe,
-  setBlockRemoteImages, setDormancyDays, setFoldersEnabled, setLocale,
+  setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled, setLocale,
   isMachineSent, isRobotAddress, parseAddressList,
   type SeedCandidate, type SeedConfirmResult, type SeedExclusionReason, type SeedReview,
 } from "./consent-seed.js";

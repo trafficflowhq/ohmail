@@ -72,6 +72,7 @@ export interface ConsentTransport {
   setAutoSuggest: (enabled: boolean) => Promise<{ autoSuggestAt: string | null }>;
   setDormancyDays: (days: number | null) => Promise<{ dormancyDays: number }>;
   setBlockRemoteImages: (blocked: boolean) => Promise<{ blockRemoteImagesAt: string | null }>;
+  setBlockTrackingPixels: (blocked: boolean) => Promise<{ loadTrackingPixelsAt: string | null }>;
   setBlockAutoUnsubscribe: (blocked: boolean) => Promise<{ blockAutoUnsubscribeAt: string | null }>;
   setFoldersEnabled: (enabled: boolean) => Promise<{ foldersEnabledAt: string | null }>;
 }
@@ -82,6 +83,7 @@ const CLOUD_CONSENT: ConsentTransport = {
   setAutoSuggest: (enabled) => consentApi.setAutoSuggest(enabled),
   setDormancyDays: (days) => consentApi.setDormancyDays(days),
   setBlockRemoteImages: (blocked) => consentApi.setBlockRemoteImages(blocked),
+  setBlockTrackingPixels: (blocked) => consentApi.setBlockTrackingPixels(blocked),
   setBlockAutoUnsubscribe: (blocked) => consentApi.setBlockAutoUnsubscribe(blocked),
   setFoldersEnabled: (enabled) => consentApi.setFoldersEnabled(enabled),
 };
@@ -144,6 +146,19 @@ export interface ConsentState {
   blockRemoteImages: boolean;
   /** When they opted out, for the settings row that says so. Null whenever images load. */
   blockRemoteImagesAt: string | null;
+  /**
+   * ARE TRACKING PIXELS REFUSED THE PROXY? True = the product default (mail 0072).
+   *
+   * **It starts TRUE, and here — unlike {@link blockRemoteImages} — the safe resting value IS the
+   * default one.** A failed `GET /consent`, an API too old to carry the field, and a build with no
+   * API all leave this true, and so does a server that read the row and found no opt-out; the
+   * three are one answer because blocking is the protective posture and the worst a wrong "true"
+   * can do is refuse a beacon somebody wanted fetched. Only a successful read carrying a stored
+   * instant moves it to false.
+   */
+  blockTrackingPixels: boolean;
+  /** When they asked pixels to load, for the settings row that says so. Null while blocked. */
+  loadTrackingPixelsAt: string | null;
   /**
    * DOES SCREENING A SENDER OUT ALSO UNSUBSCRIBE FROM THEIR LIST? True = the product default.
    *
@@ -267,6 +282,11 @@ const RESTING: ConsentState = {
   // sender's content for somebody who asked us not to.
   blockRemoteImages: true,
   blockRemoteImagesAt: null,
+  // BLOCKED AT REST — the product default AND the protective posture at once, so unlike the pair
+  // above there is no tension here: a tab that does not know refuses a beacon, which is what
+  // every account that never opened the setting is doing anyway.
+  blockTrackingPixels: true,
+  loadTrackingPixelsAt: null,
   // ON AT REST, which is the PRODUCT DEFAULT and not the contrarian value the line above is. See
   // {@link ConsentState.autoUnsubscribe}: this flag decides whether a consequence is stated, never
   // whether it happens, so the safe resting value is the one that describes what the server does.
@@ -384,6 +404,13 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
    */
   setBlockRemoteImages: (blocked: boolean) => Promise<boolean>;
   /**
+   * Keep refusing tracking pixels (the default), or let them load with the pictures, and keep the
+   * local answer in step with the stored one. Resolves to `blockTrackingPixels` AS THE DATABASE
+   * HOLDS IT — set from the echo, never the argument, for the reason the row above gives with the
+   * sign reversed: a write that FAILED must never leave this tab believing a beacon may load.
+   */
+  setBlockTrackingPixels: (blocked: boolean) => Promise<boolean>;
+  /**
    * Stop auto-unsubscribe on screen-out, or let it run, and keep the local answer in step with the
    * stored one.
    *
@@ -500,6 +527,13 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
             ? true
             : wire.blockRemoteImagesAt !== null,
           blockRemoteImagesAt: wire.blockRemoteImagesAt ?? null,
+          // `== null` — BOTH null and undefined — and deliberately NOT the `=== undefined` split the
+          // images field above needs. There the two answers differ because only one of them may
+          // load a sender's content. Here they are the same answer: a server that found no opt-out
+          // and a server too old to have looked both leave pixels BLOCKED, which is the protective
+          // posture, so a garbled or elderly wire can only ever refuse a beacon, never fetch one.
+          blockTrackingPixels: wire.loadTrackingPixelsAt == null,
+          loadTrackingPixelsAt: wire.loadTrackingPixelsAt ?? null,
           // `== null` — BOTH null and undefined — which is the line four above's shape and NOT the
           // one directly above it, and the difference is deliberate in both places. For images the
           // two are different answers because only one of them may load a sender's content. Here
@@ -574,6 +608,16 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
     return on;
   }, []);
 
+  const setBlockTrackingPixels = useCallback(async (blocked: boolean): Promise<boolean> => {
+    const res = await link.current.setBlockTrackingPixels(blocked);
+    // The echo is the OPT-OUT instant; the flag is its absence. Inverted exactly once, here.
+    const on = res.loadTrackingPixelsAt == null;
+    setState((prev) => ({
+      ...prev, blockTrackingPixels: on, loadTrackingPixelsAt: res.loadTrackingPixelsAt ?? null,
+    }));
+    return on;
+  }, []);
+
   const setFoldersEnabled = useCallback(async (enabled: boolean): Promise<boolean> => {
     const res = await link.current.setFoldersEnabled(enabled);
     const on = res.foldersEnabledAt != null;
@@ -619,6 +663,7 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
     setAutoSuggest,
     setDormancyDays,
     setBlockRemoteImages,
+    setBlockTrackingPixels,
     setBlockAutoUnsubscribe,
     setFoldersEnabled,
   };

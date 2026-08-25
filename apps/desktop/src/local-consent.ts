@@ -99,6 +99,8 @@ export const consentOverBridge: ConsentTransport = {
   setDormancyDays: (days) => patch<{ dormancyDays: number }>({ dormancyDays: days }),
   setBlockRemoteImages: (blocked) =>
     patch<{ blockRemoteImagesAt: string | null }>({ blockRemoteImages: blocked }),
+  setBlockTrackingPixels: (blocked) =>
+    patch<{ loadTrackingPixelsAt: string | null }>({ blockTrackingPixels: blocked }),
   setBlockAutoUnsubscribe: (blocked) =>
     patch<{ blockAutoUnsubscribeAt: string | null }>({ blockAutoUnsubscribe: blocked }),
   setFoldersEnabled: (enabled) =>

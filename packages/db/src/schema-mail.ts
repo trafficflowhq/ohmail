@@ -2065,6 +2065,25 @@ export const accountSettings = pgTable("account_settings", {
    */
   blockRemoteImagesAt: timestamp("block_remote_images_at", { withTimezone: true }),
   /**
+   * TRACKING PIXELS — the OPT-OUT of a protection, and the sign is the opposite of the column
+   * above (mail 0072).
+   *
+   * NULL (and no row) = the product default: a beacon, a 1×1 or a zero-dimension image is never
+   * fetched, in either images mode. NOT NULL = this account asked for tracking pixels to load
+   * along with the pictures, and the instant is when they asked.
+   *
+   * Two opt-out columns side by side whose NULLs mean OPPOSITE postures: {@link blockRemoteImagesAt}
+   * NULL is permissive (pictures load), this NULL is protective (pixels blocked). Both store the
+   * reader's departure from the default and never the default itself; what differs is which way
+   * the default points, and a reader of the row must not assume the two NULLs agree.
+   *
+   * The client's failed-read direction is therefore the SAME as its row-absent direction, unlike
+   * its neighbour: unknown ⇒ blocked, because loading a beacon for somebody who never asked is the
+   * one outcome this column may not produce. It governs only the sanitizer's pixel override, and
+   * only where a proxy exists — a pixel loads through `GET /img` like any picture or not at all.
+   */
+  loadTrackingPixelsAt: timestamp("load_tracking_pixels_at", { withTimezone: true }),
+  /**
    * AUTO-UNSUBSCRIBE ON SCREEN-OUT — the OPT-OUT, and the second column on this row spelled that
    * way (mail 0054).
    *

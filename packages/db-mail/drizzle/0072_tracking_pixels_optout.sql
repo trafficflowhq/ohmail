@@ -1,0 +1,68 @@
+-- TRACKING PIXELS STAY BLOCKED BY DEFAULT — and the column stores the OPT-OUT of that protection.
+--
+-- Mail 0048 made a message's remote pictures load on open, through the reader-side proxy, and left
+-- one refusal in place in both modes: a tracking pixel — a 1×1, a zero-dimension image, a
+-- beacon-shaped url — is never fetched, because there is no picture behind it and the only thing it
+-- can tell anybody is that this message was opened at this minute. That refusal is still the default
+-- and it is still what the sanitizer does when this column is NULL.
+--
+-- What this adds is the CONTROL. Some readers want a sender to see the open — a receipt they
+-- expect to be acknowledged, a colleague's read-tracker, a mailing they run themselves — and a
+-- product that cannot be told so is making the decision for them. So the reading pane gains a
+-- second switch beside "Load images in messages": "Block tracking pixels", ON by default.
+--
+-- ══ NULL IS THE PROTECTED DEFAULT, AND THAT IS WHY THE COLUMN IS SPELLED THIS WAY ═════════════
+--
+-- `load_tracking_pixels_at` NULL means "tracking pixels are blocked" — every account that exists
+-- and every account that never finds the setting. NOT NULL means "this account asked for pixels to
+-- load along with the pictures", and the instant is when they asked.
+--
+-- 0048's argument for storing the opt-out and never the default applies here with the sign the
+-- other way round, and it is worth stating because the two columns sit side by side and READ
+-- differently. There, NULL is the permissive state (images load) and the row stores the reader's
+-- request for MORE protection. Here, NULL is the protective state (pixels blocked) and the row
+-- stores the reader's request for LESS. Both are "never store the default"; what the default IS
+-- differs, and a reader of the row must not assume both NULLs mean the same posture.
+--
+-- The direction is also the one that fails safe under a bad read, in BOTH unknown cases. A row that
+-- is absent or NULL is the protected default; a settings read that FAILED, or an API too old to
+-- carry the field, resolves on the client to the same answer — blocked — because loading a beacon
+-- for somebody who never asked is the one outcome this column may not produce. Unlike
+-- `block_remote_images_at`, "absent" and "unknown" therefore collapse to one client value, and
+-- `consent-state.ts` says so where it reads them.
+--
+-- ══ WHAT IT GOVERNS, PRECISELY ═══════════════════════════════════════════════════════════════
+--
+-- Only the sanitizer's pixel override, and only where a proxy exists. A pixel can load ONLY through
+-- `GET /img` like every other picture — the sender never learns the reader's address either way —
+-- and only when pictures load at all: in the manual mode a pixel waits behind "Show images" with
+-- everything else, and on a client with no proxy (a standalone desktop install) nothing loads and
+-- this column changes nothing. Remote stylesheets stay blocked in every mode; there is no proxy for
+-- a sheet. The tracker classifier itself is untouched — what changes is what happens to the image it
+-- classifies.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO CHECK ═════════════════════════════════════════════════════════
+--
+-- `ADD COLUMN IF NOT EXISTS`, nullable, no default: a catalog-only change on a table with one row
+-- per account, so a replay is a no-op and a partially-applied window costs nothing. No CHECK —
+-- 0030's rule, a timestamp closes no set. No backfill: the default is the absence, and a backfill
+-- would either be a no-op (NULL) or would opt everybody OUT of a protection nobody asked to lose.
+-- `ADD COLUMN` inherits the table's grants.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → API. `consentSettings` selects whole `account_settings` rows, so an API deployed ahead
+-- of this answers Postgres 42703 on `GET /consent` and on `PATCH /consent/settings` — the consent
+-- surface, not just this feature. The health marker `["account_settings","load_tracking_pixels_at"]`
+-- turns that into a `503 schema_incomplete` naming this file. No worker half: nothing in the sync
+-- worker reads or writes it.
+--
+-- A CLIENT older than the API ignores a field it does not know and keeps blocking pixels. A client
+-- NEWER than the API reads `undefined`, which its resting value treats as BLOCKED — the same safe
+-- direction as a failed read. Neither needs the other to ship first.
+--
+-- ROLLBACK is `ALTER TABLE account_settings DROP COLUMN load_tracking_pixels_at`, which costs the
+-- stored opt-outs and returns every account to blocking. That IS the safe direction here — the
+-- opposite of 0048's rollback note — so no API ordering constraint attaches to it.
+
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "load_tracking_pixels_at" timestamp with time zone;

@@ -1,6 +1,7 @@
 import {
   buildSeedReview, confirmSeed, consentSettings, cutlineCounts,
   resetScreeningState, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
+  setBlockTrackingPixels,
   setDormancyDays, setFoldersEnabled, setLocale,
   unmovedReport,
   DEFAULT_DORMANCY_DAYS, SUPPORTED_LOCALES, ServiceError,
@@ -63,6 +64,8 @@ interface SeedConfirmBody {
  *   dormancyDays       number | null — the cutline dial (1–365), or `null` for the default.
  *   blockRemoteImages  boolean — keep the per-message "Show images" flow (true), or let a
  *                      message's remote images load through the proxy (false, the default).
+ *   blockTrackingPixels boolean — keep refusing beacons the proxy (true, the default), or let
+ *                      them load along with the pictures (false). Mail 0072.
  *   locale             'en' | 'de' | null — the interface language, or `null` for the default
  *                      (which is also what `'en'` stores; see {@link setLocale}).
  */
@@ -70,6 +73,7 @@ interface ConsentSettingsBody {
   autoSuggest?: unknown;
   dormancyDays?: unknown;
   blockRemoteImages?: unknown;
+  blockTrackingPixels?: unknown;
   blockAutoUnsubscribe?: unknown;
   /** "Use folders" — the folders foundation's master toggle (FOLDERS-SPEC.md §6). */
   foldersEnabled?: unknown;
@@ -107,19 +111,21 @@ async function applyConsentSettings(
   ctx: ReturnType<typeof serviceContext>, body: ConsentSettingsBody,
 ): Promise<{
   autoSuggestAt?: string | null; dormancyDays?: number; blockRemoteImagesAt?: string | null;
+  loadTrackingPixelsAt?: string | null;
   blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null; locale?: string | null;
 }> {
   const hasAuto = "autoSuggest" in body;
   const hasDormancy = "dormancyDays" in body;
   const hasImages = "blockRemoteImages" in body;
+  const hasPixels = "blockTrackingPixels" in body;
   const hasAutoUnsub = "blockAutoUnsubscribe" in body;
   const hasFolders = "foldersEnabled" in body;
   const hasLocale = "locale" in body;
-  if (!hasAuto && !hasDormancy && !hasImages && !hasAutoUnsub && !hasFolders && !hasLocale) {
+  if (!hasAuto && !hasDormancy && !hasImages && !hasPixels && !hasAutoUnsub && !hasFolders && !hasLocale) {
     throw new ServiceError(
       "validation_failed", 400,
-      "at least one of autoSuggest, dormancyDays, blockRemoteImages, blockAutoUnsubscribe, " +
-      "foldersEnabled or locale is required",
+      "at least one of autoSuggest, dormancyDays, blockRemoteImages, blockTrackingPixels, " +
+      "blockAutoUnsubscribe, foldersEnabled or locale is required",
     );
   }
 
@@ -152,6 +158,19 @@ async function applyConsentSettings(
       throw new ServiceError("validation_failed", 400, "blockRemoteImages must be true or false");
     }
     blockImages = body.blockRemoteImages;
+  }
+  /**
+   * THE PIXEL SWITCH, same rule, and the direction it protects is `false`: that is the position in
+   * which a beacon is fetched through the proxy and the sender learns the open. Coercing `"false"`,
+   * `0` or `null` to `false` would turn a garbled request into "tell every sender when this account
+   * reads their mail from now on" — so, like every boolean on this route, only the two booleans.
+   */
+  let blockPixels: boolean | undefined;
+  if (hasPixels) {
+    if (typeof body.blockTrackingPixels !== "boolean") {
+      throw new ServiceError("validation_failed", 400, "blockTrackingPixels must be true or false");
+    }
+    blockPixels = body.blockTrackingPixels;
   }
   /**
    * THE THIRD BOOLEAN, on the rule directly above with the consequence one degree worse.
@@ -212,6 +231,7 @@ async function applyConsentSettings(
 
   const out: {
     autoSuggestAt?: string | null; dormancyDays?: number; blockRemoteImagesAt?: string | null;
+    loadTrackingPixelsAt?: string | null;
     blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null; locale?: string | null;
   } = {};
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
@@ -224,6 +244,10 @@ async function applyConsentSettings(
     }
     if (hasImages) {
       out.blockRemoteImagesAt = (await setBlockRemoteImages(txCtx, blockImages!)).blockRemoteImagesAt;
+    }
+    if (hasPixels) {
+      out.loadTrackingPixelsAt =
+        (await setBlockTrackingPixels(txCtx, blockPixels!)).loadTrackingPixelsAt;
     }
     if (hasAutoUnsub) {
       out.blockAutoUnsubscribeAt =
@@ -321,6 +345,12 @@ export const consentRoutes: Route[] = [
         // found no opt-out" from "this server is too old to have the field", which is the one
         // distinction that decides whether it may load a remote image at all.
         blockRemoteImagesAt: settings.blockRemoteImagesAt,
+        // TRACKING PIXELS, as the instant the account asked for them to LOAD, or `null` for the
+        // product default (they are blocked). The sign is the reverse of the field above: here
+        // `null` is the PROTECTIVE posture, so a client that reads `undefined` from an older API
+        // and one that reads `null` from this one land on the same answer — blocked — and that
+        // collapse is safe precisely because it can only ever refuse a beacon, never fetch one.
+        loadTrackingPixelsAt: settings.loadTrackingPixelsAt,
         // AUTO-UNSUBSCRIBE, as the instant the account turned it OFF, or `null` for the product
         // default (a screen-out still sends the one-click request). Sent as `null` rather than
         // omitted for `blockRemoteImagesAt`'s reason with the branches the other way round: the

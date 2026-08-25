@@ -32,6 +32,7 @@ import { useListWindow } from "../shell/list-window";
 import { type MessageAction } from "../shell/MessagePane";
 import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/StreamShell";
 import { StreamCardMemo } from "../shell/StreamCardMemo";
+import type { RemoteImagesChrome } from "../shell/remote-images";
 import { useStreamWindow } from "../shell/stream-window";
 import { waterlineStamp } from "../shell/format";
 
@@ -60,6 +61,7 @@ export function ReadsView({
   onLeaveSeen,
   bodyOf,
   hydrateBody,
+  remoteImages,
   jumpTo,
   onJumped,
   closeTo,
@@ -112,6 +114,8 @@ export function ReadsView({
    * a human asking again from an effect re-running — see `OhmailEngine.hydrateBody`.
    */
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
+  /** The remote-images chrome the reading pane reads; the stream's cards read the same one. */
+  remoteImages?: RemoteImagesChrome;
   jumpTo: string | null;
   onJumped: () => void;
   /**
@@ -585,6 +589,7 @@ export function ReadsView({
         bodyState={body.state}
         bodyHtml={body.html}
         bodyLoadedRemote={body.loadedRemoteContent}
+        remoteImages={remoteImages}
         loadingLabel={loadingLabel}
         failedLabel={failedLabel}
         /* Per MARKER (`withheldCopyKey`): which policy emptied the body decides the sentence. */

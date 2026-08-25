@@ -1263,6 +1263,9 @@ export function MessagePane({
             ? () => chrome.remoteImages!.consent(message.id)
             : undefined
         }
+        /* The account's pixel switch (mail 0072). `false` — the default and the answer on a
+           client with no chrome — keeps the sanitizer's refusal to proxy a beacon. */
+        loadTrackingPixels={chrome.remoteImages?.loadPixels ?? false}
         /* The message's own embedded (`cid:`) images — resolved from the parts' bytes through
            the attachment seam, never from any url the sender wrote. Both halves travel
            together or not at all: a client with no attachment service (`?demo=1`) hands

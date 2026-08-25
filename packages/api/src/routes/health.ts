@@ -530,6 +530,12 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker — the column is
   // read off a row fetched by primary key and nothing filters on it.
   ["account_settings", "block_remote_images_at"],
+  // mail 0072_tracking_pixels_optout — the opt-out of pixel BLOCKING (NULL = blocked, the default).
+  // One additive nullable column on `account_settings`, and it earns a marker for exactly the
+  // whole-row-select reason its neighbour above does: `consentSettings` selects the whole row, so
+  // an API deployed ahead of the migration 42703s the entire consent surface. No worker half, no
+  // CHECK, no INDEX — read off a row fetched by primary key. Deploy order: migration → API.
+  ["account_settings", "load_tracking_pixels_at"],
   // mail 0049_mailbox_sync_requested_at — the enforced-sync doorbell. One additive nullable
   // timestamptz on `mailboxes`, and it earns a marker on the whole-row-select rule its OWN
   // migration already states: *"`MailboxService.list` selects whole rows, so
@@ -1433,13 +1439,16 @@ export const MAIL_EXPECTED_MARKERS =
  * `0071_withheld_provenance_index` adds no column and is probed as the INDEX
  * `message_bodies_withheld_idx` (in `SCHEMA_INDEX_MARKERS`, not here): the partial index the
  * worker's `junk_filed` convergence pass reads husks by. Its absence is the silent kind — a slow
- * cycle, never a 42703 — which is exactly the class the index list exists for. It is the newest
- * entry, so it is the tag below.
+ * cycle, never a 42703 — which is exactly the class the index list exists for.
+ *
+ * `0072_tracking_pixels_optout` is probed as `account_settings.load_tracking_pixels_at` — the
+ * opt-out of pixel blocking, one nullable column read by the whole-row `consentSettings` select.
+ * It is the newest entry, so it is the tag below.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0071_withheld_provenance_index";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0072_tracking_pixels_optout";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

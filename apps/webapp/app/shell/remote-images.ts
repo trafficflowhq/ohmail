@@ -106,6 +106,18 @@ export interface RemoteImagesChrome {
    * true, and a caller that needed to tell the two apart would have no way left to.
    */
   auto: boolean;
+  /**
+   * MAY A TRACKING PIXEL RIDE THE PROXY WITH THE PICTURES? The account setting (mail 0072), carried
+   * on the chrome beside {@link auto} for the same reason: every surface that renders a message
+   * reads one answer.
+   *
+   * `false` — the product default — keeps the refusal the sanitizer has always made: a 1×1, a
+   * zero-dimension image or a beacon-shaped url is blanked whatever else loads. `true` hands those
+   * to the proxy like any other image, so the sender learns the message was opened and still
+   * nothing about who opened it or from where. It reaches the sanitizer as
+   * `SanitizeOptions.loadPixels` and does nothing where no proxy exists.
+   */
+  loadPixels: boolean;
 }
 
 /**
@@ -145,6 +157,13 @@ export interface RemoteImagesOptions {
    * build with no API all arrive here as `"manual"`.
    */
   mode: "auto" | "manual";
+  /**
+   * THE PIXEL SWITCH — `true` lets beacons through the proxy with the pictures, `false` (the
+   * product default) keeps refusing them. Required for the reason {@link mode} is: the caller
+   * resolves it from `useConsentState().blockTrackingPixels`, whose resting value is BLOCKED, so
+   * every unknown arrives here as `false`.
+   */
+  loadPixels: boolean;
 }
 
 /**
@@ -195,9 +214,10 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
   );
 
   const auto = opts.mode === "auto";
+  const loadPixels = opts.loadPixels;
 
   return useMemo(
-    () => (apiConfigured() ? { proxyFor, consented, consent, auto } : undefined),
-    [proxyFor, consented, consent, auto],
+    () => (apiConfigured() ? { proxyFor, consented, consent, auto, loadPixels } : undefined),
+    [proxyFor, consented, consent, auto, loadPixels],
   );
 }

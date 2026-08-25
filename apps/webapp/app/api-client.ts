@@ -1092,6 +1092,14 @@ export interface ConsentStateWire {
    */
   blockRemoteImagesAt?: string | null;
   /**
+   * WHEN this account asked for tracking pixels to LOAD, or null for the default (blocked) — and
+   * `undefined` from an API deployed before mail 0072. Unlike the field above, `null` and
+   * `undefined` may be read as ONE answer: both are "blocked", and the collapse is safe because
+   * blocked is the protective posture — a client that cannot tell refuses a beacon, never fetches
+   * one.
+   */
+  loadTrackingPixelsAt?: string | null;
+  /**
    * WHEN "Use folders" was turned on, or null for off — and `undefined` from an API deployed
    * before the folders feature, which must read the same as null (the pre-feature interface is
    * exactly what such a server serves). Optional in the type for `autoSuggestAt`'s reason: the
@@ -1227,6 +1235,16 @@ export const consent = {
     api<{ blockRemoteImagesAt: string | null }>("/consent/settings", {
       method: "PATCH",
       body: { blockRemoteImages: blocked },
+    }),
+  /**
+   * BLOCK TRACKING PIXELS (the default), OR LET THEM LOAD — mail 0072, the same route. `blocked:
+   * true` clears the stored opt-out; `false` stores it. The response echoes `loadTrackingPixelsAt`
+   * — the instant pixels were allowed, `null` while they are blocked.
+   */
+  setBlockTrackingPixels: (blocked: boolean) =>
+    api<{ loadTrackingPixelsAt: string | null }>("/consent/settings", {
+      method: "PATCH",
+      body: { blockTrackingPixels: blocked },
     }),
   /**
    * KEEP AUTO-UNSUBSCRIBE ON SCREEN-OUT, OR STOP IT — the fifth knob on the same route

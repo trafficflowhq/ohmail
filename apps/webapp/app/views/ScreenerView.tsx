@@ -1444,11 +1444,25 @@ function newestHeld(w: ScreenerSenderDTO) {
 function heldRemoteProps(
   remoteImages: RemoteImagesChrome | undefined,
   h: { id: string; loadedRemoteContent?: boolean },
-): { remoteLoaded: boolean; imageProxy: ((url: string) => string) | null; onLoadRemote?: () => void } {
+): {
+  remoteLoaded: boolean;
+  imageProxy: ((url: string) => string) | null;
+  onLoadRemote?: () => void;
+  loadTrackingPixels: boolean;
+} {
   return {
-    remoteLoaded: (h.loadedRemoteContent ?? false) || (remoteImages?.consented(h.id) ?? false),
+    // THREE terms, as `MessagePane` has: the stored flag, the ACCOUNT'S auto mode, this session's
+    // press. The middle one was missing here, so a held message kept the per-message button on an
+    // account whose setting said pictures load on open — the Screener was the one surface where
+    // that sentence in Settings was false.
+    remoteLoaded:
+      (h.loadedRemoteContent ?? false) ||
+      (remoteImages?.auto ?? false) ||
+      (remoteImages?.consented(h.id) ?? false),
     imageProxy: remoteImages ? remoteImages.proxyFor(h.id) : null,
-    onLoadRemote: remoteImages ? () => remoteImages.consent(h.id) : undefined,
+    // Withheld in auto mode for the pane's reason: a button over images already showing does nothing.
+    onLoadRemote: remoteImages && !remoteImages.auto ? () => remoteImages.consent(h.id) : undefined,
+    loadTrackingPixels: remoteImages?.loadPixels ?? false,
   };
 }
 
@@ -1557,6 +1571,7 @@ function HeldMail({
   remoteLoaded,
   imageProxy,
   onLoadRemote,
+  loadTrackingPixels,
   onRetry,
   unsubscribe,
   unsubscribeUrl,
@@ -1593,6 +1608,8 @@ function HeldMail({
   imageProxy?: ((url: string) => string) | null;
   /** The reader pressed "Show images". Absent ⇒ no button, matching the pane. */
   onLoadRemote?: () => void;
+  /** The account's pixel switch (mail 0072); absent reads as blocked, matching the pane. */
+  loadTrackingPixels?: boolean;
   /** Ask for this held message's body again. Rendered only in the `failed` state. */
   onRetry?: () => void;
   /** This message's unsubscribe posture, from its hydrated body. Absent ⇒ no control. */
@@ -1701,10 +1718,11 @@ function HeldMail({
         </div>
       ) : null}
       {/* THE SAME RENDERER THE READING PANE USES — sanitized html in a sandboxed frame that
-          cannot phone home, remote images blocked until consent — so the surface where a
-          stranger's mail is judged is a mail client and not a text dump. With no html (a
-          fixture row, or a body not yet hydrated to `full`) `MessageBody` renders the text
-          part, which is what this preview showed before. */}
+          cannot phone home, remote images under the account's own images mode (auto through the
+          proxy, or per-message consent) — so the surface where a stranger's mail is judged is a
+          mail client and not a text dump. With no html (a fixture row, or a body not yet
+          hydrated to `full`) `MessageBody` renders the text part, which is what this preview
+          showed before. */}
       <div className="hm-body">
         {protectedMail ? (
           /* SENSITIVE MAIL RENDERS NO TEXT IN THIS PILE EITHER. The gate is where a stranger's
@@ -1723,6 +1741,7 @@ function HeldMail({
             remoteLoaded={remoteLoaded}
             imageProxy={imageProxy}
             onLoadRemote={onLoadRemote}
+            loadTrackingPixels={loadTrackingPixels ?? false}
           />
         )}
       </div>

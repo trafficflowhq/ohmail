@@ -42,6 +42,7 @@ import { senderName, displayTime } from "./format";
 import { displayAddress } from "./idn";
 import { MessageActionBar, type MessageAction } from "./MessagePane";
 import { FoldTableArt } from "./StreamShell";
+import type { RemoteImagesChrome } from "./remote-images";
 import { MessageBody as MessageBodyView } from "../components/MessageBody";
 
 export interface StreamCardMemoProps {
@@ -60,7 +61,22 @@ export interface StreamCardMemoProps {
   bodyText: string;
   bodyState: MessageBody["state"];
   bodyHtml: string | null;
+  /** The STORED per-message consent flag. One of three facts `remoteLoaded` is the OR of. */
   bodyLoadedRemote: boolean;
+  /**
+   * THE REMOTE-IMAGES CHROME — the same object `MessagePane` and `MessageCard` read, so a card in
+   * the stream loads a message's pictures under exactly the rules the reading pane does: the
+   * account's auto mode, this session's press, the proxy, the pixel switch. ABSENT on a client
+   * with no proxy (the demo, a test with no API), in which case nothing loads and no button is
+   * offered — the same answer `MessageBody` gives everywhere else.
+   *
+   * This used to be missing, and the stream was the one surface where the reading pane's
+   * "images load when you open a message" was false: every remote image blanked, the bar
+   * counting them as blocked, and no button to press. Compared by REFERENCE in `areEqual` — the
+   * hook memoizes it, so it moves only when a setting or a consent changes, which is exactly when
+   * every mounted card must re-sanitize.
+   */
+  remoteImages?: RemoteImagesChrome;
   loadingLabel: string;
   failedLabel: string;
   /** The storage-cap sentence — terminal, honest, no retry implied. */
@@ -75,12 +91,25 @@ export interface StreamCardMemoProps {
 
 function StreamCardMemoInner({
   m, now, current, expanded, unread,
-  bodyText, bodyState, bodyHtml, bodyLoadedRemote, loadingLabel, failedLabel, withheldLabel,
+  bodyText, bodyState, bodyHtml, bodyLoadedRemote, remoteImages, loadingLabel, failedLabel, withheldLabel,
   onSelect, onToggle, onAction,
 }: StreamCardMemoProps) {
+  /* THE SAME THREE-TERM `remoteLoaded` AS `MessagePane`, and the same withheld button in auto
+     mode: the stored flag, the account's auto setting, this session's press. Built inside the
+     memo so a skipped render costs nothing. */
   const bodySlot: ReactNode =
     bodyState === "full" && bodyHtml ? (
-      <MessageBodyView messageId={m.id} text={bodyText} html={bodyHtml} remoteLoaded={bodyLoadedRemote} />
+      <MessageBodyView
+        messageId={m.id}
+        text={bodyText}
+        html={bodyHtml}
+        remoteLoaded={
+          bodyLoadedRemote || (remoteImages?.auto ?? false) || (remoteImages?.consented(m.id) ?? false)
+        }
+        imageProxy={remoteImages ? remoteImages.proxyFor(m.id) : null}
+        onLoadRemote={remoteImages && !remoteImages.auto ? () => remoteImages.consent(m.id) : undefined}
+        loadTrackingPixels={remoteImages?.loadPixels ?? false}
+      />
     ) : undefined;
   const art: ReactNode = m.art ? (
     <StreamArt ariaLabel={m.art.ariaLabel} caption={m.art.caption}>
@@ -132,6 +161,7 @@ function areEqual(a: StreamCardMemoProps, b: StreamCardMemoProps): boolean {
     a.bodyState === b.bodyState &&
     a.bodyHtml === b.bodyHtml &&
     a.bodyLoadedRemote === b.bodyLoadedRemote &&
+    a.remoteImages === b.remoteImages &&
     a.loadingLabel === b.loadingLabel &&
     a.failedLabel === b.failedLabel &&
     a.withheldLabel === b.withheldLabel &&

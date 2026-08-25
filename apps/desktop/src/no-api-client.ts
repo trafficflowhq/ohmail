@@ -454,6 +454,9 @@ export const consent: {
     setBlockRemoteImages: (blocked: boolean) => Promise<{
         blockRemoteImagesAt: string | null;
     }>;
+    setBlockTrackingPixels: (blocked: boolean) => Promise<{
+        loadTrackingPixelsAt: string | null;
+    }>;
     setBlockAutoUnsubscribe: (blocked: boolean) => Promise<{
         blockAutoUnsubscribeAt: string | null;
     }>;

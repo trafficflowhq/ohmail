@@ -16,6 +16,18 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+### Designed mail renders as its sender designed it
+
+The reading pane sets ordinary letters in the app's own type, and that class was
+too greedy: a designed message whose template declares its width the responsive
+way (`max-width` on a full-width table) or builds its layout from nested tables
+was treated as a letter, and the app's table styling drew a border around every
+layout cell — a box around each nesting level of a design that draws none. Such
+messages now keep their frame: the sender's own presentation, laid out at the
+column's width, with sanitization unchanged. Plain letters keep the app's
+typography exactly as before, and "Show original" still flips any letter to the
+sender's rendering.
+
 ### A first sync fills from the top
 
 A fresh install of the Cloud door used to mirror the account oldest-first: the

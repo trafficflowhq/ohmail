@@ -587,6 +587,8 @@ export async function consentSettings(
   screeningBaselineAt: string | null;
   autoSuggestAt: string | null;
   blockRemoteImagesAt: string | null;
+  /** mail 0072 — the instant this account asked for tracking pixels to load. NULL ⇒ blocked. */
+  loadTrackingPixelsAt: string | null;
   blockAutoUnsubscribeAt: string | null;
   foldersEnabledAt: string | null;
   locale: string | null;
@@ -614,6 +616,14 @@ export async function consentSettings(
     // the difference between "no opt-out" and "no answer" is actually visible.
     blockRemoteImagesAt: row?.blockRemoteImagesAt
       ? row.blockRemoteImagesAt.toISOString()
+      : null,
+    // NULL and an absent row both mean "tracking pixels are blocked" — the product default, and
+    // the PROTECTIVE posture, which is the opposite sign from the column directly above. The
+    // client collapses a failed read into the same answer (`consent-state.ts`), so here there is
+    // no unknown to resolve and nothing to defend: a server that read the row and found no opt-out
+    // says blocked, and so does one whose reader could not ask.
+    loadTrackingPixelsAt: row?.loadTrackingPixelsAt
+      ? row.loadTrackingPixelsAt.toISOString()
       : null,
     // NULL and an absent row both mean "a screen-out still unsubscribes" — the product default,
     // and the same direction as `blockRemoteImagesAt` above rather than as the two flags before
@@ -837,6 +847,45 @@ export async function setBlockRemoteImages(
       set: { blockRemoteImagesAt: at, updatedAt: ctx.now() },
     });
   return { blockRemoteImagesAt: at ? at.toISOString() : null };
+}
+
+/**
+ * BLOCK TRACKING PIXELS, OR LET THEM LOAD — the knob beside {@link setBlockRemoteImages}, storing
+ * the opt-out of a PROTECTION (mail 0072).
+ *
+ * `blocked === true` is the product default and NULLs the column. `false` stamps the instant: this
+ * account asked for a beacon to load along with the pictures, through the same proxy, so the sender
+ * learns that the message was opened and still nothing about who opened it or from where.
+ *
+ * The argument's sign is the reverse of the neighbour's and the column's own migration states it:
+ * there, NULL is permissive and the row stores a request for more protection; here, NULL is
+ * protective and the row stores a request for less. Spelled as an opt-out for the same reason —
+ * the default must reach every account that never finds the setting.
+ *
+ * ── WHAT THIS FLAG DOES NOT AUTHORISE ──────────────────────────────────────────────────────
+ *
+ * It spends nothing, moves no mail, and sends no byte from the reader's machine: a pixel can load
+ * only through `GET /img`, whose port takes a url and nothing else. It changes exactly one thing —
+ * whether the sanitizer's pixel override refuses the proxy — and only where a proxy exists and
+ * pictures load at all. In the manual images mode a pixel still waits behind "Show images".
+ *
+ * ── THE UPSERT, COLUMN-SCOPED ──────────────────────────────────────────────────────────────
+ *
+ * Same shape and reason as every sibling on this row: touching only `load_tracking_pixels_at` +
+ * `updated_at`, so a concurrent write to any other knob keeps its column. Returns the stored
+ * instant so the caller echoes the database rather than the argument.
+ */
+export async function setBlockTrackingPixels(
+  ctx: ServiceContext, blocked: boolean,
+): Promise<{ loadTrackingPixelsAt: string | null }> {
+  const at = blocked ? null : ctx.now();
+  await ctx.db.insert(accountSettings)
+    .values({ accountId: ctx.accountId, loadTrackingPixelsAt: at })
+    .onConflictDoUpdate({
+      target: accountSettings.accountId,
+      set: { loadTrackingPixelsAt: at, updatedAt: ctx.now() },
+    });
+  return { loadTrackingPixelsAt: at ? at.toISOString() : null };
 }
 
 /**
