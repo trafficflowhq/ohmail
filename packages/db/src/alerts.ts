@@ -1647,19 +1647,25 @@ export function sinkHealthOf(
  * notify-once semantics were never enforced by the database, only by the assumption of a
  * single writer, and that assumption is exactly what the external observer removes.
  *
- * So the decision to notify is a CLAIM — one conditional UPDATE, which Postgres serialises on
- * the row:
+ * So the decision to notify is a CLAIM — one row lock, the due decision, one UPDATE, all
+ * inside a transaction that spans microseconds and zero I/O:
  *
  * ```
- *   UPDATE alert_state SET notified_at = <lease>
- *    WHERE alert_key = $k AND (notified_at IS NULL OR notified_at <= $now - repeatMs)
+ *   BEGIN;
+ *   SELECT notified_at, notified_signature FROM alert_state WHERE alert_key = $k FOR UPDATE;
+ *   -- due? (never notified / past the tier's interval / the signature changed past the floor)
+ *   UPDATE alert_state SET notified_at = <lease>, notified_signature = <sig> WHERE alert_key = $k;
+ *   COMMIT;
  * ```
  *
- * The winner gets a row back and notifies; the loser blocks on the row lock, re-checks the
- * predicate against the committed new value, matches nothing, and stays quiet. No advisory
- * lock and no surrounding transaction, deliberately: {@link deliver} does network I/O, and
- * holding a Postgres transaction open across an HTTP call is the `idle in transaction`
- * pathology that caused the outage this observer exists to catch.
+ * The winner claims and notifies; the loser blocks on the row lock, reads the committed lease,
+ * finds nothing due, and stays quiet. The lock also pins THE PRIOR: the values a failed
+ * delivery restores are read under the same lock that admits the claim, so a release can never
+ * write back a snapshot a concurrent confirm had already superseded. No advisory lock, and no
+ * transaction ACROSS DELIVERY, deliberately: {@link deliver} does network I/O, and holding a
+ * Postgres transaction open across an HTTP call is the `idle in transaction` pathology that
+ * caused the outage this observer exists to catch — the claim's own two-statement transaction
+ * holds no such thing.
  *
  * ## The claim is a LEASE, so a pass that dies mid-delivery does not swallow the page
  *
@@ -1743,9 +1749,14 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
 
   // ── CLAIM the notifications this pass is allowed to send ──────────────────────────────
   //
-  // One conditional UPDATE per firing alert, and the row it does or does not return IS the
-  // decision. See the header: the predicate is the old in-memory `due` test moved into the
-  // database, which is what makes it safe against a second driver running the same pass.
+  // One SHORT transaction per firing alert — `SELECT … FOR UPDATE`, the due decision, one
+  // UPDATE — and the row it does or does not claim IS the decision. The lock is held across
+  // two statements and zero I/O: the header's rule against a surrounding transaction is about
+  // holding one open across DELIVERY (the `idle in transaction` pathology), and this is
+  // microseconds on one row. What the lock buys over the previous single-UPDATE form is the
+  // PRIOR: the values a failed delivery must restore are read under the same lock that admits
+  // the claim, so a release can never write back a snapshot that a concurrent driver's confirm
+  // had already superseded (which would have re-armed an alert that was successfully paged).
   //
   // THREE ARMS make an alert due, and each carries its own claim discipline:
   //   · never notified (`notified_at IS NULL`) — a first observation pages at once;
@@ -1753,47 +1764,59 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   //     unchanged-hold for everything else (`renotifyUnchangedMs`): a standing warning owes
   //     one page and a daily reminder, not an hourly restatement of its own age;
   //   · the CONDITION CHANGED — the firing alert's signature differs from the one recorded at
-  //     the last notification, which re-pages ANY tier immediately. The claim WRITES the new
-  //     signature in the same UPDATE, so a concurrent driver's change arm finds it equal and
-  //     stays quiet; the release below restores the old one, so a failed delivery retries.
+  //     the last notification, which re-pages ANY tier as soon as the last notification is
+  //     `claimTtlMs` old. That floor is not hesitation, it is the stale-evaluation guard: two
+  //     drivers overlap, the slower one's alert was computed from an older firing snapshot,
+  //     and without a floor its unequal signature would reclaim a condition a newer pass had
+  //     just confirmed — paging stale numbers and then paging again when the fresh ones
+  //     differ. A pass's evaluate-to-claim span is seconds, so any claim arriving more than
+  //     `claimTtlMs` after a confirm is a genuinely new observation, and a real change still
+  //     pages within one pass cadence plus the floor. The claim WRITES the new signature, so
+  //     a concurrent driver's change arm finds it equal and stays quiet; the release below
+  //     restores the lock-read prior, so a failed delivery retries.
   //     `notified_signature IS NULL` (pre-column rows) deliberately reads as UNCHANGED — a
   //     deploy must not page every standing alert once because the column arrived.
   //
-  // Drizzle COLUMN operators, never a raw `sql` fragment with a `Date` in it — the rule the
-  // sync-lag rule above states at length. The column on the left is what lets drizzle bind
-  // these as timestamptz instead of letting postgres-js describe the parameter as TEXT.
+  // The due decision is taken in JS over the LOCKED row's own values — Date compares on
+  // `getTime()`, no SQL fragment with a `Date` in it, which retires this block's old binding
+  // hazard along with the race.
   const claimed: Array<{ alert: Alert; lease: Date; prior: Date | null; priorSignature: string | null }> = [];
   for (const alert of firing) {
     const intervalMs = alert.severity === "critical" ? repeatMs : renotifyUnchangedMs;
     const dueBefore = new Date(now.getTime() - intervalMs);
+    // The stale-evaluation floor for the change arm — see the header bullet.
+    const changeBefore = new Date(now.getTime() - claimTtlMs);
     // The lease sits past this alert's own due cutoff (unclaimable by the time arm) and the
     // signature written beside it disarms the change arm — so it expires `claimTtlMs` later
     // exactly as before, whichever arm won the claim.
     const lease = new Date(dueBefore.getTime() + claimTtlMs);
     const sig = alertSignature(alert);
-    const won = await db
-      .update(alertState)
-      .set({ notifiedAt: lease, notifiedSignature: sig })
-      .where(and(
-        eq(alertState.alertKey, alert.key),
-        or(
-          isNull(alertState.notifiedAt),
-          lte(alertState.notifiedAt, dueBefore),
-          and(isNotNull(alertState.notifiedSignature), ne(alertState.notifiedSignature, sig)),
-        ),
-      ))
-      .returning({ alertKey: alertState.alertKey });
-    if (won.length === 0) continue;
-    // What to put back if nothing accepts this alert. Read at the top of the pass, and safe
-    // to use precisely BECAUSE the claim succeeded: any concurrent confirm would have moved
-    // `notified_at` past `dueBefore` and this UPDATE would have matched nothing.
-    const priorRaw = byKey.get(alert.key)?.notifiedAt ?? null;
-    claimed.push({
-      alert,
-      lease,
-      prior: priorRaw ? new Date(priorRaw as unknown as string) : null,
-      priorSignature: byKey.get(alert.key)?.notifiedSignature ?? null,
+    const won = await db.transaction(async (tx) => {
+      const [cur] = await tx
+        .select({ notifiedAt: alertState.notifiedAt, notifiedSignature: alertState.notifiedSignature })
+        .from(alertState)
+        .where(eq(alertState.alertKey, alert.key))
+        .limit(1)
+        .for("update");
+      if (!cur) return null; // resolved underneath this pass — nothing to page
+      const notifiedAt = cur.notifiedAt ? new Date(cur.notifiedAt as unknown as string) : null;
+      const due =
+        notifiedAt === null ||
+        notifiedAt.getTime() <= dueBefore.getTime() ||
+        (cur.notifiedSignature !== null &&
+          cur.notifiedSignature !== sig &&
+          notifiedAt.getTime() <= changeBefore.getTime());
+      if (!due) return null;
+      await tx
+        .update(alertState)
+        .set({ notifiedAt: lease, notifiedSignature: sig })
+        .where(eq(alertState.alertKey, alert.key));
+      // THE PRIOR, from under the lock — exactly what this claim displaced, whatever any
+      // other driver did before it.
+      return { prior: notifiedAt, priorSignature: cur.notifiedSignature };
     });
+    if (!won) continue;
+    claimed.push({ alert, lease, prior: won.prior, priorSignature: won.priorSignature });
   }
   const toNotify = claimed.map((c) => c.alert);
 

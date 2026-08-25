@@ -270,6 +270,14 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   "public.alert_state": [
     "alert_key", "kind", "severity", "opened_at", "last_seen_at", "notified_at",
     "notify_count", "detail",
+    // The renotify policy's condition signature (cloud 0025) — composed by `alerts.ts` itself
+    // from an alert's severity and count, never from content. The blind role must read AND
+    // write it: `runAlertPass`'s claim names the column, and the API driver — the sole
+    // observer of `worker_down` — runs that pass over exactly this role, so a grant list
+    // without it is 42501 on every external pass, which is the pager's second arm dying the
+    // moment the column ships. The three-place decision the harden script demands: here,
+    // `harden-staff-role.sql`'s three column-scoped grants, and the census equality.
+    "notified_signature",
   ],
   // The `security_barrier` view, and the ONLY route to `audit_log`. Four named scalars: no
   // `payload`, no `inverse`. The bags are never granted, in any shape.
