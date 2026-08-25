@@ -498,6 +498,13 @@
       "when": 1791241340527,
       "tag": "0070_session_sync_stamp",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1791327920527,
+      "tag": "0071_withheld_provenance_index",
+      "breakpoints": true
     }
   ]
 }

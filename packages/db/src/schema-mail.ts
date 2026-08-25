@@ -1008,6 +1008,17 @@ export const messageBodies = pgTable("message_bodies", {
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   ixBodyTsv: index("message_bodies_body_tsv_idx").using("gin", t.bodyTsv),
+  /**
+   * THE HUSK-PROVENANCE INDEX (mail 0071). The readers that walk withheld bodies BY REASON — the
+   * worker's `junk_filed` convergence pass (`junk-restore.ts` → `listJunkFiledHusks`, once per
+   * cycle per mailbox, keyset on `message_id`) and the `storage_cap` restore 0062's comment above
+   * names for the future — would otherwise test the marker on every body of the mailbox to find
+   * the handful that carry one. PARTIAL on the marker being set, so it holds only the husks and
+   * no ordinary body write ever touches it; the reason leads, `message_id` follows so the keyset
+   * rides the index order. Its absence is SILENT (`SCHEMA_INDEX_MARKERS` lists it for that).
+   */
+  ixWithheld: index("message_bodies_withheld_idx").on(t.withheldReason, t.messageId)
+    .where(sql`${t.withheldReason} is not null`),
   // ── Mail 0022 — the 256 KiB ceiling on one stored html body ──
   // The tripwire for a storage outage, where mailparser's default `cid:` →
   // `data:…;base64,…` rewriting put hundreds of megabytes of ATTACHMENT bytes in this column and

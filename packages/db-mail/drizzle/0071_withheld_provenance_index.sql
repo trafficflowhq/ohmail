@@ -1,0 +1,58 @@
+-- THE HUSK-PROVENANCE INDEX — the partial index the withheld-body reads walk by REASON.
+--
+-- ══ WHAT THIS SERVES ═══════════════════════════════════════════════════════════════════════
+--
+-- `message_bodies.withheld_reason` (mail 0062, widened by 0065) is NULL on every ordinarily
+-- stored body and names a POLICY on the few rows whose content is not here: 'storage_cap',
+-- 'junk_filed', 'expunged'. 0065 shipped its two members with "no index earns its keep" — true
+-- for the writes it added (the husk is a point update by message_id) and no longer true once a
+-- reader walks the husks BY REASON, which two now do:
+--
+--   · the worker's `junk_filed` convergence pass (`apps/worker/src/junk-restore.ts`, reading
+--     `listJunkFiledHusks`): once per sync cycle per mailbox,
+--         SELECT … FROM message_bodies b
+--           JOIN messages m ON m.id = b.message_id
+--           JOIN message_instances i ON i.message_id = m.id AND i.is_primary
+--          WHERE b.withheld_reason = 'junk_filed' AND m.account_id = $1 AND m.mailbox_id = $2
+--            AND m.deleted_at IS NULL AND m.id > $3
+--          ORDER BY m.id LIMIT $4
+--     Without this index the driving relation is `messages` by mailbox — every row of the
+--     mailbox joined to its body and tested for the marker, per cycle, per mailbox, to find the
+--     handful of husks; or a sequential scan of `message_bodies`, the largest table there is.
+--     Measured on the real schema (EXPLAIN, `0071`'s slice): the plan seeks this index on
+--     `(withheld_reason = 'junk_filed', message_id > $3)` and joins the few hits.
+--   · the "Not junk" rescue's origin attribution (`packages/api/src/junk-window.ts#rescueJunk`)
+--     reads one husk by message_id — served by the unique key already; it is listed because it
+--     shares the marker's vocabulary and a future reason-wide read there rides this index too.
+--   · the future ratified `storage_cap` restore that 0062's column comment names
+--     (`WHERE withheld_reason = 'storage_cap'`) — the same shape, the same index.
+--
+-- ══ THE INDEX ══════════════════════════════════════════════════════════════════════════════
+--
+--   message_bodies_withheld_idx  btree (withheld_reason, message_id) WHERE withheld_reason IS NOT NULL
+--
+-- PARTIAL on the marker being set, so it holds ONLY the husks — a small fraction of the table
+-- however large the account — and stays out of every ordinary body write (a NULL marker never
+-- enters it). The reason leads so one seek answers one reason; `message_id` follows so the
+-- convergence pass's keyset (`m.id > $3 ORDER BY m.id`) rides the index order, since
+-- `m.id = b.message_id` on the join. A non-partial index here would index every body row to
+-- serve reads that touch almost none of them — the same argument 0041's retry probe and 0043's
+-- move-to-Ohbox probe made.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO DML ═══════════════════════════════════════════════════════════
+--
+-- One `CREATE INDEX IF NOT EXISTS`, no column, no CHECK, no backfill. The migrator runs each
+-- file in a transaction, so this is a plain (non-CONCURRENT) build — the husk population is
+-- small and the table's write lock is held for one index build, which is how every earlier
+-- index in this journal was created.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → worker. Nothing fails without the index — the reads are correct, only slow — so
+-- the deploy order is a performance rule, not a 42P01 rule; `/health` lists the index in
+-- `SCHEMA_INDEX_MARKERS` for exactly that reason: its absence is SILENT, and the only symptom is
+-- a worker cycle that stops finishing on a large mailbox. No API half.
+--
+-- ROLLBACK: `DROP INDEX IF EXISTS message_bodies_withheld_idx`. No data involved.
+
+CREATE INDEX IF NOT EXISTS "message_bodies_withheld_idx" ON "message_bodies" USING btree ("withheld_reason","message_id") WHERE "withheld_reason" IS NOT NULL;

@@ -876,6 +876,13 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
   // log per candidate, per page, per cycle — no query is wrong, every test stays green, and the only
   // symptom is a worker cycle that stops finishing, which is exactly what this list exists for.
   "change_log_move_to_inbox_idx",
+  // mail 0071_withheld_provenance_index. Listed for the same property as the three above: its
+  // absence is SILENT. The worker's `junk_filed` convergence pass (`junk-restore.ts`) walks
+  // `message_bodies` by `withheld_reason` once per cycle per mailbox to find the few husks whose
+  // message is alive in a watched folder again; without this partial index that read tests the
+  // marker on every body of the mailbox, per cycle — no query is wrong, every test stays green,
+  // and the only symptom is a worker cycle that stops finishing on a large mailbox.
+  "message_bodies_withheld_idx",
 ];
 
 /**
@@ -1421,12 +1428,18 @@ export const MAIL_EXPECTED_MARKERS =
  * horizon (0064's twin for deviceless installs). The whole-row-select blast radius is the
  * AUTH surface: `rotateRefresh`, `listDevices` and `requireStepUp` all
  * `select().from(sessions)`, so a too-early API 42703s token refresh itself. One column, no
- * CHECK, no index, no worker half; it is the newest entry, so it is the tag below.
+ * CHECK, no index, no worker half.
+ *
+ * `0071_withheld_provenance_index` adds no column and is probed as the INDEX
+ * `message_bodies_withheld_idx` (in `SCHEMA_INDEX_MARKERS`, not here): the partial index the
+ * worker's `junk_filed` convergence pass reads husks by. Its absence is the silent kind — a slow
+ * cycle, never a 42703 — which is exactly the class the index list exists for. It is the newest
+ * entry, so it is the tag below.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0070_session_sync_stamp";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0071_withheld_provenance_index";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
