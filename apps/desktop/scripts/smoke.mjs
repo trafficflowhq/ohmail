@@ -134,6 +134,15 @@ class DistOnlyLoader extends ResourceLoader {
 const invoked = [];
 /** `engine_request` URLs this stub has no answer for. Asserted empty — see below. */
 const unmodelled = [];
+/**
+ * THE INDEX IN `invoked` AT WHICH THE FIRST `/health` ANSWER WAS RELEASED — the gate's verdict
+ * landing. The stub HOLDS that answer for `HEALTH_HOLD_MS` so that "asked before the verdict" and
+ * "asked after it" are different positions in the log; section 5 reads this to prove no mail was
+ * asked for while the verdict was still pending. An instant answer could not tell the two apart,
+ * because a request is recorded before its promise settles. -1 until the answer lands.
+ */
+let healthReleasedAt = -1;
+const HEALTH_HOLD_MS = 120;
 
 const encoder = new TextEncoder();
 function frame(status, statusText, body) {
@@ -422,7 +431,7 @@ function installShellStub(window) {
            mail — a pre-auth or expired answer would render the sign-in surface over a world
            these checks then assert is on screen, a contradiction the run could not read. */
         if (url === "/health" && (payload?.method ?? "GET") === "GET") {
-          return Promise.resolve(frame(200, "OK", {
+          const answer = frame(200, "OK", {
             ok: true,
             mode: "cloud",
             schemaTier: "mail",
@@ -430,7 +439,16 @@ function installShellStub(window) {
             signedIn: true,
             online: true,
             sessionExpired: false,
-          }));
+          });
+          /* HELD, not resolved on the spot — see `healthReleasedAt`. The hold is what lets the
+             gate check below tell a window that waited for the verdict from one that mounted
+             optimistically while it was pending. */
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              if (healthReleasedAt === -1) healthReleasedAt = invoked.length;
+              resolve(answer);
+            }, HEALTH_HOLD_MS);
+          });
         }
         /* Exact, or with a query — and NOT a `startsWith("/mailboxes")`, which would also swallow
            `/mailboxes/:id` and the organizer, takeover and resync routes under it. Those are
@@ -750,16 +768,22 @@ check("no collapsed-mail placeholder", collapsed == null, collapsed?.[0] ?? "");
      route was added after this check named the 404 red — so a gate that is removed or bypassed
      mounts the app at once, asks nothing, and leaves every render check above green over a window
      that no longer re-earns its auth answer per engine. `unmodelled` cannot see an unused route.
-     Named, AND ORDERED: the first `/health` has to precede the first `/sync`, because a gate that
-     has been bypassed still probes `/health` once a minute from inside the mounted app, and mere
-     presence would read that later probe as the gate. */
-  const firstAsk = (test) => asked.findIndex((i) => test(String(i.payload?.url ?? "")));
-  const healthAt = firstAsk((u) => u === "/health");
-  const syncAt = firstAsk((u) => u.startsWith("/sync"));
+     Named, and ORDERED AGAINST THE ANSWER, not the ask: the stub holds the first `/health` answer
+     for `HEALTH_HOLD_MS` and records where in the log it was released, and no `/sync` may sit
+     before that point. Ordering the asks alone would not do — a gate that mounts optimistically
+     while the verdict is pending still asks `/health` first (a request is recorded before its
+     promise settles), and a bypassed gate still probes `/health` once a minute from inside the
+     mounted app. Watched red by holding the answer past the render wait: no `/sync` at all. */
+  const healthAt = asked.findIndex((i) => String(i.payload?.url ?? "") === "/health");
+  /* `invoked` indices, not `asked` ones: `healthReleasedAt` is a position in the FULL log. */
+  const firstSyncAt = invoked.findIndex(
+    (i) => i.command === "engine_request" && String(i.payload?.url ?? "").startsWith("/sync"),
+  );
   check(
-    "the window asked the engine's /health before it asked for any mail",
-    healthAt !== -1 && syncAt !== -1 && healthAt < syncAt,
-    asked.map((i) => i.payload?.url).join(", "),
+    "the window asked for no mail until the engine's /health answer had landed",
+    healthAt !== -1 && healthReleasedAt !== -1 && firstSyncAt !== -1 && firstSyncAt >= healthReleasedAt,
+    `/health released at #${healthReleasedAt}, first /sync at #${firstSyncAt}: `
+      + asked.map((i) => i.payload?.url).join(", "),
   );
 
   /* A route the stub does not model would be answered 404 and would surface as a
