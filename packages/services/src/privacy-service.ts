@@ -1,5 +1,5 @@
 import { and, desc, eq, lt, or } from "drizzle-orm";
-import { messages, messageBodies, trackerEvents, type Tx } from "@trafficflow/db";
+import { accountSettings, messages, messageBodies, trackerEvents, type Tx } from "@trafficflow/db";
 import { hostOf, isKnownTracker, isBeaconUrl } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -104,21 +104,29 @@ export class PrivacyService {
     await this.requireOwnedMessage(ctx, messageId);
 
     /**
-     * ── CONSENT IS ENFORCED HERE, OR IT IS NOT ENFORCED AT ALL ───────────────────
+     * ── AUTHORIZATION IS ENFORCED HERE, OR IT IS NOT ENFORCED AT ALL ─────────────
      *
-     * The reading path blocks remote content and offers "Show images", and until
-     * this check that arrangement was a CLIENT CONVENTION: this endpoint would
-     * fetch any url for any message the caller owned, whether the reader had asked
-     * for it or not. Anything that could reach the route — a second client, a
-     * replayed url, a bug in the renderer's `pixel` branch, a curious operator with
-     * a session — could make the sender's server see a request, which is the exact
-     * event "blocked by default" exists to prevent.
+     * Two grants, either one sufficient, both SERVER facts:
      *
-     * It also keeps a claim true that nothing else could. `TrackerEventDTO.blocked`
-     * is `!loadedRemoteContent`, so a row written for an image we fetched WITHOUT
-     * consent would be reported to the user as "blocked" in the very feed whose
-     * subject is who tried to spy on them. The feed would be lying about the one
-     * fact it exists to state.
+     *   · the reader pressed "Show images" for THIS message
+     *     (`message_bodies.loaded_remote_content` — `POST /messages/:id/load-remote`);
+     *   · the ACCOUNT loads images automatically (mail 0048:
+     *     `account_settings.block_remote_images_at` NULL, and an absent row IS the
+     *     default — every account that never changed anything is on auto).
+     *
+     * The second grant is what makes the product default WORK at this boundary. The
+     * client's auto mode points every image at this route without a per-message
+     * press, and a gate that only knew the press answered 403 to all of it — the
+     * shipped default was authorized nowhere server-side. The account column is a
+     * server fact exactly like the flag: an opted-out account's urls are refused
+     * here whatever a client claims, and nothing that reaches this route — a second
+     * client, a replayed url, a bug in the renderer's `pixel` branch — can make the
+     * sender's server see a request the account's own settings forbid.
+     *
+     * It also keeps the tracker feed honest: `TrackerEventDTO.blocked` derives from
+     * these same two facts (see {@link listTrackerEvents}), so an image fetched
+     * under either grant is never reported to the user as "blocked" in the very
+     * feed whose subject is who tried to spy on them.
      *
      * 403 and not 404: the message is real and the caller owns it, and pretending
      * otherwise would make a legitimate client's bug indistinguishable from an
@@ -130,7 +138,7 @@ export class PrivacyService {
       .from(messageBodies)
       .where(eq(messageBodies.messageId, messageId))
       .limit(1);
-    if (body?.loaded !== true) {
+    if (body?.loaded !== true && !(await this.imagesLoadAutomatically(ctx))) {
       throw new ServiceError(
         "remote_content_not_loaded", 403,
         "remote content for this message has not been loaded by the reader",
@@ -187,6 +195,22 @@ export class PrivacyService {
   }
 
   /**
+   * DOES THIS ACCOUNT LOAD REMOTE IMAGES WITHOUT A PRESS? The server-side reading of mail
+   * 0048's opt-out: NULL — and an ABSENT ROW, which is every account that never changed
+   * anything — is the product default, auto. Kept as one method because two call sites
+   * (the proxy gate and the tracker feed's `blocked` flag) must answer identically or the
+   * feed lies about what the gate did.
+   */
+  private async imagesLoadAutomatically(ctx: ServiceContext): Promise<boolean> {
+    const [row] = await ctx.db
+      .select({ blockedAt: accountSettings.blockRemoteImagesAt })
+      .from(accountSettings)
+      .where(eq(accountSettings.accountId, ctx.accountId))
+      .limit(1);
+    return (row?.blockedAt ?? null) === null;
+  }
+
+  /**
    * "Load anyway": flip `message_bodies.loadedRemoteContent = true` so
    * getBody returns remote content unblocked. Idempotent-safe (a second call is a
    * no-op). 404 if the message is not owned by the account.
@@ -235,7 +259,10 @@ export class PrivacyService {
       .limit(limit + 1);
 
     const pageRows = rows.slice(0, limit);
-    const items = pageRows.map((r) => toDTO(r));
+    // The SAME two grants the proxy gate checks, so `blocked` reports what the gate actually
+    // did: an image fetched under the account's auto mode must not be shown as "blocked".
+    const auto = pageRows.length > 0 ? await this.imagesLoadAutomatically(ctx) : false;
+    const items = pageRows.map((r) => toDTO(r, auto));
     const last = pageRows[pageRows.length - 1];
     const nextCursor = rows.length > limit && last
       ? encodeCursor(last.detectedAt, last.id)
@@ -270,7 +297,7 @@ const KIND_MAP: Record<string, TrackerEventDTO["kind"]> = {
 function toDTO(r: {
   id: string; messageId: string; kind: string; trackerHost: string | null;
   detectedAt: Date; fromAddress: string; loaded: boolean | null;
-}): TrackerEventDTO {
+}, accountAuto: boolean): TrackerEventDTO {
   return {
     id: r.id,
     messageId: r.messageId,
@@ -278,7 +305,9 @@ function toDTO(r: {
     pixelHost: r.trackerHost ?? "",
     detectedAt: r.detectedAt.toISOString(),
     kind: KIND_MAP[r.kind] ?? "remote_beacon",
-    blocked: !(r.loaded ?? false),
+    // The proxy gate's two grants, re-derived at read time: the per-message press OR the
+    // account's auto mode. `!loaded` alone reported auto-mode fetches as "blocked".
+    blocked: !((r.loaded ?? false) || accountAuto),
   };
 }
 

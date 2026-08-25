@@ -4,9 +4,10 @@
  * TRACKING PIXELS — the switch over the one refusal the reading pane makes in every images mode.
  *
  * ON (the product default) means a beacon — a 1×1, a zero-dimension image, a beacon-shaped url — is
- * never fetched, whatever else in the message loads. OFF means it rides the proxy with the pictures:
- * the sender learns that the message was opened, and still nothing about who opened it or from
- * where, because the proxy's port takes a url and nothing else.
+ * never fetched, whatever else in the message loads. OFF means it rides the proxy with the pictures.
+ * What the sender then learns: that the message was opened — and, since a bulk sender's pixel url
+ * usually carries a per-recipient token, WHO opened it. What stays hidden is the reader's network:
+ * the proxy's port takes a url and nothing else, so no IP, location or device ever travels.
  *
  * ── WHY IT EXISTS AT ALL, GIVEN THE PRODUCT IS NAMED FOR THE REFUSAL ──────────────────────────
  *
@@ -18,10 +19,11 @@
  *
  * ── WHAT THE DESCRIPTION MAY NOT SAY ──────────────────────────────────────────────────────────
  *
- * It must not promise that ON hides the reader's address (the proxy does that in both positions)
- * and it must not imply that OFF loads pictures (that is the row above; in the manual images mode a
- * pixel still waits behind "Show images" with everything else). The copy says what the switch
- * decides — whether a beacon is fetched — and stops.
+ * It must not promise that ON hides the reader's address (the proxy does that in both positions);
+ * it must not imply that OFF loads pictures (that is the row above; in the manual images mode a
+ * pixel still waits behind "Show images" with everything else); and it must not describe OFF as an
+ * anonymous open — the pixel's own url usually identifies the recipient, so the honest sentence is
+ * that the sender can tell the reader opened it. The copy says what the switch decides and stops.
  *
  * ── IT WRITES THROUGH THE HOOK, AND DRAWS THE SERVER'S ANSWER ─────────────────────────────────
  *

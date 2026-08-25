@@ -1146,6 +1146,31 @@ function declaresResponsiveCanvas(css: string): boolean {
 }
 
 /**
+ * The STYLESHEET half of the same question — rule-wise, because a sheet's declarations belong
+ * to selectors and a canvas is a property of LAYOUT elements. An ordinary letter that pastes
+ * `img.hero { max-width:600px }` is capping a PICTURE, which is exactly the reflow-that-costs-
+ * nothing `CANVAS_TAGS` excludes images for — reading the sheet as one flat string would move
+ * that letter into a frame on the strength of an image-size rule. So each `selector { block }`
+ * is read on its own, and a rule whose selector names `img` (as a tag token — `.imgwrap` is a
+ * class and does not match) contributes nothing. A mixed list (`td, img { … }`) is skipped
+ * whole: the cost is one designed mail rendered as a letter, which is the pre-existing
+ * behaviour, and the shape is not one mail templates use.
+ *
+ * The rule regex cannot cross braces, so a media query's PRELUDE is never read as a block —
+ * only the rules inside it are, each under its own selector — and inline `style` attributes
+ * (no braces) never reach this function at all: the element loop in {@link isDesignedLayout}
+ * reads those, and it already walks only {@link CANVAS_TAGS}.
+ */
+function sheetDeclaresResponsiveCanvas(styleText: string): boolean {
+  const rule = /([^{}]+)\{([^{}]*)\}/g;
+  for (let m = rule.exec(styleText); m; m = rule.exec(styleText)) {
+    if (/(?:^|[\s,>+~(])img\b/i.test(m[1]!)) continue;
+    if (declaresResponsiveCanvas(m[2]!)) return true;
+  }
+  return false;
+}
+
+/**
  * IS THIS MAIL DESIGNED — did the sender lay something out — even where no fixed canvas says so?
  *
  * The rule this implements: an html mail with its own design is shown as the html mail it is,
@@ -1174,7 +1199,7 @@ function declaresResponsiveCanvas(css: string): boolean {
  * document shapes directly (`test/message-body-designed.test.ts`), not inferred from a frame.
  */
 export function isDesignedLayout(root: Element, styleText: string): boolean {
-  if (declaresResponsiveCanvas(styleText)) return true;
+  if (sheetDeclaresResponsiveCanvas(styleText)) return true;
   for (const el of root.querySelectorAll(CANVAS_TAGS)) {
     const style = el.getAttribute("style");
     if (style && declaresResponsiveCanvas(style)) return true;

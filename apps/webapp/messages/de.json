@@ -975,7 +975,7 @@
     "pixels": {
       "title": "Zählpixel blockieren",
       "on": "Ein Zählpixel wird nie geholt, ein Absender sieht also nicht, wann du seine Nachricht öffnest.",
-      "off": "Zählpixel laden mit den Bildern. Ein Absender erfährt, dass du die Nachricht geöffnet hast, aber nicht wer oder wo du bist.",
+      "off": "Zählpixel laden mit den Bildern. Ein Absender kann erkennen, dass du seine Nachricht geöffnet hast — das Pixel selbst identifiziert dich meist — während deine IP-Adresse, dein Standort und dein Gerät hinter ohmails Proxy verborgen bleiben.",
       "microcopy": "Ein Zählpixel ist ein unsichtbares Bild, das nur das Öffnen meldet. Schalte das aus, wenn Absender es sehen sollen.",
       "failed": "Das ließ sich nicht speichern — versuch es nochmal."
     },

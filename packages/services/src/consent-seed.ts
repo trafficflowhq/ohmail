@@ -854,8 +854,10 @@ export async function setBlockRemoteImages(
  * the opt-out of a PROTECTION (mail 0072).
  *
  * `blocked === true` is the product default and NULLs the column. `false` stamps the instant: this
- * account asked for a beacon to load along with the pictures, through the same proxy, so the sender
- * learns that the message was opened and still nothing about who opened it or from where.
+ * account asked for a beacon to load along with the pictures, through the same proxy. The sender
+ * then learns the open — and, since a bulk sender's pixel url usually carries a per-recipient
+ * token, which recipient opened it; what stays hidden is the reader's network (IP, location,
+ * device), because the proxy's port takes a url and nothing else.
  *
  * The argument's sign is the reverse of the neighbour's and the column's own migration states it:
  * there, NULL is permissive and the row stores a request for more protection; here, NULL is

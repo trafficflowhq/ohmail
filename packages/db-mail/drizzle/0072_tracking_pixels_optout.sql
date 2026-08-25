@@ -2,9 +2,10 @@
 --
 -- Mail 0048 made a message's remote pictures load on open, through the reader-side proxy, and left
 -- one refusal in place in both modes: a tracking pixel — a 1×1, a zero-dimension image, a
--- beacon-shaped url — is never fetched, because there is no picture behind it and the only thing it
--- can tell anybody is that this message was opened at this minute. That refusal is still the default
--- and it is still what the sanitizer does when this column is NULL.
+-- beacon-shaped url — is never fetched, because there is no picture behind it and all it exists to
+-- tell the sender is that this message was opened, at this minute, and (through the per-recipient
+-- token such urls usually carry) by whom. That refusal is still the default and it is still what
+-- the sanitizer does when this column is NULL.
 --
 -- What this adds is the CONTROL. Some readers want a sender to see the open — a receipt they
 -- expect to be acknowledged, a colleague's read-tracker, a mailing they run themselves — and a

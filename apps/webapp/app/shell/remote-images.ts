@@ -54,16 +54,18 @@
  * `account_settings.block_remote_images_at`). Everything in this file still exists and still runs
  * unchanged in that mode — the module did not become dead code, it became the second branch.
  *
- * What did not move: **a tracking pixel is never fetched in either mode.** That refusal lives in
- * the sanitizer, where a 1×1, a zero-dimension image and a beacon-shaped url override the proxy
- * outright (`MessageBody.tsx`), and it is not reachable from this file at all. Nor did remote
- * stylesheets, which have no proxied form to load. The default that changed is which PICTURES a
- * reader has to ask for, and it is affordable precisely because of the paragraph above it: the
- * proxy's port takes a url and nothing else, so an image the reader never pressed a button for
- * still tells the sender nothing about them.
+ * What did not move by default: **a tracking pixel is not fetched in either images mode** unless
+ * the account's own pixel switch says otherwise (mail 0072, {@link RemoteImagesChrome.loadPixels}).
+ * That refusal lives in the sanitizer, where a 1×1, a zero-dimension image and a beacon-shaped url
+ * override the proxy (`MessageBody.tsx`), and it is not reachable from this file at all. Remote
+ * stylesheets stay blocked in every mode — they have no proxied form to load. The default that
+ * changed is which PICTURES a reader has to ask for, and it is affordable precisely because of the
+ * paragraph above it: the proxy's port takes a url and nothing else, so an image the reader never
+ * pressed a button for still hands the sender none of the reader's network — no IP, no location,
+ * no device.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE, apiConfigured, messageOf, privacy } from "../api-client";
 
 /**
@@ -98,8 +100,9 @@ export interface RemoteImagesChrome {
    * bar counts what was blocked and offers "Show images".
    *
    * **It changes NOTHING about pixels.** A beacon or a 1×1 is refused the proxy in both modes,
-   * inside the sanitizer, and remote stylesheets are blocked in both modes because a sheet cannot
-   * be proxied at all. What moves is which PICTURES load.
+   * inside the sanitizer — {@link loadPixels} below is the one thing that can lift that, and it
+   * is its own switch. Remote stylesheets are blocked in both modes because a sheet cannot be
+   * proxied at all. What moves here is which PICTURES load.
    *
    * It is deliberately not folded into {@link consented}: that function answers "did this person
    * press the button for this message", which is a per-message fact the auto mode does not make
@@ -113,9 +116,11 @@ export interface RemoteImagesChrome {
    *
    * `false` — the product default — keeps the refusal the sanitizer has always made: a 1×1, a
    * zero-dimension image or a beacon-shaped url is blanked whatever else loads. `true` hands those
-   * to the proxy like any other image, so the sender learns the message was opened and still
-   * nothing about who opened it or from where. It reaches the sanitizer as
-   * `SanitizeOptions.loadPixels` and does nothing where no proxy exists.
+   * to the proxy like any other image. What the sender then learns: the open, and — because bulk
+   * senders mint a per-recipient token into the pixel's url — usually WHICH recipient opened it.
+   * What the proxy still hides is the reader's network: IP, location, device. The switch's copy
+   * says exactly that; this flag must never be described as anonymous opens. It reaches the
+   * sanitizer as `SanitizeOptions.loadPixels` and does nothing where no proxy exists.
    */
   loadPixels: boolean;
 }
@@ -177,7 +182,19 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
   const [allowed, setAllowed] = useState<ReadonlySet<string>>(() => new Set());
   const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
 
-  const onFailed = opts.onFailed;
+  /**
+   * ── THE CHROME'S IDENTITY IS A PERFORMANCE CONTRACT, SO `onFailed` RIDES A REF ──────────
+   *
+   * The stream cards compare this hook's return BY REFERENCE (`StreamCardMemo`'s comparator),
+   * because a changed chrome is exactly when every mounted card must re-sanitize — a setting
+   * flipped, a consent recorded. The one caller passes `onFailed` as an inline arrow, so its
+   * identity changes on every shell render — including the render every `/sync` apply causes —
+   * and an `onFailed` dependency here would hand the stream a fresh chrome per poll, re-running
+   * the sanitizer over every mounted card to deliver nothing. The ref keeps the LATEST callback
+   * reachable from a `consent` whose identity moves only with the consent state itself.
+   */
+  const onFailedRef = useRef(opts.onFailed);
+  useEffect(() => { onFailedRef.current = opts.onFailed; });
 
   const proxyFor = useCallback(
     (messageId: string) => (url: string) =>
@@ -200,7 +217,7 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
         } catch (err) {
           // Nothing is admitted. See the header: a local flag the server did not record is a
           // message that shows images once and never again, with no explanation either time.
-          onFailed(messageOf(err));
+          onFailedRef.current(messageOf(err));
         } finally {
           setPending((p) => {
             const next = new Set(p);
@@ -210,7 +227,7 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
         }
       })();
     },
-    [allowed, pending, onFailed],
+    [allowed, pending],
   );
 
   const auto = opts.mode === "auto";

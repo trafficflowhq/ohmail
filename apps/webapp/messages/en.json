@@ -975,7 +975,7 @@
     "pixels": {
       "title": "Block tracking pixels",
       "on": "A tracking pixel is never fetched, so a sender can't tell when you open their message.",
-      "off": "Tracking pixels load with the pictures. A sender learns that you opened the message, not who or where you are.",
+      "off": "Tracking pixels load with the pictures. A sender can tell that you opened their message — the pixel itself usually identifies you — while your IP address, location and device stay hidden behind ohmail's proxy.",
       "microcopy": "A tracking pixel is an invisible image whose only job is to report the open. Turn this off if you want senders to see it.",
       "failed": "Couldn't save that — try again."
     },
