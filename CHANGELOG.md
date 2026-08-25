@@ -16,6 +16,83 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.11.1] — 2026-08-25
+
+Deleting mail is safe for synced devices now, the Cloud mirror survives its own
+first sync, and the folders you keep on your own mail server can join the menu —
+off unless you turn them on.
+
+### Deleting mail no longer stalls a synced device
+
+Deleting a message that other messages replied to could wedge the app's local
+mirror of a Cloud account: the sync page carrying the delete aborted on a
+reply's reference to the deleted message, the same page was retried forever,
+and new mail stopped arriving with no error on screen. Deletes now detach the
+surviving replies instead of aborting — on the single-message path and the
+whole-thread path alike — and every detachment is announced through the same
+sync feed. An install that had already hit this starts moving again on its
+first sync after the update: the page that used to abort now applies.
+
+### The Cloud mirror survives its own first sync
+
+- An interrupted first sync resumes where it stopped instead of starting over.
+- Every sync request carries a deadline, so a hung connection fails and
+  retries instead of freezing the mirror behind it.
+- Being signed out shows as signed out, with the door to sign back in —
+  not as a false "offline" banner over a network that is fine. An expired
+  session is detected and named instead of masquerading as an outage.
+- The wake channel backs off when the server asks it to, instead of retrying
+  into the same refusal.
+
+### The hosted door re-earns its answer
+
+The gate that decides whether the desktop's hosted client is signed in
+re-checks whenever the engine changes, and cancelling the sign-in overlay
+re-asks the engine before any mail is shown — a stale "signed in" cannot
+survive a cancelled sign-in any more.
+
+### Rules before mail
+
+A first sync loads the account's screening decisions before its mail, so
+senders you have already let in never flash as unscreened while the backlog
+downloads.
+
+### Your mail server's own folders (opt-in)
+
+Settings → **Use folders** shows the folders you keep on your mail server in
+the menu, each opening as its own list with unread counts. It only shows what
+already exists — nothing is moved — and turning it off hides them again
+without touching your mail. With it on, the reading pane gains **Delete**: the
+message goes to your server's own Trash, behind a confirmation that says
+exactly that. In the hosted web client the Screener's Spam view also gains a
+**Junk** segment — a live window into the mailbox's own Junk folder, with
+"Not junk" moving a message back to your inbox on your own server; the desktop
+app keeps its verdict-based Spam pile for now.
+
+### Sending and attachments
+
+- A just-sent message shows its attachments immediately, and a forwarded
+  message's sent copy lists the files it inherited.
+- The picture-quality dial re-encodes pictures that are already attached, and
+  its refusals name the limit that actually fired: an unreadable file gets its
+  own sentence, a mixed batch states both failures, and a removed file stays
+  removed.
+
+### Parked mail returns where it belongs
+
+Mail taken back out of Parked, Answer Later or a scheduled resurface returns
+at its own chronological position instead of wherever an old reading stamp put
+it, and answering a resurfaced message completes the resurface — the pin no
+longer stays up over mail you just replied to.
+
+### Fixes
+
+- On mail servers that advertise no Sent folder, the organizer now follows the
+  Sent folder it actually watches by name, so completing a delete there no
+  longer leaves a retrying stale row.
+- The organizer's first-import stamp reads inbound mail alone, so a long
+  outbound filing pass cannot withhold it.
+
 ## [0.11.0] — 2026-08-21
 
 ohmail can be your computer's mail app now — and the app carries no demo mail
@@ -2136,7 +2213,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.11.1
 [0.11.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.11.0
 [0.10.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.10.0
 [0.9.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.9.8
