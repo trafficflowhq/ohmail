@@ -2110,6 +2110,11 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
             err: String(err),
           });
         }
+        // The between-pages stop check, REPEATED after this await: `stop()` can set the flag
+        // while the pre-pass is in flight, and falling through would start the replay's next
+        // /sync request after shutdown was asked for — past the shell's grace window (review
+        // round). Same cut shape as the loop's own check: the bootstrap resumes next launch.
+        if (aborted) return { applied, sweep: null, cut: true };
       }
       const q = new URLSearchParams({
         since: cursor.sync || "0",
