@@ -597,8 +597,19 @@ export function DesktopDevices() {
   const moment = (iso: string): string =>
     iso ? format.dateTime(new Date(iso), { dateStyle: "medium", timeStyle: "short" }) : "";
 
-  const kindWord = (kind: string): string =>
-    kind === "web" ? t("kindWeb") : kind === "macos" ? t("kindMac") : t("kindOther");
+  // The full device vocabulary — phones now declare mobile-android / mobile-ios at the redeem,
+  // so the pane says what actually paired; an unknown kind keeps the generic word.
+  const kindWord = (kind: string): string => {
+    switch (kind) {
+      case "web": return t("kindWeb");
+      case "macos": case "desktop-macos": return t("kindMac");
+      case "desktop-linux": return t("kindLinux");
+      case "desktop-windows": return t("kindWindows");
+      case "mobile-android": return t("kindAndroid");
+      case "mobile-ios": return t("kindIphone");
+      default: return t("kindOther");
+    }
+  };
 
   /* ── The ladder, told from the top ─────────────────────────────────────────────────────── */
 

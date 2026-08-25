@@ -197,11 +197,32 @@ export interface ConnectedSession {
   ownerKey: string;
 }
 
+/** The two kinds this app can truthfully be — the hosted device vocabulary's mobile half. */
+export type MobileDeviceKind = "mobile-android" | "mobile-ios";
+
+/**
+ * What THIS phone is, from the platform React Native reports. A pure mapping, deliberately not
+ * an import of `react-native` here: this module runs under node in the suite, and the OS is the
+ * composition's fact to hand in (`connection.tsx` passes `Platform.OS`), the same way the
+ * transport is.
+ */
+export function mobileDeviceKind(os: string): MobileDeviceKind {
+  return os === "ios" ? "mobile-ios" : "mobile-android";
+}
+
 export interface PairingEnv {
   profiles: ServerProfileStore;
   engineDeps: MobileEngineDeps;
   /** Override the transport (tests). Absent, RN's global fetch. */
   fetchImpl?: FetchLike;
+  /**
+   * The kind this phone declares in the redeem body, so the server's device list and its
+   * staleness attribution say WHICH install a row is ("mobile-android", not "Web"). Composed by
+   * the provider from {@link mobileDeviceKind}(Platform.OS). Absent means the field is omitted
+   * and the server defaults the row to `"web"` — exactly what every redeem sent before the
+   * vocabulary existed.
+   */
+  deviceKind?: MobileDeviceKind;
 }
 
 export type PairOutcome =
@@ -260,24 +281,54 @@ export async function pairWithServer(
     };
   }
 
-  // 2 — spend the token: its one appearance, in the redeem body. `kind` is omitted (the wire
-  // defaults it); an honest "mobile" device kind would need a server-side whitelist change, so
-  // it is left for later rather than smuggled past the frozen wire here.
-  let redeemed: Response;
-  try {
-    redeemed = await fetchImpl(`${origin}/pair/redeem`, {
+  // 2 — spend the token: its one appearance, in the redeem body. `kind` is this phone's own
+  // declaration (the server's whitelist now carries the mobile vocabulary), omitted only when
+  // the composition handed none in — the server then defaults the row to "web" as it always has.
+  //
+  // ONE RETRY, for one refusal: an OLDER server whose whitelist predates the mobile kinds
+  // answers the declaration `validation_failed` naming "device kind" — and it refuses BEFORE
+  // the burn (every version that has ever validated the field checks it ahead of consuming the
+  // token; the versions before that ignore unknown body fields entirely), so the single-use
+  // token is still live and the same redeem without the declaration is exactly the request that
+  // server has always accepted. Honesty degrades to silence, never to a dead pairing code.
+  const redeem = async (declare: boolean): Promise<Response> =>
+    fetchImpl(`${origin}/pair/redeem`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ grant: "device-pair", token }),
+      body: JSON.stringify({
+        grant: "device-pair",
+        token,
+        ...(declare && env.deviceKind ? { kind: env.deviceKind } : {}),
+      }),
     });
+  type RedeemAnswer = {
+    tokens?: { accessToken?: unknown; refreshToken?: unknown };
+    error?: { code?: unknown; message?: unknown };
+  };
+  const parse = async (res: Response): Promise<RedeemAnswer> => {
+    try {
+      return (await res.json()) as RedeemAnswer;
+    } catch {
+      return {};
+    }
+  };
+  let redeemed: Response;
+  let answer: RedeemAnswer;
+  try {
+    redeemed = await redeem(true);
+    answer = await parse(redeemed);
+    const kindRefused =
+      env.deviceKind !== undefined &&
+      redeemed.status === 400 &&
+      answer.error?.code === "validation_failed" &&
+      typeof answer.error?.message === "string" &&
+      answer.error.message.includes("device kind");
+    if (kindRefused) {
+      redeemed = await redeem(false);
+      answer = await parse(redeemed);
+    }
   } catch {
     return { kind: "refused", reason: "could not reach that server to redeem the pairing" };
-  }
-  let answer: { tokens?: { accessToken?: unknown; refreshToken?: unknown }; error?: { code?: unknown; message?: unknown } };
-  try {
-    answer = (await redeemed.json()) as typeof answer;
-  } catch {
-    answer = {};
   }
   const tokens = answer.tokens;
   if (!redeemed.ok || typeof tokens?.accessToken !== "string" || typeof tokens.refreshToken !== "string") {

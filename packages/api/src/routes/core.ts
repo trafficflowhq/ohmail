@@ -211,7 +211,10 @@ export const coreRoutes: Route[] = [
     cost: "ceremony",
     options: { public: true },
     handler: async (req, deps) => {
-      const body = await readBody<{ code?: unknown; verifier?: unknown }>(req);
+      // `kind` is the claimant's own platform declaration (desktop-linux/-macos/-windows, or
+      // the legacy "macos" — also the default when absent, which is what every shipped desktop
+      // sends). Whitelist-gated in the service BEFORE the ip slot and the burn.
+      const body = await readBody<{ code?: unknown; verifier?: unknown; kind?: unknown }>(req);
       return json(await auth(deps).claimDesktopLink(serviceContext(deps, req), body), 200);
     },
   },

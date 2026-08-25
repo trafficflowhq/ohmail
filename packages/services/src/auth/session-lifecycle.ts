@@ -63,6 +63,21 @@ export const PAIRED_DEVICE_KINDS: ReadonlySet<string> = new Set<PairedDeviceKind
   "mobile-android", "mobile-ios",
 ]);
 
+/**
+ * The kinds {@link SessionLifecycle.establish} auto-mints a device row for, with the label the
+ * row gets — the desktop family and nothing else. `web` is absent because a browser ceremony
+ * mints no row (see the comment at the mint), and the mobile kinds are absent because a phone
+ * only ever arrives through the pairing redeem, which pre-creates its row with the mint-time
+ * label and passes `deviceId` in. The map is therefore the whole answer to "which kinds are
+ * named devices by construction", and adding a kind here is a decision, not a default.
+ */
+const AUTO_MINT_DEVICE_LABELS: Partial<Record<DeviceKind, string>> = {
+  "macos": "ohmail for Mac",
+  "desktop-linux": "ohmail for Linux",
+  "desktop-macos": "ohmail for Mac",
+  "desktop-windows": "ohmail for Windows",
+};
+
 export interface SessionLifecycleDeps {
   config: AuthConfig;
 }
@@ -455,26 +470,35 @@ export class SessionLifecycle {
     // are `macos` and take the native one. Deriving it rather than adding a second parameter is
     // what stops a session whose device says "Web" from holding a 400-day credential: there is one
     // value, and both the row and the lifetime read it. Anything that is not `macos` is a browser
-    // as far as this decision goes — the strict side, per `surfaceTtls`.
+    // as far as this decision goes — the strict side, per `surfaceTtls`. The platform-qualified
+    // desktop kinds deliberately take the STRICT side of this derivation too: on the one seam
+    // where they are wire input (a 2FA verify's declaration), the declaration must not be able to
+    // buy the native window, so any caller whose transport really is native pins `o.surface`
+    // itself — the desktop-link claim does, exactly as the paired mint always has.
     //
     // `o.surface` is the ONE exception, for the caller whose `kind` is not its own to derive
     // from: a pairing redeem's kind arrives from the anonymous redeemer, so the paired mint pins
     // the surface its TRANSPORT dictates instead — see the option's doc above.
     const ttls = surfaceTtls(this.cfg, o.surface ?? (o.kind === "macos" ? "native" : "cookie"));
-    // A device row means a NAMED device, so only the macos claim auto-mints one ("ohmail for
-    // Mac" — the desktop app really is a device a user manages by name). A plain web ceremony
+    // A device row means a NAMED device, so only a DESKTOP kind auto-mints one — the desktop app
+    // really is a device a user manages by name. The label map below is the closed set of kinds
+    // that may auto-mint: the legacy "macos" spelling (the shipped desktop's claim) and the
+    // platform-qualified desktop kinds a current install declares. A plain web ceremony
     // mints NO row: it used to mint one labeled "Web" per sign-in, which turned the list that
     // exists to make PAIRED devices visible into a flood of indistinguishable rows (hundreds
-    // on a well-used account) and left `devices` growing without bound. Device-less is also
+    // on a well-used account) and left `devices` growing without bound. The mobile kinds are
+    // deliberately NOT in the map: a phone arrives only through the pairing redeem, which
+    // pre-creates the row with the mint-time label and passes `deviceId`. Device-less is also
     // what the sidecar's launch session has always been (`identity.ts` narrows on
     // `isNull(sessions.deviceId)`), so `device_id IS NULL` now means the same thing on every
     // tier: a session that is not a named device. Migration 0061 backfills the historical
     // "Web" rows to match.
     let deviceId = o.deviceId ?? null;
-    if (!deviceId && o.kind === "macos") {
+    const autoLabel = AUTO_MINT_DEVICE_LABELS[o.kind];
+    if (!deviceId && autoLabel !== undefined) {
       const [dev] = await db.insert(devices).values({
         accountId: user.accountId, userId: user.id, kind: o.kind,
-        label: "ohmail for Mac", ip: o.ip ?? ctx.ip ?? "",
+        label: autoLabel, ip: o.ip ?? ctx.ip ?? "",
       }).returning();
       deviceId = dev!.id;
     }

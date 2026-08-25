@@ -119,12 +119,44 @@ export interface CloudSignInRequest {
   handoffCode?: string;
 }
 
+/** The platform-qualified kinds a desktop install may declare itself as, on either door. */
+export type DesktopDeviceKind = "desktop-linux" | "desktop-macos" | "desktop-windows";
+
+/**
+ * What THIS process is, in the hosted vocabulary — from the platform Node reports, which is a
+ * fact about the running binary rather than anything a caller could claim. `null` for a
+ * platform the vocabulary has no word for (a BSD, an exotic build): the declaration is then
+ * OMITTED and the hosted side keeps its legacy reading, exactly as an old install's claim does
+ * — an honest silence, never a guessed kind.
+ */
+export function desktopDeviceKind(platform: string): DesktopDeviceKind | null {
+  switch (platform) {
+    case "linux": return "desktop-linux";
+    case "darwin": return "desktop-macos";
+    case "win32": return "desktop-windows";
+    default: return null;
+  }
+}
+
 export interface CloudSignInOptions {
   /** e.g. `https://api.ohmail.app`. A trailing slash is trimmed. */
   baseUrl: string;
   /** Injected for tests; production dials the real hosted API. */
   fetchImpl?: typeof fetch;
   log?: Diagnostic;
+  /**
+   * The kind this install declares itself as, on both sign-in paths: `kind` beside the code on
+   * `POST /auth/desktop-claim`, and `kind` beside the six digits on `POST /auth/2fa/totp/verify`
+   * — so the hosted account's device list and its staleness attribution can say WHICH install a
+   * session is, not merely that one exists.
+   *
+   * ON THE OPTIONS AND NOT ON THE REQUEST, the verifier's own placement rule: the request is
+   * JSON that arrived over the bridge, and what this process runs on is not a caller's to
+   * assert. Composed by the engine from {@link desktopDeviceKind}(process.platform). Absent —
+   * an unrecognized platform, or an older engine — means the field is omitted and the hosted
+   * side reads the sign-in exactly as it read every sign-in before the vocabulary existed.
+   */
+  deviceKind?: DesktopDeviceKind;
   /**
    * The PKCE verifier this install is holding, if it minted one before opening the browser.
    *
@@ -311,10 +343,16 @@ export async function cloudSignIn(
     // side reads an absent verifier as the real predicate "this code was minted unbound", and an
     // empty string is not that — it is a claim to hold the verifier for the digest of "", which is
     // a challenge somebody could deliberately mint. Two shapes, and the difference is a refusal.
+    // `kind` follows the same rule: present when the engine knows its platform, omitted rather
+    // than guessed when it does not (the hosted side then keeps the legacy "macos" reading).
     const verifier = trimmed(opts.verifier);
     const res = await post(
       "/auth/desktop-claim",
-      verifier ? { code: handoff, verifier } : { code: handoff },
+      {
+        code: handoff,
+        ...(verifier ? { verifier } : {}),
+        ...(opts.deviceKind ? { kind: opts.deviceKind } : {}),
+      },
       "claim",
     );
     const body = await readJson(res);
@@ -393,7 +431,14 @@ export async function cloudSignIn(
 
   // THE FIELD IS `loginToken`. `challengeToken` is the name everybody reaches for and it is not
   // this one; a wrong name here answers 400 and reads exactly like a wrong code.
-  const verifyRes = await post("/auth/2fa/totp/verify", { loginToken, code }, "verify");
+  // `kind` is this install's platform declaration — what turns the password path's session from
+  // a deviceless row nobody can attribute into a named device the account can list, revoke and
+  // be paged about. Omitted when unknown; an older hosted service ignores the extra field.
+  const verifyRes = await post(
+    "/auth/2fa/totp/verify",
+    { loginToken, code, ...(opts.deviceKind ? { kind: opts.deviceKind } : {}) },
+    "verify",
+  );
   const verifyBody = await readJson(verifyRes);
   if (!verifyRes.ok) {
     opts.log?.("cloud_signin_refused", { status: verifyRes.status, reason: "the hosted service refused the code" });

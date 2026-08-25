@@ -45,7 +45,10 @@ export const totpRoutes: Route[] = [
     cost: "ceremony",
     options: { public: true },
     handler: async (req, deps) => {
-      const body = await readBody<{ loginToken: string; code: string }>(req);
+      // `kind` is the caller's own device declaration — the desktop's cloud-door sign-in names
+      // its platform here so the session gets a device row the staleness alarm can attribute.
+      // Whitelist-gated in the service (desktop kinds only; none can reach the native window).
+      const body = await readBody<{ loginToken: string; code: string; kind?: unknown }>(req);
       return webSession(deps, await auth(deps).totpVerify(serviceContext(deps, req), body));
     },
   },

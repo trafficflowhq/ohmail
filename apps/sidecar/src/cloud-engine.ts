@@ -14,6 +14,7 @@ import {
   cloudIdentity,
   cloudSignIn,
   CloudSignInError,
+  desktopDeviceKind,
   newDesktopLinkPair,
   type CloudSignInRequest,
 } from "./cloud-signin.js";
@@ -379,6 +380,16 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     let linkVerifier: string | null = null;
 
     /**
+     * WHAT THIS INSTALL IS, in the hosted device vocabulary — this process's own fact, read once
+     * from the platform the binary runs on and carried on both sign-in paths so the hosted
+     * account can name the install (`desktop-linux` / `desktop-macos` / `desktop-windows`).
+     * `null` on a platform the vocabulary has no word for: the declaration is then omitted and
+     * the hosted side keeps its legacy reading. Never read from the bridge body, for the
+     * verifier's exact reason.
+     */
+    const declaredDeviceKind = desktopDeviceKind(process.platform);
+
+    /**
      * TRUE from the moment the hosted API definitively refuses to renew the session (401/403 on
      * `/auth/refresh` — a revoked or rotated-past family) until the next successful activation.
      * `/health` carries it beside `signedIn`, so the shell can say "your session ended — sign in
@@ -631,6 +642,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
               // request field precisely so that this line is the only way one can reach the claim
               // — a caller over the bridge names the code and nothing else about how it is spent.
               ...(linkVerifier ? { verifier: linkVerifier } : {}),
+              // FROM THE PROCESS, NEVER FROM `body`, for the verifier's reason: what platform
+              // this install runs on is this process's own fact — see `declaredDeviceKind`.
+              ...(declaredDeviceKind ? { deviceKind: declaredDeviceKind } : {}),
             },
             body,
           );

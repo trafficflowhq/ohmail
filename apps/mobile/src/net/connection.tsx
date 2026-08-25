@@ -34,12 +34,14 @@
  * anything short of a judgment.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Platform } from "react-native";
 import { nativeEngineDeps } from "../engine/native";
 import { nativeServerProfiles } from "../state/servers-native";
 import type { ServerProfile } from "../state/servers";
 import type { FetchLike } from "./bearer";
 import {
   connectProfileById,
+  mobileDeviceKind,
   negotiate,
   pairWithServer,
   revokeProfile,
@@ -96,7 +98,14 @@ const SUPERSEDED = "superseded by a newer connection attempt";
 
 export function ConnectionProvider({ children }: { children: ReactNode }) {
   const env = useMemo<PairingEnv>(
-    () => ({ profiles: nativeServerProfiles(), engineDeps: nativeEngineDeps() }),
+    // `deviceKind` — what THIS phone is, declared at pairing time so the server's device list
+    // and its staleness attribution name the install. `Platform.OS` is read here, in the one
+    // RN-world composition, and handed in as a fact — `net/pairing` stays react-native-free.
+    () => ({
+      profiles: nativeServerProfiles(),
+      engineDeps: nativeEngineDeps(),
+      deviceKind: mobileDeviceKind(Platform.OS),
+    }),
     [],
   );
   const gateRef = useRef<TransitionGate | null>(null);

@@ -7,7 +7,7 @@
  * alone. */
 import {
   mintPairingToken, listPairingTokens, revokePairingToken,
-  redeemDevicePair, type PairingGrant, type PairedDeviceSessionMinter,
+  redeemDevicePair, type PairingGrant, type PairedDeviceKind, type PairedDeviceSessionMinter,
 } from "@trafficflow/services/auth";
 import { ServiceError } from "@trafficflow/services/mail";
 import { silentLogger } from "@trafficflow/core/mail";
@@ -193,7 +193,7 @@ export const pairRedeemRoutes: Route[] = [
           // the service BEFORE the burn (the same wire-input division as the mint's `grant`).
           const { tokens } = await redeemDevicePair(ctx, sessionMinter(deps), {
             token,
-            ...(b.kind !== undefined ? { kind: b.kind as "web" | "macos" } : {}),
+            ...(b.kind !== undefined ? { kind: b.kind as PairedDeviceKind } : {}),
           });
           // The bearer pair and nothing else — `POST /auth/desktop-claim`'s shape. No cookie:
           // a token shown on a screen must not be spendable into a browser session.

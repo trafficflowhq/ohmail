@@ -33,7 +33,7 @@ import { generateToken, hashToken, sha256, type PasswordHasher } from "./crypto.
 import type { AuthDeps, AuthConfig } from "./types.js";
 import type {
   SessionUser, TwofaEnrolled, LoginResult, SessionEstablished, OAuthTokens,
-  RecoveryCodesResp, AuthAuditEvent,
+  RecoveryCodesResp, AuthAuditEvent, DeviceKind,
   EnrollmentSessionEstablished, RegistrationResult, VerifyEmailResult,
 } from "./types.js";
 import type { SessionScope } from "./resolve-session.js";
@@ -50,6 +50,43 @@ import { SessionLifecycle } from "./session-lifecycle.js";
 
 type Method = "webauthn" | "totp" | "recovery_code";
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+
+/**
+ * The platform-qualified desktop kinds — what a CURRENT desktop install declares itself as, on
+ * the two seams where the desktop identifies itself: the link-claim and the password sign-in's
+ * TOTP verify. A closed set on purpose, and NARROWER than the device vocabulary:
+ *
+ *  · `"web"` is excluded — the device staleness alarm excludes kind `web` by design (a closed
+ *    browser is not an incident), so letting a desktop declare `web` would be an attribution
+ *    dodge, not a vocabulary choice.
+ *  · The mobile kinds are excluded — a phone arrives through the pairing redeem, never these
+ *    doors, and a declaration that cannot be true is refused rather than recorded.
+ *  · `"macos"` is excluded HERE and admitted separately where the legacy claim needs it (see
+ *    {@link DESKTOP_CLAIM_KINDS}): on the verify seam `macos` is the one kind whose derived
+ *    lifetime surface is `native`, so admitting it would let anonymous wire input choose the
+ *    long window — the exact capability the declaration must not carry.
+ */
+const DESKTOP_DECLARED_KINDS: ReadonlySet<string> = new Set<DeviceKind>([
+  "desktop-linux", "desktop-macos", "desktop-windows",
+]);
+
+/**
+ * What `POST /auth/desktop-claim` may say it is: the declared desktop kinds plus the legacy
+ * `"macos"` spelling — which is also the DEFAULT when the field is absent, because every
+ * shipped desktop build claims without the field and its device rows have always said `macos`.
+ * Admitting `macos` explicitly here is safe where it is not on the verify seam: the claim's
+ * mint pins `surface: "native"` for every admissible kind (the transport truth — it answers a
+ * bearer pair), so the declaration selects a row label and nothing about the credential.
+ */
+const DESKTOP_CLAIM_KINDS: ReadonlySet<string> = new Set<DeviceKind>([
+  "macos", "desktop-linux", "desktop-macos", "desktop-windows",
+]);
+
+/** The one refusal sentence for a kind outside its seam's closed set. */
+function invalidDeviceKind(admissible: ReadonlySet<string>): ServiceError {
+  return new ServiceError("validation_failed", 400,
+    `device kind must be one of ${[...admissible].map((k) => `"${k}"`).join(", ")}`);
+}
 
 /**
  * Require a non-blank string body field. The UNAUTHENTICATED auth routes are the
@@ -1305,12 +1342,24 @@ export class AuthService extends SessionLifecycle {
    * interceptor would like to learn.
    */
   async claimDesktopLink(
-    ctx: ServiceContext, b: { code?: unknown; verifier?: unknown },
+    ctx: ServiceContext, b: { code?: unknown; verifier?: unknown; kind?: unknown },
   ): Promise<{ tokens: OAuthTokens }> {
     const db = asTx(ctx);
     const now = ctx.now();
     const raw = typeof b?.code === "string" ? b.code.trim() : "";
     const verifier = typeof b?.verifier === "string" ? b.verifier.trim() : "";
+    // WHAT the claimant says it is — {@link DESKTOP_CLAIM_KINDS}, and ABSENT means the legacy
+    // `"macos"`: every shipped desktop claims without the field, and its rows keep reading
+    // exactly as they always have. Refused BEFORE the ip slot and BEFORE the burn — a
+    // malformed declaration is the caller's bug and must cost neither an attempt from its
+    // connection's budget nor the single-use code the browser is still showing.
+    let kind: DeviceKind = "macos";
+    if (b?.kind !== undefined) {
+      if (typeof b.kind !== "string" || !DESKTOP_CLAIM_KINDS.has(b.kind)) {
+        throw invalidDeviceKind(DESKTOP_CLAIM_KINDS);
+      }
+      kind = b.kind as DeviceKind;
+    }
     const ip = (ctx.ip ?? "").trim();
     if (ip.length > 0) {
       const claimed = await reserveIpSlot(db, {
@@ -1349,9 +1398,18 @@ export class AuthService extends SessionLifecycle {
     if (!row) throw invalidDesktopCode();
 
     const user = await this.loadUser(db, row.userId);
-    // `kind: "macos"` — the device row is labelled for the app, so `GET /devices` shows the
-    // machine that claimed the code and `DELETE /devices/:id` can take it away again. That
-    // revocation path is the reason the handoff is safe to offer at all.
+    // The device row is labelled for the app — the claimant's own declared kind, or the legacy
+    // `"macos"` when it said nothing — so `GET /devices` shows the machine that claimed the code
+    // and `DELETE /devices/:id` can take it away again. That revocation path is the reason the
+    // handoff is safe to offer at all.
+    //
+    // `surface: "native"` is PINNED, not derived, and the pin is what makes the declaration
+    // privilege-free: every admissible kind mints the identical credential — the bearer pair
+    // this route answers with, on the native window this door has always issued (for the legacy
+    // `"macos"` the pin and the derivation agree byte for byte). The kind therefore selects a
+    // device row's spelling and nothing else. Without the pin the platform-qualified kinds
+    // would fall to the derivation's strict side and shrink the window — a behavior change for
+    // exactly the installs this field exists to name.
     //
     // NO `method`, so no `2fa_verified` row is written: no factor was asserted HERE. What was
     // asserted is on the mint side — the browser session cleared `withStepUp` less than
@@ -1361,7 +1419,7 @@ export class AuthService extends SessionLifecycle {
     // cleared `withStepUp` less than `desktopLinkTtlMs` ago, so a factor really was asserted by
     // this person, within two minutes, on the browser that produced this code. That precondition
     // is what the PKCE door lacked until step-up was enforced on its mint; see {@link establish}.
-    const established = await this.establish(ctx, user, { kind: "macos", twofaAt: ctx.now() });
+    const established = await this.establish(ctx, user, { kind, twofaAt: ctx.now(), surface: "native" });
     // The pair and nothing else, the shape `POST /auth/refresh`'s native branch answers with.
     // The claimant is a desktop install; a `user` object it does not read, and a `Set-Cookie`
     // that would turn a code displayed on a screen into a browser session, are both things
@@ -1542,10 +1600,42 @@ export class AuthService extends SessionLifecycle {
     });
   }
 
-  async totpVerify(ctx: ServiceContext, b: { loginToken: string; code: string }): Promise<SessionEstablished> {
+  /**
+   * `b.kind` — the CALLER's own declaration of what it is, {@link DESKTOP_DECLARED_KINDS} or
+   * absent, and it exists for one client: the desktop's cloud-door password sign-in, which
+   * lands on this seam through a native process rather than a browser and used to mint a
+   * DEVICELESS session — invisible to per-device staleness attribution, so the console could
+   * see the account wedge but never say which install. A present declaration makes `establish`
+   * auto-mint a device row of that kind (label from its map), exactly the row the desktop-link
+   * claim has always minted.
+   *
+   * NO PRIVILEGE RIDES ON IT, and the set is why: the admissible kinds all derive the COOKIE
+   * lifetime surface (none is `"macos"`, the one native-deriving kind — see the set's doc), so
+   * a declared sign-in gets the same window, scope and factor stamp as an undeclared one, to
+   * the byte. The only delta is `device_id` pointing at a row — vocabulary and attribution.
+   * The row's consequences all point the safe direction: `GET /devices` names it,
+   * `DELETE /devices/:id` can aim at it, and the device staleness alarm WATCHES it (including
+   * the never-synced arm) instead of the weaker session rule. The one behavioral trade is that
+   * `POST /devices/revoke-web-sessions` (a `device_id IS NULL` sweep) no longer catches it —
+   * which is the standing semantics of every named device, paired ones included, and the
+   * individually-aimable revoke is what replaces the sweep.
+   *
+   * Refused BEFORE the throttle reserve and the token peek: a malformed declaration is the
+   * caller's bug and must burn neither a lockout slot nor the login token's window.
+   */
+  async totpVerify(
+    ctx: ServiceContext, b: { loginToken: string; code: string; kind?: unknown },
+  ): Promise<SessionEstablished> {
     const db = asTx(ctx);
     requireField(b.loginToken, "loginToken");
     requireField(b.code, "code");
+    let kind: DeviceKind = "web";
+    if (b.kind !== undefined) {
+      if (typeof b.kind !== "string" || !DESKTOP_DECLARED_KINDS.has(b.kind)) {
+        throw invalidDeviceKind(DESKTOP_DECLARED_KINDS);
+      }
+      kind = b.kind as DeviceKind;
+    }
     const lt = await this.peekLoginToken(db, ctx, b.loginToken);
     const user = await this.loadUser(db, lt.userId);
     // RESERVED, not read: six digits behind a pure-read gate is a code an attacker can spray as
@@ -1589,8 +1679,10 @@ export class AuthService extends SessionLifecycle {
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
     await this.consumeLoginToken(db, lt.id, ctx.now());
-    // A TOTP code was just verified, here. `now` is the factor's real time.
-    return this.establish(ctx, user, { method: "totp", kind: "web", twofaAt: ctx.now() });
+    // A TOTP code was just verified, here. `now` is the factor's real time. `kind` is the
+    // caller's declaration or `"web"` — either way it derives the cookie window (see the
+    // header), so the declaration reaches the device row and nothing else.
+    return this.establish(ctx, user, { method: "totp", kind, twofaAt: ctx.now() });
   }
 
   async totpRemove(ctx: ServiceContext): Promise<void> {

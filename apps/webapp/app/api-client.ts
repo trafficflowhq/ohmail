@@ -684,7 +684,17 @@ export const pair = {
  */
 export interface DeviceDTO {
   id: string;
-  kind: "web" | "macos";
+  /**
+   * The server's device vocabulary. `"macos"` is the legacy spelling for a native desktop of
+   * unrecorded platform; current installs declare the platform-qualified kinds. Typed with a
+   * trailing open arm so a NEWER server's kind renders as the generic fallback instead of
+   * failing to parse — the same forward tolerance `named` has in the other direction.
+   */
+  kind:
+    | "web" | "macos"
+    | "desktop-linux" | "desktop-macos" | "desktop-windows"
+    | "mobile-android" | "mobile-ios"
+    | (string & {});
   label: string;
   createdAt: string;
   lastSeenAt: string;

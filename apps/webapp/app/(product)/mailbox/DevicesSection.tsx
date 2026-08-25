@@ -287,8 +287,19 @@ export function DevicesSection() {
   const day = (iso: string): string => format.dateTime(new Date(iso), { dateStyle: "medium" });
   /** A five-minute code's deadline is a TIME — the date would be today three ways out of three. */
   const clock = (iso: string): string => format.dateTime(new Date(iso), { timeStyle: "short" });
-  const kindWord = (kind: DeviceDTO["kind"]): string =>
-    kind === "macos" ? t("kindMac") : t("kindWeb");
+  // The full device vocabulary, one word each; anything newer than this build falls back to
+  // the generic word rather than lying "Browser" about a device that is not one.
+  const kindWord = (kind: DeviceDTO["kind"]): string => {
+    switch (kind) {
+      case "web": return t("kindWeb");
+      case "macos": case "desktop-macos": return t("kindMac");
+      case "desktop-linux": return t("kindLinux");
+      case "desktop-windows": return t("kindWindows");
+      case "mobile-android": return t("kindAndroid");
+      case "mobile-ios": return t("kindIphone");
+      default: return t("kindOther");
+    }
+  };
 
   // Current pinned first; NAMED devices individually; the plain-browser remainder collapses
   // into `groupedWeb` where the server mounts the bulk verb, and renders row-by-row where it

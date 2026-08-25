@@ -144,9 +144,12 @@ export interface RecoveryCodesResp {
  * both and never rewrites a row. `"web"` keeps its structural meaning everywhere (the one kind
  * the device staleness alarm excludes — a closed browser is not an incident).
  *
- * The set is server-side ENABLEMENT only until clients declare the new values — the desktop
- * app hardcodes its claim today and the pairing redeem defaults to `"web"`; teaching each
- * client to say what it is is a client-side change, tracked separately.
+ * Clients DECLARE the platform-qualified kinds on three seams: the desktop-link claim and the
+ * TOTP verify carry an optional `kind` (the desktop's two cloud doors — whitelist-gated per
+ * seam in `AuthService`, never able to choose a lifetime surface), and the pairing redeem's
+ * `kind` is the redeemer's own word (the mobile app sends its platform). Absent stays what it
+ * always was: `"macos"` on the claim, deviceless `"web"` on the verify, `"web"` on the redeem —
+ * an old client keeps minting exactly the rows it always has.
  */
 export type DeviceKind =
   | "web"
