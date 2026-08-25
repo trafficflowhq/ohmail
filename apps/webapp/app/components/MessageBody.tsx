@@ -1190,6 +1190,22 @@ function stripCssComments(css: string): string {
       i = j + 1;
       continue;
     }
+    // An UNQUOTED url token is data to CSS from `url(` to its `)` — a comment-open inside one
+    // is part of the url, and treating it as a comment ate every live rule up to the next
+    // comment-close-lookalike in a later url. `continuesIdent` keeps `xurl(` from matching.
+    if (
+      (c === "u" || c === "U") &&
+      /^url\(/i.test(css.slice(i, i + 4)) &&
+      (i === 0 || !continuesIdent(css.charCodeAt(i - 1)))
+    ) {
+      let j = i + 4;
+      while (j < css.length && css[j] !== ")") {
+        if (css[j] === "\\") j += 1;
+        j += 1;
+      }
+      i = j + 1;
+      continue;
+    }
     if (c === "/" && css[i + 1] === "*") {
       out += css.slice(copied, i) + " ";
       const close = css.indexOf("*/", i + 2);
@@ -1248,7 +1264,15 @@ function sheetDeclaresResponsiveCanvas(styleText: string): boolean {
     } else if (ch === "}") {
       if (prevBraceIsOpen) {
         const sel = sheet.slice(braceBeforeOpen + 1, prevBrace);
-        if (!IMG_SELECTOR.test(sel) && declaresResponsiveCanvas(sheet.slice(prevBrace + 1, j))) {
+        // A rule NEEDS a selector. Adjacent open braces — string data like `content:"{{…}"`,
+        // which this walk deliberately reads as the old regex did — produce an empty slice
+        // here, and an empty selector must contribute nothing rather than launder quoted
+        // text into a live declaration.
+        if (
+          sel.trim() !== "" &&
+          !IMG_SELECTOR.test(sel) &&
+          declaresResponsiveCanvas(sheet.slice(prevBrace + 1, j))
+        ) {
           return true;
         }
       }
