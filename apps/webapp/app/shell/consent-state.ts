@@ -204,6 +204,14 @@ export interface ConsentState {
    */
   folderMailboxesOff: Record<string, string>;
   /**
+   * Did {@link folderMailboxesOff} come from the LIVE wire (or a write's echo)? The boot cache
+   * paints `known` true with the MASTER flag alone — it deliberately carries no per-mailbox map
+   * — so a pane gated on `known` would render every mailbox's switch ON over stored opt-outs
+   * until the live read lands, and for ever if it fails (codex round 1). The switches render
+   * only behind this flag; the master toggle keeps rendering on `known` as before.
+   */
+  folderMailboxesKnown: boolean;
+  /**
    * THE ACCOUNT'S INTERFACE LANGUAGE, or `null` for "this account has no preference".
    *
    * The one field on this object whose null is a DEFERRAL rather than a switch position, and the
@@ -313,6 +321,7 @@ const RESTING: ConsentState = {
   // NO EXCEPTIONS AT REST — with the master off nothing renders either way, and the pane is
   // gated on `known`, so the resting value is never a switch somebody sees.
   folderMailboxesOff: {},
+  folderMailboxesKnown: false,
   // NOTHING FROM AN ACCOUNT. Unlike `blockRemoteImages` above, resting null is not a safe
   // *position* — it is the absence of one, and it leaves the language this device remembered in
   // charge. See {@link ConsentState.locale}.
@@ -571,6 +580,9 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
           // Absent (an API before mail 0073) reads as "no exceptions" — the picture that
           // server actually serves, since it filters nothing per mailbox.
           folderMailboxesOff: wire.folderMailboxesOff ?? {},
+          // The LIVE answer, whatever it holds — an older API's absent map is a real "no
+          // exceptions", so the switches may render over it.
+          folderMailboxesKnown: true,
           // NORMALISED, not trusted. The column's CHECK and `consentSettings` both close the set,
           // so an unsupported string cannot arrive from a current server — and this is the boot
           // path, where a value that got through would make the client ask for a catalogue that
@@ -669,7 +681,7 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
       const off = res.folderMailboxesOff ?? {};
       // THE WHOLE MAP FROM THE ECHO — the server answers with every exception after the write,
       // so a stale tab that missed another device's toggle heals on its own next write.
-      setState((prev) => ({ ...prev, folderMailboxesOff: off }));
+      setState((prev) => ({ ...prev, folderMailboxesOff: off, folderMailboxesKnown: true }));
       return off;
     }, []);
 

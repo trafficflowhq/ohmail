@@ -5708,6 +5708,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                     }}
                     mailboxes={facts ?? undefined}
                     mailboxesOff={consent.folderMailboxesOff}
+                    mailboxesKnown={consent.folderMailboxesKnown}
                     setMailboxFoldersEnabled={async (mailboxId, enabled) => {
                       const r = await consent.setMailboxFoldersEnabled(mailboxId, enabled);
                       void engine.syncOnce().catch(() => { /* the poll owns retries */ });

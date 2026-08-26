@@ -12,6 +12,9 @@ import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { readBody } from "./shared.js";
 
+/** The uuid shape `folderMailboxes` keys must have — `message-service.ts`'s spelling. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    ONBOARDING CONSENT — the five endpoints the seed, the cutline and the reset are reached by.
 
@@ -231,7 +234,15 @@ async function applyConsentSettings(
     if (entries.length === 0) {
       throw new ServiceError("validation_failed", 400, "folderMailboxes must name at least one mailbox");
     }
-    for (const [, v] of entries) {
+    for (const [k, v] of entries) {
+      // The KEY is validated as strictly as the value (codex round 1): it binds a uuid column,
+      // and a non-UUID key would otherwise surface as PostgreSQL 22P02 — a 500 wearing a
+      // malformed request's clothes. Shape here, OWNERSHIP in the service (404 inside the
+      // transaction): a well-formed id that names another account's mailbox is a different
+      // refusal from a string that could never name one.
+      if (!UUID_RE.test(k)) {
+        throw new ServiceError("validation_failed", 400, "every folderMailboxes key must be a mailbox id");
+      }
       if (typeof v !== "boolean") {
         throw new ServiceError("validation_failed", 400, "every folderMailboxes value must be true or false");
       }

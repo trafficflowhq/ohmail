@@ -37,6 +37,7 @@ export function FoldersRow({
   setFoldersEnabled,
   mailboxes,
   mailboxesOff,
+  mailboxesKnown,
   setMailboxFoldersEnabled,
 }: {
   /** The STORED answer, as the server last gave it. */
@@ -52,6 +53,13 @@ export function FoldersRow({
   mailboxes?: ReadonlyArray<{ id: string; address: string }>;
   /** The stored exceptions — `{ mailboxId: instant switched off }`. Absent map = all show. */
   mailboxesOff?: Record<string, string>;
+  /**
+   * Did the exceptions map come from the LIVE wire (`useConsentState().folderMailboxesKnown`)?
+   * The boot cache paints `known` with the master flag alone, so without this gate a warm boot
+   * renders every mailbox ON over stored opt-outs until — or unless — the live read lands
+   * (codex round 1). False/absent ⇒ the list waits; the master switch renders regardless.
+   */
+  mailboxesKnown?: boolean;
   /** `useConsentState().setMailboxFoldersEnabled` — same one-writer rule as the master's. */
   setMailboxFoldersEnabled?: (mailboxId: string, enabled: boolean) => Promise<Record<string, string>>;
 }) {
@@ -106,7 +114,8 @@ export function FoldersRow({
      mailbox is on exactly when it has no stored exception, so a refused write never draws a
      tree the rail will not have. */
   const showMailboxList =
-    on && setMailboxFoldersEnabled !== undefined && (mailboxes?.length ?? 0) >= 2;
+    on && mailboxesKnown === true && setMailboxFoldersEnabled !== undefined
+    && (mailboxes?.length ?? 0) >= 2;
 
   return (
     <>
