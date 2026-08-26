@@ -513,15 +513,26 @@ export function useConsentState(
   const writeEpoch = useRef(0);
   const readSeq = useRef(0);
   const appliedSeq = useRef(0);
+  /**
+   * THE LIFECYCLE ERA — bumped when the boot effect re-arms AND on its cleanup, so a read still
+   * in the air when the hook DEACTIVATES (the live→demo transition, an unmount) applies nothing
+   * and writes no cache. The old inline effect had a `live` flag doing exactly this; the shared
+   * `fetchLive` lost it in the extraction and a late response could install account state into
+   * an inactive shell (review-caught). Epoch/seq guard the WRITE races; this guards the
+   * hook's own lifetime.
+   */
+  const era = useRef(0);
 
   const fetchLive = useCallback(async (): Promise<void> => {
     const at = writeEpoch.current;
+    const eraAt = era.current;
     const mine = ++readSeq.current;
     try {
         const wire: ConsentStateWire = await link.current.state();
         // A write from this tab outranks every read in flight; a newer applied read outranks an
-        // older one arriving late. Issuance alone supersedes nothing — see the refs above.
-        if (writeEpoch.current !== at || mine <= appliedSeq.current) return;
+        // older one arriving late; and a read outliving the hook's active era — deactivated,
+        // unmounted — is nobody's answer. Issuance alone supersedes nothing — see the refs above.
+        if (era.current !== eraAt || writeEpoch.current !== at || mine <= appliedSeq.current) return;
         // KNOWN MEANS THE SERVER ANSWERED THIS QUESTION, not that a request returned 200.
         //
         // The window is the one field that cannot be absent from a real answer — the route
@@ -653,7 +664,9 @@ export function useConsentState(
       }
     }
     void fetchLive();
-    return undefined;
+    // The cleanup closes this era: a response landing after deactivation or unmount applies
+    // nothing — see `era` above.
+    return () => { era.current += 1; };
     // The fetch itself lives in `fetchLive` below so the settings-stamp effect can share it —
     // one implementation of "read the live answer and apply it under the guards".
     // eslint-disable-next-line react-hooks/exhaustive-deps

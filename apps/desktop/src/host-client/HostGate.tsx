@@ -37,7 +37,7 @@ import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { AppShell } from "../../../webapp/app/shell/AppShell";
 import { BearerManager } from "./bearer.js";
 import { PairScreen } from "./PairScreen.js";
-import { mailboxFactsOverBearer, profileImportOverBearer } from "./transports.js";
+import { mailboxFactsOverBearer, olderBodyOverBearer, profileImportOverBearer } from "./transports.js";
 
 /**
  * The host door's send-surface ceiling in raw attachment bytes — the FORM-side twin of
@@ -92,6 +92,7 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
      transport as a dependency, and a fresh object per render would re-run them per render. */
   const mailboxFacts = useMemo(() => mailboxFactsOverBearer(bearer), [bearer]);
   const profileImport = useMemo(() => profileImportOverBearer(bearer), [bearer]);
+  const olderBody = useMemo(() => olderBodyOverBearer(bearer), [bearer]);
 
   if (onPairPath || !paired || engine === null) {
     return (
@@ -120,6 +121,10 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
          fingerprint-as-consent are one implementation, and this door serves the three routes
          (they ride `localRoutes`) — only the wire is injected. */
       profileImportTransport={profileImport}
+      /* The reach-past body door over the bearer — see `olderBodyOverBearer` for why this page
+         needs one at all: its `api-client` is the refusing stub, so the shared shell's Cloud
+         fallback never arms here. */
+      olderBodyWire={olderBody}
     />
   );
 }

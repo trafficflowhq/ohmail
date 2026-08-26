@@ -611,14 +611,16 @@ export function DesktopGate() {
            That is a product boundary, not a gap: there is no account row to hold a window, no
            watermark for an automatic pass to measure from, and no ledger to price against. */
         {...(accountDoor ? { consentTransport: consentOverBridge, suggestWire: cloudSuggestWire } : {})}
-        /* THE REACH-PAST BODY WIRE — the hosted door only, `consentTransport`'s rule: the door,
-           its states and its sentences are the shared shell's (`shell/older-body.ts`); this hands
-           in the pipe. The engine serves a mirrored message's body locally and FORWARDS a
-           reach-past row's to the hosted account, so folder mail from beyond this device's window
-           opens with its full body instead of a Retry that could never work. The STANDALONE door
-           passes nothing: its store is the whole mailbox, so there is no "beyond the window" to
-           reach past and no hosted account to ask. */
-        {...(accountDoor ? { olderBodyWire: olderBodyOverBridge } : {})}
+        /* THE REACH-PAST BODY WIRE — BOTH doors, `consentTransport`'s transport-not-a-control
+           rule: the door, its states and its sentences are the shared shell's
+           (`shell/older-body.ts`); this hands in the pipe. On the HOSTED door the engine serves
+           a mirrored message's body locally and FORWARDS a reach-past row's to the hosted
+           account. On the STANDALONE door the window's engine boots a BOUNDED in-memory mirror
+           over a store that holds the whole mailbox, so its lists can also hand the shell
+           reach-past rows — and the local `/messages/:id/body` route answers them from the
+           store on this machine. Gating this on the account door was review-caught: it left the
+           standalone reader with exactly the stalled Retry the wire exists to remove. */
+        {...{ olderBodyWire: olderBodyOverBridge }}
         /* SETTINGS → SUBSCRIPTION, SECURITY AND ACCOUNT — the three panes the web client has on a
            hosted account and this window did not, so its Settings nav was simply shorter with
            nothing on screen saying why. An absent entry does not read as "this is done elsewhere";

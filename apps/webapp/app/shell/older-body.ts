@@ -166,6 +166,16 @@ function resting(text: string, state: MessageBody["state"], withheld?: WithheldM
 export function useOlderBody(active: boolean, transport?: OlderBodyWire): OlderBodyDoor {
   const wire = active ? transport ?? (apiConfigured() ? CLOUD_OLDER_BODY : undefined) : undefined;
   const [held, setHeld] = useState<Map<string, Held>>(() => new Map());
+  /**
+   * THE GUARD'S OWN COPY of what each row holds — the single-flight decision reads THIS, never
+   * the state updater's argument, because a `setState` updater must stay PURE: under
+   * `<StrictMode>` (both desktop roots) React invokes updaters twice in development, and a
+   * first draft that dispatched the fetch inside the updater issued TWO requests per open —
+   * the generation guard discarded the loser's ANSWER but the wire had already been billed
+   * twice (review-caught). Written only by {@link publish}, in dispatch order, so it can never
+   * disagree with the state it shadows.
+   */
+  const heldRef = useRef(new Map<string, Held>());
   /** Per-row ask generation — a superseded ask's completion must not overwrite its successor's. */
   const gen = useRef(new Map<string, number>());
   /** The wire behind a stable identity — `consent-state.ts`'s `link`, for the same reason. */
@@ -175,31 +185,29 @@ export function useOlderBody(active: boolean, transport?: OlderBodyWire): OlderB
   const open = useCallback((messageId: string, opts: { retry?: boolean } = {}) => {
     const w = link.current;
     if (w === undefined) return;
-    setHeld((cur) => {
-      const have = cur.get(messageId);
-      // One fetch per session per row: `loading` and any settled answer are both answers. A
-      // human Retry overrides `loading` and `failed` — but never a SETTLED outcome, because
-      // `full` and `withheld` render no Retry and a re-ask would be a poll with nobody behind it.
-      if (have && have.phase === "settled") return cur;
-      if (have && !opts.retry) return cur;
-      const mine = (gen.current.get(messageId) ?? 0) + 1;
-      gen.current.set(messageId, mine);
-      void w.body(messageId).then(
-        (outcome) =>
-          setHeld((m) =>
-            gen.current.get(messageId) === mine
-              ? new Map(m).set(messageId, { phase: "settled", outcome })
-              : m,
-          ),
-        () =>
-          setHeld((m) =>
-            gen.current.get(messageId) === mine
-              ? new Map(m).set(messageId, { phase: "failed" })
-              : m,
-          ),
-      );
-      return new Map(cur).set(messageId, { phase: "loading", attempt: mine });
-    });
+    /** One writer for the shadow and the state, so the two cannot drift. */
+    const publish = (h: Held): void => {
+      heldRef.current = new Map(heldRef.current).set(messageId, h);
+      setHeld(heldRef.current);
+    };
+    // One fetch per session per row: `loading` and any settled answer are both answers. A
+    // human Retry overrides `loading` and `failed` — but never a SETTLED outcome, because
+    // `full` and `withheld` render no Retry and a re-ask would be a poll with nobody behind it.
+    // Decided against the ref, OUTSIDE any state updater — see {@link heldRef}.
+    const have = heldRef.current.get(messageId);
+    if (have && have.phase === "settled") return;
+    if (have && !opts.retry) return;
+    const mine = (gen.current.get(messageId) ?? 0) + 1;
+    gen.current.set(messageId, mine);
+    void w.body(messageId).then(
+      (outcome) => {
+        if (gen.current.get(messageId) === mine) publish({ phase: "settled", outcome });
+      },
+      () => {
+        if (gen.current.get(messageId) === mine) publish({ phase: "failed" });
+      },
+    );
+    publish({ phase: "loading", attempt: mine });
   }, []);
 
   const bodyFor = useCallback(

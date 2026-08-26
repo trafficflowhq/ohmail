@@ -11,7 +11,9 @@
 
 import type { MailboxFacts } from "../../../webapp/app/shell/mail-state";
 import type { ProfileImportTransport } from "../../../webapp/app/shell/ProfileImportCard";
+import type { OlderBodyWire } from "../../../webapp/app/shell/older-body";
 import { readMailboxFactsVia } from "../DesktopMailboxes.js";
+import { olderBodyVia } from "../local-older-body.js";
 import { profileImportVia } from "../local-profile-import.js";
 import type { BearerManager } from "./bearer.js";
 
@@ -26,4 +28,16 @@ export function mailboxFactsOverBearer(bearer: BearerManager): () => Promise<Mai
  */
 export function profileImportOverBearer(bearer: BearerManager): ProfileImportTransport {
   return profileImportVia(bearer.fetch);
+}
+
+/**
+ * The reach-past body door over the bearer. This page's engine lists over a BOUNDED in-memory
+ * mirror of the host's store, so a folder or pile can hand the shell rows from beyond the
+ * window; the host's `/messages/:id/body` answers them from the store on the hosting computer
+ * (and, on its hosted door, forwards a row that store never held). Without this wire the shared
+ * shell's Cloud fallback stays off — `api-client` is the refusing stub in this artifact — and
+ * the reader is the stalled Retry again (review-caught, the DesktopGate finding's twin).
+ */
+export function olderBodyOverBearer(bearer: BearerManager): OlderBodyWire {
+  return olderBodyVia(bearer.fetch);
 }
