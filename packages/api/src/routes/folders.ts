@@ -17,16 +17,23 @@ import { folderOps, readBody } from "./shared.js";
  * tell whether the drain it holds already includes its own change.
  *
  * All five refuse while "Use folders" is off (`folders_disabled`, 409) — the flag-off wire
- * stays byte-identical to the pre-feature wire, verbs included.
+ * stays byte-identical to the pre-feature wire, verbs included. The four writes are
+ * `idempotent`: a retry whose response was lost replays the stored answer instead of
+ * re-recording a command the worker may already be executing (a second create would 409, a
+ * second rename would collide with its own in-flight command — false failures for a mutation
+ * that succeeded).
  */
 export const foldersRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/folders",
     cost: "work",
+    options: { idempotent: true },
     handler: async (req, deps) => {
       const body = await readBody<FolderCreateBody>(req);
-      const { dto, seq } = await folderOps(deps).create(serviceContext(deps, req), body);
+      const { dto, seq } = await folderOps(deps).create(serviceContext(deps, req), body, {
+        idempotency: deps.idempotency ?? null,
+      });
       return jsonResponse(dto, { status: 201, seq });
     },
   },
@@ -34,9 +41,12 @@ export const foldersRoutes: Route[] = [
     method: "PATCH",
     pattern: "/folders/:id",
     cost: "work",
+    options: { idempotent: true },
     handler: async (req, deps, params) => {
       const body = await readBody<FolderRenameBody>(req);
-      const { dto, seq } = await folderOps(deps).rename(serviceContext(deps, req), params.id!, body);
+      const { dto, seq } = await folderOps(deps).rename(serviceContext(deps, req), params.id!, body, {
+        idempotency: deps.idempotency ?? null,
+      });
       return jsonResponse(dto, { seq });
     },
   },
@@ -44,8 +54,11 @@ export const foldersRoutes: Route[] = [
     method: "DELETE",
     pattern: "/folders/:id",
     cost: "work",
+    options: { idempotent: true },
     handler: async (req, deps, params) => {
-      const { dto, seq } = await folderOps(deps).remove(serviceContext(deps, req), params.id!);
+      const { dto, seq } = await folderOps(deps).remove(serviceContext(deps, req), params.id!, {
+        idempotency: deps.idempotency ?? null,
+      });
       return jsonResponse(dto, { seq });
     },
   },
@@ -55,8 +68,11 @@ export const foldersRoutes: Route[] = [
     method: "DELETE",
     pattern: "/folders/:id/op",
     cost: "work",
+    options: { idempotent: true },
     handler: async (req, deps, params) => {
-      const { dto, seq } = await folderOps(deps).dismiss(serviceContext(deps, req), params.id!);
+      const { dto, seq } = await folderOps(deps).dismiss(serviceContext(deps, req), params.id!, {
+        idempotency: deps.idempotency ?? null,
+      });
       return jsonResponse(dto ?? { dismissed: true }, { seq });
     },
   },

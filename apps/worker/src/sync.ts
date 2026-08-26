@@ -529,12 +529,22 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // consequences ride the fenced group, and only fence refusals leave it: a command that fails
   // for any other reason is deferred or failed ON ITS OWN ROW (`folder_ops.status`), never by
   // wedging the mailbox's mail flow behind it.
+  let folderOpsOweMore = false;
   try {
-    await folderOpsPass({
+    const opsOut = await folderOpsPass({
       repo, adapter, accountId, mailboxId,
       ...(log !== undefined ? { log } : {}),
       write: (fn) => fencedGroup(deps, fn),
+      // The check before EVERY IMAP mutation the pass issues — the same fresh leadership read
+      // every other mutation site in this file takes (see the fence block up top). The fenced
+      // `write` covers only the database half; without this a stale worker could CREATE or
+      // sweep a mailbox another worker has taken over.
+      guard: () => fenceImapMutation(deps),
     });
+    // A folder delete that ran out its per-cycle chunk budget still owes work: report it the
+    // way the filing budget does, so the caller re-kicks and the mailbox rotates to the back
+    // of the queue instead of monopolizing it or waiting out a poll interval.
+    folderOpsOweMore = opsOut.owesMore;
   } catch (err) {
     rethrowFenced(err);
     log?.warn("folder_ops_pass_failed", { mailboxId, accountId, err });
@@ -890,7 +900,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
 
   const { owesMore } = await reconcileMailbox(deps);
   if (firstDeferredError !== null) throw firstDeferredError;
-  return { hasBacklog: batch.hasBacklog ?? false, owesFiling: owesMore };
+  return { hasBacklog: batch.hasBacklog ?? false, owesFiling: owesMore || folderOpsOweMore };
 }
 
 /**

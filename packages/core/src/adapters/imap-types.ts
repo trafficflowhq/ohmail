@@ -1090,10 +1090,11 @@ export interface MailboxAdapter {
    */
   renameFolder?(from: string, to: string): Promise<"renamed" | "already" | "conflict" | "gone">;
   /**
-   * IMAP DELETE of an EMPTY folder only — the adapter re-verifies emptiness because RFC 3501's
-   * DELETE takes messages with it, and never-expunge is the product rule, not a convention.
+   * IMAP DELETE of a VERIFIED-EMPTY folder only — the adapter re-verifies emptiness because
+   * RFC 3501's DELETE takes messages with it, and never-expunge is the product rule, not a
+   * convention. `"unverified"` fails closed when the server will not answer STATUS.
    */
-  deleteFolder?(canonical: string): Promise<"deleted" | "already" | "not_empty">;
+  deleteFolder?(canonical: string): Promise<"deleted" | "already" | "not_empty" | "unverified">;
   /** The folder delete's sweep: move EVERYTHING in `folder` to `toFolder` (native \Trash). */
   moveAll?(folder: string, toFolder: string): Promise<number>;
   /**

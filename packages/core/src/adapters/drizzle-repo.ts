@@ -541,8 +541,15 @@ function dueNow(col: AnyPgColumn): SQL | undefined {
  * pattern would let `a_b` claim `axb/…`. Module-level rather than a repo method so the known-set
  * census (`known-set-cache.test.ts`) enumerates operations, not fragment builders.
  */
+/** Rows per `recordChanges` INSERT inside the rename swap — see the chunk note at the call. */
+const RENAME_CHANGE_CHUNK = 2000;
+
 function inSubtree(col: unknown, path: string) {
-  return sql`(${col} = ${path} or left(${col}, ${path.length + 1}) = ${path + "/"})`;
+  // `char_length(${path})` and never a JS `path.length`: PostgreSQL's left/substr count Unicode
+  // CHARACTERS while `String.length` counts UTF-16 code units, so any astral character in a
+  // folder name (an emoji is one PG character and two JS units) would shear the prefix
+  // arithmetic and leave descendants under the old path.
+  return sql`(${col} = ${path} or left(${col}, char_length(${path}) + 1) = ${path + "/"})`;
 }
 
 export class DrizzleRepo implements WorkerRepo, RoutingPort {
@@ -1880,7 +1887,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     op: Pick<FolderOpRow, "id" | "accountId" | "mailboxId" | "folder"> & { toFolder: string },
   ): Promise<{ folders: number; messages: number }> {
     const { accountId, mailboxId, folder: from, toFolder: to } = op;
-    const swap = (col: unknown) => sql`${to} || substr(${col}, ${from.length + 1})`;
+    // char_length, not JS .length — inSubtree's argument, one screen up.
+    const swap = (col: unknown) => sql`${to} || substr(${col}, char_length(${from}) + 1)`;
     const now = new Date();
     const changes: ChangeInput[] = [];
 
@@ -1930,7 +1938,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .where(and(ofThisMailbox, inSubtree(folderState.observedFolder, from)));
     await this.db.update(messages)
       .set({
-        nativeLocator: sql`jsonb_set(${messages.nativeLocator}, '{folder}', to_jsonb(${to} || substr(${messages.nativeLocator}->>'folder', ${from.length + 1})))` as unknown as NativeLocator,
+        nativeLocator: sql`jsonb_set(${messages.nativeLocator}, '{folder}', to_jsonb(${to} || substr(${messages.nativeLocator}->>'folder', char_length(${from}) + 1)))` as unknown as NativeLocator,
         updatedAt: now,
       })
       .where(and(
@@ -1952,10 +1960,16 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     for (const m of moved) {
       changes.push({ accountId, entityType: "message", entityId: m.id, op: "update", meta: null });
     }
-    // ONE seq-range allocation + one insert + one wake for the whole swap (`recordChanges`) —
-    // the per-row `recordChange` shape held the account's seq lock once per message, which is
-    // the 30-second class of defect §17.1 already measured on this feature's enable path.
-    await recordChangesTx(this.db as LedgerTx, changes);
+    // Batched through `recordChanges` — one seq-range allocation and one wake per CHUNK rather
+    // than a per-row lock acquisition (the 30-second class of defect §17.1 measured on this
+    // feature's enable path) — and CHUNKED because one unbounded multi-row INSERT crosses
+    // PostgreSQL's 65 535 bind-parameter ceiling around ten thousand rows: the IMAP RENAME has
+    // already happened by now, so a failed insert would strand the command in a retry loop
+    // whose database half can never succeed. All chunks ride THIS transaction — the swap stays
+    // all-or-nothing; only the statement size is bounded.
+    for (let i = 0; i < changes.length; i += RENAME_CHANGE_CHUNK) {
+      await recordChangesTx(this.db as LedgerTx, changes.slice(i, i + RENAME_CHANGE_CHUNK));
+    }
 
     return { folders: subtree.length, messages: moved.length };
   }
@@ -1980,22 +1994,61 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       ))
       .orderBy(asc(messages.id))
       .limit(limit);
-    if (victims.length === 0) return 0;
+    if (victims.length === 0) {
+      // A drained pick can still leave stragglers: non-primary instance rows of the swept
+      // folder whose message RENDERS elsewhere. They are gone from the server with the sweep,
+      // and a kept row would present their UIDs as known for ever.
+      await this.db.delete(messageInstances)
+        .where(and(eq(messageInstances.mailboxId, mailboxId), eq(messageInstances.folder, folder)));
+      return 0;
+    }
     const now = new Date();
     const changes: ChangeInput[] = [];
     for (const v of victims) {
-      // The delete verb's own mirror semantics (`tombstoneInstanceless` is the template): the
-      // header row stays — identity, attribution, the resurrect-on-return path — its body is
-      // husked, and the locator is dropped because the server sweep moved the copy to Trash by
-      // folder, so no per-message locator survives to point anywhere true.
+      // The swept folder's instance rows go FIRST, so "what remains" below is the survivor
+      // question `forgetInstanceAt` asks: a logical message whose primary copy lived here may
+      // hold another WATCHED copy elsewhere, and tombstoning it whole would hide a message the
+      // server still shows (the known-set would keep its UID known, so nothing would ever
+      // resurrect it).
+      await this.db.delete(messageInstances)
+        .where(and(eq(messageInstances.messageId, v.id), eq(messageInstances.folder, folder)));
+      const [survivor] = await this.db.select({
+        folder: messageInstances.folder, uidvalidity: messageInstances.uidvalidity,
+        uid: messageInstances.uid, isPrimary: messageInstances.isPrimary,
+      }).from(messageInstances)
+        .where(eq(messageInstances.messageId, v.id))
+        .orderBy(sql`${messageInstances.isPrimary} desc`, asc(messageInstances.firstSeenAt))
+        .limit(1);
+      if (survivor) {
+        // PROMOTE, never tombstone: the message lives on in watched space. The locator moves
+        // to the surviving copy, the pending folder_state row (if any) is retired — its move
+        // was into a folder that is going away — and the mirror hears an update whose rendered
+        // folder is now the survivor's.
+        await this.db.update(messageInstances).set({ isPrimary: true, lastSeenAt: now })
+          .where(and(
+            eq(messageInstances.messageId, v.id),
+            eq(messageInstances.folder, survivor.folder),
+            eq(messageInstances.uid, survivor.uid),
+          ));
+        await this.db.update(messages).set({
+          nativeLocator: { folder: survivor.folder, ref: `${survivor.uidvalidity}:${survivor.uid}` } as NativeLocator,
+          updatedAt: now,
+        }).where(eq(messages.id, v.id));
+        await this.db.delete(folderState).where(eq(folderState.messageId, v.id));
+        changes.push({ accountId, entityType: "message", entityId: v.id, op: "update", meta: null });
+        continue;
+      }
+      // No copy left anywhere watched — the delete verb's own mirror semantics
+      // (`tombstoneInstanceless` is the template): the header row stays (identity, attribution,
+      // the resurrect-on-return path), its body is husked, and the locator is dropped because
+      // the server sweep moved the copy to Trash by folder, so no per-message locator survives
+      // to point anywhere true.
       await this.db.update(messages).set({ deletedAt: now, updatedAt: now, nativeLocator: null })
         .where(eq(messages.id, v.id));
       await this.huskBody(accountId, v.id, "expunged");
       await this.db.delete(folderState).where(eq(folderState.messageId, v.id));
       changes.push({ accountId, entityType: "message", entityId: v.id, op: "delete", meta: null });
     }
-    await this.db.delete(messageInstances)
-      .where(and(eq(messageInstances.mailboxId, mailboxId), eq(messageInstances.folder, folder)));
     await recordChangesTx(this.db as LedgerTx, changes);
     return victims.length;
   }

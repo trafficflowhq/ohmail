@@ -1140,17 +1140,26 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * DELETE — of an EMPTY folder only, verified here as the last line of the never-expunge rule:
+   * DELETE — of a VERIFIED-EMPTY folder only, the last line of the never-expunge rule:
    * RFC 3501's DELETE takes a folder's messages with it, so the guard refuses (`"not_empty"`)
-   * rather than trusting that the caller's sweep really drained it. A missing folder is
-   * `"already"` — the asked-for state.
+   * rather than trusting that the caller's sweep really drained it, and FAILS CLOSED
+   * (`"unverified"`) when the server will not answer STATUS — deleting on an unknown count
+   * would be exactly the expunge this rule forbids, so the caller retries rather than
+   * proceeds. A missing folder is `"already"` — the asked-for state.
+   *
+   * The residual, stated: a message DELIVERED between the zero-count STATUS and the DELETE one
+   * command later is taken by the server's DELETE. The window is one round trip on a warm
+   * connection, entered only after the user's explicit delete of that folder emptied it, and
+   * IMAP offers no isolation primitive that closes it — the same window every mail client's
+   * folder delete carries.
    */
-  async deleteFolder(canonical: string): Promise<"deleted" | "already" | "not_empty"> {
+  async deleteFolder(canonical: string): Promise<"deleted" | "already" | "not_empty" | "unverified"> {
     const path = this.toServerPath(canonical);
     const list = await this.client.list();
     if (!list.some((f) => f.path === path)) return "already";
     const st = await this.client.status(path, { messages: true }).catch(() => null);
-    if (st && typeof st.messages === "number" && st.messages > 0) return "not_empty";
+    if (!st || typeof st.messages !== "number") return "unverified";
+    if (st.messages > 0) return "not_empty";
     await this.client.mailboxDelete(path);
     return "deleted";
   }
