@@ -1305,6 +1305,9 @@ function stripCssComments(css: string): string {
 /** A selector list that targets images — `img` as a TAG token; `.imgwrap` is a class and is not. */
 const IMG_SELECTOR = /(?:^|[\s,>+~(])img\b/i;
 
+/** A nested selector that steps back out BESIDE its parent — `& + .card` / `& ~ .card`. */
+const NEST_ESCAPE = /&\s*[+~]/;
+
 function sheetsDeclare(
   styleText: string | readonly string[],
   declares: (block: string) => boolean,
@@ -1346,12 +1349,21 @@ function oneSheetDeclares(styleText: string, declares: (block: string) => boolea
   //   · CSS nesting (`.card{width:600px;.child{color:red}}`) — the outer rule's own
   //     declarations count even though an inner block sits beside them.
   // Whether a block's OWN declaration text is read follows the browser's attribution:
-  //   · a STYLE RULE reads it under its selector — unless the rule is DEAD: an empty selector
-  //     (string debris like `content:"{{…}"` can produce one), a selector list naming `img`
-  //     as a tag token ({@link IMG_SELECTOR} — a picture cap is not a canvas, the same rule
-  //     {@link CANVAS_TAGS} applies to `width` attributes), or any dead ancestor. A dead
-  //     rule's descendants die with it: `img{.card{width:600px}}` applies to nothing an image
-  //     can contain.
+  //   · a STYLE RULE reads it under its selector — unless the rule is dead, and there are TWO
+  //     kinds of dead which must not be conflated (conflating them was a review finding):
+  //     PARSE-dead — an empty selector (string debris like `content:"{{…}"` can produce one)
+  //     is a parse error, the browser drops the rule WHOLE, and nothing nested inside it can
+  //     come back; and EVIDENCE-skipped — a selector list naming `img` as a tag token
+  //     ({@link IMG_SELECTOR} — a picture cap is not a canvas, the same rule
+  //     {@link CANVAS_TAGS} applies to `width` attributes) is real, applying CSS whose
+  //     declarations just are not canvas evidence. A rule NESTED in an img rule is implicitly
+  //     `& <sel>` — a descendant of an image, which cannot exist — so it stays skipped, EXCEPT
+  //     when its own selector steps back out beside the image with a sibling combinator
+  //     (`img{& + .card{width:600px}}` resolves to `img + .card`, a live canvas —
+  //     {@link NEST_ESCAPE}). An escape whose subject is still the image (`& + img`, or
+  //     `.card &`) stays skipped, and nothing escapes a PARSE-dead ancestor. Pseudo-classed
+  //     parent escapes (`&:hover + .card`) are not recognized; the cost is one designed mail
+  //     read as a letter, in a shape mail does not use.
   //   · an at-rule is TRANSPARENT: `@media` neither owns declarations nor kills the rules
   //     inside it. Its direct declaration text belongs to the nearest enclosing STYLE rule
   //     (`.card{@media (…){width:600px}}` sets the card's width), and at the top level —
@@ -1367,14 +1379,18 @@ function oneSheetDeclares(styleText: string, declares: (block: string) => boolea
   type Level = {
     /** May this level's own declaration text be evaluated (and under a live selector)? */
     evalDecls: boolean;
-    /** Are style rules OPENED inside this level live at all? */
-    scopeAlive: boolean;
+    /** Browser-level: false under a parse-dead (empty-selector) rule — nothing comes back. */
+    parseAlive: boolean;
+    /** Product-level: false under an img rule — until a nested selector escapes beside it. */
+    evidenceAlive: boolean;
     /** The level's direct declaration text, nested blocks excluded. */
     decl: string;
     /** Text since the last `;` / block boundary — the next block's selector candidate. */
     pending: string;
   };
-  const stack: Level[] = [{ evalDecls: false, scopeAlive: true, decl: "", pending: "" }];
+  const stack: Level[] = [
+    { evalDecls: false, parseAlive: true, evidenceAlive: true, decl: "", pending: "" },
+  ];
   const closeTop = (): boolean => {
     const level = stack.pop()!;
     return level.evalDecls && declares(level.decl + level.pending);
@@ -1392,12 +1408,26 @@ function oneSheetDeclares(styleText: string, declares: (block: string) => boolea
     } else if (ch === "{") {
       const sel = cur.pending.trim();
       cur.pending = "";
-      const ruleAlive = cur.scopeAlive && sel !== "" && !IMG_SELECTOR.test(sel);
-      stack.push(
-        sel.startsWith("@")
-          ? { evalDecls: cur.evalDecls, scopeAlive: cur.scopeAlive, decl: "", pending: "" }
-          : { evalDecls: ruleAlive, scopeAlive: ruleAlive, decl: "", pending: "" },
-      );
+      if (sel.startsWith("@")) {
+        stack.push({
+          evalDecls: cur.evalDecls,
+          parseAlive: cur.parseAlive,
+          evidenceAlive: cur.evidenceAlive,
+          decl: "",
+          pending: "",
+        });
+      } else {
+        const parseAlive = cur.parseAlive && sel !== "";
+        const evidenceAlive =
+          (cur.evidenceAlive || NEST_ESCAPE.test(sel)) && !IMG_SELECTOR.test(sel);
+        stack.push({
+          evalDecls: parseAlive && evidenceAlive,
+          parseAlive,
+          evidenceAlive,
+          decl: "",
+          pending: "",
+        });
+      }
     } else if (ch === "}") {
       if (stack.length > 1) {
         if (closeTop()) return true;
