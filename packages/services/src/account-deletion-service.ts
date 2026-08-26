@@ -187,6 +187,22 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
       deleted[table] = n(await run);
     };
 
+    /**
+     * THE GLOBAL LOCK ORDER — `account_settings` FIRST, the change-log sequence row second
+     * (`recordSettingsChange`, consent-seed.ts, states the rule and its two reproduced 40P01s).
+     * This transaction used to delete `change_log` and `account_sync_state` in section 6 and
+     * only then delete `account_settings` — the reverse order, which deadlocks against any
+     * consent settings PATCH racing the erasure: the PATCH holds the settings row and waits on
+     * the sequence row this transaction already holds, Postgres kills one, and the killed one
+     * can be the Art. 17 erasure itself. So the settings delete RUNS FIRST — a delete takes the
+     * row lock exactly as an update would, creates nothing (a retried erasure stays a zero-row
+     * no-op, which the idempotency pin counts), and a knob write inserting the row afresh
+     * queues on this delete while holding nothing, so no cycle can form from either side. The
+     * row's own reasoning (why consent is erased at all) stays with its old neighbours in
+     * section 6.
+     */
+    await drop("account_settings", tx.delete(accountSettings).where(eq(accountSettings.accountId, accountId)));
+
     // The account's users and mailboxes, resolved once — several tables below key
     // off the USER, not the account, and after the users are gone we cannot ask.
     const userRows = await tx.select({ id: users.id, email: users.email })
@@ -297,9 +313,10 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     await drop("idempotency_keys", tx.delete(idempotencyKeys).where(eq(idempotencyKeys.accountId, accountId)));
     await drop("push_subscriptions", tx.delete(pushSubscriptions).where(eq(pushSubscriptions.accountId, accountId)));
     // The account's own preferences — the dormancy dial, the Ohbox posture, and
-    // `seed_confirmed_at`, which is the CONSENT EVENT of onboarding. Consent to something is a
-    // record about a person; there is nobody left to have consented.
-    await drop("account_settings", tx.delete(accountSettings).where(eq(accountSettings.accountId, accountId)));
+    // `seed_confirmed_at`, which is the CONSENT EVENT of onboarding — were deleted FIRST, at
+    // the top of this transaction: consent to something is a record about a person and there
+    // is nobody left to have consented, and the settings row is also the first lock in the
+    // global order every settings writer takes (see the note at the top).
 
     // ── 6b. The HOSTED-ONLY account-scoped rows ─────────────────────────────────
     // Five Cloud tables key off `accounts`, which erasure does NOT delete — so none of these
