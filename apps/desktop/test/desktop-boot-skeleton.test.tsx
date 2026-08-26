@@ -193,6 +193,7 @@ describe("the window while an engine is still coming up", () => {
     expect(sk!.querySelector(".boot-sk-head"), "no view-head slot on the list panel").not.toBeNull();
     expect(sk!.querySelector(".boot-sk-reader"), "no reading-pane frame").not.toBeNull();
     expect(sk!.querySelector(".boot-sk-pill"), "no compose-capsule slot in the rail").not.toBeNull();
+    expect(sk!.querySelector(".boot-sk-topbar"), "no narrow-topbar shape (shown ≤900px)").not.toBeNull();
     expect(sk!.querySelectorAll(".boot-sk-item").length, "a rail with no nav items")
       .toBeGreaterThan(3);
     expect(sk!.querySelectorAll(".boot-sk-row .boot-sk-av").length, "rows without lead circles")

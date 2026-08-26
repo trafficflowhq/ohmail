@@ -166,6 +166,13 @@ export function BootSkeleton({
   }
   return (
     <div className="boot-sk boot-sk-window" aria-hidden="true">
+      {/* The NARROW shell's topbar, as shape — rendered always, shown only ≤900px (where the
+          rail and reader silhouettes hide): without it a long narrow boot ended with the real
+          topbar appearing and every row shifting down. Wordmark bar left, one capsule right. */}
+      <div className="boot-sk-topbar">
+        <span className="boot-sk-bar boot-sk-mark" />
+        <span className="boot-sk-tb-btn" />
+      </div>
       <div className="boot-sk-rail">
         {/* The wordmark slot, the compose capsule, then the nav groups — `rail.css`'s order. */}
         <span className="boot-sk-bar boot-sk-mark" />
