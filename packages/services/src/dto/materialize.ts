@@ -2,13 +2,14 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import {
+  accountSettings, mailboxes,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags,
   type EntityType,
 } from "@trafficflow/db";
 import type { Db } from "../context.js";
 import type {
-  FolderDTO,
+  FolderDTO, SettingsDTO,
   Folder, MessageDTO, MessageStateDTO, ThreadDTO, RoutingDecisionDTO, ApprovalDTO, RuleDTO,
   DraftDTO, DraftStatus, SensitivityFlags, TriageState, TagDTO,
 } from "./types.js";
@@ -477,6 +478,49 @@ async function materializeFolder(db: Db, accountId: string, id: string): Promise
   return row ? folderRowToDTO(row) : null;
 }
 
+/**
+ * THE ACCOUNT'S SETTINGS ROW — the `"settings"` entity (`change-log.ts` names why it exists).
+ *
+ * NEVER NULL for the caller's own account, and that is load-bearing: `SyncService.getChanges`
+ * reads a null entity as a tombstone and would drain the change to every client as a DELETE —
+ * but "no row yet" is a real settings state (every knob at its default, created lazily by the
+ * first write), not an absence. So a missing row materializes as the default-shaped DTO, exactly
+ * what `GET /consent` reports for the same account.
+ *
+ * The id is the ACCOUNT id (one row per account); a change row naming any other id is not this
+ * account's settings and answers null like every cross-account read here — indistinguishable
+ * from missing, which the feed then tombstones harmlessly.
+ *
+ * The per-mailbox exceptions live on `mailboxes.folders_disabled_at` (spec §17), not on the
+ * settings row, and travel here because the client-facing question — "which mailboxes did this
+ * account switch off?" — is a settings question wherever the column lives.
+ */
+export async function materializeSettings(db: Db, accountId: string, id: string): Promise<SettingsDTO | null> {
+  if (id !== accountId) return null;
+  const [row] = await db.select().from(accountSettings)
+    .where(eq(accountSettings.accountId, accountId)).limit(1);
+  const off: Record<string, string> = {};
+  const boxes = await db.select({ id: mailboxes.id, at: mailboxes.foldersDisabledAt })
+    .from(mailboxes).where(eq(mailboxes.accountId, accountId));
+  for (const b of boxes) {
+    if (b.at !== null) off[b.id] = b.at.toISOString();
+  }
+  return {
+    accountId,
+    dormancyDays: row?.dormancyDays ?? null,
+    autoSuggestAt: iso(row?.autoSuggestAt),
+    blockRemoteImagesAt: iso(row?.blockRemoteImagesAt),
+    loadTrackingPixelsAt: iso(row?.loadTrackingPixelsAt),
+    blockAutoUnsubscribeAt: iso(row?.blockAutoUnsubscribeAt),
+    foldersEnabledAt: iso(row?.foldersEnabledAt),
+    folderMailboxesOff: off,
+    locale: row?.locale ?? null,
+    // A missing row still needs a stamp the client can compare; the epoch is honest for "nothing
+    // was ever written", and the first real write replaces it with the row's own.
+    updatedAt: row?.updatedAt ? row.updatedAt.toISOString() : new Date(0).toISOString(),
+  };
+}
+
 export function materialize(db: Db, accountId: string, type: EntityType, id: string): Promise<unknown | null> {
   switch (type) {
     case "message": return materializeMessage(db, accountId, id);
@@ -488,6 +532,7 @@ export function materialize(db: Db, accountId: string, type: EntityType, id: str
     case "approval": return materializeApproval(db, accountId, id);
     case "rule": return materializeRule(db, accountId, id);
     case "draft": return materializeDraft(db, accountId, id);
+    case "settings": return materializeSettings(db, accountId, id);
     default: return Promise.resolve(null);
   }
 }

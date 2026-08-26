@@ -156,6 +156,17 @@ import type { Diagnostic } from "./log.js";
 export const CLOUD_SYNC_TYPES: readonly EntityType[] = [
   "message", "thread", "routing_decision", "approval",
   "draft", "rule", "message_state", "folder", "tag",
+  /**
+   * The account's settings row — the doorbell that lets a consent knob flipped on ANY surface
+   * reach an open desktop window without a restart. The hosted writers append one `settings`
+   * change per knob write (`consent-seed.ts`); pulling it here re-emits it into the LOCAL change
+   * log (see `applyUpsert`), so the webview's own drain bumps its mirror version and the shell
+   * re-asks `GET /consent` — which this door FORWARDS to the hosted account, so the re-ask is
+   * live truth. Unlike `"tag"` above, there is no stale-mirror repair to run for this type: a
+   * settings row is re-askable state, not history — a mirror that missed old settings rows loses
+   * nothing, because its next `GET /consent` answers from the account itself.
+   */
+  "settings",
 ];
 
 /**
@@ -169,7 +180,7 @@ export const CLOUD_SYNC_TYPES: readonly EntityType[] = [
  * the time the message carrying the assignment is applied.
  */
 const APPLY_ORDER: readonly EntityType[] = [
-  "folder", "tag", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
+  "settings", "folder", "tag", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
 ];
 
 const DEFAULT_PAGE_LIMIT = 500;
@@ -932,6 +943,42 @@ async function applyUpsert(
   known: ReadonlySet<string>,
 ): Promise<boolean> {
   switch (ch.type) {
+    case "settings": {
+      /**
+       * THE ACCOUNT'S SETTINGS ROW — applied for its STAMP, never for authority. The hosted-door
+       * webview's consent reads FORWARD to the hosted account, so nothing a user sees is served
+       * from these columns; what this write does is move the local row's `updated_at` (and keep
+       * the mirrored scalars honest), so the LOCAL `/sync`'s `materializeSettings` answers a
+       * stamp that MOVED — which is what tells the shell to re-ask. Two columns are deliberately
+       * NOT written:
+       *
+       *  · `folders_enabled_at` — `reconcileLocalFoldersFlag` derives the local flag from what
+       *    the feed actually sent (a folder page settles it in the same transaction), and a
+       *    second writer would fight it exactly when the two disagree (master on, zero folders);
+       *  · the per-mailbox exceptions — they live on the mirrored `mailboxes` rows, which are
+       *    the mirror's own and not this change's to re-attribute.
+       */
+      const st = ch.entity as {
+        dormancyDays?: number | null; autoSuggestAt?: string | null;
+        blockRemoteImagesAt?: string | null; loadTrackingPixelsAt?: string | null;
+        blockAutoUnsubscribeAt?: string | null; locale?: string | null; updatedAt?: string;
+      } | undefined;
+      if (!st) return false;
+      const stamp = asDate(st.updatedAt) ?? now;
+      const cols = {
+        dormancyDays: st.dormancyDays ?? null,
+        autoSuggestAt: asDate(st.autoSuggestAt),
+        blockRemoteImagesAt: asDate(st.blockRemoteImagesAt),
+        loadTrackingPixelsAt: asDate(st.loadTrackingPixelsAt),
+        blockAutoUnsubscribeAt: asDate(st.blockAutoUnsubscribeAt),
+        locale: st.locale ?? null,
+        updatedAt: stamp,
+      };
+      await tx.insert(accountSettings)
+        .values({ accountId: world.accountId, ...cols })
+        .onConflictDoUpdate({ target: accountSettings.accountId, set: cols });
+      return true;
+    }
     case "folder": {
       // ONE OF THE MAILBOX'S OWN FOLDERS (the folders foundation). The local row takes the
       // HOSTED entity's id verbatim — the local /sync materializes folder entities BY ROW ID
@@ -1383,7 +1430,13 @@ async function applyPage(
       for (const ch of nonDeletes) {
         if (ch.type !== type) continue;
         if (await applyUpsert(tx, world, ch, now, gen, known)) {
-          await record(type, ch.id, ch.op, ch.move);
+          // Every entity keeps its hosted id verbatim — EXCEPT the settings row, whose id IS an
+          // account id, and the one identity the two worlds do not share is the account's own:
+          // the local `materializeSettings` answers only for the LOCAL account and reads a
+          // foreign id as "not this account's" — a null entity, which the local feed then
+          // drains as a DELETE. Re-keyed here so the doorbell that arrived rings instead of
+          // tombstoning the very record it announces.
+          await record(type, type === "settings" ? world.accountId : ch.id, ch.op, ch.move);
           applied++;
         }
       }

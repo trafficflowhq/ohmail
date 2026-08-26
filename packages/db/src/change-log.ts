@@ -79,7 +79,22 @@ export type EntityType =
   | "message" | "thread" | "routing_decision" | "approval"
   | "draft" | "rule" | "message_state" | "folder"
   // Tag identity (name + hue). The assignment rides `message`; see above.
-  | "tag";
+  | "tag"
+  /**
+   * THE ACCOUNT'S OWN SETTINGS ROW — added together with `materializeSettings`
+   * (`packages/services/src/dto/materialize.ts`), which is the condition the rule above imposes.
+   *
+   * One row per account, so `entity_id` is the ACCOUNT id and the op is always `"update"` (the
+   * row is created lazily by whichever knob writes first, and it is never deleted). The change
+   * exists so that a settings write RINGS THE WAKE CHANNEL and travels the delta feed like any
+   * other state: without it, a consent/settings flip made on one surface reached every other
+   * signed-in surface only at its next full boot — the desktop showed a folders group the
+   * account had just switched off until the app was restarted. The entity carries the row's own
+   * scalars (a stamp plus the flags surfaces gate on), but the AUTHORITY for what a client shows
+   * stays `GET /consent` — clients treat the change as "re-ask now", not as a second consent
+   * read, so the two doors cannot drift.
+   */
+  | "settings";
 
 export type ChangeOp = "create" | "update" | "move" | "delete";
 

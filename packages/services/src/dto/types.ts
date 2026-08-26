@@ -174,6 +174,35 @@ export interface FolderDTO {
 }
 
 /**
+ * THE ACCOUNT'S SETTINGS ROW ON THE DELTA FEED — the `"settings"` entity (`change-log.ts`).
+ *
+ * One row per account (`entity_id` = the account id, op always `"update"`). It exists so a
+ * settings write travels the sync channel and rings the wake like any other change; the AUTHORITY
+ * for what a surface renders stays `GET /consent` — a client reads this as "the settings moved,
+ * re-ask", never as a second consent read, so the wire here carries only the row's own scalars:
+ * the flags surfaces gate chrome on, and the stamp that says they moved. Deliberately absent:
+ * the consent read's counts (they change with every drain and are not settings), and anything
+ * that authorises spending on its own — `autoSuggestAt` is here as a FACT about the row, and the
+ * spend gate still reads its own answer through `GET /consent`'s echo discipline.
+ */
+export interface SettingsDTO {
+  /** The account id — the entity's own id on the wire, one row per account. */
+  accountId: string;
+  /** Stored dial, or null for "the product default" (never the default value itself). */
+  dormancyDays: number | null;
+  autoSuggestAt: ISODateTime | null;
+  blockRemoteImagesAt: ISODateTime | null;
+  loadTrackingPixelsAt: ISODateTime | null;
+  blockAutoUnsubscribeAt: ISODateTime | null;
+  foldersEnabledAt: ISODateTime | null;
+  /** Per-mailbox "Use folders" EXCEPTIONS — `{ mailboxId: instant switched off }` (spec §17). */
+  folderMailboxesOff: Record<string, ISODateTime>;
+  /** The account's interface language, or null for "no preference stored". */
+  locale: string | null;
+  updatedAt: ISODateTime;
+}
+
+/**
  * WHY a stored body holds no content, when that is POLICY rather than an empty message — the
  * client-facing projection of `message_bodies.withheld_reason`, verbatim, closed set:
  *

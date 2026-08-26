@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
-  accountSettings, contacts, mailboxes, messageBodies, messages, recordChanges, rules, type Tx,
+  accountSettings, contacts, mailboxes, messageBodies, messages, recordChanges, rules,
+  type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { listMailboxUserFolders, listUserFolders } from "./folders.js";
 import type { ServiceContext } from "./context.js";
@@ -648,6 +649,27 @@ export async function consentSettings(
 }
 
 /**
+ * ONE `settings` CHANGE ROW PER SETTINGS WRITE — the doorbell that makes a consent knob travel.
+ *
+ * Every writer below appends this in the SAME transaction as its column: `recordChanges` NOTIFYs
+ * the wake channel at commit, so every signed-in surface's next drain — which the wake makes
+ * immediate — carries the `settings` entity, and each surface re-asks `GET /consent` instead of
+ * holding its boot-time answer for the life of the process. Measured before this existed:
+ * disabling folders in a browser left the desktop drawing the folders group (over tombstoned
+ * entities — an empty husk) until the app was restarted, and the reading-pane image/tracker
+ * postures went equally stale in every other open surface.
+ *
+ * `entity_id` is the ACCOUNT id and the op is always `"update"`: one row per account, created
+ * lazily, never deleted — `materializeSettings` answers a default-shaped DTO even before the
+ * first write, so this can never drain as a tombstone.
+ */
+async function recordSettingsChange(tx: LedgerTx, accountId: string): Promise<void> {
+  await recordChanges(tx, [
+    { accountId, entityType: "settings" as const, entityId: accountId, op: "update" as const },
+  ]);
+}
+
+/**
  * TURN AUTO-SUGGEST ON OR OFF — a column-scoped write on the shared `account_settings` row.
  *
  * `dormancy_days` sat in the schema from 0035 with no writer at all — a column with no knob is a
@@ -684,12 +706,17 @@ export async function setAutoSuggest(
   // `now()` from the context clock, not the database's: every other consent timestamp is
   // written this way, and a settings row whose columns come from two clocks cannot be ordered.
   const at = enabled ? ctx.now() : null;
-  await ctx.db.insert(accountSettings)
-    .values({ accountId: ctx.accountId, autoSuggestAt: at })
-    .onConflictDoUpdate({
-      target: accountSettings.accountId,
-      set: { autoSuggestAt: at, updatedAt: ctx.now() },
-    });
+  // The upsert is unchanged and still column-scoped; the transaction exists for the settings
+  // change row beside it — see {@link recordSettingsChange}. Both land or neither does.
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, autoSuggestAt: at })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { autoSuggestAt: at, updatedAt: ctx.now() },
+      });
+    await recordSettingsChange(tx, ctx.accountId);
+  });
   return { autoSuggestAt: at ? at.toISOString() : null };
 }
 
@@ -739,6 +766,12 @@ export async function setFoldersEnabled(
         op: enabled ? ("create" as const) : ("delete" as const),
       })));
     }
+    // THE FLAG ITSELF travels too — see {@link recordSettingsChange}. The folder creates/deletes
+    // above move the ENTITIES; without this row a client whose consent answer was read at boot
+    // kept drawing (or withholding) the GROUP around them — the measured desktop husk. It also
+    // covers the case the entity rows cannot: an account with zero user folders appends nothing
+    // above, so this is the only thing that rings the wake at all for its flip.
+    await recordSettingsChange(tx, ctx.accountId);
   });
   return { foldersEnabledAt: at ? at.toISOString() : null };
 }
@@ -782,6 +815,10 @@ export async function setMailboxFoldersEnabled(
     await tx.update(mailboxes)
       .set({ foldersDisabledAt: at })
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
+    // The dial's own change row FIRST, master on or off — the per-mailbox exception is settings
+    // state whatever the master says, and a surface holding a stale exceptions map is the same
+    // staleness the master's row exists to end. See {@link recordSettingsChange}.
+    await recordSettingsChange(tx, ctx.accountId);
     const [master] = await tx.select({ at: accountSettings.foldersEnabledAt })
       .from(accountSettings)
       .where(eq(accountSettings.accountId, ctx.accountId))
@@ -855,12 +892,17 @@ export async function setDormancyDays(
   // NEVER STORE THE DEFAULT — see the note above. `null` and the default both mean "use the product
   // default", so both persist NULL and let the read side substitute it.
   const stored = days === null || days === DEFAULT_DORMANCY_DAYS ? null : days;
-  await ctx.db.insert(accountSettings)
-    .values({ accountId: ctx.accountId, dormancyDays: stored })
-    .onConflictDoUpdate({
-      target: accountSettings.accountId,
-      set: { dormancyDays: stored, updatedAt: ctx.now() },
-    });
+  // Column-scoped upsert unchanged; the transaction adds the settings change row — see
+  // {@link recordSettingsChange}.
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, dormancyDays: stored })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { dormancyDays: stored, updatedAt: ctx.now() },
+      });
+    await recordSettingsChange(tx, ctx.accountId);
+  });
   return { dormancyDays: stored ?? DEFAULT_DORMANCY_DAYS };
 }
 
@@ -899,12 +941,19 @@ export async function setBlockRemoteImages(
   // The context clock, not the database's — every other consent timestamp is written this way,
   // and a settings row whose columns come from two clocks cannot be ordered.
   const at = blocked ? ctx.now() : null;
-  await ctx.db.insert(accountSettings)
-    .values({ accountId: ctx.accountId, blockRemoteImagesAt: at })
-    .onConflictDoUpdate({
-      target: accountSettings.accountId,
-      set: { blockRemoteImagesAt: at, updatedAt: ctx.now() },
-    });
+  // Column-scoped upsert unchanged; the transaction adds the settings change row — see
+  // {@link recordSettingsChange}. This is one of the two knobs the cross-surface staleness was
+  // measured on: an image posture changed in a browser must reach an open desktop pane without
+  // a restart.
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, blockRemoteImagesAt: at })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { blockRemoteImagesAt: at, updatedAt: ctx.now() },
+      });
+    await recordSettingsChange(tx, ctx.accountId);
+  });
   return { blockRemoteImagesAt: at ? at.toISOString() : null };
 }
 
@@ -940,12 +989,17 @@ export async function setBlockTrackingPixels(
   ctx: ServiceContext, blocked: boolean,
 ): Promise<{ loadTrackingPixelsAt: string | null }> {
   const at = blocked ? null : ctx.now();
-  await ctx.db.insert(accountSettings)
-    .values({ accountId: ctx.accountId, loadTrackingPixelsAt: at })
-    .onConflictDoUpdate({
-      target: accountSettings.accountId,
-      set: { loadTrackingPixelsAt: at, updatedAt: ctx.now() },
-    });
+  // Column-scoped upsert unchanged; the transaction adds the settings change row — see
+  // {@link recordSettingsChange}.
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, loadTrackingPixelsAt: at })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { loadTrackingPixelsAt: at, updatedAt: ctx.now() },
+      });
+    await recordSettingsChange(tx, ctx.accountId);
+  });
   return { loadTrackingPixelsAt: at ? at.toISOString() : null };
 }
 
@@ -992,12 +1046,17 @@ export async function setBlockAutoUnsubscribe(
   // The context clock, not the database's — every other consent timestamp is written this way,
   // and a settings row whose columns come from two clocks cannot be ordered.
   const at = blocked ? ctx.now() : null;
-  await ctx.db.insert(accountSettings)
-    .values({ accountId: ctx.accountId, blockAutoUnsubscribeAt: at })
-    .onConflictDoUpdate({
-      target: accountSettings.accountId,
-      set: { blockAutoUnsubscribeAt: at, updatedAt: ctx.now() },
-    });
+  // Column-scoped upsert unchanged; the transaction adds the settings change row — see
+  // {@link recordSettingsChange}.
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, blockAutoUnsubscribeAt: at })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { blockAutoUnsubscribeAt: at, updatedAt: ctx.now() },
+      });
+    await recordSettingsChange(tx, ctx.accountId);
+  });
   return { blockAutoUnsubscribeAt: at ? at.toISOString() : null };
 }
 
@@ -1061,12 +1120,17 @@ export async function setLocale(
   // NEVER STORE THE DEFAULT — see the note above. The two spellings of "use the default" collapse
   // to one stored representation so no reader has to handle both.
   const stored = locale === null || locale === DEFAULT_LOCALE ? null : locale;
-  await ctx.db.insert(accountSettings)
-    .values({ accountId: ctx.accountId, locale: stored })
-    .onConflictDoUpdate({
-      target: accountSettings.accountId,
-      set: { locale: stored, updatedAt: ctx.now() },
-    });
+  // Column-scoped upsert unchanged; the transaction adds the settings change row — see
+  // {@link recordSettingsChange}.
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, locale: stored })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { locale: stored, updatedAt: ctx.now() },
+      });
+    await recordSettingsChange(tx, ctx.accountId);
+  });
   return { locale: stored };
 }
 
