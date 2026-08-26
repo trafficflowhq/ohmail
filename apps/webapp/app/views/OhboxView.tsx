@@ -912,9 +912,10 @@ export function OhboxView({
     if (pinnedUnread.current === id) return;
     if (!allRef.current.find((m) => m.id === id)?.unread) return;
     // A GLANCE, and it says so. Nobody pressed anything to get here: the dwell armed on a cursor
-    // landing and this is a departure. A resurfaced row read this way keeps its pin — the engine
-    // drops it from the batch (`OhmailEngine.enrich`) — so "open it and leave" no longer answers
-    // a resurface the reader never dealt with. Every deliberate reader below omits the flag.
+    // landing and this is a departure. The read LANDS — the label travels to the server, which
+    // marks read WITHOUT spending a resurface pin (owner ruling 2026-08-26: reading a resurfaced
+    // message sticks; the pin is answered only by dealing with the row) — so "open it and leave"
+    // stays read AND stays pinned. Every deliberate reader below omits the flag and spends.
     markSeenRef.current([id], false, "glance");
   }, [armRead]);
 

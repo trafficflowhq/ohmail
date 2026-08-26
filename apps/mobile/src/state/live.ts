@@ -946,13 +946,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (members.length > 0) void engine.hydrateThread(members.map((t) => t.id)).catch(() => undefined);
     if (m.hasAttachments) void engine.loadAttachments(id).catch(() => undefined);
     if (!m.unread) return true;
-    // A RESURFACED PIN IS NOT SPENT BY OPENING. The open is the involuntary read (the
-    // webapp's dwell), and the engine's own glance rule prunes pinned ids — but a one-id
-    // glance pruned to nothing is `mutate`'s not-found rollback, which would raise a false
-    // failure toast over a working open. So the pinned case is answered here, with no wire
-    // call at all: the row stays bold ("you have not dealt with this yet"), and the
-    // deliberate reads — the sheet's Done, Mark as read — remain the acts that spend it.
-    if (triageStateOf(engine.read(), m) === "resurfaced") return true;
+    // A RESURFACED PIN IS NOT SPENT BY OPENING — but the READ LANDS (owner ruling 2026-08-26:
+    // reading a resurfaced message sticks like anywhere else). This used to skip pinned rows
+    // entirely because the engine pruned their ids from a glance and a one-id glance pruned to
+    // nothing was `mutate`'s not-found rollback; that pruning is gone — the glance travels
+    // labelled and the SERVER keeps the pin while marking read. The deliberate reads — the
+    // sheet's Done, Mark as read — remain the acts that spend the pin.
     // `via: "glance"` — the involuntary read, so the server's pin semantics see it as such.
     const ok = await watched(engine.mutate({ kind: "mark_seen", messageIds: [id], unread: false, via: "glance" }));
     if (!ok) toast(Copy.liveSaveFailed);
