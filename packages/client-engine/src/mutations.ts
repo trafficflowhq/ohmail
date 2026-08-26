@@ -419,13 +419,13 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         setAt: iso,
         updatedAt: iso,
       };
-      // Resurfacing RE-UNREADS — the server's `resurfaced` arm forces `unread` and disowns the
-      // reading order in the same transaction (`TriageService.setState`), so the pin the overlay
-      // paints is bold from its first frame rather than turning bold when the drain lands.
-      const reUnread = m.state === "resurfaced" ? { unread: true, lastReadAt: null } : {};
+      // Resurfacing DOES NOT touch read state (owner ruling 2026-08-26). The overlay used to
+      // force `unread: true` + `lastReadAt: null` for `resurfaced` — wire parity with a server
+      // arm that has been removed for making pins arrive bold whatever their real state. The
+      // pin is the attention signal; the message keeps its genuine read state on both sides.
       return [
         { type: "message_state", id: recordId, entity: state },
-        { type: "message", id: msg.id, entity: { ...msg, triage: state, ...reUnread, updatedAt: iso } },
+        { type: "message", id: msg.id, entity: { ...msg, triage: state, updatedAt: iso } },
       ];
     }
 
@@ -588,22 +588,17 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       // left it alone would move the row into "Earlier" at the BOTTOM of the list and then jump it
       // to the top when the server's answer landed. One visible reorder per read, from the client
       // and the server disagreeing about a field only one of them was writing.
-      const effects: MutationEffect[] = targets.flatMap((msg): MutationEffect[] => {
-        // The wire below is `PATCH /messages/:id { unread: false }` per id, and that route
-        // spends the resurface in its transaction — so this overlay does too (`spentResurface`).
-        const spent = spentResurface(msg, iso);
-        const out: MutationEffect[] = [{
-          type: "message",
-          id: msg.id,
-          entity: {
-            ...msg, unread: false, lastReadAt: iso,
-            ...(spent ? { triage: spent } : {}), updatedAt: iso,
-          },
-        }];
-        // The settled record's id, as everywhere a resurface is spent — see `stateRecordIdOf`.
-        if (spent) out.push({ type: "message_state", id: stateRecordIdOf(reader, msg.id), entity: spent });
-        return out;
-      });
+      const effects: MutationEffect[] = targets.map((msg): MutationEffect => ({
+        // NO `spentResurface`, and that is wire parity, not an omission: this verb is a GLANCE
+        // by construction (the per-card dwell, the leave-commit — nobody pressed anything), and
+        // its wire side is `PATCH /messages/:id { unread: false, via: "glance" }` per id — a
+        // request the server answers by marking read WITHOUT spending the pin (owner ruling
+        // 2026-08-26: the read sticks; placement in Resurface is the signal, answered only by
+        // dealing with the row). An overlay that unpinned here would drop a pin the server keeps.
+        type: "message",
+        id: msg.id,
+        entity: { ...msg, unread: false, lastReadAt: iso, updatedAt: iso },
+      }));
       // THE LINE MOVES ONLY ON AN EXPLICIT ANCHOR. `upToId` is the leave commit — the newest
       // message that was on screen, above which the line renders (`WaterlineMeta`). A sweep
       // that passes ids alone leaves the line where the last visit put it: "new since last
@@ -640,9 +635,12 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       for (const id of m.messageIds) {
         const msg = reader.get<EngineMessage>("message", id);
         if (!msg) continue;
-        // Marking READ spends the resurface, exactly as the batch route does in the same
+        // A DELIBERATE read spends the resurface, exactly as the batch route does in the same
         // transaction (`spendResurface`); marking unread must not touch triage — also the wire.
-        const spent = m.unread ? null : spentResurface(msg, iso);
+        // A GLANCE (`via: "glance"` — the Ohbox dwell commit) reads WITHOUT spending, and the
+        // wire says so on the same request, so overlay and server agree (2026-08-26 ruling:
+        // the read sticks, the pin is answered only by dealing with the row).
+        const spent = m.unread || m.via === "glance" ? null : spentResurface(msg, iso);
         effects.push({
           type: "message",
           id,

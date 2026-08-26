@@ -83,12 +83,22 @@ export interface ListMessagesOptions {
 export interface MessagePatchBody {
   unread?: boolean;
   folder?: string;
+  /**
+   * `"glance"` marks the surface's own involuntary read — the dwell commit, the stream sweep —
+   * as opposed to a deliberate act. A glance-read LANDS (a resurfaced message keeps its genuine
+   * read state, and reading it sticks — owner ruling 2026-08-26) but does NOT spend the
+   * resurface pin: placement in Resurface is the attention signal, answered by dealing with the
+   * row, and nobody pressed anything to get here. Absent ⇒ deliberate ⇒ spends.
+   */
+  via?: string;
 }
 
 /** `PATCH /messages` — one read-state decision applied to up to {@link MARK_SEEN_MAX_IDS} messages. */
 export interface MarkSeenBody {
   ids?: unknown;
   unread?: unknown;
+  /** See {@link MessagePatchBody.via} — the batch form carries the same label. */
+  via?: unknown;
 }
 
 /**
@@ -525,6 +535,7 @@ export class MessageService {
     if (body.unread !== undefined && typeof body.unread !== "boolean") {
       throw new ServiceError("validation_failed", 400, "unread must be a boolean");
     }
+    const glance = this.validVia(body.via);
 
     const seq = await asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
@@ -562,11 +573,13 @@ export class MessageService {
         });
       }
 
-      // Reading — or re-filing — spends the resurface. The batch route (`markSeen`) has always
-      // cleared it; this route marking the same message read through a different verb must not
-      // leave the pin standing, or which client a user reads in decides whether their Ohbox
-      // stays pinned. See `spendResurface`.
-      if (body.unread === false || folder !== undefined) {
+      // A DELIBERATE read — or a re-file — spends the resurface. The batch route (`markSeen`)
+      // has always cleared it; this route marking the same message read through a different verb
+      // must not leave the pin standing, or which client a user reads in decides whether their
+      // Ohbox stays pinned. A GLANCE (`via: "glance"` — the stream sweep's per-id PATCH) marks
+      // read WITHOUT spending: the read sticks (owner ruling 2026-08-26), the pin is answered
+      // by dealing with the row. Re-filing is dealing with it, so `folder` spends regardless.
+      if ((body.unread === false && !glance) || folder !== undefined) {
         const spent = await this.spendResurface(tx, ctx, [id]);
         if (spent !== null) last = spent;
       }
@@ -624,6 +637,7 @@ export class MessageService {
       }
     }
     const unread = body.unread;
+    const glance = this.validVia(body.via);
     // De-duplicated but ORDER-PRESERVING: the same id twice is one update and one change, and
     // the caller's order is the order the deltas land in.
     const ids = [...new Set(body.ids as string[])];
@@ -655,9 +669,12 @@ export class MessageService {
         });
       }
 
-      // Reading spends the resurface — see `spendResurface`. Only when marking read
-      // (`unread === false`); marking unread must not touch triage.
-      if (!unread) {
+      // A DELIBERATE read spends the resurface — see `spendResurface`. Only when marking read
+      // (`unread === false`), and never for a GLANCE (`via: "glance"` — the Ohbox dwell commit):
+      // the glance's read lands like any other (owner ruling 2026-08-26), but the pin is
+      // answered by dealing with the row, and nobody pressed anything to get here. Marking
+      // unread must not touch triage either way.
+      if (!unread && !glance) {
         const spent = await this.spendResurface(tx, ctx, ids);
         if (spent !== null) last = spent;
       }
@@ -816,11 +833,13 @@ export class MessageService {
    *
    * The worker flips a due `bubbled_up` state to `resurfaced` (see `bubbleUpPass`), which pins
    * the row at the top of the Ohbox. The pin is answered by the user DEALING with the row, and
-   * exactly two verbs are dealing with it: marking it read (a settled reply marks the parent
-   * read through the same route, so it counts too) and filing it somewhere. Both clear the state
-   * back to `none` IN THE CALLER'S TRANSACTION, so "Resurfaced" never outlives the act that
-   * answered it — and never survives into the materialized DTO the same transaction returns.
-   * Merely OPENING the row is deliberately neither: a glance does not spend the resurface.
+   * exactly two verbs are dealing with it: DELIBERATELY marking it read (a settled reply marks
+   * the parent read through the same route, so it counts too) and filing it somewhere. Both
+   * clear the state back to `none` IN THE CALLER'S TRANSACTION, so "Resurfaced" never outlives
+   * the act that answered it — and never survives into the materialized DTO the same transaction
+   * returns. Merely OPENING the row is deliberately neither: a glance does not spend the
+   * resurface. Since the 2026-08-26 ruling the glance's READ still lands (`via: "glance"` on
+   * `markSeen`/`patch` marks read and skips this) — what a glance cannot do is take the pin down.
    *
    * One implementation for every route that can perform those verbs — the batch `markSeen`, the
    * single-message `patch` (both arms) and `move` — because the first defect here was exactly a
@@ -890,6 +909,19 @@ export class MessageService {
       throw new ServiceError("validation_failed", 400, "folder is not a canonical folder");
     }
     return v as Folder;
+  }
+
+  /**
+   * `via` is `"glance"` or absent — anything else is a 400, not a silent "deliberate", because
+   * a client that misspells the label would otherwise spend pins it meant to protect and nothing
+   * would ever fail. Returns whether this request is a glance.
+   */
+  private validVia(v: unknown): boolean {
+    if (v === undefined) return false;
+    if (v !== "glance") {
+      throw new ServiceError("validation_failed", 400, "via must be \"glance\" when present");
+    }
+    return true;
   }
 }
 

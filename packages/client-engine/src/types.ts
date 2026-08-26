@@ -1175,14 +1175,19 @@ export type EngineMutation =
        *
        * The two are indistinguishable by the time they reach here — same verb, same ids, same
        * `unread: false` — and exactly one thing turns on the difference: a resurfaced row is
-       * answered by being DEALT WITH, and the server spends its pin on any route that marks it
-       * read. So a surface that marks mail read on the reader's behalf has to say so, or a
-       * two-second dwell takes down a pin the user never answered.
+       * answered by being DEALT WITH, and the server spends its pin on a DELIBERATE read. So a
+       * surface that marks mail read on the reader's behalf has to say so, or a two-second dwell
+       * takes down a pin the user never answered.
        *
        * `"glance"` is claimed by the surfaces that decide FOR the reader: the Ohbox's dwell
        * commit and the Receipts per-card mark. Everything else — the read pill, `⇧I`, a bulk
        * selection, read-all, and the settled reply that marks its parent read — is the reader
        * saying so, and omits this.
+       *
+       * A GLANCE-LABELLED READ STILL LANDS (owner ruling 2026-08-26: a resurfaced message keeps
+       * its genuine read state, and reading it sticks like anywhere else). The label travels on
+       * the wire and the server marks read WITHOUT spending the pin — the engine no longer drops
+       * pinned ids from a glance, which is what used to turn a read row back to unread.
        *
        * ABSENT MEANS DELIBERATE, which is the safe default in the only direction that matters: a
        * new call site that forgets this field spends the pin, which is the behaviour every caller

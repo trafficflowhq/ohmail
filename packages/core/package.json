@@ -10,10 +10,12 @@
     "./net": "./src/net/index.ts",
     "./adapters/http-host": "./src/adapters/http-host.ts",
     "./adapters/imap": "./src/adapters/imap.ts",
+    "./adapters/imap-types": "./src/adapters/imap-types.ts",
     "./adapters/organizer-lease": "./src/adapters/organizer-lease.ts",
     "./adapters/organizer-profile": "./src/adapters/organizer-profile.ts",
     "./adapters/organizer-profile-store": "./src/adapters/organizer-profile-store.ts",
-    "./adapters/drizzle-repo": "./src/adapters/drizzle-repo.ts"
+    "./adapters/drizzle-repo": "./src/adapters/drizzle-repo.ts",
+    "./folder-name": "./src/folder-name.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

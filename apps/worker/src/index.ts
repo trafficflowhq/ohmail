@@ -3502,9 +3502,9 @@ export async function startWorkerWithLock(
             // pass's own header explains why (an unscoped pass under a shard-specific lock
             // would let shard 0 mutate shard 1's rows), and per-account isolation keeps one
             // account's failure from skipping the rest.
-            const { flipped, rescued } = await asDatabaseFault("cycle.bubbleUpPass",
+            const { flipped } = await asDatabaseFault("cycle.bubbleUpPass",
               () => bubbleUpPass(db as unknown as Tx, new Date(), { accountId }));
-            if (flipped > 0 || rescued > 0) log.info("bubble_up_flipped", { accountId, flipped, rescued });
+            if (flipped > 0) log.info("bubble_up_flipped", { accountId, flipped });
           } catch (err) {
             noteIfSharedDatabaseFault(err);
             log.error("bubble_up_failed", {

@@ -236,12 +236,9 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // validated grammar with no allowlist behind it, so it costs nothing — while every entry added
   // here is another chance to repeat the attach-phase mistake four lines up.
   "generated", "flipped", "drained",
-  // `rescued` rides the same bubble-up log line as `flipped` and is the same kind of quantity —
-  // the reconciliation's own counter (resurfaced rows whose due event never re-unread them,
-  // healed), an integer accumulated by `++` and assigned by nothing else. Added WITH its call
-  // sites (`bubbleUpPass` → worker cycle + sidecar drain), per the paragraph above: the first
-  // live line must not read `droppedFields=["rescued"]` on the event that exists to report it.
-  "rescued",
+  // `rescued` is GONE with its call sites: it was the bubble-up reconciliation's counter, and
+  // that pass was removed when resurfacing stopped forcing read state (2026-08-26) — an entry
+  // with no emitter is exactly the kind of standing exception this file's header forbids.
   // ── The local store's bloat-compaction line (`store_compacting`/`store_compacted`), added WITH
   // the call site (`apps/sidecar/src/db.ts#reclaimBodyBloat`) ──
   //

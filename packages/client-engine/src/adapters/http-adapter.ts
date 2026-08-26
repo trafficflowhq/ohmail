@@ -884,10 +884,15 @@ export class HttpAdapter implements EngineAdapter {
       case "feed_mark_seen": {
         // No batch endpoint — one PATCH per message (idempotent by definition,
         // §1.6); each echoes the updated DTO + X-Sync-Seq.
+        //
+        // `via: "glance"` on every one, because this verb IS the involuntary read (the per-card
+        // dwell, the leave-commit): the server marks read WITHOUT spending a resurface pin, so
+        // a sweep that covers a pinned row reads it and leaves the pin standing — the same
+        // thing the overlay paints (`mutations.ts#feed_mark_seen`).
         const changes: SyncChange[] = [];
         let seq: number | null = null;
         for (const id of m.messageIds ?? []) {
-          const res = await this.request("PATCH", `/messages/${id}`, { body: { unread: false } });
+          const res = await this.request("PATCH", `/messages/${id}`, { body: { unread: false, via: "glance" } });
           if (!res.ok) throw await this.rejectionOf(res);
           const s = this.noteSeq(res);
           const dto = (await res.json()) as EngineMessage;
@@ -911,8 +916,11 @@ export class HttpAdapter implements EngineAdapter {
         // engine's `dispatch` sees `changes: []` and pulls the authoritative drain instead —
         // the same contract `triage_set` and `screener_decide` already use, and the overlay
         // holds the user's view steady until it lands.
+        // `via` travels when the surface set it: a glance-labelled read must reach the server AS
+        // a glance, so it marks read without spending a resurface pin (`MessageService.markSeen`).
+        // Deliberate reads (no `via`) keep answering pins exactly as before.
         const res = await this.request("PATCH", "/messages", {
-          body: { ids: m.messageIds, unread: m.unread },
+          body: { ids: m.messageIds, unread: m.unread, ...(m.via ? { via: m.via } : {}) },
           idempotencyKey: opts.idempotencyKey,
         });
         if (!res.ok) throw await this.rejectionOf(res);
