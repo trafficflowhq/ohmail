@@ -105,6 +105,7 @@ import { TrackingPixelsRow } from "./TrackingPixelsRow";
 import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
 import { FoldersRow } from "./FoldersRow";
 import { FoldersRailGroup } from "./FoldersRailGroup";
+import { useFolderVerbs } from "./folder-verbs";
 import { folderTailVerdict, folderUnreadCounts } from "./folders";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
@@ -1453,6 +1454,29 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   const folders = useMemo(
     () => (consent.foldersEnabled ? reader.list<FolderEntity>("folder") : []),
     [reader, version, consent.foldersEnabled],
+  );
+
+  /**
+   * THE FOLDER VERBS (stage 2) — engine dispatch + the delete confirm's summary read, from the
+   * sibling hook (`folder-verbs.ts` carries the api-client boundary argument). Built
+   * unconditionally (hooks may not be conditional); HANDED to the rail group only on a live,
+   * folders-on account — the demo keeps the read-only group, and a flag-off rail renders no
+   * group at all.
+   */
+  const folderVerbs = useFolderVerbs(engine, toast);
+
+  /**
+   * The account's PARTICIPATING mailboxes for the rail group's sections — what lets a mailbox
+   * with zero folders still offer `+ New folder`. Participation is the per-mailbox dial
+   * (spec §17: only the EXCEPTIONS travel) and the stood-down state: a `disabled` mailbox is
+   * another organizer's, and a command Cloud's worker will never execute must not be offered.
+   */
+  const folderMailboxes = useMemo(
+    () =>
+      (facts ?? [])
+        .filter((f) => f.status !== "disabled" && !(f.id in consent.folderMailboxesOff))
+        .map((f) => ({ id: f.id, label: f.address })),
+    [facts, consent.folderMailboxesOff],
   );
   /**
    * Per-folder unread, ONE PASS over the presented mirror — the tag counts' derivation and the
@@ -4693,6 +4717,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
               <FoldersRailGroup
                 folders={folders}
                 unread={folderUnread}
+                verbs={demo ? undefined : folderVerbs}
+                accountMailboxes={demo ? undefined : folderMailboxes}
                 /* The third render (the folder-delivery review): with the flag ON and ZERO
                    entities, "no folders on your server" and "the first drain has not finished"
                    are different sentences — `bootstrapping` is exactly that window, and
@@ -4745,7 +4771,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     [
       t, ohbox.newForYou.length, allOhbox.length, readsNew, receiptsNew, screener.waitingCount, piles,
       tagGroups, tags, createTagAlone, consent.foldersEnabled, consent.known, folders,
-      folderUnread, syncStatus.bootstrapping, route.view,
+      folderUnread, folderVerbs, folderMailboxes, demo, syncStatus.bootstrapping, route.view,
       route.folderId, facts,
     ],
   );

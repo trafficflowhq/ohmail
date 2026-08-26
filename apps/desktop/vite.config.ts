@@ -520,7 +520,8 @@ export default defineConfig({
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
 
-      /* The calendar reader, and the ONE `@trafficflow/*` specifier that reaches this bundle.
+      /* The calendar reader — with `folder-name` below, one of the TWO `@trafficflow/*`
+         specifiers that reach this bundle.
          It is imported by `packages/client-engine/src/engine.ts` and by the attachment strip
          and event card under `apps/webapp/app/components/`, all three of which are published.
          In THIS tree the specifier resolves without help, through the workspace link and
@@ -531,6 +532,11 @@ export default defineConfig({
          the engine bundle (which has its own resolver) went green beside them. Same reason the
          four entries above exist; listed after them because it is the same kind of seam. */
       { find: "@trafficflow/core/ics", replacement: r("../../packages/core/src/ics.ts") },
+      /* The folder-name validator (FOLDERS-SPEC.md stage 2) — the rail's Folders group
+         validates a create/rename BEFORE the wire with the same rules the server runs, and
+         `FoldersRailGroup.tsx` is published shell. A browser-safe leaf (`types.ts` re-export,
+         zero imports), resolved here for exactly `ics`'s reason. */
+      { find: "@trafficflow/core/folder-name", replacement: r("../../packages/core/src/folder-name.ts") },
     ],
   },
 

@@ -160,3 +160,29 @@ button.ftw:hover{color:var(--ink)}
 .rmblab{font-size:10.5px;font-weight:600;color:var(--ink3);padding:8px 8px 3px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rmblab:first-child{padding-top:2px}
+
+/* ── THE FOLDER VERBS (FOLDERS-SPEC.md stage 2) — the … menu, pending/failed states, the
+ * ask-first delete confirm. The menu reuses `.scn-act-menu`/`.scn-act-dest` (app.css) for its
+ * surface; `.fmenu` only anchors it to the row. `.fmore` is hover/focus-revealed on pointer
+ * devices and always visible where hover does not exist (the prototype's rule). */
+.fmore{flex:0 0 auto;padding:2px 7px;border-radius:8px;color:var(--ink3);font-weight:700;
+  background:none;border:0;cursor:pointer;opacity:0;transition:opacity .15s ease}
+.frow:hover .fmore,.frow:focus-within .fmore,.frow.menu-on .fmore{opacity:1}
+.fmore:hover{color:var(--ink);background:var(--tint)}
+@media (hover:none){.fmore{opacity:1}}
+.fmenu{top:calc(100% + 2px);right:4px;left:auto}
+/* a command in flight: dimmed, the sentence in the title — pending, never pretended done */
+.ritem.fpend{opacity:.55}
+.ritem.fpend .flabel{font-style:italic}
+/* a refused command: the row keeps rendering; the sentence stands under it until dismissed */
+.ritem.ffail .fglyph{color:var(--danger-ink, var(--ink2))}
+.fproblem{display:flex;align-items:center;gap:8px;margin:2px 8px 4px 22px;font-size:11px;
+  line-height:1.35;color:var(--ink2)}
+.fdismiss{flex:none;border:0;background:none;padding:2px 7px;border-radius:7px;font:inherit;
+  font-size:11px;font-weight:600;color:var(--accent-ink);cursor:pointer}
+.fdismiss:hover{background:var(--tint)}
+/* the delete confirm, inside the menu surface: the numbers first, the verb second */
+.fconfirm{max-width:230px;padding:5px 8px 3px;font-size:11px;line-height:1.4;color:var(--ink2);
+  white-space:normal}
+.fdanger{color:var(--danger, #b3261e)}
+.fdanger:hover{color:var(--danger, #b3261e)}
