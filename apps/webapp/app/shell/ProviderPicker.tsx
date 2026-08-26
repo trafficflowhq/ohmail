@@ -83,11 +83,14 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
     // A key this group handles STOPS here. The registry's document listener now binds the
     // arrows too (the zone walk, `zone-nav.tsx`), and the tiles sit inside a settings pane —
     // without the stop, one press would both move the radio selection and scroll the pane.
-    // `stopPropagation` is enough for a listener on `document` (MoreMenu measured this); the
-    // unhandled keys fall through untouched.
+    // `stopImmediatePropagation` ON THE NATIVE EVENT, not only `stopPropagation`: the App
+    // Router hydrates the whole document, so React and the registry are sibling listeners on
+    // the SAME node, and stopping propagation cannot stop a sibling — MoreMenu measured this
+    // on the deployed build. Unhandled keys fall through untouched.
     const handled = (): void => {
       e.preventDefault();
       e.stopPropagation();
+      e.nativeEvent.stopImmediatePropagation();
     };
     switch (e.key) {
       case "ArrowRight":

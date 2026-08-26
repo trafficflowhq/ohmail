@@ -458,9 +458,13 @@ export function RecipientField({
     // (`zone-nav.tsx`) also binds the arrows on `document`, and inside the reply editor the
     // chips sit in the reading column. Every arrow this handler CLAIMS therefore stops here,
     // or one press would both move the chip focus and walk/scroll the zone under it.
+    // `stopImmediatePropagation` on the NATIVE event: React and the registry are sibling
+    // listeners on `document` in the deployed App Router, and `stopPropagation` alone cannot
+    // stop a sibling (MoreMenu measured this on the deployed build).
     const claim = (): void => {
       e.preventDefault();
       e.stopPropagation();
+      e.nativeEvent.stopImmediatePropagation();
     };
     if (e.altKey && row && onMove) {
       // Alt+arrows are the keyboard drag. Horizontal reorders within the row; vertical

@@ -3312,14 +3312,19 @@ textarea.c-input:read-only {
   .view-ohbox .read-col {
     display: none;
   }
-  /* History + Tag + Triage in the split layout: same rule as the Ohbox — the reading column is
-     hidden and a tap opens the reader sheet, so the split degrades to the list on a phone.
-     `TriageView.readColumnHidden()` asks the SAME 900px question before deciding whether a row
-     click selects or opens; the two must not disagree, or a tap would select a message into a
-     column that is not on screen. */
+  /* History + Tag + Triage + Folder in the split layout: same rule as the Ohbox — the reading
+     column is hidden and a tap opens the reader sheet, so the split degrades to the list on a
+     phone. `readColumnHidden()` (Triage, Tag, Folder, History) asks the SAME 900px question
+     before deciding whether a row click selects or opens; the two must not disagree, or a tap
+     would select a message into a column that is not on screen. Folder was missing from this
+     list, which the arrow keys turned from a latent mismatch into a live one: the zone walk's
+     "→ into the pane" probes the column with `focus()` and takes the deliberate-open path only
+     when the browser refuses — a column left visible (and focusable) at phone widths swallowed
+     the focus and no reader opened, unlike the tap on the very same row. */
   .view-history .read-col,
   .view-tag .read-col,
-  .view-triage .read-col {
+  .view-triage .read-col,
+  .view-folder .read-col {
     display: none;
   }
   /* …and the header slot keeps the list's horizontal padding on a phone. */

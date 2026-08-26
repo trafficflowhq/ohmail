@@ -246,20 +246,30 @@ export function TriageView({
    * where the column is hidden it is the sheet, the same answer a tap gets (`openRow`).
    */
   const navAt = shown ? openable.findIndex((m) => m.id === shown.id) : -1;
+  const selectRow = (id: string): void => {
+    setSelectedId(id);
+    // Keep the new cursor in view — the registry preventDefaults the arrows, so nothing
+    // scrolls natively. `?.` on the METHOD: jsdom mounts this view without implementing it.
+    queueMicrotask(() =>
+      document
+        .querySelector<HTMLElement>(`.view-triage .row[data-id="${CSS.escape(id)}"]`)
+        ?.scrollIntoView?.({ block: "nearest" }),
+    );
+  };
   useZoneNav({
     list: {
       followId: shown?.id ?? null,
       up: {
         disabled: navAt <= 0,
         run: () => {
-          if (navAt > 0) setSelectedId(openable[navAt - 1]!.id);
+          if (navAt > 0) selectRow(openable[navAt - 1]!.id);
         },
         label: to("keyPrev"),
       },
       down: {
         disabled: navAt >= openable.length - 1,
         run: () => {
-          if (navAt < openable.length - 1) setSelectedId(openable[navAt + 1]!.id);
+          if (navAt < openable.length - 1) selectRow(openable[navAt + 1]!.id);
         },
         label: to("keyNext"),
       },

@@ -86,8 +86,42 @@ function computeZone(): Zone {
   const el = document.activeElement;
   if (!(el instanceof Element) || el === document.body) return "list";
   if (el.closest(RAIL)) return "rail";
+  // The shell's full-screen reader sheet counts as the reader zone whatever the mounted view
+  // declared: it IS the open message at the widths that raise it, and reading focus inside it
+  // as "list" made ↑/↓ walk the hidden cursor behind a modal while suppressing the sheet's own
+  // scroll (found by review, round 1).
+  if (el.closest(READER_OVERLAY)) return "reader";
   if (readerGeography && el.closest(readerGeography)) return "reader";
   return "list";
+}
+
+/**
+ * THE WALK STANDS DOWN BEHIND THE FULL-SCREEN READER. While the sheet is up, every zone key
+ * that would act on the rail or the list underneath it is withheld — a modal that owns the
+ * screen owns the keys that move focus around it. Expressed as a `when` (a dispatch-time
+ * condition) rather than `disabled`, because the sheet's presence is DOM state the
+ * registering render cannot reliably read mid-commit; the trade is that the `?` sheet lists
+ * these rows as live while the reader is open, which the reader's own full-screen chrome
+ * makes moot. The reader ↑/↓ scroll pair is deliberately NOT gated: with focus in the sheet
+ * the zone is "reader" and the pair scrolls the sheet itself (see `scrollReader`).
+ */
+const READER_OVERLAY = ".reader";
+function noReaderOverlay(): boolean {
+  return typeof document === "undefined" || document.querySelector(READER_OVERLAY) == null;
+}
+
+/**
+ * THE MOBILE DRAWER IS OFF-CANVAS BY TRANSFORM, NOT `display:none` — so the focus-refusal
+ * guard that protects every other hidden surface here does not fire: a translated button
+ * accepts `focus()` happily, and ← from the list would put real focus into a drawer nobody
+ * can see, without opening it. The same 900px question the views' `readColumnHidden()` asks,
+ * plus the drawer's own open flag (`.rail.open`, set by the shell) — entering the rail by
+ * key is allowed exactly where the rail is on screen.
+ */
+function railHidden(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  if (!window.matchMedia("(max-width: 900px)").matches) return false;
+  return document.querySelector(`${RAIL}.open`) == null;
 }
 
 function refresh(): void {
@@ -130,6 +164,7 @@ function tryFocus(el: HTMLElement | null | undefined): boolean {
 
 /** Step into the rail, landing on the row for the view the reader is already in. */
 function enterRail(): void {
+  if (railHidden()) return;
   const active = document.querySelector<HTMLElement>(`${RAIL} .ritem.on`);
   if (tryFocus(active)) return;
   for (const el of railItems()) if (tryFocus(el)) return;
@@ -242,6 +277,17 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
     };
   }, []);
 
+  /* Re-derive after EVERY commit, not only on focus events. Geography changes move no focus
+     of their own — the reader sheet unmounting leaves `activeElement` on `body` with no
+     `focusout` fired (a removed node blurs silently), which would strand the store on
+     "reader" and keep the list arrows declared inert after the sheet closed. But a geography
+     change is always a React commit, and the commit is the moment to re-read where focus
+     stands. `refresh()` notifies only on an actual change, so the steady state costs one
+     `closest()` per commit and no render loop. */
+  useEffect(() => {
+    refresh();
+  });
+
   /* Read through a ref at run time, the registry's own pattern (`Layer.get`): the closures
      below dispatch against the render that is on screen, never the mount's. */
   const latest = useRef(cfg);
@@ -274,7 +320,12 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
   const scrollReader = (dir: 1 | -1): void => {
     const r = latest.current.reader;
     if (!r) return;
-    const el = document.querySelector<HTMLElement>(r.scrollSelector ?? r.selector);
+    // The sheet outranks the column: when the zone is "reader" because focus sits inside the
+    // full-screen reader, the thing to scroll is the sheet the reader is looking at, never a
+    // column standing `display:none` behind it.
+    const cur = document.activeElement;
+    const sheet = cur instanceof HTMLElement ? cur.closest<HTMLElement>(READER_OVERLAY) : null;
+    const el = sheet ?? document.querySelector<HTMLElement>(r.scrollSelector ?? r.selector);
     if (el) el.scrollTop = el.scrollTop + dir * READER_SCROLL_STEP;
   };
 
@@ -286,6 +337,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneMenu"),
       disabled: z !== "list",
+      when: noReaderOverlay,
       run: enterRail,
     },
     {
@@ -293,6 +345,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneList"),
       disabled: z !== "reader",
+      when: noReaderOverlay,
       run: focusList,
     },
     {
@@ -300,6 +353,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneList"),
       disabled: z !== "rail",
+      when: noReaderOverlay,
       run: focusList,
     },
     {
@@ -307,6 +361,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneRead"),
       disabled: z !== "list" || !cfg.reader || cfg.reader.disabled,
+      when: noReaderOverlay,
       run: enterReader,
     },
     {
@@ -314,6 +369,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneMenuUp"),
       disabled: z !== "rail",
+      when: noReaderOverlay,
       run: () => railStep(-1),
     },
     {
@@ -321,6 +377,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneMenuDown"),
       disabled: z !== "rail",
+      when: noReaderOverlay,
       run: () => railStep(1),
     },
     /* Escape walks back left, one zone per press. It is registered at `global` scope like
@@ -332,6 +389,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneList"),
       disabled: z !== "reader",
+      when: noReaderOverlay,
       run: focusList,
     },
     {
@@ -339,6 +397,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneMenu"),
       disabled: z !== "list",
+      when: noReaderOverlay,
       run: enterRail,
     },
   ];
@@ -350,6 +409,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
         group: "navigate",
         label: cfg.list.up.label,
         disabled: z !== "list" || cfg.list.up.disabled,
+        when: noReaderOverlay,
         run: () => latest.current.list?.up.run(),
       },
       {
@@ -357,6 +417,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
         group: "navigate",
         label: cfg.list.down.label,
         disabled: z !== "list" || cfg.list.down.disabled,
+        when: noReaderOverlay,
         run: () => latest.current.list?.down.run(),
       },
     );

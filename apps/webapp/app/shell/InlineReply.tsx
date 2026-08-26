@@ -333,7 +333,11 @@ export function InlineReply({
     e.preventDefault();
     // The grip lives inside the reading column, where the zone walk (`zone-nav.tsx`) reads
     // ↑/↓ as "scroll the message" — without this stop one press would resize AND scroll.
+    // `stopImmediatePropagation` on the NATIVE event, because in the deployed App Router
+    // React and the registry are sibling listeners on `document` and `stopPropagation`
+    // cannot stop a sibling (MoreMenu measured this on the deployed build).
     e.stopPropagation();
+    e.nativeEvent.stopImmediatePropagation();
     setPanelHeight(currentPanelPx() + (e.key === "ArrowUp" ? 24 : -24));
   };
 

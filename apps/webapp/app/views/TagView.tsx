@@ -125,20 +125,30 @@ export function TagView({
    * sheet, the same answer a tap gets (`openRow`).
    */
   const navAt = shown ? messages.findIndex((m) => m.id === shown.id) : -1;
+  const selectRow = (id: string): void => {
+    setSelectedId(id);
+    // Keep the new cursor in view — the registry preventDefaults the arrows, so nothing
+    // scrolls natively. `?.` on the METHOD: jsdom mounts this view without implementing it.
+    queueMicrotask(() =>
+      document
+        .querySelector<HTMLElement>(`.view-tag .row[data-id="${CSS.escape(id)}"]`)
+        ?.scrollIntoView?.({ block: "nearest" }),
+    );
+  };
   useZoneNav({
     list: {
       followId: shown?.id ?? null,
       up: {
         disabled: navAt <= 0,
         run: () => {
-          if (navAt > 0) setSelectedId(messages[navAt - 1]!.id);
+          if (navAt > 0) selectRow(messages[navAt - 1]!.id);
         },
         label: to("keyPrev"),
       },
       down: {
         disabled: navAt >= messages.length - 1,
         run: () => {
-          if (navAt < messages.length - 1) setSelectedId(messages[navAt + 1]!.id);
+          if (navAt < messages.length - 1) selectRow(messages[navAt + 1]!.id);
         },
         label: to("keyNext"),
       },
