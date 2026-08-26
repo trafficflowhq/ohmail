@@ -1305,8 +1305,125 @@ function stripCssComments(css: string): string {
 /** A selector list that targets images — `img` as a TAG token; `.imgwrap` is a class and is not. */
 const IMG_SELECTOR = /(?:^|[\s,>+~(])img\b/i;
 
-/** A nested selector that steps back out BESIDE its parent — `& + .card` / `& ~ .card`. */
-const NEST_ESCAPE = /&\s*[+~]/;
+/**
+ * Under CSS nesting, does a rule nested in an IMAGE-subject rule resolve to a live rule on
+ * something that is NOT an image? Substring heuristics kept failing review here, in both
+ * directions at once, so this is the real (small) decision instead: per comma-alternative,
+ * resolve the implicit parent and read the subject.
+ *
+ *   · `.card`            → implicit `& .card` — a descendant of an image, which cannot exist.
+ *   · `& + .card`        → a live canvas BESIDE the image.
+ *   · `+ .card`          → relative nesting, the same selector with the `&` implicit.
+ *   · `& + .card &`      → the subject resolves back to the image — a picture rule still.
+ *   · `& + img.hero`     → the subject IS an image — a picture rule still.
+ *   · `& > .card`        → a child of an image, which cannot exist either.
+ *
+ * The rules, stated once: the SUBJECT is the last compound; an alternative is live iff its
+ * subject neither contains `&` nor names `img` as a tag token, and no `&`-bearing compound
+ * is followed by a descendant or child combinator (nothing lives inside an image). A `&`
+ * inside a functional pseudo-class (`:is(& + .x)`) is read as parent-in-subject and therefore
+ * dead — conservative, costing one designed mail read as a letter in a shape mail never uses.
+ * Splitting respects escapes, parens and brackets, so `[data-x~=y]` is data and `:is(a, b)`
+ * is one compound.
+ */
+function nestedSelectorEscapesImage(sel: string): boolean {
+  const alternatives: string[] = [];
+  {
+    let depth = 0;
+    let buf = "";
+    for (let i = 0; i < sel.length; i += 1) {
+      const ch = sel[i]!;
+      if (ch === "\\") {
+        const past = pastCssEscape(sel, i);
+        buf += sel.slice(i, past);
+        i = past - 1;
+        continue;
+      }
+      if (ch === "(" || ch === "[") depth += 1;
+      else if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
+      if (ch === "," && depth === 0) {
+        alternatives.push(buf);
+        buf = "";
+        continue;
+      }
+      buf += ch;
+    }
+    alternatives.push(buf);
+  }
+  for (const raw of alternatives) {
+    const alt = raw.trim();
+    if (alt === "") continue;
+    // Tokenize into compounds with the combinator BEFORE each (null before the first, unless
+    // the alternative is RELATIVE and leads with one).
+    const compounds: string[] = [];
+    const combs: (string | null)[] = [];
+    let depth = 0;
+    let buf = "";
+    let nextComb: string | null = null;
+    let combBefore: string | null = null;
+    const close = () => {
+      if (buf === "") return;
+      compounds.push(buf);
+      combs.push(combBefore);
+      buf = "";
+    };
+    for (let i = 0; i < alt.length; i += 1) {
+      const ch = alt[i]!;
+      if (ch === "\\") {
+        const past = pastCssEscape(alt, i);
+        if (buf === "") { combBefore = nextComb; nextComb = null; }
+        buf += alt.slice(i, past);
+        i = past - 1;
+        continue;
+      }
+      if (depth > 0) {
+        if (ch === "(" || ch === "[") depth += 1;
+        else if (ch === ")" || ch === "]") depth -= 1;
+        buf += ch;
+        continue;
+      }
+      if (ch === "(" || ch === "[") {
+        depth += 1;
+        if (buf === "") { combBefore = nextComb; nextComb = null; }
+        buf += ch;
+        continue;
+      }
+      if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f") {
+        if (buf !== "") { close(); nextComb = " "; }
+        continue;
+      }
+      if (ch === ">" || ch === "+" || ch === "~") {
+        if (buf !== "") close();
+        nextComb = ch;
+        continue;
+      }
+      if (buf === "") { combBefore = nextComb; nextComb = null; }
+      buf += ch;
+    }
+    close();
+    if (compounds.length === 0) continue;
+    if (!compounds.some((c) => c.includes("&"))) {
+      // Implicit parent: relative nesting keeps its leading combinator; otherwise descendant.
+      if (combs[0] === null) combs[0] = " ";
+      compounds.unshift("&");
+      combs.unshift(null);
+    }
+    const subject = compounds[compounds.length - 1]!;
+    if (subject.includes("&")) continue;
+    if (IMG_SELECTOR.test(subject)) continue;
+    let unreachable = false;
+    for (let i = 0; i < compounds.length - 1; i += 1) {
+      if (!compounds[i]!.includes("&")) continue;
+      const after = combs[i + 1] ?? " ";
+      if (after === " " || after === ">") {
+        unreachable = true; // nothing lives inside an image
+        break;
+      }
+    }
+    if (!unreachable) return true;
+  }
+  return false;
+}
 
 function sheetsDeclare(
   styleText: string | readonly string[],
@@ -1358,12 +1475,11 @@ function oneSheetDeclares(styleText: string, declares: (block: string) => boolea
   //     {@link CANVAS_TAGS} applies to `width` attributes) is real, applying CSS whose
   //     declarations just are not canvas evidence. A rule NESTED in an img rule is implicitly
   //     `& <sel>` — a descendant of an image, which cannot exist — so it stays skipped, EXCEPT
-  //     when its own selector steps back out beside the image with a sibling combinator
-  //     (`img{& + .card{width:600px}}` resolves to `img + .card`, a live canvas —
-  //     {@link NEST_ESCAPE}). An escape whose subject is still the image (`& + img`, or
-  //     `.card &`) stays skipped, and nothing escapes a PARSE-dead ancestor. Pseudo-classed
-  //     parent escapes (`&:hover + .card`) are not recognized; the cost is one designed mail
-  //     read as a letter, in a shape mail does not use.
+  //     when its own selector resolves to a live rule beside the image
+  //     (`img{& + .card{width:600px}}` → `img + .card`, and the relative spelling
+  //     `img{+ .card{…}}` resolves the same way). What decides is the RESOLVED SUBJECT, not a
+  //     substring — `img{& + .card &{…}}` resolves back to the image and stays a picture rule
+  //     — see {@link nestedSelectorEscapesImage}. Nothing escapes a PARSE-dead ancestor.
   //   · an at-rule is TRANSPARENT: `@media` neither owns declarations nor kills the rules
   //     inside it. Its direct declaration text belongs to the nearest enclosing STYLE rule
   //     (`.card{@media (…){width:600px}}` sets the card's width), and at the top level —
@@ -1418,8 +1534,9 @@ function oneSheetDeclares(styleText: string, declares: (block: string) => boolea
         });
       } else {
         const parseAlive = cur.parseAlive && sel !== "";
-        const evidenceAlive =
-          (cur.evidenceAlive || NEST_ESCAPE.test(sel)) && !IMG_SELECTOR.test(sel);
+        const evidenceAlive = cur.evidenceAlive
+          ? !IMG_SELECTOR.test(sel)
+          : nestedSelectorEscapesImage(sel);
         stack.push({
           evalDecls: parseAlive && evidenceAlive,
           parseAlive,
