@@ -65,6 +65,80 @@
   color: var(--accent-ink);
   opacity: 0.75;
 }
+/* ── THE EDITABLE SUBJECT MATCH (SubjectRuleSheet) ────────────────────────────────────────
+   A radio TILE that holds a text field: the same tile grammar as the buttons beside it —
+   `.on` accent, count in `small` — plus a field whose value is the term. The field is
+   borderless inside the tile (the tile is the control's box), and the warnings under the
+   count are the fragment's two honest failure states, in the sheet's own fine-print size. */
+.sm-scope .sm-edit {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-start;
+  padding: 6px 9px;
+  border-radius: 10px;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--ink2);
+  text-align: left;
+  background: var(--tint);
+  cursor: text;
+}
+.sm-scope .sm-edit.on {
+  color: var(--accent-ink);
+  font-weight: 650;
+  background: var(--accent-soft);
+}
+.sm-scope .sm-edit small {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  font-size: 10px;
+  line-height: 1.35;
+  font-weight: 450;
+  color: var(--ink3);
+}
+.sm-scope .sm-edit.on small {
+  color: var(--accent-ink);
+  opacity: 0.75;
+}
+.sm-edit-lead {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: inherit;
+  opacity: 0.8;
+}
+.sm-edit-input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  margin: 1px 0;
+  padding: 2px 0;
+  background: none;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink);
+  border-bottom: 1px solid var(--hair-soft);
+}
+.sm-edit.on .sm-edit-input {
+  color: var(--accent-ink);
+  border-bottom-color: var(--accent-hair);
+}
+.sm-edit-input:focus {
+  outline: none;
+  border-bottom-color: var(--accent-ink);
+}
+/* The two warnings keep the count's size and take the ink that means "stop and read" —
+   they are statements about what the fragment names, made before anything is written. */
+.sm-scope .sm-edit small.sm-edit-warn,
+.sm-scope .sm-edit.on small.sm-edit-warn {
+  color: var(--danger-ink, var(--ink2));
+  opacity: 1;
+}
 .sm-scope button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

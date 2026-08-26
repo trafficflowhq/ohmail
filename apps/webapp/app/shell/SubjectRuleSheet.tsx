@@ -16,9 +16,14 @@
  *
  * ── WHAT IT REFUSES TO DO ───────────────────────────────────────────────────────────────────
  *
- *  · **No free-text box.** A box asking somebody to invent a substring gets `Alert` typed into it,
- *    which then also catches `Alert: your invoice is overdue`. It offers the DETECTED repeating
- *    token, and the message's own subject as the explicit alternative. Both are shown in full.
+ *  · **No BLIND free text.** The exact-subject option is an EDITABLE match field now — owner
+ *    request, 2026-08-26: detection finding nothing left "this exact subject" as the only door,
+ *    and a recurring report whose subject varies by date needs a fragment. The original refusal
+ *    ("`Alert` typed into a box also catches `Alert: your invoice is overdue`") is answered with
+ *    measurement instead of prohibition: the count under the field re-runs the server's own test
+ *    on every keystroke, and the field says so out loud when the fragment stops narrowing —
+ *    matching ALL of the sender's mail here, or none of it. The detected token, when one exists,
+ *    is still offered first and still never typed.
  *  · **No claim that mail moves back.** The rule is revocable at Settings → Rules, and revoking it
  *    does not un-file anything — `DELETE /rules/:id` touches the rules row and the change log and
  *    nothing else. So the way back offered here is the count and the choice BEFORE the press, which
@@ -71,19 +76,22 @@ export interface SubjectRuleState {
 }
 
 /**
- * Which term the sheet is offering. Three choices and no text input:
+ * Which term the sheet is offering. Three choices:
  *
  *  · `token`   — the detected repeating token in the SUBJECT. Absent when nothing repeats.
- *  · `whole`   — this message's entire subject, which is always available and always exact.
+ *  · `whole`   — the EDITABLE subject match, prefilled with this message's entire subject. Left
+ *                untouched it is "this exact subject"; trimmed to a fragment it is the manual
+ *                door (owner request 2026-08-26) for the tag detection could not find. The count
+ *                under it is live — the same case-folded substring test the server applies —
+ *                and the field states it plainly when the fragment matches ALL of the sender's
+ *                mail here (not narrowing any more) or NONE of it.
  *  · `content` — the detected repeating token in the message TEXT (mail 0052). Absent when
  *                nothing repeats in the text the mirror holds. For the sender whose subjects are
  *                all alike and whose distinguishing text is in the body.
  *
- * `whole` is not a fallback nobody would pick: "everything with this exact subject" is a real thing
- * to want for a recurring report whose title never changes, and it is the honest offer when detection
- * has nothing. It is never the DEFAULT while a token exists, because a rule keyed on a whole subject
- * line catches less than the user usually means. `content` follows the same discipline as `token` —
- * detected, never typed — and a `null` detection simply does not render the option.
+ * `whole` is never the DEFAULT while a token exists, because a rule keyed on a whole subject
+ * line catches less than the user usually means. `content` keeps the detected-never-typed
+ * discipline, and a `null` detection simply does not render the option.
  */
 type TermChoice = "token" | "whole" | "content";
 
@@ -101,6 +109,13 @@ export function SubjectRuleSheet({
   const t = useTranslations("screening");
   const rootRef = useRef<HTMLDivElement>(null);
   const [choice, setChoice] = useState<TermChoice>(ctx.token ? "token" : "whole");
+  /**
+   * The editable subject match — prefilled with the FULL subject, so the untouched field IS
+   * "this exact subject" and every deletion widens the rule from there. State is initialized
+   * once per mount; the shell keys this sheet by message id, so a different title press gets a
+   * fresh prefill rather than the previous message's edit.
+   */
+  const [custom, setCustom] = useState<string>(ctx.subject);
   /** The destination awaiting its confirm press, or null. One question at a time. */
   const [pending, setPending] = useState<ScreeningDest | null>(null);
 
@@ -125,14 +140,27 @@ export function SubjectRuleSheet({
   // The choice decides BOTH halves — the term and the field it reads — in one place, so the
   // radio, the plan and the confirm sentence cannot disagree about what is being written.
   const field: TermField = choice === "content" ? "body" : "subject";
-  const term = (choice === "token" ? ctx.token : choice === "content" ? ctx.bodyToken : ctx.subject)
-    ?? ctx.subject;
+  const term = (choice === "token" ? ctx.token : choice === "content" ? ctx.bodyToken : custom)
+    ?? custom;
   // Computed through the SAME function the plan uses, so the number the sheet shows and the work that
   // happens cannot disagree — `SenderMenu`'s rule, applied here.
   const plan = planSubjectRule(ctx, term, pending ?? "reads", field);
   const tokenCount = ctx.token ? subjectMatchCount(ctx.messages, ctx.token) : 0;
-  const wholeCount = subjectMatchCount(ctx.messages, ctx.subject);
+  // LIVE, against the edited value — the same case-folded substring test the server applies, so
+  // the number tracks every keystroke and cannot disagree with the rule it measures.
+  const customTrimmed = custom.trim();
+  const customCount = subjectMatchCount(ctx.messages, custom);
   const contentCount = ctx.bodyToken ? bodyMatchCount(ctx.messages, ctx.bodyToken) : 0;
+  /**
+   * The two honest failure states of a typed fragment, said where the typing happens:
+   *  · it matches EVERY one of the sender's messages here — the rule stopped narrowing and is a
+   *    plain sender rule wearing a subject term (stated only when there is more than one message,
+   *    because "1 of 1" is not evidence of anything);
+   *  · it matches NONE — a fragment (or an emptied field) that names no mail.
+   */
+  const customAll = customTrimmed !== "" && ctx.messages.length > 1
+    && customCount === ctx.messages.length;
+  const customNone = customCount === 0;
 
   /**
    * THE VIEWPORT CLAMP — the sender sheet's sibling geometry. At ~600px this sheet
@@ -190,16 +218,53 @@ export function SubjectRuleSheet({
             <small>{copy("subjectTokenCount", `${tokenCount} of this sender's messages`)}</small>
           </button>
         ) : null}
-        <button
-          type="button"
+        {/* ── THE EDITABLE MATCH (owner request 2026-08-26) ────────────────────────────────
+            Prefilled with the FULL subject — untouched it is "this exact subject", trimmed it is
+            the manual fragment the detection could not offer. A div with the radio role rather
+            than a button, because a button swallows the text field inside it; focusing or typing
+            in the field selects the choice, exactly as pressing the row does. The count is the
+            live measurement; the two warnings below it are the honest failure states of a typed
+            fragment, stated before anything can be written. */}
+        <div
           role="radio"
           aria-checked={choice === "whole"}
-          className={choice === "whole" ? "on" : undefined}
+          className={choice === "whole" ? "sm-edit on" : "sm-edit"}
           onClick={() => { setChoice("whole"); setPending(null); }}
         >
-          {copy("subjectWhole", "This exact subject")}
-          <small>{copy("subjectWholeCount", `${wholeCount} of this sender's messages`)}</small>
-        </button>
+          <span className="sm-edit-lead">{copy("subjectEditLead", "Whose subject contains")}</span>
+          <input
+            type="text"
+            className="sm-edit-input"
+            value={custom}
+            aria-label={copy("subjectEditAria", "Part of the subject to match")}
+            spellCheck={false}
+            onFocus={() => { setChoice("whole"); setPending(null); }}
+            onChange={(e) => { setCustom(e.target.value); setChoice("whole"); setPending(null); }}
+          />
+          <small>
+            {/* Count-bearing, so the en.json form is ICU and gets the value — the plain shim
+                would return the template with its placeholder unfilled. */}
+            {t.has("subjectWholeCount")
+              ? t("subjectWholeCount", { count: customCount })
+              : `${customCount} of this sender's messages`}
+          </small>
+          {choice === "whole" && customAll ? (
+            <small className="sm-edit-warn">
+              {copy(
+                "subjectEditAll",
+                "Matches all of this sender's mail here — it no longer narrows. Use a longer part "
+                  + "of the subject, or file the whole sender by clicking the sender instead.",
+              )}
+            </small>
+          ) : null}
+          {choice === "whole" && customNone ? (
+            <small className="sm-edit-warn">
+              {customTrimmed === ""
+                ? copy("subjectEditEmpty", "Type part of the subject to match.")
+                : copy("subjectEditNone", "Matches none of this sender's mail here.")}
+            </small>
+          ) : null}
+        </div>
         {/* ── THE CONTENT TERM (mail 0052) ─────────────────────────────────────────────────
             The same discipline as the subject token — detected, never typed — against the message
             TEXT, for the sender whose subjects are all alike. Rendered only when something repeats
@@ -298,6 +363,11 @@ export function SubjectRuleSheet({
             <button
               type="button"
               className="go"
+              /* An EMPTIED match field names no mail and writes no rule (`planSubjectRule`
+                 answers it with zero mutations), so the press is withheld rather than confirmed
+                 into a no-op. `plan.already` stays pressable — its press is the honest "nothing
+                 will be written" the fine print above has already stated. */
+              disabled={!plan.already && plan.ruleMutations.length === 0}
               onClick={() => { setPending(null); onConfirm(plan.term, pending, plan.field); }}
             >
               {copy("subjectConfirmGo", `File these to ${DECISION_DONE_LABEL[pending]}`)}

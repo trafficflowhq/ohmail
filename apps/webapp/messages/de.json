@@ -2084,7 +2084,13 @@
     "auditSuggestion": "Von der KI vorgeschlagen: {rationale}",
     "ruleRetro": "· gilt für die {count, plural, one {1 Nachricht} other {# Nachrichten}}, die schon hier sind",
     "footWillRuleRetro": "Künftige Post von {sender} geht auch dorthin, und ohmail wendet die Regel auf die Post an, die schon in deinem Postfach liegt. Nachrichten, die du beantwortet, selbst einsortiert oder geparkt hast, bleiben unberührt. Was verschoben wird, bleibt verschoben, auch wenn du die Regel später aufhebst.",
-    "footWillRuleRetroDomain": "Künftige Post von allen bei {domain} geht auch dorthin, und ohmail wendet die Regel auf die Post an, die schon in deinem Postfach liegt. Nachrichten, die du beantwortet, selbst einsortiert oder geparkt hast, bleiben unberührt. Was verschoben wird, bleibt verschoben, auch wenn du die Regel später aufhebst."
+    "footWillRuleRetroDomain": "Künftige Post von allen bei {domain} geht auch dorthin, und ohmail wendet die Regel auf die Post an, die schon in deinem Postfach liegt. Nachrichten, die du beantwortet, selbst einsortiert oder geparkt hast, bleiben unberührt. Was verschoben wird, bleibt verschoben, auch wenn du die Regel später aufhebst.",
+    "subjectEditLead": "Deren Betreff enthält",
+    "subjectEditAria": "Teil des Betreffs, der passen soll",
+    "subjectWholeCount": "{count, plural, one {1 Nachricht dieses Absenders} other {# Nachrichten dieses Absenders}}",
+    "subjectEditAll": "Passt auf alle Nachrichten dieses Absenders hier — das grenzt nicht mehr ein. Nimm einen längeren Teil des Betreffs, oder lege gleich den ganzen Absender ab (Klick auf den Absender).",
+    "subjectEditNone": "Passt auf keine Nachricht dieses Absenders hier.",
+    "subjectEditEmpty": "Gib einen Teil des Betreffs ein."
   },
   "reply": {
     "to": "Antwort an {name}",

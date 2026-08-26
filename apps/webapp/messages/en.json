@@ -2084,7 +2084,13 @@
     "auditSuggestion": "Suggested by AI: {rationale}",
     "ruleRetro": "· applies to the {count, plural, one {1 message} other {# messages}} already here",
     "footWillRuleRetro": "Future mail from {sender} files there too, and ohmail applies the rule to the mail already in your mailbox. Messages you have replied to, filed yourself or set aside are left alone. Mail that moves stays moved if you later revoke the rule.",
-    "footWillRuleRetroDomain": "Future mail from anyone at {domain} files there too, and ohmail applies the rule to the mail already in your mailbox. Messages you have replied to, filed yourself or set aside are left alone. Mail that moves stays moved if you later revoke the rule."
+    "footWillRuleRetroDomain": "Future mail from anyone at {domain} files there too, and ohmail applies the rule to the mail already in your mailbox. Messages you have replied to, filed yourself or set aside are left alone. Mail that moves stays moved if you later revoke the rule.",
+    "subjectEditLead": "Whose subject contains",
+    "subjectEditAria": "Part of the subject to match",
+    "subjectWholeCount": "{count, plural, one {1 of this sender's messages} other {# of this sender's messages}}",
+    "subjectEditAll": "Matches all of this sender's mail here — it no longer narrows. Use a longer part of the subject, or file the whole sender by clicking the sender instead.",
+    "subjectEditNone": "Matches none of this sender's mail here.",
+    "subjectEditEmpty": "Type part of the subject to match."
   },
   "reply": {
     "to": "Reply to {name}",

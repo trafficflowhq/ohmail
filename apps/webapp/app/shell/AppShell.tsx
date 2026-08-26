@@ -6040,6 +6040,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
           empty one. */}
       {subjectRuleFor ? (
         <SubjectRuleSheet
+          /* Keyed by message: the sheet prefills its editable match from the subject ONCE per
+             mount, so a title press while another message's sheet is open must remount rather
+             than carry the previous message's edit into this one's field. */
+          key={subjectRule!.messageId}
           state={subjectRule!}
           ctx={subjectRuleFor}
           onConfirm={(term, dest, field) => confirmSubjectRule(subjectRule!.messageId, term, dest, field)}
