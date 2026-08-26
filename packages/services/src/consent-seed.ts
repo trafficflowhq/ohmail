@@ -876,8 +876,11 @@ export async function setMailboxFoldersEnabled(
  * The dial decides how long a sender may be quiet before the Screener stops asking about them: a
  * sender with no recent mail and no decision waits in History rather than the queue. It is PURE
  * VISIBILITY — it changes which UNDECIDED senders are SHOWN, never where any mail lives. Nothing
- * here writes a rule, a contact, a `folder_state` row or a `change_log` entry, and the pg test
- * proves all three by making a stamp of any of them turn the assertion red. Recompute is READ-TIME
+ * here writes a rule, a contact, a `folder_state` row or any MAIL-typed `change_log` entry, and
+ * the pg test proves all three by making a stamp of any of them turn the assertion red. The one
+ * change row it does append is the `settings` doorbell ({@link recordSettingsChange}) — a row
+ * ABOUT the dial, so every other signed-in surface re-asks its consent answer and re-partitions
+ * with the new window instead of holding the old one until reload. Recompute is READ-TIME
  * on both sides — `cutlineCounts` takes the window per request and the client re-partitions its own
  * mirror — so this writer moves no mail and arms no pass. It must NEVER travel through a writer that
  * can arm the tidy (`setScreeningPreference` stamps `ohbox_tidy_requested_at`); that is why the dial
