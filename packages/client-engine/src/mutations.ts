@@ -7,6 +7,7 @@ import {
   type EngineMessage,
   type EngineMutation,
   type Folder,
+  type FolderEntity,
   type MessageStateDTO,
   type RuleDTO,
   type ScreenerSenderDTO,
@@ -569,6 +570,74 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         }));
       effects.push({ type: "tag", id: tag.id, entity: null });
       return effects;
+    }
+
+    /**
+     * ═══ THE FOLDER VERBS — pending MARKERS, never pretended completion (types.ts carries the
+     * model). Each effect paints what the server will confirm in seconds via the wake channel;
+     * none of them re-spells a message's folder locally, because `FolderEntity.name` keeps the
+     * mailbox's truth until the worker lands the change and every join stays consistent. ═══
+     *
+     * CREATE — the full optimistic row under the client-local id (`tag_create`'s rule: the two
+     * ids never coexist). The owning address is borrowed from a sibling entity of the same
+     * mailbox — with one mailbox the rail shows no labels, and the server echo replaces the
+     * row in the same breath. An empty name yields no effects; the surface validates the rest
+     * (`folderNameError`) before dispatching.
+     */
+    case "folder_create": {
+      const name = m.name.trim();
+      if (name === "") return [];
+      const sibling = reader.list<FolderEntity>("folder").find((f) => f.mailboxId === m.mailboxId);
+      const folder: FolderEntity = {
+        id: m.folderId,
+        name,
+        mailboxId: m.mailboxId,
+        mailbox: sibling?.mailbox ?? "",
+        updatedAt: iso,
+        op: { kind: "create" },
+      };
+      return [{ type: "folder", id: folder.id, entity: folder }];
+    }
+
+    /** RENAME — the marker and the target; the name itself settles with the worker's swap. */
+    case "folder_rename": {
+      const folder = reader.get<FolderEntity>("folder", m.folderId);
+      const name = m.name.trim();
+      if (!folder || name === "" || name === folder.name) return [];
+      return [{
+        type: "folder", id: folder.id,
+        entity: { ...folder, op: { kind: "rename", to: name }, updatedAt: iso } satisfies FolderEntity,
+      }];
+    }
+
+    /**
+     * DELETE — the marker only. The row ghosts in the rail ("deleting…") and disappears when
+     * the worker's tombstones drain; hiding it instantly would claim a mailbox state that can
+     * still fail, and the failure's honest sentence needs a row to stand on.
+     */
+    case "folder_delete": {
+      const folder = reader.get<FolderEntity>("folder", m.folderId);
+      if (!folder) return [];
+      return [{
+        type: "folder", id: folder.id,
+        entity: { ...folder, op: { kind: "delete" }, updatedAt: iso } satisfies FolderEntity,
+      }];
+    }
+
+    /**
+     * DISMISS — only a FAILED command has one. A failed create tombstones (nothing on the
+     * server answers to the row); anything else sheds its marker and stands as the mailbox
+     * has it. No marker, no error ⇒ nothing to dismiss ⇒ rejected, which is right: the row
+     * settled under the cursor.
+     */
+    case "folder_op_dismiss": {
+      const folder = reader.get<FolderEntity>("folder", m.folderId);
+      if (!folder || !folder.op || folder.op.error === undefined) return [];
+      if (folder.op.kind === "create") {
+        return [{ type: "folder", id: folder.id, entity: null }];
+      }
+      const { op: _op, ...settled } = folder;
+      return [{ type: "folder", id: folder.id, entity: { ...settled, updatedAt: iso } satisfies FolderEntity }];
     }
 
     case "feed_mark_seen": {

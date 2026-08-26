@@ -5,6 +5,7 @@ import {
   UnsupportedMutationError,
   type EngineMessage,
   type EngineMutation,
+  type FolderEntity,
   type MessageBodyBatchWire,
   type MessageBodyWire,
   type OhmailView,
@@ -1087,6 +1088,82 @@ export class HttpAdapter implements EngineAdapter {
         if (res.status === 404) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
         return { changes: [], seq: this.noteSeq(res) };
+      }
+
+      /**
+       * ═══ THE FOLDER VERBS REACH THE WIRE (FOLDERS-SPEC.md stage 2) ═══════════════════════
+       *
+       * Every verb answers the subject's fresh DTO wearing its PENDING MARKER (`FolderDTO.op`)
+       * — the API records the command; the worker executes it seconds later and the settled
+       * entity arrives on the drain. The echo is returned as a change so the server's own
+       * pending row replaces the optimistic one (create swaps the client-local id for the
+       * server's, exactly `tag_create`'s two-ids-never-coexist rule).
+       */
+      case "folder_create": {
+        const res = await this.request("POST", "/folders", {
+          body: { mailboxId: m.mailboxId, name: m.name },
+          idempotencyKey: opts.idempotencyKey,
+        });
+        if (!res.ok) throw await this.rejectionOf(res);
+        const seq = this.noteSeq(res);
+        const dto = (await res.json()) as FolderEntity;
+        return {
+          changes: seq === null ? [] : [{ type: "folder", op: "create", id: dto.id, seq, updatedAt: dto.updatedAt ?? "", entity: dto }],
+          seq,
+        };
+      }
+
+      case "folder_rename": {
+        const res = await this.request("PATCH", `/folders/${encodeURIComponent(m.folderId)}`, {
+          body: { name: m.name },
+          idempotencyKey: opts.idempotencyKey,
+        });
+        if (!res.ok) throw await this.rejectionOf(res);
+        const seq = this.noteSeq(res);
+        const dto = (await res.json()) as FolderEntity;
+        return {
+          changes: seq === null ? [] : [{ type: "folder", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? "", entity: dto }],
+          seq,
+        };
+      }
+
+      /**
+       * DELETE answers 200 WITH the DTO — the entity persists, wearing `op: { kind: "delete" }`,
+       * until the worker's sweep finishes and the tombstones drain. A 404 is success, the
+       * `tag_delete` reading: the folder is gone, which is what the caller asked for.
+       */
+      case "folder_delete": {
+        const res = await this.request("DELETE", `/folders/${encodeURIComponent(m.folderId)}`, {
+          idempotencyKey: opts.idempotencyKey,
+        });
+        if (res.status === 404) return { changes: [], seq: null };
+        if (!res.ok) throw await this.rejectionOf(res);
+        const seq = this.noteSeq(res);
+        const dto = (await res.json()) as FolderEntity;
+        return {
+          changes: seq === null ? [] : [{ type: "folder", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? "", entity: dto }],
+          seq,
+        };
+      }
+
+      /**
+       * DISMISS a failed command. The answer is either the folder shed of its marker (rename/
+       * delete refusals) or `{ dismissed: true }` — a failed CREATE took its row with it, and
+       * the authoritative `folder` delete arrives on the drain the empty `changes` triggers.
+       */
+      case "folder_op_dismiss": {
+        const res = await this.request("DELETE", `/folders/${encodeURIComponent(m.folderId)}/op`, {
+          idempotencyKey: opts.idempotencyKey,
+        });
+        if (res.status === 404) return { changes: [], seq: null };
+        if (!res.ok) throw await this.rejectionOf(res);
+        const seq = this.noteSeq(res);
+        const body = (await res.json()) as FolderEntity | { dismissed: true };
+        if (!("id" in body)) return { changes: [], seq };
+        return {
+          changes: seq === null ? [] : [{ type: "folder", op: "update", id: body.id, seq, updatedAt: body.updatedAt ?? "", entity: body }],
+          seq,
+        };
       }
 
       /**

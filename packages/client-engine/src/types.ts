@@ -777,6 +777,15 @@ export interface FolderEntity {
   /** The owning mailbox's address — the rail's section label when 2+ mailboxes exist. */
   mailbox: string;
   updatedAt?: ISODateTime;
+  /**
+   * The user's in-flight COMMAND on this folder (stage 2: create / rename / delete), absent
+   * when settled. `name` stays the MAILBOX's truth throughout — a rename in flight keeps the
+   * old spelling here and carries the commanded target in `op.to`, so every join on `name`
+   * (the folder view, the unread counts, the tail verdict) stays consistent with the messages
+   * while the rail renders the pending state honestly. `op.error` is a closed catalogue code
+   * once the worker refused the command; it stands until the user dismisses it.
+   */
+  op?: { kind: "create" | "rename" | "delete"; to?: string; error?: string };
 }
 
 export type ScreenerSegment = "waiting" | "screened_out" | "spam";
@@ -1114,6 +1123,50 @@ export type EngineMutation =
    * folder, so deleting one moves no mail — the surface has to say that before it asks.
    */
   | { kind: "tag_delete"; tagId: string }
+  /**
+   * ═══ THE FOLDER VERBS (FOLDERS-SPEC.md stage 2) — REAL IMAP OPERATIONS, USER-COMMANDED ═══
+   *
+   * Unlike every tag verb above — rows in our database — these command writes in the user's
+   * OWN MAILBOX: an IMAP CREATE, RENAME, DELETE, executed by the worker under the organizer
+   * lease seconds after the API records the command (`folder_ops`). The optimism model is
+   * therefore PENDING MARKERS, never pretended completion: the effect paints the entity's
+   * `op` marker (and, for create, the full optimistic row), the adapter's echo replaces it
+   * with the server's own pending row, and the settled entity arrives on the change feed when
+   * the worker confirms — the wake channel makes that seconds. The mirror never claims a
+   * mailbox state that does not exist yet.
+   *
+   * CREATE — `folderId` is a client-local name for a row that does not exist yet (`tag_create`'s
+   * rule exactly; the two ids never coexist). `name` is the FULL canonical path — a subfolder
+   * create sends `parent/leaf`. The surface validates with `folderNameError` BEFORE dispatching,
+   * so the server's 400 is the race, not the normal path.
+   */
+  | { kind: "folder_create"; folderId: string; mailboxId: string; name: string }
+  /**
+   * RENAME — the new FULL canonical path (rename and move are one wire act: a move is a rename
+   * under a new parent; stage 2's UI ships rename-in-place and the vocabulary already carries
+   * both). The subtree, the contained messages' folder addresses, the folder-scoped state and
+   * the cursors all follow when the worker lands the swap — in ONE transaction beside the IMAP
+   * RENAME. Until then the entity wears `op: { kind: "rename", to }` and keeps its old name.
+   */
+  | { kind: "folder_rename"; folderId: string; name: string }
+  /**
+   * DELETE — the ratified ceremony: the folder's messages (the whole subtree, children first)
+   * move to the provider's native \Trash — the message-delete verb's own semantics, NEVER an
+   * expunge — and each emptied folder is then removed. The surface asks BEFORE the act with the
+   * server-truth numbers (`GET /folders/:id/summary` — "N messages across M folders move to
+   * Trash"), the same confirm-before-act ceremony the message Delete ships, and for the same
+   * reason: there is no un-delete on the wire. The entity wears `op: { kind: "delete" }` until
+   * the tombstones arrive.
+   */
+  | { kind: "folder_delete"; folderId: string }
+  /**
+   * DISMISS a FAILED folder command — the refusal was read. A failed CREATE takes its
+   * never-created row with it (nothing on the server answers to it); a failed rename/delete
+   * leaves the folder exactly as the mailbox has it. Pending commands cannot be dismissed —
+   * the worker may be mid-execution, and a cancel racing an IMAP write would leave the marker
+   * lying in whichever direction lost.
+   */
+  | { kind: "folder_op_dismiss"; folderId: string }
   /**
    * A READING STREAM'S SEEN-STATE — the \Seen sweep and the waterline, one verb for both piles.
    *
