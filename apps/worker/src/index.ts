@@ -84,7 +84,7 @@ import {
   markMailboxFailed, markMailboxConnected, markMailboxStoodDown, clearOrganizerStandDown,
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, mailboxErrorDetail,
-  stampMailboxSync, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
+  stampMailboxSyncNow, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
   accountsOf, loadServedAccounts, accountInShard,
   type EnabledMailbox, type MailboxErrorPhase, type MailboxSyncBlockReason,
 } from "./mailboxes.js";
@@ -2576,6 +2576,13 @@ export async function startWorkerWithLock(
     /** One sync pass over the rotation, then the per-account DB passes. Never throws. */
     async function cycle(): Promise<void> {
       if (stopped) return;
+      /**
+       * When this pass began — the batch stamp below the loop backdates to it, because a
+       * `last_sync_at` written at pass END claims scans the pass performed MINUTES earlier and
+       * would settle a pull that landed in between (see `stampMailboxSyncNow`'s header). A
+       * host-measured elapsed, not a wall-clock: durations carry no skew.
+       */
+      const passStartedMs = Date.now();
       // ══════════════════════════════════════════════════════════════════════════════════════
       //  A MAILBOX THAT HAS NEVER SYNCED GOES TO THE FRONT, NOT THE BACK
       // ══════════════════════════════════════════════════════════════════════════════════════
@@ -2699,6 +2706,37 @@ export async function startWorkerWithLock(
           pending.unshift(rt);
         }
       }
+      /**
+       * Re-apply the PLANNING order to what is left of `pending`, so a wake that lands MID-PASS
+       * for a mailbox that has NOT had its turn yet moves it forward instead of leaving it at its
+       * snapshot position.
+       *
+       * `admitWoken` above handles the already-served half of the wake story; this is the other
+       * half, and it was the measured one: the pass plans its order once at the top, so a
+       * doorbell that rang two seconds into a seven-minute pass for the last mailbox in the
+       * snapshot bought nothing at all — probe 2 of the 2026-08-26 measurement waited 478 s with
+       * `wokenAt` set the whole time, because its position was fixed before its wake existed.
+       *
+       * A STABLE re-partition into the exact three groups the planner used — first-syncers
+       * (their internal order untouched), then woken by oldest wake, then the rest in their
+       * existing order — so this cannot invert anything the planning comment promises. It moves
+       * mailboxes only BETWEEN dispatcher turns (never a runtime a lane holds — those are not in
+       * `pending`), consumes nothing, and admission still applies every rule (`servedIds`,
+       * account exclusivity, the heavy cap) at the moment a lane is filled. Runs on every
+       * dispatcher turn; the array is at most the shard's mailbox count, so the sort is noise.
+       */
+      function reorderPending(): void {
+        const rank = (rt: MailboxRuntime): number =>
+          rt.lastSuccessAt === null ? 0 : rt.wokenAt !== null ? 1 : 2;
+        // `Array.prototype.sort` is stable per spec, so equal-rank entries keep their order.
+        pending.sort((a, b) => {
+          const ra = rank(a);
+          const rb = rank(b);
+          if (ra !== rb) return ra - rb;
+          if (ra === 1) return (a.wokenAt ?? 0) - (b.wokenAt ?? 0);
+          return 0;
+        });
+      }
       let succeeded = 0;
       /** The ids to stamp `last_sync_at` on — see `stampMailboxSync` for why it must exist. */
       const synced: string[] = [];
@@ -2782,8 +2820,19 @@ export async function startWorkerWithLock(
         return true;
       }
 
-      /** One mailbox's turn. NEVER throws and never rejects — every arm is handled inside. */
-      async function visitMailbox(rt: MailboxRuntime): Promise<void> {
+      /**
+       * One mailbox's turn. NEVER throws and never rejects — every arm is handled inside.
+       *
+       * `woken` says this visit was admitted on a wake (IDLE fired, or the sync-kick scan named
+       * it) — captured at admission, because admission is also what SPENDS `rt.wokenAt`. It buys
+       * one thing: an EAGER `last_sync_at` stamp on success, beside the first-success stamp and
+       * for a client-facing reason rather than an alerting one. The pull affordance's spinner
+       * settles on "every mailbox's `lastSyncAt` moved past my request" (`PullNewMail.tsx`,
+       * `POST /sync/pull`), and the batched stamp at the end of the pass can be MINUTES behind
+       * the visit that actually served the wake — an honest scan reported dishonestly late. One
+       * UPDATE per woken visit, i.e. per doorbell ring or per real arrival, never per rotation.
+       */
+      async function visitMailbox(rt: MailboxRuntime, woken = false): Promise<void> {
         try {
           // ── THE LEASE IS RE-VERIFIED EVERY CYCLE, BEFORE THE PIPELINE RUNS ──────────────
           //
@@ -2815,6 +2864,8 @@ export async function startWorkerWithLock(
           // The classifier is resolved HERE, once per cycle, from the circuit — not stored on
           // `rt.deps`. That is what lets an outage degrade this mailbox to rules-only between
           // one cycle and the next without touching `sync.ts`, `pipeline.ts` or `SyncDeps`.
+          /** When THIS visit's scan began — the eager stamp backdates to it (same rule as the pass). */
+          const visitStartedMs = Date.now();
           const { hasBacklog, owesFiling } = await runSyncCycle({
             ...rt.deps, ...aiFor(rt.mailboxId, rt.accountId), ...(await screeningFor(rt.accountId)),
             // The cap is refreshed per cycle like the screening posture beside it, so an
@@ -2908,24 +2959,33 @@ export async function startWorkerWithLock(
           // write fails, the batched one covers the same row in the same pass, which is what lets
           // `firstSuccess` be spent once without leaving an orphan.
           //
+          // `woken` joins `firstSuccess` here (2026-08-26): a visit admitted on a wake stamps
+          // eagerly too, because the pull affordance settles its spinner on `lastSyncAt` moving
+          // past its request instant, and the batched stamp at pass end can be minutes behind the
+          // visit that answered the wake. Same double-write posture, one UPDATE per doorbell ring
+          // or real arrival — never one per rotation.
+          //
           // THE `catch` IS LOAD-BEARING AND MUST NEVER RETHROW OR `continue`. Uncaught, a failed
           // bookkeeping UPDATE would fall into this loop's `catch (err)` arm, miss the
           // `LeaseUnavailableError`/`ClassifierFaultError` exemptions, increment `rt.failures` and
           // walk a customer's row toward `status='error'` and a detach — a mailbox marked broken
           // because a freshness column could not be written.
-          if (firstSuccess) {
+          if (firstSuccess || woken) {
             try {
+              // The DB-clock variant, NOT `new Date()`: this stamp is the pull affordance's
+              // settle signal and is compared against a `sync_requested_at` the API stamped
+              // with SQL `now()` — one clock or the comparison lies (see `stampMailboxSyncNow`).
               await asDatabaseFault("cycle.stampMailboxSync",
-                () => stampMailboxSync(db, [rt.mailboxId], new Date()));
+                () => stampMailboxSyncNow(db, [rt.mailboxId], Date.now() - visitStartedMs));
             } catch (err) {
               // Swallowed for the MAILBOX, announced for the SHARD — see
               // `noteIfSharedDatabaseFault`. Nothing below changes.
               noteIfSharedDatabaseFault(err, rt);
               log.error("mailbox_sync_stamp_failed", {
                 mailboxId: rt.mailboxId, accountId: rt.accountId, count: 1, err,
-                reason: "this mailbox's FIRST cycle completed but last_sync_at could not be " +
-                  "written — the batched write at the end of this pass covers the same row, and " +
-                  "the mailbox keeps serving either way",
+                reason: "this mailbox's first-or-woken cycle completed but last_sync_at could " +
+                  "not be written — the batched write at the end of this pass covers the same " +
+                  "row, and the mailbox keeps serving either way",
               });
             }
           }
@@ -3012,6 +3072,32 @@ export async function startWorkerWithLock(
               mailboxId: rt.mailboxId, accountId: rt.accountId, err,
               reason: "no marker was written, so the next cycle retries; every message keeps the " +
                 "body it already had and nothing about this mailbox's syncing is affected",
+            });
+          }
+
+          // ── PUT THE CONNECTION BACK ON WATCH — THE LAST ACT OF EVERY SUCCESSFUL VISIT ────
+          //
+          // Everything above re-SELECTed other folders on this same connection, and imapflow
+          // idles on whichever mailbox is CURRENTLY selected — so without this line the IDLE
+          // established at attach watches the last folder the visit touched, an INBOX arrival
+          // emits no `exists`, and the push channel is dead from the first cycle onward while
+          // looking healthy. That was the measured production state on 2026-08-26: p50 194 s /
+          // p90 431 s from arrival to mirror across 48 h, entirely poll-driven. One SELECT per
+          // visit is the whole cost, and only the success path pays it — a failed visit is
+          // connection trouble, and the detach/re-attach that follows re-establishes the watch
+          // from scratch.
+          //
+          // Swallowed like the two passes above it and for the same reason: a re-arm that could
+          // not SELECT is the connection dying, which the adapter's own `close` listener turns
+          // into a detach — it is not evidence against the mailbox and must not walk it toward
+          // `status='error'` over a wake channel.
+          try {
+            await rt.adapter.rearmWatch?.();
+          } catch (err) {
+            log.warn("watch_rearm_failed", {
+              mailboxId: rt.mailboxId, accountId: rt.accountId, err,
+              reason: "the post-visit INBOX re-select failed — the connection is likely dying " +
+                "and its own close listener detaches; until then this mailbox is poll-only",
             });
           }
         } catch (err) {
@@ -3233,6 +3319,9 @@ export async function startWorkerWithLock(
         admitNewFirstSyncers();
         // …and whoever rang the doorbell since their turn gets another one.
         admitWoken();
+        // …and whoever rang it BEFORE their turn stops waiting at a position planned before the
+        // wake existed — the mid-pass half of the wake ordering (see `reorderPending`).
+        reorderPending();
 
         // Fill every free lane with the first ADMISSIBLE runtime, not merely the first one: a
         // mailbox held back by a busy account or by the heavy cap must not block the mailboxes
@@ -3265,7 +3354,10 @@ export async function startWorkerWithLock(
           if (runtimes.get(rt.mailboxId) !== rt) continue;
           // THE WAKE IS SPENT ON ADMISSION, not on completion — see `MailboxRuntime.wokenAt`. A
           // signal that arrives during this very visit is about mail that landed after
-          // `changesSince` answered, and must survive into the next pass.
+          // `changesSince` answered, and must survive into the next pass. Whether this WAS a
+          // woken admission is captured first — the visit stamps `last_sync_at` eagerly for
+          // exactly the woken ones (see `visitMailbox`).
+          const wokenVisit = rt.wokenAt !== null;
           rt.wokenAt = null;
           const heavy = rt.owesBacklog;
           busyAccounts.add(rt.accountId);
@@ -3276,7 +3368,7 @@ export async function startWorkerWithLock(
           // maps it re-reads on the next turn.
           const lane = (async () => {
             try {
-              await visitMailbox(rt);
+              await visitMailbox(rt, wokenVisit);
             } finally {
               inFlight.delete(rt.mailboxId);
               busyAccounts.delete(rt.accountId);
@@ -3332,7 +3424,8 @@ export async function startWorkerWithLock(
       // the quarantine pass: a mailbox that synced this cycle earned its stamp regardless of
       // what happens to a different one below.
       try {
-        await asDatabaseFault("cycle.stampMailboxSync", () => stampMailboxSync(db, synced, new Date()));
+        await asDatabaseFault("cycle.stampMailboxSync",
+          () => stampMailboxSyncNow(db, synced, Date.now() - passStartedMs));
       } catch (err) {
         noteIfSharedDatabaseFault(err);
         log.error("mailbox_sync_stamp_failed", {
@@ -4437,9 +4530,17 @@ export async function startWorkerWithLock(
     // no adapter operation — and its `kick` REQUESTS a cycle rather than running one, so the actual
     // sync still goes through the single queue. Scoped to `runtimes` so it only ever hastens a
     // mailbox this instance organizes.
+    //
+    // SINGLE-FLIGHT, because `setInterval` does not wait for its callback: a database that takes
+    // longer than 3 s to answer stacks a new pass on top of the slow one every tick — each holding
+    // a pool connection, all racing the same compare-and-clear — which turns one slow read into
+    // pool pressure at exactly the moment the database is struggling. A tick that finds the
+    // previous pass still running skips; the stamp it would have seen is still there for the next.
+    let syncKickInFlight = false;
     syncKickTimer = setInterval(() => {
       void (async () => {
-        if (stopped) return;
+        if (stopped || syncKickInFlight) return;
+        syncKickInFlight = true;
         try {
           await syncKickPass({
             db: db as unknown as Tx,
@@ -4454,6 +4555,8 @@ export async function startWorkerWithLock(
           });
         } catch (err) {
           log.warn("sync_kick_failed", { err });
+        } finally {
+          syncKickInFlight = false;
         }
       })();
     }, SYNC_KICK_EVERY_MS);

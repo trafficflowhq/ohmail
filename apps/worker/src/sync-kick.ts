@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { mailboxes, type Tx } from "@trafficflow/db";
 import { silentLogger, type Logger } from "@trafficflow/core";
 
@@ -45,6 +45,21 @@ import { silentLogger, type Logger } from "@trafficflow/core";
  * That is the whole of its convergence: a stamped mailbox is either being served now or on the next
  * ~3 s pass, and the 60 s poll is the floor beneath both.
  *
+ * ── AND WHY "THE EXACT VALUE" IS COMPARED AS TEXT, NEVER THROUGH A `Date` ───────────────────
+ *
+ * `timestamptz` carries MICROSECONDS; a JavaScript `Date` carries milliseconds. Reading the
+ * column into a `Date` and comparing the column to that `Date` therefore matches only stamps
+ * whose microsecond part happens to be zero — a stamp written by a JS producer round-trips, and
+ * a stamp written by SQL `now()` NEVER matches. The failure is not "the clear misses once": the
+ * stamp is re-observed on every 3-second pass, so one SQL-written stamp turns into a kick every
+ * 3 seconds for ever — permanent cycle pressure from one row, measured live on 2026-08-26 (a
+ * `now()` stamp stayed set for 10+ minutes of passes; the same stamp written with millisecond
+ * precision cleared in 2.0 s). So the pass reads `sync_requested_at::text` and clears
+ * `WHERE sync_requested_at = <that text>::timestamptz` — the comparison token is server-derived
+ * and exact at the server's own precision, whoever wrote the stamp. The pg test writes one stamp
+ * with `clock_timestamp()` (six fractional digits) precisely because a JS-seeded test cannot see
+ * this.
+ *
  * ── PURE AND HERMETIC ───────────────────────────────────────────────────────────────────────
  *
  * It takes the db handle, the set of mailbox ids this process serves, and the `kick` that
@@ -86,16 +101,21 @@ export async function syncKickPass(deps: SyncKickDeps): Promise<SyncKickResult> 
 
   // Only mailboxes THIS process serves AND that are stamped. Scoping to the served set is what
   // keeps the pass from reaching into a mailbox another worker (or a desktop install) organizes —
-  // the same principle the roster pass follows.
+  // the same principle the roster pass follows. The stamp is read AS TEXT — see the header: a
+  // `Date` truncates the server's microseconds and the compare-and-clear below must name the
+  // stored value exactly.
   const rows = await deps.db
-    .select({ id: mailboxes.id, requestedAt: mailboxes.syncRequestedAt })
+    .select({
+      id: mailboxes.id,
+      requestedAtText: sql<string | null>`${mailboxes.syncRequestedAt}::text`,
+    })
     .from(mailboxes)
     .where(and(inArray(mailboxes.id, served), isNotNull(mailboxes.syncRequestedAt)));
 
   const kicked: string[] = [];
   let cleared = 0;
   for (const row of rows) {
-    if (!row.requestedAt) continue; // isNotNull already guarantees this; narrows the type.
+    if (!row.requestedAtText) continue; // isNotNull already guarantees this; narrows the type.
     // Kick first: the mailbox owed a reconcile the moment we read the stamp, and a kick is only a
     // request for a cycle, so it is safe to issue before the clear even if the clear then misses.
     try {
@@ -105,12 +125,15 @@ export async function syncKickPass(deps: SyncKickDeps): Promise<SyncKickResult> 
       log.warn("sync_kick_trigger_failed", { mailboxId: row.id, err });
       continue; // do NOT clear a stamp we failed to act on.
     }
-    // Compare-and-clear on the observed instant. A stamp that changed since the read (a second
-    // send) does not match and is preserved for the next pass.
+    // Compare-and-clear on the observed instant, at the SERVER's precision. A stamp that changed
+    // since the read (a second send) does not match and is preserved for the next pass.
     const done = await deps.db
       .update(mailboxes)
       .set({ syncRequestedAt: null })
-      .where(and(eq(mailboxes.id, row.id), eq(mailboxes.syncRequestedAt, row.requestedAt)))
+      .where(and(
+        eq(mailboxes.id, row.id),
+        sql`${mailboxes.syncRequestedAt} = ${row.requestedAtText}::timestamptz`,
+      ))
       .returning({ id: mailboxes.id });
     if (done.length > 0) cleared += 1;
   }

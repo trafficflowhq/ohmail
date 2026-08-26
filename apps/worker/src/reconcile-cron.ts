@@ -7,7 +7,7 @@ import { instanceIdFrom, selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
 import {
   accountInShard, clearOrganizerStandDown, loadMailboxById, makeSyncWriteFence,
-  markMailboxStoodDown, stampMailboxSync, type LeaderFence,
+  markMailboxStoodDown, stampMailboxSyncNow, type LeaderFence,
 } from "./mailboxes.js";
 import { LeaderFencedError, runSyncCycle, type SyncDeps } from "./sync.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
@@ -185,7 +185,7 @@ export async function runReconcileCron(
       shardIndex, instanceId: fence.instanceId, shards: selection.shards ?? 1,
       // The backstop's duty is exactly its one configured mailbox and that mailbox's account, so
       // these are true about THIS process rather than about the shard's full roster. `lastCycleAt`
-      // is null because nothing has synced yet — it is stamped by `stampMailboxSync` below, on the
+      // is null because nothing has synced yet — it is stamped by `stampMailboxSyncNow` below, on the
       // mailbox row, which is what `sync_lag` actually reads.
       mailboxes: 1, expected: 1, accounts: 1, quarantined: 0, degraded: false,
       lastCycleAt: null, startedAt: new Date(),
@@ -330,7 +330,12 @@ export async function runReconcileCron(
     // while mail is demonstrably flowing. Best-effort for the same reason as the main loop's:
     // the mail HAS synced, and a failed bookkeeping write must not turn that into an error.
     try {
-      await stampMailboxSync(db, [mailboxId], new Date());
+      // The DB-clock variant — this stamp participates in the same `last_sync_at` the pull
+      // affordance settles on, and a host-clock `new Date()` here was the one writer left that
+      // could plant a future value for `stampMailboxSyncNow`'s GREATEST to preserve (2026-08-26
+      // review, round 4). Backdate 0: the backstop's per-mailbox pass is a single bounded
+      // reconcile, not a rotation.
+      await stampMailboxSyncNow(db, [mailboxId]);
     } catch (err) {
       log.error(cronEvent("reconcile", "stamp_failed"), { mailboxId, err });
     }

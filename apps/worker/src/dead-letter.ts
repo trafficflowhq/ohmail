@@ -420,12 +420,28 @@ export const ESCALATE_AFTER_ATTEMPTS = 3;
 export function nextAttemptAfter(
   code: MessageFailureCode, attempts: number, now: Date,
 ): Date | null {
-  if (code === "mime_too_large" || code === "mime_unparseable" || code === "data_exception") {
+  if ((DETERMINISTIC_MESSAGE_FAILURE_CODES as readonly string[]).includes(code)) {
     return null;
   }
   const hours = Math.min(24, 2 ** Math.max(0, attempts - 1));
   return new Date(now.getTime() + hours * 60 * 60 * 1000);
 }
+
+/**
+ * The codes whose failure is a function of the MESSAGE BYTES — retrying them on a clock re-runs
+ * the identical computation on identical input, so their `next_attempt_at` is NULL and their next
+ * look is a NEW BUILD (the `attempted_version` arm of `claimMessageFailures`' due-predicate).
+ *
+ * Exported because the CLAIM needs the same list: `claimMessageFailures` stamps the next clock
+ * instant in the same statement that claims the row, and for years it stamped the generic hourly
+ * schedule onto every row regardless of code — so a `mime_too_large` message was size-probed once
+ * an hour for ever (a production row reached 297 attempts; its comment promised "null for the
+ * deterministic codes" while the code passed the hourly date unconditionally). The repo method
+ * cannot import this app's types, so the caller passes this list and this is its one definition.
+ */
+export const DETERMINISTIC_MESSAGE_FAILURE_CODES = [
+  "mime_too_large", "mime_unparseable", "data_exception",
+] as const satisfies readonly MessageFailureCode[];
 
 const keyOf = (folder: string, uidValidity: string, uid: number): string =>
   `${folder}${uidValidity}${uid}`;

@@ -1359,6 +1359,71 @@ export async function stampMailboxSync(
 }
 
 /**
+ * {@link stampMailboxSync} at the DATABASE's own clock — `last_sync_at = now() - <elapsed>`.
+ *
+ * The cycle's call sites use this rather than passing `new Date()`, because the pull
+ * affordance's honest settle compares this column against `sync_requested_at`, which
+ * `MailboxService.requestPull` stamps with SQL `now()`. Two columns compared with each other
+ * must come off ONE clock; a worker-host `Date` put the worker's wall clock into that
+ * comparison, where any skew either settles a spinner before the scan it claims to report or
+ * never settles it at all (2026-08-26 review, round 1 — and the very machine that ran the
+ * measurement has a clock minutes off, which is all the argument this needs).
+ *
+ * ── `backdateMs` — THE STAMP CLAIMS THE SCAN'S START, NEVER ITS FINISH ─────────────────────
+ *
+ * Round 2 of the same review: a stamp written at COMPLETION claims an instant later than the
+ * IMAP read it reports, so a pull request landing inside that gap — after the read, before the
+ * bookkeeping — is "settled" by a scan that could not have seen its mail. The caller therefore
+ * passes how long ago its scan STARTED (per-visit elapsed for the eager stamp, per-pass elapsed
+ * for the batch), and the write is `now() - elapsed`: still the database's clock for the
+ * instant, with only a host-measured DURATION subtracted — a duration carries no wall-clock
+ * skew. Understating freshness is the safe direction on both consumers: a settle waits for a
+ * scan that genuinely began after its request, and the lag alert's 15-minute threshold dwarfs
+ * a pass length.
+ *
+ * The Date-taking form above survives for callers that mean a SPECIFIC instant — the alert
+ * tests seed backdated stamps through it.
+ */
+export async function stampMailboxSyncNow(
+  db: WorkerDb, mailboxIds: string[], backdateMs = 0,
+): Promise<void> {
+  if (mailboxIds.length === 0) return;
+  const behind = Math.max(0, Math.round(backdateMs));
+  // GREATEST: this writer only ever RAISES the column. The pass-end batch backdates to the
+  // PASS's start, and a woken visit inside that pass has already stamped its own, later,
+  // visit-start instant — an unconditional write would overwrite the newer claim with the
+  // older one, un-settling a pull the eager stamp had just honestly settled (2026-08-26
+  // review, round 3). GREATEST ignores a NULL column, so a first stamp still lands.
+  //
+  // …AND A FUTURE EXISTING VALUE IS REPLACED BY THIS WRITE'S OWN CANDIDATE, because "only ever
+  // raises" must not immortalize a lie: a host-clock writer — an older deployment, or
+  // `stampMailboxSync`'s Date form — can have planted a stamp in the DATABASE's future, and a
+  // bare GREATEST would preserve it against every honest write until the wall clock caught up,
+  // settling pulls with no scan behind them and suppressing the lag alert for the whole skew
+  // (round 4). Clamping it to `now()` instead (round 4's first cut) was still a lie with a
+  // smaller skew: `now()` claims a scan that COMPLETED this instant, which can post-date a pull
+  // baseline this write's scan never covered (round 5). The only truthful claim available for a
+  // corrupted row is this write's own scan start, so that is what replaces it. A NULL column
+  // falls to the ordinary arm, where GREATEST ignores it and the first stamp lands.
+  //
+  // `behind` is inlined via sql.raw, NOT bound: drizzle maps a bound parameter inside a
+  // `set({ lastSyncAt: … })` fragment through the COLUMN's own mapper on some query paths, and
+  // PgTimestamp calls `.toISOString()` on what is a plain number — a crash the best-effort
+  // catches would swallow into a silently-never-stamped mailbox. The value is
+  // `Math.max(0, Math.round(...))` of a host-measured duration, so the inline is a bare integer
+  // by construction.
+  const candidate = sql`now() - interval '1 millisecond' * ${sql.raw(String(behind))}`;
+  await db.update(mailboxes)
+    .set({
+      lastSyncAt: sql`case
+        when ${mailboxes.lastSyncAt} > now() then ${candidate}
+        else greatest(${mailboxes.lastSyncAt}, ${candidate})
+      end`,
+    })
+    .where(inArray(mailboxes.id, mailboxIds));
+}
+
+/**
  * Stamp `initial_import_completed_at` the FIRST time this mailbox's import has genuinely drained
  * (mail migration 0038) — the per-mailbox floor the client reads as `IS NULL ⇒ still importing`.
  *

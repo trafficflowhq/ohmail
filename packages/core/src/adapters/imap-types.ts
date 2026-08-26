@@ -876,6 +876,25 @@ export interface ChangeBatch {
    * Optional so every existing fake adapter keeps compiling; absent ⇒ nothing was withheld.
    */
   unanswered?: ReadonlyArray<{ folder: string; uidValidity: string; uid: number }>;
+  /**
+   * UIDs whose RFC822.SIZE already exceeds the hard MIME ceiling (`MAX_RAW_MESSAGE_BYTES`), so
+   * their body was DELIBERATELY NEVER FETCHED — and the caller owes each one a durable
+   * `mime_too_large` row BEFORE it writes the folder cursor, exactly as it does for
+   * {@link unanswered}.
+   *
+   * The anti-stall rule in `fetchCapped` admits the first candidate past the BATCH byte budget so
+   * one large mail cannot wedge the drain — but a message past the MIME ceiling is refused by
+   * `normalizeMime` deterministically AFTER the download, so admitting it buys a full-source
+   * transfer (measured shape: 100+ MiB into one Buffer) whose only possible outcome was already
+   * known from the size the metadata fetch had in hand. That transfer can monopolize the
+   * connection or take the process past its memory budget before the failure ledger ever hears
+   * about the message. So the ceiling is enforced from RFC822.SIZE, pre-fetch, and the outcome is
+   * the SAME durable row the post-download rejection would have written — the targeted retry then
+   * probes it by size once per deployed build, never re-downloading it.
+   *
+   * Optional so every existing fake adapter keeps compiling; absent ⇒ nothing was refused on size.
+   */
+  oversize?: ReadonlyArray<{ folder: string; uidValidity: string; uid: number; size: number }>;
 }
 
 export interface OutboundMessage {
@@ -1139,6 +1158,18 @@ export interface MailboxAdapter {
    */
   findSpecialFolders?(): Promise<SpecialFolders>;
   watch(onSignal: () => void): Promise<() => Promise<void>>;
+  /**
+   * Re-establish what {@link watch} set up — INBOX selected, IDLE running — after other
+   * operations on the same connection moved the selection elsewhere. The worker calls this at
+   * the end of every cycle visit; without it the IDLE sits on whichever folder the visit's last
+   * `SELECT` landed on and an INBOX arrival emits nothing, which is a dead push channel that
+   * looks exactly like a slow one (measured: p50 194 s arrival→mirror while "watching").
+   *
+   * OPTIONAL on the interface, on {@link scanSentRecipients}' rule: every existing fake adapter
+   * keeps compiling, and a backend without it simply relies on its own `watch` semantics.
+   * A no-op before `watch` and after its unwatch.
+   */
+  rearmWatch?(): Promise<void>;
   send(msg: OutboundMessage): Promise<SendResult>;
   /**
    * Fetch a single MIME part's BLOB on-demand. Bytes are NEVER persisted.

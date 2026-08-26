@@ -12,7 +12,7 @@ import type { WorkerRepo, DrizzleRepo, PendingFolderState } from "@trafficflow/c
 import { ClassifierFaultError } from "./classifier-fault.js";
 import {
   DeadLetterLedger, classifyIngestFault, nextAttemptAfter,
-  MAX_MESSAGE_RETRIES_PER_CYCLE,
+  DETERMINISTIC_MESSAGE_FAILURE_CODES, MAX_MESSAGE_RETRIES_PER_CYCLE,
 } from "./dead-letter.js";
 import { KnownSetCache, watchKnownSet } from "./known-set.js";
 // `./build-version.js` and NOT `./config.js`, which re-exports the same symbol: `config.ts` imports
@@ -793,6 +793,42 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     }
   }
 
+  // ── UIDS REFUSED ON SIZE, PRE-FETCH — THE SAME OBLIGATION, WITH THE HONEST CODE ─────────────
+  //
+  // `batch.oversize` is the adapter declining to download a body whose RFC822.SIZE already
+  // exceeds the hard MIME ceiling (see `ChangeBatch.oversize` for why the download would have
+  // been pure waste and a memory hazard). The row is exactly the one `normalizeMime`'s
+  // post-download rejection would have produced — `mime_too_large`, deterministic, so
+  // `next_attempt_at` is NULL and its next look is a new build's size probe, never a later hour —
+  // and it MUST land before the cursor writes below, for the unanswered loop's reason: the cursor
+  // advances over the UID, and only this row keeps it enumerable (the targeted retry) at all.
+  for (const site of batch.oversize ?? []) {
+    try {
+      const attempts = await fencedWrite(deps, (r) => r.recordMessageFailure(mailboxId, {
+        accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+        code: "mime_too_large", version,
+        nextAttemptAt: nextAttemptAfter("mime_too_large", 1, new Date()),
+      }));
+      log?.warn("sync_uid_oversize_skipped", {
+        mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+        size: site.size, attempts,
+        reason: "RFC822.SIZE exceeds the hard MIME ceiling, so the body was never fetched — " +
+          "recorded as mime_too_large so the cursor may cross it; a build with a bigger ceiling " +
+          "recovers it via the targeted retry",
+      });
+    } catch (writeErr) {
+      rethrowFenced(writeErr);
+      deferred.add(site.folder);
+      if (firstDeferredError === null) firstDeferredError = writeErr;
+      log?.error("sync_uid_oversize_unrecordable", {
+        mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+        err: writeErr,
+        reason: "the oversize refusal could not be recorded — the folder's cursor is held rather " +
+          "than advanced past mail nothing would ever enumerate again",
+      });
+    }
+  }
+
   // AFTER the commit loop, deliberately. The adapter holds a truncated folder's cursor at its
   // previous value, so this writes the ADVANCED cursor only for folders that genuinely
   // drained; advancing mid-loop would put `highestModseq` past mail this process has not
@@ -884,8 +920,13 @@ async function retryFailedMessages(
       version, now, limit: MAX_MESSAGE_RETRIES_PER_CYCLE,
       // The NEXT clock instant is written by the claim, so a process that dies mid-fetch does not
       // leave the row due on every subsequent cycle. `null` for the deterministic codes: their next
-      // look is a new build, not a later hour.
+      // look is a new build, not a later hour — and the claim itself enforces that per code via
+      // `holdScheduleForCodes`. This sentence used to be a promise the call did not keep: the
+      // hourly instant below was stamped onto EVERY claimed row regardless of code, so a
+      // `mime_too_large` message was size-probed once an hour for ever (a production row reached
+      // 297 attempts before the 2026-08-26 review caught it).
       nextAttemptAt: nextAttemptAfter("unclassified", 1, now),
+      holdScheduleForCodes: DETERMINISTIC_MESSAGE_FAILURE_CODES,
     }));
   } catch (err) {
     rethrowFenced(err);

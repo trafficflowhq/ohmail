@@ -43,6 +43,9 @@ import {
   type LeaseImapClient, type LeaseIo, type LeasePeekIo,
 } from "./organizer-lease.js";
 import { makeProfileIo, type ProfileImapClient, type ProfileIo } from "./organizer-profile.js";
+// The HARD per-message ceiling `normalizeMime` enforces after a download — imported so
+// `fetchCapped` can enforce the same number BEFORE the download, from RFC822.SIZE alone.
+import { MAX_RAW_MESSAGE_BYTES } from "../mime.js";
 
 // Re-export the adapter types + folder constants so consumers can import them from this entrypoint.
 export * from "./imap-types.js";
@@ -839,6 +842,23 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private passiveOverflow: string[] = [];
   /** `changesSince` passes since the folder inventory was LISTed. See `PASSIVE_RELIST_CYCLES`. */
   private passiveCycle = 0;
+
+  /**
+   * Whether {@link watch} has registered a wake callback that is still wanted. Read by
+   * {@link rearmWatch} so a re-arm after unwatch (or before any watch) is a no-op instead of a
+   * pointless SELECT on a connection nobody is listening to.
+   */
+  private watchArmed = false;
+
+  /** The callback {@link watch} registered — {@link rearmWatch} rings it for the blind-window catch-up. */
+  private watchSignal: (() => void) | null = null;
+
+  /**
+   * INBOX as the last {@link changesSince} scan actually SAW it on the server (never the
+   * held-back cursor value). `null` until the first scan. See the write site in `changesSince`
+   * and the read in {@link rearmWatch}.
+   */
+  private lastInboxSeen: { uidValidity: string; uidNext: number } | null = null;
   /** Canonical path → the STATUS the last LIST volunteered. See {@link unchangedPassive}. */
   private passiveStatus: ReadonlyMap<string, FolderStatus> = new Map();
   /** Folder → in-flight bounded flag drain. See {@link FlagDrain}. */
@@ -1605,9 +1625,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     folder: string,
     curUidValidity: bigint,
     budget: { messages: number; bytes: number },
-  ): Promise<{ fetched: InternalCreate[]; truncated: boolean; unanswered: number[] }> {
+  ): Promise<{
+    fetched: InternalCreate[]; truncated: boolean; unanswered: number[];
+    oversize: Array<{ uid: number; size: number }>;
+  }> {
     const fetched: InternalCreate[] = [];
-    if (uids.length === 0) return { fetched, truncated: false, unanswered: [] };
+    if (uids.length === 0) return { fetched, truncated: false, unanswered: [], oversize: [] };
 
     const dates = await this.arrivalDatesFor(folder, curUidValidity, uids);
     const newestFirst = orderCandidates(uids, dates);
@@ -1622,16 +1645,37 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
 
     const take: number[] = [];
+    /** Refused from RFC822.SIZE alone — see {@link ChangeBatch.oversize}. Never fetched. */
+    const oversize: Array<{ uid: number; size: number }> = [];
     let bytes = 0;
     for (const uid of slice) {
       const size = sizes.get(uid) ?? 0;
-      // `take.length === 0` is the anti-stall rule: the first message is always admitted,
-      // however large, so the drain can never wedge on one oversized mail.
+      // ── THE HARD CEILING IS ENFORCED BEFORE THE BODY MOVES, NOT AFTER ────────────────────────
+      //
+      // The anti-stall rule below admits the FIRST message past the batch byte budget, and until
+      // this gate existed "however large" meant exactly that: a message whose RFC822.SIZE already
+      // exceeded `MAX_RAW_MESSAGE_BYTES` was downloaded whole into a Buffer so `normalizeMime`
+      // could refuse it — a transfer whose only possible outcome was known before it started, and
+      // which could take the process past its memory budget before the failure ledger heard about
+      // the message at all. The size fetch above is the same evidence the targeted retry's
+      // `found.oversize` uses; refusing here writes the same durable `mime_too_large` row (the
+      // caller's obligation, stated on `ChangeBatch.oversize`), so the UID joins the known-set and
+      // is size-probed once per deployed build instead of downloaded once per admission.
+      //
+      // NOT counted as `truncated`: a backlog re-kick exists to come back for mail the budget
+      // deferred, and this message is not deferred — its outcome is decided. Marking it backlog
+      // would re-kick the mailbox for ever over a message no cycle will ever admit.
+      if (size > MAX_RAW_MESSAGE_BYTES) {
+        oversize.push({ uid, size });
+        continue;
+      }
+      // `take.length === 0` is the anti-stall rule: the first message is always admitted past the
+      // BATCH budget, so the drain can never wedge on one large-but-storable mail.
       if (take.length > 0 && bytes + size > budget.bytes) { truncated = true; break; }
       take.push(uid);
       bytes += size;
     }
-    if (take.length === 0) return { fetched, truncated, unanswered: [] };
+    if (take.length === 0) return { fetched, truncated, unanswered: [], oversize };
 
     for await (const m of this.client.fetch(
       take,
@@ -1737,7 +1781,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
 
     fetched.sort((a, b) => (dates.get(b.uid) ?? 0) - (dates.get(a.uid) ?? 0) || b.uid - a.uid);
-    return { fetched, truncated, unanswered };
+    return { fetched, truncated, unanswered, oversize };
   }
 
   /**
@@ -1866,6 +1910,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const newFolders: Record<string, PersistedFolderCursor> = {};
     /** UIDs this pass asked for and the server did not return — see {@link ChangeBatch.unanswered}. */
     const unanswered: Array<{ folder: string; uidValidity: string; uid: number }> = [];
+    /** UIDs refused pre-fetch on RFC822.SIZE — see {@link ChangeBatch.oversize}. */
+    const oversize: Array<{ folder: string; uidValidity: string; uid: number; size: number }> = [];
     // ONE budget for the whole call, spent in WATCHED_FOLDERS order (INBOX first, Sent LAST),
     // so the bound is per-cycle rather than per-folder — six folders each fetching a full batch
     // would be six times the memory this is supposed to cap.
@@ -2056,7 +2102,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // `changedSince` could report, so nothing is lost by sourcing them here instead.
         const unknownUids = currentUids.filter((u) => !effectiveKnown.has(u));
         const {
-          fetched, truncated, unanswered: withheldUids,
+          fetched, truncated, unanswered: withheldUids, oversize: refusedOnSize,
         } = await this.fetchCapped(unknownUids, folder, curUidValidity, budget);
         creates.push(...fetched);
         budget.messages -= fetched.length;
@@ -2067,6 +2113,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // {@link ChangeBatch.unanswered}, which is where that obligation is stated.
         for (const uid of withheldUids) {
           unanswered.push({ folder, uidValidity: String(curUidValidity), uid });
+        }
+        // Same contract, decided from RFC822.SIZE instead of a withheld answer — see
+        // {@link ChangeBatch.oversize}: the caller records `mime_too_large` before the cursor
+        // crosses these, and the body was deliberately never transferred.
+        for (const o of refusedOnSize) {
+          oversize.push({ folder, uidValidity: String(curUidValidity), uid: o.uid, size: o.size });
         }
 
         // A UIDVALIDITY reset makes every remembered UID meaningless, including a drain's
@@ -2318,6 +2370,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           uidNext: truncated ? (prev?.uidNext ?? 0) : mb.uidNext,
           highestModseq: flagsTruncated || !caps.condstore ? (prev?.highestModseq ?? "0") : advanceTo,
         };
+        // What the SERVER said about INBOX at the moment this scan read it — NOT the cursor value
+        // above, which deliberately holds back under truncation. {@link rearmWatch} compares the
+        // re-arm SELECT's uidNext against this to close the scan→re-arm blind window: a message
+        // that arrives after this read and before the visit's last folder op emits `exists` into
+        // whatever folder is then selected (or into nothing), and the re-arm's own SELECT absorbs
+        // it into a fresh baseline — silently, without this record to diff against.
+        if (folder === "INBOX") {
+          this.lastInboxSeen = { uidValidity: String(curUidValidity), uidNext: mb.uidNext ?? 0 };
+        }
       } finally {
         lock.release();
       }
@@ -2361,6 +2422,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       newCursor: { folders: newFolders },
       hasBacklog,
       unanswered,
+      oversize,
     };
   }
 
@@ -3010,18 +3072,107 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
   }
 
+  /**
+   * ── THE WAKE CHANNEL IS `exists`-ON-INBOX, AND NOTHING ELSE ──────────────────────────────
+   *
+   * This used to listen to `exists` + `flags` + `expunge` with no path filter, and both halves
+   * of that were wrong in ways a review measured on 2026-08-26:
+   *
+   *  · **No path filter** meant the events described whatever folder happened to be SELECTed.
+   *    imapflow emits them for the CURRENT mailbox only, and every cycle's `getMailboxLock`
+   *    re-selects other folders — so in steady state the "INBOX watch" was watching the last
+   *    passive folder a scan touched, and a real arrival produced nothing. That is the single
+   *    mechanism behind the measured p50 of 194 s from arrival to mirror: the push channel was
+   *    dead after the first cycle, and everything waited for the poll rotation.
+   *  · **`flags`/`expunge` as wake events** turned the worker's OWN reconciliation into wakes:
+   *    filing out of INBOX emits EXPUNGE on the source, a STORE's FETCH response emits `flags`,
+   *    each one re-marked the mailbox as owed a visit, and the wake-revisit budget
+   *    (`CYCLE_WAKE_REVISITS`) was spent on echoes of our own writes.
+   *
+   * So the wake is now exactly "INBOX grew": `exists` whose payload path IS the INBOX server
+   * path. Flag changes made on other devices reach the mirror at the poll cadence, exactly as
+   * they did before (the old listeners never fired in steady state, so nothing is lost).
+   * A message the worker itself restores INTO INBOX (the Not-junk rescue) still counts — the
+   * folder genuinely grew and the next visit adopts it.
+   *
+   * The selection is taken through `getMailboxLock` rather than a bare `mailboxOpen`: imapflow
+   * gives the bare call no concurrency guarantee, and this client is shared with every other
+   * operation of the attachment. `idle()` is then started EXPLICITLY (fire-and-forget — it
+   * resolves when the next command interrupts it) because auto-idle waits 15 s of inactivity
+   * before entering IDLE, and those 15 s would sit inside every wake this channel exists to
+   * deliver. {@link rearmWatch} re-establishes both halves after each cycle visit.
+   */
   async watch(onSignal: () => void): Promise<() => Promise<void>> {
-    const handler = (): void => onSignal();
-    this.client.on("exists", handler);
-    this.client.on("flags", handler);
-    this.client.on("expunge", handler);
-    // Open INBOX and leave it open; imapflow auto-idles (disableAutoIdle defaults false) and renews IDLE.
-    await this.client.mailboxOpen(this.toServerPath("INBOX"));
-    return async () => {
-      this.client.removeListener("exists", handler);
-      this.client.removeListener("flags", handler);
-      this.client.removeListener("expunge", handler);
+    const inboxPath = this.toServerPath("INBOX");
+    const handler = (info?: { path?: string }): void => {
+      if (info?.path === inboxPath) onSignal();
     };
+    this.client.on("exists", handler);
+    this.watchArmed = true;
+    this.watchSignal = onSignal;
+    const lock = await this.client.getMailboxLock(inboxPath);
+    lock.release();
+    this.startIdle();
+    return async () => {
+      this.watchArmed = false;
+      this.watchSignal = null;
+      this.client.removeListener("exists", handler);
+    };
+  }
+
+  /**
+   * Put the connection back where {@link watch} left it: INBOX selected, IDLE running — and ring
+   * the wake callback ourselves if INBOX grew while nothing could hear it.
+   *
+   * Called by the worker at the end of every cycle visit, because the visit's own folder work
+   * (`changesSince` scans, reconciler moves, flag writes) re-SELECTs other folders and leaves
+   * the connection idling WHEREVER IT LAST STOOD — after which an INBOX arrival emits nothing
+   * and the push channel is silently dead until the next attach. One SELECT per visit is the
+   * whole cost. A no-op until {@link watch} has been established, and after its unwatch.
+   *
+   * ── THE BLIND-WINDOW CATCH-UP, AND WHY THE SELECT ITSELF CANNOT ANNOUNCE IT ─────────────────
+   *
+   * A message that arrives between the visit's INBOX scan and this re-arm lands while another
+   * folder is selected, so its `exists` went to the wrong folder or nowhere — and imapflow's
+   * SELECT handler seeds the fresh mailbox state WITHOUT emitting the public `exists` event, so
+   * the re-arm quietly absorbs the arrival into a new baseline. The catch-up compares the
+   * SELECTed uidNext against what the last scan actually saw ({@link lastInboxSeen}); growth
+   * under the same UIDVALIDITY rings {@link watchSignal} directly, once, and moves the baseline
+   * so the same growth cannot ring twice. Without this the blind window's mail waits for the
+   * poll floor.
+   *
+   * Throws what the SELECT throws (a dead connection, most likely); the caller treats that as
+   * connection trouble, which it is — the `close` listener detaches and the next attach
+   * re-establishes the watch from scratch.
+   */
+  async rearmWatch(): Promise<void> {
+    if (!this.watchArmed) return;
+    const lock = await this.client.getMailboxLock(this.toServerPath("INBOX"));
+    let grew = false;
+    try {
+      const mb = this.client.mailbox as MailboxObject | false;
+      const seen = this.lastInboxSeen;
+      if (
+        mb && seen
+        && String(mb.uidValidity ?? "") === seen.uidValidity
+        && typeof mb.uidNext === "number" && mb.uidNext > seen.uidNext
+      ) {
+        grew = true;
+        this.lastInboxSeen = { uidValidity: seen.uidValidity, uidNext: mb.uidNext };
+      }
+    } finally {
+      lock.release();
+    }
+    this.startIdle();
+    if (grew) this.watchSignal?.();
+  }
+
+  /** Start IDLE now instead of waiting out imapflow's 15 s auto-idle inactivity delay. */
+  private startIdle(): void {
+    // Fire-and-forget: `idle()` resolves only when the NEXT command interrupts it, so awaiting
+    // it here would hang the visit that called this. It no-ops when IDLE is already running,
+    // and a failure is the connection dying — which the `close`/`error` listeners own.
+    void this.client.idle().catch(() => { /* the connection's own listeners handle it */ });
   }
 
   /**

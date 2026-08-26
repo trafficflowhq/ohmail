@@ -293,9 +293,20 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * Due is `resolved_at IS NULL AND (next_attempt_at <= now() OR attempted_version IS DISTINCT FROM
    * version)`. The version arm is self-disarming — this statement stamps `attempted_version` — so a
    * deploy carrying a parser fix wakes every owed UID exactly once.
+   *
+   * `holdScheduleForCodes` names the codes whose claim must write `next_attempt_at = NULL`
+   * regardless of `nextAttemptAt` — the deterministic failures, whose next look is a new build
+   * and never a later hour. The list is the CALLER's (`DETERMINISTIC_MESSAGE_FAILURE_CODES` in
+   * the worker); this package cannot import it, and a claim that stamped the clock schedule onto
+   * a deterministic row put an hourly size-probe on the same unchanged bytes for ever (a
+   * production row reached 297 attempts).
    */
   claimMessageFailures(
-    mailboxId: string, opts: { version: string; now: Date; limit: number; nextAttemptAt: Date | null },
+    mailboxId: string,
+    opts: {
+      version: string; now: Date; limit: number; nextAttemptAt: Date | null;
+      holdScheduleForCodes?: readonly string[];
+    },
   ): Promise<MessageFailureRow[]>;
   /**
    * Close a failure: it was ingested, or it is gone from the server, or its epoch was renumbered.
@@ -698,7 +709,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async claimMessageFailures(
-    mailboxId: string, opts: { version: string; now: Date; limit: number; nextAttemptAt: Date | null },
+    mailboxId: string,
+    opts: {
+      version: string; now: Date; limit: number; nextAttemptAt: Date | null;
+      holdScheduleForCodes?: readonly string[];
+    },
   ): Promise<MessageFailureRow[]> {
     if (opts.limit <= 0) return [];
     /**
@@ -739,11 +754,20 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // `attempts + 1` is written by the CLAIM and not by the retry's outcome, deliberately: a process
     // that dies mid-fetch must still have spent an attempt, or a poison message that reliably kills
     // the worker is retried for ever and never escalates.
+    // The schedule is PER CODE, decided inside the claim statement itself so it is exactly as
+    // atomic as the claim: a deterministic row keeps `NULL` (due again only via the version arm),
+    // everything else gets the caller's clock instant. The instant travels as ISO text + a cast —
+    // the same postgres-js Date-parameter trap the due-predicate's comment documents.
+    const holds = opts.holdScheduleForCodes ?? [];
+    const nextAttemptAt = holds.length === 0
+      ? opts.nextAttemptAt
+      : sql`case when ${inArray(messageFailures.code, [...holds])} then null
+             else ${opts.nextAttemptAt === null ? null : opts.nextAttemptAt.toISOString()}::timestamptz end`;
     const rows = await this.db.update(messageFailures)
       .set({
         attempts: sql`${messageFailures.attempts} + 1`,
         attemptedVersion: opts.version,
-        nextAttemptAt: opts.nextAttemptAt,
+        nextAttemptAt,
       })
       .where(and(
         inArray(messageFailures.id, due),
