@@ -16,6 +16,29 @@
  *    not been read and the list is not empty — it is unknown. On a full mailbox the import
  *    behind it runs for minutes.
  *
+ * ── THE GEOMETRY IS THE APP'S OWN, NOT A GENERIC ONE — owner report, 2026-08-26 ──────────
+ *
+ * The first cut of this drew "some skeleton text lines": eight bars for a rail and rows of two
+ * anonymous lines, which is a wireframe of no window this product has ever shown. The desktop
+ * boot renders it as THE WHOLE WINDOW, so the silhouette is a promise about what the window is
+ * about to be — and a promise in the wrong shape is answered by a visible re-layout when the
+ * real shell arrives. So every measure below is the live shell's own, by name:
+ *
+ *  · the three columns are `.deck`'s rail (224px) plus `.view.split`'s `--split`
+ *    (`minmax(320px,400px) 1fr`) with the same 16px gaps — rail, list, reading pane, exactly
+ *    where the real ones land;
+ *  · the rail's insides follow `rail.css`: the wordmark slot, the compose capsule, then groups
+ *    of a small label over items in `.ritem`'s own padding and rhythm;
+ *  · the list is `.list-col`'s panel with `.vhead`'s title row, and each row is `.row`/`.srow`
+ *    verbatim — the 30px lead avatar circle every Ohbox row draws, the sender line with the
+ *    time stub at the right, the subject line, the preview line, at `.row`'s 12×14 padding;
+ *  · the reading pane is what the real unselected `ReadColumn` is — a quiet lift-1 panel and
+ *    nothing in it.
+ *
+ * The mobile port (`apps/mobile/src/ui/Skeleton.tsx`) reached this standard first — "the row
+ * geometry mirrors the REAL list rows, so when content replaces the skeleton, nothing jumps" —
+ * and this brings the origin up to its port.
+ *
  * ── THIS WAS RULED OUT ONCE, ON THE SAME MEASUREMENT THAT NOW ARGUES FOR IT ──────────────
  *
  * The earlier reading was: an ordinary launch answers in well under a second now that the log is
@@ -64,19 +87,47 @@ import { useLoadingGrace } from "./loading-grace";
  */
 export const BOOT_SKELETON_GRACE_MS = 300;
 
-/** The rail's bars, as a share of the column. Groups and their items, in the rail's own rhythm. */
-const RAIL_BARS = [58, 34, 46, 40, 30, 52, 36, 44] as const;
-
-/** Per row: the short line and the long one, as a share of the row. */
-const ROW_BARS = [
-  [34, 84],
-  [27, 68],
-  [41, 76],
-  [30, 88],
-  [37, 62],
-  [25, 80],
-  [39, 71],
+/**
+ * The rail's silhouette, in the rail's own order: groups of a short label over items, the way
+ * `RailNav` draws Screener/Triage/Views. Label and item widths as a share of the column.
+ */
+const RAIL_GROUPS = [
+  { label: 26, items: [58, 46, 52] },
+  { label: 34, items: [44, 56, 38, 50] },
+  { label: 30, items: [48, 40] },
 ] as const;
+
+/**
+ * Per row, `.row`'s three lines: the sender (`.who`), the subject (`.subj`), the preview
+ * (`.prev`) — each as a share of the row's text column, beside the 30px lead circle.
+ */
+const ROW_BARS = [
+  [34, 62, 84],
+  [27, 74, 68],
+  [41, 58, 76],
+  [30, 70, 88],
+  [37, 66, 62],
+  [25, 54, 80],
+  [39, 71, 71],
+] as const;
+
+/** One mail row's silhouette — `.srow`'s anatomy: lead circle, then the three text lines. */
+function RowShape({ bars }: { bars: readonly [number, number, number] }) {
+  const [who, subj, prev] = bars;
+  return (
+    <div className="boot-sk-row">
+      <span className="boot-sk-av" />
+      <span className="boot-sk-main">
+        <span className="boot-sk-top">
+          <span className="boot-sk-bar boot-sk-who" style={{ width: `${who}%` }} />
+          <span className="boot-sk-bar boot-sk-time" />
+        </span>
+        <span className="boot-sk-bar boot-sk-subj" style={{ width: `${subj}%` }} />
+        <span className="boot-sk-bar boot-sk-line" style={{ width: `${prev}%` }} />
+      </span>
+    </div>
+  );
+}
 
 export function BootSkeleton({
   /**
@@ -86,12 +137,13 @@ export function BootSkeleton({
    */
   active,
   /**
-   * Draw the rail column too.
+   * Draw the WHOLE WINDOW — rail, list panel with its head, reading-pane frame.
    *
    * True where the silhouette IS the window — the standalone client before an engine has served,
-   * which has no rail on screen to stand next to. False in a browser tab, where the rail is real,
-   * populated and already rendered: a second, fake one beside it would be the one thing this
-   * component is not allowed to be.
+   * which has nothing else on screen. False in a browser tab, where the rail, the panel and the
+   * view head are real, populated and already rendered: there only the ROWS are unknown, and a
+   * second fake copy of any real surface would be the one thing this component is not allowed
+   * to be.
    */
   rail = false,
   rows = ROW_BARS.length,
@@ -102,23 +154,46 @@ export function BootSkeleton({
 }) {
   const show = useLoadingGrace(active, BOOT_SKELETON_GRACE_MS);
   if (!show) return null;
-  return (
-    <div className="boot-sk" aria-hidden="true">
-      {rail ? (
-        <div className="boot-sk-rail">
-          {RAIL_BARS.map((w, i) => (
-            <span key={i} className="boot-sk-bar" style={{ width: `${w}%` }} />
-          ))}
+  if (!rail) {
+    // IN A LIST'S EMPTY BLOCK: rows alone, in the rows' own geometry, where the rows will be.
+    return (
+      <div className="boot-sk" aria-hidden="true">
+        <div className="boot-sk-list">
+          {ROW_BARS.slice(0, rows).map((b, i) => <RowShape key={i} bars={b} />)}
         </div>
-      ) : null}
-      <div className="boot-sk-list">
-        {ROW_BARS.slice(0, rows).map(([who, line], i) => (
-          <div className="boot-sk-row" key={i}>
-            <span className="boot-sk-bar boot-sk-who" style={{ width: `${who}%` }} />
-            <span className="boot-sk-bar boot-sk-line" style={{ width: `${line}%` }} />
+      </div>
+    );
+  }
+  return (
+    <div className="boot-sk boot-sk-window" aria-hidden="true">
+      <div className="boot-sk-rail">
+        {/* The wordmark slot, the compose capsule, then the nav groups — `rail.css`'s order. */}
+        <span className="boot-sk-bar boot-sk-mark" />
+        <span className="boot-sk-pill" />
+        {RAIL_GROUPS.map((g, gi) => (
+          <div className="boot-sk-group" key={gi}>
+            <span className="boot-sk-bar boot-sk-label" style={{ width: `${g.label}%` }} />
+            {g.items.map((w, i) => (
+              <span className="boot-sk-item" key={i}>
+                <span className="boot-sk-dot" />
+                <span className="boot-sk-bar" style={{ width: `${w}%` }} />
+              </span>
+            ))}
           </div>
         ))}
       </div>
+      <div className="boot-sk-list boot-sk-pane">
+        {/* `.vhead`'s title row — a short title-weight bar and a longer meta one. */}
+        <div className="boot-sk-head">
+          <span className="boot-sk-bar boot-sk-h1" />
+          <span className="boot-sk-bar boot-sk-meta" />
+        </div>
+        <div className="boot-sk-rows">
+          {ROW_BARS.slice(0, rows).map((b, i) => <RowShape key={i} bars={b} />)}
+        </div>
+      </div>
+      {/* The unselected reading column: a quiet panel, exactly as `ReadColumn` renders empty. */}
+      <div className="boot-sk-reader" />
     </div>
   );
 }

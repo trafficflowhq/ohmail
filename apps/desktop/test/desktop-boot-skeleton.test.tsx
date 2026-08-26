@@ -184,6 +184,19 @@ describe("the window while an engine is still coming up", () => {
     const sk = skeleton();
     expect(sk, "a hundred seconds of recovery behind one centred sentence and nothing else")
       .not.toBeNull();
+    /* THE WHOLE WINDOW, IN ITS OWN GEOMETRY (owner report 2026-08-26): the desktop boot draws
+       this as the window, so it must be the window — three columns (rail, list panel, reading
+       pane), the list panel carrying its `.vhead` slot, the rows carrying `.row`'s anatomy.
+       A regression to generic text lines goes red on every one of these. */
+    expect(sk!.classList.contains("boot-sk-window"), "not the whole-window silhouette").toBe(true);
+    expect(sk!.querySelector(".boot-sk-pane"), "no list panel").not.toBeNull();
+    expect(sk!.querySelector(".boot-sk-head"), "no view-head slot on the list panel").not.toBeNull();
+    expect(sk!.querySelector(".boot-sk-reader"), "no reading-pane frame").not.toBeNull();
+    expect(sk!.querySelector(".boot-sk-pill"), "no compose-capsule slot in the rail").not.toBeNull();
+    expect(sk!.querySelectorAll(".boot-sk-item").length, "a rail with no nav items")
+      .toBeGreaterThan(3);
+    expect(sk!.querySelectorAll(".boot-sk-row .boot-sk-av").length, "rows without lead circles")
+      .toBeGreaterThan(0);
     expect(sk!.querySelector(".boot-sk-rail"), "no rail column in the window's own geometry")
       .not.toBeNull();
     expect(sk!.querySelectorAll(".boot-sk-row").length, "a silhouette with no rows in it")

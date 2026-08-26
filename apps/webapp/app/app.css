@@ -3645,20 +3645,88 @@ textarea.c-input:read-only {
    row's, restated here rather than shared, because this must not inherit a future change to the
    real ones: a silhouette that tracks the list would be one more thing to keep in step, and the
    only property it needs is "close enough that nothing jumps". */
-.boot-sk { display: flex; gap: 16px; width: 100%; min-width: 0; }
+/* ── THE BOOT SILHOUETTE, IN THE LIVE SHELL'S OWN GEOMETRY (owner report 2026-08-26) ──────
+   The first cut was generic text lines; the desktop boot shows this as THE WHOLE WINDOW, so
+   every measure here is the real shell's, by name: `.deck`'s 224px rail + `--split`'s
+   `minmax(320px,400px) 1fr` list/reader columns with the same 16px gaps; `rail.css`'s wordmark,
+   compose capsule and `.ritem` rhythm; `.list-col`'s panel with `.vhead`'s title row; `.row`'s
+   12×14 rows with the 30px lead circle; and the empty `ReadColumn`'s quiet panel. Content then
+   replaces the silhouette IN PLACE — same columns, same panels, same row grid — so the arrival
+   of the real shell is a fill-in, not a re-layout. */
+.boot-sk { width: 100%; min-width: 0; }
+.boot-sk-window {
+  display: grid;
+  grid-template-columns: 224px minmax(320px, 400px) 1fr;
+  gap: 0 16px;
+  /* NO own height: in the gate this sits absolutely at `inset:16px` (`.gate-boot > .boot-sk`),
+     where the inset IS the box — an explicit 100% would add itself to the top inset and run
+     16px past the window. The single grid row stretches the three panels to that box. */
+  min-height: 0;
+}
+/* The rail panel — `.rail`'s own padding, radius and lift. */
 .boot-sk-rail {
-  flex: none;
-  width: 224px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 15px;
-  padding: 22px 12px 18px 16px;
+  padding: 18px 12px 18px 16px;
   border-radius: 20px;
   background: var(--panel);
   box-shadow: var(--lift-1);
 }
+/* The wordmark slot (`.wordmark`: one short line, 14px of air below). */
+.boot-sk-mark { height: 12px; width: 42%; margin: 2px 8px 14px; }
+/* The compose capsule (`.compose-cta`: a full-width pill, 16px of air below). */
+.boot-sk-pill {
+  display: block;
+  height: 34px;
+  margin: 0 4px 16px 0;
+  border-radius: 99px;
+  background: var(--tint);
+  animation: boot-sk-breathe 2s var(--swift) infinite;
+}
+/* A nav group — `.rgroup`'s 14px tail, `.rlabel`'s small line, items at `.ritem`'s 6×8. */
+.boot-sk-group { display: flex; flex-direction: column; gap: 1px; margin: 0 0 14px; }
+.boot-sk-label { height: 8px; margin: 4px 8px 6px; background: var(--tint); }
+.boot-sk-item { display: flex; align-items: center; gap: 9px; padding: 7px 8px; }
+.boot-sk-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--tint2); flex: none;
+  animation: boot-sk-breathe 2s var(--swift) infinite; }
+/* The list column. Bare `.boot-sk-list` is the in-list variant (rows only, inside a REAL
+   panel); `.boot-sk-pane` is the window variant's own panel — `.list-col`'s paper. */
 .boot-sk-list { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
-.boot-sk-row { padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; }
+.boot-sk-pane {
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 20px;
+  background: var(--panel);
+  box-shadow: var(--lift-1);
+}
+/* `.vhead`'s title row: the pile name and its meta count, as shape. */
+.boot-sk-head { display: flex; align-items: center; gap: 12px; padding: 24px 30px 16px; }
+.boot-sk-h1 { height: 15px; width: 88px; }
+.boot-sk-meta { height: 8px; width: 120px; background: var(--tint); }
+/* `.rows`' own gutter, then `.row`/`.srow` verbatim: 12×14 padding, radius 16, the 30px lead
+   circle, and the three text lines at the row's own line rhythm. */
+.boot-sk-rows { padding: 0 16px; }
+.boot-sk-row { display: flex; align-items: flex-start; gap: 11px; padding: 12px 14px; border-radius: 16px; }
+.boot-sk-av {
+  width: 30px; height: 30px; border-radius: 50%; flex: none; margin-top: 1px;
+  background: var(--tint2);
+  animation: boot-sk-breathe 2s var(--swift) infinite;
+}
+.boot-sk-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.boot-sk-top { display: flex; align-items: center; gap: 8px; height: 18px; }
+/* The time stub — `.row-top .t`'s far-right tabular slot. */
+.boot-sk-time { width: 26px; height: 7px; margin-left: auto; background: var(--tint); flex: none; }
+/* The unselected reading column — the empty `ReadColumn`, panel and nothing else. */
+.boot-sk-reader {
+  min-width: 0;
+  min-height: 0;
+  border-radius: 20px;
+  background: var(--panel);
+  box-shadow: var(--lift-1);
+}
 /* `--tint2` and `--tint` are the two quietest fills in the system, and both are alpha over the
    surface — so this reads correctly in either theme without a second palette, and never as a
    grey rectangle on a dark canvas. */
@@ -3669,8 +3737,9 @@ textarea.c-input:read-only {
   background: var(--tint2);
   animation: boot-sk-breathe 2s var(--swift) infinite;
 }
-.boot-sk-who { height: 10px; }
-.boot-sk-line { height: 8px; background: var(--tint); }
+.boot-sk-who { height: 10px; margin: 0; }
+.boot-sk-subj { height: 10px; margin-top: 6px; }
+.boot-sk-line { height: 8px; margin-top: 8px; background: var(--tint); }
 /* A breath, not a shimmer. A travelling highlight is the convention and it is the wrong one
    here: it draws the eye to a surface with nothing on it, for a wait that can legitimately run
    a hundred seconds. Opacity alone, slowly, says "not yet" and then lets go of the attention. */
@@ -3682,11 +3751,13 @@ textarea.c-input:read-only {
    same reason: the affordance is the thing, the motion is only how it is drawn. */
 @media (prefers-reduced-motion: reduce) {
   .boot-sk-bar { animation: none; }
+  .boot-sk-av, .boot-sk-dot, .boot-sk-pill { animation: none; }
 }
-/* Narrow: the deck is one column and the rail is a drawer, so a rail silhouette beside the list
-   would be describing a layout this width does not have. */
+/* Narrow: the deck is one column — the rail is a drawer and the reading pane is a sheet — so
+   silhouettes of either beside the list would describe a layout this width does not have. */
 @media (max-width: 900px) {
-  .boot-sk-rail { display: none; }
+  .boot-sk-window { grid-template-columns: 1fr; }
+  .boot-sk-rail, .boot-sk-reader { display: none; }
 }
 /* IN A LIST'S EMPTY BLOCK (the browser tab's cold mirror). `.empty` is centred, padded for a
    sentence and — inside `.rows` — already carries the list's own 14px gutter, so the silhouette
