@@ -52,9 +52,16 @@
  */
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
-import { useOptionalKeyBindings, type KeyBinding } from "./keymap";
+import { isTypingTarget, useOptionalKeyBindings, type KeyBinding } from "./keymap";
 
-export type Zone = "rail" | "list" | "reader";
+/**
+ * `"none"` is the fourth answer: a dialog is layered ABOVE the open reader (a screening
+ * panel, a popover) and owns its own keys — every zone binding stands down rather than
+ * scrolling an obscured sheet or walking a buried list. It exists only while a reader
+ * overlay and a higher layer are BOTH standing; everywhere else the three spatial zones
+ * partition the screen.
+ */
+export type Zone = "rail" | "list" | "reader" | "none";
 
 /**
  * How far one ↑/↓ press moves the open message, in px.
@@ -96,8 +103,20 @@ function noReaderOverlay(): boolean {
 
 function computeZone(): Zone {
   if (typeof document === "undefined") return "list";
-  if (document.querySelector(READER_OVERLAY)) return "reader";
   const el = document.activeElement;
+  const sheet = document.querySelector(READER_OVERLAY);
+  if (sheet) {
+    // The sheet owns the screen — unless something is layered ABOVE it. Document order is
+    // the layering truth here: the shell renders every higher surface (screening panels,
+    // popovers, the tag picker) AFTER the reader element, so focus in a node the sheet
+    // PRECEDES is focus in a layer above it (review round 3) — the walk stands down whole
+    // ("none") and that layer's own keys and native scrolling apply. Focus inside the sheet,
+    // on `body`, or anywhere the sheet FOLLOWS (the buried deck) leaves the sheet in charge.
+    if (!(el instanceof Element) || el === document.body) return "reader";
+    if (sheet.contains(el)) return "reader";
+    const pos = sheet.compareDocumentPosition(el);
+    return (pos & Node.DOCUMENT_POSITION_PRECEDING) !== 0 ? "reader" : "none";
+  }
   if (!(el instanceof Element) || el === document.body) return "list";
   if (el.closest(RAIL)) return "rail";
   if (readerGeography && el.closest(readerGeography)) return "reader";
@@ -419,12 +438,24 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
      zone is "reader" — a pair registered only under `cfg.reader` left the sheet unscrollable
      exactly there (review round 2). With no sheet and no geography the zone is never
      "reader", so the pair stays declared-inert where it has nothing to scroll. */
+  /* `inInput` + the `when` below, together: a keyboard search can open a hit in place while
+     the search box keeps focus, so the typing target is a field BURIED UNDER the sheet — the
+     pair must claim ↑/↓ there or the visible reader cannot scroll at all (review round 3).
+     A typing target INSIDE the sheet (an editor in the open message) keeps its native caret:
+     the `when` yields for it, and with no sheet standing it yields for every field. */
+  const scrollableTyping = (e: KeyboardEvent): boolean => {
+    if (!isTypingTarget(e.target)) return true;
+    const el = e.target as HTMLElement;
+    return document.querySelector(READER_OVERLAY) != null && !el.closest(READER_OVERLAY);
+  };
   bindings.push(
     {
       chord: "ArrowUp",
       group: "navigate",
       label: t("zoneScroll"),
       disabled: z !== "reader",
+      inInput: true,
+      when: scrollableTyping,
       run: () => scrollReader(-1),
     },
     {
@@ -432,6 +463,8 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneScroll"),
       disabled: z !== "reader",
+      inInput: true,
+      when: scrollableTyping,
       run: () => scrollReader(1),
     },
   );
