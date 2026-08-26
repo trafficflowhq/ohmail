@@ -24,6 +24,12 @@ import { sync } from "./shared.js";
 const VALID_TYPES = new Set<EntityType>([
   "message", "thread", "routing_decision", "approval",
   "draft", "rule", "message_state", "folder", "tag",
+  // The account's settings row — the consent doorbell (`change-log.ts`). `?types=` is a REQUEST
+  // as well as a description, and this filter drops unknown tokens SILENTLY — so a member
+  // missing here starves every mirror that asks for it while the rest of its list keeps
+  // arriving, which is exactly how the desktop's tag drought happened (`cloud-mirror.ts` tells
+  // that story). Review round 1 of the settings entity caught this list lagging the union.
+  "settings",
 ]);
 
 /** Parse `?types=a,b,c` → EntityType[], silently ignoring unknown tokens. */

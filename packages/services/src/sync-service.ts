@@ -7,7 +7,7 @@ import type { Db, ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import {
   approvalRowToDTO, draftRowToDTO, folderRowToDTO, materialize, materializeMessages,
-  materializeMessagesInOrder,
+  materializeMessagesInOrder, materializeSettings,
   materializeThreads, messageStateRowToDTO, routingDecisionRowToDTO, ruleRowToDTO, tagRowToDTO,
 } from "./dto/materialize.js";
 import { foldersEnabled, listUserFolders, userFoldersByIds, type UserFolderRow } from "./folders.js";
@@ -473,6 +473,17 @@ export class SyncService {
           emit("folder", f.id, folderRowToDTO(f), f.updatedAt.toISOString());
         }
       }
+
+      // THE SETTINGS DOORBELL — one row, always, on page 1 (never null for the caller's own
+      // account: a missing row materializes as the default-shaped DTO). Live state like the
+      // tags above, and the row that closes the bootstrap race review round 1 named: a settings
+      // write landing between a fresh mirror's boot `GET /consent` and this snapshot's
+      // `asOfSeq` is BELOW the cursor this page commits, so the delta would never deliver it —
+      // the tab held stale consent until the next settings write, however far away that was.
+      // With the entity on page 1 the mirror's stamp starts at the row's own instant and the
+      // client's re-ask covers the gap.
+      const settings = await materializeSettings(db, accountId, accountId);
+      if (settings !== null) emit("settings", accountId, settings, settings.updatedAt);
     }
 
     // ── The message window: newest first, keyset-paged on (date desc nulls last, id desc).

@@ -663,6 +663,25 @@ export async function consentSettings(
  * lazily, never deleted — `materializeSettings` answers a default-shaped DTO even before the
  * first write, so this can never drain as a tombstone.
  */
+/**
+ * ── THE GLOBAL LOCK ORDER: `account_settings` FIRST, THE SEQUENCE ROW SECOND ─────────────────
+ *
+ * `recordChanges` serializes on the account's `account_sync_state` row; the settings upsert
+ * locks `account_settings`. Every transaction that touches BOTH rows takes them in ONE order —
+ * settings first — because two transactions taking the same two row locks in opposite orders is
+ * the textbook Postgres deadlock (40P01), and both directions of it were reproduced on real
+ * Postgres during this entity's review rounds. The order is the one `confirmSeed` DESIGNED
+ * around ("the transaction opens by taking the account's `account_settings` row") and
+ * `ScreenerService.decide` already follows; `resetScreeningState` — the one long-standing
+ * writer that rang first — was conformed in the same change (`consent-reset.ts` names it at its
+ * own seam). So every writer below touches its settings column FIRST and rings the doorbell
+ * second; both land or neither does, exactly as before.
+ */
+// Every writer's INSERT path sets `updatedAt: ctx.now()` explicitly rather than taking the
+// column's `defaultNow()`: the row's stamp is the settings ENTITY's `updatedAt` on the wire, and
+// a stamp whose first write came from the database clock while every later write comes from the
+// context clock is two clocks on one column — the exact thing these writers' own comments refuse
+// for the consent instants beside it.
 async function recordSettingsChange(tx: LedgerTx, accountId: string): Promise<void> {
   await recordChanges(tx, [
     { accountId, entityType: "settings" as const, entityId: accountId, op: "update" as const },
@@ -710,12 +729,12 @@ export async function setAutoSuggest(
   // change row beside it — see {@link recordSettingsChange}. Both land or neither does.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     await tx.insert(accountSettings)
-      .values({ accountId: ctx.accountId, autoSuggestAt: at })
+      .values({ accountId: ctx.accountId, autoSuggestAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { autoSuggestAt: at, updatedAt: ctx.now() },
       });
-    await recordSettingsChange(tx, ctx.accountId);
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { autoSuggestAt: at ? at.toISOString() : null };
 }
@@ -752,11 +771,18 @@ export async function setFoldersEnabled(
   const at = enabled ? ctx.now() : null;
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     await tx.insert(accountSettings)
-      .values({ accountId: ctx.accountId, foldersEnabledAt: at })
+      .values({ accountId: ctx.accountId, foldersEnabledAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { foldersEnabledAt: at, updatedAt: ctx.now() },
       });
+    // THE FLAG ITSELF travels too — see {@link recordSettingsChange} (and its global lock
+    // order, which is why the settings row above comes first). The folder creates/deletes below
+    // move the ENTITIES; without this row a client whose consent answer was read at boot kept
+    // drawing (or withholding) the GROUP around them — the measured desktop husk. It also
+    // covers the case the entity rows cannot: an account with zero user folders appends nothing
+    // below, so this is the only thing that rings the wake at all for its flip.
+    await recordSettingsChange(tx, ctx.accountId);
     const rows = await listUserFolders(tx as unknown as typeof ctx.db, ctx.accountId);
     if (rows.length > 0) {
       await recordChanges(tx, rows.map((r) => ({
@@ -766,12 +792,6 @@ export async function setFoldersEnabled(
         op: enabled ? ("create" as const) : ("delete" as const),
       })));
     }
-    // THE FLAG ITSELF travels too — see {@link recordSettingsChange}. The folder creates/deletes
-    // above move the ENTITIES; without this row a client whose consent answer was read at boot
-    // kept drawing (or withholding) the GROUP around them — the measured desktop husk. It also
-    // covers the case the entity rows cannot: an account with zero user folders appends nothing
-    // above, so this is the only thing that rings the wake at all for its flip.
-    await recordSettingsChange(tx, ctx.accountId);
   });
   return { foldersEnabledAt: at ? at.toISOString() : null };
 }
@@ -812,12 +832,28 @@ export async function setMailboxFoldersEnabled(
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
       .limit(1);
     if (!mb) throw new ServiceError("not_found", 404, "no such mailbox on this account");
+    // THE STAMP MOVES — AND IT MOVES BEFORE THE MAILBOX ROW. Two reasons, one per line of the
+    // global lock chain (settings → mailboxes → sequence row; see {@link recordSettingsChange}
+    // and the erasure's note in account-deletion-service.ts, which deletes in exactly that
+    // order): the settings ENTITY's `updatedAt` is the `account_settings` row's own — a client
+    // that already holds the entity compares stamps and ignores a re-apply whose stamp did not
+    // move, so a per-mailbox flip that left the row untouched was a doorbell nobody heard
+    // (review-caught staleness) — and taking the mailbox row FIRST put this writer into a
+    // 40P01 cycle with erasure, which holds the settings row while deleting toward
+    // `mailboxes` (the next round caught that one). The 404-check SELECT above locks nothing,
+    // so it may stay first.
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, updatedAt: ctx.now() })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { updatedAt: ctx.now() },
+      });
     await tx.update(mailboxes)
       .set({ foldersDisabledAt: at })
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
-    // The dial's own change row FIRST, master on or off — the per-mailbox exception is settings
-    // state whatever the master says, and a surface holding a stale exceptions map is the same
-    // staleness the master's row exists to end. See {@link recordSettingsChange}.
+    // The dial's own change row, master on or off — the per-mailbox exception is settings state
+    // whatever the master says, and a surface holding a stale exceptions map is the same
+    // staleness the master's row exists to end.
     await recordSettingsChange(tx, ctx.accountId);
     const [master] = await tx.select({ at: accountSettings.foldersEnabledAt })
       .from(accountSettings)
@@ -840,13 +876,109 @@ export async function setMailboxFoldersEnabled(
 }
 
 /**
+ * The signature's length ceiling, in characters — enforced HERE, as a 400 in words, rather than
+ * as a CHECK: free text closes no set, and a database byte bound would answer a person typing
+ * with a raw 23514. Ten thousand characters is roomier than any signature anybody signs with
+ * and small enough that the consent read carrying every mailbox's text stays a settings
+ * payload rather than a document store.
+ */
+export const MAILBOX_SIGNATURE_MAX_CHARS = 10_000;
+
+/**
+ * SET ONE MAILBOX'S SIGNATURE — the per-mailbox text a compose offers under the message when
+ * that mailbox is the sender (owner ruling 2026-08-27; mail 0075).
+ *
+ * `null` — and a value that is empty after trimming — CLEARS it: "no signature" is the resting
+ * state and an all-whitespace signature is nobody's choice. A non-empty value is stored AS
+ * TYPED (interior whitespace and line breaks are the user's formatting; only a fully blank
+ * value collapses), bounded by {@link MAILBOX_SIGNATURE_MAX_CHARS}.
+ *
+ * THE TRANSACTION IS {@link setMailboxFoldersEnabled}'s, statement for statement, because the
+ * requirements are identical: the mailbox must BELONG to the account (404 before anything
+ * writes), the `account_settings` stamp must MOVE (a client that already holds the settings
+ * entity compares stamps, and a flip that left the row untouched is a doorbell nobody hears),
+ * and the stamp moves BEFORE the mailbox row — the global lock chain (settings → mailboxes →
+ * sequence row) that keeps this writer out of the 40P01 cycle with erasure. No entity change
+ * rows beyond the `settings` doorbell: a signature moves no folder, no message, nothing on the
+ * delta feed — the doorbell makes every surface re-read `GET /consent`, which is where the
+ * signatures map travels.
+ *
+ * Returns the stored text (`null` = none) so the caller echoes what the database holds —
+ * server-confirmed values only, which is what the Settings pane renders.
+ */
+export async function setMailboxSignature(
+  ctx: ServiceContext, mailboxId: string, signature: string | null,
+): Promise<{ mailboxId: string; signature: string | null }> {
+  if (signature !== null && typeof signature !== "string") {
+    throw new ServiceError("validation_failed", 400, "signature must be a string or null");
+  }
+  if (signature !== null && signature.length > MAILBOX_SIGNATURE_MAX_CHARS) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `signature must be at most ${MAILBOX_SIGNATURE_MAX_CHARS} characters`,
+    );
+  }
+  // A NUL is legal in a JSON string and illegal in a PostgreSQL `text` value — unrejected, it
+  // reaches the driver as an encoding error, which surfaces as a 500 and rolls back the whole
+  // batch (review round 1). Refused HERE, before the transaction opens, in words: no signature
+  // anybody typed contains one, so the only senders are callers probing the wire.
+  if (signature !== null && signature.includes("\u0000")) {
+    throw new ServiceError("validation_failed", 400, "signature must not contain a NUL character");
+  }
+  const stored = signature !== null && signature.trim().length > 0 ? signature : null;
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    const [mb] = await tx.select({ id: mailboxes.id })
+      .from(mailboxes)
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
+      .limit(1);
+    if (!mb) throw new ServiceError("not_found", 404, "no such mailbox on this account");
+    // The stamp moves, and it moves BEFORE the mailbox row — see the header and
+    // {@link setMailboxFoldersEnabled}'s identical block for the two measured reasons.
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, updatedAt: ctx.now() })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { updatedAt: ctx.now() },
+      });
+    await tx.update(mailboxes)
+      .set({ signature: stored })
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
+    await recordSettingsChange(tx, ctx.accountId);
+  });
+  return { mailboxId, signature: stored };
+}
+
+/**
+ * EVERY STORED SIGNATURE ON THE ACCOUNT — `{ mailboxId: text }`, only the mailboxes that have
+ * one. The `GET /consent` read and the write echo; {@link mailboxFoldersOff}'s shape for the
+ * same reason (an absent key IS the resting state, so nothing invents an empty string for a
+ * mailbox that never had a signature).
+ */
+export async function mailboxSignatures(
+  db: ServiceContext["db"], accountId: string,
+): Promise<Record<string, string>> {
+  const rows = await db
+    .select({ id: mailboxes.id, signature: mailboxes.signature })
+    .from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId));
+  const out: Record<string, string> = {};
+  for (const r of rows) {
+    if (r.signature !== null) out[r.id] = r.signature;
+  }
+  return out;
+}
+
+/**
  * SET THE DORMANCY WINDOW — the cutline dial, the second knob on `account_settings`.
  *
  * The dial decides how long a sender may be quiet before the Screener stops asking about them: a
  * sender with no recent mail and no decision waits in History rather than the queue. It is PURE
  * VISIBILITY — it changes which UNDECIDED senders are SHOWN, never where any mail lives. Nothing
- * here writes a rule, a contact, a `folder_state` row or a `change_log` entry, and the pg test
- * proves all three by making a stamp of any of them turn the assertion red. Recompute is READ-TIME
+ * here writes a rule, a contact, a `folder_state` row or any MAIL-typed `change_log` entry, and
+ * the pg test proves all three by making a stamp of any of them turn the assertion red. The one
+ * change row it does append is the `settings` doorbell ({@link recordSettingsChange}) — a row
+ * ABOUT the dial, so every other signed-in surface re-asks its consent answer and re-partitions
+ * with the new window instead of holding the old one until reload. Recompute is READ-TIME
  * on both sides — `cutlineCounts` takes the window per request and the client re-partitions its own
  * mirror — so this writer moves no mail and arms no pass. It must NEVER travel through a writer that
  * can arm the tidy (`setScreeningPreference` stamps `ohbox_tidy_requested_at`); that is why the dial
@@ -896,12 +1028,12 @@ export async function setDormancyDays(
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     await tx.insert(accountSettings)
-      .values({ accountId: ctx.accountId, dormancyDays: stored })
+      .values({ accountId: ctx.accountId, dormancyDays: stored, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { dormancyDays: stored, updatedAt: ctx.now() },
       });
-    await recordSettingsChange(tx, ctx.accountId);
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { dormancyDays: stored ?? DEFAULT_DORMANCY_DAYS };
 }
@@ -947,12 +1079,12 @@ export async function setBlockRemoteImages(
   // a restart.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     await tx.insert(accountSettings)
-      .values({ accountId: ctx.accountId, blockRemoteImagesAt: at })
+      .values({ accountId: ctx.accountId, blockRemoteImagesAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { blockRemoteImagesAt: at, updatedAt: ctx.now() },
       });
-    await recordSettingsChange(tx, ctx.accountId);
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { blockRemoteImagesAt: at ? at.toISOString() : null };
 }
@@ -993,12 +1125,12 @@ export async function setBlockTrackingPixels(
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     await tx.insert(accountSettings)
-      .values({ accountId: ctx.accountId, loadTrackingPixelsAt: at })
+      .values({ accountId: ctx.accountId, loadTrackingPixelsAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { loadTrackingPixelsAt: at, updatedAt: ctx.now() },
       });
-    await recordSettingsChange(tx, ctx.accountId);
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { loadTrackingPixelsAt: at ? at.toISOString() : null };
 }
@@ -1050,12 +1182,12 @@ export async function setBlockAutoUnsubscribe(
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     await tx.insert(accountSettings)
-      .values({ accountId: ctx.accountId, blockAutoUnsubscribeAt: at })
+      .values({ accountId: ctx.accountId, blockAutoUnsubscribeAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { blockAutoUnsubscribeAt: at, updatedAt: ctx.now() },
       });
-    await recordSettingsChange(tx, ctx.accountId);
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { blockAutoUnsubscribeAt: at ? at.toISOString() : null };
 }
@@ -1124,12 +1256,12 @@ export async function setLocale(
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     await tx.insert(accountSettings)
-      .values({ accountId: ctx.accountId, locale: stored })
+      .values({ accountId: ctx.accountId, locale: stored, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { locale: stored, updatedAt: ctx.now() },
       });
-    await recordSettingsChange(tx, ctx.accountId);
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { locale: stored };
 }
