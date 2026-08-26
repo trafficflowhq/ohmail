@@ -1148,7 +1148,8 @@
   },
   "reader": {
     "hint": "zum Zurückgehen",
-    "back": "Zurück"
+    "back": "Zurück",
+    "pane": "Geöffnete Nachricht"
   },
   "body": {
     "loading": "Vollständige Nachricht wird geladen …",
@@ -1991,7 +1992,13 @@
     "resurface": "Später wieder auftauchen lassen",
     "palette": "Befehlspalette",
     "sheet": "Diese Übersicht",
-    "escape": "Schließen, was offen ist"
+    "escape": "Schließen, was offen ist",
+    "zoneMenu": "Das Menü fokussieren",
+    "zoneList": "Zurück zur Liste",
+    "zoneRead": "Die geöffnete Nachricht fokussieren",
+    "zoneMenuUp": "Im Menü nach oben",
+    "zoneMenuDown": "Im Menü nach unten",
+    "zoneScroll": "Die geöffnete Nachricht scrollen"
   },
   "viewError": {
     "title": "Diese Ansicht wurde nicht geladen.",

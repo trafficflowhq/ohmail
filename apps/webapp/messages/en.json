@@ -1148,7 +1148,8 @@
   },
   "reader": {
     "hint": "to return",
-    "back": "Back"
+    "back": "Back",
+    "pane": "Open message"
   },
   "body": {
     "loading": "Loading the full message…",
@@ -1991,7 +1992,13 @@
     "resurface": "Resurface it later",
     "palette": "Command palette",
     "sheet": "This list",
-    "escape": "Close what is open"
+    "escape": "Close what is open",
+    "zoneMenu": "Focus the menu",
+    "zoneList": "Back to the list",
+    "zoneRead": "Focus the open message",
+    "zoneMenuUp": "Up the menu",
+    "zoneMenuDown": "Down the menu",
+    "zoneScroll": "Scroll the open message"
   },
   "viewError": {
     "title": "This view didn't load.",
