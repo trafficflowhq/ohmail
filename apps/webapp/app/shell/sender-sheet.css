@@ -104,12 +104,20 @@
   color: var(--accent-ink);
   opacity: 0.75;
 }
-/* The tile's own radio — the lead line as the atomic pick control, the field beside it. */
-.sm-edit-pick {
+/* The tile's own radio — the lead line as the atomic pick control, the field beside it.
+   `.sm-scope .sm-edit-pick`, NOT bare `.sm-edit-pick`: the sheet's generic `.sm-scope button`
+   tile rule (one class + element) outweighs a single class, so the bare form rendered the lead
+   as a second full tile inside the editable tile, in unselected ink (review round). Two classes
+   win that tie, and every tile property the generic rule sets is overridden here by name —
+   `flex`, the box, the fill, the type — so the pick is a LINE, never a tile. */
+.sm-scope .sm-edit-pick {
+  flex: none;
+  min-width: 0;
   display: block;
   width: 100%;
   padding: 0;
   border: 0;
+  border-radius: 0;
   background: none;
   text-align: left;
   cursor: pointer;
