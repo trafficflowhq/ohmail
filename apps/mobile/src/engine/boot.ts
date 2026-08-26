@@ -211,7 +211,22 @@ async function verifyAccountId(
  */
 type GuardedMobileAdapter = EngineAdapter & Pick<HttpAdapter, "snapshot" | "listMessages">;
 
-function accountGuarded(adapter: HttpAdapter, accountId: string): GuardedMobileAdapter {
+function accountGuarded(
+  adapter: HttpAdapter,
+  accountId: string,
+  /**
+   * HAS THE IDENTITY VERDICT SETTLED WITHOUT A MISMATCH? The entity check below cannot see
+   * every way a wrong-account bearer can move a mirror: a 410 on this mirror's cursor makes
+   * the engine wipe and re-bootstrap before one entity arrives, and an empty or delete-only
+   * page carries no `accountId` to refuse yet advances the cursor. So the DRAIN routes are
+   * held shut until {@link EngineBoot.verifyIdentity} has settled (`verified` and
+   * `unverified` both open them; `mismatch` never does) — structural, so a caller that
+   * forgets the sequence gets a loud refusal, never a moved mirror. Invariant #9
+   * (per-account isolation): the stamp stops mirror bleed, and this stops cursor bleed.
+   */
+  cleared: () => boolean,
+): GuardedMobileAdapter {
+  const HELD = `this mirror's sync is held until the account identity check settles — run verifyIdentity() first`;
   const check = (changes: SyncChange[]): void => {
     for (const ch of changes) {
       const entityAccount = (ch.entity as { accountId?: unknown } | undefined)?.accountId;
@@ -224,6 +239,7 @@ function accountGuarded(adapter: HttpAdapter, accountId: string): GuardedMobileA
   };
   return {
     sync: async (params) => {
+      if (!cleared()) throw new Error(HELD);
       const resp = await adapter.sync(params);
       check(flattenResponse(resp));
       return resp;
@@ -232,6 +248,7 @@ function accountGuarded(adapter: HttpAdapter, accountId: string): GuardedMobileA
     // on page 1 latches the engine's snapshot-unavailable fallback and the `since=0` drain
     // that follows is guarded above, so nothing merges through either path.
     snapshot: async (params = {}) => {
+      if (!cleared()) throw new Error(HELD);
       const page = await adapter.snapshot(params);
       check(page.changes);
       return page;
@@ -306,7 +323,11 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
   // The claimed id is checked against the credential wherever the server can be asked — see
   // {@link verifyAccountId} — but NOT here, and not awaited: the probe rides behind the
   // rendered UI (the header's boot-from-local rule). Only a positive mismatch judges; a door
-  // with no session read stays "unverified" under the drain-time guard.
+  // with no session read stays "unverified" under the drain-time guard. Any non-mismatch
+  // settle OPENS the drain routes (`identityCleared` — the guard above holds them shut until
+  // then), so the caller's sequence is verify → drain, and a drain fired early is a loud
+  // refusal rather than a mirror a wrong bearer could move.
+  let identityCleared = false;
   const verifyIdentity = async (): Promise<IdentityVerdict> => {
     const identity = await verifyAccountId(fetchImpl, origin, authHeaders, accountId);
     if (identity.kind === "mismatch") {
@@ -315,6 +336,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
         reason: `this bearer belongs to account "${identity.serverSays}", not "${accountId}" — check the account id you entered`,
       };
     }
+    identityCleared = true;
     return { kind: identity.kind };
   };
 
@@ -345,6 +367,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
         fetch: fetchImpl,
       }),
       accountId,
+      () => identityCleared,
     ),
     store,
     storePolicy: MOBILE_WINDOW,

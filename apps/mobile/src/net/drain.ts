@@ -55,20 +55,29 @@ export class SyncRunner {
     // round IS the retry it was asking for.
     this.on.syncing(true);
     this.on.error(null);
-    // A box rather than a bare self-reference: the finally must clear `inflight` only when it
-    // still names THIS round (a session switch can start a new round while an old one lands).
+    // A box rather than a bare self-reference: a session switch can start a new round while
+    // an old one is still landing, and everything the OLD round would report is gated on it
+    // still being the round of record (`this.inflight === self.round`). The busy flag falling
+    // is the signal the world layer re-derives on (the settled stamp, the retry flush, the
+    // folders re-read) — a SUPERSEDED round's landing must not spend it: with two rounds
+    // overlapped, the stale one's `syncing(false)` would fire while the live one still flies,
+    // and the live one's own completion would then be a no-op state write that re-derives
+    // nothing — a just-synced empty mailbox left rendering its skeleton. The same gate keeps
+    // a dead session's failure sentence from standing over the live session's state.
     const self: { round: Promise<void> | null } = { round: null };
     const round = (async (): Promise<void> => {
       try {
         await (first ? engine.start() : engine.syncOnce());
       } catch (err) {
-        this.on.error(String(err));
+        if (this.inflight === self.round) this.on.error(String(err));
         // Re-sync memory with disk so the torn-flush guard's refusal window closes and the
         // retry re-fetches the failed page instead of writing past it.
         await engine.hydrate().catch(() => undefined);
       } finally {
-        this.on.syncing(false);
-        if (this.inflight === self.round) this.inflight = null;
+        if (this.inflight === self.round) {
+          this.on.syncing(false);
+          this.inflight = null;
+        }
       }
     })();
     self.round = round;

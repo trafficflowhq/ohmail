@@ -146,11 +146,17 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     setActiveId((await env.profiles.active())?.id ?? null);
   }, [env]);
 
-  /** Leave the live state, then close the mirror once the in-flight drain settles. */
+  /**
+   * Leave the live state, then close the mirror once the in-flight drain settles. The round
+   * is DISOWNED first (captured for the close-wait, then dropped): the leaving session's
+   * sync status — a standing failure sentence, a busy flag mid-round — must not stand as the
+   * next session's, and the disowned round's own landing reports nothing.
+   */
   const teardown = useCallback((session: ConnectedSession) => {
     offDead.current?.();
     offDead.current = null;
     const inFlight = runner.inFlight() ?? Promise.resolve();
+    runner.disown();
     void inFlight.catch(() => undefined).then(() => session.store.close());
   }, [runner]);
 
@@ -160,12 +166,33 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   );
 
   /**
-   * Go live on a session: wire the dead signal, kick the first drain — and only THEN the
-   * deferred identity probe, so a probe that dies into a refused rotation always finds the
-   * dead listener subscribed (the boot itself no longer touches the wire; `engine/boot.ts`).
+   * ── NO DRAIN BEFORE THE IDENTITY VERDICT (per-account isolation) ──────────────────────────
+   *
+   * Rendering the local mirror owes the wire nothing, but a DRAIN moves the mirror: a bearer
+   * belonging to another account could answer this mirror's cursor with a 410 (the engine's
+   * re-bootstrap WIPES the mirror before the drain-time guard could see one entity) or with
+   * an entity-less page (deletes and empty pages carry no `accountId` for the guard to
+   * refuse, yet advance the cursor). So every drain — the session's first, a pull, a wake, a
+   * folders-flip — waits for {@link ConnectedSession.verifyIdentity} to settle. `verified`
+   * and `unverified` both clear it (the desktop-host door has no session read, and a dead
+   * network must not brick sync — the entity-carrying pages stay guarded as before); only a
+   * positive `mismatch` refuses, and then no drain ever runs. The map holds the per-session
+   * clearance promise so a pull landing mid-probe CHAINS instead of racing it.
+   */
+  const clearance = useRef(new WeakMap<ConnectedSession, Promise<boolean>>());
+
+  /**
+   * Go live on a session: wire the dead signal FIRST (a probe that dies into a refused
+   * rotation must find the listener subscribed — the boot itself no longer touches the wire;
+   * `engine/boot.ts`), then run the identity probe, and only on its all-clear the first
+   * drain. The mail on screen during the round trip is the device's own cached mirror for
+   * this profile; nothing moves it until the verdict is in.
    */
   const adopt = useCallback(
     (session: ConnectedSession) => {
+      // Whatever the PREVIOUS session left standing — a failure sentence, a disowned round —
+      // is not this session's status. Idempotent; the teardown path already disowned.
+      runner.disown();
       offDead.current?.();
       offDead.current = session.bearer.onSessionDead(() => {
         // The server judged this family's token — a revoke or a reuse-past. Render mail no
@@ -175,20 +202,23 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         void refreshProfiles();
       });
       setState({ k: "live", session });
-      void drain(session, true);
-      // The bearer/account judgment, BEHIND the rendered mirror (boot-from-local): only a
-      // positive mismatch acts, and only on the session it was asked about — a verdict that
-      // outlives its session (a switch, a forget) changes nothing. The mail on screen during
-      // the round trip is the device's own cached mirror for this profile; the drain-time
-      // account guard keeps the mismatched bearer's pages out of it throughout.
-      void session.verifyIdentity().then((verdict) => {
-        if (verdict.kind !== "mismatch") return;
-        if (live.current.k !== "live" || live.current.session !== session) return;
-        teardown(session);
-        setState({ k: "refused", reason: verdict.reason });
+      // Only a mismatch acts, and only on the session it was asked about — a verdict that
+      // outlives its session (a switch, a forget) clears nothing and drains nothing.
+      const gate = session.verifyIdentity().then((verdict) => {
+        if (live.current.k !== "live" || live.current.session !== session) return false;
+        if (verdict.kind === "mismatch") {
+          teardown(session);
+          setState({ k: "refused", reason: verdict.reason });
+          return false;
+        }
+        return true;
+      });
+      clearance.current.set(session, gate);
+      void gate.then((ok) => {
+        if (ok) void drain(session, true);
       });
     },
-    [drain, refreshProfiles, teardown],
+    [drain, refreshProfiles, runner, teardown],
   );
 
   /**
@@ -198,8 +228,13 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
    */
   const runConnect = useCallback(
     async (id: string, stillCurrent: () => boolean): Promise<Attempt> => {
-      if (live.current.k === "live") teardown(live.current.session);
+      // The keystore read comes FIRST, teardown immediately before its own next state: the
+      // disown's falling busy edge and the departure from `live` must land in ONE render
+      // commit. With an await between them, the world layer would see "drain completed" while
+      // the OUTGOING session was still on screen and restart work against it — the retry
+      // flush, the folders re-read, an owed drain — racing the scheduled store close.
       const row = (await env.profiles.list()).find((p) => p.id === id);
+      if (live.current.k === "live") teardown(live.current.session);
       if (row === undefined) {
         if (stillCurrent()) setState({ k: "refused", reason: "that server is no longer paired on this phone" });
         return { ok: false, reason: "that server is no longer paired on this phone" };
@@ -328,11 +363,19 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           setSyncError(null);
         }),
       syncNow: () => {
-        // Not live ⇒ nothing to sync, settled already. Live ⇒ the runner joins the round in
-        // flight or starts one, and the returned promise IS that round's completion — the
-        // honest settle a pull spinner renders on.
+        // Not live ⇒ nothing to sync, settled already. Live ⇒ behind the session's identity
+        // clearance (see `clearance` — no drain may move the mirror before the verdict), the
+        // runner joins the round in flight or starts one, and the returned promise IS that
+        // round's completion — the honest settle a pull spinner renders on. A pull landing
+        // mid-probe chains on the verdict: the first drain starts the instant it clears (the
+        // adopt continuation registered first, so this one joins that very round).
         if (live.current.k !== "live") return Promise.resolve();
-        return runner.request(live.current.session.engine);
+        const session = live.current.session;
+        const gate = clearance.current.get(session) ?? Promise.resolve(false);
+        return gate.then((ok) => {
+          if (!ok || live.current.k !== "live" || live.current.session !== session) return;
+          return runner.request(session.engine);
+        });
       },
     }),
     [state, syncing, syncError, profiles, activeId, adopt, drain, env, gate, refreshProfiles, runConnect, runner, teardown],

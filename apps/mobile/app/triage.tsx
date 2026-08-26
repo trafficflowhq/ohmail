@@ -54,7 +54,7 @@ function TriageBody() {
           </Txt>
         </View>
 
-        {w.piles.map((p) => (
+        {w.piles.map((p, pi) => (
           <View key={p.kind} style={{ marginBottom: 16 }}>
             {/*
               `.pile-stack::before/::after` — two sheets of paper under the top
@@ -113,7 +113,9 @@ function TriageBody() {
 
               <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
                 {p.items.length === 0 && !settled ? (
-                  <SkeletonList rows={2} />
+                  // The standing first-sync failure speaks ONCE, on the top pile — three
+                  // repeats of one sentence down the stack would be noise about one fact.
+                  <SkeletonList rows={2} stalled={pi === 0 ? w.boot.syncFailure : null} />
                 ) : p.items.length === 0 ? (
                   <Txt variant="note" tone="ink3" style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
                     {Copy.pileEmpty}

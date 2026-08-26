@@ -423,15 +423,12 @@ export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Pr
   }
 }
 
-/** Boot a STORED profile — app launch and profile switch. No token is spent here. */
+/**
+ * Boot a STORED profile — app launch and profile switch. No token is spent here. The
+ * null-credential refusal lives in {@link buildSession}, the one place every session is
+ * built, so this is a plain delegation.
+ */
 export async function connectProfile(env: PairingEnv, profile: ServerProfile): Promise<ConnectOutcome> {
-  if (profile.refreshToken === null) {
-    return {
-      kind: "refused",
-      needsRepair: true,
-      reason: "this pairing ended — the server refused its token. Scan a fresh QR to pair again",
-    };
-  }
   return buildSession(env, profile, null);
 }
 
@@ -466,6 +463,19 @@ async function buildSession(
     vault: vaultFor(env.profiles, profile.id),
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
   });
+  // A CREDENTIAL-LESS BEARER IS REFUSED HERE, STRUCTURALLY — not left to the caller's guard.
+  // `connectProfile` already refuses a `refreshToken: null` row, but the property must hold
+  // wherever a session could be built, because a null-credential bearer is the one shape the
+  // "dies on first wire touch" rule below cannot catch: with no refresh token to present,
+  // `rotate()` returns false without ever firing `onSessionDead`, and an adopted session
+  // would render cached mail behind an endless quiet 401 instead of routing to re-pair.
+  if (!bearer.paired()) {
+    return {
+      kind: "refused",
+      needsRepair: true,
+      reason: "this pairing ended — the server refused its token. Scan a fresh QR to pair again",
+    };
+  }
   const boot = await bootEngine(env.engineDeps, {
     origin: profile.origin,
     accountId: profile.accountId,
