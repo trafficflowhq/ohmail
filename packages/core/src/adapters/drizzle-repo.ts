@@ -1984,6 +1984,48 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async tombstoneFolderMessages(accountId: string, mailboxId: string, folder: string, limit: number): Promise<number> {
+    const now = new Date();
+    const changes: ChangeInput[] = [];
+
+    /**
+     * The EPOCH-VALID survivor of one message, or null — the promotion target when a swept
+     * copy was the primary. Valid means: a watched instance in another folder whose
+     * UIDVALIDITY matches that folder's CURRENT inventory epoch (an epochless inventory row —
+     * the "0"/null cold sentinel — vetoes nothing). Reset-orphaned rows of a dead epoch can
+     * coexist with current ones, and promoting one would write a locator the server no longer
+     * has, permanently, while the real copy stays "known" and can never repair it. Answered by
+     * ROW ID so the promotion updates exactly one row — a folder that reused a UID across
+     * epochs would otherwise match two and trip the primary uniqueness mid-transaction.
+     */
+    const survivorOf = async (messageId: string) => {
+      const [survivor] = await this.db.select({
+        id: messageInstances.id, folder: messageInstances.folder,
+        uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid,
+      }).from(messageInstances)
+        .leftJoin(mailboxFolders, and(
+          eq(mailboxFolders.mailboxId, messageInstances.mailboxId),
+          eq(mailboxFolders.folder, messageInstances.folder),
+        ))
+        .where(and(
+          eq(messageInstances.messageId, messageId),
+          sql`(${mailboxFolders.uidvalidity} is null or ${mailboxFolders.uidvalidity} in (0, ${messageInstances.uidvalidity}))`,
+        ))
+        .orderBy(sql`${messageInstances.isPrimary} desc`, asc(messageInstances.firstSeenAt))
+        .limit(1);
+      return survivor ?? null;
+    };
+
+    /** Promote one survivor row: primary flag + the message's locator, an update on the wire. */
+    const promote = async (messageId: string, survivor: NonNullable<Awaited<ReturnType<typeof survivorOf>>>) => {
+      await this.db.update(messageInstances).set({ isPrimary: true, lastSeenAt: now })
+        .where(eq(messageInstances.id, survivor.id));
+      await this.db.update(messages).set({
+        nativeLocator: { folder: survivor.folder, ref: `${survivor.uidvalidity}:${survivor.uid}` } as NativeLocator,
+        updatedAt: now,
+      }).where(eq(messages.id, messageId));
+    };
+
+    // ── The RENDERED residents: messages every view shows in this folder ──────────────────
     const victims = await this.db.select({ id: messages.id }).from(messages)
       .leftJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(
@@ -1994,16 +2036,6 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       ))
       .orderBy(asc(messages.id))
       .limit(limit);
-    if (victims.length === 0) {
-      // A drained pick can still leave stragglers: non-primary instance rows of the swept
-      // folder whose message RENDERS elsewhere. They are gone from the server with the sweep,
-      // and a kept row would present their UIDs as known for ever.
-      await this.db.delete(messageInstances)
-        .where(and(eq(messageInstances.mailboxId, mailboxId), eq(messageInstances.folder, folder)));
-      return 0;
-    }
-    const now = new Date();
-    const changes: ChangeInput[] = [];
     for (const v of victims) {
       // The swept folder's instance rows go FIRST, so "what remains" below is the survivor
       // question `forgetInstanceAt` asks: a logical message whose primary copy lived here may
@@ -2012,28 +2044,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       // resurrect it).
       await this.db.delete(messageInstances)
         .where(and(eq(messageInstances.messageId, v.id), eq(messageInstances.folder, folder)));
-      const [survivor] = await this.db.select({
-        folder: messageInstances.folder, uidvalidity: messageInstances.uidvalidity,
-        uid: messageInstances.uid, isPrimary: messageInstances.isPrimary,
-      }).from(messageInstances)
-        .where(eq(messageInstances.messageId, v.id))
-        .orderBy(sql`${messageInstances.isPrimary} desc`, asc(messageInstances.firstSeenAt))
-        .limit(1);
+      const survivor = await survivorOf(v.id);
       if (survivor) {
-        // PROMOTE, never tombstone: the message lives on in watched space. The locator moves
-        // to the surviving copy, the pending folder_state row (if any) is retired — its move
-        // was into a folder that is going away — and the mirror hears an update whose rendered
-        // folder is now the survivor's.
-        await this.db.update(messageInstances).set({ isPrimary: true, lastSeenAt: now })
-          .where(and(
-            eq(messageInstances.messageId, v.id),
-            eq(messageInstances.folder, survivor.folder),
-            eq(messageInstances.uid, survivor.uid),
-          ));
-        await this.db.update(messages).set({
-          nativeLocator: { folder: survivor.folder, ref: `${survivor.uidvalidity}:${survivor.uid}` } as NativeLocator,
-          updatedAt: now,
-        }).where(eq(messages.id, v.id));
+        // PROMOTE, never tombstone: the message lives on in watched space. The pending
+        // folder_state row (if any) is retired — its move was into a folder that is going away
+        // — and the mirror hears an update whose rendered folder is now the survivor's.
+        await promote(v.id, survivor);
         await this.db.delete(folderState).where(eq(folderState.messageId, v.id));
         changes.push({ accountId, entityType: "message", entityId: v.id, op: "update", meta: null });
         continue;
@@ -2049,10 +2065,49 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       await this.db.delete(folderState).where(eq(folderState.messageId, v.id));
       changes.push({ accountId, entityType: "message", entityId: v.id, op: "delete", meta: null });
     }
-    await recordChangesTx(this.db as LedgerTx, changes);
-    return victims.length;
-  }
 
+    // ── The STRAGGLERS: instance rows still in the swept folder whose message RENDERS
+    // elsewhere — a pending move OUT (`desired_folder` points away), or an already-tombstoned
+    // row. Their copies left the server with the sweep too, and each is processed through the
+    // SAME survivor question — a bulk delete here once removed a message's only primary row
+    // without promotion, leaving a permanent locator into a deleted folder. Only entered once
+    // the victims pick has drained (< limit), and bounded like it.
+    let stragglers: Array<{ messageId: string; hadPrimary: boolean }> = [];
+    if (victims.length < limit) {
+      const rows = await this.db.select({
+        messageId: messageInstances.messageId, isPrimary: messageInstances.isPrimary,
+      }).from(messageInstances)
+        .where(and(eq(messageInstances.mailboxId, mailboxId), eq(messageInstances.folder, folder)))
+        .orderBy(asc(messageInstances.messageId))
+        .limit(limit);
+      const byMessage = new Map<string, boolean>();
+      for (const r of rows) byMessage.set(r.messageId, (byMessage.get(r.messageId) ?? false) || r.isPrimary);
+      stragglers = [...byMessage.entries()].map(([messageId, hadPrimary]) => ({ messageId, hadPrimary }));
+      for (const st of stragglers) {
+        await this.db.delete(messageInstances)
+          .where(and(eq(messageInstances.messageId, st.messageId), eq(messageInstances.folder, folder)));
+        if (!st.hadPrimary) continue;
+        const [m] = await this.db.select({ deletedAt: messages.deletedAt }).from(messages)
+          .where(eq(messages.id, st.messageId));
+        if (!m || m.deletedAt !== null) continue;
+        const survivor = await survivorOf(st.messageId);
+        if (survivor) {
+          await promote(st.messageId, survivor);
+        } else {
+          // The primary went to Trash with the sweep and nothing watched remains; the message
+          // still RENDERS elsewhere (its pending move can no longer complete — reconcile's
+          // gone-handling answers it honestly). A locator into the deleted folder would be a
+          // permanent lie; null states "no server copy known" and adoption heals a return.
+          await this.db.update(messages).set({ nativeLocator: null, updatedAt: now })
+            .where(eq(messages.id, st.messageId));
+        }
+        changes.push({ accountId, entityType: "message", entityId: st.messageId, op: "update", meta: null });
+      }
+    }
+
+    await recordChangesTx(this.db as LedgerTx, changes);
+    return victims.length + stragglers.length;
+  }
   async removeFolderRow(accountId: string, folderId: string): Promise<void> {
     await this.db.delete(mailboxFolders).where(eq(mailboxFolders.id, folderId));
     await this.recordChange({

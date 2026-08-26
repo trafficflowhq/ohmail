@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 // `@trafficflow/core/mail`, NOT the default barrel — `folders.ts`'s rule, same reason: this
 // module is imported beside it and must never pull the classifier/drafter graph anywhere.
 import { folderNameError } from "@trafficflow/core/mail";
-import { claimIdempotencyKey, folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type Tx } from "@trafficflow/db";
+import { claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type Tx } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import type { MoveIdempotency } from "./message-service.js";
@@ -48,19 +48,35 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
  *  worker may already be executing. */
 async function claimVerb(
   tx: Tx, ctx: ServiceContext, idem: MoveIdempotency | null | undefined,
-  dto: unknown, seq: bigint | null,
+  dto: unknown, seq: bigint | null, status = 200,
 ): Promise<void> {
   if (!idem) return;
   const claimed = await claimIdempotencyKey(tx, {
     accountId: ctx.accountId,
     key: idem.key,
     requestHash: idem.requestHash,
-    responseStatus: 200,
+    // The verb's OWN status — a create replays as the 201 it answered, not a generic 200.
+    responseStatus: status,
     responseJson: dto,
     seq: seq === null ? null : Number(seq),
     now: ctx.now(),
   });
   if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, idem.key);
+}
+
+/**
+ * The POST-LOCK idempotency re-read. Two simultaneous same-key requests can both miss the
+ * middleware's pre-handler lookup (the winner's row is uncommitted); the loser then parks on
+ * the mailbox lock and, resumed, would fail an overlap or collision check on the WINNER'S OWN
+ * command — a 409 for a request that succeeded. Re-reading the key once the lock is held sees
+ * the winner's committed row, and the race-lost throw makes the middleware replay it.
+ */
+async function recheckIdempotency(
+  tx: Tx, ctx: ServiceContext, idem: MoveIdempotency | null | undefined,
+): Promise<void> {
+  if (!idem) return;
+  const stored = await readIdempotencyKey(tx, ctx.accountId, idem.key, ctx.now());
+  if (stored !== null) throw new IdempotencyRaceLost(ctx.accountId, idem.key);
 }
 
 /** `POST /folders` body. */
@@ -90,6 +106,7 @@ export class FolderOpsService {
 
     return asTx(ctx).transaction(async (tx) => {
       await this.requireCommandableMailbox(tx, ctx, mailboxId);
+      await recheckIdempotency(tx, ctx, opts.idempotency);
       await this.assertNoOpOverlap(tx, mailboxId, [name]);
       const inserted = await tx.insert(mailboxFolders)
         .values({ mailboxId, folder: name })
@@ -105,7 +122,7 @@ export class FolderOpsService {
         accountId: ctx.accountId, entityType: "folder", entityId: row.id, op: "create", meta: null,
       });
       await this.ringDoorbell(tx, mailboxId, ctx.now());
-      return this.answer(tx, ctx, row.id, s, opts.idempotency);
+      return this.answer(tx, ctx, row.id, s, opts.idempotency, 201);
     });
   }
 
@@ -133,6 +150,7 @@ export class FolderOpsService {
 
     return asTx(ctx).transaction(async (tx) => {
       await this.requireCommandableMailbox(tx, ctx, subject.mailboxId);
+      await recheckIdempotency(tx, ctx, opts.idempotency);
       await this.assertNoOpOverlap(tx, subject.mailboxId, [subject.folder, name]);
       const [collision] = await tx.select({ id: mailboxFolders.id }).from(mailboxFolders)
         .where(and(eq(mailboxFolders.mailboxId, subject.mailboxId), eq(mailboxFolders.folder, name)))
@@ -172,6 +190,7 @@ export class FolderOpsService {
           "this mailbox has no Trash folder, and ohmail never expunges — delete the folder in your own mail client instead",
         );
       }
+      await recheckIdempotency(tx, ctx, opts.idempotency);
       await this.assertNoOpOverlap(tx, subject.mailboxId, [subject.folder]);
       await tx.insert(folderOps).values({
         accountId: ctx.accountId, mailboxId: subject.mailboxId, folderId: id,
@@ -206,6 +225,7 @@ export class FolderOpsService {
     const wasCreate = subject.op.kind === "create";
 
     return asTx(ctx).transaction(async (tx) => {
+      await recheckIdempotency(tx, ctx, opts.idempotency);
       if (wasCreate) {
         // CASCADE takes the op row with the inventory row.
         await tx.delete(mailboxFolders).where(eq(mailboxFolders.id, id));
@@ -360,12 +380,12 @@ export class FolderOpsService {
    */
   private async answer(
     tx: Tx, ctx: ServiceContext, id: string, seq: bigint | null,
-    idem?: MoveIdempotency | null,
+    idem?: MoveIdempotency | null, status = 200,
   ): Promise<{ dto: FolderDTO; seq: number | null }> {
     const row = await userFolderById(tx as unknown as ServiceContext["db"], ctx.accountId, id);
     if (!row) throw new ServiceError("internal", 500, "folder vanished after write");
     const dto = folderRowToDTO(row);
-    await claimVerb(tx, ctx, idem, dto, seq);
+    await claimVerb(tx, ctx, idem, dto, seq, status);
     return { dto, seq: seq === null ? null : Number(seq) };
   }
 }
