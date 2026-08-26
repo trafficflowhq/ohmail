@@ -1305,9 +1305,35 @@ function stripCssComments(css: string): string {
 /** A selector list that targets images — `img` as a TAG token; `.imgwrap` is a class and is not. */
 const IMG_SELECTOR = /(?:^|[\s,>+~(])img\b/i;
 
-/** IMG as a decoded TAG token — `i\6dg` spells `img` in CSS escapes and must read as it. */
+/**
+ * IMG as a decoded TAG token — `i\6dg` spells `img` in CSS escapes and must read as it.
+ *
+ * The decode PRESERVES TOKEN BOUNDARIES, which a plain decode does not (a review finding from
+ * each direction): an escape that decodes to a letter or digit keeps its identity, so the
+ * escaped img spelling matches; any other decoded character becomes a word placeholder, so an
+ * escaped combinator stays identifier DATA — `.foo\+img` is a class named `foo+img`, and a
+ * plain decode would hand {@link IMG_SELECTOR} a `+` boundary with an img tag behind it. The
+ * placeholder is a letter for the same reason in miniature: a non-word character after a
+ * decoded `img` would satisfy the regex's word boundary and forge the match the escape was
+ * preventing.
+ */
 function selectsImage(selector: string): boolean {
-  return IMG_SELECTOR.test(decodeCssEscapes(selector));
+  if (!selector.includes("\\")) return IMG_SELECTOR.test(selector);
+  const preserved = selector.replace(
+    /\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|([^\n\r\f]))/g,
+    (_m, hex: string | undefined, literal: string | undefined) => {
+      let ch = "";
+      if (hex === undefined) ch = literal ?? "";
+      else {
+        const cp = Number.parseInt(hex, 16);
+        if (Number.isFinite(cp) && cp > 0 && cp <= 0x10ffff) {
+          try { ch = String.fromCodePoint(cp); } catch { ch = ""; }
+        }
+      }
+      return /^[A-Za-z0-9]$/.test(ch) ? ch : "x";
+    },
+  );
+  return IMG_SELECTOR.test(preserved);
 }
 
 /**
