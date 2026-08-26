@@ -80,8 +80,29 @@ export interface ConnectConfig {
   accountId: string;
 }
 
+/**
+ * The deferred identity judgment — see {@link bootEngine}'s header for why it is no longer
+ * awaited before the mirror opens. `mismatch` carries the sentence the connection layer shows
+ * when it tears the session down.
+ */
+export type IdentityVerdict =
+  | { kind: "verified" | "unverified" }
+  | { kind: "mismatch"; reason: string };
+
 export type EngineBoot =
-  | { kind: "ready"; engine: OhmailEngine; store: SqlMirrorStore; ownerKey: string }
+  | {
+      kind: "ready";
+      engine: OhmailEngine;
+      store: SqlMirrorStore;
+      ownerKey: string;
+      /**
+       * Ask the server whose bearer this is — STARTED BY THE CALLER, after it has gone live
+       * and wired the bearer's dead signal (a cold probe can 401 → rotate → be refused, and
+       * that death must land on a subscribed listener, never before one exists). A positive
+       * mismatch is the caller's cue to tear the session down with the carried sentence.
+       */
+      verifyIdentity: () => Promise<IdentityVerdict>;
+    }
   | { kind: "refused"; reason: string };
 
 /**
@@ -145,14 +166,18 @@ export const MOBILE_SYNC_TYPES: string[] = [
  * The typed account id names — and, through the `__owner` stamp, CLAIMS — a mirror database.
  * The stamp referees databases against each other; it cannot referee the id against the BEARER,
  * so account A's token entered beside account B's previously-used id would open B's stamped
- * mirror legitimately and then drain A's mail into it. Where `GET /auth/session` is mounted
- * (the standalone server), it answers the account id the bearer resolves to — the exact read
- * the browser client names its mirror by — and a POSITIVE mismatch refuses the boot.
+ * mirror legitimately and then try to drain A's mail into it. Where `GET /auth/session` is
+ * mounted (the standalone server), it answers the account id the bearer resolves to — the
+ * exact read the browser client names its mirror by — and a POSITIVE mismatch ends the
+ * session: the caller runs this AFTER going live (boot-from-local, the boot header) and tears
+ * the session down on the mismatch verdict. The mail on screen in that round-trip window is
+ * the device's own cached mirror for the named profile — never anything the mismatched bearer
+ * delivered, because the drain-time guard below refuses its pages.
  *
- * Only a positive mismatch refuses. The desktop-host door mounts no session read (404), an old
+ * Only a positive mismatch judges. The desktop-host door mounts no session read (404), an old
  * server may answer anything, and a dead network answers nothing — all of those proceed as
  * "unverified", because the drain-time guard below still refuses a cross-account MERGE, and a
- * refusal here on a route that merely does not exist would brick the one door this app can
+ * judgment here on a route that merely does not exist would brick the one door this app can
  * reach over a LAN.
  */
 async function verifyAccountId(
@@ -240,6 +265,24 @@ function accountGuarded(adapter: HttpAdapter, accountId: string): GuardedMobileA
  * constructed before the store proved itself would be one `?? new MemoryMirrorStore()` away
  * from the exact failure this refusal exists to prevent. `engine-boot.test.ts` kills the
  * executor and asserts the refusal; reinstating a silent fallback turns that test red.
+ *
+ * ── AND THE BOOT NEVER TOUCHES THE WIRE (boot-from-local-first, owner feedback 2026-08) ────
+ *
+ * This function used to await `GET /auth/session` before opening the mirror, which put a
+ * network round trip — on a cold launch, THREE: the probe, the 401's rotation, the replay —
+ * in front of the first rendered frame. That is the "connecting to mailbox" hold the owner
+ * killed: the phone's own mirror was sitting on disk the whole time. Now everything awaited
+ * here is local (keystore-shaped validation + the sqlite open/hydrate), the app renders its
+ * last known state immediately, and the identity probe is handed back as
+ * {@link EngineBoot.verifyIdentity} for the connection layer to run BEHIND the rendered UI.
+ *
+ * Deferring the probe does not open the cross-account hole the old ordering guarded, because
+ * that ordering was never the guard — the drain-time account check below is: no /sync or
+ * snapshot page naming another account can reach the store, probe or no probe. What the
+ * deferral trades is WHERE a positive mismatch surfaces — as a background teardown one round
+ * trip after first paint, instead of a pre-paint refusal — and what it buys is a first frame
+ * that owes the network nothing. `engine-boot.test.ts` pins both halves: a boot that resolves
+ * while /auth/session hangs forever, and a drain that still refuses a foreign account's pages.
  */
 export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig): Promise<EngineBoot> {
   const origin = normalizeOrigin(config.origin);
@@ -261,15 +304,19 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     (globalThis.fetch.bind(globalThis) as NonNullable<MobileEngineDeps["fetch"]>);
 
   // The claimed id is checked against the credential wherever the server can be asked — see
-  // {@link verifyAccountId}. Only a positive mismatch refuses; a door with no session read
-  // proceeds under the drain-time guard instead.
-  const identity = await verifyAccountId(fetchImpl, origin, authHeaders, accountId);
-  if (identity.kind === "mismatch") {
-    return {
-      kind: "refused",
-      reason: `this bearer belongs to account "${identity.serverSays}", not "${accountId}" — the mirror is not opened`,
-    };
-  }
+  // {@link verifyAccountId} — but NOT here, and not awaited: the probe rides behind the
+  // rendered UI (the header's boot-from-local rule). Only a positive mismatch judges; a door
+  // with no session read stays "unverified" under the drain-time guard.
+  const verifyIdentity = async (): Promise<IdentityVerdict> => {
+    const identity = await verifyAccountId(fetchImpl, origin, authHeaders, accountId);
+    if (identity.kind === "mismatch") {
+      return {
+        kind: "mismatch",
+        reason: `this bearer belongs to account "${identity.serverSays}", not "${accountId}" — check the account id you entered`,
+      };
+    }
+    return { kind: identity.kind };
+  };
 
   const ownerKey = mirrorOwnerKey(origin, accountId);
   const store = new SqlMirrorStore({ owner: ownerKey, open: deps.openExecutor });
@@ -307,5 +354,5 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     // No wake signal attached: this build polls /sync. `attachWakeSignal` stays the seam a
     // push wake would feed later.
   });
-  return { kind: "ready", engine, store, ownerKey };
+  return { kind: "ready", engine, store, ownerKey, verifyIdentity };
 }

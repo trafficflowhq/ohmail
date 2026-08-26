@@ -10,7 +10,10 @@
  *    every cold start of a paired phone.
  *  · `welcome` — nothing is paired and nothing went wrong. The app opens into the connect
  *    flow, never into an empty mail UI and never into sample data.
- *  · `connecting` — a boot or switch in flight; a one-sentence status, not the mail UI.
+ *  · `connecting` — a boot or switch in flight; the instant shell with the list silhouette
+ *    (`ui/Skeleton.tsx#BootShell`), never a text screen — and never long: the boot is local
+ *    (boot-from-local, `engine/boot.ts`), so this state spans a keystore read and a sqlite
+ *    open, not a network round trip.
  *  · `servers` — not live with something to say or act on: disconnected with pairings, a
  *    refusal, an ended session. The Servers screen carries the reason in words and every
  *    remedy — switch, re-pair, forget, add. A refusal lands here even with ZERO pairings

@@ -15,10 +15,13 @@ import { router } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
 import { destDone, type ScreenerSeg } from "../../src/state/model";
+import { usePullToSync } from "../../src/state/pull";
+import { listSurface, metaWhen } from "../../src/state/surface";
 import { useWorld, type ScreenerRow } from "../../src/state/world";
 import { Badge, Empty, Panel, Screen, Scroller, Tail, TapRow, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { Segmented } from "../../src/ui/Segmented";
+import { SkeletonList } from "../../src/ui/Skeleton";
 
 const EMPTY: Record<ScreenerSeg, { glyph: string; title: string; hint: string }> = {
   waiting: { glyph: "🚪", title: Copy.waitingEmptyTitle, hint: Copy.waitingEmptyHint },
@@ -28,18 +31,23 @@ const EMPTY: Record<ScreenerSeg, { glyph: string; title: string; hint: string }>
 
 export default function ScreenerScreen() {
   const w = useWorld();
+  const pull = usePullToSync();
   const [seg, setSeg] = useState<ScreenerSeg>("waiting");
   const empty = EMPTY[seg];
   const { waiting, screened, spam, meta } = w.screener;
+  // Unknown ≠ empty, per SEGMENT: the active shelf's own count against the one settled fact.
+  const counts: Record<ScreenerSeg, number> = { waiting: waiting.length, screened: screened.length, spam: spam.length };
+  const surface = listSurface({ settled: w.boot.settled, count: counts[seg] });
+  const shelfEmpty = surface === "empty" ? <Empty {...empty} /> : <SkeletonList kind="screener" stalled={w.boot.syncFailure} />;
 
   return (
     <Screen>
       <TopBar />
-      <Scroller>
+      <Scroller refresh={pull}>
         <View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: 14 }}>
           <Txt variant="h1">{Copy.screener}</Txt>
           <Txt variant="meta" tone="ink3" style={{ marginTop: 4 }}>
-            {meta}
+            {metaWhen(surface, meta) ?? " "}
           </Txt>
         </View>
 
@@ -48,16 +56,18 @@ export default function ScreenerScreen() {
           value={seg}
           onChange={setSeg}
           segments={[
-            { value: "waiting", label: Copy.segWaiting, count: waiting.length },
-            { value: "screened", label: Copy.segScreened, count: screened.length },
-            { value: "spam", label: Copy.segSpam, count: spam.length },
+            // Counts speak only over a settled mirror — a "0" badge beside a shelf that is
+            // still rendering its skeleton would be an invented count (`state/surface.ts`).
+            { value: "waiting", label: Copy.segWaiting, ...(w.boot.settled ? { count: waiting.length } : {}) },
+            { value: "screened", label: Copy.segScreened, ...(w.boot.settled ? { count: screened.length } : {}) },
+            { value: "spam", label: Copy.segSpam, ...(w.boot.settled ? { count: spam.length } : {}) },
           ]}
         />
 
         <Panel style={{ paddingBottom: 4 }}>
           {seg === "waiting" ? (
             waiting.length === 0 ? (
-              <Empty {...empty} />
+              shelfEmpty
             ) : (
               <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
                 {waiting.map((row) => (
@@ -69,7 +79,7 @@ export default function ScreenerScreen() {
 
           {seg === "screened" ? (
             screened.length === 0 ? (
-              <Empty {...empty} />
+              shelfEmpty
             ) : (
               <>
                 <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
@@ -96,7 +106,7 @@ export default function ScreenerScreen() {
 
           {seg === "spam" ? (
             spam.length === 0 ? (
-              <Empty {...empty} />
+              shelfEmpty
             ) : (
               <>
                 <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>

@@ -202,7 +202,7 @@ export function WakeProvider({ children }: { children: ReactNode }) {
        * the connection layer, whose own guard is the other half.
        */
       if (liveSession.current !== subscribedFor) return;
-      conn.syncNow();
+      void conn.syncNow();
     });
   }, [session, conn]);
 

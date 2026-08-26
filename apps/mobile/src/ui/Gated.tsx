@@ -10,37 +10,24 @@
  * verdicts route TO.
  */
 import { Redirect } from "expo-router";
-import { View } from "react-native";
 import type { ReactNode } from "react";
-import { Copy } from "../copy";
 import { useConnection } from "../net/connection";
 import { gateFor } from "../state/gate";
-import { Screen, Txt } from "./base";
+import { BootShell } from "./Skeleton";
 
 export function Gated({ children }: { children: ReactNode }) {
   const conn = useConnection();
   const verdict = gateFor(conn.state, conn.profiles.length);
 
   // NOT CONNECTED → the connect flow owns the screen; the mail UI renders only a live
-  // mirror. `boot` paints nothing for the instant before the keystore answers, so a
-  // paired phone never flashes the welcome screen on its way to mail.
-  if (verdict.to === "boot") return <Screen>{null}</Screen>;
+  // mirror. `boot` and `connecting` both paint the instant shell (`BootShell`): the same
+  // canvas + top bar the mail screens stand on, with the list silhouette arriving only
+  // after the skeleton grace — so the keystore instant stays a quiet frame (a paired phone
+  // never flashes the welcome screen on its way to mail), a LOCAL boot passes through in
+  // milliseconds with no text screen, and nothing here ever waits on the network (the
+  // connection layer goes live off the on-device mirror; sync runs behind the mail UI).
+  if (verdict.to === "boot" || verdict.to === "connecting") return <BootShell />;
   if (verdict.to === "welcome") return <Redirect href="/welcome" />;
   if (verdict.to === "servers") return <Redirect href="/servers" />;
-  if (verdict.to === "connecting") return <ConnectingView origin={verdict.origin} />;
   return <>{children}</>;
-}
-
-/** A boot or switch in flight — one sentence, not the mail UI and not a spinner circus. */
-function ConnectingView({ origin }: { origin: string }) {
-  return (
-    <Screen>
-      <View style={{ flex: 1, justifyContent: "center", paddingHorizontal: 28, gap: 8 }}>
-        <Txt variant="settingsLabel">{origin}</Txt>
-        <Txt variant="caption" tone="ink3">
-          {Copy.connectBooting}
-        </Txt>
-      </View>
-    </Screen>
-  );
 }

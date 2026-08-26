@@ -19,19 +19,25 @@ import { useCallback, useRef, useState } from "react";
 import { View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
+import { usePullToSync } from "../../src/state/pull";
+import { listSurface, metaWhen } from "../../src/state/surface";
 import { useTheme } from "../../src/theme";
 import { useWorld, type WorldMail } from "../../src/state/world";
 import { Badge, Empty, Panel, Screen, Scroller, Tail, TapRow, Txt, Waterline } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { FadeOut } from "../../src/ui/FadeOut";
+import { SkeletonList } from "../../src/ui/Skeleton";
 
 /** The read line: a card counts as skimmed once its foot clears this fraction. */
 const READ_LINE = 0.62;
 
 export default function ReadsScreen() {
   const w = useWorld();
+  const pull = usePullToSync();
   const { items, waterlineAboveId, waterLabel, meta } = w.reads;
   const actions = w.actions;
+  // Unknown ≠ empty — the stream shows card silhouettes until this mirror has settled once.
+  const surface = listSurface({ settled: w.boot.settled, count: items.length });
 
   const bounds = useRef<Record<string, { y: number; h: number }>>({});
   const onCardLayout = useCallback(
@@ -62,12 +68,12 @@ export default function ReadsScreen() {
   return (
     <Screen>
       <TopBar />
-      <Scroller onScroll={onScroll} scrollEventThrottle={64}>
+      <Scroller onScroll={onScroll} scrollEventThrottle={64} refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
           <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
             <Txt variant="h1">{Copy.reads}</Txt>
             <Txt variant="meta" tone="ink3" tabular>
-              {meta}
+              {metaWhen(surface, meta) ?? " "}
             </Txt>
           </View>
           <Txt variant="caption" tone="ink3" style={{ marginTop: 4 }}>
@@ -75,7 +81,9 @@ export default function ReadsScreen() {
           </Txt>
         </View>
 
-        {items.length === 0 ? (
+        {surface === "skeleton" ? (
+          <SkeletonList kind="card" stalled={w.boot.syncFailure} />
+        ) : surface === "empty" ? (
           <Empty glyph="📰" title={Copy.readsEmptyTitle} hint={Copy.readsEmptyHint} />
         ) : (
           <>

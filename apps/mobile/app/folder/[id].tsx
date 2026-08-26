@@ -17,11 +17,14 @@ import { router, useLocalSearchParams } from "expo-router";
 import { View } from "react-native";
 import { Copy } from "../../src/copy";
 import { folderLeafOf, folderParentOf } from "../../src/state/folders";
+import { usePullToSync } from "../../src/state/pull";
+import { listSurface, metaWhen } from "../../src/state/surface";
 import { useWorld } from "../../src/state/world";
 import { Empty, Panel, Screen, Scroller, Section, Tail, Txt } from "../../src/ui/base";
 import { DetailBar } from "../../src/ui/chrome";
 import { Gated } from "../../src/ui/Gated";
 import { MailRow } from "../../src/ui/MailRow";
+import { SkeletonList } from "../../src/ui/Skeleton";
 
 /** Gated like the tabs: a restored route must land on the connect flow, not an empty list. */
 export default function FolderScreen() {
@@ -35,6 +38,7 @@ export default function FolderScreen() {
 function FolderBody() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const w = useWorld();
+  const pull = usePullToSync();
   const folder = w.folders.byId(id ?? "");
 
   // The flag went off, the entity left the mirror, or the URL names a folder this account
@@ -55,18 +59,21 @@ function FolderBody() {
   const { fresh, seen, unread, total } = w.folders.items(folder.id);
   const leaf = folderLeafOf(folder.name);
   const parent = folderParentOf(folder.name);
+  // Unknown ≠ empty — see `state/surface.ts`. (A folder entity can only exist in a mirror a
+  // drain has touched, but a bootstrap killed before its final page leaves exactly this state.)
+  const surface = listSurface({ settled: w.boot.settled, count: total });
 
   return (
     <Screen>
       <DetailBar title={leaf} />
-      <Scroller>
+      <Scroller refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
           <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
             <Txt variant="h1" numberOfLines={1} style={{ flexShrink: 1 }}>
               {leaf}
             </Txt>
             <Txt variant="meta" tone="ink3" tabular>
-              {`${unread} unread of ${total}`}
+              {metaWhen(surface, `${unread} unread of ${total}`) ?? " "}
             </Txt>
           </View>
           {/* The full path when the folder is nested, so "Q1" says where it lives — the
@@ -78,7 +85,13 @@ function FolderBody() {
           ) : null}
         </View>
 
-        {total === 0 ? (
+        {surface === "skeleton" ? (
+          <Panel style={{ paddingBottom: 4 }}>
+            <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
+              <SkeletonList stalled={w.boot.syncFailure} />
+            </View>
+          </Panel>
+        ) : surface === "empty" ? (
           <Empty glyph="📁" title={Copy.folderEmptyTitle} hint={Copy.folderEmptyHint} />
         ) : (
           <>

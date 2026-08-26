@@ -54,6 +54,7 @@ import {
   liveReceipts,
   liveScreener,
   liveTags,
+  mirrorSettled,
   presentedOf,
   readerZone,
   stableActions,
@@ -71,6 +72,16 @@ export type { FolderEntity, MoveTarget, ScreenerRow, WorldActions, WorldMail, Wo
 
 export interface World {
   live: boolean;
+  /**
+   * THE BOOT FACTS every list screen renders its surface from (`state/surface.ts`):
+   * `settled` — this mirror has EVER completed a drain (`live.ts#mirrorSettled`), so its
+   * zero-row lists are genuinely empty rather than unknown; `syncFailure` — the connection's
+   * standing failure sentence, for the one stall a first-ever launch can hit (a dead network
+   * under an unsettled mirror, where the skeleton alone would pulse without explanation).
+   * On the empty world `settled` is false: the render between a teardown and the redirect
+   * shows the honest unknown, never a fictitious emptiness.
+   */
+  boot: { settled: boolean; syncFailure: string | null };
   /**
    * WHICH SESSION this is — the live session's mirror owner key, or `"none"`. The one
    * legitimate effect dependency for "do this again when the world changes": the actions
@@ -194,6 +205,7 @@ const NO_ACTIONS: WorldActions = {
 function emptyWorld(actions: WorldActions): World {
   return {
     live: false,
+    boot: { settled: false, syncFailure: null },
     worldKey: "none",
     account: { name: "", email: "" },
     ohbox: { resurfaced: [], fresh: [], seen: [], unread: 0, total: 0, meta: "" },
@@ -321,7 +333,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         if (current.current !== m) return;
         // Mid-drain the ask is OWED (see `drainOwed`); otherwise it fires now.
         if (syncingRef.current) drainOwed.current = true;
-        else syncNowRef.current();
+        else void syncNowRef.current();
       },
     });
     return (current.current = m);
@@ -346,7 +358,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // because the flip's folder rows were behind the last drain's cutline.
     if (drainOwed.current) {
       drainOwed.current = false;
-      syncNowRef.current();
+      void syncNowRef.current();
     }
     void machine.refresh();
   }, [conn.syncing, machine]);
@@ -514,6 +526,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const pileTotal = piles.reduce((n, p) => n + p.items.length, 0);
     return {
       live: true,
+      // Read per derivation, not latched: the first drain's completion stamps the mirror and
+      // flips `conn.syncing`, which is in this memo's deps — so `settled` turns true in the
+      // same render pass that could otherwise flash an empty state over a just-synced mailbox.
+      boot: { settled: mirrorSettled(session.store), syncFailure: conn.syncError },
       worldKey: session.ownerKey,
       account: { name: session.profile.origin, email: session.profile.accountId },
       ohbox: { ...ohbox, meta: `${ohbox.unread} unread of ${ohbox.total}` },
@@ -565,10 +581,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // `version` IS the dependency that re-derives the world on every mirror change; the
     // reader itself is stable across drains, so it cannot stand in for it — and `outcomeSeq`
     // re-derives it when a reconnect flush settles a queued key, so a locked composer's
-    // settle effect fires without a mirror change.
+    // settle effect fires without a mirror change. `conn.syncing`/`conn.syncError` re-derive
+    // the BOOT facts: the settled stamp lands as a drain completes (syncing falls), and the
+    // failure sentence is part of what an unsettled screen renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, actions, version, outcomeSeq, outcomeOf,
-    foldersOn, foldersPending, setFoldersEnabled]);
+    foldersOn, foldersPending, setFoldersEnabled, conn.syncing, conn.syncError]);
 
   return (
     <WorldContext.Provider value={world}>

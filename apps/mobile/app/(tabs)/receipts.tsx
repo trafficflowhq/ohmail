@@ -20,11 +20,14 @@ import { useCallback, useEffect, useRef } from "react";
 import { View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
+import { usePullToSync } from "../../src/state/pull";
+import { listSurface, metaWhen } from "../../src/state/surface";
 import { GroupedSweepLedger } from "../../src/state/sweep";
 import { useWorld } from "../../src/state/world";
 import { Empty, Panel, Screen, Scroller, Section, Tail, Txt, Waterline } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { MailRow } from "../../src/ui/MailRow";
+import { SkeletonList } from "../../src/ui/Skeleton";
 
 const READ_LINE = 0.62;
 
@@ -39,8 +42,11 @@ const groupKeyOf = (g: { label: string; items: { id: string }[] }): string =>
 
 export default function ReceiptsScreen() {
   const w = useWorld();
+  const pull = usePullToSync();
   const { groups, waterlineAboveId, waterLabel, total, meta } = w.receipts;
   const actions = w.actions;
+  // Unknown ≠ empty — see `state/surface.ts`.
+  const surface = listSurface({ settled: w.boot.settled, count: total });
 
   const ledger = useRef(new GroupedSweepLedger()).current;
 
@@ -72,17 +78,22 @@ export default function ReceiptsScreen() {
   return (
     <Screen>
       <TopBar />
-      <Scroller onScroll={onScroll} scrollEventThrottle={64}>
+      <Scroller onScroll={onScroll} scrollEventThrottle={64} refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14 }}>
           <Txt variant="h1">{Copy.receipts}</Txt>
           <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
-            {meta}
+            {metaWhen(surface, meta) ?? " "}
           </Txt>
         </View>
 
         <View onLayout={(e) => ledger.setPanel(e.nativeEvent.layout.y)}>
           <Panel style={{ paddingBottom: 4 }}>
-            {total === 0 ? (
+            {surface === "skeleton" ? (
+              <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
+                <SkeletonList stalled={w.boot.syncFailure} />
+              </View>
+            ) : null}
+            {surface === "empty" ? (
               <Empty glyph="🧾" title={Copy.receiptsEmptyTitle} hint={Copy.receiptsEmptyHint} />
             ) : null}
             {groups.map((g, gi) => (

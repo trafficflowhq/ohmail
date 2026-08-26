@@ -40,6 +40,7 @@ import {
   bootEngine,
   mirrorOwnerKey,
   normalizeOrigin,
+  type IdentityVerdict,
   type MobileEngineDeps,
 } from "../engine/boot";
 import { ServerProfileStore, type ServerProfile } from "../state/servers";
@@ -195,6 +196,12 @@ export interface ConnectedSession {
   engine: OhmailEngine;
   store: SqlMirrorStore;
   ownerKey: string;
+  /**
+   * The deferred bearer/account judgment ({@link IdentityVerdict}) — the boot no longer waits
+   * on the wire (boot-from-local, `engine/boot.ts`), so the connection layer starts this AFTER
+   * adoption, once the dead signal is subscribed, and tears the session down on `mismatch`.
+   */
+  verifyIdentity: () => Promise<IdentityVerdict>;
 }
 
 /** The two kinds this app can truthfully be — the hosted device vocabulary's mobile half. */
@@ -416,15 +423,12 @@ export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Pr
   }
 }
 
-/** Boot a STORED profile — app launch and profile switch. No token is spent here. */
+/**
+ * Boot a STORED profile — app launch and profile switch. No token is spent here. The
+ * null-credential refusal lives in {@link buildSession}, the one place every session is
+ * built, so this is a plain delegation.
+ */
 export async function connectProfile(env: PairingEnv, profile: ServerProfile): Promise<ConnectOutcome> {
-  if (profile.refreshToken === null) {
-    return {
-      kind: "refused",
-      needsRepair: true,
-      reason: "this pairing ended — the server refused its token. Scan a fresh QR to pair again",
-    };
-  }
   return buildSession(env, profile, null);
 }
 
@@ -459,26 +463,33 @@ async function buildSession(
     vault: vaultFor(env.profiles, profile.id),
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
   });
-  const boot = await bootEngine(env.engineDeps, {
-    origin: profile.origin,
-    accountId: profile.accountId,
-    auth: { headers: () => bearer.headers(), fetch: bearer.fetch },
-  });
-  if (boot.kind === "refused") return { kind: "refused", reason: boot.reason };
-  // The bearer can DIE inside the boot's own /auth/session probe (a revoked cold profile: the
-  // 401 recovery presents the refresh token and the server refuses it) — and that death lands
-  // BEFORE any screen could subscribe to the dead signal. A ready-but-dead session would render
-  // the cached mirror as live mail over a credential the server already judged, so the boot is
-  // refused here, the mirror handle released, and the sentence is the same one-gesture remedy
-  // the mid-use death shows.
+  // A CREDENTIAL-LESS BEARER IS REFUSED HERE, STRUCTURALLY — not left to the caller's guard.
+  // `connectProfile` already refuses a `refreshToken: null` row, but the property must hold
+  // wherever a session could be built, because a null-credential bearer is the one shape the
+  // "dies on first wire touch" rule below cannot catch: with no refresh token to present,
+  // `rotate()` returns false without ever firing `onSessionDead`, and an adopted session
+  // would render cached mail behind an endless quiet 401 instead of routing to re-pair.
   if (!bearer.paired()) {
-    boot.store.close();
     return {
       kind: "refused",
       needsRepair: true,
       reason: "this pairing ended — the server refused its token. Scan a fresh QR to pair again",
     };
   }
+  const boot = await bootEngine(env.engineDeps, {
+    origin: profile.origin,
+    accountId: profile.accountId,
+    auth: { headers: () => bearer.headers(), fetch: bearer.fetch },
+  });
+  if (boot.kind === "refused") return { kind: "refused", reason: boot.reason };
+  // The boot makes NO request any more (boot-from-local, `engine/boot.ts`), so the bearer
+  // cannot die inside it — the "ready-but-dead" window a `bearer.paired()` check used to
+  // close here has moved, not vanished. A revoked cold profile now boots ready over its own
+  // cached mirror and dies on the FIRST wire touch (the deferred identity probe or the first
+  // drain, whichever 401s into the refused rotation first) — and both of those are started
+  // by the connection layer AFTER it subscribes `onSessionDead` in `adopt`, so the death
+  // always lands on a listener and tears down to the same one-gesture sentence.
+  // `pairing.test.ts` pins that ordering-free version of the property.
   return {
     kind: "connected",
     session: {
@@ -487,6 +498,7 @@ async function buildSession(
       engine: boot.engine,
       store: boot.store,
       ownerKey: mirrorOwnerKey(profile.origin, profile.accountId),
+      verifyIdentity: boot.verifyIdentity,
     },
   };
 }

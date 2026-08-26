@@ -38,6 +38,7 @@
  */
 import {
   FOLDER_OF_VIEW,
+  LAST_DRAIN_AT_META,
   VIEW_OF_FOLDER,
   bodyOf,
   consentPartition,
@@ -1565,6 +1566,27 @@ export function whenLabel(iso: string, zone: string): string {
   } catch {
     return iso;
   }
+}
+
+/**
+ * HAS THIS MIRROR EVER COMPLETED A DRAIN — the boot-from-local question, answered from the
+ * engine's own completion stamp ({@link LAST_DRAIN_AT_META}, written when a drain settles and
+ * read back after the store hydrates). This is what separates the two states a zero-row list
+ * can be in, which the sync interim-state rule says must never be conflated:
+ *
+ *  · **settled** — some session finished a drain over this mirror, so zero rows means the
+ *    mailbox (or this pile of it) is genuinely empty: the empty state may speak;
+ *  · **unsettled** — no drain has ever completed here (a first-ever launch, or a bootstrap
+ *    killed before its final page), so zero rows means UNKNOWN: the screen owes the reader
+ *    the shape of what is coming (`listSurface`), never "Nothing here".
+ *
+ * The stamp persists in the mirror, which is exactly why a warm relaunch renders content in
+ * its first frame with the network still unasked — `boot-surface.test.ts` pins that the
+ * reopened store still answers `true` with no adapter attached. Typed against the one method
+ * it reads rather than the store class, so the suite can drive it without a store.
+ */
+export function mirrorSettled(store: { getMeta<T>(key: string): T | undefined }): boolean {
+  return store.getMeta<string>(LAST_DRAIN_AT_META) !== undefined;
 }
 
 /* Re-exported so the world layer and the suite spell the vocabulary identically. `FolderEntity`

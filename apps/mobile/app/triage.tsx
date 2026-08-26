@@ -10,12 +10,14 @@
 import { View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
+import { usePullToSync } from "../src/state/pull";
 import { useTheme } from "../src/theme";
 import { useWorld } from "../src/state/world";
 import { Badge, Panel, Screen, Scroller, TapRow, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { Icon, type IconName } from "../src/ui/Icon";
+import { SkeletonList } from "../src/ui/Skeleton";
 
 const PILE_ICON: Record<string, IconName> = {
   replyLater: "clock",
@@ -35,15 +37,20 @@ export default function TriageScreen() {
 function TriageBody() {
   const t = useTheme();
   const w = useWorld();
+  const pull = usePullToSync();
+  // Unknown ≠ empty (`state/surface.ts`): before this mirror has settled a drain, a pile
+  // with no items shows the row silhouette, never "Nothing here" — and the derived counts
+  // and meta stay silent for the same reason (a "0" over a skeleton is an invented count).
+  const settled = w.boot.settled;
 
   return (
     <Screen>
       <DetailBar title={Copy.triage} />
-      <Scroller>
+      <Scroller refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.triage}</Txt>
           <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
-            {w.pilesMeta}
+            {settled ? w.pilesMeta : " "}
           </Txt>
         </View>
 
@@ -98,14 +105,16 @@ function TriageBody() {
                 <Icon name={PILE_ICON[p.kind]} size={14} color={t.c.accentInk} />
                 <Txt variant="pileTitle">{p.title}</Txt>
                 <View style={{ flex: 1 }} />
-                <Badge>{p.items.length}</Badge>
+                {settled || p.items.length > 0 ? <Badge>{p.items.length}</Badge> : null}
               </View>
               <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 18, lineHeight: 16 }}>
                 {p.note}
               </Txt>
 
               <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
-                {p.items.length === 0 ? (
+                {p.items.length === 0 && !settled ? (
+                  <SkeletonList rows={2} />
+                ) : p.items.length === 0 ? (
                   <Txt variant="note" tone="ink3" style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
                     {Copy.pileEmpty}
                   </Txt>

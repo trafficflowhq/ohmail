@@ -20,6 +20,7 @@
 import type { ReactNode } from "react";
 import {
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -105,17 +106,39 @@ export function Panel({
 /**
  * The scroller every list screen uses. Owns the side gutter and the clearance
  * under the tab bar so a panel's full shadow falloff is never clipped.
+ *
+ * `refresh` is the standard pull gesture, themed once here so every list that
+ * refreshes speaks the same voice: the spinner in the quiet ink (iOS half —
+ * `tintColor` on UIRefreshControl), the accent on the material indicator over a
+ * floating panel (Android half — `colors`/`progressBackgroundColor` on
+ * SwipeRefreshLayout). The screens hand in `usePullToSync()`, whose spinner
+ * settles when the sync round actually completes — see `state/pull.ts`.
  */
 export function Scroller({
   children,
   contentStyle,
+  refresh,
   ...rest
-}: React.ComponentProps<typeof ScrollView> & { contentStyle?: StyleProp<ViewStyle> }) {
+}: React.ComponentProps<typeof ScrollView> & {
+  contentStyle?: StyleProp<ViewStyle>;
+  refresh?: { refreshing: boolean; onRefresh: () => void };
+}) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
   return (
     <ScrollView
       {...rest}
+      refreshControl={
+        refresh ? (
+          <RefreshControl
+            refreshing={refresh.refreshing}
+            onRefresh={refresh.onRefresh}
+            tintColor={t.c.ink3}
+            colors={[t.c.accentInk]}
+            progressBackgroundColor={t.c.float}
+          />
+        ) : undefined
+      }
       style={{ flex: 1 }}
       contentContainerStyle={[
         {

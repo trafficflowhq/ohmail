@@ -39,6 +39,7 @@ import { nativeEngineDeps } from "../engine/native";
 import { nativeServerProfiles } from "../state/servers-native";
 import type { ServerProfile } from "../state/servers";
 import type { FetchLike } from "./bearer";
+import { SyncRunner } from "./drain";
 import {
   connectProfileById,
   mobileDeviceKind,
@@ -82,7 +83,13 @@ export interface Connection {
   forget(profileId: string): Promise<void>;
   /** End the session without forgetting the pairing. The mirror stays on disk — that is the point. */
   disconnect(): Promise<void>;
-  syncNow(): void;
+  /**
+   * The sync doorbell — the wake channel, the Servers screen and pull-to-refresh all ring
+   * this one. Resolves when the sync round actually settles (a round already in flight is
+   * JOINED, not doubled — the engine's own poll/wake doctrine), which is what lets a pull
+   * spinner end honestly; a failure resolves too, with the sentence in `syncError`.
+   */
+  syncNow(): Promise<void>;
 }
 
 const ConnectionContext = createContext<Connection | null>(null);
@@ -119,8 +126,18 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 
   const live = useRef<ConnectionState>(state);
   live.current = state;
-  /** The in-flight drain, so teardown can WAIT for it (the header's first discipline). */
-  const pending = useRef<Promise<void> | null>(null);
+  /**
+   * The sync rounds, single-flighted ({@link SyncRunner}) — extracted so the honest-settle
+   * and quiet-refusal contracts are testable without this provider. The retry queue is NOT
+   * drained in a round: the world layer flushes it after each successful drain (watching
+   * `syncing` fall), because terminal outcomes need the toast and the composer ledger, and
+   * both live above this provider. See `WorldProvider`'s flush effect and `live.ts#flushQueued`.
+   */
+  const runnerRef = useRef<SyncRunner | null>(null);
+  const runner = (runnerRef.current ??= new SyncRunner({
+    syncing: setSyncing,
+    error: setSyncError,
+  }));
   /** Unsubscribe from the current session's dead signal on teardown. */
   const offDead = useRef<(() => void) | null>(null);
 
@@ -133,34 +150,20 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const teardown = useCallback((session: ConnectedSession) => {
     offDead.current?.();
     offDead.current = null;
-    const inFlight = pending.current ?? Promise.resolve();
+    const inFlight = runner.inFlight() ?? Promise.resolve();
     void inFlight.catch(() => undefined).then(() => session.store.close());
-  }, []);
+  }, [runner]);
 
-  const drain = useCallback(async (session: ConnectedSession, first: boolean) => {
-    setSyncing(true);
-    setSyncError(null);
-    const run = (async () => {
-      try {
-        await (first ? session.engine.start() : session.engine.syncOnce());
-        // The retry queue is NOT drained here: the world layer flushes it after each
-        // successful drain (watching `syncing` fall), because terminal outcomes need the
-        // toast and the composer ledger, and both live above this provider. See
-        // `WorldProvider`'s flush effect and `live.ts#flushQueued`.
-      } catch (err) {
-        setSyncError(String(err));
-        // Re-sync memory with disk so the torn-flush guard's refusal window closes and the
-        // retry re-fetches the failed page instead of writing past it (the store's own rule).
-        await session.engine.hydrate().catch(() => undefined);
-      } finally {
-        setSyncing(false);
-      }
-    })();
-    pending.current = run;
-    await run;
-  }, []);
+  const drain = useCallback(
+    (session: ConnectedSession, first: boolean) => runner.run(session.engine, first),
+    [runner],
+  );
 
-  /** Go live on a session: wire the dead signal, kick the first drain. */
+  /**
+   * Go live on a session: wire the dead signal, kick the first drain — and only THEN the
+   * deferred identity probe, so a probe that dies into a refused rotation always finds the
+   * dead listener subscribed (the boot itself no longer touches the wire; `engine/boot.ts`).
+   */
   const adopt = useCallback(
     (session: ConnectedSession) => {
       offDead.current?.();
@@ -173,6 +176,17 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       });
       setState({ k: "live", session });
       void drain(session, true);
+      // The bearer/account judgment, BEHIND the rendered mirror (boot-from-local): only a
+      // positive mismatch acts, and only on the session it was asked about — a verdict that
+      // outlives its session (a switch, a forget) changes nothing. The mail on screen during
+      // the round trip is the device's own cached mirror for this profile; the drain-time
+      // account guard keeps the mismatched bearer's pages out of it throughout.
+      void session.verifyIdentity().then((verdict) => {
+        if (verdict.kind !== "mismatch") return;
+        if (live.current.k !== "live" || live.current.session !== session) return;
+        teardown(session);
+        setState({ k: "refused", reason: verdict.reason });
+      });
     },
     [drain, refreshProfiles, teardown],
   );
@@ -314,10 +328,14 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           setSyncError(null);
         }),
       syncNow: () => {
-        if (live.current.k === "live" && !syncing) void drain(live.current.session, false);
+        // Not live ⇒ nothing to sync, settled already. Live ⇒ the runner joins the round in
+        // flight or starts one, and the returned promise IS that round's completion — the
+        // honest settle a pull spinner renders on.
+        if (live.current.k !== "live") return Promise.resolve();
+        return runner.request(live.current.session.engine);
       },
     }),
-    [state, syncing, syncError, profiles, activeId, adopt, drain, env, gate, refreshProfiles, runConnect, teardown],
+    [state, syncing, syncError, profiles, activeId, adopt, drain, env, gate, refreshProfiles, runConnect, runner, teardown],
   );
 
   return <ConnectionContext.Provider value={api}>{children}</ConnectionContext.Provider>;
