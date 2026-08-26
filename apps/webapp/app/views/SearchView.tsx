@@ -46,6 +46,7 @@ import { Facets, SearchBox, SearchHit, type FacetGroup } from "@ohmail/ui";
 import { displayTime, metaLine, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
 import { displayAddress } from "../shell/idn";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { useZoneNav } from "../shell/zone-nav";
 import { readOwner } from "../shell/owner-cookie";
 import { searchSortKey, usePersistedChoice } from "../shell/persisted-ui";
 import "./search-keys.css";
@@ -485,6 +486,16 @@ export function SearchView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * THE ZONE MODEL (`zone-nav.tsx`), and why this view gates its own keys on it. Search's
+   * arrows, ↵ and Escape all carry `inInput` — the box holds focus from mount — which also
+   * makes them fire with focus on a RAIL button (a non-typing target is always eligible).
+   * Without the gate, ← into the rail would leave ↓ stepping results underneath and ↵
+   * opening a hit instead of the rail row under the cursor. `zone !== "list"` declares them
+   * inert exactly where the rail owns the keys; the `?` sheet reads the same statement.
+   */
+  const zone = useZoneNav({});
+
   const keys: KeyBinding[] = [
     /**
      * ESCAPE, IN TWO HONEST STEPS — the app's own sentence is "esc — Close what is open".
@@ -501,7 +512,7 @@ export function SearchView({
       group: "navigate",
       label: t("keyClose"),
       inInput: true,
-      disabled: trimmed === "" && onExit == null,
+      disabled: (trimmed === "" && onExit == null) || zone !== "list",
       run: () => {
         if (trimmed !== "") onQuery("");
         else onExit?.();
@@ -514,7 +525,7 @@ export function SearchView({
       // The box has focus the moment this view mounts (`autoFocus`), so a binding without
       // this is a binding that never fires — the same reason Escape and ⌘K opt in.
       inInput: true,
-      disabled: shown.length === 0,
+      disabled: shown.length === 0 || zone !== "list",
       run: () => setAt((i) => Math.min(i + 1, shown.length - 1)),
     },
     {
@@ -522,7 +533,7 @@ export function SearchView({
       group: "navigate",
       label: t("keyPrev"),
       inInput: true,
-      disabled: shown.length === 0,
+      disabled: shown.length === 0 || zone !== "list",
       run: () => setAt((i) => Math.max(i - 1, 0)),
     },
     {
@@ -544,7 +555,7 @@ export function SearchView({
        * on an empty search, which is the registry's rule for every other binding in the
        * product: listed because it exists, greyed because there is nothing to act on.
        */
-      disabled: cursor < 0,
+      disabled: cursor < 0 || zone !== "list",
       run: () => {
         // `shown[cursor]`, never `shown[0]`. The cursor is the whole point of the two
         // bindings above; opening the first hit regardless would make ↓ decoration.

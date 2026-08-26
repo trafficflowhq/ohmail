@@ -25,6 +25,7 @@ import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, waterlineStamp, withheldCopyKey } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { useZoneNav } from "../shell/zone-nav";
 import { useListWindow } from "../shell/list-window";
 import { type MessageAction } from "../shell/MessagePane";
 import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/StreamShell";
@@ -302,20 +303,36 @@ export function ReceiptsView({
 
   const order = all.map((m) => m.id);
   const at = current ? order.indexOf(current) : -1;
+  /* ↓/↑ are j/k — one pair of closures under four keycaps, registered into the zone model
+     below so the arrows yield to the rail when focus is there (`zone-nav.tsx`). */
+  const stepDown = {
+    disabled: at >= order.length - 1,
+    run: () => {
+      if (at < order.length - 1) jump(order[at + 1]!);
+    },
+    label: tr("keyNext"),
+  };
+  const stepUp = {
+    disabled: at <= 0,
+    run: () => {
+      if (at > 0) jump(order[at - 1]!);
+    },
+    label: tr("keyPrev"),
+  };
   const keys: KeyBinding[] = [
     {
       chord: "j",
       group: "navigate",
       label: tr("keyNext"),
-      disabled: at >= order.length - 1,
-      run: () => at < order.length - 1 && jump(order[at + 1]!),
+      disabled: stepDown.disabled,
+      run: stepDown.run,
     },
     {
       chord: "k",
       group: "navigate",
       label: tr("keyPrev"),
-      disabled: at <= 0,
-      run: () => at > 0 && jump(order[at - 1]!),
+      disabled: stepUp.disabled,
+      run: stepUp.run,
     },
     {
       chord: "Enter",
@@ -333,6 +350,10 @@ export function ReceiptsView({
     },
   ];
   useKeyBindings(keys);
+
+  /* The zone model (`zone-nav.tsx`): rail ↔ list. A stream has no third column — the cards
+     ARE the reading — so no reader zone is declared and → from the list stays inert. */
+  useZoneNav({ list: { up: stepUp, down: stepDown, followId: current ?? null } });
 
   /* Expanding is the request for the rest of the receipt, and the retry — and it raises the verbs,
      so record which card is open. STABLE so `StreamCardMemo` can skip an unchanged card across a

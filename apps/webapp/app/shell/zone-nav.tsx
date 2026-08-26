@@ -1,0 +1,390 @@
+"use client";
+
+/**
+ * THE SPATIAL MODEL — three focus zones, walked with the arrow keys.
+ *
+ *     menu rail   ←→   list   ←→   open message
+ *
+ * ← and → move BETWEEN zones, ↑/↓ move WITHIN one, Enter activates, Escape walks back left.
+ * The list is the resting zone; the rail and the open message are places you step into and
+ * out of. Every view that wants the model declares it with {@link useZoneNav}, exactly as
+ * views declare their keys into the registry — this file adds NO listener of its own beyond
+ * the two focus observers below, and every key it handles is an ordinary `KeyBinding`
+ * dispatched by `keymap.tsx`, so the `?` sheet documents the zone keys because they exist
+ * and existing single-key shortcuts keep their precedence over them (view layers are
+ * consulted before these `global`-scope bindings).
+ *
+ * ── THE ZONE IS DERIVED FROM REAL FOCUS, NOT KEPT AS PARALLEL STATE ─────────────────────
+ *
+ * "Which zone am I in" has one honest answer: where the browser's focus actually is. A
+ * stored zone flag would need resynchronising after every click, tap, Tab and programmatic
+ * focus move, and each missed one would leave the arrows acting on a zone the user can see
+ * they are not in. So the zone is COMPUTED — focus inside `.rail` is the rail, focus inside
+ * the mounted view's open-message container (each view names its own, e.g.
+ * `.view-ohbox .read-col`) is the reader, and everything else, `document.body` included, is
+ * the list. Entering a zone is nothing more than moving real focus into it, which is also
+ * the whole accessibility story: the rail rows and list rows are real `<button>`s, the
+ * reading column is a labelled region with `tabIndex={-1}`, and a screen reader announces
+ * every move because every move is a genuine focus change. `:focus-visible` (base.css)
+ * paints the ring, in both themes, for free.
+ *
+ * Deriving from focus also self-guards the widths where a zone does not exist: `focus()`
+ * on a `display:none` element is refused by the browser, so stepping into a hidden rail
+ * (the sub-900px drawer) or a hidden reading column simply does not move — no media query
+ * here, no second copy of the layout's breakpoints. Where the reading column is hidden the
+ * view supplies `onHiddenEnter`, which is its deliberate open (the reader sheet), because
+ * at that width "into the message" and "open the message" are the same request.
+ *
+ * ── TEXT INPUTS ARE NEVER TOUCHED ────────────────────────────────────────────────────────
+ *
+ * No binding here sets `inInput`, so the registry's typing guard applies: arrows inside
+ * compose, search or any other field keep their native caret behaviour, and the zone model
+ * only speaks when the rail, the list or the pane owns focus.
+ *
+ * ── READ-MARKING IS THE VIEW'S, ON THE SEAM THAT ALREADY SHIPPED ─────────────────────────
+ *
+ * Arrow selection in the Ohbox rides `selectByUser`, so the dwell guard (`DWELL_MS`,
+ * `OhboxView.tsx` — armed on the cursor, cancelled by the next move, committed as a labelled
+ * `"glance"` on departure) applies to a flick through five messages exactly as it applies to
+ * j/k: nothing is marked until the reader actually stays. Stepping INTO the message with →
+ * is explicit engagement, so the view arms its read in `onEnter` — the same arm an open
+ * performs, never a second write path.
+ */
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useTranslations } from "next-intl";
+import { useOptionalKeyBindings, type KeyBinding } from "./keymap";
+
+export type Zone = "rail" | "list" | "reader";
+
+/**
+ * How far one ↑/↓ press moves the open message, in px.
+ *
+ * 48 = three 16px text lines — Firefox's native arrow-scroll unit, within a few px of
+ * Chrome's 40. Small enough that a held key reads as continuous text flow rather than
+ * jumps, big enough that a single press visibly moves. Applied as an instant `scrollTop`
+ * assignment (`MessagePane` prefers the same primitive) so key-repeat never queues smooth
+ * animations against each other. A thread needs no extra "next message" step: the
+ * conversation is one flat column of full-body panels in one scroller
+ * (`ConversationPanels`), so scrolling past the end of one message IS arriving at the next.
+ */
+export const READER_SCROLL_STEP = 48;
+
+const RAIL = ".rail";
+
+/* ── the derived zone, as an external store ──────────────────────────────────────────────
+   Module-level rather than context so the views (which declare bindings) and any future
+   reader of `currentZone` share one derivation without a provider mounted above them — the
+   same reason the keymap keeps one listener. `readerGeography` is the mounted view's
+   open-message selector; exactly one view is mounted at a time, so a plain slot is the
+   honest shape and a registry of them would imply a concurrency that cannot occur. */
+let readerGeography: string | null = null;
+let zone: Zone = "list";
+const subscribers = new Set<() => void>();
+
+function computeZone(): Zone {
+  if (typeof document === "undefined") return "list";
+  const el = document.activeElement;
+  if (!(el instanceof Element) || el === document.body) return "list";
+  if (el.closest(RAIL)) return "rail";
+  if (readerGeography && el.closest(readerGeography)) return "reader";
+  return "list";
+}
+
+function refresh(): void {
+  const next = computeZone();
+  if (next === zone) return;
+  zone = next;
+  for (const notify of subscribers) notify();
+}
+
+function subscribe(notify: () => void): () => void {
+  subscribers.add(notify);
+  return () => subscribers.delete(notify);
+}
+
+export function currentZone(): Zone {
+  return zone;
+}
+
+/** The zone, live — re-renders the caller when focus crosses a zone boundary. */
+export function useZone(): Zone {
+  return useSyncExternalStore(subscribe, currentZone, () => "list");
+}
+
+/* ── focus movement ──────────────────────────────────────────────────────────────────────
+   Every helper moves REAL focus and then trusts the derivation above. `focus()` on an
+   element the browser will not focus (hidden, or removed between query and call) leaves
+   `activeElement` where it was, so each helper checks whether the move actually happened
+   rather than assuming — that check is the whole of the responsive guard. */
+
+/** Focusable rail rows, in visual order. Collapsed groups are skipped by focus refusal. */
+function railItems(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>(`${RAIL} button:not([disabled])`)];
+}
+
+function tryFocus(el: HTMLElement | null | undefined): boolean {
+  if (!el) return false;
+  el.focus();
+  return document.activeElement === el;
+}
+
+/** Step into the rail, landing on the row for the view the reader is already in. */
+function enterRail(): void {
+  const active = document.querySelector<HTMLElement>(`${RAIL} .ritem.on`);
+  if (tryFocus(active)) return;
+  for (const el of railItems()) if (tryFocus(el)) return;
+}
+
+/** ↑/↓ inside the rail: the next row that accepts focus, so a closed group is no stop. */
+function railStep(dir: 1 | -1): void {
+  const items = railItems();
+  const cur = document.activeElement;
+  const at = cur instanceof HTMLElement ? items.indexOf(cur) : -1;
+  if (at < 0) {
+    enterRail();
+    return;
+  }
+  for (let i = at + dir; i >= 0 && i < items.length; i += dir) {
+    if (tryFocus(items[i]!)) return;
+  }
+}
+
+export interface ZoneListStep {
+  /** Same contract as a binding's `disabled` — the sheet reads it. */
+  disabled: boolean;
+  run: () => void;
+  /** The view's own next/prev wording, so ↓ and `j` document one vocabulary. */
+  label: string;
+}
+
+/**
+ * FOCUS FOLLOWS THE CURSOR WHILE A ROW OWNS FOCUS — and the defect this closes is concrete:
+ * → from the rail lands real focus on the selected row; without this, the next ↓ moves the
+ * VIEW's cursor and leaves focus standing on the old row, so Enter — the browser's own
+ * button activation — presses the row the reader has visibly left. Focus and cursor must
+ * not be allowed to name two different messages.
+ *
+ * Keyed on the view's selected id and gated on "a row button currently has focus": the
+ * mouse-and-letters flow (focus on body, j/k walking the virtual cursor) is untouched, and
+ * a reader who entered the list BY FOCUS gets the row announced on every step — the roving
+ * walk over the real `<button>` rows the views already render as `role`-carrying options.
+ * Runs after the render that moved the cursor, so the `.sel` row it focuses is the new one.
+ */
+function useListFocusFollow(followId: string | null | undefined, selector: string): void {
+  useEffect(() => {
+    if (followId == null) return;
+    const cur = document.activeElement;
+    if (!(cur instanceof HTMLElement) || !cur.matches(".row")) return;
+    const sel = document.querySelector<HTMLElement>(selector);
+    if (sel && sel !== cur) sel.focus();
+  }, [followId, selector]);
+}
+
+export interface ZoneNavConfig {
+  /**
+   * ↑/↓ in the list zone — the view's j/k walk, so arrows and letters are one gesture.
+   * `followId` is the view's selected id, for {@link useListFocusFollow}; a view whose rows
+   * are not `.row` buttons may omit it and the follow never engages.
+   */
+  list?: { up: ZoneListStep; down: ZoneListStep; followId?: string | null };
+  /** The open-message zone. Absent in the stream views, which have no third column. */
+  reader?: {
+    /** Geography, focus target and default scroller of the open message. */
+    selector: string;
+    /** Where ↑/↓ scroll, when that is not `selector` itself (Settings: the view scroller). */
+    scrollSelector?: string;
+    /** Nothing is open — → into the pane is declared inert, and the sheet says so. */
+    disabled: boolean;
+    /** → landed in the pane: explicit engagement. The Ohbox arms its read here. */
+    onEnter?: () => void;
+    /** The pane is hidden at this width; → means the view's deliberate open instead. */
+    onHiddenEnter?: () => void;
+  };
+  /** Where "back to the list" lands focus. Default: the selected row. */
+  listFocusSelector?: string;
+}
+
+/**
+ * Declare the zone model for the mounted view. Returns the live zone so the view can gate
+ * its own bindings (`disabled: … || zone !== "list"`) — the counterpart of this hook gating
+ * everything it registers on the same value.
+ */
+export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
+  const t = useTranslations("shortcuts");
+  const z = useZone();
+
+  /* The mounted view owns the reader geography for as long as it is mounted. */
+  const readerSelector = cfg.reader?.selector ?? null;
+  useEffect(() => {
+    readerGeography = readerSelector;
+    refresh();
+    return () => {
+      readerGeography = null;
+      refresh();
+    };
+  }, [readerSelector]);
+
+  /* The two observers that keep the derivation current. `focusout` fires before the next
+     `activeElement` settles (a blur to `body` fires no `focusin` at all), so it re-reads on
+     a microtask. Installed per mounted hook and ref-counted by Set semantics: one view at a
+     time in practice, and a second caller would simply add the same two listeners once. */
+  useEffect(() => {
+    const onFocusIn = (): void => refresh();
+    const onFocusOut = (): void => {
+      void Promise.resolve().then(refresh);
+    };
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    refresh();
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+    };
+  }, []);
+
+  /* Read through a ref at run time, the registry's own pattern (`Layer.get`): the closures
+     below dispatch against the render that is on screen, never the mount's. */
+  const latest = useRef(cfg);
+  latest.current = cfg;
+
+  useListFocusFollow(cfg.list?.followId, cfg.listFocusSelector ?? ".view .row.sel");
+
+  const focusList = (): void => {
+    const sel = latest.current.listFocusSelector ?? ".view .row.sel";
+    if (tryFocus(document.querySelector<HTMLElement>(sel))) return;
+    // No row to stand on (a resting list, a stream): release focus to the body, which IS
+    // the list zone by derivation. The view's own cursor highlight carries the indication.
+    const cur = document.activeElement;
+    if (cur instanceof HTMLElement) cur.blur();
+  };
+
+  const enterReader = (): void => {
+    const r = latest.current.reader;
+    if (!r || r.disabled) return;
+    const pane = document.querySelector<HTMLElement>(r.selector);
+    if (tryFocus(pane)) {
+      r.onEnter?.();
+      return;
+    }
+    // The column is hidden at this width (or not rendered): "into the message" can only
+    // mean the deliberate open, and the view says what that is.
+    r.onHiddenEnter?.();
+  };
+
+  const scrollReader = (dir: 1 | -1): void => {
+    const r = latest.current.reader;
+    if (!r) return;
+    const el = document.querySelector<HTMLElement>(r.scrollSelector ?? r.selector);
+    if (el) el.scrollTop = el.scrollTop + dir * READER_SCROLL_STEP;
+  };
+
+  /* Two bindings per contested chord, gated to disjoint zones, so the `?` sheet shows the
+     label for the zone the reader is actually in — the dedup keeps the enabled one. */
+  const bindings: KeyBinding[] = [
+    {
+      chord: "ArrowLeft",
+      group: "navigate",
+      label: t("zoneMenu"),
+      disabled: z !== "list",
+      run: enterRail,
+    },
+    {
+      chord: "ArrowLeft",
+      group: "navigate",
+      label: t("zoneList"),
+      disabled: z !== "reader",
+      run: focusList,
+    },
+    {
+      chord: "ArrowRight",
+      group: "navigate",
+      label: t("zoneList"),
+      disabled: z !== "rail",
+      run: focusList,
+    },
+    {
+      chord: "ArrowRight",
+      group: "navigate",
+      label: t("zoneRead"),
+      disabled: z !== "list" || !cfg.reader || cfg.reader.disabled,
+      run: enterReader,
+    },
+    {
+      chord: "ArrowUp",
+      group: "navigate",
+      label: t("zoneMenuUp"),
+      disabled: z !== "rail",
+      run: () => railStep(-1),
+    },
+    {
+      chord: "ArrowDown",
+      group: "navigate",
+      label: t("zoneMenuDown"),
+      disabled: z !== "rail",
+      run: () => railStep(1),
+    },
+    /* Escape walks back left, one zone per press. It is registered at `global` scope like
+       everything here, so every existing Escape wins first: the shell's overlay ladder
+       (anything open on top), then the view's own (cancel the bulk row, clear the picked
+       set) — this fires only when nothing nearer claimed the key. */
+    {
+      chord: "Escape",
+      group: "navigate",
+      label: t("zoneList"),
+      disabled: z !== "reader",
+      run: focusList,
+    },
+    {
+      chord: "Escape",
+      group: "navigate",
+      label: t("zoneMenu"),
+      disabled: z !== "list",
+      run: enterRail,
+    },
+  ];
+
+  if (cfg.list) {
+    bindings.push(
+      {
+        chord: "ArrowUp",
+        group: "navigate",
+        label: cfg.list.up.label,
+        disabled: z !== "list" || cfg.list.up.disabled,
+        run: () => latest.current.list?.up.run(),
+      },
+      {
+        chord: "ArrowDown",
+        group: "navigate",
+        label: cfg.list.down.label,
+        disabled: z !== "list" || cfg.list.down.disabled,
+        run: () => latest.current.list?.down.run(),
+      },
+    );
+  }
+
+  if (cfg.reader) {
+    bindings.push(
+      {
+        chord: "ArrowUp",
+        group: "navigate",
+        label: t("zoneScroll"),
+        disabled: z !== "reader",
+        run: () => scrollReader(-1),
+      },
+      {
+        chord: "ArrowDown",
+        group: "navigate",
+        label: t("zoneScroll"),
+        disabled: z !== "reader",
+        run: () => scrollReader(1),
+      },
+    );
+  }
+
+  /* Optional registration: the split views are also mounted with no keymap at all (bare
+     view tests, keyboard-less hosts), where the zone model is simply absent — see the
+     variant's own docs in `keymap.tsx`. Under the app's provider it registers exactly as
+     `useKeyBindings` would. */
+  useOptionalKeyBindings(bindings, "global");
+  return z;
+}

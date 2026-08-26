@@ -80,23 +80,32 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
     const last = ORDER.length - 1;
+    // A key this group handles STOPS here. The registry's document listener now binds the
+    // arrows too (the zone walk, `zone-nav.tsx`), and the tiles sit inside a settings pane —
+    // without the stop, one press would both move the radio selection and scroll the pane.
+    // `stopPropagation` is enough for a listener on `document` (MoreMenu measured this); the
+    // unhandled keys fall through untouched.
+    const handled = (): void => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
     switch (e.key) {
       case "ArrowRight":
       case "ArrowDown":
-        e.preventDefault();
+        handled();
         moveTo(at < 0 || at >= last ? 0 : at + 1);
         break;
       case "ArrowLeft":
       case "ArrowUp":
-        e.preventDefault();
+        handled();
         moveTo(at <= 0 ? last : at - 1);
         break;
       case "Home":
-        e.preventDefault();
+        handled();
         moveTo(0);
         break;
       case "End":
-        e.preventDefault();
+        handled();
         moveTo(last);
         break;
     }

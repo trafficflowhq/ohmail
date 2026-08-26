@@ -331,6 +331,9 @@ export function InlineReply({
   const onGripKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
     e.preventDefault();
+    // The grip lives inside the reading column, where the zone walk (`zone-nav.tsx`) reads
+    // ↑/↓ as "scroll the message" — without this stop one press would resize AND scroll.
+    e.stopPropagation();
     setPanelHeight(currentPanelPx() + (e.key === "ArrowUp" ? 24 : -24));
   };
 

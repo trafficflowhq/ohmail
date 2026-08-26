@@ -169,7 +169,33 @@ export function ReadingPane({
   );
 }
 
-/** The lift-1 reading column that hosts a ReadingPane in split views. */
-export function ReadColumn({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={className ? `read-col ${className}` : "read-col"}>{children}</div>;
+/**
+ * The lift-1 reading column that hosts a ReadingPane in split views.
+ *
+ * `regionLabel` makes the column a FOCUSABLE, NAMED REGION — the third zone of the arrow-key
+ * spatial model (rail ← list → open message; the webapp's `zone-nav.tsx`). `tabIndex={-1}`
+ * so → can land real focus on it (never Tab: the message's own controls keep the tab order),
+ * `role="region"` with the label so the landing is announced, and the global
+ * `:focus-visible` ring (base.css) marks the focused zone in both themes. Optional and
+ * default-absent: a column nobody navigates by keyboard renders exactly as before.
+ */
+export function ReadColumn({
+  children,
+  className,
+  regionLabel,
+}: {
+  children: ReactNode;
+  className?: string;
+  regionLabel?: string;
+}) {
+  return (
+    <div
+      className={className ? `read-col ${className}` : "read-col"}
+      {...(regionLabel !== undefined
+        ? ({ role: "region", "aria-label": regionLabel, tabIndex: -1 } as const)
+        : {})}
+    >
+      {children}
+    </div>
+  );
 }

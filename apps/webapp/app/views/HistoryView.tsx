@@ -59,6 +59,7 @@ import { MarkAllRead } from "../components/MarkAllRead";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useListWindow } from "../shell/list-window";
 import { avatarOf, rowStamp, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { useZoneNav } from "../shell/zone-nav";
 
 /** Below this the reading column is `display:none` (app.css), so a tap must open the sheet. */
 function readColumnHidden(): boolean {
@@ -116,6 +117,10 @@ export function HistoryView({
   onMarkAllRead?: (ids: string[]) => void;
 }) {
   const t = useTranslations("history");
+  /* The list keys' shared vocabulary and the reading column's region name — the Ohbox's own
+     labels and `reader.pane`, so the split views never phrase the same gesture apart. */
+  const to = useTranslations("ohbox");
+  const tReader = useTranslations("reader");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const win = useListWindow({ scrollerRef, count: messages.length });
@@ -138,6 +143,50 @@ export function HistoryView({
     if (readColumnHidden()) onOpen(m);
     else setSelectedId(m.id);
   };
+
+  /**
+   * ↓/↑ WALK THE LIST AS RENDERED — the zone model's list zone (`zone-nav.tsx`), and this
+   * view's first list keys. History is all-read by construction, so selection here can have
+   * no read side effect at all — showing is the whole act. → into the pane is a focus move;
+   * where the column is hidden it is the sheet, the same answer a tap gets (`openRow`).
+   */
+  const navAt = shown ? messages.findIndex((m) => m.id === shown.id) : -1;
+  const selectRow = (id: string): void => {
+    setSelectedId(id);
+    // Keep the new cursor in view. `?.` on the METHOD, not only the node: jsdom mounts this
+    // view without implementing scrollIntoView (RulesView's precedent).
+    queueMicrotask(() =>
+      document
+        .querySelector<HTMLElement>(`.view-history .row[data-id="${CSS.escape(id)}"]`)
+        ?.scrollIntoView?.({ block: "nearest" }),
+    );
+  };
+  useZoneNav({
+    list: {
+      followId: shown?.id ?? null,
+      up: {
+        disabled: navAt <= 0,
+        run: () => {
+          if (navAt > 0) selectRow(messages[navAt - 1]!.id);
+        },
+        label: to("keyPrev"),
+      },
+      down: {
+        disabled: navAt >= messages.length - 1,
+        run: () => {
+          if (navAt < messages.length - 1) selectRow(messages[navAt + 1]!.id);
+        },
+        label: to("keyNext"),
+      },
+    },
+    reader: {
+      selector: ".view-history .read-col",
+      disabled: shown == null,
+      onHiddenEnter: () => {
+        if (shown) onOpen(shown);
+      },
+    },
+  });
 
   return (
     <section className="view split view-history">
@@ -229,7 +278,7 @@ export function HistoryView({
           `onEnterReader` on the pane, for the reason the Ohbox omits it — the "open reading
           mode" button it renders would sit at exactly the widths where the sheet duplicates
           this column. */}
-      <ReadColumn>
+      <ReadColumn regionLabel={tReader("pane")}>
         {shown ? (
           <MessagePane
             message={shown}

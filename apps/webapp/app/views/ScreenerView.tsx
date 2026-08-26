@@ -39,6 +39,7 @@ import { junkKeyOf, type JunkWindowControl } from "../shell/junk-window";
 import { displayAddress, displayAddressee, displayAddressUnder, displayDomainLabel } from "../shell/idn";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { useZoneNav } from "../shell/zone-nav";
 import { ShortcutHint } from "../shell/ShortcutHint";
 /* The reader surfaces' own bound on "still coming" — one mechanism, not a second one shaped like
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
@@ -1000,20 +1001,32 @@ export function ScreenerView({
     return ai && ai.dest !== "screener" ? ai : null;
   })();
 
+  /* ↓/↑ are j/k — one pair of closures under four keycaps, registered into the zone model
+     below so the arrows yield to the rail when focus is there (`zone-nav.tsx`). */
+  const stepDown = {
+    disabled: at >= selectable.length - 1,
+    run: () => step(at + 1),
+    label: t("keyNext"),
+  };
+  const stepUp = {
+    disabled: at <= 0,
+    run: () => step(at - 1),
+    label: t("keyPrev"),
+  };
   const keys: KeyBinding[] = [
     {
       chord: "j",
       group: "navigate",
       label: t("keyNext"),
-      disabled: at >= selectable.length - 1,
-      run: () => step(at + 1),
+      disabled: stepDown.disabled,
+      run: stepDown.run,
     },
     {
       chord: "k",
       group: "navigate",
       label: t("keyPrev"),
-      disabled: at <= 0,
-      run: () => step(at - 1),
+      disabled: stepUp.disabled,
+      run: stepUp.run,
     },
     {
       chord: "Escape",
@@ -1076,6 +1089,10 @@ export function ScreenerView({
     ),
   ];
   useKeyBindings(keys);
+
+  /* The zone model (`zone-nav.tsx`): rail ↔ list. The Screener has no reading column —
+     deciding, not reading, is its act — so no reader zone is declared. */
+  useZoneNav({ list: { up: stepUp, down: stepDown, followId: activeId ?? null } });
 
   const selectRow = (id: string) => {
     onSelect(segment, id);

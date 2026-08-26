@@ -55,6 +55,7 @@ import {
 } from "@ohmail/ui";
 import { avatarOf, rowStamp, hueOf, resurfaceLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useKeyBindings } from "../shell/keymap";
+import { useZoneNav } from "../shell/zone-nav";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { TRIAGE_PILES, type TriagePileId } from "../shell/routing";
 
@@ -168,6 +169,8 @@ export function TriageView({
   /* The "Done" release control's copy lives in the Ohbox namespace with the verb's other faces
      (the action bar's `actionDone`, the pinned row's) — ONE wording source, not a per-view copy. */
   const to = useTranslations("ohbox");
+  /* The reading column's region name — shared with every split view (`ReadColumn`). */
+  const tReader = useTranslations("reader");
   const total =
     piles.replyLater.length + piles.setAside.length + piles.resurface.length;
   const entries = PILE_ENTRIES[pile](piles);
@@ -233,6 +236,42 @@ export function TriageView({
     if (readColumnHidden()) onOpen(m);
     else setSelectedId(m.id);
   };
+
+  /**
+   * ↓/↑ WALK THE PILE AS RENDERED — the zone model's list zone (`zone-nav.tsx`), and this
+   * view's first list-cursor keys. The walk is over `openable` — the entries a cursor can
+   * stand on, the same order `shown` falls back through — so a demo orphan (an entry with no
+   * message behind it) is never a keyboard stop, exactly as it is not a button. Selecting
+   * shows and shows only: triage writes nothing on display. → into the pane is a focus move;
+   * where the column is hidden it is the sheet, the same answer a tap gets (`openRow`).
+   */
+  const navAt = shown ? openable.findIndex((m) => m.id === shown.id) : -1;
+  useZoneNav({
+    list: {
+      followId: shown?.id ?? null,
+      up: {
+        disabled: navAt <= 0,
+        run: () => {
+          if (navAt > 0) setSelectedId(openable[navAt - 1]!.id);
+        },
+        label: to("keyPrev"),
+      },
+      down: {
+        disabled: navAt >= openable.length - 1,
+        run: () => {
+          if (navAt < openable.length - 1) setSelectedId(openable[navAt + 1]!.id);
+        },
+        label: to("keyNext"),
+      },
+    },
+    reader: {
+      selector: ".view-triage .read-col",
+      disabled: shown == null,
+      onHiddenEnter: () => {
+        if (shown) onOpen(shown);
+      },
+    },
+  });
 
   /**
    * One entry, as a row.
@@ -388,7 +427,7 @@ export function TriageView({
       {/* THE READING COLUMN — the Ohbox's own. No `onEnterReader` on the pane, for the reason
           the Ohbox and Tag omit it: the "open reading mode" button would sit at exactly the
           widths where the sheet duplicates this column. */}
-      <ReadColumn>
+      <ReadColumn regionLabel={tReader("pane")}>
         {shown ? (
           <MessagePane
             message={shown}

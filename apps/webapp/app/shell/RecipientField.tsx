@@ -454,16 +454,24 @@ export function RecipientField({
   const onChipKeyDown = (e: React.KeyboardEvent<HTMLElement>, at: number): void => {
     const entry = chips[at];
     if (entry === undefined || disabled) return;
+    // A chip is a BUTTON, so the registry's typing guard does not shield it: the zone walk
+    // (`zone-nav.tsx`) also binds the arrows on `document`, and inside the reply editor the
+    // chips sit in the reading column. Every arrow this handler CLAIMS therefore stops here,
+    // or one press would both move the chip focus and walk/scroll the zone under it.
+    const claim = (): void => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
     if (e.altKey && row && onMove) {
       // Alt+arrows are the keyboard drag. Horizontal reorders within the row; vertical
       // re-rows in the fixed To→Cc→Bcc order. `focusMovedChip` is the caller's half.
       if (e.key === "ArrowLeft" && at > 0) {
-        e.preventDefault();
+        claim();
         onMove({ entry, from: row, to: row, before: at - 1 });
         return;
       }
       if (e.key === "ArrowRight" && at < chips.length - 1) {
-        e.preventDefault();
+        claim();
         onMove({ entry, from: row, to: row, before: at + 2 });
         return;
       }
@@ -471,7 +479,7 @@ export function RecipientField({
         const step = e.key === "ArrowUp" ? -1 : 1;
         const target = RECIPIENT_ROWS[RECIPIENT_ROWS.indexOf(row) + step];
         if (target) {
-          e.preventDefault();
+          claim();
           onMove({ entry, from: row, to: target, before: null });
         }
         return;
@@ -479,12 +487,12 @@ export function RecipientField({
       return;
     }
     if (e.key === "ArrowLeft" && at > 0) {
-      e.preventDefault();
+      claim();
       chipRefs.current[at - 1]?.focus();
       return;
     }
     if (e.key === "ArrowRight") {
-      e.preventDefault();
+      claim();
       if (at < chips.length - 1) chipRefs.current[at + 1]?.focus();
       else inputRef.current?.focus();
       return;

@@ -28,6 +28,7 @@ import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, withheldCopyKey } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { useZoneNav } from "../shell/zone-nav";
 import { useListWindow } from "../shell/list-window";
 import { type MessageAction } from "../shell/MessagePane";
 import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/StreamShell";
@@ -493,20 +494,36 @@ export function ReadsView({
   // the `?` sheet knows they exist and so the shell's global map yields to them here.
   const order = all.map((m) => m.id);
   const at = current ? order.indexOf(current) : -1;
+  /* ↓/↑ are j/k — one pair of closures under four keycaps, registered into the zone model
+     below so the arrows yield to the rail when focus is there (`zone-nav.tsx`). */
+  const stepDown = {
+    disabled: at >= order.length - 1,
+    run: () => {
+      if (at < order.length - 1) jump(order[at + 1]!);
+    },
+    label: t("keyNext"),
+  };
+  const stepUp = {
+    disabled: at <= 0,
+    run: () => {
+      if (at > 0) jump(order[at - 1]!);
+    },
+    label: t("keyPrev"),
+  };
   const keys: KeyBinding[] = [
     {
       chord: "j",
       group: "navigate",
       label: t("keyNext"),
-      disabled: at >= order.length - 1,
-      run: () => at < order.length - 1 && jump(order[at + 1]!),
+      disabled: stepDown.disabled,
+      run: stepDown.run,
     },
     {
       chord: "k",
       group: "navigate",
       label: t("keyPrev"),
-      disabled: at <= 0,
-      run: () => at > 0 && jump(order[at - 1]!),
+      disabled: stepUp.disabled,
+      run: stepUp.run,
     },
     {
       chord: "Enter",
@@ -524,6 +541,10 @@ export function ReadsView({
     },
   ];
   useKeyBindings(keys);
+
+  /* The zone model (`zone-nav.tsx`): rail ↔ list. A stream has no third column — the cards
+     ARE the reading — so no reader zone is declared and → from the list stays inert. */
+  useZoneNav({ list: { up: stepUp, down: stepDown, followId: current ?? null } });
 
   const row = (m: EngineMessage) => (
     <MessageRow

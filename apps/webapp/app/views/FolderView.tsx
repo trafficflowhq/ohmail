@@ -31,6 +31,7 @@ import { ListGroupLabel, ListPane, ListRows, MessageRow, ReadColumn } from "@ohm
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { folderLeafOf, folderParentOf } from "../shell/folders";
+import { useZoneNav } from "../shell/zone-nav";
 import { useListWindow } from "../shell/list-window";
 import type { OlderMail } from "../shell/older-mail";
 
@@ -88,6 +89,8 @@ export function FolderView({
 }) {
   const t = useTranslations("folder");
   const to = useTranslations("ohbox");
+  /* The reading column's region name — shared with every split view (`ReadColumn`). */
+  const tReader = useTranslations("reader");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
 
@@ -145,6 +148,54 @@ export function FolderView({
    */
   const mirrorIds = new Set(ordered.map((m) => m.id));
   const olderRows = older.items.filter((m) => !mirrorIds.has(m.id));
+
+  /**
+   * ↓/↑ WALK THE LIST AS RENDERED — the zone model's list zone (`zone-nav.tsx`), and this
+   * view's first list keys (it never had j/k). The walk is the rows in the order the
+   * scroller shows them: mirror rows first, the fetched older rows below. Selecting SHOWS —
+   * the column beside the list renders `shown` — and shows only: this view writes no read
+   * state on display, so a flick down a folder marks nothing by construction. → into the
+   * pane is a focus move; at widths where the column is hidden it is the sheet, the same
+   * answer a tap gets (`openRow`).
+   */
+  const navOrder = [...ordered, ...olderRows].map((m) => m.id);
+  const navAt = shown ? navOrder.indexOf(shown.id) : -1;
+  const selectRow = (id: string): void => {
+    setSelectedId(id);
+    // Keep the new cursor in view. `?.` on the METHOD, not only the node: jsdom mounts this
+    // view without implementing scrollIntoView (RulesView's precedent).
+    queueMicrotask(() =>
+      document
+        .querySelector<HTMLElement>(`.view-folder .row[data-id="${CSS.escape(id)}"]`)
+        ?.scrollIntoView?.({ block: "nearest" }),
+    );
+  };
+  useZoneNav({
+    list: {
+      followId: shown?.id ?? null,
+      up: {
+        disabled: navAt <= 0,
+        run: () => {
+          if (navAt > 0) selectRow(navOrder[navAt - 1]!);
+        },
+        label: to("keyPrev"),
+      },
+      down: {
+        disabled: navAt >= navOrder.length - 1,
+        run: () => {
+          if (navAt < navOrder.length - 1) selectRow(navOrder[navAt + 1]!);
+        },
+        label: to("keyNext"),
+      },
+    },
+    reader: {
+      selector: ".view-folder .read-col",
+      disabled: shown == null,
+      onHiddenEnter: () => {
+        if (shown) onOpen(shown);
+      },
+    },
+  });
 
   /**
    * REVEAL A TARGET THE WINDOW HAS NOT MOUNTED — the Ohbox window's own rule, verbatim in
@@ -303,7 +354,7 @@ export function FolderView({
         </ListRows>
       </ListPane>
       {/* The reading column — the Ohbox's own; no `onEnterReader`, TagView's reason. */}
-      <ReadColumn>
+      <ReadColumn regionLabel={tReader("pane")}>
         {shown ? (
           <MessagePane
             message={shown}

@@ -25,6 +25,7 @@ import { ShortcutHint } from "../shell/ShortcutHint";
 import { groupSection, sendTimeOf, singletonGroup, type OhboxRowGroup } from "./ohbox-groups";
 import { PLACE_LABEL, avatarOf, resurfaceLabel, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { useZoneNav } from "../shell/zone-nav";
 import { useListWindow } from "../shell/list-window";
 import { BootSkeleton } from "../shell/BootSkeleton";
 import { useLoadingGrace } from "../shell/loading-grace";
@@ -293,6 +294,9 @@ export function OhboxView({
   onMarkAllRead?: (ids: string[]) => void;
 }) {
   const t = useTranslations("ohbox");
+  /* The reading column's region name — shared vocabulary with every split view, so the
+     screen-reader landing (`ReadColumn regionLabel`) says the same thing everywhere. */
+  const tReader = useTranslations("reader");
 
   /**
    * ═══ SESSION-SCOPED PLACEMENT, AND THE SLIDE THAT ENDS IT ════════════════════════════
@@ -995,6 +999,27 @@ export function OhboxView({
   }, [onSelect, onEnterReader, commitPendingRead, armRead]);
 
   /**
+   * STEPPING INTO THE PANE WITH → IS ENGAGEMENT — `open` minus the reader raise.
+   *
+   * The ratified read-marking guard has two triggers: dwelling on one message, and explicit
+   * engagement with it. Arrowing right into the reading column is the second one, so it ARMS
+   * the read exactly as `open` does — the debt is recorded through the same `armRead`, spent
+   * by the same four departures, and written with the same `"glance"` label (the pane focus
+   * is not "dealing with the row", so a resurface pin must survive it). No sheet is raised:
+   * at a split width the column beside the list already shows this message, and → is a focus
+   * move, not an open. At widths where the column is hidden the zone hook never calls this —
+   * it calls `open` (`onHiddenEnter`), because there "into the message" has to mean the
+   * deliberate open.
+   */
+  const engage = useCallback((m: EngineMessage) => {
+    setDwellOn(null);
+    if (m.unread) {
+      if (pendingRead.current !== m.id) commitPendingRead();
+      armRead(m.id);
+    }
+  }, [commitPendingRead, armRead]);
+
+  /**
    * THE SELECTION TAKEN AWAY FROM OUTSIDE IS A DEPARTURE — the Back button's half of the
    * commit-on-leave rule. The URL carries the open message now, so Back on `#/ohbox/m/A`
    * clears the SHELL's selection while this view stays mounted — a way of
@@ -1344,16 +1369,38 @@ export function OhboxView({
    */
   const order = navRows.map((g) => g.openTarget.id);
   const at = rowIndexOf(selected?.id ?? null);
+  /**
+   * ONE WALK, FOUR KEYCAPS. ↓/↑ are `j`/`k` — same steps, same entry moves, same
+   * `selectByUser` and therefore the same dwell guard: an arrow flick down the list arms
+   * and cancels exactly as a `jjjjj` sweep does and commits nothing (see `DWELL_MS`).
+   * Extracted so the letter bindings below and the zone hook's arrow bindings dispatch ONE
+   * pair of closures — a second copy is how two keys presented as aliases drift apart.
+   */
+  const stepDown = {
+    // `at < 0` — no cursor, or a cursor on something these rows do not contain — is ENTRY,
+    // and this expression already treats it as one: `-1 >= order.length - 1` is false for any
+    // non-empty list, so the step comes in at the top. See `stepUp` for the other half.
+    disabled: at >= order.length - 1,
+    run: () => {
+      if (at < order.length - 1) selectByUser(order[at + 1]!);
+    },
+    label: t("keyNext"),
+  };
+  const stepUp = {
+    disabled: order.length === 0 || at === 0,
+    run: () => {
+      if (at < 0) selectByUser(order[order.length - 1]!);
+      else if (at > 0) selectByUser(order[at - 1]!);
+    },
+    label: t("keyPrev"),
+  };
   const keys: KeyBinding[] = [
     {
       chord: "j",
       group: "navigate",
       label: t("keyNext"),
-      // `at < 0` — no cursor, or a cursor on something these rows do not contain — is ENTRY,
-      // and this expression already treats it as one: `-1 >= order.length - 1` is false for any
-      // non-empty list, so `j` steps in at the top. See `k` below for the other half.
-      disabled: at >= order.length - 1,
-      run: () => at < order.length - 1 && selectByUser(order[at + 1]!),
+      disabled: stepDown.disabled,
+      run: stepDown.run,
     },
     {
       /**
@@ -1382,11 +1429,8 @@ export function OhboxView({
       chord: "k",
       group: "navigate",
       label: t("keyPrev"),
-      disabled: order.length === 0 || at === 0,
-      run: () => {
-        if (at < 0) selectByUser(order[order.length - 1]!);
-        else if (at > 0) selectByUser(order[at - 1]!);
-      },
+      disabled: stepUp.disabled,
+      run: stepUp.run,
     },
     {
       chord: "Enter",
@@ -1526,6 +1570,22 @@ export function OhboxView({
     },
   ];
   useKeyBindings(keys);
+
+  /**
+   * THE ZONE MODEL — rail ← list → open message (`zone-nav.tsx`). ↓/↑ in the list are
+   * `stepDown`/`stepUp`, the same closures `j`/`k` dispatch, so the dwell guard is one
+   * mechanism under four keycaps. → into the pane is `engage` (the armed read, above); at
+   * widths where the column is hidden it is `open`, the deliberate open the sheet answers.
+   */
+  useZoneNav({
+    list: { up: stepUp, down: stepDown, followId: selected?.id ?? null },
+    reader: {
+      selector: ".view-ohbox .read-col",
+      disabled: selected == null,
+      onEnter: () => selected && engage(selected),
+      onHiddenEnter: () => selected && open(selected),
+    },
+  });
 
   /**
    * SHIFT-CLICK RANGES, intercepted in the CAPTURE phase.
@@ -2166,7 +2226,7 @@ export function OhboxView({
           reachable at exactly the widths where the sheet duplicates the pane it is standing
           on — a control whose only outcome was the defect. The reader is not lost: it is
           what "opened" means where there is no column, which is the shell's `enterReader`. */}
-      <ReadColumn>
+      <ReadColumn regionLabel={tReader("pane")}>
         {selected ? (
           <MessagePane
             /* The pane derives its read-state verb from `message.unread`, so the open message

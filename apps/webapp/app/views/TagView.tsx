@@ -32,6 +32,7 @@ import { type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { Button, Kbd, ListPane, ListRows, MessageRow, ReadColumn, TagDot } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
+import { useZoneNav } from "../shell/zone-nav";
 
 /** Below this the reading column is `display:none` (app.css), so a tap must open the sheet. */
 function readColumnHidden(): boolean {
@@ -94,6 +95,10 @@ export function TagView({
   admin?: TagAdmin;
 }) {
   const t = useTranslations("tag");
+  /* The list keys' shared vocabulary and the reading column's region name — the Ohbox's own
+     labels and `reader.pane`, so four surfaces never phrase the same gesture apart. */
+  const to = useTranslations("ohbox");
+  const tReader = useTranslations("reader");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   /**
@@ -111,6 +116,41 @@ export function TagView({
     if (readColumnHidden()) onOpen(m);
     else setSelectedId(m.id);
   };
+
+  /**
+   * ↓/↑ WALK THE LIST AS RENDERED — the zone model's list zone (`zone-nav.tsx`), and this
+   * view's first list keys. Selecting SHOWS (the column renders `shown`) and shows only:
+   * this view writes no read state on display, so a flick down the tag marks nothing by
+   * construction. → into the pane is a focus move; where the column is hidden it is the
+   * sheet, the same answer a tap gets (`openRow`).
+   */
+  const navAt = shown ? messages.findIndex((m) => m.id === shown.id) : -1;
+  useZoneNav({
+    list: {
+      followId: shown?.id ?? null,
+      up: {
+        disabled: navAt <= 0,
+        run: () => {
+          if (navAt > 0) setSelectedId(messages[navAt - 1]!.id);
+        },
+        label: to("keyPrev"),
+      },
+      down: {
+        disabled: navAt >= messages.length - 1,
+        run: () => {
+          if (navAt < messages.length - 1) setSelectedId(messages[navAt + 1]!.id);
+        },
+        label: to("keyNext"),
+      },
+    },
+    reader: {
+      selector: ".view-tag .read-col",
+      disabled: shown == null,
+      onHiddenEnter: () => {
+        if (shown) onOpen(shown);
+      },
+    },
+  });
 
   return (
     <section className="view split view-tag">
@@ -162,7 +202,7 @@ export function TagView({
       {/* THE READING COLUMN — the Ohbox's own. No `onEnterReader` on the pane, for the reason
           the Ohbox omits it: the "open reading mode" button would sit at exactly the widths
           where the sheet duplicates this column. */}
-      <ReadColumn>
+      <ReadColumn regionLabel={tReader("pane")}>
         {shown ? (
           <MessagePane
             message={shown}

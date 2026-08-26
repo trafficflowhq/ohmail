@@ -203,6 +203,8 @@ export function chordKeys(chord: string): string[] {
     Escape: "esc",
     ArrowUp: "↑",
     ArrowDown: "↓",
+    ArrowLeft: "←",
+    ArrowRight: "→",
   };
   return chord.split(" ").flatMap((step) => step.split("+").map((part) => caps[part] ?? part));
 }
@@ -350,6 +352,35 @@ export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "vi
 
   useEffect(
     () => register({ scope, get: () => latest.current }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [register, scope, shape],
+  );
+}
+
+/**
+ * DECLARE BINDINGS WHERE A REGISTRY MAY LEGITIMATELY BE ABSENT.
+ *
+ * `useKeyBindings`'s throw is a real guard and stays: a VIEW that declares its keys into no
+ * registry is a bug, silently. This variant exists for exactly one caller — the zone model
+ * (`zone-nav.tsx`), which every view mounts as part of itself. The views that carry it are
+ * also mounted bare in tests and by surfaces with no keyboard registry at all, and a spatial
+ * model with no dispatcher behind it is not a bug there, it is simply absent — the same
+ * argument `useBinding` states for reading: no provider means NO keys, never guessed ones.
+ * Registration is identical to `useKeyBindings` in every other respect (shape-keyed
+ * re-registration, live closures through the ref), so a provider present behaves exactly as
+ * if the caller had used the throwing form.
+ */
+export function useOptionalKeyBindings(bindings: KeyBinding[], scope: BindingScope = "view"): void {
+  const ctx = useContext(KeymapContext);
+  const latest = useRef(bindings);
+  latest.current = bindings;
+  // The same JSON shape key as `useKeyBindings`, for the same collision argument.
+  const shape = JSON.stringify(
+    bindings.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true]),
+  );
+  const register = ctx ? ctx.register : null;
+  useEffect(
+    () => (register ? register({ scope, get: () => latest.current }) : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [register, scope, shape],
   );

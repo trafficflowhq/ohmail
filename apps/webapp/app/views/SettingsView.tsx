@@ -49,6 +49,7 @@ import { hueOf } from "../shell/format";
 import { LanguageRow } from "../shell/LanguageRow";
 import { ImageQualityRow } from "../shell/ImageQualityRow";
 import { PANE_IDS, type PaneId } from "../shell/routing";
+import { useZoneNav } from "../shell/zone-nav";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
 /* Re-exported so every caller that LINKS to a pane keeps its import — `AppShell`, and through it
@@ -705,6 +706,8 @@ export function SettingsView({
   const t = useTranslations("settings");
   /** The `tag` namespace owns what a tag IS; `settings` owns this pane's chrome. */
   const tg = useTranslations("tag");
+  /** The zone keys' shared vocabulary — the same words the rail's arrows carry. */
+  const tz = useTranslations("shortcuts");
   const toast = useToast();
   const { preference, setTheme } = useTheme();
   // The caller's request wins over the URL's, and both are read ONCE. A caller that says nothing
@@ -797,6 +800,40 @@ export function SettingsView({
      become valid. */
   const shown: PaneId = panes.some(([id]) => id === pane) ? pane : "general";
 
+  /**
+   * "ONE COULD EVEN DIVE INTO THE SETTINGS LIKE THIS" — the zone model, inside Settings
+   * (`zone-nav.tsx`). The settings NAV is this view's list zone: ↓/↑ rove real focus over
+   * its buttons (they are real `<button>`s, so Enter is the browser's own activation and the
+   * `?` sheet's "Enter = the click" stays literally true), → or Enter dives into the pane
+   * column, Escape/← walk back — nav, then rail. The pane column is the reader zone: a
+   * labelled, focusable region; ↓/↑ scroll the view's one scroller.
+   */
+  const navButtons = (): HTMLElement[] =>
+    [...document.querySelectorAll<HTMLElement>(".view-settings .set-nav button")];
+  const roveNav = (dir: 1 | -1): void => {
+    const items = navButtons();
+    const cur = document.activeElement;
+    const at = cur instanceof HTMLElement ? items.indexOf(cur) : -1;
+    if (at < 0) {
+      // Entry: land on the pane the reader is already in, the rail's own entry rule.
+      (items.find((b) => b.classList.contains("on")) ?? items[0])?.focus();
+      return;
+    }
+    items[Math.min(Math.max(at + dir, 0), items.length - 1)]?.focus();
+  };
+  useZoneNav({
+    list: {
+      up: { disabled: false, run: () => roveNav(-1), label: tz("zoneMenuUp") },
+      down: { disabled: false, run: () => roveNav(1), label: tz("zoneMenuDown") },
+    },
+    reader: {
+      selector: ".view-settings .set-pane-col",
+      scrollSelector: ".view-settings .scroller",
+      disabled: false,
+    },
+    listFocusSelector: ".view-settings .set-nav button.on",
+  });
+
   return (
     <section className="view col view-settings">
       <div className="vhead">
@@ -836,7 +873,14 @@ export function SettingsView({
               from taking a second row. This wrapper does, by leaving the grid exactly two items
               wide — nav, content — and stacking a pane's sections inside it with a flex gap that
               owes the nav nothing. Pinned by `test/settings-account-layout.test.tsx`. */}
-          <div className="set-pane-col">
+          <div
+            className="set-pane-col"
+            /* The reader zone of the settings dive (`useZoneNav` above): → lands real focus
+               here, announced as a named region, ringed by the global `:focus-visible`. */
+            role="region"
+            aria-label={t("title")}
+            tabIndex={-1}
+          >
           {shown === "general" ? (
             <SettingsSection>
               {/* THE LANGUAGE, and the one control in this pane that is NOT injected as a node.

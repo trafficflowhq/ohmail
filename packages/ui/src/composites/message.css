@@ -11,6 +11,12 @@
   min-width:0;min-height:0;overflow-y:auto;padding-bottom:0;
   background:var(--panel);border-radius:20px;box-shadow:var(--lift-1);
 }
+/* THE FOCUSED ZONE'S RING — the arrow-key spatial model lands real focus on this column
+ * (`ReadColumn regionLabel`; the webapp's zone-nav). The global ring (base.css) sits 3px
+ * OUTSIDE the box, which for this column is the deck's gutter where a tight grid track can
+ * clip it. Drawn inward instead: same accent token, both themes, and it scrolls with the
+ * scrollport's edge rather than the content. */
+.read-col:focus-visible{outline:1.5px solid var(--accent);outline-offset:-2px}
 /* THE WRAPPER GOES TRANSPARENT WHEN THE THREAD TAKES OVER — AND ITS CLIP MOVES OUT OF THE
  * PANELS' LIGHT.
  *

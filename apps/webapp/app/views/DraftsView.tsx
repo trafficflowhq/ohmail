@@ -52,6 +52,7 @@ import { useTranslations } from "next-intl";
 import type { EngineDraft } from "@ohmail/client-engine";
 import { Button, InfoNote, ListPane, ListRows } from "@ohmail/ui";
 import { displayTime } from "../shell/format";
+import { useZoneNav } from "../shell/zone-nav";
 
 /** "you, and two others" — the recipients, as a line, or the empty-string for none. */
 function recipientLine(d: EngineDraft): string {
@@ -80,6 +81,10 @@ export function DraftsView({
   repliesHere: (draft: EngineDraft) => boolean;
 }) {
   const t = useTranslations("drafts");
+
+  /* The zone model's rail leg only (`zone-nav.tsx`): ← steps to the rail, ↑/↓ walk it, →
+     returns. No list config — this view has no keyboard cursor yet — and no reader zone. */
+  useZoneNav({});
   /** The row whose Discard has been pressed once. One at a time — a list of open confirms is noise. */
   const [confirming, setConfirming] = useState<string | null>(null);
   /**
