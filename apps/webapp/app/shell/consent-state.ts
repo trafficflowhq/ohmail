@@ -397,7 +397,25 @@ function acceptConsentCache(parsed: unknown): ConsentBootCache | null {
  * the effect below reads it through a ref and re-runs only on `active`/reachability, so a fresh
  * object each render costs nothing but a mid-flight swap is not honoured until one of those moves.
  */
-export function useConsentState(active: boolean, transport?: ConsentTransport): ConsentState & {
+export function useConsentState(
+  active: boolean,
+  transport?: ConsentTransport,
+  /**
+   * THE SETTINGS STAMP FROM THE SYNC CHANNEL — `settings` entity's `updatedAt` as the mirror
+   * holds it, or null while the mirror holds no such record. Every consent-settings write on any
+   * surface appends a `settings` change row in the same transaction (`consent-seed.ts`), the
+   * wake channel rings at its commit, and the next drain lands the row in this client's mirror —
+   * so a CHANGED stamp here means "the account's settings moved somewhere; re-ask". The hook
+   * re-runs `GET /consent` on every stamp transition (the authority stays the live read — the
+   * mirror record is a doorbell, never a second consent answer), guarded so a write from THIS
+   * tab always outranks a re-ask in flight, and an older answer never lands over a newer one —
+   * the mobile folders-flag coordinator's measured rules, inherited rather than re-learned.
+   * The FIRST observed stamp also re-asks once: a settings write can land between the boot read
+   * and the first drain, and skipping the baseline would hold that stale boot answer for the
+   * session. Costs one small GET per session; correctness over the request.
+   */
+  settingsStamp?: string | null,
+): ConsentState & {
   /**
    * Flip auto-suggest and keep the local answer in step with the stored one.
    *
@@ -482,46 +500,28 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
   const link = useRef<ConsentTransport>(transport ?? CLOUD_CONSENT);
   link.current = transport ?? CLOUD_CONSENT;
 
-  useEffect(() => {
-    if (!active || !reachable) return;
-    let live = true;
-    /**
-     * THE DEVICE'S LAST ANSWER, FIRST — synchronously, before the fetch below is even issued,
-     * so the live answer can only ever land on top of the cache and never under it.
-     *
-     * Keyed by the remembered account id (`owner-cookie.ts`) — the same id that names the
-     * mirror the warm open paints from, so the cached window and the cached mail can only ever
-     * describe the same account. No cookie (a first visit, the desktop) ⇒ no cache, and the
-     * boot waits for the server exactly as it did before the cache existed.
-     *
-     * The `prev.known` guard makes "the fetch already answered" unconditionally win; with the
-     * synchronous read above it is unreachable, and it is kept because the reachability is an
-     * ordering fact of this effect's body, not a property of the state machine.
-     */
-    const owner = readOwner();
-    if (owner !== null) {
-      const cached = readBootCache(CONSENT_BOOT_SCOPE, owner, acceptConsentCache);
-      if (cached !== null) {
-        bootCache.current = cached;
-        setState((prev) =>
-          prev.known
-            ? prev
-            : {
-                ...prev,
-                seedConfirmedAt: cached.seedConfirmedAt,
-                dormancyDays: cached.dormancyDays,
-                screeningBaselineAt: cached.screeningBaselineAt,
-                foldersEnabled: (cached.foldersEnabledAt ?? null) != null,
-                foldersEnabledAt: cached.foldersEnabledAt ?? null,
-                known: true,
-              },
-        );
-      }
-    }
-    void (async () => {
-      try {
+  /**
+   * THE RE-ASK GUARDS — the mobile coordinator's semantics, in three refs:
+   *
+   *  · `writeEpoch` bumps BEFORE every setter's PATCH, so any read captured earlier is discarded
+   *    whatever it answers — the user's act outranks every read in flight (the measured race:
+   *    a boot GET resolving after a PATCH reset the switch to the pre-write value);
+   *  · `readSeq`/`appliedSeq` order overlapping reads by ISSUE and let only a newer VALID answer
+   *    apply — an older response arriving last must not overwrite the fresher one, and a newer
+   *    read that FAILS invalidates nothing (a failure is not an answer).
+   */
+  const writeEpoch = useRef(0);
+  const readSeq = useRef(0);
+  const appliedSeq = useRef(0);
+
+  const fetchLive = useCallback(async (): Promise<void> => {
+    const at = writeEpoch.current;
+    const mine = ++readSeq.current;
+    try {
         const wire: ConsentStateWire = await link.current.state();
-        if (!live) return;
+        // A write from this tab outranks every read in flight; a newer applied read outranks an
+        // older one arriving late. Issuance alone supersedes nothing — see the refs above.
+        if (writeEpoch.current !== at || mine <= appliedSeq.current) return;
         // KNOWN MEANS THE SERVER ANSWERED THIS QUESTION, not that a request returned 200.
         //
         // The window is the one field that cannot be absent from a real answer — the route
@@ -595,10 +595,12 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
           standalone: false,
           cloudClient: false,
         });
+        appliedSeq.current = mine;
         // The next boot paints from THIS answer. Written after the state (never instead of
         // it), from the same normalised values, under the same account id the read used —
         // and only the three fields `ConsentBootCache` names, which is the authorisation
         // boundary, not an economy.
+        const owner = readOwner();
         if (owner !== null) {
           const next: ConsentBootCache = {
             v: 1,
@@ -613,11 +615,71 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
       } catch {
         // Deliberately silent — see the header.
       }
-    })();
-    return () => { live = false; };
-  }, [active, reachable]);
+  }, []);
+
+  useEffect(() => {
+    if (!active || !reachable) return;
+    /**
+     * THE DEVICE'S LAST ANSWER, FIRST — synchronously, before the fetch below is even issued,
+     * so the live answer can only ever land on top of the cache and never under it.
+     *
+     * Keyed by the remembered account id (`owner-cookie.ts`) — the same id that names the
+     * mirror the warm open paints from, so the cached window and the cached mail can only ever
+     * describe the same account. No cookie (a first visit, the desktop) ⇒ no cache, and the
+     * boot waits for the server exactly as it did before the cache existed.
+     *
+     * The `prev.known` guard makes "the fetch already answered" unconditionally win; with the
+     * synchronous read above it is unreachable, and it is kept because the reachability is an
+     * ordering fact of this effect's body, not a property of the state machine.
+     */
+    const owner = readOwner();
+    if (owner !== null) {
+      const cached = readBootCache(CONSENT_BOOT_SCOPE, owner, acceptConsentCache);
+      if (cached !== null) {
+        bootCache.current = cached;
+        setState((prev) =>
+          prev.known
+            ? prev
+            : {
+                ...prev,
+                seedConfirmedAt: cached.seedConfirmedAt,
+                dormancyDays: cached.dormancyDays,
+                screeningBaselineAt: cached.screeningBaselineAt,
+                foldersEnabled: (cached.foldersEnabledAt ?? null) != null,
+                foldersEnabledAt: cached.foldersEnabledAt ?? null,
+                known: true,
+              },
+        );
+      }
+    }
+    void fetchLive();
+    return undefined;
+    // The fetch itself lives in `fetchLive` below so the settings-stamp effect can share it —
+    // one implementation of "read the live answer and apply it under the guards".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, reachable, fetchLive]);
+
+
+  /**
+   * THE SETTINGS-STAMP RE-ASK — the sync channel's doorbell, answered with the live read.
+   *
+   * Fires on every observed TRANSITION of the stamp, including the first observation (see the
+   * parameter's own note for why the baseline is not skipped). `fetchLive`'s guards make the
+   * re-ask safe against this tab's own writes and against overlapping reads.
+   */
+  const seenStamp = useRef<string | null>(null);
+  useEffect(() => {
+    if (!active || !reachable) return;
+    if (settingsStamp == null) return;
+    if (seenStamp.current === settingsStamp) return;
+    seenStamp.current = settingsStamp;
+    void fetchLive();
+  }, [active, reachable, settingsStamp, fetchLive]);
 
   const setAutoSuggest = useCallback(async (enabled: boolean): Promise<boolean> => {
+    // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
+    // request, so a re-ask racing this write is discarded whatever it answers.
+    writeEpoch.current += 1;
     const res = await link.current.setAutoSuggest(enabled);
     const on = res.autoSuggestAt != null;
     // BOTH FIELDS FROM THE SAME ECHO. Setting the boolean from the server and the instant from
@@ -628,6 +690,9 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
   }, []);
 
   const setDormancyDays = useCallback(async (days: number | null): Promise<number> => {
+    // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
+    // request, so a re-ask racing this write is discarded whatever it answers.
+    writeEpoch.current += 1;
     const res = await link.current.setDormancyDays(days);
     // FROM THE SERVER ECHO, never the argument — the server stores the default as NULL and reads it
     // back as the default number, so this is the window the partition memo must re-key on.
@@ -636,6 +701,9 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
   }, []);
 
   const setBlockRemoteImages = useCallback(async (blocked: boolean): Promise<boolean> => {
+    // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
+    // request, so a re-ask racing this write is discarded whatever it answers.
+    writeEpoch.current += 1;
     const res = await link.current.setBlockRemoteImages(blocked);
     const on = res.blockRemoteImagesAt != null;
     // BOTH FIELDS FROM THE SAME ECHO, as with auto-suggest — a row reading "Off since <yesterday>"
@@ -646,6 +714,9 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
   }, []);
 
   const setBlockTrackingPixels = useCallback(async (blocked: boolean): Promise<boolean> => {
+    // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
+    // request, so a re-ask racing this write is discarded whatever it answers.
+    writeEpoch.current += 1;
     const res = await link.current.setBlockTrackingPixels(blocked);
     // The echo is the OPT-OUT instant; the flag is its absence. Inverted exactly once, here.
     const on = res.loadTrackingPixelsAt == null;
@@ -656,6 +727,9 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
   }, []);
 
   const setFoldersEnabled = useCallback(async (enabled: boolean): Promise<boolean> => {
+    // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
+    // request, so a re-ask racing this write is discarded whatever it answers.
+    writeEpoch.current += 1;
     const res = await link.current.setFoldersEnabled(enabled);
     const on = res.foldersEnabledAt != null;
     // BOTH FIELDS FROM THE SAME ECHO — auto-suggest's rule: the boolean the shell gates on and
@@ -677,6 +751,8 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
 
   const setMailboxFoldersEnabled = useCallback(
     async (mailboxId: string, enabled: boolean): Promise<Record<string, string>> => {
+      // The user's act outranks every read in flight — see `writeEpoch`.
+      writeEpoch.current += 1;
       const res = await link.current.setMailboxFoldersEnabled(mailboxId, enabled);
       const off = res.folderMailboxesOff ?? {};
       // THE WHOLE MAP FROM THE ECHO — the server answers with every exception after the write,
@@ -686,6 +762,9 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
     }, []);
 
   const setBlockAutoUnsubscribe = useCallback(async (blocked: boolean): Promise<boolean> => {
+    // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
+    // request, so a re-ask racing this write is discarded whatever it answers.
+    writeEpoch.current += 1;
     const res = await link.current.setBlockAutoUnsubscribe(blocked);
     // `== null` ⇒ the pass runs. The same collapse as the read above, for the same reason, and it
     // has to be spelled the same way in both places or a server that answered with the field

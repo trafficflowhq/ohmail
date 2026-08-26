@@ -52,9 +52,21 @@ export function FoldersRailGroup({
   mailboxCount,
   activeFolderId,
   onNavigate,
+  settled = true,
 }: {
   /** The mirror's `folder` entities — already post-exclusion, already flag-gated. */
   folders: FolderEntity[];
+  /**
+   * CAN AN EMPTY LIST BE BELIEVED — the group's third render. With "Use folders" on and zero
+   * entities, two different sentences are true at different times: "no folders on your mail
+   * server yet" (a settled mirror that heard the inventory) and "the inventory has not arrived"
+   * (a first drain still running, or a consent answer still cache-painted). The caller passes
+   * `consent.known && !bootstrapping`; while false, an empty group renders SKELETON rows rather
+   * than the empty line — the same rule the reach-past probe follows one file over: an empty
+   * mirror is a question, not an answer. Defaults true so a host with no sync posture (tests,
+   * the demo) keeps the settled behaviour.
+   */
+  settled?: boolean;
   /** Per-folder unread, keyed `mailboxId|path` — `folderUnreadCounts` over the projected mirror. */
   unread: ReadonlyMap<string, number>;
   /**
@@ -168,9 +180,26 @@ export function FoldersRailGroup({
         {t("folders")}
       </button>
       <div className="rgroup-body">
-        {/* No folders discovered anywhere: the invite line, not a blank group — the tags
-            group's empty-state rule. Discovery is the server's; there is nothing to press. */}
-        {mailboxes.length === 0 ? <p className="rsub-empty">{t("folderEmpty")}</p> : null}
+        {/* No folders discovered anywhere: while the mirror is UNSETTLED, skeleton rows (the
+            inventory may simply not have arrived — see `settled`); once settled, the invite
+            line, not a blank group — the tags group's empty-state rule. Discovery is the
+            server's; there is nothing to press. */}
+        {mailboxes.length === 0 && !settled ? (
+          <div className="fskel" aria-hidden="true" data-testid="folders-skeleton">
+            {/* `boot-sk-bar` is the boot skeleton's own idiom — a breath, not a shimmer — so
+                the rail's not-yet reads exactly like the deck's. */}
+            {[0, 1, 2].map((i) => (
+              <div className="frow" key={i}>
+                <span className="ftw" />
+                <span className="ritem">
+                  <Icon name="folder" className="fglyph" />
+                  <span className="flabel boot-sk-bar" style={{ width: `${72 - i * 14}%` }} />
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {mailboxes.length === 0 && settled ? <p className="rsub-empty">{t("folderEmpty")}</p> : null}
         {mailboxes.map((mb) => {
           const hasKids = (path: string): boolean =>
             mb.folders.some((f) => folderParentOf(f.name) === path);

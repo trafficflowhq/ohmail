@@ -75,6 +75,7 @@ import {
   useDemoMode,
   useEngine,
   useEngineVersion,
+  useSyncStatus,
   type OwnerResolver,
   type ProvidedEngine,
 } from "./engine";
@@ -92,6 +93,7 @@ import { readOwner } from "./owner-cookie";
 import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
 import { useJunkWindow } from "./junk-window";
+import { useOlderBody, type OlderBodyWire } from "./older-body";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
@@ -611,6 +613,7 @@ export function AppShell({
   awayTransport,
   profileImportTransport,
   consentTransport,
+  olderBodyWire,
   suggestWire,
   aiCredits,
   mailtoDraft,
@@ -864,6 +867,15 @@ export function AppShell({
    */
   consentTransport?: ConsentTransport;
   /**
+   * THE REACH-PAST BODY WIRE, when the host has its own — the desktop on its HOSTED door. The
+   * shared shell's default is the browser's Cloud client (decided inside `older-body.ts`, which
+   * owns the api-client import); the desktop aliases that client to a refusing stub, so without
+   * this wire a reach-past row's body there has no door at all. Same transport-not-a-control
+   * rule as {@link consentTransport}: the states and their sentences are decided in
+   * `older-body.ts` and only the bytes' route is injected.
+   */
+  olderBodyWire?: OlderBodyWire;
+  /**
    * THE SCREENER'S TWO SPEND CALLS, WHEN THE HOST HAS ITS OWN WIRE — the desktop on its HOSTED
    * door, and nobody else.
    *
@@ -955,6 +967,7 @@ export function AppShell({
             awayTransport={awayTransport}
             profileImportTransport={profileImportTransport}
             consentTransport={consentTransport}
+            olderBodyWire={olderBodyWire}
             suggestWire={suggestWire}
             aiCredits={aiCredits}
             mailtoDraft={mailtoDraft}
@@ -1003,7 +1016,7 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, suggestWire, aiCredits, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, olderBodyWire, suggestWire, aiCredits, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
@@ -1024,6 +1037,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   awayTransport?: AwayTransport;
   profileImportTransport?: ProfileImportTransport;
   consentTransport?: ConsentTransport;
+  /** The reach-past body wire — see the outer prop of the same name. */
+  olderBodyWire?: OlderBodyWire;
   suggestWire?: SuggestWire;
   aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
   mailtoDraft?: ComposePrefill | null;
@@ -1076,7 +1091,29 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * senders who went quiet years ago and were never screened presents in History. Nothing
    * moves; this is a filter over the same mirror.
    */
-  const consent = useConsentState(!demo, consentTransport);
+  /**
+   * THE SETTINGS STAMP off the mirror — the `settings` entity's `updatedAt`, recomputed per
+   * version bump. The entity is the sync channel's doorbell for consent-settings writes made on
+   * ANY surface (`change-log.ts` says why it exists); `useConsentState` re-asks `GET /consent`
+   * whenever it moves, which is what lets a folders flip or an image-posture change made in
+   * another window reach THIS one within normal sync latency instead of at the next boot. The
+   * record's CONTENT is deliberately not read beyond the stamp — the live consent read stays the
+   * one authority, so the two cannot drift.
+   */
+  const settingsStamp = useMemo(() => {
+    const rows = engine.read().entries<{ updatedAt?: string }>("settings");
+    if (rows.length === 0) return null;
+    return String(rows[0]?.entity?.updatedAt ?? "");
+    // `version` is the subscription; the reader object is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine, version]);
+  const consent = useConsentState(!demo, consentTransport, settingsStamp);
+  /**
+   * The sync loop's posture, for the folders group's third render: `bootstrapping` is "no drain
+   * has yet completed for this engine", which is exactly the window in which ZERO folder
+   * entities means "cannot judge yet" rather than "the account has none".
+   */
+  const syncStatus = useSyncStatus();
   /**
    * THE ACCOUNT'S LANGUAGE WINS OVER THIS DEVICE'S — the whole of the account-tied half, and it
    * rides the `GET /consent` this shell already makes rather than a request of its own.
@@ -2053,11 +2090,45 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * outcome is a record the UI renders rather than an exception thrown at a React effect — so the
    * `void` inside the factory states there is no promise worth awaiting, not a discarded error.
    */
-  const hydrateBody = useMemo(() => makeHydrateBody(engine), [engine]);
+  const engineHydrateBody = useMemo(() => makeHydrateBody(engine), [engine]);
   const hydrateThread = useMemo(() => makeHydrateThread(engine), [engine]);
+
+  /**
+   * ── THE REACH-PAST BODY DOOR, SPLICED IN AT THE ONE SEAM EVERY PANE READS ────────────────
+   *
+   * A reach-past row (`useOlderMail`) is deliberately not a mirror row, and the engine's own
+   * body machinery keys on the mirror — `hydrateBody` for such an id was a silent no-op, so the
+   * pane's stall face said "Couldn't load the full message" over a fetch that never started and
+   * offered a Retry that re-ran the same no-op. The split is decided HERE, per invocation,
+   * against the live mirror: a mirror-resident id takes the engine's path exactly as before
+   * (persisted record, eager hydration, the failed-guard), and an id the mirror does not hold
+   * takes the session door (`older-body.ts` — fetched on show, held for this session, never
+   * persisted). Deciding per invocation matters: a drain can bring a reach-past row INTO the
+   * mirror mid-session, and from that moment the engine's path owns it — the door's held copy
+   * simply stops being read, because `bodyOf` below prefers the mirror by the same test.
+   */
+  // Destructured so `hydrateBody` can depend on the STABLE dispatch alone — the door's `bodyFor`
+  // changes identity when an answer lands (that is how panes learn), and riding the whole object
+  // would re-fire the urgent-selection effects once per delivered body for nothing.
+  const { open: openOlderBody, bodyFor: olderBodyFor } = useOlderBody(!demo, olderBodyWire);
+  const hydrateBody = useCallback(
+    (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => {
+      if (engine.read().get<EngineMessage>("message", messageId) !== undefined) {
+        engineHydrateBody(messageId, opts);
+        return;
+      }
+      openOlderBody(messageId, opts?.retry ? { retry: true } : {});
+    },
+    [engine, engineHydrateBody, openOlderBody],
+  );
   const bodyOfMessage = useCallback(
-    (m: EngineMessage) => bodyOf(engine.read(), m),
-    [engine],
+    (m: EngineMessage) => {
+      if (engine.read().get<EngineMessage>("message", m.id) !== undefined) {
+        return bodyOf(engine.read(), m);
+      }
+      return olderBodyFor(m);
+    },
+    [engine, olderBodyFor],
   );
 
   /*
@@ -4617,6 +4688,13 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
               <FoldersRailGroup
                 folders={folders}
                 unread={folderUnread}
+                /* The third render (the folder-delivery review): with the flag ON and ZERO
+                   entities, "no folders on your server" and "the first drain has not finished"
+                   are different sentences — `bootstrapping` is exactly that window, and
+                   `consent.known` false is the same window for the flag itself (a cache-painted
+                   boot). Unsettled renders the skeleton; settled-and-empty renders the honest
+                   empty line. The flag-OFF render stays the spread above: no group at all. */
+                settled={consent.known && !syncStatus.bootstrapping}
                 /* The ACCOUNT's mailbox count, not the entity-derived one: two connected
                    mailboxes where only one has folders still section, or the lone tree is
                    ambiguous (spec §14). `facts` is the host's probe; null (demo, standalone)
@@ -4661,7 +4739,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     ],
     [
       t, ohbox.newForYou.length, allOhbox.length, readsNew, receiptsNew, screener.waitingCount, piles,
-      tagGroups, tags, createTagAlone, consent.foldersEnabled, folders, folderUnread, route.view,
+      tagGroups, tags, createTagAlone, consent.foldersEnabled, consent.known, folders,
+      folderUnread, syncStatus.bootstrapping, route.view,
       route.folderId, facts,
     ],
   );
