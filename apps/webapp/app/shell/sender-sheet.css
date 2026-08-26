@@ -128,6 +128,13 @@
   color: inherit;
   opacity: 0.8;
 }
+/* The generic tile hover (`.sm-scope button:hover`, 0-2-1) still outranks the 0-2-0 reset above,
+   so hovering the pick flipped its ink to `--ink` over a selected (accented) tile. This ties the
+   hover's specificity and is declared later, so the pick keeps its tile's ink under the pointer. */
+.sm-scope .sm-edit-pick:hover {
+  color: inherit;
+  background: none;
+}
 .sm-edit-status {
   display: flex;
   flex-direction: column;
