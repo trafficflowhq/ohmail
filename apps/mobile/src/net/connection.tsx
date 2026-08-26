@@ -228,8 +228,13 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
    */
   const runConnect = useCallback(
     async (id: string, stillCurrent: () => boolean): Promise<Attempt> => {
-      if (live.current.k === "live") teardown(live.current.session);
+      // The keystore read comes FIRST, teardown immediately before its own next state: the
+      // disown's falling busy edge and the departure from `live` must land in ONE render
+      // commit. With an await between them, the world layer would see "drain completed" while
+      // the OUTGOING session was still on screen and restart work against it — the retry
+      // flush, the folders re-read, an owed drain — racing the scheduled store close.
       const row = (await env.profiles.list()).find((p) => p.id === id);
+      if (live.current.k === "live") teardown(live.current.session);
       if (row === undefined) {
         if (stillCurrent()) setState({ k: "refused", reason: "that server is no longer paired on this phone" });
         return { ok: false, reason: "that server is no longer paired on this phone" };

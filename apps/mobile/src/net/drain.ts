@@ -66,18 +66,21 @@ export class SyncRunner {
     // a dead session's failure sentence from standing over the live session's state.
     const self: { round: Promise<void> | null } = { round: null };
     const round = (async (): Promise<void> => {
+      // REGISTRATION BEFORE ANY ENGINE CODE: this yield lets the synchronous tail below fill
+      // the box and take the record before the engine is invoked, so an engine that throws
+      // SYNCHRONOUSLY is an ordinary failed round — its sentence reported, its busy flag
+      // dropped — never an unregistered one the record gates would silence.
+      await Promise.resolve();
       try {
         await (first ? engine.start() : engine.syncOnce());
       } catch (err) {
-        // `self.round !== null` beside the record check: a synchronous throw out of the
-        // engine call would land here BEFORE the box is filled, and a both-null equality
-        // would wrongly read an unregistered round as the round of record.
-        if (self.round !== null && this.inflight === self.round) this.on.error(String(err));
+        if (this.inflight === self.round) this.on.error(String(err));
         // Re-sync memory with disk so the torn-flush guard's refusal window closes and the
-        // retry re-fetches the failed page instead of writing past it.
-        await engine.hydrate().catch(() => undefined);
+        // retry re-fetches the failed page instead of writing past it. Through a thenable so
+        // even a synchronously-throwing hydrate stays inside this round.
+        await Promise.resolve().then(() => engine.hydrate()).catch(() => undefined);
       } finally {
-        if (self.round !== null && this.inflight === self.round) {
+        if (this.inflight === self.round) {
           this.on.syncing(false);
           this.inflight = null;
         }
