@@ -832,22 +832,25 @@ export async function setMailboxFoldersEnabled(
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
       .limit(1);
     if (!mb) throw new ServiceError("not_found", 404, "no such mailbox on this account");
-    await tx.update(mailboxes)
-      .set({ foldersDisabledAt: at })
-      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
-    // THE STAMP MOVES. The exception lives on `mailboxes`, but the settings ENTITY's
-    // `updatedAt` is the `account_settings` row's own — a client that already holds the entity
-    // compares stamps and ignores a re-apply whose stamp did not move, so a per-mailbox flip
-    // that left the row untouched re-delivered the same instant and no surface re-asked —
-    // a review-caught staleness. Touch the row in the same transaction, creating it if the
-    // account has never written a knob before — and touch it FIRST: the global lock order
-    // ({@link recordSettingsChange}) puts the settings row ahead of the sequence row.
+    // THE STAMP MOVES — AND IT MOVES BEFORE THE MAILBOX ROW. Two reasons, one per line of the
+    // global lock chain (settings → mailboxes → sequence row; see {@link recordSettingsChange}
+    // and the erasure's note in account-deletion-service.ts, which deletes in exactly that
+    // order): the settings ENTITY's `updatedAt` is the `account_settings` row's own — a client
+    // that already holds the entity compares stamps and ignores a re-apply whose stamp did not
+    // move, so a per-mailbox flip that left the row untouched was a doorbell nobody heard
+    // (review-caught staleness) — and taking the mailbox row FIRST put this writer into a
+    // 40P01 cycle with erasure, which holds the settings row while deleting toward
+    // `mailboxes` (the next round caught that one). The 404-check SELECT above locks nothing,
+    // so it may stay first.
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { updatedAt: ctx.now() },
       });
+    await tx.update(mailboxes)
+      .set({ foldersDisabledAt: at })
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
     // The dial's own change row, master on or off — the per-mailbox exception is settings state
     // whatever the master says, and a surface holding a stale exceptions map is the same
     // staleness the master's row exists to end.
