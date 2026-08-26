@@ -81,33 +81,27 @@ let readerGeography: string | null = null;
 let zone: Zone = "list";
 const subscribers = new Set<() => void>();
 
-function computeZone(): Zone {
-  if (typeof document === "undefined") return "list";
-  const el = document.activeElement;
-  if (!(el instanceof Element) || el === document.body) return "list";
-  if (el.closest(RAIL)) return "rail";
-  // The shell's full-screen reader sheet counts as the reader zone whatever the mounted view
-  // declared: it IS the open message at the widths that raise it, and reading focus inside it
-  // as "list" made ↑/↓ walk the hidden cursor behind a modal while suppressing the sheet's own
-  // scroll (found by review, round 1).
-  if (el.closest(READER_OVERLAY)) return "reader";
-  if (readerGeography && el.closest(readerGeography)) return "reader";
-  return "list";
-}
-
 /**
- * THE WALK STANDS DOWN BEHIND THE FULL-SCREEN READER. While the sheet is up, every zone key
- * that would act on the rail or the list underneath it is withheld — a modal that owns the
- * screen owns the keys that move focus around it. Expressed as a `when` (a dispatch-time
- * condition) rather than `disabled`, because the sheet's presence is DOM state the
- * registering render cannot reliably read mid-commit; the trade is that the `?` sheet lists
- * these rows as live while the reader is open, which the reader's own full-screen chrome
- * makes moot. The reader ↑/↓ scroll pair is deliberately NOT gated: with focus in the sheet
- * the zone is "reader" and the pair scrolls the sheet itself (see `scrollReader`).
+ * The shell's full-screen reader sheet. Its EXISTENCE decides the zone, not focus inside it:
+ * the sheet opens without taking focus (review round 2 — ↑/↓ could not scroll the visible
+ * sheet until the user first tabbed into it), so while it stands the zone IS "reader",
+ * wherever the opening gesture left the caret. The two bindings that would move focus into
+ * the surfaces UNDER the sheet keep a dispatch-time gate (`noReaderOverlay`) — every other
+ * rail/list key is already declared inert by the zone itself.
  */
 const READER_OVERLAY = ".reader";
 function noReaderOverlay(): boolean {
   return typeof document === "undefined" || document.querySelector(READER_OVERLAY) == null;
+}
+
+function computeZone(): Zone {
+  if (typeof document === "undefined") return "list";
+  if (document.querySelector(READER_OVERLAY)) return "reader";
+  const el = document.activeElement;
+  if (!(el instanceof Element) || el === document.body) return "list";
+  if (el.closest(RAIL)) return "rail";
+  if (readerGeography && el.closest(readerGeography)) return "reader";
+  return "list";
 }
 
 /**
@@ -318,14 +312,14 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
   };
 
   const scrollReader = (dir: 1 | -1): void => {
+    // The sheet outranks the column: while the full-screen reader stands, the zone is
+    // "reader" wherever focus sits, and the thing to scroll is the sheet — never a column
+    // standing `display:none` behind it. With no sheet, the zone can only be "reader"
+    // through the view's own geography, and its declared scroller is the target.
+    const sheet = document.querySelector<HTMLElement>(READER_OVERLAY);
     const r = latest.current.reader;
-    if (!r) return;
-    // The sheet outranks the column: when the zone is "reader" because focus sits inside the
-    // full-screen reader, the thing to scroll is the sheet the reader is looking at, never a
-    // column standing `display:none` behind it.
-    const cur = document.activeElement;
-    const sheet = cur instanceof HTMLElement ? cur.closest<HTMLElement>(READER_OVERLAY) : null;
-    const el = sheet ?? document.querySelector<HTMLElement>(r.scrollSelector ?? r.selector);
+    const el =
+      sheet ?? (r ? document.querySelector<HTMLElement>(r.scrollSelector ?? r.selector) : null);
     if (el) el.scrollTop = el.scrollTop + dir * READER_SCROLL_STEP;
   };
 
@@ -337,7 +331,6 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneMenu"),
       disabled: z !== "list",
-      when: noReaderOverlay,
       run: enterRail,
     },
     {
@@ -345,6 +338,9 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneList"),
       disabled: z !== "reader",
+      // Gated: with the SHEET standing the zone is "reader" too, and "back to the list"
+      // would land real focus on a row behind a modal. The sheet's ← is nothing; its exit
+      // is Escape, which the shell's overlay ladder owns.
       when: noReaderOverlay,
       run: focusList,
     },
@@ -353,7 +349,6 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneList"),
       disabled: z !== "rail",
-      when: noReaderOverlay,
       run: focusList,
     },
     {
@@ -361,7 +356,6 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneRead"),
       disabled: z !== "list" || !cfg.reader || cfg.reader.disabled,
-      when: noReaderOverlay,
       run: enterReader,
     },
     {
@@ -369,7 +363,6 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneMenuUp"),
       disabled: z !== "rail",
-      when: noReaderOverlay,
       run: () => railStep(-1),
     },
     {
@@ -377,7 +370,6 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneMenuDown"),
       disabled: z !== "rail",
-      when: noReaderOverlay,
       run: () => railStep(1),
     },
     /* Escape walks back left, one zone per press. It is registered at `global` scope like
@@ -389,6 +381,8 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneList"),
       disabled: z !== "reader",
+      // Gated for ArrowLeft's reason — and the shell's overlay-scope Escape outranks this
+      // binding anyway while anything is open; the gate keeps the fallthrough honest.
       when: noReaderOverlay,
       run: focusList,
     },
@@ -397,7 +391,6 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       group: "navigate",
       label: t("zoneMenu"),
       disabled: z !== "list",
-      when: noReaderOverlay,
       run: enterRail,
     },
   ];
@@ -409,7 +402,6 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
         group: "navigate",
         label: cfg.list.up.label,
         disabled: z !== "list" || cfg.list.up.disabled,
-        when: noReaderOverlay,
         run: () => latest.current.list?.up.run(),
       },
       {
@@ -417,30 +409,32 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
         group: "navigate",
         label: cfg.list.down.label,
         disabled: z !== "list" || cfg.list.down.disabled,
-        when: noReaderOverlay,
         run: () => latest.current.list?.down.run(),
       },
     );
   }
 
-  if (cfg.reader) {
-    bindings.push(
-      {
-        chord: "ArrowUp",
-        group: "navigate",
-        label: t("zoneScroll"),
-        disabled: z !== "reader",
-        run: () => scrollReader(-1),
-      },
-      {
-        chord: "ArrowDown",
-        group: "navigate",
-        label: t("zoneScroll"),
-        disabled: z !== "reader",
-        run: () => scrollReader(1),
-      },
-    );
-  }
+  /* Unconditional, unlike everything else the reader config guards: the STREAM views have no
+     reading column, but the full-screen sheet can stand over any view, and while it does the
+     zone is "reader" — a pair registered only under `cfg.reader` left the sheet unscrollable
+     exactly there (review round 2). With no sheet and no geography the zone is never
+     "reader", so the pair stays declared-inert where it has nothing to scroll. */
+  bindings.push(
+    {
+      chord: "ArrowUp",
+      group: "navigate",
+      label: t("zoneScroll"),
+      disabled: z !== "reader",
+      run: () => scrollReader(-1),
+    },
+    {
+      chord: "ArrowDown",
+      group: "navigate",
+      label: t("zoneScroll"),
+      disabled: z !== "reader",
+      run: () => scrollReader(1),
+    },
+  );
 
   /* Optional registration: the split views are also mounted with no keymap at all (bare
      view tests, keyboard-less hosts), where the zone model is simply absent — see the
