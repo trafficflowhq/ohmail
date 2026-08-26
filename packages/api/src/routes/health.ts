@@ -544,16 +544,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // half, no CHECK, no INDEX — read through the `listUserFolders` mailbox join. Deploy order:
   // migration → API.
   ["mailboxes", "folders_disabled_at"],
-  // mail 0076_junk_sweep_request — the one-time Quarantine→\Junk sweep recorded as a command
-  // (`junk_sweep_requested_at`: the API stamps it on the user's press, the worker consumes it
-  // inside the mailbox's serial cycle; NULL = no sweep owed, the default). One additive nullable
-  // column on `mailboxes`, and it earns a marker for the whole-row-select reason
-  // `mailboxes.error_code` established: `MailboxService.list` selects whole rows, so an API
-  // deployed ahead of the migration 42703s the mailbox panel and the connect flow. The worker
-  // half is the safe kind — a worker ahead of the migration never reaches the column (its read
-  // lives in the sweep-command pass this same change introduces). Deploy order: migration → API
-  // → worker.
-  ["mailboxes", "junk_sweep_requested_at"],
   // mail 0074_folder_ops — the user-commanded folder verbs' command table (create / rename /
   // delete; FOLDERS-SPEC.md stage 2). A whole NEW table, probed by its primary key: the API's
   // /folders verbs INSERT into it and the /sync folder materializers LEFT JOIN it for the
@@ -563,14 +553,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // simply queue nothing (the API refuses first anyway). Deploy order: migration → API → worker.
   // The op/status CHECKs are closed OURS-only sets inside the CREATE TABLE (0041's rule).
   ["folder_ops", "id"],
-  // mail 0075_mailbox_signature — the per-mailbox signature text (NULL = none, the default).
-  // One additive nullable column on `mailboxes`, and it earns a marker for exactly the
-  // whole-row-select reason its two neighbours above do: `MailboxService.list` selects whole
-  // rows, so an API deployed ahead of the migration 42703s the mailbox panel and the connect
-  // flow — and `mailboxSignatures` (the `GET /consent` map) selects the column by name, so the
-  // consent read 42703s too. No worker half, no CHECK, no INDEX — read through account-scoped
-  // mailbox selects only. Deploy order: migration → API.
-  ["mailboxes", "signature"],
   // mail 0049_mailbox_sync_requested_at — the enforced-sync doorbell. One additive nullable
   // timestamptz on `mailboxes`, and it earns a marker on the whole-row-select rule its OWN
   // migration already states: *"`MailboxService.list` selects whole rows, so
@@ -1486,21 +1468,13 @@ export const MAIL_EXPECTED_MARKERS =
  * `0074_folder_ops` is probed as the TABLE `folder_ops` (its `id` column) — the user-commanded
  * folder verbs' command table (create / rename / delete). The /folders verbs INSERT into it and
  * every folder materializer LEFT JOINs it for the pending-op marker, so a too-early API 42704s
- * the folder reads of every "Use folders" account.
- *
- * `0075_mailbox_signature` is probed as `mailboxes.signature` — the per-mailbox signature
- * text, one nullable column read by the whole-row `MailboxService.list` select and by name in
- * `mailboxSignatures` (the `GET /consent` map).
- *
- * `0076_junk_sweep_request` is probed as `mailboxes.junk_sweep_requested_at` — the one-time
- * Quarantine→Junk sweep's command stamp, one nullable column read by the whole-row
- * `MailboxService.list` select and by name in the sweep preview (`GET /screener/junk/sweep`).
- * It is the newest entry, so it is the tag below.
+ * the folder reads of every "Use folders" account. It is the newest entry, so it is the tag
+ * below.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0076_junk_sweep_request";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0074_folder_ops";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

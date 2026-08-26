@@ -49,17 +49,6 @@ export const FOLDER_OP_MAX_ATTEMPTS = 5;
 /** One chunk of the delete's mirror tombstones — the mark-seen batch bound, for its reason. */
 export const FOLDER_DELETE_TOMBSTONE_CHUNK = 200;
 
-/**
- * How many tombstone CHUNKS one cycle may spend on folder deletes, across all of the mailbox's
- * commands — the reconciler's `RECONCILE_MOVES_PER_CYCLE` argument at this seam: the worker's
- * rotation is serial, so a deep archive folder drained to exhaustion in one pass would hold
- * every other mailbox behind it. A cycle that runs out leaves the command PENDING with its
- * attempts untouched (progress is not an error), reports `owesMore`, and the caller re-kicks —
- * the mailbox goes to the back of the queue and the delete resumes where the chunks left off
- * (the picked set excludes what earlier chunks already tombstoned).
- */
-export const FOLDER_DELETE_CHUNKS_PER_CYCLE = 10;
-
 export interface FolderOpsDeps {
   repo: WorkerRepo;
   adapter: MailboxAdapter;
@@ -67,15 +56,6 @@ export interface FolderOpsDeps {
   mailboxId: string;
   /** The cycle's fenced group — consequences and the leadership verdict commit together. */
   write: <T>(fn: (r: WorkerRepo) => Promise<T>) => Promise<T>;
-  /**
-   * The check before EVERY IMAP mutation — the cycle wires `fenceImapMutation`, the fresh
-   * leadership read the fence block in sync.ts documents. An IMAP command cannot ride a
-   * database transaction, so the fenced `write` alone would let a stale worker CREATE, RENAME
-   * or sweep a mailbox another worker has taken over; this closes that gap to the same
-   * converging residual every other mutation site carries. Absent (a caller with no fence —
-   * the local engine's single process) means no check, which is that caller's own posture.
-   */
-  guard?: () => Promise<void>;
   log?: Logger;
 }
 
@@ -83,8 +63,6 @@ export interface FolderOpsResult {
   executed: number;
   failed: number;
   deferred: number;
-  /** A delete ran out its per-cycle chunk budget — still pending, re-kick to resume. */
-  owesMore: boolean;
 }
 
 /** Does any SEGMENT of this canonical path contain the mailbox's real delimiter? */
@@ -95,11 +73,9 @@ export function leafFightsDelimiter(canonical: string, delimiter: string): boole
 
 export async function folderOpsPass(deps: FolderOpsDeps): Promise<FolderOpsResult> {
   const { repo, adapter, accountId, mailboxId, log } = deps;
-  const result: FolderOpsResult = { executed: 0, failed: 0, deferred: 0, owesMore: false };
+  const result: FolderOpsResult = { executed: 0, failed: 0, deferred: 0 };
   const ops = await repo.listFolderOps(mailboxId);
   if (ops.length === 0) return result;
-  /** The cycle's shared tombstone budget — see {@link FOLDER_DELETE_CHUNKS_PER_CYCLE}. */
-  const budget = { chunks: FOLDER_DELETE_CHUNKS_PER_CYCLE };
 
   // An adapter without the verbs (a fake, an alternative backend) cannot execute the command;
   // failing it honestly beats holding it pending for ever on a surface that will never act.
@@ -116,9 +92,8 @@ export async function folderOpsPass(deps: FolderOpsDeps): Promise<FolderOpsResul
         ? await runCreate(deps, op)
         : op.op === "rename"
           ? await runRename(deps, op)
-          : await runDelete(deps, op, budget);
+          : await runDelete(deps, op);
       if (outcome === "done") result.executed += 1;
-      else if (outcome === "paused") result.owesMore = true;
       else result.failed += 1;
     } catch (err) {
       // Only the caller's fence vocabulary may leave this pass — lost leadership stops the
@@ -154,15 +129,9 @@ async function runCreate(deps: FolderOpsDeps, op: FolderOpRow): Promise<"done" |
     await deps.write((r) => r.failFolderOp(op, "bad_name"));
     return "failed";
   }
-  await deps.guard?.();
-  // Where the create LANDED — a personal-namespace server files a root-named create under
-  // INBOX, and the completion records the real path (or defers to the row discovery already
-  // adopted there) so the commanded row can never stand as a phantom.
-  const landed = await deps.adapter.createFolder!(op.folder);
-  await deps.write((r) => r.completeFolderCreate(op, landed));
-  deps.log?.info("folder_created", {
-    mailboxId: deps.mailboxId, accountId: deps.accountId, folderId: op.folderId, landed,
-  });
+  await deps.adapter.createFolder!(op.folder);
+  await deps.write((r) => r.completeFolderCreate(op));
+  deps.log?.info("folder_created", { mailboxId: deps.mailboxId, accountId: deps.accountId, folderId: op.folderId });
   return "done";
 }
 
@@ -178,7 +147,6 @@ async function runRename(deps: FolderOpsDeps, op: FolderOpRow): Promise<"done" |
     await deps.write((r) => r.failFolderOp(op, "bad_name"));
     return "failed";
   }
-  await deps.guard?.();
   const res = await deps.adapter.renameFolder!(op.folder, to);
   if (res === "conflict") {
     await deps.write((r) => r.failFolderOp(op, "exists"));
@@ -199,9 +167,7 @@ async function runRename(deps: FolderOpsDeps, op: FolderOpRow): Promise<"done" |
   return "done";
 }
 
-async function runDelete(
-  deps: FolderOpsDeps, op: FolderOpRow, budget: { chunks: number },
-): Promise<"done" | "failed" | "paused"> {
+async function runDelete(deps: FolderOpsDeps, op: FolderOpRow): Promise<"done" | "failed"> {
   const { repo, adapter, accountId, mailboxId } = deps;
   const special = await repo.getMailboxSpecialFolders?.(mailboxId);
   const trash = special?.trashFolder ?? null;
@@ -212,56 +178,32 @@ async function runDelete(
     return "failed";
   }
 
-  // The RESOLVED Sent path, read once per delete: the stale-residue guard compares the exact
-  // folder the adapter watermarks, not a spelling — a mailbox whose \\Sent resolved to a
-  // custom path would otherwise lose the last evidence of old sent copies.
-  // `watchedSentFolder ?? sentFolder` — the same precedence `sentFolderOf` uses: an adapter
-  // that resolved \\Sent but names no separate watch path reports it in `sentFolder` alone.
-  const caps = await adapter.capabilities();
-  const sentFolder = caps.watchedSentFolder ?? caps.sentFolder ?? null;
-
-  /** One folder's mirror consequences, within the cycle's budget. False ⇒ budget ran out. */
-  const tombstoneWithin = async (folder: string): Promise<boolean> => {
-    for (;;) {
-      if (budget.chunks <= 0) return false;
-      budget.chunks -= 1;
-      const took = await deps.write((r) =>
-        r.tombstoneFolderMessages(accountId, mailboxId, folder, FOLDER_DELETE_TOMBSTONE_CHUNK, sentFolder));
-      if (took < FOLDER_DELETE_TOMBSTONE_CHUNK) return true;
-    }
-  };
-
   // Children before parents — no IMAP DELETE ever targets a folder with inferiors. The subject
   // (the subtree's root) is therefore LAST, and removing its inventory row CASCADE-retires the
-  // command itself: the delete completes exactly when the last folder is gone. A cycle that
-  // exhausts its chunk budget mid-subtree PAUSES — the command stays pending with its attempts
-  // untouched (progress is not an error), the caller re-kicks, and the re-entry converges:
-  // swept folders sweep to nothing, tombstoned rows are excluded from the next pick, removed
-  // rows are gone from the subtree read.
+  // command itself: the delete completes exactly when the last folder is gone.
   const subtree = await repo.listFolderSubtree(mailboxId, op.folder);
   for (const f of subtree) {
     // Phase 1 — the server sweep. Folder-level, not per known message: the mailbox may hold
     // mail the mirror never ingested, and every message must reach Trash before DELETE.
-    await deps.guard?.();
     await adapter.moveAll!(f.folder, trash);
     // Phase 2 — the mirror consequences, chunked (one tx per chunk, idempotent re-entry).
-    if (!(await tombstoneWithin(f.folder))) return "paused";
+    for (;;) {
+      const took = await deps.write((r) =>
+        r.tombstoneFolderMessages(accountId, mailboxId, f.folder, FOLDER_DELETE_TOMBSTONE_CHUNK));
+      if (took < FOLDER_DELETE_TOMBSTONE_CHUNK) break;
+    }
     // Phase 3 — the folder itself. `not_empty` means mail landed between sweep and DELETE;
     // one more sweep covers the race, and a folder that STILL will not empty fails the command
     // with everything consistent: swept mail is honestly in Trash, the folder stands.
-    // `unverified` — the server would not answer STATUS — is a transient, not a verdict:
-    // deleting on an unverified count is the expunge this ceremony exists to forbid.
-    await deps.guard?.();
     let res = await adapter.deleteFolder!(f.folder);
     if (res === "not_empty") {
-      await deps.guard?.();
       await adapter.moveAll!(f.folder, trash);
-      if (!(await tombstoneWithin(f.folder))) return "paused";
-      await deps.guard?.();
+      for (;;) {
+        const took = await deps.write((r) =>
+          r.tombstoneFolderMessages(accountId, mailboxId, f.folder, FOLDER_DELETE_TOMBSTONE_CHUNK));
+        if (took < FOLDER_DELETE_TOMBSTONE_CHUNK) break;
+      }
       res = await adapter.deleteFolder!(f.folder);
-    }
-    if (res === "unverified") {
-      throw new Error(`folder ${f.folder}: the server did not answer STATUS — emptiness unverified, retrying`);
     }
     if (res === "not_empty") {
       await deps.write((r) => r.failFolderOp(op, "refused"));

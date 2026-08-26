@@ -2,10 +2,9 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 // `@trafficflow/core/mail`, NOT the default barrel — `folders.ts`'s rule, same reason: this
 // module is imported beside it and must never pull the classifier/drafter graph anywhere.
 import { folderNameError } from "@trafficflow/core/mail";
-import { claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type Tx } from "@trafficflow/db";
+import { folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type Tx } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
-import { ServiceError, IdempotencyRaceLost } from "./errors.js";
-import type { MoveIdempotency } from "./message-service.js";
+import { ServiceError } from "./errors.js";
 import { foldersEnabled, userFolderById, userFolderExclusion, type UserFolderRow } from "./folders.js";
 import { folderRowToDTO } from "./dto/materialize.js";
 import type { FolderDTO } from "./dto/types.js";
@@ -43,42 +42,6 @@ import type { FolderDTO } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
-/** The verb's idempotency claim, inside its transaction — `MessageService.move`'s exact rule:
- *  a retry whose response was lost must replay the stored answer, never re-run a command the
- *  worker may already be executing. */
-async function claimVerb(
-  tx: Tx, ctx: ServiceContext, idem: MoveIdempotency | null | undefined,
-  dto: unknown, seq: bigint | null, status = 200,
-): Promise<void> {
-  if (!idem) return;
-  const claimed = await claimIdempotencyKey(tx, {
-    accountId: ctx.accountId,
-    key: idem.key,
-    requestHash: idem.requestHash,
-    // The verb's OWN status — a create replays as the 201 it answered, not a generic 200.
-    responseStatus: status,
-    responseJson: dto,
-    seq: seq === null ? null : Number(seq),
-    now: ctx.now(),
-  });
-  if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, idem.key);
-}
-
-/**
- * The POST-LOCK idempotency re-read. Two simultaneous same-key requests can both miss the
- * middleware's pre-handler lookup (the winner's row is uncommitted); the loser then parks on
- * the mailbox lock and, resumed, would fail an overlap or collision check on the WINNER'S OWN
- * command — a 409 for a request that succeeded. Re-reading the key once the lock is held sees
- * the winner's committed row, and the race-lost throw makes the middleware replay it.
- */
-async function recheckIdempotency(
-  tx: Tx, ctx: ServiceContext, idem: MoveIdempotency | null | undefined,
-): Promise<void> {
-  if (!idem) return;
-  const stored = await readIdempotencyKey(tx, ctx.accountId, idem.key, ctx.now());
-  if (stored !== null) throw new IdempotencyRaceLost(ctx.accountId, idem.key);
-}
-
 /** `POST /folders` body. */
 export interface FolderCreateBody { mailboxId?: unknown; name?: unknown }
 /** `PATCH /folders/:id` body — the new full canonical path. */
@@ -95,18 +58,14 @@ export class FolderOpsService {
    * row, one transaction. The worker's `mailboxCreate` is idempotent against "already exists",
    * so a crash after commit costs one redundant CREATE and nothing else.
    */
-  async create(
-    ctx: ServiceContext, body: FolderCreateBody,
-    opts: { idempotency?: MoveIdempotency | null } = {},
-  ): Promise<{ dto: FolderDTO; seq: number | null }> {
+  async create(ctx: ServiceContext, body: FolderCreateBody): Promise<{ dto: FolderDTO; seq: number | null }> {
     const mailboxId = typeof body?.mailboxId === "string" ? body.mailboxId : "";
     const name = typeof body?.name === "string" ? body.name : "";
     await this.requireFolders(ctx);
     this.validName(name);
 
-    return asTx(ctx).transaction(async (tx) => {
+    const { id, seq } = await asTx(ctx).transaction(async (tx) => {
       await this.requireCommandableMailbox(tx, ctx, mailboxId);
-      await recheckIdempotency(tx, ctx, opts.idempotency);
       await this.assertNoOpOverlap(tx, mailboxId, [name]);
       const inserted = await tx.insert(mailboxFolders)
         .values({ mailboxId, folder: name })
@@ -122,8 +81,10 @@ export class FolderOpsService {
         accountId: ctx.accountId, entityType: "folder", entityId: row.id, op: "create", meta: null,
       });
       await this.ringDoorbell(tx, mailboxId, ctx.now());
-      return this.answer(tx, ctx, row.id, s, opts.idempotency, 201);
+      return { id: row.id, seq: s };
     });
+
+    return this.answer(ctx, id, seq);
   }
 
   /**
@@ -133,10 +94,7 @@ export class FolderOpsService {
    * one transaction, beside the IMAP RENAME it mirrors. Here: the command, the pending marker,
    * the doorbell.
    */
-  async rename(
-    ctx: ServiceContext, id: string, body: FolderRenameBody,
-    opts: { idempotency?: MoveIdempotency | null } = {},
-  ): Promise<{ dto: FolderDTO; seq: number | null }> {
+  async rename(ctx: ServiceContext, id: string, body: FolderRenameBody): Promise<{ dto: FolderDTO; seq: number | null }> {
     const name = typeof body?.name === "string" ? body.name : "";
     await this.requireFolders(ctx);
     this.validName(name);
@@ -148,9 +106,8 @@ export class FolderOpsService {
       throw new ServiceError("validation_failed", 400, "a folder cannot move into its own subtree");
     }
 
-    return asTx(ctx).transaction(async (tx) => {
+    const seq = await asTx(ctx).transaction(async (tx) => {
       await this.requireCommandableMailbox(tx, ctx, subject.mailboxId);
-      await recheckIdempotency(tx, ctx, opts.idempotency);
       await this.assertNoOpOverlap(tx, subject.mailboxId, [subject.folder, name]);
       const [collision] = await tx.select({ id: mailboxFolders.id }).from(mailboxFolders)
         .where(and(eq(mailboxFolders.mailboxId, subject.mailboxId), eq(mailboxFolders.folder, name)))
@@ -164,8 +121,10 @@ export class FolderOpsService {
         accountId: ctx.accountId, entityType: "folder", entityId: id, op: "update", meta: null,
       });
       await this.ringDoorbell(tx, subject.mailboxId, ctx.now());
-      return this.answer(tx, ctx, id, s, opts.idempotency);
+      return s;
     });
+
+    return this.answer(ctx, id, seq);
   }
 
   /**
@@ -175,14 +134,11 @@ export class FolderOpsService {
    * mailbox has no discovered Trash — the only alternatives are an expunge (forbidden) or a
    * delete that strands mail, and both are worse than the sentence.
    */
-  async remove(
-    ctx: ServiceContext, id: string,
-    opts: { idempotency?: MoveIdempotency | null } = {},
-  ): Promise<{ dto: FolderDTO; seq: number | null }> {
+  async remove(ctx: ServiceContext, id: string): Promise<{ dto: FolderDTO; seq: number | null }> {
     await this.requireFolders(ctx);
     const subject = await this.requireSubject(ctx, id);
 
-    return asTx(ctx).transaction(async (tx) => {
+    const seq = await asTx(ctx).transaction(async (tx) => {
       const mb = await this.requireCommandableMailbox(tx, ctx, subject.mailboxId);
       if (mb.trashFolder === null) {
         throw new ServiceError(
@@ -190,7 +146,6 @@ export class FolderOpsService {
           "this mailbox has no Trash folder, and ohmail never expunges — delete the folder in your own mail client instead",
         );
       }
-      await recheckIdempotency(tx, ctx, opts.idempotency);
       await this.assertNoOpOverlap(tx, subject.mailboxId, [subject.folder]);
       await tx.insert(folderOps).values({
         accountId: ctx.accountId, mailboxId: subject.mailboxId, folderId: id,
@@ -200,8 +155,10 @@ export class FolderOpsService {
         accountId: ctx.accountId, entityType: "folder", entityId: id, op: "update", meta: null,
       });
       await this.ringDoorbell(tx, subject.mailboxId, ctx.now());
-      return this.answer(tx, ctx, id, s, opts.idempotency);
+      return s;
     });
+
+    return this.answer(ctx, id, seq);
   }
 
   /**
@@ -212,10 +169,7 @@ export class FolderOpsService {
    * has it. A PENDING command cannot be dismissed — the worker may be mid-execution, and a
    * cancel that races an IMAP write would make the marker lie in whichever direction lost.
    */
-  async dismiss(
-    ctx: ServiceContext, id: string,
-    opts: { idempotency?: MoveIdempotency | null } = {},
-  ): Promise<{ dto: FolderDTO | null; seq: number | null }> {
+  async dismiss(ctx: ServiceContext, id: string): Promise<{ dto: FolderDTO | null; seq: number | null }> {
     await this.requireFolders(ctx);
     const subject = await this.requireSubject(ctx, id);
     if (!subject.op) throw new ServiceError("not_found", 404, "no failed change to dismiss");
@@ -224,32 +178,31 @@ export class FolderOpsService {
     }
     const wasCreate = subject.op.kind === "create";
 
-    return asTx(ctx).transaction(async (tx) => {
-      await recheckIdempotency(tx, ctx, opts.idempotency);
+    const seq = await asTx(ctx).transaction(async (tx) => {
       if (wasCreate) {
         // CASCADE takes the op row with the inventory row.
         await tx.delete(mailboxFolders).where(eq(mailboxFolders.id, id));
-        const s = await recordChange(tx, {
+        return recordChange(tx, {
           accountId: ctx.accountId, entityType: "folder", entityId: id, op: "delete", meta: null,
         });
-        await claimVerb(tx, ctx, opts.idempotency, { dismissed: true }, s);
-        return { dto: null, seq: s === null ? null : Number(s) };
       }
       await tx.delete(folderOps).where(eq(folderOps.folderId, id));
-      const s = await recordChange(tx, {
+      return recordChange(tx, {
         accountId: ctx.accountId, entityType: "folder", entityId: id, op: "update", meta: null,
       });
-      return this.answer(tx, ctx, id, s, opts.idempotency);
     });
+
+    if (wasCreate) return { dto: null, seq: seq === null ? null : Number(seq) };
+    return this.answer(ctx, id, seq);
   }
 
   /**
-   * The delete confirm's numbers — `folders` counts the subtree including the subject;
-   * `messages` counts undeleted mirror rows whose effective folder (`folder_state` desired,
-   * else the locator) sits in the subtree, the same derivation `MessageDTO.folder` uses, so
-   * the number is the one the views agree with. It is the count of what ohmail HAS SEEN — the
-   * worker's sweep deliberately moves everything, ingested or not — and the confirm's sentence
-   * says exactly that rather than presenting the number as the delete's total.
+   * The delete confirm's numbers, from the SERVER's truth — the client mirror is windowed
+   * (the folder tail exists precisely because it does not hold everything), so a count derived
+   * there would understate what the delete moves. `folders` counts the subtree including the
+   * subject; `messages` counts undeleted mirror rows whose effective folder (`folder_state`
+   * desired, else the locator) sits in the subtree — the same derivation `MessageDTO.folder`
+   * uses, so the number is the one the views agree with.
    */
   async summary(ctx: ServiceContext, id: string): Promise<FolderScopeSummary> {
     await this.requireFolders(ctx);
@@ -307,13 +260,6 @@ export class FolderOpsService {
         eq(mailboxes.accountId, ctx.accountId),
         isNull(mailboxes.foldersDisabledAt),
       ))
-      // FOR UPDATE, and it is the concurrency design of the whole enqueue: the overlap check
-      // below reads `folder_ops` without a predicate lock, so two concurrent commands for a
-      // parent and its child would each see no in-flight sibling and both insert — different
-      // folder_ids, so UNIQUE stops neither, and whichever the worker ran second would execute
-      // against a tree the first had reshaped. Serializing enqueues on the MAILBOX row makes
-      // the second transaction's overlap read see the first's committed row.
-      .for("update")
       .limit(1);
     if (!mb) throw new ServiceError("not_found", 404, "mailbox not found");
     if (mb.status === "disabled") {
@@ -373,20 +319,13 @@ export class FolderOpsService {
     await tx.update(mailboxes).set({ syncRequestedAt: now }).where(eq(mailboxes.id, mailboxId));
   }
 
-  /**
-   * The verb's echo: the subject's fresh DTO (marker included) + the write's `X-Sync-Seq`,
-   * read INSIDE the verb's transaction so the idempotency claim can store the exact response
-   * a replay must answer with (`MessageService.delete`'s rule).
-   */
+  /** The verb's echo: the subject's fresh DTO (marker included) + the write's `X-Sync-Seq`. */
   private async answer(
-    tx: Tx, ctx: ServiceContext, id: string, seq: bigint | null,
-    idem?: MoveIdempotency | null, status = 200,
+    ctx: ServiceContext, id: string, seq: bigint | null,
   ): Promise<{ dto: FolderDTO; seq: number | null }> {
-    const row = await userFolderById(tx as unknown as ServiceContext["db"], ctx.accountId, id);
+    const row = await userFolderById(ctx.db, ctx.accountId, id);
     if (!row) throw new ServiceError("internal", 500, "folder vanished after write");
-    const dto = folderRowToDTO(row);
-    await claimVerb(tx, ctx, idem, dto, seq, status);
-    return { dto, seq: seq === null ? null : Number(seq) };
+    return { dto: folderRowToDTO(row), seq: seq === null ? null : Number(seq) };
   }
 }
 

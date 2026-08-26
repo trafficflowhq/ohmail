@@ -148,19 +148,6 @@ export const PASSIVE_EXCLUDED_SPECIAL_USE: ReadonlySet<string> = new Set([
 export const PASSIVE_EXCLUDED_LEAF = RESERVED_FOLDER_LEAF;
 
 /**
- * Sent-shaped CANONICAL paths — top level or under the INBOX prefix: the English resolver
- * family plus the localized German one the SPECIAL-USE resolver can surface. The single source
- * for two readers with two different stakes: the folders inventory (`packages/services/
- * src/folders.ts`) excludes these from the user-folder class, and the folder delete's
- * stale-residue cleanup (`drizzle-repo.ts#tombstoneFolderMessages`) must NEVER take a
- * Sent-folder instance row — Sent is scanned by UID WATERMARK, not enumerated end to end, so
- * after a UIDVALIDITY reset an old message's renumbered copy is never re-learned and a deleted
- * "stale" Sent row is the last evidence that copy exists.
- */
-export const SENT_SHAPED_CANONICAL =
-  /^(inbox\/)?(sent([ -](items|messages|mail))?|gesendet(e[ -](objekte|elemente|nachrichten))?)$/i;
-
-/**
  * Leaf names that mean the provider's Junk folder on a server that names no SPECIAL-USE — the
  * WRITE-side belt for the three user-commanded writes (see the product rule above).
  *
@@ -1094,12 +1081,8 @@ export interface MailboxAdapter {
    * `/`-joined paths throughout; the adapter owns the delimiter translation. */
   /** The mailbox's real hierarchy delimiter, discovered at connect — the folder-op pass's last name check. */
   hierarchyDelimiter?(): string;
-  /**
-   * IMAP CREATE, answering the canonical path that now EXISTS — a personal-namespace server
-   * files a root-named CREATE under INBOX, and the caller must record where it landed.
-   * Idempotent: "already exists" is the asked-for state.
-   */
-  createFolder?(canonical: string): Promise<string>;
+  /** IMAP CREATE. Idempotent: "already exists" is the asked-for state. */
+  createFolder?(canonical: string): Promise<void>;
   /**
    * IMAP RENAME with the idempotent-completion arm: `"already"` when the source is gone AND the
    * target exists (a crash between the RENAME and the database swap, or the user's own client
@@ -1107,11 +1090,10 @@ export interface MailboxAdapter {
    */
   renameFolder?(from: string, to: string): Promise<"renamed" | "already" | "conflict" | "gone">;
   /**
-   * IMAP DELETE of a VERIFIED-EMPTY folder only — the adapter re-verifies emptiness because
-   * RFC 3501's DELETE takes messages with it, and never-expunge is the product rule, not a
-   * convention. `"unverified"` fails closed when the server will not answer STATUS.
+   * IMAP DELETE of an EMPTY folder only — the adapter re-verifies emptiness because RFC 3501's
+   * DELETE takes messages with it, and never-expunge is the product rule, not a convention.
    */
-  deleteFolder?(canonical: string): Promise<"deleted" | "already" | "not_empty" | "unverified">;
+  deleteFolder?(canonical: string): Promise<"deleted" | "already" | "not_empty">;
   /** The folder delete's sweep: move EVERYTHING in `folder` to `toFolder` (native \Trash). */
   moveAll?(folder: string, toFolder: string): Promise<number>;
   /**

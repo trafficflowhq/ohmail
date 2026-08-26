@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS } from "@trafficflow/db";
+import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   Rule, NativeLocator, EmailAddress,
@@ -16,9 +16,6 @@ import {
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
 import { effectForDestination } from "../rules.js";
-// The Sent shape's single source — the stale-residue cleanup must never take a Sent row (its
-// export in imap-types.ts carries the watermark argument).
-import { SENT_SHAPED_CANONICAL } from "./imap-types.js";
 import { providerAuthservIds } from "../authserv-ids.js";
 
 export interface PersistedFolderCursor { uidValidity: string; uidNext: number; highestModseq: string; }
@@ -206,14 +203,6 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * delivered to one mailbox may answer mail that arrived in another.
    */
   listThreadBacklog(accountId: string, limit: number): Promise<ThreadBacklogRow[]>;
-  /**
-   * `pg_advisory_xact_lock(ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, hashtext(accountId))` — taken
-   * before {@link listThreadBacklog} in every batch. Serializes the backfill against account
-   * erasure, the one other writer that locks a whole account's `threads`/`messages` in bulk and
-   * in the OPPOSITE order (see the constant's own doc). Nothing else needs it: every other
-   * writer of a thread touches only the few rows one message or merge group involves.
-   */
-  lockAccountThreadStructure(accountId: string): Promise<void>;
   getMailboxFolders(mailboxId: string): Promise<Array<{ folder: string } & PersistedFolderCursor>>;
   upsertMailboxFolder(mailboxId: string, folder: string, cursor: PersistedFolderCursor): Promise<void>;
   /* ── USER-COMMANDED FOLDER OPERATIONS (`folder_ops`, mail 0074; FOLDERS-SPEC.md stage 2) ─────
@@ -221,12 +210,8 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * records commands; these apply their database consequences beside the IMAP writes. */
   /** Pending commands of one mailbox, FIFO by request time — failed rows wait for dismissal. */
   listFolderOps(mailboxId: string): Promise<FolderOpRow[]>;
-  /**
-   * A create landed on the server: retire the command, emit the settled entity — re-spelt to
-   * `landed` when a personal-namespace server filed it elsewhere, or retired in favour of the
-   * row discovery already adopted there. One tx.
-   */
-  completeFolderCreate(op: Pick<FolderOpRow, "id" | "accountId" | "mailboxId" | "folder" | "folderId">, landed: string): Promise<void>;
+  /** A create landed on the server: retire the command, emit the settled entity. One tx. */
+  completeFolderCreate(op: Pick<FolderOpRow, "id" | "accountId" | "folderId">): Promise<void>;
   /**
    * THE RENAME SWAP — everything that spells the old path, re-spelt under the new one, in ONE
    * transaction beside the IMAP RENAME it mirrors: the inventory subtree (cursors intact —
@@ -251,7 +236,7 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * so a crash between chunks re-enters. Returns how many it took; 0 ⇒ the folder's mirror side
    * is clean and the row itself may go.
    */
-  tombstoneFolderMessages(accountId: string, mailboxId: string, folder: string, limit: number, sentFolder?: string | null): Promise<number>;
+  tombstoneFolderMessages(accountId: string, mailboxId: string, folder: string, limit: number): Promise<number>;
   /** The folder left the server: drop its inventory row (CASCADE takes a subject op) + tombstone. */
   removeFolderRow(accountId: string, folderId: string): Promise<void>;
   /** The honest refusal: `status='failed'` + the closed code, carried on the entity until dismissed. */
@@ -556,15 +541,8 @@ function dueNow(col: AnyPgColumn): SQL | undefined {
  * pattern would let `a_b` claim `axb/…`. Module-level rather than a repo method so the known-set
  * census (`known-set-cache.test.ts`) enumerates operations, not fragment builders.
  */
-/** Rows per `recordChanges` INSERT inside the rename swap — see the chunk note at the call. */
-const RENAME_CHANGE_CHUNK = 2000;
-
 function inSubtree(col: unknown, path: string) {
-  // `char_length(${path})` and never a JS `path.length`: PostgreSQL's left/substr count Unicode
-  // CHARACTERS while `String.length` counts UTF-16 code units, so any astral character in a
-  // folder name (an emoji is one PG character and two JS units) would shear the prefix
-  // arithmetic and leave descendants under the old path.
-  return sql`(${col} = ${path} or left(${col}, char_length(${path}) + 1) = ${path + "/"})`;
+  return sql`(${col} = ${path} or left(${col}, ${path.length + 1}) = ${path + "/"})`;
 }
 
 export class DrizzleRepo implements WorkerRepo, RoutingPort {
@@ -1685,12 +1663,6 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * message whose body row is missing still deserves a thread (its own), and an INNER JOIN
    * would silently leave it out of the backlog for ever.
    */
-  async lockAccountThreadStructure(accountId: string): Promise<void> {
-    await this.db.execute(
-      sql`select pg_advisory_xact_lock(${ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS}, hashtext(${accountId}))`,
-    );
-  }
-
   async listThreadBacklog(accountId: string, limit: number): Promise<ThreadBacklogRow[]> {
     const rows = await this.db.select({
       messageId: messages.id,
@@ -1895,41 +1867,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return rows.map((r) => ({ ...r, op: r.op as FolderOpRow["op"] }));
   }
 
-  async completeFolderCreate(
-    op: Pick<FolderOpRow, "id" | "accountId" | "mailboxId" | "folder" | "folderId">,
-    /**
-     * Where the CREATE actually LANDED (the adapter's answer) — a personal-namespace server
-     * files a root-named create under INBOX, so the commanded row must be re-spelt to the real
-     * path or it stands as a phantom whose rename/delete answer "gone" for ever (measured
-     * live). Three shapes: landed = commanded (the ordinary case — touch and settle); landed
-     * elsewhere with no row there yet (re-spell the row); landed where DISCOVERY already
-     * adopted a row (the discovered row IS the folder — the commanded row retires with a
-     * tombstone, and the entity the rail keeps is the one every join already works against).
-     */
-    landed: string,
-  ): Promise<void> {
+  async completeFolderCreate(op: Pick<FolderOpRow, "id" | "accountId" | "folderId">): Promise<void> {
     await this.db.delete(folderOps).where(eq(folderOps.id, op.id));
-    if (landed !== op.folder) {
-      const [existing] = await this.db.select({ id: mailboxFolders.id }).from(mailboxFolders)
-        .where(and(eq(mailboxFolders.mailboxId, op.mailboxId), eq(mailboxFolders.folder, landed)))
-        .limit(1);
-      if (existing) {
-        await this.db.delete(mailboxFolders).where(eq(mailboxFolders.id, op.folderId));
-        await this.recordChange({
-          accountId: op.accountId, entityType: "folder", entityId: op.folderId, op: "delete", meta: null,
-        });
-        await this.recordChange({
-          accountId: op.accountId, entityType: "folder", entityId: existing.id, op: "update", meta: null,
-        });
-        return;
-      }
-      await this.db.update(mailboxFolders).set({ folder: landed, updatedAt: new Date() })
-        .where(eq(mailboxFolders.id, op.folderId));
-      await this.recordChange({
-        accountId: op.accountId, entityType: "folder", entityId: op.folderId, op: "update", meta: null,
-      });
-      return;
-    }
     await this.db.update(mailboxFolders).set({ updatedAt: new Date() })
       .where(eq(mailboxFolders.id, op.folderId));
     await this.recordChange({
@@ -1941,8 +1880,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     op: Pick<FolderOpRow, "id" | "accountId" | "mailboxId" | "folder"> & { toFolder: string },
   ): Promise<{ folders: number; messages: number }> {
     const { accountId, mailboxId, folder: from, toFolder: to } = op;
-    // char_length, not JS .length — inSubtree's argument, one screen up.
-    const swap = (col: unknown) => sql`${to} || substr(${col}, char_length(${from}) + 1)`;
+    const swap = (col: unknown) => sql`${to} || substr(${col}, ${from.length + 1})`;
     const now = new Date();
     const changes: ChangeInput[] = [];
 
@@ -1992,7 +1930,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .where(and(ofThisMailbox, inSubtree(folderState.observedFolder, from)));
     await this.db.update(messages)
       .set({
-        nativeLocator: sql`jsonb_set(${messages.nativeLocator}, '{folder}', to_jsonb(${to} || substr(${messages.nativeLocator}->>'folder', char_length(${from}) + 1)))` as unknown as NativeLocator,
+        nativeLocator: sql`jsonb_set(${messages.nativeLocator}, '{folder}', to_jsonb(${to} || substr(${messages.nativeLocator}->>'folder', ${from.length + 1})))` as unknown as NativeLocator,
         updatedAt: now,
       })
       .where(and(
@@ -2014,16 +1952,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     for (const m of moved) {
       changes.push({ accountId, entityType: "message", entityId: m.id, op: "update", meta: null });
     }
-    // Batched through `recordChanges` — one seq-range allocation and one wake per CHUNK rather
-    // than a per-row lock acquisition (the 30-second class of defect §17.1 measured on this
-    // feature's enable path) — and CHUNKED because one unbounded multi-row INSERT crosses
-    // PostgreSQL's 65 535 bind-parameter ceiling around ten thousand rows: the IMAP RENAME has
-    // already happened by now, so a failed insert would strand the command in a retry loop
-    // whose database half can never succeed. All chunks ride THIS transaction — the swap stays
-    // all-or-nothing; only the statement size is bounded.
-    for (let i = 0; i < changes.length; i += RENAME_CHANGE_CHUNK) {
-      await recordChangesTx(this.db as LedgerTx, changes.slice(i, i + RENAME_CHANGE_CHUNK));
-    }
+    // ONE seq-range allocation + one insert + one wake for the whole swap (`recordChanges`) —
+    // the per-row `recordChange` shape held the account's seq lock once per message, which is
+    // the 30-second class of defect §17.1 already measured on this feature's enable path.
+    await recordChangesTx(this.db as LedgerTx, changes);
 
     return { folders: subtree.length, messages: moved.length };
   }
@@ -2037,87 +1969,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return rows.sort((a, b) => (b.folder.length - a.folder.length) || (a.folder < b.folder ? -1 : 1));
   }
 
-  async tombstoneFolderMessages(
-    accountId: string, mailboxId: string, folder: string, limit: number,
-    /**
-     * The mailbox's RESOLVED Sent path (`capabilities().watchedSentFolder`), when the caller
-     * holds a live adapter — the stale-residue guard's primary comparison. The shape belt
-     * below stays as the fallback (and the belt for UNRESOLVED Sent-shaped siblings an old
-     * mailbox can carry): both err toward PRESERVING, because lost Sent evidence never heals
-     * while a lingering stale row is re-taught by the next end-to-end enumeration.
-     */
-    sentFolder?: string | null,
-  ): Promise<number> {
-    const now = new Date();
-    const changes: ChangeInput[] = [];
-
-    /**
-     * The EPOCH-VALID survivor of one message, or null — the promotion target when a swept
-     * copy was the primary. Valid means: a watched instance in another folder whose
-     * UIDVALIDITY matches that folder's CURRENT inventory epoch (an epochless inventory row —
-     * the "0"/null cold sentinel — vetoes nothing). Reset-orphaned rows of a dead epoch can
-     * coexist with current ones, and promoting one would write a locator the server no longer
-     * has, permanently, while the real copy stays "known" and can never repair it. Answered by
-     * ROW ID so the promotion updates exactly one row — a folder that reused a UID across
-     * epochs would otherwise match two and trip the primary uniqueness mid-transaction.
-     */
-    const survivorOf = async (messageId: string) => {
-      // TIER 1 — a CONFIRMED survivor: a folder the inventory knows, in that folder's current
-      // epoch (an epochless cursor — the "0"/null cold sentinel — vetoes nothing). Reset
-      // residue of a dead epoch can coexist with the live row, and promoting it would write a
-      // locator the server no longer has while the real copy stays known.
-      const [confirmed] = await this.db.select({
-        id: messageInstances.id, folder: messageInstances.folder,
-        uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid,
-      }).from(messageInstances)
-        .innerJoin(mailboxFolders, and(
-          eq(mailboxFolders.mailboxId, messageInstances.mailboxId),
-          eq(mailboxFolders.folder, messageInstances.folder),
-        ))
-        .where(and(
-          eq(messageInstances.messageId, messageId),
-          sql`(${mailboxFolders.uidvalidity} is null or ${mailboxFolders.uidvalidity} in (0, ${messageInstances.uidvalidity}))`,
-        ))
-        .orderBy(sql`${messageInstances.isPrimary} desc`, asc(messageInstances.firstSeenAt))
-        .limit(1);
-      if (confirmed) return confirmed;
-      // TIER 2 — a MISSING-CURSOR copy ONLY: an instance whose folder has no cursor row at all
-      // (ingest commits per message and the cursor lands after the batch, so a crash window
-      // leaves real copies cursor-less). A missing cursor is UNKNOWN, never evidence of
-      // deletion — tombstoning would hide a message the server still shows, permanently — and
-      // a stale promotion self-heals (a dead locator answers MessageGoneError; enumeration
-      // adopts the real copy). A cursor that EXISTS with a different epoch is the opposite
-      // case and stays rejected: that row is KNOWN dead (old-epoch deletes are deliberately
-      // ignored after a UIDVALIDITY reset, so the residue lingers), and promoting it would
-      // pin a locator the server can never resolve.
-      const [cursorless] = await this.db.select({
-        id: messageInstances.id, folder: messageInstances.folder,
-        uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid,
-      }).from(messageInstances)
-        .leftJoin(mailboxFolders, and(
-          eq(mailboxFolders.mailboxId, messageInstances.mailboxId),
-          eq(mailboxFolders.folder, messageInstances.folder),
-        ))
-        .where(and(
-          eq(messageInstances.messageId, messageId),
-          sql`${mailboxFolders.id} is null`,
-        ))
-        .orderBy(sql`${messageInstances.isPrimary} desc`, asc(messageInstances.firstSeenAt))
-        .limit(1);
-      return cursorless ?? null;
-    };
-
-    /** Promote one survivor row: primary flag + the message's locator, an update on the wire. */
-    const promote = async (messageId: string, survivor: NonNullable<Awaited<ReturnType<typeof survivorOf>>>) => {
-      await this.db.update(messageInstances).set({ isPrimary: true, lastSeenAt: now })
-        .where(eq(messageInstances.id, survivor.id));
-      await this.db.update(messages).set({
-        nativeLocator: { folder: survivor.folder, ref: `${survivor.uidvalidity}:${survivor.uid}` } as NativeLocator,
-        updatedAt: now,
-      }).where(eq(messages.id, messageId));
-    };
-
-    // ── The RENDERED residents: messages every view shows in this folder ──────────────────
+  async tombstoneFolderMessages(accountId: string, mailboxId: string, folder: string, limit: number): Promise<number> {
     const victims = await this.db.select({ id: messages.id }).from(messages)
       .leftJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(
@@ -2128,145 +1980,26 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       ))
       .orderBy(asc(messages.id))
       .limit(limit);
+    if (victims.length === 0) return 0;
+    const now = new Date();
+    const changes: ChangeInput[] = [];
     for (const v of victims) {
-      // The swept folder's instance rows go FIRST, so "what remains" below is the survivor
-      // question `forgetInstanceAt` asks: a logical message whose primary copy lived here may
-      // hold another WATCHED copy elsewhere, and tombstoning it whole would hide a message the
-      // server still shows (the known-set would keep its UID known, so nothing would ever
-      // resurrect it).
-      await this.db.delete(messageInstances)
-        .where(and(eq(messageInstances.messageId, v.id), eq(messageInstances.folder, folder)));
-      const survivor = await survivorOf(v.id);
-      if (survivor) {
-        // PROMOTE, never tombstone: the message lives on in watched space. The pending
-        // folder_state row (if any) is retired — its move was into a folder that is going away
-        // — and the mirror hears an update whose rendered folder is now the survivor's.
-        await promote(v.id, survivor);
-        await this.db.delete(folderState).where(eq(folderState.messageId, v.id));
-        changes.push({ accountId, entityType: "message", entityId: v.id, op: "update", meta: null });
-        continue;
-      }
-      // No copy left anywhere watched — the delete verb's own mirror semantics
-      // (`tombstoneInstanceless` is the template): the header row stays (identity, attribution,
-      // the resurrect-on-return path), its body is husked, and the locator is dropped because
-      // the server sweep moved the copy to Trash by folder, so no per-message locator survives
-      // to point anywhere true.
+      // The delete verb's own mirror semantics (`tombstoneInstanceless` is the template): the
+      // header row stays — identity, attribution, the resurrect-on-return path — its body is
+      // husked, and the locator is dropped because the server sweep moved the copy to Trash by
+      // folder, so no per-message locator survives to point anywhere true.
       await this.db.update(messages).set({ deletedAt: now, updatedAt: now, nativeLocator: null })
         .where(eq(messages.id, v.id));
       await this.huskBody(accountId, v.id, "expunged");
       await this.db.delete(folderState).where(eq(folderState.messageId, v.id));
       changes.push({ accountId, entityType: "message", entityId: v.id, op: "delete", meta: null });
     }
-
-    // ── The STRAGGLERS: instance rows still in the swept folder whose message RENDERS
-    // elsewhere — a pending move OUT (`desired_folder` points away), or an already-tombstoned
-    // row. Their copies left the server with the sweep too, and each is processed through the
-    // SAME survivor question — a bulk delete here once removed a message's only primary row
-    // without promotion, leaving a permanent locator into a deleted folder. Only entered once
-    // the victims pick has drained (< limit), and bounded like it.
-    let stragglerCount = 0;
-    if (victims.length < limit) {
-      // Paged by MESSAGE, never by instance row: a row-level page could split one message's
-      // copies across pages — its primary unselected while the per-message delete below takes
-      // every row, bypassing promotion — and could under-fill while unselected messages
-      // remain, letting the caller read "clean" off a folder that still holds instances.
-      const group = await this.db.selectDistinct({ messageId: messageInstances.messageId })
-        .from(messageInstances)
-        .where(and(eq(messageInstances.mailboxId, mailboxId), eq(messageInstances.folder, folder)))
-        .orderBy(asc(messageInstances.messageId))
-        .limit(limit);
-      stragglerCount = group.length;
-      for (const st of group) {
-        const removed = await this.db.delete(messageInstances)
-          .where(and(eq(messageInstances.messageId, st.messageId), eq(messageInstances.folder, folder)))
-          .returning({ isPrimary: messageInstances.isPrimary });
-        const hadPrimary = removed.some((r) => r.isPrimary);
-        if (!hadPrimary) continue;
-        const [m] = await this.db.select({ deletedAt: messages.deletedAt }).from(messages)
-          .where(eq(messages.id, st.messageId));
-        if (!m || m.deletedAt !== null) continue;
-        const survivor = await survivorOf(st.messageId);
-        if (survivor) {
-          await promote(st.messageId, survivor);
-          const [fs] = await this.db.select({ desiredFolder: folderState.desiredFolder })
-            .from(folderState).where(eq(folderState.messageId, st.messageId)).limit(1);
-          if (fs && fs.desiredFolder !== survivor.folder) {
-            // The user's pending move STANDS — its subject copy is gone, but the message lives
-            // on at the survivor, so reconciliation continues from there: observed moves to
-            // the survivor's folder, desired stays the user's own word (pending user moves are
-            // never discarded — the folder_state contract).
-            await this.db.update(folderState)
-              .set({ observedFolder: survivor.folder, updatedAt: now })
-              .where(eq(folderState.messageId, st.messageId));
-          } else if (fs) {
-            // The survivor IS the destination — the move is done in effect. Kept, the row
-            // would drive a same-folder move whose destination precheck expunges the "old"
-            // copy: the survivor itself.
-            await this.db.delete(folderState).where(eq(folderState.messageId, st.messageId));
-          }
-          changes.push({ accountId, entityType: "message", entityId: st.messageId, op: "update", meta: null });
-          continue;
-        }
-        // No admissible survivor. TWO sub-cases, split on whether a move was IN FLIGHT:
-        const [pending] = await this.db.select({ desiredFolder: folderState.desiredFolder })
-          .from(folderState).where(eq(folderState.messageId, st.messageId)).limit(1);
-        if (pending && pending.desiredFolder !== folder) {
-          // A pending move OUT whose IMAP half may already have SUCCEEDED, its completion
-          // transaction lost (this pass runs before changesSince, so the destination's create
-          // is not yet ingested and no survivor row exists to find). Tombstoning here would
-          // hide real server mail for ever. DEFER instead, preserving the exact adoption
-          // evidence `primaryInstanceVanished` reads — locator kept, primary instance rows
-          // gone: if the move landed, the destination copy is adopted as the move's own
-          // completion on ingest; if the sweep truly trashed the copy first, the pending row
-          // parks under the reconciler's bounded retry — a message shown at its destination
-          // while its copy sits in Trash, stated here as the residual this deferral accepts
-          // (the opposite error, hiding real mail, does not heal).
-          //
-          // KNOWN-STALE residue goes first: a dead-epoch instance row — the exact candidate
-          // the survivor tiers reject — would otherwise keep this message out of every
-          // terminal check for ever (`tombstoneInstanceless` skips messages with any instance
-          // row), turning the bounded-retry residual into a permanent phantom.
-          //
-          // EXCEPT the Sent folder's rows. Sent is scanned by UID WATERMARK, never enumerated
-          // end to end, so after a UIDVALIDITY reset the renumbered copy of a message older
-          // than the watermark window is never re-learned: a "stale" Sent row is the LAST
-          // evidence that copy exists, and deleting it would let the phantom reaper tombstone
-          // real mail no scan will ever re-emit. Every other folder is enumerated whole and
-          // re-teaches its epoch, which is what makes its stale rows safely removable.
-          const staleRows = await this.db.select({
-            id: messageInstances.id, folder: messageInstances.folder,
-          }).from(messageInstances)
-            .innerJoin(mailboxFolders, and(
-              eq(mailboxFolders.mailboxId, messageInstances.mailboxId),
-              eq(mailboxFolders.folder, messageInstances.folder),
-            ))
-            .where(and(
-              eq(messageInstances.messageId, st.messageId),
-              sql`${mailboxFolders.uidvalidity} is not null and ${mailboxFolders.uidvalidity} not in (0, ${messageInstances.uidvalidity})`,
-            ));
-          const removable = staleRows
-            .filter((r) => r.folder !== (sentFolder ?? null) && !SENT_SHAPED_CANONICAL.test(r.folder))
-            .map((r) => r.id);
-          if (removable.length > 0) {
-            await this.db.delete(messageInstances).where(inArray(messageInstances.id, removable));
-          }
-          changes.push({ accountId, entityType: "message", entityId: st.messageId, op: "update", meta: null });
-          continue;
-        }
-        // No move in flight: the user's folder delete swept this message's only copy to Trash,
-        // so it takes the delete verb's own tombstone — never a retired state that would
-        // rematerialize it in the Imbox.
-        await this.db.update(messages).set({ deletedAt: now, updatedAt: now, nativeLocator: null })
-          .where(eq(messages.id, st.messageId));
-        await this.huskBody(accountId, st.messageId, "expunged");
-        await this.db.delete(folderState).where(eq(folderState.messageId, st.messageId));
-        changes.push({ accountId, entityType: "message", entityId: st.messageId, op: "delete", meta: null });
-      }
-    }
-
+    await this.db.delete(messageInstances)
+      .where(and(eq(messageInstances.mailboxId, mailboxId), eq(messageInstances.folder, folder)));
     await recordChangesTx(this.db as LedgerTx, changes);
-    return victims.length + stragglerCount;
+    return victims.length;
   }
+
   async removeFolderRow(accountId: string, folderId: string): Promise<void> {
     await this.db.delete(mailboxFolders).where(eq(mailboxFolders.id, folderId));
     await this.recordChange({
