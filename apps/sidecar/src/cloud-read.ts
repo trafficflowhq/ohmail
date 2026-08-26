@@ -31,6 +31,16 @@ import {
  * by the write-through proxy (`cloud-proxy.ts`), never served here. This table therefore carries
  * only reads — the projection the mirror already holds — and a request that matches nothing here
  * falls through to the proxy.
+ *
+ * ── AND ONLY READS THE MIRROR CAN ANSWER TRUTHFULLY ───────────────────────────────────────────
+ *
+ * The converse boundary, learned from the folder-contents defect: a read whose QUESTION is about
+ * what the mirror does NOT hold must forward, however read-shaped it looks. `GET /messages` (the
+ * list route) is the reach-past door — a page of mail beyond the local window — and is therefore
+ * absent from this table on purpose; see the note at its former position below. The same rule
+ * gives `GET /messages/:id/body` a fall-through in `cloud-engine.ts`: served from the mirror when
+ * the message is mirrored, forwarded to the hosted account when it is a reach-past row the mirror
+ * never held.
  */
 
 export interface ReadRoute {
@@ -95,22 +105,28 @@ export const READ_ROUTES: ReadRoute[] = [
       );
     },
   },
-  {
-    method: "GET",
-    pattern: "/messages",
-    handler: async (req, ctx) => {
-      const url = new URL(req.url);
-      const view = url.searchParams.get("view") ?? "";
-      const cursor = url.searchParams.get("cursor");
-      const limit = num(url.searchParams.get("limit"));
-      const page = await messageService.list(ctx, {
-        view,
-        ...(cursor ? { cursor } : {}),
-        ...(limit !== undefined ? { limit } : {}),
-      });
-      return json({ items: page.items, nextCursor: page.nextCursor });
-    },
-  },
+  /*
+   * `GET /messages` (the LIST route) is DELIBERATELY NOT IN THIS TABLE, and its absence is the
+   * folder-contents fix, so it is recorded here rather than left to be re-derived.
+   *
+   * The JS client calls that route for exactly one thing: the reach-past door
+   * (`HttpAdapter.listMessages` — "one keyset page of a view, oldest-ward"), which by definition
+   * asks for mail BEYOND what the local store kept. The mirror in this database is a window over
+   * the hosted account, so serving the route from the mirror answers the one question the mirror
+   * cannot answer: it re-serves the rows the client already renders and then says `nextCursor:
+   * null` — "your mail ends here" — about a mailbox whose older mail is all on the hosted
+   * account. Worse for folders: this table's handler predated `view=folder` and dropped
+   * `folderId`/`beforeId`/`beforeDate` on the floor, so the service answered
+   * `400 view=folder requires folderId` and every folder on the desktop's hosted door rendered
+   * nothing but the reach-past failure line.
+   *
+   * So the list ask falls through to the write-through proxy and is answered by the hosted
+   * account — the same treatment as the attachment/media byte reads the mirror never holds.
+   * The hosted ids are the local ids (the mirror stores hosted entity ids verbatim), so the
+   * answered rows compose with the mirror-preferred merge on the client. Offline, the proxy
+   * answers `503 offline_read_only`, which the reach-past surface renders as its honest failed
+   * state with a retry — a paused door, never a claim that the mail ends here.
+   */
   {
     method: "GET",
     pattern: "/messages/bodies",

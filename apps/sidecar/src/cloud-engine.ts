@@ -802,9 +802,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         }
       }
 
-      // THE LOCAL READ SURFACE — GET /messages*, /threads/:id, /search, /mailboxes, /tags, /rules,
-      // served from the mirror through read services alone. The census over this file's expanded
-      // graph proves none of these handlers can reach the IMAP adapter, the lease or the sync loop.
+      // THE LOCAL READ SURFACE — GET /messages/:id(+/body), /messages/bodies, /threads/:id,
+      // /search, /mailboxes, /tags, /rules, served from the mirror through read services alone.
+      // The census over this file's expanded graph proves none of these handlers can reach the
+      // IMAP adapter, the lease or the sync loop. The LIST route (`GET /messages`) is deliberately
+      // NOT in the table — it is the reach-past door, a question about mail the mirror does not
+      // hold — so it falls through to the proxy below; see `cloud-read.ts` at its former position.
       const read = matchReadRoute(req.method, path);
       if (read) {
         try {
@@ -821,6 +824,23 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           return answer;
         } catch (err) {
           if (err instanceof ServiceError) {
+            /**
+             * A BODY THE MIRROR NEVER HELD IS A REACH-PAST BODY — forward it, don't 404 it.
+             *
+             * The reach-past list (`GET /messages`, forwarded above the table) hands the client
+             * rows the local mirror does not hold; opening one asks THIS route for its body, and
+             * the local read service honestly answers `not_found` because the message row is not
+             * in the mirror. That is the one `not_found` that is not the end of the story: the
+             * hosted account holds the row (it just listed it) and its stored body — or the
+             * body's honest `withheld` marker — so the ask travels the same door the list did.
+             * A genuinely unknown id costs one forwarded round trip and comes back as the hosted
+             * 404, which is the same answer with better provenance. Scoped to the BODY read
+             * alone: every other local `not_found` (a thread, a rule, a message row) stays a
+             * local 404, because nothing hands the client those ids from beyond the mirror.
+             */
+            if (err.code === "not_found" && req.method === "GET" && read.route.pattern === "/messages/:id/body") {
+              return proxy.forward(req);
+            }
             return json({ error: { code: err.code, message: err.message } }, err.httpStatus);
           }
           throw err;
