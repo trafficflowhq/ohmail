@@ -461,6 +461,18 @@ export function folderRowToDTO(r: UserFolderRow): FolderDTO {
     mailboxId: r.mailboxId,
     mailbox: r.address,
     updatedAt: r.updatedAt.toISOString(),
+    // The in-flight command marker (stage 2) rides only when one exists, so a settled folder's
+    // DTO — every folder of every account that never used the verbs — is byte-identical to the
+    // foundation's.
+    ...(r.op
+      ? {
+          op: {
+            kind: r.op.kind,
+            ...(r.op.to !== null ? { to: r.op.to } : {}),
+            ...(r.op.error !== null ? { error: r.op.error } : {}),
+          },
+        }
+      : {}),
   };
 }
 

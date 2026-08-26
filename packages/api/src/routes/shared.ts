@@ -5,7 +5,7 @@ import {
   type ScreenerService, type ApprovalService, type TriageService, type SearchService,
   type PrivacyService, type UnsubscribeService,
   type ContactsService, type SnippetsService, type NotifyRulesService, type AwayResponderService,
-  type AttachmentsService, type KbService, type TagsService, type DraftsService, type DraftingService,
+  type AttachmentsService, type KbService, type TagsService, type FolderOpsService, type DraftsService, type DraftingService,
   type ProfileImportService, type SendService, type WorkflowsService,
 } from "@trafficflow/services/mail";
 import type { DraftPort } from "@trafficflow/core/mail";
@@ -165,6 +165,12 @@ export function kb(deps: ApiDeps): KbService {
 export function tags(deps: ApiDeps): TagsService {
   const svc = deps.services?.tags;
   if (!svc) throw new ServiceError("internal", 500, "tags service not configured");
+  return svc;
+}
+
+export function folderOps(deps: ApiDeps): FolderOpsService {
+  const svc = deps.services?.folderOps;
+  if (!svc) throw new ServiceError("internal", 500, "folder ops service not configured");
   return svc;
 }
 

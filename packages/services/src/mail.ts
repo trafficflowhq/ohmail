@@ -206,6 +206,10 @@ export {
   type TagBody, type TagHue, type AssignResult,
 } from "./tags-service.js";
 export {
+  FolderOpsService, folderOpsService,
+  type FolderCreateBody, type FolderRenameBody, type FolderScopeSummary,
+} from "./folder-ops-service.js";
+export {
   DraftsService, draftsService,
   type CreateDraftBody, type PatchDraftBody, type DraftMutation,
 } from "./drafts-service.js";

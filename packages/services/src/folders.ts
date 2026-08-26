@@ -5,7 +5,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 // engine's private-input gate refuses outright (`scripts/engine-bundle.mjs`). The mail barrel
 // is the vocabulary half, exactly what imap-types.ts does internally for the same reason.
 import { DESTINATIONS } from "@trafficflow/core/mail";
-import { accountSettings, mailboxFolders, mailboxes } from "@trafficflow/db";
+import { accountSettings, folderOps, mailboxFolders, mailboxes } from "@trafficflow/db";
 import type { Db } from "./context.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -74,6 +74,19 @@ export function userFolderExclusion(path: string): string | null {
   return null;
 }
 
+/**
+ * A pending or failed user COMMAND on this folder (`folder_ops`, mail 0074) — what lets every
+ * client render "creating…" / "renaming to X…" / "deleting…" honestly instead of pretending
+ * the mailbox already changed, and carry a refusal's closed code until it is dismissed.
+ */
+export interface UserFolderOp {
+  kind: "create" | "rename" | "delete";
+  /** The rename's target canonical path; null for the other two. */
+  to: string | null;
+  /** Closed refusal code when the worker failed the command; null while pending. */
+  error: string | null;
+}
+
 export interface UserFolderRow {
   /** The `mailbox_folders` row id — the `folder` entity's id on the wire. */
   id: string;
@@ -83,6 +96,28 @@ export interface UserFolderRow {
   /** The owning mailbox's address — the rail's section label when 2+ mailboxes exist. */
   address: string;
   updatedAt: Date;
+  /** The in-flight user command, or null when the folder is settled (see {@link UserFolderOp}). */
+  op: UserFolderOp | null;
+}
+
+/** The op columns every read below selects — one spelling, so no read can drift. */
+const OP_SELECTION = {
+  opKind: folderOps.op,
+  opTo: folderOps.toFolder,
+  opStatus: folderOps.status,
+  opError: folderOps.error,
+} as const;
+
+type OpColumns = { opKind: string | null; opTo: string | null; opStatus: string | null; opError: string | null };
+
+/** One row's op columns → {@link UserFolderOp} (or null when no op row joined). */
+function opOf(r: OpColumns): UserFolderOp | null {
+  if (r.opKind !== "create" && r.opKind !== "rename" && r.opKind !== "delete") return null;
+  return {
+    kind: r.opKind,
+    to: r.opTo,
+    error: r.opStatus === "failed" ? (r.opError ?? "refused") : null,
+  };
 }
 
 /**
@@ -105,12 +140,15 @@ export async function listUserFolders(db: Db, accountId: string): Promise<UserFo
       mailboxId: mailboxFolders.mailboxId,
       address: mailboxes.address,
       updatedAt: mailboxFolders.updatedAt,
+      ...OP_SELECTION,
     })
     .from(mailboxFolders)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+    .leftJoin(folderOps, eq(folderOps.folderId, mailboxFolders.id))
     .where(and(eq(mailboxes.accountId, accountId), isNull(mailboxes.foldersDisabledAt)));
   return rows
     .filter((r) => userFolderExclusion(r.folder) === null)
+    .map((r) => ({ ...r, op: opOf(r) }))
     .sort((a, b) => (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0));
 }
 
@@ -132,12 +170,15 @@ export async function listMailboxUserFolders(
       mailboxId: mailboxFolders.mailboxId,
       address: mailboxes.address,
       updatedAt: mailboxFolders.updatedAt,
+      ...OP_SELECTION,
     })
     .from(mailboxFolders)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+    .leftJoin(folderOps, eq(folderOps.folderId, mailboxFolders.id))
     .where(and(eq(mailboxes.accountId, accountId), eq(mailboxFolders.mailboxId, mailboxId)));
   return rows
     .filter((r) => userFolderExclusion(r.folder) === null)
+    .map((r) => ({ ...r, op: opOf(r) }))
     .sort((a, b) => (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0));
 }
 
@@ -191,9 +232,11 @@ export async function userFolderById(
       mailboxId: mailboxFolders.mailboxId,
       address: mailboxes.address,
       updatedAt: mailboxFolders.updatedAt,
+      ...OP_SELECTION,
     })
     .from(mailboxFolders)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+    .leftJoin(folderOps, eq(folderOps.folderId, mailboxFolders.id))
     .where(and(
       eq(mailboxFolders.id, id),
       eq(mailboxes.accountId, accountId),
@@ -203,7 +246,7 @@ export async function userFolderById(
     ))
     .limit(1);
   if (!r) return null;
-  return userFolderExclusion(r.folder) === null ? r : null;
+  return userFolderExclusion(r.folder) === null ? { ...r, op: opOf(r) } : null;
 }
 
 /**
@@ -230,9 +273,11 @@ export async function userFoldersByIds(
       mailboxId: mailboxFolders.mailboxId,
       address: mailboxes.address,
       updatedAt: mailboxFolders.updatedAt,
+      ...OP_SELECTION,
     })
     .from(mailboxFolders)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+    .leftJoin(folderOps, eq(folderOps.folderId, mailboxFolders.id))
     .where(and(
       inArray(mailboxFolders.id, ids as string[]),
       eq(mailboxes.accountId, accountId),
@@ -240,7 +285,7 @@ export async function userFoldersByIds(
     ));
   const out = new Map<string, UserFolderRow>();
   for (const r of rows) {
-    if (userFolderExclusion(r.folder) === null) out.set(r.id, r);
+    if (userFolderExclusion(r.folder) === null) out.set(r.id, { ...r, op: opOf(r) });
   }
   return out;
 }

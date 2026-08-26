@@ -29,6 +29,10 @@ import { attachmentRoutes } from "./attachments.js";
 import { attachmentStagingRoutes } from "./attachment-staging.js";
 import { kbRoutes } from "./kb.js";
 import { tagsRoutes } from "./tags.js";
+/* The folder VERBS (FOLDERS-SPEC.md stage 2) — create / rename / delete as recorded user
+ * commands the WORKER executes. Hosted-table only in effect: the standalone local door wires no
+ * `folderOps` service, and its settings surface withholds the pane (§17). */
+import { foldersRoutes } from "./folders.js";
 import { draftsRoutes } from "./drafts.js";
 import { workflowsRoutes } from "./workflows.js";
 import { proposalsRoutes } from "./proposals.js";
@@ -260,6 +264,7 @@ export const apiRoutes: Route[] = [
   ...attachmentStagingRoutes,
   ...kbRoutes,
   ...tagsRoutes,
+  ...foldersRoutes,
   ...draftsRoutes,
   ...workflowsRoutes,
   ...proposalsRoutes,

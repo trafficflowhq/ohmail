@@ -63,6 +63,78 @@ export function isOrganizedFolder(folder: string): boolean {
   return (DESTINATIONS as readonly string[]).includes(folder);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   USER-COMMANDED FOLDER NAMES — the shared validator (FOLDERS-SPEC.md stage 2).
+
+   Create / rename take a CANONICAL `/`-joined path chosen by the user, and both the client
+   (the honest sentence BEFORE the wire) and the server (the sentence is a claim, the refusal
+   is the contract) must ask the same question — so the question lives here, in the one module
+   both import graphs already reach (this file has no imports; see the header of DESTINATIONS
+   for who depends on that).
+
+   What is deliberately NOT here: the mailbox's REAL hierarchy delimiter. It is discovered at
+   connect (`imap.ts`) and persisted nowhere, so only the worker's folder-op pass can refuse a leaf
+   that contains it — `bad_name` on the op, reported through the entity's `op.error`. This
+   validator covers every rule that is knowable without a connection.
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Leaf names a mailbox RESERVES — the single source of `PASSIVE_EXCLUDED_LEAF`
+ * (`adapters/imap-types.ts` re-exports this value; the import points that way because THIS
+ * module must stay import-free). A folder created under one of these names would never be
+ * watched by the passive read, so its mail would never mirror: refusing the name up front is
+ * the honest sentence, and silently creating an invisible folder is the dishonest alternative.
+ */
+export const RESERVED_FOLDER_LEAF =
+  /^(drafts?|entw(?:ü|ue)rfe|junk[ -]?(?:e-?mail)?|spam|bulk[ -]?mail|unerw(?:ü|ue)nscht|trash|bin|recycle[ -]?bin|deleted[ -](?:items|messages)|gel(?:ö|oe)schte[ -](?:objekte|elemente|nachrichten)|papierkorb|all[ -]mail|alle[ -]nachrichten|starred|important|outbox|postausgang)$/i;
+
+/**
+ * The longest canonical path a create/rename may command. RFC 9051 caps a mailbox NAME at
+ * 255 octets on the wire and UTF-7 encoding only grows it, so the canonical cap sits under
+ * that with room for the server-side delimiter translation.
+ */
+export const FOLDER_PATH_MAX = 200;
+
+/**
+ * Why this canonical path may NOT be a user folder's name, or `null` when it may — the
+ * `userFolderExclusion` answer shape, for its reason: every refusal is a sentence, keyed by a
+ * CLOSED code so both catalogues can carry it.
+ *
+ *  · `empty`     — no name at all (or a path of empty segments: `a//b`, `/a`, `a/`);
+ *  · `spaces`    — a segment with leading/trailing whitespace (IMAP keeps it, users cannot
+ *                  see it, and the same name "twice" is the support ticket);
+ *  · `control`   — control characters (many servers refuse them; none renders them);
+ *  · `wildcard`  — `%` or `*` (IMAP LIST wildcards — several servers refuse them in CREATE,
+ *                  and a name that breaks the user's OTHER client is not a name to write);
+ *  · `long`      — over {@link FOLDER_PATH_MAX};
+ *  · `reserved`  — a segment the mailbox reserves ({@link RESERVED_FOLDER_LEAF}), the
+ *                  organized six, `INBOX`, or the `ohmail` namespace: names the passive read
+ *                  would never watch, so the folder would hold invisible mail.
+ */
+export type FolderNameError = "empty" | "spaces" | "control" | "wildcard" | "long" | "reserved";
+
+export function folderNameError(path: string): FolderNameError | null {
+  if (typeof path !== "string" || path.length === 0) return "empty";
+  if (path.length > FOLDER_PATH_MAX) return "long";
+  const segments = path.split("/");
+  for (const seg of segments) {
+    if (seg.length === 0) return "empty";
+    if (seg !== seg.trim()) return "spaces";
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u001f\u007f]/.test(seg)) return "control";
+    if (/[%*]/.test(seg)) return "wildcard";
+    if (RESERVED_FOLDER_LEAF.test(seg)) return "reserved";
+    if (/^ohmail$/i.test(seg)) return "reserved";
+  }
+  // The Imbox itself — as the WHOLE path only. `INBOX/<name>` is deliberately admitted: a
+  // personal-namespace server files every user folder under the INBOX prefix (measured live —
+  // a root-named create lands as `INBOX/<name>` and its rename must re-spell that full path),
+  // so refusing the segment would ban renaming anything such a mailbox holds.
+  if (/^inbox$/i.test(path)) return "reserved";
+  if ((DESTINATIONS as readonly string[]).includes(path)) return "reserved";
+  return null;
+}
+
 /**
  * Attachment METADATA captured at ingest. The BLOB bytes are NEVER
  * stored server-side — only this metadata persists; the bytes are

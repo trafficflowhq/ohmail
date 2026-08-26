@@ -25,6 +25,7 @@ import {
   SPAM_PILE, TOMBSTONE_MAX_PER_CYCLE, type SpecialFolderMap,
 } from "./junk-filing.js";
 import { junkRestorePass } from "./junk-restore.js";
+import { folderOpsPass } from "./folder-ops.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -518,6 +519,27 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // this table exists to stop. An unreadable table is an infrastructure fault and is handled like
   // one: no cursor written, the mailbox's ordinary failure counting takes over.
   deadLetters.hydrate(await repo.listMessageFailures(mailboxId));
+
+  // ── USER-COMMANDED FOLDER OPERATIONS, FIRST (FOLDERS-SPEC.md stage 2) ──────────────────────
+  //
+  // Before the cursor is even built, so this same cycle's `changesSince` already observes the
+  // result: a created folder is scanned, a renamed subtree's swapped cursors line up with the
+  // server's renamed tree, a deleted folder is simply absent from the LIST. The pass runs inside
+  // this mailbox's serial cycle (one organizer — nothing else can touch the tree beside it), its
+  // consequences ride the fenced group, and only fence refusals leave it: a command that fails
+  // for any other reason is deferred or failed ON ITS OWN ROW (`folder_ops.status`), never by
+  // wedging the mailbox's mail flow behind it.
+  try {
+    await folderOpsPass({
+      repo, adapter, accountId, mailboxId,
+      ...(log !== undefined ? { log } : {}),
+      write: (fn) => fencedGroup(deps, fn),
+    });
+  } catch (err) {
+    rethrowFenced(err);
+    log?.warn("folder_ops_pass_failed", { mailboxId, accountId, err });
+  }
+
   const cursor = await buildCursor(repo, mailboxId, deadLetters);
   const batch = await adapter.changesSince(cursor);
 

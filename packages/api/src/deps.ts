@@ -11,7 +11,7 @@ import type {
   ScreenerService, ApprovalService, TriageService, SearchService, PrivacyService,
   UnsubscribeService,
   ContactsService, SnippetsService, NotifyRulesService, AwayResponderService,
-  AttachmentsService, KbService, TagsService, DraftsService, DraftingService, SendService,
+  AttachmentsService, KbService, TagsService, FolderOpsService, DraftsService, DraftingService, SendService,
   WorkflowsService, ProfileImportService,
 } from "@trafficflow/services/mail";
 /* `OAuthTokenProvider` from the MAIL entry, never the root barrel: this file is compiled by every
@@ -216,6 +216,14 @@ export interface ApiServices {
   attachments: AttachmentsService; // on-demand attachment fetch + download-all (bytes never stored)
   kb: KbService;             // Knowledge Base CRUD + dedicated lexical retrieval (REST-only)
   tags: TagsService;         // the account's own labels, keyed by message (never an IMAP folder)
+  /**
+   * The folder VERBS (stage 2: create / rename / delete) — records user commands in
+   * `folder_ops` and rings the doorbell; the WORKER executes them under the organizer lease.
+   * OPTIONAL: a host without a worker lane (the standalone local door) wires none, and the
+   * /folders verbs answer 500 `folder ops service not configured` there — the pane that could
+   * reach them is withheld on that surface anyway (FOLDERS-SPEC.md §17).
+   */
+  folderOps?: FolderOpsService;
   drafts: DraftsService;     // manual compose drafts (emits `draft` change_log in-tx)
   // AI draft-from-history. `drafting` assembles the sensitivity-safe context + stores
   // the draft; `drafter` is the INJECTED DraftPort (a mock in tests, a model-backed

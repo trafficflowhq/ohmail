@@ -179,6 +179,21 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // that finds a candidate, which is exactly why it must be named here: unclassified it would
   // drop the memo once per restore and re-read listKnownLocators for the whole mailbox.
   "unhuskJunkFiledBody",
+  // the folder-op pass's NARROW half (mail 0074): the pending-command read, the create's
+  // completion (folder_ops + mailbox_folders.updated_at + change_log), the failure/deferral
+  // stamps, the subtree read. None of these touches an instance row or a projected column.
+  // `applyFolderRename` and `tombstoneFolderMessages` are DELIBERATELY ABSENT: the first
+  // re-spells `message_instances.folder` for a whole subtree and the second deletes instance
+  // rows — both move exactly what this projection remembers, so they must drop the memo.
+  "listFolderOps", "completeFolderCreate", "failFolderOp", "deferFolderOp", "listFolderSubtree",
+  // `removeFolderRow` — mailbox_folders + one change row: the folder's INSTANCES were already
+  // dropped by `tombstoneFolderMessages` (dirty, above the projection) before any row removal.
+  "removeFolderRow",
+  // the thread-join heal's serialization lock (erasure vs. backfill): one
+  // pg_advisory_xact_lock, no row written anywhere — a lock cannot move a projection. It
+  // landed UNCLASSIFIED and the guard suite sat red in HEAD for a day, the third time the
+  // dirty-by-default rule did its job late; classified at the 0.12.0 release gate.
+  "lockAccountThreadStructure",
   // the pass-through
   "transaction",
 ]);

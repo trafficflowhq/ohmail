@@ -154,6 +154,36 @@ export const mailboxes = pgTable("mailboxes", {
   // live rail follows the switch. The worker neither reads nor writes it — `mailbox_folders`
   // keeps its cursors either way (the passive read is not consent-gated; SHOWING is).
   foldersDisabledAt: timestamp("folders_disabled_at", { withTimezone: true }),
+  // ── Mail 0075 — the per-mailbox SIGNATURE (owner ruling 2026-08-27) ──
+  //
+  // The text a compose offers under the message when this mailbox is the sender. NULL is "no
+  // signature" — the default, costing nothing anywhere. STORED TEXT ONLY: whether an outgoing
+  // message carries it is the compose surface's decision (the signature is a visible, removable
+  // block there and serializes into the body at send exactly as shown), so the send path never
+  // reads this column. Written by `setMailboxSignature` (consent-seed.ts), whose transaction
+  // moves the account-settings stamp and appends the `settings` change row — the same wake the
+  // per-mailbox folders dial rides — so open composers everywhere re-read `GET /consent` and
+  // swap to the new text live. Length is bounded at the write site
+  // (`MAILBOX_SIGNATURE_MAX_CHARS`, a 400), not by a CHECK: free text closes no set, and a
+  // byte bound in the database would answer 23514 to a person typing.
+  signature: text("signature"),
+  // ── Mail 0076 — THE ONE-TIME QUARANTINE→\Junk SWEEP, RECORDED AS A COMMAND (FOLDERS-SPEC.md
+  // §16.1: "an optional ONE-TIME sweep offers to move the old ohmail/Quarantine pile into
+  // native Junk … One press, one direction, then the offer is gone") ──
+  //
+  // A DOORBELL WITH A NAME, on `sync_requested_at`'s exact shape: the API stamps it when the
+  // account's user presses the offer (`POST /screener/junk/sweep`), the worker consumes it at
+  // the top of the mailbox's serial cycle — runs `junkSweepPass` under the organizer lease, then
+  // clears ONLY the value it observed — and NULL is "no sweep owed", the state of every row. The
+  // §16.1 carve-out is why it is a stamp the WORKER serves rather than a move the API performs:
+  // the sweep is user-commanded, but it is the one junk write that is a bulk organization act
+  // over mirrored rows (`folder_state`, husks, locators), and those the API never applies
+  // itself — it records the command and the always-on organizer executes it, like every move.
+  // Nothing reads it to route mail; the offer's visibility is the CANDIDATE COUNT (mail still
+  // physically in `ohmail/Quarantine`), so "never offered twice" needs no second column — a
+  // swept pile has no candidates, and a pile that grows again (a flag-off verdict) is offered
+  // again honestly.
+  junkSweepRequestedAt: timestamp("junk_sweep_requested_at", { withTimezone: true }),
   // ── Mail 0029 — WHY A `connected` MAILBOX IS NOT BEING SYNCED ──
   //
   // The other half of that outage. The adoption bug (a `FETCH 1:*` against an empty
@@ -385,6 +415,42 @@ export const mailboxFolders = pgTable("mailbox_folders", {
   deltaToken: text("delta_token"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ uq: unique().on(t.mailboxId, t.folder) }));
+
+/**
+ * USER-COMMANDED FOLDER OPERATIONS — mail 0074 (FOLDERS-SPEC.md stage 2: create / rename /
+ * delete from the rail).
+ *
+ * The folder verbs are REAL IMAP writes in the user's own mailbox, and the API never opens an
+ * IMAP connection to organize — so it records the COMMAND here and rings the `sync_requested_at`
+ * doorbell, and the worker executes it inside the mailbox's serial cycle (one organizer, one
+ * connection discipline), then applies the database consequences and DELETES the row. This is
+ * `folder_state`'s desired/observed split lifted one level: the desired state of the folder
+ * TREE, one pending row per subject folder.
+ *
+ *  · `op` is a CHECK-closed set: 'create' | 'rename' | 'delete'.
+ *  · `to_folder` is the rename's target canonical path; NULL for the other two (CHECK-paired).
+ *  · `status` 'pending' → the worker owes it; 'failed' + `error` → the honest refusal, carried
+ *    to every client on the `folder` entity (`FolderDTO.op.error`) until dismissed or replaced.
+ *  · UNIQUE(folder_id): ONE command in flight per folder — a second is refused 409 with the
+ *    honest sentence, because two pending commands on one subject have no defined order.
+ *  · `folder_id` CASCADEs with its inventory row: an op cannot outlive its subject.
+ *
+ * A row is deleted on completion — done needs no residue; `change_log` carries the history.
+ */
+export const folderOps = pgTable("folder_ops", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  mailboxId: uuid("mailbox_id").notNull().references(() => mailboxes.id),
+  folderId: uuid("folder_id").notNull().references(() => mailboxFolders.id, { onDelete: "cascade" }),
+  op: text("op").notNull(),           // 'create' | 'rename' | 'delete' — CHECK-closed (0074)
+  toFolder: text("to_folder"),        // rename target; NULL otherwise — CHECK-paired (0074)
+  status: text("status").notNull().default("pending"), // 'pending' | 'failed' — CHECK-closed
+  /** Closed refusal code when `status = 'failed'` — a catalogue key, never provider text. */
+  error: text("error"),
+  attempts: integer("attempts").notNull().default(0),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ uqFolder: unique().on(t.folderId) }));
 
 export const messages = pgTable("messages", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -933,6 +999,28 @@ export const changeLog = pgTable("change_log", {
 // ─────────────────────────────────────────────────────────────────────────────
 // Threads & bodies (bodies in a separate 1:1 table)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The `classid` half of `pg_advisory_xact_lock(int4, int4)`, the SECOND half `hashtext(account_id)`
+ * — the pattern `STAGING_QUOTA_LOCK_CLASS` and `PROFILE_IMPORT_LOCK_CLASS` already use.
+ *
+ * Serializes ACCOUNT ERASURE against the THREAD BACKFILL, and nothing else. Both are the only
+ * two writers that ever lock a whole account's worth of `threads` or `messages` rows in bulk,
+ * and they lock the two tables in OPPOSITE orders for reasons neither can give up: erasure's
+ * DELETE order is forced child-before-parent by the FKs (`messages` before `threads`), while the
+ * backfill locks an unthreaded `messages` row first because — being unthreaded — there is no
+ * `threads` row yet to lock ahead of it (`listThreadBacklog`, `packages/core/src/adapters/
+ * drizzle-repo.ts`). Interleaved, that is a genuine lock cycle: erasure holds every thread row
+ * and waits on a message row the backfill is mid-resolve on, while the backfill holds that
+ * message and waits on the very thread erasure is about to attach it to.
+ *
+ * Every OTHER writer of a thread (ingest, the user's own merge, the worker's join heal) locks
+ * `threads` before `messages` — one shared order among themselves — and none of them ever locks
+ * more than the few rows one message or one merge group touches, so none of them needs this
+ * lock: the risk this guards against is specific to a WHOLE-ACCOUNT sweep meeting the one path
+ * that is structurally message-first.
+ */
+export const ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS = 420_727_017;
 
 export const threads = pgTable("threads", {
   id: uuid("id").defaultRandom().primaryKey(),

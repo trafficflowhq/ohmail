@@ -25,7 +25,7 @@ import {
   nodeRemoteFetch, nodeHostResolver, scryptHasher,
   syncService, makePushService, rulesService, messageService, threadService, triageService,
   searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
-  attachmentsService, kbService, tagsService, draftsService, draftingService, sendService,
+  attachmentsService, kbService, tagsService, folderOpsService, draftsService, draftingService, sendService,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES,
   makeAttachmentStagingPort,
   workflowsService, proposalsService,
@@ -211,6 +211,7 @@ function buildServices(cfg: HostConfig): ApiServices {
     attachments: attachmentsService,
     kb: kbService,
     tags: tagsService,
+    folderOps: folderOpsService,
     drafts: draftsService,
     drafting: draftingService,
     // The AI SPEND GATE, wired BEFORE any live model is. That order is the whole

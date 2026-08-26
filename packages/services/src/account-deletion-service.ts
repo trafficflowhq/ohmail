@@ -21,6 +21,7 @@ import {
   kbEntries,
   learningSignals,
   mailboxCredentials,
+  folderOps,
   mailboxFolders,
   mailboxes,
   messageBodies,
@@ -281,9 +282,15 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // ── 4. Mailboxes — the credentials go with them ─────────────────────────────
     if (mailboxIds.length) {
       await drop("mailbox_credentials", tx.delete(mailboxCredentials).where(inArray(mailboxCredentials.mailboxId, mailboxIds)));
+      // The folder COMMANDS before the folder inventory they reference (mail 0074). The FK
+      // would CASCADE these with the inventory rows anyway; the delete is explicit so the
+      // erasure receipt counts them and the ruling is written where the census looks — a
+      // rename target is the user's own words, not residue to leave to a side effect.
+      await drop("folder_ops", tx.delete(folderOps).where(inArray(folderOps.mailboxId, mailboxIds)));
       await drop("mailbox_folders", tx.delete(mailboxFolders).where(inArray(mailboxFolders.mailboxId, mailboxIds)));
     } else {
       deleted.mailbox_credentials = 0;
+      deleted.folder_ops = 0;
       deleted.mailbox_folders = 0;
     }
     await drop("mailboxes", tx.delete(mailboxes).where(eq(mailboxes.accountId, accountId)));

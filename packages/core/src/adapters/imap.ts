@@ -1090,6 +1090,100 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       .map((f) => this.toCanonical(f.path));
   }
 
+  /* ══ USER-COMMANDED FOLDER OPERATIONS (FOLDERS-SPEC.md stage 2) ═══════════════════════════
+   *
+   * The four verbs the worker's `folderOpsPass` executes. Every one is an explicit human press
+   * recorded in `folder_ops` — ohmail never creates, renames or deletes a folder on its own
+   * initiative (imap-types.ts carries the product rule). All four speak CANONICAL `/`-joined
+   * paths; the delimiter translation happens here, which is also where a leaf that contains
+   * the mailbox's REAL delimiter is refused — the one name rule only a live connection knows
+   * (`folderNameError` in types.ts covers everything knowable without one).
+   */
+
+  /** The mailbox's real hierarchy delimiter — `folderOpsPass`'s `bad_name` check reads it. */
+  hierarchyDelimiter(): string {
+    return this.delimiter;
+  }
+
+  /** CREATE. Idempotent: a folder that already exists is the asked-for state, not a failure. */
+  async createFolder(canonical: string): Promise<void> {
+    const path = this.toServerPath(canonical);
+    try {
+      await this.client.mailboxCreate(path);
+    } catch (err) {
+      // `ensureFolders`' own idiom: "already exists" is success for a CREATE.
+      if (!/already ?exists/i.test(String((err as Error).message))) throw err;
+    }
+  }
+
+  /**
+   * RENAME, with the crash-recovery arm that makes the two-phase command (IMAP first, database
+   * swap second) idempotent: when the source is GONE and the target EXISTS, the rename already
+   * happened — a crash between the RENAME and the swap, or the user's own client got there
+   * first; either way the asked-for tree is the tree, and the caller proceeds to the swap.
+   * `"conflict"` (target exists AND source still exists) and `"gone"` (neither path exists) are
+   * the two honest refusals — a RENAME issued in either state would move or manufacture
+   * something the user did not name.
+   */
+  async renameFolder(from: string, to: string): Promise<"renamed" | "already" | "conflict" | "gone"> {
+    const list = await this.client.list();
+    const paths = new Set(list.map((f) => f.path));
+    const src = this.toServerPath(from);
+    const dst = this.toServerPath(to);
+    const srcThere = paths.has(src);
+    const dstThere = paths.has(dst);
+    if (!srcThere && dstThere) return "already";
+    if (!srcThere) return "gone";
+    if (dstThere) return "conflict";
+    await this.client.mailboxRename(src, dst);
+    return "renamed";
+  }
+
+  /**
+   * DELETE — of an EMPTY folder only, verified here as the last line of the never-expunge rule:
+   * RFC 3501's DELETE takes a folder's messages with it, so the guard refuses (`"not_empty"`)
+   * rather than trusting that the caller's sweep really drained it. A missing folder is
+   * `"already"` — the asked-for state.
+   */
+  async deleteFolder(canonical: string): Promise<"deleted" | "already" | "not_empty"> {
+    const path = this.toServerPath(canonical);
+    const list = await this.client.list();
+    if (!list.some((f) => f.path === path)) return "already";
+    const st = await this.client.status(path, { messages: true }).catch(() => null);
+    if (st && typeof st.messages === "number" && st.messages > 0) return "not_empty";
+    await this.client.mailboxDelete(path);
+    return "deleted";
+  }
+
+  /**
+   * Move EVERYTHING in one folder to another — the folder delete's sweep, at folder level
+   * rather than per known message, because the mailbox may hold mail the mirror never ingested
+   * (the ingest window, declined outcomes, mail that arrived a second ago) and every one of
+   * them must reach Trash before the folder may go. One `MOVE 1:*` on the warm connection;
+   * imapflow's own fallback (COPY + \Deleted + EXPUNGE) covers servers without MOVE — the
+   * standard move mechanics, not an expunge of mail (the copy lands first). Returns how many
+   * messages the sweep found; a source that no longer exists is 0 — nothing to move.
+   */
+  async moveAll(folder: string, toFolder: string): Promise<number> {
+    const src = this.toServerPath(folder);
+    const dst = this.toServerPath(toFolder);
+    let lock: { release(): void };
+    try {
+      lock = await this.client.getMailboxLock(src);
+    } catch {
+      return 0;
+    }
+    try {
+      const mb = this.client.mailbox as MailboxObject | false;
+      const count = mb && typeof mb.exists === "number" ? mb.exists : 0;
+      if (count === 0) return 0;
+      await this.client.messageMove("1:*", dst);
+      return count;
+    } finally {
+      lock.release();
+    }
+  }
+
   /**
    * Sample up to `limit` DISTINCT sender addresses from a folder (newest first).
    * Read-only: opens a mailbox lock, fetches envelopes for the tail UIDs, and

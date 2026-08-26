@@ -171,6 +171,14 @@ export interface FolderDTO {
   mailboxId: string;
   mailbox: string;
   updatedAt: ISODateTime;
+  /**
+   * The user's in-flight COMMAND on this folder (folders stage 2: create / rename / delete),
+   * absent when settled. `name` stays the mailbox's OWN truth throughout — a rename in flight
+   * carries the target in `op.to` and keeps the old `name` until the worker's RENAME lands, so
+   * the mirror never claims a mailbox state that does not exist yet. `error` is a closed
+   * catalogue code once the worker refused the command; it stands until dismissed or replaced.
+   */
+  op?: { kind: "create" | "rename" | "delete"; to?: string; error?: string };
 }
 
 /**
