@@ -512,6 +512,13 @@
       "when": 1791327920528,
       "tag": "0072_tracking_pixels_optout",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1791327920529,
+      "tag": "0073_mailbox_folders_optout",
+      "breakpoints": true
     }
   ]
 }

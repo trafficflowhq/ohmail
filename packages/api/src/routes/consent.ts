@@ -1,8 +1,8 @@
 import {
-  buildSeedReview, confirmSeed, consentSettings, cutlineCounts,
+  buildSeedReview, confirmSeed, consentSettings, cutlineCounts, mailboxFoldersOff,
   resetScreeningState, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
   setBlockTrackingPixels,
-  setDormancyDays, setFoldersEnabled, setLocale,
+  setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled,
   unmovedReport,
   DEFAULT_DORMANCY_DAYS, SUPPORTED_LOCALES, ServiceError,
 } from "@trafficflow/services/mail";
@@ -77,6 +77,12 @@ interface ConsentSettingsBody {
   blockAutoUnsubscribe?: unknown;
   /** "Use folders" — the folders foundation's master toggle (FOLDERS-SPEC.md §6). */
   foldersEnabled?: unknown;
+  /**
+   * Per-mailbox "Use folders" (FOLDERS-SPEC.md §17) — `{ [mailboxId]: boolean }`. Every named
+   * mailbox must belong to the account; `false` switches that mailbox's folders off under the
+   * master toggle, `true` switches them back on (the default).
+   */
+  folderMailboxes?: unknown;
   locale?: unknown;
 }
 
@@ -112,7 +118,8 @@ async function applyConsentSettings(
 ): Promise<{
   autoSuggestAt?: string | null; dormancyDays?: number; blockRemoteImagesAt?: string | null;
   loadTrackingPixelsAt?: string | null;
-  blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null; locale?: string | null;
+  blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
+  folderMailboxesOff?: Record<string, string>; locale?: string | null;
 }> {
   const hasAuto = "autoSuggest" in body;
   const hasDormancy = "dormancyDays" in body;
@@ -120,12 +127,14 @@ async function applyConsentSettings(
   const hasPixels = "blockTrackingPixels" in body;
   const hasAutoUnsub = "blockAutoUnsubscribe" in body;
   const hasFolders = "foldersEnabled" in body;
+  const hasFolderMailboxes = "folderMailboxes" in body;
   const hasLocale = "locale" in body;
-  if (!hasAuto && !hasDormancy && !hasImages && !hasPixels && !hasAutoUnsub && !hasFolders && !hasLocale) {
+  if (!hasAuto && !hasDormancy && !hasImages && !hasPixels && !hasAutoUnsub && !hasFolders
+      && !hasFolderMailboxes && !hasLocale) {
     throw new ServiceError(
       "validation_failed", 400,
       "at least one of autoSuggest, dormancyDays, blockRemoteImages, blockTrackingPixels, " +
-      "blockAutoUnsubscribe, foldersEnabled or locale is required",
+      "blockAutoUnsubscribe, foldersEnabled, folderMailboxes or locale is required",
     );
   }
 
@@ -202,6 +211,34 @@ async function applyConsentSettings(
     folders = body.foldersEnabled;
   }
   /**
+   * THE PER-MAILBOX MAP (FOLDERS-SPEC.md §17) — `{ [mailboxId]: boolean }`, validated whole
+   * before anything writes, `foldersEnabled`'s strictness per entry: a value that is not
+   * exactly a boolean is refused, never coerced, because one knob accepting `"false"` is how
+   * the route grows two contracts. Arrays are refused too — they are objects to `typeof`, and
+   * an array's indices silently becoming "mailbox ids" is precisely the kind of guess this
+   * route never makes. Whether each id names a mailbox OF THIS ACCOUNT is the service's check
+   * (404 inside the transaction, so a batch with one foreign id persists nothing).
+   */
+  let folderMailboxes: Array<[string, boolean]> | undefined;
+  if (hasFolderMailboxes) {
+    const m = body.folderMailboxes;
+    if (typeof m !== "object" || m === null || Array.isArray(m)) {
+      throw new ServiceError(
+        "validation_failed", 400, "folderMailboxes must be an object of mailboxId: boolean",
+      );
+    }
+    const entries = Object.entries(m as Record<string, unknown>);
+    if (entries.length === 0) {
+      throw new ServiceError("validation_failed", 400, "folderMailboxes must name at least one mailbox");
+    }
+    for (const [, v] of entries) {
+      if (typeof v !== "boolean") {
+        throw new ServiceError("validation_failed", 400, "every folderMailboxes value must be true or false");
+      }
+    }
+    folderMailboxes = entries as Array<[string, boolean]>;
+  }
+  /**
    * THE CLOSED SET AT THE WIRE, and `null` is a legal MEMBER of the request rather than an absence.
    *
    * "absent" and "null" mean different things on this route and this is the field where the
@@ -232,7 +269,8 @@ async function applyConsentSettings(
   const out: {
     autoSuggestAt?: string | null; dormancyDays?: number; blockRemoteImagesAt?: string | null;
     loadTrackingPixelsAt?: string | null;
-    blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null; locale?: string | null;
+    blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
+    folderMailboxesOff?: Record<string, string>; locale?: string | null;
   } = {};
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     const txCtx = { ...ctx, db: tx as unknown as typeof ctx.db };
@@ -258,6 +296,15 @@ async function applyConsentSettings(
       // (a savepoint) because its change rows and its column must land together even when a
       // caller writes it alone.
       out.foldersEnabledAt = (await setFoldersEnabled(txCtx, folders!)).foldersEnabledAt;
+    }
+    if (folderMailboxes) {
+      // Sequential on purpose: each write allocates change-log seqs under the account's
+      // counter lock, and the echo is the WHOLE map after the last write, so a batch answers
+      // with one consistent picture rather than per-entry fragments.
+      for (const [mailboxId, enabled] of folderMailboxes) {
+        await setMailboxFoldersEnabled(txCtx, mailboxId, enabled);
+      }
+      out.folderMailboxesOff = await mailboxFoldersOff(txCtx.db, txCtx.accountId);
     }
     if (hasLocale) {
       out.locale = (await setLocale(txCtx, locale as string | null)).locale;
@@ -364,6 +411,12 @@ export const consentRoutes: Route[] = [
         // `null`, absent, and a failed fetch all read as OFF on the client, which is the
         // pre-feature interface byte for byte (FOLDERS-SPEC.md §10).
         foldersEnabledAt: settings.foldersEnabledAt,
+        // PER-MAILBOX "USE FOLDERS" — only the EXCEPTIONS travel (`{ mailboxId: instant }`,
+        // FOLDERS-SPEC.md §17). A mailbox absent from the map participates, which is what the
+        // column's NULL means and what an older client that never reads the field assumes; an
+        // older SERVER simply omits the field, and the client's absent-means-none read is the
+        // same picture. The instants, not booleans, for `foldersEnabledAt`'s reason.
+        folderMailboxesOff: await mailboxFoldersOff(ctx.db, ctx.accountId),
         // THE INTERFACE LANGUAGE — `'de'`, or `null` for "this account has no preference". Sent as
         // `null` rather than omitted, and normalised to the default rather than to a string, for
         // the same reason `blockRemoteImagesAt` is: the client has to be able to tell "this server

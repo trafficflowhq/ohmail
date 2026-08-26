@@ -993,6 +993,10 @@
       "useOn": "Die Ordner deines Mailservers erscheinen im Menü, jeder öffnet sich als eigene Liste mit Ungelesen-Zähler.",
       "useOff": "Deine Ordner bleiben ausgeblendet. ohmail liest sie weiterhin für Suche und Historie.",
       "microcopy": "Einschalten zeigt nur, was ohnehin existiert — verschoben wird nichts. Ausschalten blendet die Ordner wieder aus, ohne deine Mail anzurühren.",
+      "mailboxesTitle": "Pro Postfach",
+      "mailboxesNote": "Solange dies an ist, zeigen alle Postfächer ihre Ordner. Schaltest du eines aus, verschwinden seine Ordner aus dem Menü — die Mail selbst bleibt, wo sie ist.",
+      "mailboxOn": "Ordner werden gezeigt",
+      "mailboxOff": "Ordner ausgeblendet",
       "failed": "Das ließ sich nicht speichern — versuch es nochmal."
     },
     "dormancy": {

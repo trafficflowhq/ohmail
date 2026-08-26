@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   accountSettings, contacts, mailboxes, messageBodies, messages, recordChanges, rules, type Tx,
 } from "@trafficflow/db";
-import { listUserFolders } from "./folders.js";
+import { listMailboxUserFolders, listUserFolders } from "./folders.js";
 import type { ServiceContext } from "./context.js";
 import { DEFAULT_DORMANCY_DAYS } from "./consent-cutline.js";
 import { ServiceError } from "./errors.js";
@@ -741,6 +741,65 @@ export async function setFoldersEnabled(
     }
   });
   return { foldersEnabledAt: at ? at.toISOString() : null };
+}
+
+/**
+ * SWITCH ONE MAILBOX'S FOLDERS ON OR OFF — the per-mailbox dial under the master toggle
+ * (FOLDERS-SPEC.md §17; owner ruling 2026-08-25: *"folders should be possible to be enabled on
+ * a per mailbox level"*). The column stores the EXCEPTION: `mailboxes.folders_disabled_at` NULL
+ * means the mailbox participates, which is the default the ruling asks for — enabling the
+ * master on a six-mailbox account shows all six trees, and this writer only ever records the
+ * opt-outs.
+ *
+ * THE TRANSITION RIDES THE DELTA, {@link setFoldersEnabled}'s reason scoped to one mailbox:
+ * while the MASTER flag is on, OFF appends one `folder` DELETE per user folder of this mailbox
+ * (the rail drops the tree without a re-bootstrap) and ON appends the CREATEs back. The rows
+ * come from {@link listMailboxUserFolders} — deliberately the UNFILTERED per-mailbox read,
+ * because the filtered inventory already refuses to answer for the mailbox being switched off,
+ * which is exactly when its tombstones must still be written. With the master OFF no change
+ * rows are appended: nothing about this account is on the wire to retract, and the master's
+ * own enable later emits creates for participating mailboxes only ({@link listUserFolders}
+ * carries the participation filter), so the two dials compose without a special case.
+ *
+ * The column flip and the change rows land in ONE transaction, or a crash between them leaves
+ * a rail that disagrees with the switch for ever — the master toggle's argument verbatim. The
+ * mailbox must BELONG to the account: a foreign or unknown id is a 404 before anything writes,
+ * measured against the same join every folder read scopes by.
+ *
+ * Returns the stored instant (`null` = participating) so the caller echoes what the database
+ * holds — and the mailbox id, so a batched route can answer per entry.
+ */
+export async function setMailboxFoldersEnabled(
+  ctx: ServiceContext, mailboxId: string, enabled: boolean,
+): Promise<{ mailboxId: string; foldersDisabledAt: string | null }> {
+  const at = enabled ? null : ctx.now();
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    const [mb] = await tx.select({ id: mailboxes.id })
+      .from(mailboxes)
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
+      .limit(1);
+    if (!mb) throw new ServiceError("not_found", 404, "no such mailbox on this account");
+    await tx.update(mailboxes)
+      .set({ foldersDisabledAt: at })
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
+    const [master] = await tx.select({ at: accountSettings.foldersEnabledAt })
+      .from(accountSettings)
+      .where(eq(accountSettings.accountId, ctx.accountId))
+      .limit(1);
+    if ((master?.at ?? null) === null) return;   // master off ⇒ nothing on the wire to move
+    const rows = await listMailboxUserFolders(
+      tx as unknown as typeof ctx.db, ctx.accountId, mailboxId,
+    );
+    if (rows.length > 0) {
+      await recordChanges(tx, rows.map((r) => ({
+        accountId: ctx.accountId,
+        entityType: "folder" as const,
+        entityId: r.id,
+        op: enabled ? ("create" as const) : ("delete" as const),
+      })));
+    }
+  });
+  return { mailboxId, foldersDisabledAt: at ? at.toISOString() : null };
 }
 
 /**

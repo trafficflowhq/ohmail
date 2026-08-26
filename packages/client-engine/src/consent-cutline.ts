@@ -378,18 +378,34 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
    * is empty whenever the flag is off — but a mirror can hold STALE entities (a disable this
    * tab never drained, a cached boot), and inferring authority from eventually-deleted rows
    * would keep the lens on over an interface that says folders are off. The explicit flag is
-   * what makes flag-off parity hold under staleness too. Names, not ids: a message carries its
-   * folder as the canonical path, and that spelling is the join.
+   * what makes flag-off parity hold under staleness too.
+   *
+   * MAILBOX-SCOPED, name second (FOLDERS-SPEC.md §17) — the key is `mailboxId|path`, the
+   * spelling every folder-shaped surface already uses (`folderUnreadCounts`, the rail's
+   * sections), because folders are per-mailbox facts and two mailboxes may both keep a
+   * `Projects`. A name-only set conflated them, and per-mailbox enablement is where that
+   * conflation stops being cosmetic: a mailbox switched OFF contributes no entities, so its
+   * folder-resident mail must fall through to the pre-folders partition — which a same-named
+   * folder on a still-enabled mailbox would silently veto. An entity with no `mailboxId` (a
+   * hosted server older than the field) keeps the old name-only reach via the second key, so
+   * the lens degrades to the pre-§17 behaviour rather than to off.
    *
    * Junk and Trash can never appear here — they are never watched, never ingested, and never
    * emitted as entities — so the lens excludes them by construction rather than by filter. */
-  const userFolders = new Set<string>(
-    opts.foldersEnabled === true
-      ? reader.list<{ name?: unknown }>("folder")
-          .map((f) => f.name)
-          .filter((n): n is string => typeof n === "string" && n.length > 0)
-      : [],
-  );
+  const userFolders = new Set<string>();
+  if (opts.foldersEnabled === true) {
+    for (const f of reader.list<{ name?: unknown; mailboxId?: unknown }>("folder")) {
+      if (typeof f.name !== "string" || f.name.length === 0) continue;
+      userFolders.add(
+        typeof f.mailboxId === "string" && f.mailboxId.length > 0
+          ? `${f.mailboxId}|${f.name}`
+          : f.name,
+      );
+    }
+  }
+  /** Is this message's folder one of its OWN mailbox's live user folders? */
+  const inUserFolder = (m: EngineMessage): boolean =>
+    userFolders.has(`${m.mailboxId}|${m.folder}`) || userFolders.has(m.folder);
   const activity = senderActivity(messages, opts, own);
   // The same line {@link senderActivity} measures from, read here for outbound mail — see the
   // own-sent branch below. One call, so the two halves of the partition cannot disagree about
@@ -450,7 +466,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
        *
        * With the flag OFF `userFolders` is empty and every row here falls through to the
        * own-sent branch below, byte-for-byte the pre-feature partition. */
-      if (userFolders.has(m.folder)) {
+      if (inUserFolder(m)) {
         placeOf.set(m.id, m.folder);
         const key = senderKey(m.from.address);
         if (!own.has(key) && !m.unread && !isResurfaced(m)) {

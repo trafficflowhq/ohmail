@@ -536,6 +536,14 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // an API deployed ahead of the migration 42703s the entire consent surface. No worker half, no
   // CHECK, no INDEX — read off a row fetched by primary key. Deploy order: migration → API.
   ["account_settings", "load_tracking_pixels_at"],
+  // mail 0073_mailbox_folders_optout — per-mailbox "Use folders", stored as the exception
+  // (NULL = this mailbox's folders show under the master flag, the default). One additive
+  // nullable column on `mailboxes`, and it earns a marker for the whole-row-select reason
+  // `mailboxes.error_code` established: `MailboxService.list` selects whole rows, so an API
+  // deployed ahead of the migration 42703s the mailbox panel and the connect flow. No worker
+  // half, no CHECK, no INDEX — read through the `listUserFolders` mailbox join. Deploy order:
+  // migration → API.
+  ["mailboxes", "folders_disabled_at"],
   // mail 0049_mailbox_sync_requested_at — the enforced-sync doorbell. One additive nullable
   // timestamptz on `mailboxes`, and it earns a marker on the whole-row-select rule its OWN
   // migration already states: *"`MailboxService.list` selects whole rows, so
@@ -1443,12 +1451,15 @@ export const MAIL_EXPECTED_MARKERS =
  *
  * `0072_tracking_pixels_optout` is probed as `account_settings.load_tracking_pixels_at` — the
  * opt-out of pixel blocking, one nullable column read by the whole-row `consentSettings` select.
- * It is the newest entry, so it is the tag below.
+ *
+ * `0073_mailbox_folders_optout` is probed as `mailboxes.folders_disabled_at` — the per-mailbox
+ * "Use folders" exception stamp, one nullable column read by the whole-row `MailboxService.list`
+ * select and the `listUserFolders` join. It is the newest entry, so it is the tag below.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0072_tracking_pixels_optout";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0073_mailbox_folders_optout";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

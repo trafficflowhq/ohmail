@@ -140,6 +140,20 @@ export const mailboxes = pgTable("mailboxes", {
   // the product rule and its 2026-08-22 amendment).
   junkFolder: text("junk_folder"),
   trashFolder: text("trash_folder"),
+  // ── Mail 0073 — per-mailbox "Use folders", stored as the EXCEPTION (FOLDERS-SPEC.md §17;
+  // owner ruling 2026-08-25) ──
+  //
+  // The account's `account_settings.folders_enabled_at` stays the master switch; under it every
+  // mailbox participates BY DEFAULT, so NULL — and a failed read — mean "this mailbox's folders
+  // show", and a timestamp is "when this mailbox was switched OFF" (the support question). The
+  // sign is deliberately the master's opposite: the FEATURE defaults closed, but within an
+  // opted-in account the per-mailbox default is open, because all-mailboxes-showing is what the
+  // account just asked for. Read through the mailbox join `listUserFolders` already makes
+  // (`packages/services/src/folders.ts`); written only by `setMailboxFoldersEnabled`
+  // (consent-seed.ts), whose transaction also writes the folder create/delete change rows so a
+  // live rail follows the switch. The worker neither reads nor writes it — `mailbox_folders`
+  // keeps its cursors either way (the passive read is not consent-gated; SHOWING is).
+  foldersDisabledAt: timestamp("folders_disabled_at", { withTimezone: true }),
   // ── Mail 0029 — WHY A `connected` MAILBOX IS NOT BEING SYNCED ──
   //
   // The other half of that outage. The adoption bug (a `FETCH 1:*` against an empty

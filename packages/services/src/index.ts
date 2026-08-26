@@ -54,14 +54,16 @@ export {
 export {
   SEED_SCAN_LIMIT, SUPPORTED_LOCALES,
   buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setBlockAutoUnsubscribe,
-  setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled, setLocale,
+  setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled,
+  setLocale, setMailboxFoldersEnabled,
   isMachineSent, isRobotAddress, parseAddressList,
   type SeedCandidate, type SeedConfirmResult, type SeedExclusionReason, type SeedReview,
 } from "./consent-seed.js";
 // The folders foundation's inventory reads (FOLDERS-SPEC.md §4): which of the mailbox's own
 // folders exist, whether the account shows them, and why a path is excluded.
 export {
-  foldersEnabled, listUserFolders, userFolderById, userFolderExclusion, type UserFolderRow,
+  foldersEnabled, listMailboxUserFolders, listUserFolders, mailboxFoldersOff, userFolderById,
+  userFolderExclusion, userFoldersByIds, type UserFolderRow,
 } from "./folders.js";
 // The editable Ohbox preference: posture + free-text bar on account_settings.
 export {

@@ -5693,7 +5693,27 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                    hosted door, where `known` becomes true through its transport — a LOCAL install
                    organizes the same real IMAP folders. */
                 foldersSection={demo || !consent.known ? undefined : (
-                  <FoldersRow on={consent.foldersEnabled} setFoldersEnabled={consent.setFoldersEnabled} />
+                  <FoldersRow
+                    on={consent.foldersEnabled}
+                    /* THE NUDGE — mobile's folders-flag coordinator learned this first: the
+                       flip RIDES THE DELTA, so without an immediate drain the rail answers on
+                       the wake stream's schedule, and on a stream that is refused or mid-
+                       reconnect that is the full safety cadence with the switch already ON.
+                       One drain per confirmed write, after the echo — a refused write drains
+                       nothing. The rethrow keeps the row's failed state working. */
+                    setFoldersEnabled={async (enabled) => {
+                      const r = await consent.setFoldersEnabled(enabled);
+                      void engine.syncOnce().catch(() => { /* the poll owns retries */ });
+                      return r;
+                    }}
+                    mailboxes={facts ?? undefined}
+                    mailboxesOff={consent.folderMailboxesOff}
+                    setMailboxFoldersEnabled={async (mailboxId, enabled) => {
+                      const r = await consent.setMailboxFoldersEnabled(mailboxId, enabled);
+                      void engine.syncOnce().catch(() => { /* the poll owns retries */ });
+                      return r;
+                    }}
+                  />
                 )}
                 screeningSection={demo ? undefined : (screeningSection ?? <ScreeningSection />)}
                 /* THE DORMANCY DIAL. Like `autoSuggestSection`, built here rather than injected from

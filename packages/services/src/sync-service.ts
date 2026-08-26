@@ -10,7 +10,7 @@ import {
   materializeMessagesInOrder,
   materializeThreads, messageStateRowToDTO, routingDecisionRowToDTO, ruleRowToDTO, tagRowToDTO,
 } from "./dto/materialize.js";
-import { foldersEnabled, listUserFolders } from "./folders.js";
+import { foldersEnabled, listUserFolders, userFoldersByIds, type UserFolderRow } from "./folders.js";
 import type {
   ChangeOp, Folder, SnapshotResponse, SnapshotWindow, SyncChange, SyncResponse,
 } from "./dto/types.js";
@@ -283,6 +283,25 @@ export class SyncService {
     const threadIds = rows.filter((r) => r.entityType === "thread" && r.op !== "delete").map((r) => r.entityId);
     const prefetchedThreads = await materializeThreads(db, accountId, threadIds);
 
+    /**
+     * `folder` JOINS THE PREFETCH — measured, like the two above, not assumed. Folder change
+     * rows arrive in ACCOUNT-WIDE BURSTS by construction: the "Use folders" toggle writes one
+     * create (or delete tombstone) per user folder in a single transaction, so the very first
+     * page an enabling account drains is nothing but folder creates — 527 of them on the first
+     * production mailbox this shipped to. The per-row path (`materializeFolder`: a fresh
+     * `foldersEnabled` plus a `userFolderById`, two sequential round trips each) priced that
+     * page at ~1 000 serial round trips — measured at 30.7 s on the deployed API for a 400-row
+     * page, against a 60 s function budget — so the rail stayed empty while the account
+     * watched its own switch appear to do nothing. Batched, the page costs TWO queries flat:
+     * one flag read, one `userFoldersByIds`. Same account scoping, same exclusions, same
+     * participation filter, same null-means-tombstone semantics as the per-row read, which
+     * stays for the callers that genuinely have one row.
+     */
+    const folderIds = rows.filter((r) => r.entityType === "folder" && r.op !== "delete").map((r) => r.entityId);
+    const prefetchedFolders = folderIds.length > 0 && await foldersEnabled(db, accountId)
+      ? await userFoldersByIds(db, accountId, folderIds)
+      : new Map<string, UserFolderRow>();
+
     for (const row of rows) {
       const type = row.entityType as EntityType;
       const id = row.entityId;
@@ -301,7 +320,9 @@ export class SyncService {
         ? (prefetched.get(id) ?? null)
         : type === "thread"
           ? (prefetchedThreads.get(id) ?? null)
-          : await materialize(db, accountId, type, id);
+          : type === "folder"
+            ? (() => { const f = prefetchedFolders.get(id); return f ? folderRowToDTO(f) : null; })()
+            : await materialize(db, accountId, type, id);
       if (entity === null) {
         deletes.push({ type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() });
         continue;

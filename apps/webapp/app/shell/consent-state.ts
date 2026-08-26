@@ -75,6 +75,9 @@ export interface ConsentTransport {
   setBlockTrackingPixels: (blocked: boolean) => Promise<{ loadTrackingPixelsAt: string | null }>;
   setBlockAutoUnsubscribe: (blocked: boolean) => Promise<{ blockAutoUnsubscribeAt: string | null }>;
   setFoldersEnabled: (enabled: boolean) => Promise<{ foldersEnabledAt: string | null }>;
+  setMailboxFoldersEnabled: (
+    mailboxId: string, enabled: boolean,
+  ) => Promise<{ folderMailboxesOff: Record<string, string> }>;
 }
 
 /** The hosted transport — the browser talking to the API this app was written against. */
@@ -86,6 +89,8 @@ const CLOUD_CONSENT: ConsentTransport = {
   setBlockTrackingPixels: (blocked) => consentApi.setBlockTrackingPixels(blocked),
   setBlockAutoUnsubscribe: (blocked) => consentApi.setBlockAutoUnsubscribe(blocked),
   setFoldersEnabled: (enabled) => consentApi.setFoldersEnabled(enabled),
+  setMailboxFoldersEnabled: (mailboxId, enabled) =>
+    consentApi.setMailboxFoldersEnabled(mailboxId, enabled),
 };
 
 export interface ConsentState {
@@ -190,6 +195,14 @@ export interface ConsentState {
   foldersEnabled: boolean;
   /** When it was turned on, for the settings row that says so. Null whenever it is off. */
   foldersEnabledAt: string | null;
+  /**
+   * PER-MAILBOX "Use folders", stored as the EXCEPTIONS — `{ mailboxId: instant switched off }`
+   * (FOLDERS-SPEC.md §17). A mailbox absent from the map participates, which is the ruling's
+   * default; an empty map is every mailbox showing. Only the Settings pane reads this — the
+   * rail needs nothing, because the server already withholds a switched-off mailbox's
+   * entities from `/sync`.
+   */
+  folderMailboxesOff: Record<string, string>;
   /**
    * THE ACCOUNT'S INTERFACE LANGUAGE, or `null` for "this account has no preference".
    *
@@ -297,6 +310,9 @@ const RESTING: ConsentState = {
   // the flag has.
   foldersEnabled: false,
   foldersEnabledAt: null,
+  // NO EXCEPTIONS AT REST — with the master off nothing renders either way, and the pane is
+  // gated on `known`, so the resting value is never a switch somebody sees.
+  folderMailboxesOff: {},
   // NOTHING FROM AN ACCOUNT. Unlike `blockRemoteImages` above, resting null is not a safe
   // *position* — it is the absence of one, and it leaves the language this device remembered in
   // charge. See {@link ConsentState.locale}.
@@ -429,6 +445,12 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
    * write must not draw a rail the account does not have. It rethrows so the row can say so.
    */
   setFoldersEnabled: (enabled: boolean) => Promise<boolean>;
+  /**
+   * Switch ONE mailbox's folders on or off under the master toggle (FOLDERS-SPEC.md §17).
+   * Resolves to the whole exceptions map as the DATABASE holds it — the echo, never the
+   * argument — and rethrows on refusal so the row can say so.
+   */
+  setMailboxFoldersEnabled: (mailboxId: string, enabled: boolean) => Promise<Record<string, string>>;
 } {
   const [state, setState] = useState<ConsentState>(RESTING);
   /**
@@ -546,6 +568,9 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
           // the pre-feature interface, which is what such a server serves anyway.
           foldersEnabled: wire.foldersEnabledAt != null,
           foldersEnabledAt: wire.foldersEnabledAt ?? null,
+          // Absent (an API before mail 0073) reads as "no exceptions" — the picture that
+          // server actually serves, since it filters nothing per mailbox.
+          folderMailboxesOff: wire.folderMailboxesOff ?? {},
           // NORMALISED, not trusted. The column's CHECK and `consentSettings` both close the set,
           // so an unsupported string cannot arrive from a current server — and this is the boot
           // path, where a value that got through would make the client ask for a catalogue that
@@ -638,6 +663,16 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
     return on;
   }, []);
 
+  const setMailboxFoldersEnabled = useCallback(
+    async (mailboxId: string, enabled: boolean): Promise<Record<string, string>> => {
+      const res = await link.current.setMailboxFoldersEnabled(mailboxId, enabled);
+      const off = res.folderMailboxesOff ?? {};
+      // THE WHOLE MAP FROM THE ECHO — the server answers with every exception after the write,
+      // so a stale tab that missed another device's toggle heals on its own next write.
+      setState((prev) => ({ ...prev, folderMailboxesOff: off }));
+      return off;
+    }, []);
+
   const setBlockAutoUnsubscribe = useCallback(async (blocked: boolean): Promise<boolean> => {
     const res = await link.current.setBlockAutoUnsubscribe(blocked);
     // `== null` ⇒ the pass runs. The same collapse as the read above, for the same reason, and it
@@ -666,5 +701,6 @@ export function useConsentState(active: boolean, transport?: ConsentTransport): 
     setBlockTrackingPixels,
     setBlockAutoUnsubscribe,
     setFoldersEnabled,
+    setMailboxFoldersEnabled,
   };
 }

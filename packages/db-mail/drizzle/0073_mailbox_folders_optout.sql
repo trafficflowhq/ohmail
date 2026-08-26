@@ -1,0 +1,44 @@
+-- PER-MAILBOX "USE FOLDERS" — the folders feature's second dial (FOLDERS-SPEC.md §17; owner
+-- ruling 2026-08-25: "folders should be possible to be enabled on a per mailbox level").
+--
+--   mailboxes.folders_disabled_at  timestamptz NULL
+--
+-- The ACCOUNT's `folders_enabled_at` (mail 0066/0069) stays the master switch. Under it, every
+-- mailbox PARTICIPATES BY DEFAULT — the expectation the ruling encodes: enabling folders
+-- on a six-mailbox account shows all six mailboxes' folders. So the column stores the
+-- EXCEPTION, not the rule: NULL — and a failed read — mean "this mailbox's folders show", and
+-- a timestamp is "when this mailbox was switched OFF", which is the support question
+-- (`seed_confirmed_at`'s argument). The sign is deliberately opposite to the master's: the
+-- master defaults CLOSED because the FEATURE is opt-in; within an opted-in account the
+-- per-mailbox default is OPEN because that is what the account just asked for.
+--
+-- ══ WHAT SWITCHING A MAILBOX OFF DOES — AND DELIBERATELY DOES NOT ══════════════════════════
+--
+-- OFF removes exactly that mailbox's folders from the /sync surface: the snapshot skips its
+-- rows, the delta re-materializes its stragglers as tombstones, and the write itself appends
+-- one `folder` DELETE per user folder of the mailbox (master on), so a live rail drops the
+-- mailbox's tree without a re-bootstrap. Its folder-resident mail keeps pre-folders behavior —
+-- the lens and the views treat it exactly as they did before the feature. ON re-emits CREATEs.
+-- It moves NO mail, issues NO IMAP command, and never touches `mailbox_folders` — the worker's
+-- inventory keeps its cursors either way (the passive read is not consent-gated; showing is).
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO CHECK, NO INDEX ═══════════════════════════════════════════════
+--
+-- ADD COLUMN IF NOT EXISTS, nullable, no default, no backfill (0054's refusal: every existing
+-- mailbox participating is the absence, not an UPDATE). No CHECK — a timestamp closes no set.
+-- No index: read through the mailbox join `listUserFolders` already makes, never a predicate
+-- of its own.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═════════════════════════════════════════════════════════
+--
+-- Migration → API. `MailboxService.list` selects whole `mailboxes` rows through the drizzle
+-- schema, so an API deployed ahead of this answers 42703 on the mailbox panel and the connect
+-- flow; the health marker ["mailboxes","folders_disabled_at"] turns that into a 503
+-- schema_incomplete naming this file. No worker half: the worker neither reads nor writes it.
+-- A CLIENT older than the API never sends the knob and reads every mailbox as participating,
+-- which is exactly what NULL means anyway.
+--
+-- ROLLBACK is DROP COLUMN: every mailbox returns to participating under the master flag,
+-- nothing else moves. The API has to go back first, or the mailbox surface 42703s.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "folders_disabled_at" timestamp with time zone;

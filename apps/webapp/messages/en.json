@@ -993,6 +993,10 @@
       "useOn": "Your mail server's own folders show in the menu, each opening as its own list with unread counts.",
       "useOff": "Your folders stay hidden. ohmail still reads them for search and history.",
       "microcopy": "Turning this on only shows what already exists — nothing is moved. Turning it off hides the folders again without touching your mail.",
+      "mailboxesTitle": "Per mailbox",
+      "mailboxesNote": "Every mailbox's folders show while this is on. Switch one off and its folders leave the menu — the mail itself stays where it is.",
+      "mailboxOn": "Folders show",
+      "mailboxOff": "Folders hidden",
       "failed": "Couldn't save that — try again."
     },
     "dormancy": {

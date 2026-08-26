@@ -105,4 +105,10 @@ export const consentOverBridge: ConsentTransport = {
     patch<{ blockAutoUnsubscribeAt: string | null }>({ blockAutoUnsubscribe: blocked }),
   setFoldersEnabled: (enabled) =>
     patch<{ foldersEnabledAt: string | null }>({ foldersEnabled: enabled }),
+  // Per-mailbox "Use folders" (FOLDERS-SPEC.md §17) — one mailbox per call, the hook's shape;
+  // the echo is the WHOLE exceptions map, like the hosted route answers everywhere.
+  setMailboxFoldersEnabled: (mailboxId, enabled) =>
+    patch<{ folderMailboxesOff: Record<string, string> }>({
+      folderMailboxes: { [mailboxId]: enabled },
+    }),
 };

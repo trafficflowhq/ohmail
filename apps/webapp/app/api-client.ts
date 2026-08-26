@@ -1107,6 +1107,13 @@ export interface ConsentStateWire {
    */
   foldersEnabledAt?: string | null;
   /**
+   * PER-MAILBOX "Use folders" — only the EXCEPTIONS travel: `{ mailboxId: instant switched
+   * off }` (FOLDERS-SPEC.md §17). A mailbox absent from the map participates; an absent map
+   * (an API deployed before mail 0073) reads as "no exceptions", which is the same picture
+   * that server actually serves.
+   */
+  folderMailboxesOff?: Record<string, string>;
+  /**
    * WHEN this account turned OFF auto-unsubscribe on screen-out, or null for the product default —
    * which is that screening a sender out, or marking them spam, also sends the sender's one-click
    * unsubscribe request.
@@ -1230,6 +1237,12 @@ export const consent = {
     api<{ foldersEnabledAt: string | null }>("/consent/settings", {
       method: "PATCH",
       body: { foldersEnabled: enabled },
+    }),
+  /** Per-mailbox "Use folders" (FOLDERS-SPEC.md §17) — the echo is the WHOLE exceptions map. */
+  setMailboxFoldersEnabled: (mailboxId: string, enabled: boolean) =>
+    api<{ folderMailboxesOff: Record<string, string> }>("/consent/settings", {
+      method: "PATCH",
+      body: { folderMailboxes: { [mailboxId]: enabled } },
     }),
   setBlockRemoteImages: (blocked: boolean) =>
     api<{ blockRemoteImagesAt: string | null }>("/consent/settings", {

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 // `@trafficflow/core/mail`, NOT the default barrel: this module rides into the desktop
 // ENGINE bundle through `sync-service.ts`, and the default barrel puts the classifier and the
 // drafter (and, through them, the private cloud schema) into esbuild's input graph — which the
@@ -90,6 +90,12 @@ export interface UserFolderRow {
  * entities and `setFoldersEnabled` writes change rows for. One query, account-scoped through
  * the mailbox join; deterministic order (by path) so two reads of the same state emit the same
  * sequence.
+ *
+ * PER-MAILBOX PARTICIPATION (mail 0073, FOLDERS-SPEC.md §17): a mailbox whose
+ * `folders_disabled_at` is set contributes NOTHING here — not to the snapshot, not to the
+ * master toggle's transition rows, not to the rail. NULL means participate, which is the
+ * ruling's default. The filter lives on THIS read (and its two per-row
+ * siblings below) rather than at each call site, so no emitter can forget it.
  */
 export async function listUserFolders(db: Db, accountId: string): Promise<UserFolderRow[]> {
   const rows = await db
@@ -102,10 +108,59 @@ export async function listUserFolders(db: Db, accountId: string): Promise<UserFo
     })
     .from(mailboxFolders)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
-    .where(eq(mailboxes.accountId, accountId));
+    .where(and(eq(mailboxes.accountId, accountId), isNull(mailboxes.foldersDisabledAt)));
   return rows
     .filter((r) => userFolderExclusion(r.folder) === null)
     .sort((a, b) => (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0));
+}
+
+/**
+ * ONE mailbox's user folders, post-exclusion, WITHOUT the participation filter — the
+ * per-mailbox toggle's transition read (`setMailboxFoldersEnabled`), and only its. The writer
+ * needs the list on BOTH edges: switching a mailbox OFF must tombstone folders the filtered
+ * read no longer answers, and switching it ON must emit creates the instant after the column
+ * flips. Account-scoped through the join like every read here; never exported to an emitter —
+ * the wire reads stay on the filtered three.
+ */
+export async function listMailboxUserFolders(
+  db: Db, accountId: string, mailboxId: string,
+): Promise<UserFolderRow[]> {
+  const rows = await db
+    .select({
+      id: mailboxFolders.id,
+      folder: mailboxFolders.folder,
+      mailboxId: mailboxFolders.mailboxId,
+      address: mailboxes.address,
+      updatedAt: mailboxFolders.updatedAt,
+    })
+    .from(mailboxFolders)
+    .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+    .where(and(eq(mailboxes.accountId, accountId), eq(mailboxFolders.mailboxId, mailboxId)));
+  return rows
+    .filter((r) => userFolderExclusion(r.folder) === null)
+    .sort((a, b) => (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0));
+}
+
+/**
+ * The account's switched-OFF mailboxes, as `{ mailboxId: instant }` — `GET /consent`'s
+ * per-mailbox answer (FOLDERS-SPEC.md §17). Only the EXCEPTIONS travel: a mailbox absent from
+ * the map participates, which is what NULL means in the column and what an older client that
+ * never reads the field assumes anyway. The instant rather than a boolean for the same reason
+ * every consent stamp keeps its instant — "when was this switched off" is the support
+ * question.
+ */
+export async function mailboxFoldersOff(
+  db: Db, accountId: string,
+): Promise<Record<string, string>> {
+  const rows = await db
+    .select({ id: mailboxes.id, at: mailboxes.foldersDisabledAt })
+    .from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId));
+  const out: Record<string, string> = {};
+  for (const r of rows) {
+    if (r.at !== null) out[r.id] = r.at.toISOString();
+  }
+  return out;
 }
 
 /**
@@ -139,8 +194,53 @@ export async function userFolderById(
     })
     .from(mailboxFolders)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
-    .where(and(eq(mailboxFolders.id, id), eq(mailboxes.accountId, accountId)))
+    .where(and(
+      eq(mailboxFolders.id, id),
+      eq(mailboxes.accountId, accountId),
+      // A switched-off mailbox's folder is a fourth null — drained as a tombstone like the
+      // other three, which is exactly what the per-mailbox OFF means on the wire (§17).
+      isNull(mailboxes.foldersDisabledAt),
+    ))
     .limit(1);
   if (!r) return null;
   return userFolderExclusion(r.folder) === null ? r : null;
+}
+
+/**
+ * MANY user-folder rows by entity id in ONE query — the delta page's read, and the reason it
+ * exists is a production measurement, not taste: `GET /sync` used to call {@link userFolderById}
+ * (plus a fresh {@link foldersEnabled}) PER ROW, two sequential round trips each, so the page a
+ * "Use folders" enable writes — one create per folder, 527 on the first mailbox this shipped
+ * to — cost ~1 000 serial round trips and 30+ seconds of a 60-second function budget. The rail
+ * sat empty while the account watched, which read as "the switch does nothing" and produced
+ * the off/on/off toggling that doubled the log. Same joins, same account scope, same
+ * participation filter, same post-exclusion as the per-row read — batched, so a page costs the
+ * same two queries whatever it carries. An id that is gone, excluded, or another account's is
+ * simply absent from the map, and the caller drains it as the delete tombstone the per-row
+ * null meant.
+ */
+export async function userFoldersByIds(
+  db: Db, accountId: string, ids: readonly string[],
+): Promise<Map<string, UserFolderRow>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select({
+      id: mailboxFolders.id,
+      folder: mailboxFolders.folder,
+      mailboxId: mailboxFolders.mailboxId,
+      address: mailboxes.address,
+      updatedAt: mailboxFolders.updatedAt,
+    })
+    .from(mailboxFolders)
+    .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+    .where(and(
+      inArray(mailboxFolders.id, ids as string[]),
+      eq(mailboxes.accountId, accountId),
+      isNull(mailboxes.foldersDisabledAt),
+    ));
+  const out = new Map<string, UserFolderRow>();
+  for (const r of rows) {
+    if (userFolderExclusion(r.folder) === null) out.set(r.id, r);
+  }
+  return out;
 }
