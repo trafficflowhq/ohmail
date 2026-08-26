@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import {
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
@@ -1362,6 +1362,111 @@ export class MailboxService {
       .set({ highestmodseq: null, deltaToken: null, updatedAt: ctx.now() })
       .where(eq(mailboxFolders.mailboxId, id));
   }
+
+  /**
+   * RING THE WORKER'S DOORBELL for every connected mailbox of the caller's account — the
+   * "Pull new mail" affordance's server half (mail 0049's `sync_requested_at`, the column the
+   * Not-junk rescue and `finalizeSent` already stamp).
+   *
+   * NOT {@link requestResync}, and the difference is the whole reason this exists: a resync
+   * clears every folder's CONDSTORE cursor and makes the worker re-walk the mailbox from
+   * scratch — the heaviest single thing a POST can ask of it. This stamps one nullable column;
+   * the worker's ~3 s kick scan notices, marks the runtime woken, and the cycle serves it one
+   * ORDINARY bounded batch out of turn. The user-visible effect is "I pulled / the mail I was
+   * told about is here" in seconds, at the cost of exactly the scan the next poll would have run
+   * anyway — just now instead of at the rotation's leisure.
+   *
+   * ── THE RATE LIMIT LIVES IN THE UPDATE'S OWN PREDICATE ─────────────────────────────────────
+   *
+   * A stamp younger than {@link MailboxService.PULL_MIN_GAP_MS} is left standing (it is already
+   * being answered — the kick clears it within seconds of acting on it), so a held-down refresh
+   * gesture degrades to one worker visit per gap per mailbox, not one per tap. No token bucket,
+   * no new table: the column IS the state, and the failure mode of the predicate being wrong is
+   * one extra bounded visit, never an unbounded one.
+   *
+   * ── ONE TRANSACTION, ROW LOCKS FIRST, DB CLOCK THROUGHOUT — the settle contract ────────────
+   *
+   * The answer is the client's honest-settle baseline, and three review findings (2026-08-26,
+   * round 1) shaped this exact form:
+   *
+   *  · PER MAILBOX, not one scalar. A mailbox holding a YOUNG standing stamp keeps it, and its
+   *    request predates this call — a single `requestedAt: now` would set that mailbox a bar its
+   *    already-owed visit can never have aimed at, and the spinner would run to its cap over a
+   *    pull that had settled. Each row answers with ITS effective stamp.
+   *  · ATOMIC against the worker's compare-and-clear. `FOR UPDATE` on the account's connected
+   *    rows means the kick pass's clear either lands BEFORE this transaction (the row reads
+   *    NULL and is freshly stamped) or queues BEHIND it (the standing stamp this returns is the
+   *    one the clear then names) — the fallback-SELECT race that could answer `requested: 0`
+   *    for a wake that had not yet been served is not representable.
+   *  · THE DATABASE'S CLOCK, on both sides. The stamp is SQL `now()` and is returned as the
+   *    column's own text; the worker's woken-visit `last_sync_at` stamp is SQL `now()` too
+   *    (`stampMailboxSyncNow`). The client only ever compares the two DB instants with each
+   *    other, so no API-host, worker-host or client wall clock enters the comparison — this
+   *    machine's own clock being measurably skewed is what made that rule non-negotiable.
+   *
+   * Returns the per-mailbox effective stamps (`requested` is their count). An account with no
+   * connected mailboxes gets `{ requested: 0, mailboxes: [] }` and nothing to wait for.
+   */
+  async requestPull(ctx: ServiceContext): Promise<{
+    requested: number;
+    /** The NEWEST effective stamp — a convenience for logging; the per-mailbox list is the contract. */
+    requestedAt: string;
+    mailboxes: Array<{ id: string; requestedAt: string }>;
+  }> {
+    const gapSeconds = MailboxService.PULL_MIN_GAP_MS / 1000;
+    const rows = await asTx(ctx).transaction(async (tx) => {
+      // Lock the account's connected rows so the kick pass's compare-and-clear serializes with
+      // this stamp — see the header. The set is an account's mailboxes (single digits), and the
+      // kick's clear is one row-keyed UPDATE, so the hold is microseconds.
+      // The wire form is FIXED ISO-8601 UTC via to_char, never `::text`: the bare cast renders
+      // at the server's DateStyle (space separator, `+00` offset), which `Date.parse` is not
+      // required to accept — a rejected format is a NaN baseline and a spinner that always runs
+      // to its cap (2026-08-26 review, round 2). Millisecond precision, matching the DTO's
+      // `toISOString()` on the other side of the comparison; the sub-millisecond loss floors the
+      // baseline, which is the conservative direction.
+      const mine = await tx.select({
+        id: mailboxes.id,
+        standing: sql<string | null>`to_char(${mailboxes.syncRequestedAt} at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
+      }).from(mailboxes)
+        .where(and(eq(mailboxes.accountId, ctx.accountId), eq(mailboxes.status, "connected")))
+        .for("update");
+      if (mine.length === 0) return [];
+      // `now()` — the DATABASE's instant, at its own precision, so the returned baseline and
+      // the worker's `stampMailboxSyncNow` write are the same clock. The age predicate is
+      // DB-side too: no host clock decides anything here.
+      const stamped = await tx.update(mailboxes)
+        .set({ syncRequestedAt: sql`now()` })
+        .where(and(
+          inArray(mailboxes.id, mine.map((m) => m.id)),
+          sql`(${mailboxes.syncRequestedAt} is null or ${mailboxes.syncRequestedAt} < now() - (${gapSeconds} * interval '1 second'))`,
+        ))
+        .returning({
+          id: mailboxes.id,
+          at: sql<string>`to_char(${mailboxes.syncRequestedAt} at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
+        });
+      const freshly = new Map<string, string>(stamped.map((r) => [r.id, r.at]));
+      return mine.map((m) => ({
+        id: m.id,
+        requestedAt: freshly.get(m.id) ?? m.standing,
+      })).filter((m): m is { id: string; requestedAt: string } => m.requestedAt !== null);
+    });
+    const newest = rows.reduce<string | null>(
+      (acc, r) => (acc === null || r.requestedAt > acc ? r.requestedAt : acc), null,
+    );
+    return {
+      requested: rows.length,
+      requestedAt: newest ?? ctx.now().toISOString(),
+      mailboxes: rows,
+    };
+  }
+
+  /**
+   * The youngest a standing `sync_requested_at` may be before {@link requestPull} re-stamps it.
+   * 5 s: comfortably past the worker's ~3 s kick scan, so a stamp older than this is one the
+   * scan has plausibly missed (or a worker that is down), and re-stamping is signal rather than
+   * hammering.
+   */
+  private static readonly PULL_MIN_GAP_MS = 5_000;
 
   /**
    * ASK TO BECOME THE ORGANIZER OF A MAILBOX THIS SIDE STOOD DOWN FROM.

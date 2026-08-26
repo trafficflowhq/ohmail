@@ -557,6 +557,51 @@ body.reading .shell {
   color: var(--accent-ink);
   background: var(--accent-soft);
 }
+/* ── "PULL NEW MAIL" — the worker doorbell, at the rail's foot beside the sync line. ──────
+   Quiet by design: ink-2 text, no fill until hover, exactly the register of the dock's own
+   controls — an affordance that is always available must not compete with mail. While the
+   pull is in flight the glyph turns (the honest state: the spinner ends when the SCAN has
+   happened, `PullNewMail.tsx`), and the button stays pressable-looking but inert via
+   aria-busy + the hook's single-flight latch rather than a disabled style that greys the
+   rail. */
+.rail-pull {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  text-align: left;
+  color: var(--ink2);
+  background: transparent;
+  cursor: pointer;
+}
+.rail-pull:hover {
+  color: var(--ink);
+  background: var(--tint);
+}
+.rail-pull .ic {
+  flex: none;
+}
+.pull-busy .ic {
+  animation: pull-turn 900ms linear infinite;
+}
+@keyframes pull-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pull-busy .ic {
+    animation: none;
+    opacity: 0.55;
+  }
+}
 /* ── BOTH HALVES OF THE SENTENCE WRAP. NEITHER IS EVER ELLIPSIZED. ──────────────────────
    This is the ONLY copy of the sync sentence at desktop width (a one-copy guard in the
    suite pins that), and it used to clip: "Filing 1 message on your m…" with no title attribute and

@@ -192,6 +192,15 @@ export const ATTACHMENT_LIST_TIMEOUT_MS = 12_000;
 export const BODY_FETCH_TIMEOUT_MS = 12_000;
 
 /**
+ * The worker-doorbell ring (`POST /sync/pull`). Shorter than the read deadlines: the route is
+ * one guarded UPDATE — nothing streams — and the ring is an ACCELERANT in front of a sync that
+ * proceeds regardless, so a slow answer is worth less than the gesture staying live. 8 s keeps
+ * a cold serverless start inside the window and still leaves the webapp's 30 s settle cap
+ * meaningfully about the SCAN rather than about the POST.
+ */
+export const PULL_RING_TIMEOUT_MS = 8_000;
+
+/**
  * NARROW ONE BODY OFF THE WIRE — shared by `GET /messages/:id/body` and by the batch route,
  * because they serve the same stored row and a second narrowing is a second place for it to be
  * wrong. (It already was: this adapter returned `{ text }` and dropped the rest, which is where
@@ -444,6 +453,42 @@ export class HttpAdapter implements EngineAdapter {
     if (res.status === 410) throw new CursorExpiredError();
     if (!res.ok) throw await this.rejectionOf(res);
     return (await res.json()) as SyncResponse;
+  }
+
+  /**
+   * `POST /sync/pull` — the worker doorbell. See {@link EngineAdapter.requestPull}.
+   *
+   * UNDER A DEADLINE, like the body and attachment reads and for a sharper reason: the ring is
+   * the FIRST await of every pull gesture, so a stalled POST (or a stalled response body) with
+   * no abort would hold the webapp's spinner past its advertised cap and starve the mobile
+   * follow-up drains that are scheduled off this promise — the whole affordance hangs on the
+   * one request that was only ever an accelerant. `fetch` has no timeout of its own; the abort
+   * is the only thing that reclaims the transport.
+   *
+   * The wire carries per-mailbox effective stamps (`mailboxes`) — each mailbox's OWN request
+   * instant at the database's clock, which is the client's honest-settle baseline. `requestedAt`
+   * is the newest of them, kept for logging; a missing field degrades to "nothing to wait for".
+   */
+  async requestPull(): Promise<{
+    requested: number; requestedAt: string;
+    mailboxes: Array<{ id: string; requestedAt: string }>;
+  }> {
+    return this.withDeadline(PULL_RING_TIMEOUT_MS, async (signal) => {
+      const res = await this.request("POST", "/sync/pull", { body: {}, ...(signal ? { signal } : {}) });
+      if (!res.ok) throw await this.rejectionOf(res);
+      const wire = (await res.json()) as Partial<{
+        requested: number; requestedAt: string;
+        mailboxes: Array<{ id?: string; requestedAt?: string }>;
+      }>;
+      const mailboxes = (Array.isArray(wire.mailboxes) ? wire.mailboxes : [])
+        .filter((m): m is { id: string; requestedAt: string } =>
+          typeof m?.id === "string" && typeof m?.requestedAt === "string");
+      return {
+        requested: typeof wire.requested === "number" ? wire.requested : mailboxes.length,
+        requestedAt: typeof wire.requestedAt === "string" ? wire.requestedAt : new Date().toISOString(),
+        mailboxes,
+      };
+    });
   }
 
   /**

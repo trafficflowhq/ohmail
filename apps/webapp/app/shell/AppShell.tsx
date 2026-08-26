@@ -79,6 +79,7 @@ import {
   type OwnerResolver,
   type ProvidedEngine,
 } from "./engine";
+import { PullNewMail, usePullNewMail } from "./PullNewMail";
 import { useOlderMail } from "./older-mail";
 import { PLACE_LABEL, avatarHue, hueOf, initialsOf, resurfaceLabel, tomorrowNine } from "./format";
 import { displayAddress, displayDomain } from "./idn";
@@ -1081,6 +1082,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   // The registry owns ⌘K (see `keymap.tsx`). Leaving the hook's own binding on as well
   // would toggle twice per keypress, which cancels out and never opens the palette.
   const palette = useCommandPalette({ bindKey: false });
+  // ONE pull flight per tab, shared by the rail and topbar copies of the button — two hooks
+  // would each carry their own `pulling`, and a resize mid-pull would reveal an idle-looking
+  // copy that accepts a second POST while the hidden one still polls. See `PullNewMail.tsx`.
+  const pullBinding = usePullNewMail();
   const now = useMemo(() => (demo ? DEMO_NOW : new Date()), [demo]);
 
   /* ── consent: what is PRESENTED, as opposed to where it sits ────────────────────────────
@@ -5154,6 +5159,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
             <Icon name="menu" />
           </button>
           <b>{mobileTitle}</b>
+          {/* The worker doorbell, under 900px — the rail (whose foot carries the wide-width
+              copy of this button) is a closed drawer here, and a refresh affordance inside a
+              closed drawer is one nobody is told about. See `PullNewMail.tsx`. */}
+          <PullNewMail variant="topbar" binding={pullBinding} />
           <button type="button" className="tb-btn" onClick={palette.openPalette}>
             ⌘K
           </button>
@@ -5193,7 +5202,15 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
             /* THE MAILBOX'S OWN LINE, at the foot of the rail and above the dock. The same
                component and the same derivation as the strip below the topbar — one of the two
                is showing at any width, never both (see `SyncBar.tsx`). */
-            sync={<SyncBar variant="rail" />}
+            sync={
+              <>
+                {/* The worker doorbell, above the mailbox's own line — an affordance beside the
+                    status it acts on. Renders nothing in the demo and on builds with no Cloud
+                    base; see `PullNewMail.tsx` for the honest-settle contract. */}
+                <PullNewMail variant="rail" binding={pullBinding} />
+                <SyncBar variant="rail" />
+              </>
+            }
             /* The account line at the foot of the rail — and, in the signed-in BROWSER only, the
                quiet "Get ohmail for desktop" prompt (never in the desktop app, never the demo:
                see `showDesktopCta`). The two do not coexist — `account` is a demo-only fixture

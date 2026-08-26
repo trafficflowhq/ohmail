@@ -374,7 +374,34 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         const gate = clearance.current.get(session) ?? Promise.resolve(false);
         return gate.then((ok) => {
           if (!ok || live.current.k !== "live" || live.current.session !== session) return;
-          return runner.request(session.engine);
+          // ── RING THE WORKER'S DOORBELL, THEN DRAIN ────────────────────────────────────────
+          //
+          // The drain below answers "what does the worker already have"; the person pulling was
+          // usually just told "I sent it", which is about mail the worker has NOT looked at yet.
+          // `requestPull` stamps `sync_requested_at` so the worker scans those mailboxes now
+          // (seconds) instead of at its poll rotation's leisure. It never throws — an absent or
+          // refused doorbell degrades to exactly the pull-to-refresh this always was.
+          //
+          // THE RACE, AND THE BOUNDED FOLLOW-UPS. The first drain almost always finishes before
+          // the worker's scan commits anything (the kick scan runs every ~3 s and the IMAP visit
+          // takes a few more), so a pull that stopped at one round would settle its spinner on a
+          // mirror the doorbell had not yet filled. Two quiet follow-up rounds — no spinner, the
+          // runner coalesces them onto anything already in flight — pick up what the scan wrote.
+          // Bounded at two per gesture, guarded on the session still being the live one, so a
+          // held-down refresh cannot stack unbounded rounds.
+          const rang = session.engine.requestPull();
+          const round = runner.request(session.engine);
+          void rang.then((r) => {
+            if (!r || r.requested === 0) return;
+            for (const delayMs of [4_000, 10_000]) {
+              setTimeout(() => {
+                if (live.current.k === "live" && live.current.session === session) {
+                  void runner.request(session.engine);
+                }
+              }, delayMs);
+            }
+          });
+          return round;
         });
       },
     }),

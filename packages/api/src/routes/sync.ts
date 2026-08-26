@@ -5,7 +5,7 @@ import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import type { ApiDeps } from "../deps.js";
-import { sync } from "./shared.js";
+import { mailbox, sync } from "./shared.js";
 
 /**
  * The EntityType values a `?types=` CSV may name; unknown tokens are dropped.
@@ -155,6 +155,39 @@ export const syncRoutes: Route[] = [
         ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
       });
       return jsonResponse(result);
+    },
+  },
+  /**
+   * "PULL NEW MAIL" — ring the worker's doorbell for the caller's mailboxes, now.
+   *
+   * The client-side pull/refresh gestures drain the MIRROR, which answers "show me what the
+   * worker already has" and cannot make the worker look at the IMAP server any sooner. This is
+   * the missing half: it stamps `mailboxes.sync_requested_at` for every connected mailbox of the
+   * session's account (`MailboxService.requestPull` — the rate limit lives in that UPDATE's own
+   * predicate), the worker's ~3 s kick scan marks those runtimes woken, and the cycle serves them
+   * one ordinary bounded batch out of turn. Arrivals then reach the client through the wake
+   * channel exactly as any other change does.
+   *
+   * `cost: "work"`, the resync route's class: the POST causes worker-side IMAP work. It is far
+   * LIGHTER than a resync — one bounded batch against live cursors, never a re-walk — but "an
+   * unverified account must not be able to make this service do paid work" is a boundary, not a
+   * tariff, and this is on the paid side of it.
+   *
+   * The answer carries each mailbox's OWN effective request instant (`mailboxes[]`), at the
+   * DATABASE's clock — the client's honest-settle baseline: a mailbox whose `lastSyncAt` (also
+   * written with SQL `now()`, on woken visits) moves past its own baseline has demonstrably been
+   * scanned since the pull, so a spinner settles on the scan itself rather than on a timer or on
+   * the POST round trip. Per mailbox and single-clock by review finding (2026-08-26 round 1):
+   * one scalar baseline overshoots a mailbox whose young standing request predates this call,
+   * and any host-clock comparison inherits that host's skew.
+   */
+  {
+    method: "POST",
+    pattern: "/sync/pull",
+    cost: "work",
+    handler: async (req, deps) => {
+      const result = await mailbox(deps).requestPull(serviceContext(deps, req));
+      return jsonResponse(result, { status: 202 });
     },
   },
 ];

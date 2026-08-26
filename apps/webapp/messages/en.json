@@ -2024,7 +2024,10 @@
     "sinceHours": "{hours, plural, one {for 1 hour} other {for # hours}}",
     "noMailbox": "No mailbox connected, so nothing can arrive.",
     "filing": "Filing {count, plural, one {1 message} other {# messages}} on your mail server…",
-    "filingWhere": "{address} · your decisions are already applied here; the server is catching up."
+    "filingWhere": "{address} · your decisions are already applied here; the server is catching up.",
+    "pull": "Pull new mail",
+    "pulling": "Checking your mail server…",
+    "pullAria": "Pull new mail — check the mail server now"
   },
   "screening": {
     "action": "Screening",

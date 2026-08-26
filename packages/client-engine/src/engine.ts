@@ -1112,6 +1112,31 @@ export class OhmailEngine {
   }
 
   /**
+   * Ring the WORKER's doorbell — `POST /sync/pull` — so the next IMAP scan of this account's
+   * mailboxes happens now instead of at the poll rotation's leisure. The gesture-side half of
+   * pull-to-refresh: a drain answers "what does the worker already have", and this is the ask
+   * for mail the worker has not looked at yet. See {@link EngineAdapter.requestPull}.
+   *
+   * `null` when this adapter has no doorbell (the demo's FixturesAdapter, older bundles), which
+   * a caller treats as "this world has no worker to hurry" — the drain it was going to run is
+   * still the whole of what the gesture can do there. Never throws: the pull is an accelerant on
+   * top of a sync that must proceed regardless, so a refused or failed ring degrades to exactly
+   * the behaviour the gesture had before the doorbell existed.
+   */
+  async requestPull(): Promise<{
+    requested: number; requestedAt: string;
+    mailboxes: Array<{ id: string; requestedAt: string }>;
+  } | null> {
+    const ring = this.adapter.requestPull?.bind(this.adapter);
+    if (!ring) return null;
+    try {
+      return await ring();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * One full drain: pull pages from the cursor of record until hasMore:false,
    * applying each page idempotently. A 410 discards local state and re-enters
    * as a bootstrap (once — a second 410 within one drain is surfaced).

@@ -89,6 +89,33 @@ export interface EngineAdapter {
   /** Fetch one /sync page. Throws CursorExpiredError on a 410 (§3.2). */
   sync(params: SyncParams): Promise<SyncResponse>;
   /**
+   * `POST /sync/pull` — ring the WORKER's doorbell (`mailboxes.sync_requested_at`) so the next
+   * IMAP scan of the caller's mailboxes happens now instead of at the poll rotation's leisure.
+   *
+   * This is the half of "pull to refresh" that {@link sync} cannot be: a drain answers "show me
+   * what the worker already has", and a user who was just told "I sent it" is asking about mail
+   * the worker has NOT seen yet. The gesture rings this first, then drains as it always did; the
+   * arrivals reach the mirror through the ordinary wake channel a few seconds later.
+   *
+   * `requestedAt` is the honest-settle baseline: a mailbox whose `lastSyncAt` moves past it has
+   * been scanned since the pull (the worker stamps woken visits eagerly).
+   *
+   * OPTIONAL, for the reason {@link fetchBodies} is: absence is a real answer. The
+   * FixturesAdapter has no server and no worker — the demo is self-contained and must issue zero
+   * requests — and a caller treats absence as "this world has no doorbell", never as an error.
+   */
+  requestPull?(): Promise<{
+    requested: number;
+    requestedAt: string;
+    /**
+     * Each mailbox's OWN effective request instant, at the DATABASE's clock — the honest-settle
+     * baseline. A mailbox holding a young standing request answers with THAT stamp, not with
+     * this call's, so a settle that compares per mailbox never waits on a bar an already-owed
+     * visit could not have aimed at.
+     */
+    mailboxes: Array<{ id: string; requestedAt: string }>;
+  }>;
+  /**
    * Execute a mutation. `idempotencyKey` is stable across retries of the SAME
    * logical intent (contract §1.6) — a replay must not double-apply.
    * Throws MutationRejectedError (retryable or not) on failure.

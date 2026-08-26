@@ -56,6 +56,8 @@ export const ICON_PATHS: Record<string, ReactElement> = {
   x: <path d="m4.5 4.5 7 7M11.5 4.5l-7 7" />,
   check: <path d="m3.5 8.5 3 3 6-6.5" />,
   menu: <path d="M3 5.2h10M3 10.8h10" />,
+  /** A circular arrow — "check the server now" (the pull-new-mail affordance). */
+  refresh: <path d="M12.8 8A4.8 4.8 0 1 1 11 4.3M11.2 1.9l.3 2.6-2.6.3" />,
   open: <path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 13.5h-4v-4M2.5 13.5 7.5 8.5" />,
   tag: (
     <>

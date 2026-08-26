@@ -2024,7 +2024,10 @@
     "sinceHours": "{hours, plural, one {seit 1 Stunde} other {seit # Stunden}}",
     "noMailbox": "Kein Postfach verbunden, es kann also nichts ankommen.",
     "filing": "{count, plural, one {1 Nachricht wird} other {# Nachrichten werden}} auf deinem Mailserver einsortiert …",
-    "filingWhere": "{address} · deine Entscheidungen gelten hier schon; der Server holt gerade auf."
+    "filingWhere": "{address} · deine Entscheidungen gelten hier schon; der Server holt gerade auf.",
+    "pull": "Neue Mails abrufen",
+    "pulling": "Mailserver wird geprüft…",
+    "pullAria": "Neue Mails abrufen — den Mailserver jetzt prüfen"
   },
   "screening": {
     "action": "Screening",
