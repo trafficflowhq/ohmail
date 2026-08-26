@@ -57,6 +57,7 @@ import { useOverlayClamp } from "./overlay-clamp";
 import "./sender-sheet.css";
 import { RETRO_DEFAULT_ON, type ScreeningDest } from "./sender-screening";
 import {
+  MAX_SUBJECT_TERM_CHARS,
   SUBJECT_RULE_DESTS,
   bodyMatchCount,
   planSubjectRule,
@@ -161,6 +162,14 @@ export function SubjectRuleSheet({
   const customAll = customTrimmed !== "" && ctx.messages.length > 1
     && customCount === ctx.messages.length;
   const customNone = customCount === 0;
+  /**
+   * Over the SERVER's own cap (`MAX_SUBJECT_TERM_CHARS` mirrors `RulesService`): the wire would
+   * answer 400, the sheet would close, and the edit would be lost — so the state is said here
+   * and the commit is withheld (`planSubjectRule` answers an over-cap term with zero mutations,
+   * moves included). Reachable by paste and by a genuinely enormous prefilled subject; the
+   * field is deliberately NOT truncated, because a silently shortened term is a different rule.
+   */
+  const customTooLong = customTrimmed.length > MAX_SUBJECT_TERM_CHARS;
 
   /**
    * THE VIEWPORT CLAMP — the sender sheet's sibling geometry. At ~600px this sheet
@@ -225,45 +234,68 @@ export function SubjectRuleSheet({
             in the field selects the choice, exactly as pressing the row does. The count is the
             live measurement; the two warnings below it are the honest failure states of a typed
             fragment, stated before anything can be written. */}
+        {/* The radio proper is its own small control (the lead line) and the field is a LABELED
+            TEXTBOX beside it, never a textbox inside a radio: a radio is an atomic widget, and a
+            focusable descendant inside one is flattened or half-announced by screen readers
+            (review round). Focusing or editing the field selects the choice exactly as pressing
+            the radio does; the count and the warnings live in one `role="status"` region the
+            field is described by, so the safety feedback is HEARD while focus stays in it. */}
         <div
-          role="radio"
-          aria-checked={choice === "whole"}
           className={choice === "whole" ? "sm-edit on" : "sm-edit"}
           onClick={() => { setChoice("whole"); setPending(null); }}
         >
-          <span className="sm-edit-lead">{copy("subjectEditLead", "Whose subject contains")}</span>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={choice === "whole"}
+            className="sm-edit-pick"
+            onClick={() => { setChoice("whole"); setPending(null); }}
+          >
+            {copy("subjectEditLead", "Whose subject contains")}
+          </button>
           <input
             type="text"
             className="sm-edit-input"
             value={custom}
             aria-label={copy("subjectEditAria", "Part of the subject to match")}
+            aria-describedby="sm-edit-status"
             spellCheck={false}
             onFocus={() => { setChoice("whole"); setPending(null); }}
             onChange={(e) => { setCustom(e.target.value); setChoice("whole"); setPending(null); }}
           />
-          <small>
-            {/* Count-bearing, so the en.json form is ICU and gets the value — the plain shim
-                would return the template with its placeholder unfilled. */}
-            {t.has("subjectWholeCount")
-              ? t("subjectWholeCount", { count: customCount })
-              : `${customCount} of this sender's messages`}
-          </small>
-          {choice === "whole" && customAll ? (
-            <small className="sm-edit-warn">
-              {copy(
-                "subjectEditAll",
-                "Matches all of this sender's mail here — it no longer narrows. Use a longer part "
-                  + "of the subject, or file the whole sender by clicking the sender instead.",
-              )}
+          <span className="sm-edit-status" id="sm-edit-status" role="status">
+            <small>
+              {/* Count-bearing, so the en.json form is ICU and gets the value — the plain shim
+                  would return the template with its placeholder unfilled. */}
+              {t.has("subjectWholeCount")
+                ? t("subjectWholeCount", { count: customCount })
+                : `${customCount} of this sender's messages`}
             </small>
-          ) : null}
-          {choice === "whole" && customNone ? (
-            <small className="sm-edit-warn">
-              {customTrimmed === ""
-                ? copy("subjectEditEmpty", "Type part of the subject to match.")
-                : copy("subjectEditNone", "Matches none of this sender's mail here.")}
-            </small>
-          ) : null}
+            {choice === "whole" && customTooLong ? (
+              <small className="sm-edit-warn">
+                {/* Value-bearing like the count: the en.json form carries {max}. */}
+                {t.has("subjectEditTooLong")
+                  ? t("subjectEditTooLong", { max: MAX_SUBJECT_TERM_CHARS })
+                  : `Too long to be a rule — a subject match holds at most ${MAX_SUBJECT_TERM_CHARS} characters. Trim it.`}
+              </small>
+            ) : null}
+            {choice === "whole" && customAll ? (
+              <small className="sm-edit-warn">
+                {copy(
+                  "subjectEditAll",
+                  "Matches all of this sender's mail here — it no longer narrows. Use a longer part "
+                    + "of the subject, or file the whole sender by clicking the sender instead.",
+                )}
+              </small>
+            ) : null}
+            {choice === "whole" && customNone ? (
+              <small className="sm-edit-warn">
+                {customTrimmed === ""
+                  ? copy("subjectEditEmpty", "Type part of the subject to match.")
+                  : copy("subjectEditNone", "Matches none of this sender's mail here.")}
+              </small>
+            ) : null}
+          </span>
         </div>
         {/* ── THE CONTENT TERM (mail 0052) ─────────────────────────────────────────────────
             The same discipline as the subject token — detected, never typed — against the message

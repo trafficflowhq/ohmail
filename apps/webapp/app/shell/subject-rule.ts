@@ -72,6 +72,15 @@ export function stripReplyPrefixes(subject: string): string {
 export const MIN_SUBJECT_TOKEN_CHARS = 3;
 
 /**
+ * The longest subject term the SERVER accepts — `RulesService`'s own
+ * `MAX_SUBJECT_CONTAINS_CHARS` (rules-service.ts), mirrored because the client bundle cannot
+ * import the services package. A fragment over this is a 400 on the wire, and a sheet that let
+ * it through closed itself, lost the edit, and (with retro on) had already dispatched the
+ * visible moves for a rule that was then refused. The sheet refuses the commit instead.
+ */
+export const MAX_SUBJECT_TERM_CHARS = 200;
+
+/**
  * The candidate tokens a single subject offers, best first.
  *
  * Two shapes, and no others:
@@ -407,7 +416,10 @@ export function planSubjectRule(
   // same token are two different statements about two different slices of the sender's mail.
   const termOf = (r: RuleDTO): string =>
     ((field === "subject" ? r.subjectContains : r.bodyContains) ?? "").trim();
-  const already = ctx.existing.some(
+  // An EMPTY term is never `already`: a body-only rule's absent `subjectContains` normalizes to
+  // "" too, so without this clause an emptied field compared equal to it, the confirm's go
+  // stayed pressable, and the press closed the sheet claiming an existing rule (review round).
+  const already = clean !== "" && ctx.existing.some(
     (r) => termOf(r).toLowerCase() === clean.toLowerCase() && r.destination === wanted,
   );
 
@@ -419,7 +431,13 @@ export function planSubjectRule(
   );
   const misplaced = matching.filter((m) => m.folder !== wanted);
 
-  const ruleMutations: EngineMutation[] = already || clean === "" ? [] : [{
+  // A term the SERVER would refuse writes NOTHING — no rule and no moves. The moves exist only
+  // as the optimistic half of a rule that is about to hold (or, on an `already` press, the
+  // deliberate re-file of the visible mail the standing rule names); dispatching them beside a
+  // 400 would re-file mail for a rule that was never written. `MAX_SUBJECT_TERM_CHARS` mirrors
+  // the server's own cap (both term fields share the same 200).
+  const invalid = clean === "" || clean.length > MAX_SUBJECT_TERM_CHARS;
+  const ruleMutations: EngineMutation[] = already || invalid ? [] : [{
     kind: "rule_create",
     ruleKind: "sender",
     match,
@@ -430,8 +448,12 @@ export function planSubjectRule(
 
   const mutations: EngineMutation[] = [...ruleMutations];
   // Newest first (the context is sorted), so the slice is the mail the user is looking at.
-  for (const m of misplaced.slice(0, RETRO_VISIBLE_MOVES)) {
-    mutations.push({ kind: "move", messageId: m.id, folder: wanted });
+  // An `already` press keeps its moves — "File these to …" files the visible matching mail the
+  // standing rule names; only an INVALID term moves nothing, because there is no rule behind it.
+  if (!invalid) {
+    for (const m of misplaced.slice(0, RETRO_VISIBLE_MOVES)) {
+      mutations.push({ kind: "move", messageId: m.id, folder: wanted });
+    }
   }
 
   return {

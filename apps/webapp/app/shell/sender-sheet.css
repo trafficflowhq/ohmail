@@ -104,12 +104,28 @@
   color: var(--accent-ink);
   opacity: 0.75;
 }
-.sm-edit-lead {
+/* The tile's own radio — the lead line as the atomic pick control, the field beside it. */
+.sm-edit-pick {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.01em;
   color: inherit;
   opacity: 0.8;
+}
+.sm-edit-status {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  max-width: 100%;
 }
 .sm-edit-input {
   width: 100%;

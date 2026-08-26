@@ -2090,7 +2090,8 @@
     "subjectWholeCount": "{count, plural, one {1 of this sender's messages} other {# of this sender's messages}}",
     "subjectEditAll": "Matches all of this sender's mail here — it no longer narrows. Use a longer part of the subject, or file the whole sender by clicking the sender instead.",
     "subjectEditNone": "Matches none of this sender's mail here.",
-    "subjectEditEmpty": "Type part of the subject to match."
+    "subjectEditEmpty": "Type part of the subject to match.",
+    "subjectEditTooLong": "Too long to be a rule — a subject match holds at most {max} characters. Trim it."
   },
   "reply": {
     "to": "Reply to {name}",

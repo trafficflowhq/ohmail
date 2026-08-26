@@ -2090,7 +2090,8 @@
     "subjectWholeCount": "{count, plural, one {1 Nachricht dieses Absenders} other {# Nachrichten dieses Absenders}}",
     "subjectEditAll": "Passt auf alle Nachrichten dieses Absenders hier — das grenzt nicht mehr ein. Nimm einen längeren Teil des Betreffs, oder lege gleich den ganzen Absender ab (Klick auf den Absender).",
     "subjectEditNone": "Passt auf keine Nachricht dieses Absenders hier.",
-    "subjectEditEmpty": "Gib einen Teil des Betreffs ein."
+    "subjectEditEmpty": "Gib einen Teil des Betreffs ein.",
+    "subjectEditTooLong": "Zu lang für eine Regel — ein Betreff-Treffer fasst höchstens {max} Zeichen. Kürze ihn."
   },
   "reply": {
     "to": "Antwort an {name}",
