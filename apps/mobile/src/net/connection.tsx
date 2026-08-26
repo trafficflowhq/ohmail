@@ -146,11 +146,17 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     setActiveId((await env.profiles.active())?.id ?? null);
   }, [env]);
 
-  /** Leave the live state, then close the mirror once the in-flight drain settles. */
+  /**
+   * Leave the live state, then close the mirror once the in-flight drain settles. The round
+   * is DISOWNED first (captured for the close-wait, then dropped): the leaving session's
+   * sync status — a standing failure sentence, a busy flag mid-round — must not stand as the
+   * next session's, and the disowned round's own landing reports nothing.
+   */
   const teardown = useCallback((session: ConnectedSession) => {
     offDead.current?.();
     offDead.current = null;
     const inFlight = runner.inFlight() ?? Promise.resolve();
+    runner.disown();
     void inFlight.catch(() => undefined).then(() => session.store.close());
   }, [runner]);
 
@@ -184,6 +190,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
    */
   const adopt = useCallback(
     (session: ConnectedSession) => {
+      // Whatever the PREVIOUS session left standing — a failure sentence, a disowned round —
+      // is not this session's status. Idempotent; the teardown path already disowned.
+      runner.disown();
       offDead.current?.();
       offDead.current = session.bearer.onSessionDead(() => {
         // The server judged this family's token — a revoke or a reuse-past. Render mail no
@@ -209,7 +218,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         if (ok) void drain(session, true);
       });
     },
-    [drain, refreshProfiles, teardown],
+    [drain, refreshProfiles, runner, teardown],
   );
 
   /**

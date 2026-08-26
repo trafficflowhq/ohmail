@@ -78,7 +78,21 @@ export interface ConnectConfig {
    * this field. The `__owner` stamp still makes a wrong id cost a wipe, never a bleed.
    */
   accountId: string;
+  /** Override the identity probe's deadline (tests). Absent, {@link IDENTITY_PROBE_DEADLINE_MS}. */
+  identityDeadlineMs?: number;
 }
+
+/**
+ * HOW LONG THE IDENTITY PROBE MAY HOLD THE DRAIN ROUTES SHUT. Every sync chains on the
+ * verdict (the clearance below), so a server that ACCEPTS the probe and never answers must
+ * not become a session that renders cached mail and never syncs — the exact unbounded hold
+ * boot-from-local exists to kill, reintroduced through a side door. Past the deadline the
+ * verdict is `unverified` and the routes open; the residual — a server both slower than the
+ * deadline AND answering for the wrong account — keeps the per-entity guard, which is the
+ * rule every no-session-read door lives under permanently. Eight seconds: far above any
+ * healthy round trip, far below "the app never syncs".
+ */
+export const IDENTITY_PROBE_DEADLINE_MS = 8000;
 
 /**
  * The deferred identity judgment — see {@link bootEngine}'s header for why it is no longer
@@ -329,7 +343,17 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
   // refusal rather than a mirror a wrong bearer could move.
   let identityCleared = false;
   const verifyIdentity = async (): Promise<IdentityVerdict> => {
-    const identity = await verifyAccountId(fetchImpl, origin, authHeaders, accountId);
+    // BOUNDED — see {@link IDENTITY_PROBE_DEADLINE_MS}: a probe the server accepts and never
+    // answers times out into `unverified` (the timer is cleared when the probe wins).
+    const deadline = config.identityDeadlineMs ?? IDENTITY_PROBE_DEADLINE_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<{ kind: "unverified" }>((resolve) => {
+      timer = setTimeout(() => resolve({ kind: "unverified" }), deadline);
+    });
+    const identity = await Promise.race([
+      verifyAccountId(fetchImpl, origin, authHeaders, accountId).finally(() => clearTimeout(timer)),
+      timedOut,
+    ]);
     if (identity.kind === "mismatch") {
       return {
         kind: "mismatch",

@@ -69,12 +69,15 @@ export class SyncRunner {
       try {
         await (first ? engine.start() : engine.syncOnce());
       } catch (err) {
-        if (this.inflight === self.round) this.on.error(String(err));
+        // `self.round !== null` beside the record check: a synchronous throw out of the
+        // engine call would land here BEFORE the box is filled, and a both-null equality
+        // would wrongly read an unregistered round as the round of record.
+        if (self.round !== null && this.inflight === self.round) this.on.error(String(err));
         // Re-sync memory with disk so the torn-flush guard's refusal window closes and the
         // retry re-fetches the failed page instead of writing past it.
         await engine.hydrate().catch(() => undefined);
       } finally {
-        if (this.inflight === self.round) {
+        if (self.round !== null && this.inflight === self.round) {
           this.on.syncing(false);
           this.inflight = null;
         }
@@ -93,5 +96,23 @@ export class SyncRunner {
   /** The round in the air (teardown's await), or null. */
   inFlight(): Promise<void> | null {
     return this.inflight;
+  }
+
+  /**
+   * THE OWNING SESSION IS LEAVING — the round in the air no longer speaks for the UI.
+   *
+   * Teardown calls this so a dead session's round cannot publish its landing into the NEXT
+   * session's screens: the busy flag falls NOW (the newly adopted session starts clean, and
+   * a disconnect does not strand `syncing` true), the standing failure sentence clears, and
+   * the disowned round — no longer the round of record — reports nothing when it lands (the
+   * `inflight === self.round` gates in {@link run}). Callers that must still WAIT for the
+   * round (closing the mirror under it) capture {@link inFlight} BEFORE disowning.
+   */
+  disown(): void {
+    if (this.inflight !== null) {
+      this.inflight = null;
+      this.on.syncing(false);
+    }
+    this.on.error(null);
   }
 }
