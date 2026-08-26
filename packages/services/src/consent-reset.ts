@@ -116,6 +116,22 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
   const unmoved = await unmovedReport(ctx);
 
   return asTx(ctx).transaction(async (tx) => {
+    /**
+     * THE GLOBAL LOCK ORDER — `account_settings` FIRST, the sequence row second (the rule and
+     * its reproduction live at `recordSettingsChange`, consent-seed.ts). This transaction was
+     * the one long-standing writer that took them the other way round — sequence row first
+     * (the per-rule change rows below), settings row last (the baseline reset at the bottom) —
+     * which is an opposite-order pair against `confirmSeed`, `ScreenerService.decide` and every
+     * settings knob: each holds its first row, each waits on the other, Postgres kills one
+     * with 40P01. So the row is TAKEN here, up front, with a no-op-shaped upsert; the real
+     * column writes at the bottom then update a row this transaction already holds.
+     */
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, updatedAt: ctx.now() })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { updatedAt: ctx.now() },
+      });
     const doomed = await tx.select({ id: rules.id }).from(rules).where(eq(rules.accountId, ctx.accountId));
 
     let lastSeq: bigint | null = null;

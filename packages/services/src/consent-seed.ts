@@ -664,16 +664,18 @@ export async function consentSettings(
  * first write, so this can never drain as a tombstone.
  */
 /**
- * ── LOCK ORDER: THE CHANGE ROW FIRST, THE SETTINGS ROW SECOND ────────────────────────────────
+ * ── THE GLOBAL LOCK ORDER: `account_settings` FIRST, THE SEQUENCE ROW SECOND ─────────────────
  *
  * `recordChanges` serializes on the account's `account_sync_state` row; the settings upsert
- * locks `account_settings`. `resetScreeningState` (consent-reset.ts) takes them in exactly this
- * order — change rows first (its crash-safety argument), the settings row last — so every writer
- * below rings the doorbell BEFORE touching the settings row. Both orders are individually
- * correct inside one transaction (the row and the column commit together either way); what the
- * shared direction buys is that a settings write racing a reset on the same account queues
- * instead of deadlocking — two transactions taking the same two row locks in opposite orders is
- * the textbook Postgres deadlock, and review round 1 of this entity called it.
+ * locks `account_settings`. Every transaction that touches BOTH rows takes them in ONE order —
+ * settings first — because two transactions taking the same two row locks in opposite orders is
+ * the textbook Postgres deadlock (40P01), and both directions of it were reproduced on real
+ * Postgres during this entity's review rounds. The order is the one `confirmSeed` DESIGNED
+ * around ("the transaction opens by taking the account's `account_settings` row") and
+ * `ScreenerService.decide` already follows; `resetScreeningState` — the one long-standing
+ * writer that rang first — was conformed in the same change (`consent-reset.ts` names it at its
+ * own seam). So every writer below touches its settings column FIRST and rings the doorbell
+ * second; both land or neither does, exactly as before.
  */
 // Every writer's INSERT path sets `updatedAt: ctx.now()` explicitly rather than taking the
 // column's `defaultNow()`: the row's stamp is the settings ENTITY's `updatedAt` on the wire, and
@@ -726,13 +728,13 @@ export async function setAutoSuggest(
   // The upsert is unchanged and still column-scoped; the transaction exists for the settings
   // change row beside it — see {@link recordSettingsChange}. Both land or neither does.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
-    await recordSettingsChange(tx, ctx.accountId); // the doorbell FIRST — see its lock-order note
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, autoSuggestAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { autoSuggestAt: at, updatedAt: ctx.now() },
       });
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { autoSuggestAt: at ? at.toISOString() : null };
 }
@@ -768,19 +770,19 @@ export async function setFoldersEnabled(
 ): Promise<{ foldersEnabledAt: string | null }> {
   const at = enabled ? ctx.now() : null;
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
-    // THE FLAG ITSELF travels too — see {@link recordSettingsChange}, whose lock-order note is
-    // why this rings FIRST. The folder creates/deletes below move the ENTITIES; without this row
-    // a client whose consent answer was read at boot kept drawing (or withholding) the GROUP
-    // around them — the measured desktop husk. It also covers the case the entity rows cannot:
-    // an account with zero user folders appends nothing below, so this is the only thing that
-    // rings the wake at all for its flip.
-    await recordSettingsChange(tx, ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, foldersEnabledAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { foldersEnabledAt: at, updatedAt: ctx.now() },
       });
+    // THE FLAG ITSELF travels too — see {@link recordSettingsChange} (and its global lock
+    // order, which is why the settings row above comes first). The folder creates/deletes below
+    // move the ENTITIES; without this row a client whose consent answer was read at boot kept
+    // drawing (or withholding) the GROUP around them — the measured desktop husk. It also
+    // covers the case the entity rows cannot: an account with zero user folders appends nothing
+    // below, so this is the only thing that rings the wake at all for its flip.
+    await recordSettingsChange(tx, ctx.accountId);
     const rows = await listUserFolders(tx as unknown as typeof ctx.db, ctx.accountId);
     if (rows.length > 0) {
       await recordChanges(tx, rows.map((r) => ({
@@ -833,23 +835,23 @@ export async function setMailboxFoldersEnabled(
     await tx.update(mailboxes)
       .set({ foldersDisabledAt: at })
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
-    // The dial's own change row FIRST, master on or off — the per-mailbox exception is settings
-    // state whatever the master says, and a surface holding a stale exceptions map is the same
-    // staleness the master's row exists to end. See {@link recordSettingsChange}, whose
-    // lock-order note is why it precedes the settings-row touch below.
-    await recordSettingsChange(tx, ctx.accountId);
-    // …AND THE STAMP MOVES. The exception lives on `mailboxes`, but the settings ENTITY's
+    // THE STAMP MOVES. The exception lives on `mailboxes`, but the settings ENTITY's
     // `updatedAt` is the `account_settings` row's own — a client that already holds the entity
     // compares stamps and ignores a re-apply whose stamp did not move, so a per-mailbox flip
     // that left the row untouched re-delivered the same instant and no surface re-asked —
     // a review-caught staleness. Touch the row in the same transaction, creating it if the
-    // account has never written a knob before.
+    // account has never written a knob before — and touch it FIRST: the global lock order
+    // ({@link recordSettingsChange}) puts the settings row ahead of the sequence row.
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { updatedAt: ctx.now() },
       });
+    // The dial's own change row, master on or off — the per-mailbox exception is settings state
+    // whatever the master says, and a surface holding a stale exceptions map is the same
+    // staleness the master's row exists to end.
+    await recordSettingsChange(tx, ctx.accountId);
     const [master] = await tx.select({ at: accountSettings.foldersEnabledAt })
       .from(accountSettings)
       .where(eq(accountSettings.accountId, ctx.accountId))
@@ -929,13 +931,13 @@ export async function setDormancyDays(
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
-    await recordSettingsChange(tx, ctx.accountId); // the doorbell FIRST — see its lock-order note
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, dormancyDays: stored, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { dormancyDays: stored, updatedAt: ctx.now() },
       });
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { dormancyDays: stored ?? DEFAULT_DORMANCY_DAYS };
 }
@@ -980,13 +982,13 @@ export async function setBlockRemoteImages(
   // measured on: an image posture changed in a browser must reach an open desktop pane without
   // a restart.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
-    await recordSettingsChange(tx, ctx.accountId); // the doorbell FIRST — see its lock-order note
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, blockRemoteImagesAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { blockRemoteImagesAt: at, updatedAt: ctx.now() },
       });
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { blockRemoteImagesAt: at ? at.toISOString() : null };
 }
@@ -1026,13 +1028,13 @@ export async function setBlockTrackingPixels(
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
-    await recordSettingsChange(tx, ctx.accountId); // the doorbell FIRST — see its lock-order note
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, loadTrackingPixelsAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { loadTrackingPixelsAt: at, updatedAt: ctx.now() },
       });
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { loadTrackingPixelsAt: at ? at.toISOString() : null };
 }
@@ -1083,13 +1085,13 @@ export async function setBlockAutoUnsubscribe(
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
-    await recordSettingsChange(tx, ctx.accountId); // the doorbell FIRST — see its lock-order note
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, blockAutoUnsubscribeAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { blockAutoUnsubscribeAt: at, updatedAt: ctx.now() },
       });
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { blockAutoUnsubscribeAt: at ? at.toISOString() : null };
 }
@@ -1157,13 +1159,13 @@ export async function setLocale(
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
-    await recordSettingsChange(tx, ctx.accountId); // the doorbell FIRST — see its lock-order note
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, locale: stored, updatedAt: ctx.now() })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: { locale: stored, updatedAt: ctx.now() },
       });
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { locale: stored };
 }
