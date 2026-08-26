@@ -146,17 +146,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     setActiveId((await env.profiles.active())?.id ?? null);
   }, [env]);
 
-  /**
-   * Leave the live state, then close the mirror once the in-flight drain settles. The round
-   * is DISOWNED first (captured for the close-wait, then dropped): the leaving session's
-   * sync status — a standing failure sentence, a busy flag mid-round — must not stand as the
-   * next session's, and the disowned round's own landing reports nothing.
-   */
+  /** Leave the live state, then close the mirror once the in-flight drain settles. */
   const teardown = useCallback((session: ConnectedSession) => {
     offDead.current?.();
     offDead.current = null;
     const inFlight = runner.inFlight() ?? Promise.resolve();
-    runner.disown();
     void inFlight.catch(() => undefined).then(() => session.store.close());
   }, [runner]);
 
@@ -190,9 +184,6 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
    */
   const adopt = useCallback(
     (session: ConnectedSession) => {
-      // Whatever the PREVIOUS session left standing — a failure sentence, a disowned round —
-      // is not this session's status. Idempotent; the teardown path already disowned.
-      runner.disown();
       offDead.current?.();
       offDead.current = session.bearer.onSessionDead(() => {
         // The server judged this family's token — a revoke or a reuse-past. Render mail no
@@ -218,7 +209,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         if (ok) void drain(session, true);
       });
     },
-    [drain, refreshProfiles, runner, teardown],
+    [drain, refreshProfiles, teardown],
   );
 
   /**
@@ -228,13 +219,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
    */
   const runConnect = useCallback(
     async (id: string, stillCurrent: () => boolean): Promise<Attempt> => {
-      // The keystore read comes FIRST, teardown immediately before its own next state: the
-      // disown's falling busy edge and the departure from `live` must land in ONE render
-      // commit. With an await between them, the world layer would see "drain completed" while
-      // the OUTGOING session was still on screen and restart work against it — the retry
-      // flush, the folders re-read, an owed drain — racing the scheduled store close.
-      const row = (await env.profiles.list()).find((p) => p.id === id);
       if (live.current.k === "live") teardown(live.current.session);
+      const row = (await env.profiles.list()).find((p) => p.id === id);
       if (row === undefined) {
         if (stillCurrent()) setState({ k: "refused", reason: "that server is no longer paired on this phone" });
         return { ok: false, reason: "that server is no longer paired on this phone" };

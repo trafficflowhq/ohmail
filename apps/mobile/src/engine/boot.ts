@@ -221,8 +221,8 @@ function accountGuarded(
    * page carries no `accountId` to refuse yet advances the cursor. So the DRAIN routes are
    * held shut until {@link EngineBoot.verifyIdentity} has settled (`verified` and
    * `unverified` both open them; `mismatch` never does) — structural, so a caller that
-   * forgets the sequence gets a loud refusal, never a moved mirror. Invariant #9
-   * (per-account isolation): the stamp stops mirror bleed, and this stops cursor bleed.
+   * forgets the sequence gets a loud refusal, never a moved mirror. Per-account isolation
+   * has two halves here: the owner stamp stops mirror bleed, and this stops cursor bleed.
    */
   cleared: () => boolean,
 ): GuardedMobileAdapter {
