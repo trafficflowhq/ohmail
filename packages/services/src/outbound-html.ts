@@ -217,6 +217,15 @@ export function htmlToPlainText(html: string): string {
    */
   let lead = "";
   /**
+   * How much text the OPEN ANCHOR held when the current list item opened — the item-emptiness
+   * baseline (review rounds 7–10, which each falsified a cheaper heuristic in turn: `line`
+   * alone misses text buffering inside a wrapping anchor; "an anchor is open" is not evidence
+   * of content; the anchor's PENDING HREF is the anchor's own, emitted at its close wherever
+   * that lands, never the item's). An item has produced content exactly when its line is
+   * non-empty or the enclosing anchor's buffer GREW while the item was open.
+   */
+  let liAnchorBase = 0;
+  /**
    * The anchor currently open: its href, and the text seen inside it so far.
    *
    * Held on a mutable box rather than in a `let`, which is a TYPE-CHECKING requirement and not a
@@ -383,6 +392,7 @@ export function htmlToPlainText(html: string): string {
         }
         if (name === "li") {
           flush();
+          liAnchorBase = open.anchor === null ? 0 : open.anchor.text.length;
           const ctx = lists[lists.length - 1];
           // A stray `<li>` with no list around it still needs a marker; treat it as a bullet
           // rather than dropping it, because the sanitizer permits the tag and the reader will
@@ -463,21 +473,18 @@ export function htmlToPlainText(html: string): string {
           // NEXT item must not inherit a marker that was never this item's to give away
           // (review round 6: `<ol><li><p></p></li></ol><p>after</p>` read "1. after").
           //
-          // "EMPTY" MEANS NOTHING PRODUCED YET, WHEREVER IT WOULD LAND (review round 8, on
-          // round 7's guard). Text inside an open anchor accumulates in `open.anchor.text`,
-          // never in `line` (`emit`'s rule) — so `<a href="…"><ol><li>one</li></ol></a>`
-          // reads `line` as empty at this item's close though it plainly is not (round 7),
-          // and simply treating ANY open anchor as "non-empty" over-corrected: an anchor that
-          // is itself empty, `<a><ol><li></li></ol></a><p>after</p>`, then kept a marker that
-          // belongs to nothing (round 8 — `open.anchor !== null` is not evidence of content).
-          // And "what the anchor holds" is not its text alone (round 9): the anchor-close
-          // branch emits the HREF when the link has no text, so an href-only anchor still
-          // produces a line — the item is empty only when the line, the anchor's text AND its
-          // pending href all hold nothing.
-          const stillEmpty = line === ""
-            && (open.anchor === null
-              || (open.anchor.text === "" && open.anchor.href.trim() === ""));
-          if (stillEmpty) lead = "";
+          // "EMPTY" IS A FACT ABOUT THIS ITEM, measured against the baseline its own open
+          // recorded (`liAnchorBase`): the line is empty and the enclosing anchor's buffer
+          // did not grow while the item was open. Reviews 7–10 falsified every cheaper
+          // heuristic — `line` alone misses text buffering inside a wrapping anchor (round 7),
+          // an open anchor is not itself evidence of content (round 8), and the anchor's
+          // pending HREF is the ANCHOR's content, emitted at its close onto whatever line is
+          // current there, never this item's (round 10, superseding round 9's reading of the
+          // href-only corner: an item that produced nothing carries no number, whatever its
+          // ancestors later emit — the alternative numbered prose that sits outside the item).
+          // The baseline comparison is O(1) per item; nothing here re-reads the href at all.
+          const grew = open.anchor !== null && open.anchor.text.length > liAnchorBase;
+          if (line === "" && !grew) lead = "";
           return;
         }
         if (BLOCKS.has(name)) flush();
