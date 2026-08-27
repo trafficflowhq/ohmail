@@ -463,14 +463,17 @@ export function htmlToPlainText(html: string): string {
           // NEXT item must not inherit a marker that was never this item's to give away
           // (review round 6: `<ol><li><p></p></li></ol><p>after</p>` read "1. after").
           //
-          // GUARDED ON `open.anchor === null` (review round 7): the sanitizer permits — and
-          // does not itself normalise — an anchor that WRAPS the list, `<a href="…"><ol>
-          // <li>one</li></ol></a>`. Text inside an open anchor accumulates in
-          // `open.anchor.text`, never in `line` (`emit`'s whole rule), so `line` reads empty
-          // here for an item that is very much not — clearing unconditionally threw the
-          // marker away before the anchor's own close ever appended its text to `line`. An
-          // open anchor means "still buffering", not "empty", so the clear waits.
-          if (open.anchor === null) lead = "";
+          // "EMPTY" MEANS NOTHING PRODUCED YET, WHEREVER IT WOULD LAND (review round 8, on
+          // round 7's guard). Text inside an open anchor accumulates in `open.anchor.text`,
+          // never in `line` (`emit`'s rule) — so `<a href="…"><ol><li>one</li></ol></a>`
+          // reads `line` as empty at this item's close though it plainly is not (round 7),
+          // and simply treating ANY open anchor as "non-empty" over-corrected: an anchor that
+          // is itself empty, `<a><ol><li></li></ol></a><p>after</p>`, then kept a marker that
+          // belongs to nothing (round 8 — `open.anchor !== null` is not evidence of content,
+          // only `open.anchor.text` is). Both buffers are checked; the item is empty only
+          // when neither holds anything.
+          const stillEmpty = line === "" && (open.anchor === null || open.anchor.text === "");
+          if (stillEmpty) lead = "";
           return;
         }
         if (BLOCKS.has(name)) flush();
