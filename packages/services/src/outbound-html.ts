@@ -455,6 +455,16 @@ export function htmlToPlainText(html: string): string {
           if (empty) blankLine();
           return;
         }
+        if (name === "li") {
+          flush();
+          // An EMPTY item's marker (every boundary flush inside it was empty too) must be
+          // cleared HERE, at the item's own close — the list closing later is too late, the
+          // marker would already have escaped onto whatever prose follows the list, and the
+          // NEXT item must not inherit a marker that was never this item's to give away
+          // (review round 6: `<ol><li><p></p></li></ol><p>after</p>` read "1. after").
+          lead = "";
+          return;
+        }
         if (BLOCKS.has(name)) flush();
       },
     },
