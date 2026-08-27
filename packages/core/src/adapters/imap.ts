@@ -95,6 +95,18 @@ export interface FolderPage {
 }
 
 /**
+ * A bounded search answer over one folder — the Junk window's search-append half
+ * ({@link ImapAdapter.searchFolderPage}). Newest matches first, at most {@link FOLDER_PAGE_MAX}.
+ */
+export interface FolderSearchPage {
+  /** The folder's UIDVALIDITY at read time — every row's epoch. */
+  uidValidity: string;
+  items: FolderPageItem[];
+  /** The server matched MORE than the page carried — the answer is the newest slice of the hits. */
+  truncated: boolean;
+}
+
+/**
  * The slice of imapflow's `StatusObject` the passive skip reads — see
  * {@link ImapAdapter.unchangedPassive}. Named locally so a test fake can supply three numbers
  * without constructing the library's whole response shape.
@@ -1329,6 +1341,70 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // Newest first — by sequence, which IS the folder's arrival order.
       rows.sort((a, b) => b.seq - a.seq);
       return { uidValidity, total, items: rows, nextBeforeSeq: start > 1 ? start : null };
+    } finally {
+      lock.release();
+    }
+  }
+
+  /**
+   * ONE BOUNDED SEARCH of a named folder — the Junk window's search-append (FOLDERS-SPEC.md
+   * §16.2's table: the window's own list is the newest page, and a person looking for something
+   * older asks the folder itself, separately, behind a deadline the caller holds).
+   *
+   * READ-ONLY BY CONSTRUCTION, exactly as {@link listFolderPage}: one mailbox lock, one
+   * `UID SEARCH` (the server's own scan — `OR FROM SUBJECT`, case-folded by the server, one
+   * round trip whatever the folder holds), one envelope/flags FETCH of at most `limit` of the
+   * NEWEST matching UIDs. That cap is what keeps the WORK bounded: a common word over a decade of
+   * junk may match thousands, and the answer is the newest `limit` of them with `truncated`
+   * saying so — never a fetch proportional to the match count. Header facts only, no `Change`,
+   * nothing a caller could ingest by mistake.
+   *
+   * `null` for a folder the server refuses to SELECT (missing, `\Noselect`) — the same degrade
+   * `listFolderPage` states; a transport failure propagates so the caller can say "could not be
+   * searched" rather than "no folder".
+   */
+  async searchFolderPage(
+    folder: string,
+    query: string,
+    opts: { limit?: number } = {},
+  ): Promise<FolderSearchPage | null> {
+    const limit = Math.max(1, Math.min(opts.limit ?? FOLDER_PAGE_MAX, FOLDER_PAGE_MAX));
+    const term = query.trim();
+    let lock: { release(): void };
+    try {
+      lock = await this.client.getMailboxLock(this.toServerPath(folder));
+    } catch (err) {
+      if (!(this.client as unknown as { usable?: boolean }).usable) throw err;
+      return null;
+    }
+    try {
+      const mb = this.client.mailbox as MailboxObject | false;
+      const uidValidity = mb && mb.uidValidity != null ? String(mb.uidValidity) : "0";
+      if (!mb || mb.exists === 0 || term.length === 0) return { uidValidity, items: [], truncated: false };
+
+      const found = await this.client.search({ or: [{ from: term }, { subject: term }] }, { uid: true });
+      const uids = Array.isArray(found) ? [...found].sort((a, b) => b - a) : [];
+      if (uids.length === 0) return { uidValidity, items: [], truncated: false };
+      const wanted = uids.slice(0, limit);
+
+      const rows: FolderPageItem[] = [];
+      for await (const m of this.client.fetch(
+        wanted, { uid: true, envelope: true, flags: true, internalDate: true }, { uid: true },
+      )) {
+        const from = m.envelope?.from?.[0];
+        const date = m.envelope?.date ?? m.internalDate;
+        rows.push({
+          uid: m.uid,
+          seq: m.seq,
+          subject: m.envelope?.subject ?? "",
+          from: { name: from?.name ?? null, address: from?.address?.trim().toLowerCase() ?? "" },
+          date: date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : null,
+          messageIdHeader: m.envelope?.messageId ?? null,
+          seen: m.flags?.has("\\Seen") ?? false,
+        });
+      }
+      rows.sort((a, b) => b.seq - a.seq);
+      return { uidValidity, items: rows, truncated: uids.length > wanted.length };
     } finally {
       lock.release();
     }

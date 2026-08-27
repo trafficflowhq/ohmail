@@ -1,5 +1,8 @@
-import { and, eq } from "drizzle-orm";
-import { pruneIdempotencyKeys, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials } from "@trafficflow/db";
+import { and, eq, sql } from "drizzle-orm";
+import {
+  pruneIdempotencyKeys, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
+  messages, folderState, junkSweepCandidateWhere,
+} from "@trafficflow/db";
 import { makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
 import {
   makeAiCreditGate, withSetupPool,
@@ -53,6 +56,14 @@ import {
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
 import { runSyncCycle, LeaderFencedError, type SyncDeps } from "./sync.js";
+import { adoptSweepWindow, junkSweepPass, type SweepScanState } from "./junk-sweep.js";
+
+/**
+ * How many Quarantine members one cycle's sweep slice may move — the filing budget's argument
+ * (`RECONCILE_MOVES_PER_CYCLE`) applied to the one-time sweep: a large pile rotates through the
+ * serial queue rather than holding it, and the command stands until the pile is drained.
+ */
+const JUNK_SWEEP_PER_CYCLE = 200;
 import { makeStorageCapResolver } from "./storage-cap.js";
 import { DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
 import { KnownSetCache } from "./known-set.js";
@@ -1779,6 +1790,11 @@ export async function startWorkerWithLock(
         }
         // accountId comes from the MAILBOX ROW, not from config: one process, many accounts.
         // The spend gate is built from that same accountId for exactly that reason.
+        // The narrowed handle the sweep port's closures capture — `adapter` is a `let` above,
+        // and TypeScript does not carry a `let`'s narrowing into a callback that runs later.
+        const attachedAdapter: MailboxAdapter = adapter;
+        /** The sweep's scan state for THIS attachment — see the `junkSweep.run` note below. */
+        let sweepScan: SweepScanState = { after: null, movedSinceTop: false };
         const deps: SyncDeps = {
           repo, adapter, accountId: mb.accountId, mailboxId: mb.mailboxId,
           // ── THE LEADER FENCE OVER THIS MAILBOX'S MAIL-BEARING WRITES ─────────────────────
@@ -1840,6 +1856,93 @@ export async function startWorkerWithLock(
           // and this composition is the metered one.
           storageCap: await storageCapFor(mb.accountId),
           log,
+          // ── THE ONE-TIME SWEEP'S COMMAND PORT (FOLDERS-SPEC.md §16.1) ─────────────────
+          //
+          // Built HERE because this is where the database handle and this mailbox's adapter
+          // meet. `requested` reads the stamp as the server renders it; `run` is `junkSweepPass`
+          // — the operator CLI's exact function — with the cycle's fences threaded in: the
+          // leadership `guard` before every chunk's IMAP move, and a repo whose `transaction`
+          // IS the fenced group, so every completion write rides the same fence the ingest and
+          // reconcile groups do; `clear` retires only the observed token (`sync-kick.ts`'s
+          // compare-the-text discipline), so a press landing mid-sweep is served next cycle.
+          junkSweep: {
+            requested: async () => {
+              const [row] = await db
+                .select({
+                  at: sql<string | null>`${mailboxes.junkSweepRequestedAt}::text`,
+                  off: mailboxes.foldersDisabledAt,
+                })
+                .from(mailboxes)
+                .where(eq(mailboxes.id, mb.mailboxId))
+                .limit(1);
+              if (!row || row.at === null) return null;
+              if (row.off !== null) {
+                // Switched off under "Use folders" since the press (§17): an opted-out mailbox
+                // performs no move on the feature's account. The stale stamp is retired here
+                // — at its observed value — so the offer does not read "queued" for ever.
+                await db.update(mailboxes)
+                  .set({ junkSweepRequestedAt: null })
+                  .where(and(
+                    eq(mailboxes.id, mb.mailboxId),
+                    sql`${mailboxes.junkSweepRequestedAt} = ${row.at}::timestamptz`,
+                  ));
+                log.info("junk_sweep_command_dropped", {
+                  mailboxId: mb.mailboxId, accountId: mb.accountId,
+                  reason: "the mailbox was switched off under Use folders after the press; nothing moves",
+                });
+                return null;
+              }
+              return row.at;
+            },
+            run: async (hooks) => {
+              const fencedRepo = new Proxy(repo, {
+                get: (target, key, receiver) =>
+                  key === "transaction" ? hooks.write : Reflect.get(target, key, receiver),
+              }) as typeof repo & { transaction: typeof hooks.write };
+              /**
+               * ONE BOUNDED WINDOW PER CYCLE on a KEYSET cursor, with the scan's state carried
+               * across cycles in the attachment ({@link adoptSweepWindow} is the whole decision,
+               * pinned by test): the cursor advances until the scan runs off the end, and
+               * `examinedAll` is true precisely when a WHOLE scan — top to end, however many
+               * cycles it took — moved nothing. That is what lets `sync.ts` retire the command
+               * over a pile the server refuses outright, without ever walking more than one
+               * window inside one cycle (review rounds 3 and 4).
+               */
+              const res = await junkSweepPass({
+                db: db as unknown as Tx, repo: fencedRepo, adapter: attachedAdapter,
+                accountId: mb.accountId, mailboxId: mb.mailboxId, execute: true, guard: hooks.guard,
+                limit: JUNK_SWEEP_PER_CYCLE,
+                ...(sweepScan.after !== null ? { afterId: sweepScan.after } : {}),
+              });
+              const adopted = adoptSweepWindow(sweepScan, {
+                movedCount: res.moved.length,
+                candidates: res.candidates.length,
+                lastId: res.candidates.at(-1)?.messageId ?? null,
+                junkFolder: res.junkFolder,
+              }, JUNK_SWEEP_PER_CYCLE);
+              sweepScan = adopted.state;
+              return {
+                moved: res.moved, skipped: res.skipped, junkFolder: res.junkFolder,
+                examinedAll: adopted.examinedAll,
+              };
+            },
+            remaining: async () => {
+              const [row] = await db
+                .select({ n: sql<number>`count(*)::int` })
+                .from(messages)
+                .innerJoin(folderState, eq(folderState.messageId, messages.id))
+                .where(junkSweepCandidateWhere(mb.accountId, mb.mailboxId));
+              return Number(row?.n ?? 0);
+            },
+            clear: async (observed) => {
+              await db.update(mailboxes)
+                .set({ junkSweepRequestedAt: null })
+                .where(and(
+                  eq(mailboxes.id, mb.mailboxId),
+                  sql`${mailboxes.junkSweepRequestedAt} = ${observed}::timestamptz`,
+                ));
+            },
+          },
         };
 
         // ── REGISTERING THE MAILBOX *IS* WHAT ATTACH IS FOR ────────────────────────────────

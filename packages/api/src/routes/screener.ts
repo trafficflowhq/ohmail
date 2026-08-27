@@ -1,7 +1,9 @@
 import { ServiceError, type ScreenBody } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
-import { listJunk, junkBody, rescueJunk } from "../junk-window.js";
+import {
+  listJunk, junkBody, rescueJunk, searchJunk, junkSweepPreview, requestJunkSweep,
+} from "../junk-window.js";
 import type { Route } from "../router.js";
 import { screener, readBody } from "./shared.js";
 
@@ -127,22 +129,73 @@ export const screenerRoutes: Route[] = [
     },
   },
   {
+    // The search-append (§16.2's table): one server-side SEARCH per junk folder, behind the
+    // same read budget as the list, the newest hits merged. The client asks only after its own
+    // filter over the loaded window came up empty, so the first paint never waits on this.
+    method: "GET",
+    pattern: "/screener/junk/search",
+    cost: "connection",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const q = new URL(req.url).searchParams.get("q") ?? "";
+      return jsonResponse(await searchJunk(deps, ctx.accountId, q));
+    },
+  },
+  {
+    // The one-time sweep offer's DRY RUN (§16.1): how much still sits in ohmail/Quarantine
+    // per mailbox, whether it can move, whether a press is queued. Database only — `read`, not
+    // `connection`, because nothing here dials.
+    method: "GET",
+    pattern: "/screener/junk/sweep",
+    cost: "read",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      return jsonResponse(await junkSweepPreview(deps, ctx.accountId));
+    },
+  },
+  {
+    // The PRESS: records the command (`junk_sweep_requested_at`, mail 0076) for the worker to
+    // execute under the lease. `work` — it writes on the user's account — and NO IMAP here: the
+    // sweep is a bulk act over mirrored rows, which is the organization the API never applies
+    // itself (junk-window.ts' header draws the line).
+    method: "POST",
+    pattern: "/screener/junk/sweep",
+    cost: "work",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      return jsonResponse(await requestJunkSweep(deps, ctx));
+    },
+  },
+  {
     // "Not junk" — ONE user-commanded move out of \Junk back to INBOX (the imap-types
     // carve-out's second write), then the doorbell; re-entry is the worker's NORMAL ingest.
     // A message the provider expunged first answers 410 — the rescue fails honestly.
+    // `allow: { sender }` is the SECOND VERB — "Not junk, always allow": the sender's spam rule
+    // is disabled and their allow minted BEFORE the move, in one transaction (junk-window.ts'
+    // header for why both halves, and why rules-first). Same route, never a parallel one.
     method: "POST",
     pattern: "/screener/junk/rescue",
     cost: "connection",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const body = await readBody<{ mailboxId?: unknown; uid?: unknown; uidValidity?: unknown }>(req);
+      const body = await readBody<{ mailboxId?: unknown; uid?: unknown; uidValidity?: unknown; allow?: unknown }>(req);
       const mailboxId = typeof body.mailboxId === "string" ? body.mailboxId : "";
       const uid = typeof body.uid === "number" ? body.uid : NaN;
       const uidValidity = typeof body.uidValidity === "string" ? body.uidValidity : "";
       if (!mailboxId || !Number.isInteger(uid) || uid <= 0 || !uidValidity) {
         throw new ServiceError("validation_failed", 400, "mailboxId, uid and uidValidity are required");
       }
-      return jsonResponse(await rescueJunk(deps, ctx, { mailboxId, uid, uidValidity }));
+      let allow: { sender: string } | undefined;
+      if (body.allow !== undefined) {
+        const sender = (body.allow as { sender?: unknown } | null)?.sender;
+        if (typeof sender !== "string" || sender.trim().length === 0) {
+          throw new ServiceError("validation_failed", 400, "allow.sender must be the row's sender address");
+        }
+        allow = { sender };
+      }
+      return jsonResponse(await rescueJunk(deps, ctx, {
+        mailboxId, uid, uidValidity, ...(allow !== undefined ? { allow } : {}),
+      }));
     },
   },
   {

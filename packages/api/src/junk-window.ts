@@ -1,8 +1,11 @@
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
-import { mailboxes, messageBodies, messages } from "@trafficflow/db";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import {
+  contacts, folderState, junkSweepCandidateWhere, mailboxes, messageBodies, messages, recordChange,
+  rules as rulesTbl, type Tx,
+} from "@trafficflow/db";
 import {
   FOLDER_PAGE_MAX, MessageGoneError, makeRef,
-  type FolderPage, type FolderPageItem,
+  type FolderPage, type FolderPageItem, type FolderSearchPage,
 } from "@trafficflow/core/adapters/imap";
 /* `core/mail`, never the default barrel: the barrel re-exports `ai/workflows/*`, whose workflow runner
  * imports the db cloud barrel — so one barrel import here pulls the hosted schema (billing,
@@ -65,6 +68,55 @@ import type { ApiDeps } from "./deps.js";
  * adoption cannot do is un-husk the body the verdict dropped, so the rescue restores it — the
  * same fetch-verify-rewrite `redacted-restore.ts` performs, byte accounting included. A message
  * the provider expunged mid-flight fails HONESTLY: `MessageGoneError` → 410, never a phantom.
+ *
+ * ── THE SECOND VERB: "NOT JUNK, ALWAYS ALLOW" — the same rescue plus ONE rule transaction ──
+ *
+ * The plain rescue deliberately touches no rule: a message can be in Junk for reasons that have
+ * nothing to do with the sender (the provider's filter, a one-off verdict), and moving it back is
+ * not a statement about their future mail. The second verb IS that statement — §16.2: *"the
+ * row's second verb, '…and always allow this sender', mints the allow first — a Screener
+ * yes-decision, the standard shape — so the mail and every later mail skips the gate."* It runs
+ * `allowSender` BEFORE the move, in one transaction, and it has to do two things, not one:
+ *
+ *  · DISABLE the sender's own spam-promoting rule(s) — `kind:'sender'`, this address,
+ *    `destination:'ohmail/Quarantine'`, enabled. Necessary, not decorative: `compareRules` ranks
+ *    DENY above ALLOW at equal priority (core/rules.ts — "the user's explicit no is never lost to
+ *    a tie"), so a fresh allow rule beside a standing spam rule would LOSE, and the rescued
+ *    message would re-file straight back to Junk on arrival. Sender-scoped on purpose: a
+ *    domain-wide spam rule covers other senders too, and one press about one address must not
+ *    widen to them (a domain rule still outranks the sender allow, exactly as it does for a
+ *    Screener yes-decision today — the standard shape, standard limits).
+ *  · MINT the allow — `kind:'sender'`, `destination:'INBOX'`, `provenance:'promoted'`, plus the
+ *    `contacts` row a yes-decision writes — unless an enabled sender allow already stands (any
+ *    allow-side destination: their admission is already given, and a second row at the same rank
+ *    would make the pile a UUID coin toss). Both halves emit their `rule` change rows, so every
+ *    mirror's rules surface converges.
+ *
+ * Rules first, move second: the allow must exist before the message's new INBOX UID is ingested,
+ * or the arrival is routed under the old rules. A move that then fails 410 leaves the allow
+ * standing — the press was about the SENDER, and the sentence the client shows says both halves.
+ *
+ * ── THE SEARCH-APPEND (§16.2's table: "async search-append with a timeout") ──────────────────
+ *
+ * `searchJunk` is the list read's exact shape — the same parallel, deadline-raced, force-closed
+ * per-mailbox dial — pointed at `searchFolderPage` instead of `listFolderPage`: one server-side
+ * `UID SEARCH` per mailbox, the newest `FOLDER_PAGE_MAX` hits fetched, merged and origin-
+ * attributed like a page. A mailbox that does not answer within the bound is stated
+ * `unreachable` ("Junk could not be searched"), never silently empty; the client asks it only
+ * AFTER its client-side filter over the loaded window found nothing, so the window's first paint
+ * never waits on it.
+ *
+ * ── THE ONE-TIME SWEEP OFFER (§16.1) — a COMMAND recorded here, EXECUTED by the worker ──
+ *
+ * `junkSweepPreview` is the dry run the offer shows: per mailbox, how much mail still sits
+ * physically in `ohmail/Quarantine` (`native_locator`), whether a native \Junk is known to move
+ * it into, and whether a press is already queued. Database only, no dial. `requestJunkSweep`
+ * stamps `mailboxes.junk_sweep_requested_at` (mail 0076) on the mailboxes that have both
+ * candidates and a junk folder; the worker consumes the stamp at the top of the mailbox's serial
+ * cycle and runs `junkSweepPass` — the CLI's exact function — under the lease. The sweep is the
+ * one junk write this module does NOT perform itself: it is a bulk act over MIRRORED rows, which
+ * is the organization the API never applies (the architecture line the header above draws).
+ * "Never offered twice" is the candidate count itself — a swept pile has none.
  */
 
 /** The junk body read's transfer ceiling — a bounded window never pulls a 90 MB spam payload. */
@@ -350,29 +402,146 @@ export async function listJunk(
   // ── Origin attribution: the verdict's husk keeps the message-id, and the filing completion
   // parks `native_locator` at the junk path — so a live junk row whose mid matches such a row
   // was filed by US on the user's order. Bounded: at most one IN() over this page's mids.
-  const mids = [...new Set(items.map((i) => i.messageIdHeader).filter((m): m is string => m !== null))];
-  if (mids.length > 0) {
-    const junkPathOf = new Map(boxes.map((b) => [b.id, b.junkFolder]));
-    const rows = await deps.db
-      .select({ messageIdHeader: messages.messageIdHeader, mailboxId: messages.mailboxId, nativeLocator: messages.nativeLocator })
-      .from(messages)
-      .where(and(eq(messages.accountId, accountId), inArray(messages.messageIdHeader, mids)));
-    const filedByUs = new Set(
-      rows
-        .filter((r) => {
-          const loc = r.nativeLocator as { folder?: string } | null;
-          return loc?.folder !== undefined && loc.folder === junkPathOf.get(r.mailboxId);
-        })
-        .map((r) => `${r.mailboxId} ${r.messageIdHeader}`),
-    );
-    for (const it of items) {
-      if (it.messageIdHeader !== null && filedByUs.has(`${it.mailboxId} ${it.messageIdHeader}`)) {
-        it.origin = "verdict";
-      }
-    }
-  }
+  await attributeOrigin(deps, accountId, items, boxes);
 
   return { mailboxes: states, items, nextCursor: mintCursor(nextBefore) };
+}
+
+/** Longest search term the window accepts — a bound on what is handed to the provider's SEARCH. */
+export const JUNK_SEARCH_MAX_CHARS = 120;
+
+export interface JunkSearchPage {
+  mailboxes: JunkMailboxState[];
+  items: JunkItem[];
+  /** Some mailbox matched more than its page carried — the rows are the newest hits only. */
+  truncated: boolean;
+}
+
+/**
+ * Origin attribution shared by the list and the search: a live junk row whose message-id matches
+ * a mirror row parked at this mailbox's junk path was filed by US on the user's order. Bounded:
+ * at most one IN() over the rows' mids. Mutates `origin` in place.
+ */
+/**
+ * A Message-ID as a comparable key: trimmed, angle brackets off. The live envelope (imapflow)
+ * carries `<id@host>`; the mirror stores the id the parser kept, which is bare — so the two
+ * sides of the attribution join never met for a sweep-filed row until this normalisation (the
+ * first live proof of the sweep showed its own rows marked "filed by your mail server").
+ */
+const midKey = (raw: string): string => raw.trim().replace(/^<|>$/g, "");
+
+async function attributeOrigin(
+  deps: ApiDeps, accountId: string, items: JunkItem[],
+  boxes: Array<{ id: string; junkFolder: string | null }>,
+): Promise<void> {
+  const keys = [...new Set(items.map((i) => i.messageIdHeader).filter((m): m is string => m !== null).map(midKey))];
+  if (keys.length === 0) return;
+  const junkPathOf = new Map(boxes.map((b) => [b.id, b.junkFolder]));
+  // Both spellings are asked for, so a mirror row stored either way is found; the comparison
+  // below is on the normalised key regardless.
+  const wanted = [...new Set(keys.flatMap((k) => [k, `<${k}>`]))];
+  const rows = await deps.db
+    .select({ messageIdHeader: messages.messageIdHeader, mailboxId: messages.mailboxId, nativeLocator: messages.nativeLocator })
+    .from(messages)
+    .where(and(eq(messages.accountId, accountId), inArray(messages.messageIdHeader, wanted)));
+  const filedByUs = new Set(
+    rows
+      .filter((r) => {
+        const loc = r.nativeLocator as { folder?: string } | null;
+        return r.messageIdHeader !== null && loc?.folder !== undefined && loc.folder === junkPathOf.get(r.mailboxId);
+      })
+      .map((r) => `${r.mailboxId} ${midKey(r.messageIdHeader!)}`),
+  );
+  for (const it of items) {
+    if (it.messageIdHeader !== null && filedByUs.has(`${it.mailboxId} ${midKey(it.messageIdHeader)}`)) {
+      it.origin = "verdict";
+    }
+  }
+}
+
+/**
+ * ONE deadline-raced, force-closed dial of one mailbox, running `work` on the opened adapter —
+ * the list read's connection discipline (see the comment inside {@link listJunk}) lifted out so
+ * the search shares it verbatim rather than restating it. ONE budget for dial and read together;
+ * a read that outlives the deadline has its socket destroyed, never a graceful LOGOUT queued
+ * behind the hang.
+ */
+async function dialWithinBudget<T>(
+  deps: ApiDeps, mailboxId: string, budgetMs: number,
+  work: (adapter: Awaited<ReturnType<typeof openMailboxImap>>["adapter"]) => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  const remaining = (): number => Math.max(1, budgetMs - (Date.now() - startedAt));
+  const openedP = openMailboxImap(deps, mailboxId);
+  let opened: Awaited<typeof openedP>;
+  try {
+    opened = await withDeadline(openedP, remaining());
+  } catch (err) {
+    void openedP.then((o) => o.forceClose()).catch(() => { /* never came up */ });
+    throw err;
+  }
+  try {
+    const got = await withDeadline(work(opened.adapter), remaining());
+    await opened.close().catch(() => { /* socket gone; the slot release has its own guard */ });
+    return got;
+  } catch (err) {
+    await opened.forceClose().catch(() => { /* already down */ });
+    throw err;
+  }
+}
+
+/**
+ * THE SEARCH-APPEND: every mailbox's junk folder searched IN PARALLEL behind the read budget,
+ * the newest hits merged into ONE bounded, origin-attributed answer. Reads only; writes nothing.
+ * A mailbox that fails or times out is stated `unreachable` — "Junk could not be searched" — so
+ * an empty answer beside it is never read as "nothing matched".
+ */
+export async function searchJunk(
+  deps: ApiDeps, accountId: string, query: string,
+): Promise<JunkSearchPage> {
+  await requireFolders(deps, accountId);
+  const term = query.trim();
+  if (term.length === 0 || term.length > JUNK_SEARCH_MAX_CHARS) {
+    throw new ServiceError("validation_failed", 400, `q must be 1–${JUNK_SEARCH_MAX_CHARS} characters`);
+  }
+  const boxes = await junkMailboxesOf(deps, accountId);
+  const states: JunkMailboxState[] = [];
+  let truncated = false;
+
+  const reads = boxes.map(async (box): Promise<{ boxId: string; page: FolderSearchPage } | null> => {
+    if (box.junkFolder === null) {
+      states.push({ id: box.id, address: box.address, window: "no_junk_folder" });
+      return null;
+    }
+    try {
+      const page = await dialWithinBudget(deps, box.id, JUNK_READ_TIMEOUT_MS, (adapter) =>
+        adapter.searchFolderPage(box.junkFolder!, term, { limit: FOLDER_PAGE_MAX }));
+      if (page === null) {
+        states.push({ id: box.id, address: box.address, window: "no_junk_folder" });
+        return null;
+      }
+      states.push({ id: box.id, address: box.address, window: "ok" });
+      if (page.truncated) truncated = true;
+      return { boxId: box.id, page };
+    } catch (err) {
+      deps.logger?.warn?.("junk_window_search_failed", { mailboxId: box.id, err: String(err) });
+      states.push({ id: box.id, address: box.address, window: "unreachable" });
+      return null;
+    }
+  });
+  const pages = (await Promise.all(reads)).filter((p): p is { boxId: string; page: FolderSearchPage } => p !== null);
+
+  // Newest-date-first across mailboxes, capped at the page bound — the hits are a window too.
+  const dateOf = (r: FolderPageItem): number => (r.date !== null ? Date.parse(r.date) || 0 : 0);
+  const all = pages.flatMap(({ boxId, page }) => page.items.map((row) => ({ boxId, uidValidity: page.uidValidity, row })));
+  all.sort((a, b) => dateOf(b.row) - dateOf(a.row));
+  if (all.length > FOLDER_PAGE_MAX) truncated = true;
+  const items: JunkItem[] = all.slice(0, FOLDER_PAGE_MAX).map(({ boxId, uidValidity, row }) => {
+    const { seq: _seq, ...header } = row;
+    return { ...header, mailboxId: boxId, uidValidity, origin: "provider" as const };
+  });
+  await attributeOrigin(deps, accountId, items, boxes);
+  return { mailboxes: states, items, truncated };
 }
 
 /**
@@ -413,15 +582,104 @@ export async function junkBody(
   }
 }
 
+/** The spam-promoting destination a verdict's rule carries — the one the second verb disables. */
+const SPAM_RULE_DESTINATION = "ohmail/Quarantine";
+/** Where a minted allow files — the Screener yes-decision's default (`YES_FOLDER`). */
+const ALLOW_RULE_DESTINATION = "INBOX";
+/** Every allow-side destination — an enabled sender rule at any of these already admits them. */
+const ALLOW_SIDE = ["INBOX", "ohmail/Reads", "ohmail/Receipts"] as const;
+
+export interface AllowSenderOutcome {
+  /** Rule ids this press DISABLED — the sender's own spam-promoting rules. */
+  disabledRuleIds: string[];
+  /** The allow rule minted, or null when an enabled sender allow already stood. */
+  createdRuleId: string | null;
+}
+
+/**
+ * "ALWAYS ALLOW THIS SENDER" — the rule half of the second verb, ONE transaction. The module
+ * header argues both halves; this is the mechanism. Everything the standard yes-decision writes
+ * for a sender's admission — the promoted allow rule, the `contacts` row, the `rule` change rows
+ * — and the one thing it cannot assume: that the sender's spam rule is switched off first, since
+ * deny outranks allow at equal priority and the new rule would otherwise never win.
+ *
+ * Exported for the test; not a route of its own — it exists only beside the rescue.
+ */
+export async function allowSender(
+  deps: ApiDeps, ctx: ServiceContext, address: string,
+): Promise<AllowSenderOutcome> {
+  const accountId = ctx.accountId;
+  const addr = address.trim().toLowerCase();
+  if (addr.length === 0 || !addr.includes("@")) {
+    throw new ServiceError("unprocessable", 422, "this message has no sender address to allow");
+  }
+  const nowAt = ctx.now();
+  // The services' `asTx` cast: the host's `Db` is the same drizzle handle under a narrower type.
+  return (deps.db as unknown as Tx).transaction(async (tx) => {
+    // 1. The spam-promoting rules for THIS address, switched off. `.returning()` so the change
+    //    rows describe exactly the rows that flipped — an already-disabled rule is not re-announced.
+    const disabled = await tx.update(rulesTbl)
+      .set({ enabled: false, updatedAt: nowAt })
+      .where(and(
+        eq(rulesTbl.accountId, accountId),
+        eq(rulesTbl.kind, "sender"),
+        eq(rulesTbl.match, addr),
+        eq(rulesTbl.destination, SPAM_RULE_DESTINATION),
+        eq(rulesTbl.enabled, true),
+      ))
+      .returning({ id: rulesTbl.id });
+    for (const r of disabled) {
+      await recordChange(tx, { accountId, entityType: "rule", entityId: r.id, op: "update", meta: null });
+    }
+
+    // 2. The admission — the yes-decision's `contacts` row, idempotent.
+    await tx.insert(contacts).values({ accountId, address: addr })
+      .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
+
+    // 3. The allow rule, unless one already stands. Any allow-side destination counts: their
+    //    admission is given, and a second sender allow at the same rank would leave the pile to
+    //    a UUID tie-break (`compareRules`' last clause) rather than to a decision.
+    const [standing] = await tx.select({ id: rulesTbl.id }).from(rulesTbl)
+      .where(and(
+        eq(rulesTbl.accountId, accountId),
+        eq(rulesTbl.kind, "sender"),
+        eq(rulesTbl.match, addr),
+        eq(rulesTbl.enabled, true),
+        inArray(rulesTbl.destination, [...ALLOW_SIDE]),
+        isNull(rulesTbl.subjectContains),
+        isNull(rulesTbl.bodyContains),
+      ))
+      .limit(1);
+    if (standing !== undefined) {
+      return { disabledRuleIds: disabled.map((r) => r.id), createdRuleId: null };
+    }
+    const [rule] = await tx.insert(rulesTbl).values({
+      accountId,
+      kind: "sender",
+      match: addr,
+      destination: ALLOW_RULE_DESTINATION,
+      provenance: "promoted",
+      enabled: true,
+    }).returning({ id: rulesTbl.id });
+    await recordChange(tx, { accountId, entityType: "rule", entityId: rule!.id, op: "create", meta: null });
+    return { disabledRuleIds: disabled.map((r) => r.id), createdRuleId: rule!.id };
+  });
+}
+
 /**
  * "NOT JUNK" — the rescue (§16.2/G3): ONE user-commanded, EPOCH-GUARDED move OUT of Junk back
  * to INBOX, the doorbell, and — for a message OUR verdict husked — the body's restoration. See
  * the module header for how each half re-enters the normal flow.
+ *
+ * With `allow` — the second verb — {@link allowSender} runs FIRST, for the sender the caller
+ * names (the row's own `from`, which the client has in hand and the server cannot learn without
+ * a second fetch): the rules must stand before the message's re-arrival is routed. A 410 after
+ * the allow leaves it standing, and the answer to the client is the same 410 it knows.
  */
 export async function rescueJunk(
   deps: ApiDeps, ctx: ServiceContext,
-  args: { mailboxId: string; uid: number; uidValidity: string },
-): Promise<{ status: "rescued" }> {
+  args: { mailboxId: string; uid: number; uidValidity: string; allow?: { sender: string } },
+): Promise<{ status: "rescued"; allowed?: AllowSenderOutcome }> {
   const accountId = ctx.accountId;
   await requireFolders(deps, accountId);
   const [box] = await junkMailboxesOf(deps, accountId, args.mailboxId);
@@ -429,6 +687,16 @@ export async function rescueJunk(
     throw new ServiceError("no_junk_folder", 404, "this mailbox has no Junk folder");
   }
   const ref = makeRef(args.uidValidity, args.uid);
+  const allowed = args.allow !== undefined ? await allowSender(deps, ctx, args.allow.sender) : undefined;
+
+  /**
+   * EVERYTHING AFTER THE ALLOW SPEAKS THE PARTIAL-OUTCOME LANGUAGE. The move's own catch below
+   * translates its two failures; this boundary covers the steps BEFORE it — the husk lookup and
+   * the dial itself (a busy mailbox, an unreadable credential, a refused LOGIN) — which used to
+   * rethrow raw and read as "nothing happened" while the sender's rules had already changed
+   * (review round 2 on the client). An inner ServiceError passes through untouched.
+   */
+  try {
 
   /**
    * THE HUSK, if this is our own verdict coming back: the filing completion parked the row's
@@ -483,8 +751,24 @@ export async function rescueJunk(
     if (err instanceof MessageGoneError) {
       // The provider (or another client) took it first — or the folder was renumbered. The
       // rescue fails honestly: never a phantom arrival, never a claim of a move that did not
-      // happen, and never a different message moved in this one's name.
-      throw new ServiceError("junk_message_gone", 410, "this message is no longer in the Junk folder — it may have been deleted there");
+      // happen, and never a different message moved in this one's name. With the second verb
+      // the allow was written BEFORE this, and stands — carried in `details` so the client can
+      // say both halves.
+      throw new ServiceError(
+        "junk_message_gone", 410, "this message is no longer in the Junk folder — it may have been deleted there",
+        allowed !== undefined ? { allowed } : undefined,
+      );
+    }
+    if (allowed !== undefined) {
+      // A move that failed for any OTHER reason (a timeout, a provider refusal) after the allow
+      // committed is a PARTIAL outcome, and the client must be able to report it as one: the
+      // message is still in Junk, but the sender's rules changed. A bare rethrow would read as
+      // "nothing happened" (review round on the client).
+      throw new ServiceError(
+        "junk_rescue_move_failed", 502,
+        "the move could not be made just now — the sender is allowed from now on regardless",
+        { allowed },
+      );
     }
     throw err;
   } finally {
@@ -530,6 +814,25 @@ export async function rescueJunk(
     }
   }
 
+  } catch (err) {
+    // Only the rescue's OWN answers pass through: `junk_message_gone` (which already carries the
+    // allow) and an inner `junk_rescue_move_failed`. Every other failure — a typed dial refusal
+    // (`mailbox_busy`, unreadable credentials) as much as a raw transport throw — happened AFTER
+    // the allow committed, and must say so (review round 5: the blanket ServiceError passthrough
+    // hid the partial outcome behind the dial's own vocabulary).
+    const rescueOwn = err instanceof ServiceError
+      && (err.code === "junk_message_gone" || err.code === "junk_rescue_move_failed");
+    if (rescueOwn) throw err;
+    if (allowed !== undefined) {
+      throw new ServiceError(
+        "junk_rescue_move_failed", 502,
+        "the move could not be made just now — the sender is allowed from now on regardless",
+        { allowed, ...(err instanceof ServiceError ? { cause: err.code } : {}) },
+      );
+    }
+    throw err;
+  }
+
   // Ring the doorbell (`sync_requested_at`, mail 0049): the worker's ~3 s kick pass ingests the
   // rescued message's new INBOX UID without waiting for the poll. Best-effort — the poll is the
   // floor beneath it either way.
@@ -540,5 +843,93 @@ export async function rescueJunk(
   } catch (err) {
     deps.logger?.warn?.("junk_rescue_kick_failed", { mailboxId: args.mailboxId, err: String(err) });
   }
-  return { status: "rescued" };
+  return allowed !== undefined ? { status: "rescued", allowed } : { status: "rescued" };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE ONE-TIME SWEEP OFFER (FOLDERS-SPEC.md §16.1) — preview and press. Database only.
+   The worker executes; see the module header and `apps/worker/src/junk-sweep.ts`.
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+export interface JunkSweepMailbox {
+  id: string;
+  address: string;
+  /** Messages still physically in `ohmail/Quarantine` for this mailbox — what a press would move. */
+  candidates: number;
+  /** Whether a native \Junk is known for this mailbox — without one, nothing can move. */
+  hasJunkFolder: boolean;
+  /** A press is recorded and the worker has not consumed it yet. */
+  pending: boolean;
+}
+
+export interface JunkSweepPreview {
+  mailboxes: JunkSweepMailbox[];
+  /** Candidates across the mailboxes that CAN move (have a junk folder) — the offer's number. */
+  movable: number;
+  /** Any mailbox has a press outstanding. */
+  pending: boolean;
+}
+
+/**
+ * The dry run the offer shows — per connected, PARTICIPATING mailbox, the pile's size and whether
+ * it can move. One count per mailbox over the sweep's own predicate (`junkSweepCandidateWhere`,
+ * shared with the worker's pass so the number offered is the number moved), one mailbox read; no
+ * dial, no write. A mailbox switched off under "Use folders" (§17, `folders_disabled_at`) is
+ * absent from the answer and can therefore never be stamped: an opted-out mailbox performs no
+ * move and no IMAP write on the feature's account.
+ */
+export async function junkSweepPreview(deps: ApiDeps, accountId: string): Promise<JunkSweepPreview> {
+  await requireFolders(deps, accountId);
+  const boxes = await deps.db
+    .select({
+      id: mailboxes.id, address: mailboxes.address, junkFolder: mailboxes.junkFolder,
+      requestedAt: mailboxes.junkSweepRequestedAt,
+    })
+    .from(mailboxes)
+    .where(and(
+      eq(mailboxes.accountId, accountId),
+      ne(mailboxes.status, "disabled"),
+      isNull(mailboxes.foldersDisabledAt),
+    ));
+  if (boxes.length === 0) return { mailboxes: [], movable: 0, pending: false };
+  const countOf = new Map<string, number>();
+  for (const b of boxes) {
+    const [row] = await deps.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(junkSweepCandidateWhere(accountId, b.id));
+    countOf.set(b.id, Number(row?.n ?? 0));
+  }
+  const out: JunkSweepMailbox[] = boxes.map((b) => ({
+    id: b.id, address: b.address,
+    candidates: countOf.get(b.id) ?? 0,
+    hasJunkFolder: b.junkFolder !== null,
+    pending: b.requestedAt !== null,
+  }));
+  return {
+    mailboxes: out,
+    movable: out.filter((m) => m.hasJunkFolder).reduce((n, m) => n + m.candidates, 0),
+    pending: out.some((m) => m.pending),
+  };
+}
+
+/**
+ * THE PRESS: record the command on every mailbox that has both something to move and somewhere
+ * to move it. Idempotent in effect — a second press re-stamps, and the worker's clear-what-it-
+ * observed discipline means the later stamp is served by a later cycle, never lost and never a
+ * second sweep of an already-empty pile (a sweep of zero candidates is a no-op by construction).
+ * Answers the preview it leaves behind, so the client renders "queued" from the same shape.
+ */
+export async function requestJunkSweep(deps: ApiDeps, ctx: ServiceContext): Promise<JunkSweepPreview> {
+  const accountId = ctx.accountId;
+  const preview = await junkSweepPreview(deps, accountId);
+  const targets = preview.mailboxes.filter((m) => m.hasJunkFolder && m.candidates > 0).map((m) => m.id);
+  if (targets.length === 0) {
+    throw new ServiceError("nothing_to_sweep", 409, "there is nothing left in ohmail/Quarantine to move");
+  }
+  await deps.db.update(mailboxes)
+    .set({ junkSweepRequestedAt: ctx.now(), syncRequestedAt: ctx.now() })
+    .where(and(eq(mailboxes.accountId, accountId), inArray(mailboxes.id, targets)));
+  return junkSweepPreview(deps, accountId);
 }

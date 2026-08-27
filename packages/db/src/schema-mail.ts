@@ -167,6 +167,23 @@ export const mailboxes = pgTable("mailboxes", {
   // (`MAILBOX_SIGNATURE_MAX_CHARS`, a 400), not by a CHECK: free text closes no set, and a
   // byte bound in the database would answer 23514 to a person typing.
   signature: text("signature"),
+  // ── Mail 0076 — THE ONE-TIME QUARANTINE→\Junk SWEEP, RECORDED AS A COMMAND (FOLDERS-SPEC.md
+  // §16.1: "an optional ONE-TIME sweep offers to move the old ohmail/Quarantine pile into
+  // native Junk … One press, one direction, then the offer is gone") ──
+  //
+  // A DOORBELL WITH A NAME, on `sync_requested_at`'s exact shape: the API stamps it when the
+  // account's user presses the offer (`POST /screener/junk/sweep`), the worker consumes it at
+  // the top of the mailbox's serial cycle — runs `junkSweepPass` under the organizer lease, then
+  // clears ONLY the value it observed — and NULL is "no sweep owed", the state of every row. The
+  // §16.1 carve-out is why it is a stamp the WORKER serves rather than a move the API performs:
+  // the sweep is user-commanded, but it is the one junk write that is a bulk organization act
+  // over mirrored rows (`folder_state`, husks, locators), and those the API never applies
+  // itself — it records the command and the always-on organizer executes it, like every move.
+  // Nothing reads it to route mail; the offer's visibility is the CANDIDATE COUNT (mail still
+  // physically in `ohmail/Quarantine`), so "never offered twice" needs no second column — a
+  // swept pile has no candidates, and a pile that grows again (a flag-off verdict) is offered
+  // again honestly.
+  junkSweepRequestedAt: timestamp("junk_sweep_requested_at", { withTimezone: true }),
   // ── Mail 0029 — WHY A `connected` MAILBOX IS NOT BEING SYNCED ──
   //
   // The other half of that outage. The adoption bug (a `FETCH 1:*` against an empty

@@ -533,6 +533,13 @@
       "when": 1791327920531,
       "tag": "0075_mailbox_signature",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1791327920532,
+      "tag": "0076_junk_sweep_request",
+      "breakpoints": true
     }
   ]
 }

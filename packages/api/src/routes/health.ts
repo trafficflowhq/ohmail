@@ -544,6 +544,16 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // half, no CHECK, no INDEX — read through the `listUserFolders` mailbox join. Deploy order:
   // migration → API.
   ["mailboxes", "folders_disabled_at"],
+  // mail 0076_junk_sweep_request — the one-time Quarantine→\Junk sweep recorded as a command
+  // (`junk_sweep_requested_at`: the API stamps it on the user's press, the worker consumes it
+  // inside the mailbox's serial cycle; NULL = no sweep owed, the default). One additive nullable
+  // column on `mailboxes`, and it earns a marker for the whole-row-select reason
+  // `mailboxes.error_code` established: `MailboxService.list` selects whole rows, so an API
+  // deployed ahead of the migration 42703s the mailbox panel and the connect flow. The worker
+  // half is the safe kind — a worker ahead of the migration never reaches the column (its read
+  // lives in the sweep-command pass this same change introduces). Deploy order: migration → API
+  // → worker.
+  ["mailboxes", "junk_sweep_requested_at"],
   // mail 0074_folder_ops — the user-commanded folder verbs' command table (create / rename /
   // delete; FOLDERS-SPEC.md stage 2). A whole NEW table, probed by its primary key: the API's
   // /folders verbs INSERT into it and the /sync folder materializers LEFT JOIN it for the

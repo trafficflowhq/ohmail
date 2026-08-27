@@ -9,9 +9,14 @@
  * it there, and the sweep executes those same verdicts against the destination they would choose
  * today.
  *
- * It is NOT wired into the worker cycle and must never be: the product rule allows
- * user-commanded writes into `\Junk`, and a recurring pass would be the organizer acting on its
- * own initiative — the exact boundary the amendment keeps.
+ * It is NOT SCHEDULED and must never be: the product rule allows user-commanded writes into
+ * `\Junk`, and a RECURRING pass would be the organizer acting on its own initiative — the exact
+ * boundary the amendment keeps. Two callers, both explicit: the operator runner above, and the
+ * worker cycle's sweep-command consumption (`sync.ts`), which runs this pass ONCE per recorded
+ * press — `mailboxes.junk_sweep_requested_at` (mail 0076), stamped by `POST /screener/junk/sweep`
+ * on the account owner's own click. That is §16.1's carve-out to the letter: "an explicit human
+ * press, recorded, executed by the worker under the organizer lease". A cycle with no stamp
+ * runs nothing here.
  *
  * Same completion, same claims discipline as the live path: `completeFiling` runs only for
  * members the server's move actually named, so a member that vanished mid-sweep (`gone`) is left
@@ -46,8 +51,15 @@ export async function junkSweepPass(opts: {
   mailboxId: string;
   execute: boolean;
   limit?: number;
+  /**
+   * Called before EVERY chunk's IMAP mutation. The worker cycle hands in its fresh leadership
+   * read (`fenceImapMutation`) so a stale leader cannot move mail another worker has taken over;
+   * the operator runner passes none. A throw here aborts the sweep — the members not yet moved
+   * are left exactly where they were, and the stamp that requested the sweep is not consumed.
+   */
+  guard?: () => Promise<void>;
 }): Promise<JunkSweepResult> {
-  const { db, repo, adapter, accountId, mailboxId, execute, limit } = opts;
+  const { db, repo, adapter, accountId, mailboxId, execute, limit, guard } = opts;
 
   // Physically in the pile, still alive in the mirror. `native_locator` is the primary
   // instance's mirror, so this is exactly the set a per-message move can act on.
@@ -90,6 +102,9 @@ export async function junkSweepPass(opts: {
 
   for (let i = 0; i < pending.length; i += FILING_BATCH_MAX) {
     const chunk = pending.slice(i, i + FILING_BATCH_MAX);
+    // The leadership check before this chunk's IMAP writes — a refusal propagates, never caught
+    // into `skipped`: it is proof of lost leadership, not evidence about a message.
+    if (guard) await guard();
     // The batched fast path when the adapter can prove it, per-message otherwise — the
     // reconciler's exact fallback shape, minus its deferral machinery: a sweep is one
     // invocation, so a refusal is reported and left rather than scheduled.

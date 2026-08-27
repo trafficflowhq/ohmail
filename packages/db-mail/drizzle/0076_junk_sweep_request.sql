@@ -1,0 +1,52 @@
+-- THE ONE-TIME QUARANTINE→\Junk SWEEP, RECORDED AS A COMMAND (FOLDERS-SPEC.md §16.1:
+-- "an optional ONE-TIME sweep offers to move the old ohmail/Quarantine pile into native Junk when
+-- the feature turns on. One press, one direction, then the offer is gone").
+--
+--   mailboxes.junk_sweep_requested_at  timestamptz NULL
+--
+-- A doorbell with a name, on `sync_requested_at`'s (mail 0049) exact shape. The API stamps it
+-- when the account's own user presses the offer (`POST /screener/junk/sweep`); the worker
+-- consumes it at the top of the mailbox's serial cycle — runs the same `junkSweepPass` the
+-- operator CLI runs, under the organizer lease and the leader fence — and clears ONLY the value
+-- it observed, so a press that lands while a sweep is running is served by the next cycle rather
+-- than lost. NULL means "no sweep owed", which is every row today.
+--
+-- ══ WHY A STAMP THE WORKER SERVES, NOT A MOVE THE API PERFORMS ═══════════════════════════════
+--
+-- The §16.1 carve-out names three user acts that touch `\Junk` — the verdict, the rescue, and
+-- this sweep — "each is an explicit human press, recorded, executed by the worker under the
+-- organizer lease". The rescue is one UID in a folder no pass enumerates and the API performs it
+-- directly (junk-window.ts argues that deviation); the sweep is different in kind: a BULK act
+-- over MIRRORED rows — every member's `folder_state`, locator and husk are rewritten as it lands
+-- — which is exactly the organization the API never applies itself. So the API records the
+-- command and the always-on organizer executes it, like every other move.
+--
+-- ══ "NEVER OFFERED TWICE" NEEDS NO SECOND COLUMN ═════════════════════════════════════════════
+--
+-- The offer's visibility is the CANDIDATE COUNT — messages still physically in
+-- `ohmail/Quarantine` (`messages.native_locator->>'folder'`). A swept pile has none, so the offer
+-- is gone; a pile that grows again (a verdict filed while the flag was off) is offered again,
+-- honestly, because there is again something to move. A `done_at` would only restate what the
+-- count already says and could disagree with it.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO CHECK, NO INDEX ════════════════════════════════════════════════
+--
+-- ADD COLUMN IF NOT EXISTS, nullable, no default, no backfill (0054's refusal: no mailbox owes
+-- a sweep until somebody presses). No CHECK — a timestamp closes no set. No index: the worker
+-- reads it for the ONE mailbox whose cycle is running (by primary key), never as a scan.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ══════════════════════════════════════════════════════════
+--
+-- Migration → API → worker. `MailboxService.list` selects whole `mailboxes` rows through the
+-- drizzle schema, so an API deployed ahead of this answers 42703 on the mailbox panel and the
+-- connect flow; the health marker ["mailboxes","junk_sweep_requested_at"] turns that into a 503
+-- schema_incomplete naming this file. A WORKER ahead of the migration never reads the column
+-- (the read is inside the sweep-command pass, which the new worker introduces), and a worker
+-- behind the API simply leaves a stamped mailbox stamped until it is upgraded — the offer shows
+-- "queued" and nothing is lost. A CLIENT older than the API never sees the offer.
+--
+-- ROLLBACK is DROP COLUMN: a pending press is forgotten (the pile stays where it is, offered
+-- again on the next read), nothing already swept changes. The API has to go back first, or the
+-- mailbox surface 42703s.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "junk_sweep_requested_at" timestamp with time zone;
