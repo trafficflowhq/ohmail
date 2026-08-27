@@ -41,6 +41,7 @@ import {
   messageTags,
   threadNotes,
   threads,
+  ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
   trackerEvents,
   unsubscribeRecords,
   users,
@@ -214,6 +215,13 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     const mailboxRows = await tx.select({ id: mailboxes.id })
       .from(mailboxes).where(eq(mailboxes.accountId, accountId));
     const mailboxIds = mailboxRows.map((m) => m.id);
+
+    // ── SERIALIZE AGAINST THE THREAD BACKFILL, before any lock this transaction takes. ──
+    // See {@link ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS}: erasure and the backfill lock `threads`
+    // and `messages` in opposite orders for reasons neither can give up, so instead of racing
+    // to acquire them, whichever gets here first finishes its whole sweep before the other
+    // proceeds. Releases at COMMIT, same as every advisory lock this repo takes for this.
+    await tx.execute(sql`select pg_advisory_xact_lock(${ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS}, hashtext(${accountId}))`);
 
     // ── 0. THE THREAD-FIRST FENCE. Every live writer of a thread takes thread rows before
     // message or draft rows (ingest's mergeThreadMessage, both merge paths, the drafts

@@ -180,6 +180,11 @@ export async function runThreadBackfill(deps: ThreadBackfillDeps): Promise<Threa
     // would let a zero budget make no progress at all and re-read the same rows for ever.
     if (page > 0 && deadline !== null && now() >= deadline) { stoppedBy = "deadline"; break; }
     const batch = await repo.transaction(async (tx) => {
+      // Serialize against account erasure BEFORE the backlog lock — see
+      // `ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS`: the two lock `threads`/`messages` in opposite
+      // orders for reasons neither can give up, so instead of racing to acquire them,
+      // whichever gets here first finishes its whole sweep before the other proceeds.
+      await tx.lockAccountThreadStructure(accountId);
       const rows = await tx.listThreadBacklog(accountId, THREAD_BACKFILL_BATCH);
       let created = 0;
       // BUFFERED, and the buffer is the deadlock fix rather than a micro-optimisation.

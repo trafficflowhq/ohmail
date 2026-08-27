@@ -983,6 +983,28 @@ export const changeLog = pgTable("change_log", {
 // Threads & bodies (bodies in a separate 1:1 table)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The `classid` half of `pg_advisory_xact_lock(int4, int4)`, the SECOND half `hashtext(account_id)`
+ * — the pattern `STAGING_QUOTA_LOCK_CLASS` and `PROFILE_IMPORT_LOCK_CLASS` already use.
+ *
+ * Serializes ACCOUNT ERASURE against the THREAD BACKFILL, and nothing else. Both are the only
+ * two writers that ever lock a whole account's worth of `threads` or `messages` rows in bulk,
+ * and they lock the two tables in OPPOSITE orders for reasons neither can give up: erasure's
+ * DELETE order is forced child-before-parent by the FKs (`messages` before `threads`), while the
+ * backfill locks an unthreaded `messages` row first because — being unthreaded — there is no
+ * `threads` row yet to lock ahead of it (`listThreadBacklog`, `packages/core/src/adapters/
+ * drizzle-repo.ts`). Interleaved, that is a genuine lock cycle: erasure holds every thread row
+ * and waits on a message row the backfill is mid-resolve on, while the backfill holds that
+ * message and waits on the very thread erasure is about to attach it to.
+ *
+ * Every OTHER writer of a thread (ingest, the user's own merge, the worker's join heal) locks
+ * `threads` before `messages` — one shared order among themselves — and none of them ever locks
+ * more than the few rows one message or one merge group touches, so none of them needs this
+ * lock: the risk this guards against is specific to a WHOLE-ACCOUNT sweep meeting the one path
+ * that is structurally message-first.
+ */
+export const ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS = 420_727_017;
+
 export const threads = pgTable("threads", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),

@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType } from "@trafficflow/db";
+import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   Rule, NativeLocator, EmailAddress,
@@ -206,6 +206,14 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * delivered to one mailbox may answer mail that arrived in another.
    */
   listThreadBacklog(accountId: string, limit: number): Promise<ThreadBacklogRow[]>;
+  /**
+   * `pg_advisory_xact_lock(ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, hashtext(accountId))` — taken
+   * before {@link listThreadBacklog} in every batch. Serializes the backfill against account
+   * erasure, the one other writer that locks a whole account's `threads`/`messages` in bulk and
+   * in the OPPOSITE order (see the constant's own doc). Nothing else needs it: every other
+   * writer of a thread touches only the few rows one message or merge group involves.
+   */
+  lockAccountThreadStructure(accountId: string): Promise<void>;
   getMailboxFolders(mailboxId: string): Promise<Array<{ folder: string } & PersistedFolderCursor>>;
   upsertMailboxFolder(mailboxId: string, folder: string, cursor: PersistedFolderCursor): Promise<void>;
   /* ── USER-COMMANDED FOLDER OPERATIONS (`folder_ops`, mail 0074; FOLDERS-SPEC.md stage 2) ─────
@@ -1677,6 +1685,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * message whose body row is missing still deserves a thread (its own), and an INNER JOIN
    * would silently leave it out of the backlog for ever.
    */
+  async lockAccountThreadStructure(accountId: string): Promise<void> {
+    await this.db.execute(
+      sql`select pg_advisory_xact_lock(${ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS}, hashtext(${accountId}))`,
+    );
+  }
+
   async listThreadBacklog(accountId: string, limit: number): Promise<ThreadBacklogRow[]> {
     const rows = await this.db.select({
       messageId: messages.id,
