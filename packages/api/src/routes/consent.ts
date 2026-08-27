@@ -1,8 +1,9 @@
 import {
   buildSeedReview, confirmSeed, consentSettings, cutlineCounts, mailboxFoldersOff,
+  mailboxSignatures,
   resetScreeningState, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
   setBlockTrackingPixels,
-  setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled,
+  setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled, setMailboxSignature,
   unmovedReport,
   DEFAULT_DORMANCY_DAYS, SUPPORTED_LOCALES, ServiceError,
 } from "@trafficflow/services/mail";
@@ -86,6 +87,12 @@ interface ConsentSettingsBody {
    * master toggle, `true` switches them back on (the default).
    */
   folderMailboxes?: unknown;
+  /**
+   * Per-mailbox SIGNATURES (mail 0075) — `{ [mailboxId]: string | null }`. Every named mailbox
+   * must belong to the account; a string stores it (bounded by the service's
+   * `MAILBOX_SIGNATURE_MAX_CHARS`), `null` — and a blank string — clears it.
+   */
+  signatures?: unknown;
   locale?: unknown;
 }
 
@@ -122,7 +129,8 @@ async function applyConsentSettings(
   autoSuggestAt?: string | null; dormancyDays?: number; blockRemoteImagesAt?: string | null;
   loadTrackingPixelsAt?: string | null;
   blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
-  folderMailboxesOff?: Record<string, string>; locale?: string | null;
+  folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
+  locale?: string | null;
 }> {
   const hasAuto = "autoSuggest" in body;
   const hasDormancy = "dormancyDays" in body;
@@ -131,13 +139,14 @@ async function applyConsentSettings(
   const hasAutoUnsub = "blockAutoUnsubscribe" in body;
   const hasFolders = "foldersEnabled" in body;
   const hasFolderMailboxes = "folderMailboxes" in body;
+  const hasSignatures = "signatures" in body;
   const hasLocale = "locale" in body;
   if (!hasAuto && !hasDormancy && !hasImages && !hasPixels && !hasAutoUnsub && !hasFolders
-      && !hasFolderMailboxes && !hasLocale) {
+      && !hasFolderMailboxes && !hasSignatures && !hasLocale) {
     throw new ServiceError(
       "validation_failed", 400,
       "at least one of autoSuggest, dormancyDays, blockRemoteImages, blockTrackingPixels, " +
-      "blockAutoUnsubscribe, foldersEnabled, folderMailboxes or locale is required",
+      "blockAutoUnsubscribe, foldersEnabled, folderMailboxes, signatures or locale is required",
     );
   }
 
@@ -250,6 +259,38 @@ async function applyConsentSettings(
     folderMailboxes = entries as Array<[string, boolean]>;
   }
   /**
+   * THE SIGNATURES MAP (mail 0075) — `{ [mailboxId]: string | null }`, validated whole before
+   * anything writes, `folderMailboxes`' shape rule value for value: keys must be uuids (a
+   * non-UUID key would surface as PostgreSQL 22P02 — a 500 wearing a malformed request's
+   * clothes), values must be exactly a string or `null` (never coerced — a number or an object
+   * stored as somebody's signature is words they did not write). Whether each id names a
+   * mailbox OF THIS ACCOUNT is the service's check (404 inside the transaction, so a batch
+   * with one foreign id persists nothing), and so is the length ceiling (its 400 names the
+   * bound).
+   */
+  let signatures: Array<[string, string | null]> | undefined;
+  if (hasSignatures) {
+    const m = body.signatures;
+    if (typeof m !== "object" || m === null || Array.isArray(m)) {
+      throw new ServiceError(
+        "validation_failed", 400, "signatures must be an object of mailboxId: string | null",
+      );
+    }
+    const entries = Object.entries(m as Record<string, unknown>);
+    if (entries.length === 0) {
+      throw new ServiceError("validation_failed", 400, "signatures must name at least one mailbox");
+    }
+    for (const [k, v] of entries) {
+      if (!UUID_RE.test(k)) {
+        throw new ServiceError("validation_failed", 400, "every signatures key must be a mailbox id");
+      }
+      if (v !== null && typeof v !== "string") {
+        throw new ServiceError("validation_failed", 400, "every signatures value must be a string or null");
+      }
+    }
+    signatures = entries as Array<[string, string | null]>;
+  }
+  /**
    * THE CLOSED SET AT THE WIRE, and `null` is a legal MEMBER of the request rather than an absence.
    *
    * "absent" and "null" mean different things on this route and this is the field where the
@@ -281,7 +322,8 @@ async function applyConsentSettings(
     autoSuggestAt?: string | null; dormancyDays?: number; blockRemoteImagesAt?: string | null;
     loadTrackingPixelsAt?: string | null;
     blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
-    folderMailboxesOff?: Record<string, string>; locale?: string | null;
+    folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
+    locale?: string | null;
   } = {};
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     const txCtx = { ...ctx, db: tx as unknown as typeof ctx.db };
@@ -316,6 +358,15 @@ async function applyConsentSettings(
         await setMailboxFoldersEnabled(txCtx, mailboxId, enabled);
       }
       out.folderMailboxesOff = await mailboxFoldersOff(txCtx.db, txCtx.accountId);
+    }
+    if (signatures) {
+      // Sequential, like `folderMailboxes` above and for its reasons: each write moves the
+      // settings stamp under the account's counter lock, and the echo is the WHOLE map after
+      // the last write — one consistent picture, server-confirmed.
+      for (const [mailboxId, signature] of signatures) {
+        await setMailboxSignature(txCtx, mailboxId, signature);
+      }
+      out.signatures = await mailboxSignatures(txCtx.db, txCtx.accountId);
     }
     if (hasLocale) {
       out.locale = (await setLocale(txCtx, locale as string | null)).locale;
@@ -428,6 +479,12 @@ export const consentRoutes: Route[] = [
         // older SERVER simply omits the field, and the client's absent-means-none read is the
         // same picture. The instants, not booleans, for `foldersEnabledAt`'s reason.
         folderMailboxesOff: await mailboxFoldersOff(ctx.db, ctx.accountId),
+        // PER-MAILBOX SIGNATURES (mail 0075) — only the mailboxes that HAVE one travel
+        // (`{ mailboxId: text }`). A mailbox absent from the map has no signature, which is
+        // what the column's NULL means and what an older client that never reads the field
+        // assumes; an older SERVER simply omits the field, and the client's absent-means-none
+        // read is the same picture.
+        signatures: await mailboxSignatures(ctx.db, ctx.accountId),
         // THE INTERFACE LANGUAGE — `'de'`, or `null` for "this account has no preference". Sent as
         // `null` rather than omitted, and normalised to the default rather than to a string, for
         // the same reason `blockRemoteImagesAt` is: the client has to be able to tell "this server

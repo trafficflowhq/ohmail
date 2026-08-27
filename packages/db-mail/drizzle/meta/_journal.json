@@ -526,6 +526,13 @@
       "when": 1791327920530,
       "tag": "0074_folder_ops",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1791327920531,
+      "tag": "0075_mailbox_signature",
+      "breakpoints": true
     }
   ]
 }

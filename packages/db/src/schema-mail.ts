@@ -154,6 +154,19 @@ export const mailboxes = pgTable("mailboxes", {
   // live rail follows the switch. The worker neither reads nor writes it — `mailbox_folders`
   // keeps its cursors either way (the passive read is not consent-gated; SHOWING is).
   foldersDisabledAt: timestamp("folders_disabled_at", { withTimezone: true }),
+  // ── Mail 0075 — the per-mailbox SIGNATURE (owner ruling 2026-08-27) ──
+  //
+  // The text a compose offers under the message when this mailbox is the sender. NULL is "no
+  // signature" — the default, costing nothing anywhere. STORED TEXT ONLY: whether an outgoing
+  // message carries it is the compose surface's decision (the signature is a visible, removable
+  // block there and serializes into the body at send exactly as shown), so the send path never
+  // reads this column. Written by `setMailboxSignature` (consent-seed.ts), whose transaction
+  // moves the account-settings stamp and appends the `settings` change row — the same wake the
+  // per-mailbox folders dial rides — so open composers everywhere re-read `GET /consent` and
+  // swap to the new text live. Length is bounded at the write site
+  // (`MAILBOX_SIGNATURE_MAX_CHARS`, a 400), not by a CHECK: free text closes no set, and a
+  // byte bound in the database would answer 23514 to a person typing.
+  signature: text("signature"),
   // ── Mail 0029 — WHY A `connected` MAILBOX IS NOT BEING SYNCED ──
   //
   // The other half of that outage. The adoption bug (a `FETCH 1:*` against an empty

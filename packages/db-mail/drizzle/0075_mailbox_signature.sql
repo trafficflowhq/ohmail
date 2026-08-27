@@ -1,0 +1,43 @@
+-- PER-MAILBOX SIGNATURE — the text a compose offers under the message when this mailbox is
+-- the sender (owner ruling 2026-08-27: "allow signatures on a per mailbox setting … then
+-- automatically added when writing a message, but can be deleted if one does not want it for
+-- a specific message").
+--
+--   mailboxes.signature  text NULL
+--
+-- NULL means "this mailbox has no signature", which is every mailbox until somebody writes
+-- one — the feature defaults to absent, and absence costs nothing anywhere: the Settings pane
+-- shows an empty editor, the compose surface renders no block, the send appends nothing.
+--
+-- ══ IT IS SETTINGS STATE, NOT MESSAGE STATE ═════════════════════════════════════════════════
+--
+-- The column is the STORED text only. Whether a given outgoing message carries it is decided in
+-- the compose surface (the signature is a visible, removable block there, serialized into the
+-- body at send exactly as shown), so nothing on the send path reads this column — the server
+-- sends the body it was handed. Written by `setMailboxSignature` (consent-seed.ts), whose
+-- transaction moves the account-settings stamp and appends the `settings` change row, so every
+-- signed-in surface re-reads `GET /consent` and the new text reaches open composers live.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO CHECK, NO INDEX ════════════════════════════════════════════════
+--
+-- ADD COLUMN IF NOT EXISTS, nullable, no default, no backfill (0054's refusal: no existing
+-- mailbox has a signature, and NULL already says so). No CHECK — free text closes no set; the
+-- length ceiling is the service's 400 (`MAILBOX_SIGNATURE_MAX_CHARS`), enforced at the one
+-- write site, because a byte bound in the database would answer 23514 to a person typing.
+-- No index: read through the same account-scoped mailbox selects every consent read makes,
+-- never a predicate of its own.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ══════════════════════════════════════════════════════════
+--
+-- Migration → API. `MailboxService.list` selects whole `mailboxes` rows through the drizzle
+-- schema, so an API deployed ahead of this answers 42703 on the mailbox panel and the connect
+-- flow; the health marker ["mailboxes","signature"] turns that into a 503 schema_incomplete
+-- naming this file. No worker half: the worker neither reads nor writes it. A CLIENT older
+-- than the API never sends the field and never renders a block, which is exactly what NULL
+-- means anyway.
+--
+-- ROLLBACK is DROP COLUMN: every mailbox returns to having no signature, no message already
+-- sent changes (the text was serialized into bodies at send, never referenced). The API has
+-- to go back first, or the mailbox surface 42703s.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "signature" text;

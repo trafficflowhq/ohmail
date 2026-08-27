@@ -876,6 +876,92 @@ export async function setMailboxFoldersEnabled(
 }
 
 /**
+ * The signature's length ceiling, in characters — enforced HERE, as a 400 in words, rather than
+ * as a CHECK: free text closes no set, and a database byte bound would answer a person typing
+ * with a raw 23514. Ten thousand characters is roomier than any signature anybody signs with
+ * and small enough that the consent read carrying every mailbox's text stays a settings
+ * payload rather than a document store.
+ */
+export const MAILBOX_SIGNATURE_MAX_CHARS = 10_000;
+
+/**
+ * SET ONE MAILBOX'S SIGNATURE — the per-mailbox text a compose offers under the message when
+ * that mailbox is the sender (owner ruling 2026-08-27; mail 0075).
+ *
+ * `null` — and a value that is empty after trimming — CLEARS it: "no signature" is the resting
+ * state and an all-whitespace signature is nobody's choice. A non-empty value is stored AS
+ * TYPED (interior whitespace and line breaks are the user's formatting; only a fully blank
+ * value collapses), bounded by {@link MAILBOX_SIGNATURE_MAX_CHARS}.
+ *
+ * THE TRANSACTION IS {@link setMailboxFoldersEnabled}'s, statement for statement, because the
+ * requirements are identical: the mailbox must BELONG to the account (404 before anything
+ * writes), the `account_settings` stamp must MOVE (a client that already holds the settings
+ * entity compares stamps, and a flip that left the row untouched is a doorbell nobody hears),
+ * and the stamp moves BEFORE the mailbox row — the global lock chain (settings → mailboxes →
+ * sequence row) that keeps this writer out of the 40P01 cycle with erasure. No entity change
+ * rows beyond the `settings` doorbell: a signature moves no folder, no message, nothing on the
+ * delta feed — the doorbell makes every surface re-read `GET /consent`, which is where the
+ * signatures map travels.
+ *
+ * Returns the stored text (`null` = none) so the caller echoes what the database holds —
+ * server-confirmed values only, which is what the Settings pane renders.
+ */
+export async function setMailboxSignature(
+  ctx: ServiceContext, mailboxId: string, signature: string | null,
+): Promise<{ mailboxId: string; signature: string | null }> {
+  if (signature !== null && typeof signature !== "string") {
+    throw new ServiceError("validation_failed", 400, "signature must be a string or null");
+  }
+  if (signature !== null && signature.length > MAILBOX_SIGNATURE_MAX_CHARS) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `signature must be at most ${MAILBOX_SIGNATURE_MAX_CHARS} characters`,
+    );
+  }
+  const stored = signature !== null && signature.trim().length > 0 ? signature : null;
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    const [mb] = await tx.select({ id: mailboxes.id })
+      .from(mailboxes)
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
+      .limit(1);
+    if (!mb) throw new ServiceError("not_found", 404, "no such mailbox on this account");
+    // The stamp moves, and it moves BEFORE the mailbox row — see the header and
+    // {@link setMailboxFoldersEnabled}'s identical block for the two measured reasons.
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, updatedAt: ctx.now() })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { updatedAt: ctx.now() },
+      });
+    await tx.update(mailboxes)
+      .set({ signature: stored })
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
+    await recordSettingsChange(tx, ctx.accountId);
+  });
+  return { mailboxId, signature: stored };
+}
+
+/**
+ * EVERY STORED SIGNATURE ON THE ACCOUNT — `{ mailboxId: text }`, only the mailboxes that have
+ * one. The `GET /consent` read and the write echo; {@link mailboxFoldersOff}'s shape for the
+ * same reason (an absent key IS the resting state, so nothing invents an empty string for a
+ * mailbox that never had a signature).
+ */
+export async function mailboxSignatures(
+  db: ServiceContext["db"], accountId: string,
+): Promise<Record<string, string>> {
+  const rows = await db
+    .select({ id: mailboxes.id, signature: mailboxes.signature })
+    .from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId));
+  const out: Record<string, string> = {};
+  for (const r of rows) {
+    if (r.signature !== null) out[r.id] = r.signature;
+  }
+  return out;
+}
+
+/**
  * SET THE DORMANCY WINDOW — the cutline dial, the second knob on `account_settings`.
  *
  * The dial decides how long a sender may be quiet before the Screener stops asking about them: a

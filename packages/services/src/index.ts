@@ -55,7 +55,8 @@ export {
   SEED_SCAN_LIMIT, SUPPORTED_LOCALES,
   buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setBlockAutoUnsubscribe,
   setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled,
-  setLocale, setMailboxFoldersEnabled,
+  setLocale, setMailboxFoldersEnabled, setMailboxSignature,
+  mailboxSignatures, MAILBOX_SIGNATURE_MAX_CHARS,
   isMachineSent, isRobotAddress, parseAddressList,
   type SeedCandidate, type SeedConfirmResult, type SeedExclusionReason, type SeedReview,
 } from "./consent-seed.js";

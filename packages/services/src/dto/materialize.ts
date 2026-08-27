@@ -512,10 +512,16 @@ export async function materializeSettings(db: Db, accountId: string, id: string)
   const [row] = await db.select().from(accountSettings)
     .where(eq(accountSettings.accountId, accountId)).limit(1);
   const off: Record<string, string> = {};
-  const boxes = await db.select({ id: mailboxes.id, at: mailboxes.foldersDisabledAt })
+  const signatures: Record<string, string> = {};
+  const boxes = await db
+    .select({ id: mailboxes.id, at: mailboxes.foldersDisabledAt, signature: mailboxes.signature })
     .from(mailboxes).where(eq(mailboxes.accountId, accountId));
   for (const b of boxes) {
     if (b.at !== null) off[b.id] = b.at.toISOString();
+    // The per-mailbox signature travels with the settings entity for the exceptions map's
+    // reason: "what does this account sign with" is a settings question wherever the column
+    // lives, and only the mailboxes that HAVE one appear (mail 0075).
+    if (b.signature !== null) signatures[b.id] = b.signature;
   }
   return {
     accountId,
@@ -526,6 +532,7 @@ export async function materializeSettings(db: Db, accountId: string, id: string)
     blockAutoUnsubscribeAt: iso(row?.blockAutoUnsubscribeAt),
     foldersEnabledAt: iso(row?.foldersEnabledAt),
     folderMailboxesOff: off,
+    signatures,
     locale: row?.locale ?? null,
     // A missing row still needs a stamp the client can compare; the epoch is honest for "nothing
     // was ever written", and the first real write replaces it with the row's own.
