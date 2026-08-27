@@ -1,9 +1,9 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { drafts, mailboxes, messages, recordChanges, threadNotes, threads, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
   conversationJoinVerdict, silentLogger,
   type ConversationJoinFacts, type EmailAddress, type Logger,
-} from "@trafficflow/core/mail";
+} from "@trafficflow/core";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    THE THREAD-JOIN HEAL — the deferred merge for conversations a forward split
@@ -97,10 +97,6 @@ export interface ThreadJoinHealDeps {
   log?: Logger;
   maxGroups?: number;
   now?: () => Date;
-  /** TEST SEAM: awaited before each merge attempt, so a test can commit a competing write in
-   * the window between the facts read and the transaction — the race the locked-row reads
-   * exist for. Production callers never pass it. */
-  beforeMergeAttempt?: () => Promise<void> | void;
   /**
    * Resume AFTER this group. Without it a capped run's successor rescans from the top, and a
    * group whose verdict is "no" never leaves the candidate predicate — so a caller looping on
@@ -118,20 +114,8 @@ export interface ThreadJoinHealResult {
   merged: number;
   /** Messages moved onto a surviving thread (dry run: would be). */
   messagesMoved: number;
-  /** Groups permanently declined this run: over the per-group thread bound. */
+  /** Groups skipped: over the per-group bound, or failed mid-transaction and left for next run. */
   skipped: number;
-  /**
-   * Groups whose merge TRANSACTION failed TWICE — once, and once more on the in-run retry
-   * below. A single failure is usually a user merge or delete racing the pass (nothing
-   * committed either way), and the immediate re-read-and-retry resolves it inside the same
-   * run, so this counter names the persistent case: a group that failed both attempts, left
-   * for the NEXT walk. Counted APART from `skipped` (an over-bound group is a permanent
-   * refusal, not a failure), and deliberately NOT a reason for a caller to reset its forward
-   * cursor: a deterministic poison group that reset the walk would pin every future run to
-   * the same leading page and starve the tail for ever. The trade is deliberate: the
-   * in-run retry covers transients and the wrap-around retries the rest.
-   */
-  failed: number;
   /** True ⇒ the group budget ran out before the candidate set did; resume from `cursor`. */
   capped: boolean;
   /** The last group examined — the resume point for a follow-on invocation. */
@@ -149,7 +133,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
   const now = deps.now ?? (() => new Date());
   const maxGroups = Math.min(deps.maxGroups ?? THREAD_JOIN_HEAL_MAX_GROUPS, THREAD_JOIN_HEAL_MAX_GROUPS);
 
-  const result: ThreadJoinHealResult = { groupsScanned: 0, merged: 0, messagesMoved: 0, skipped: 0, failed: 0, capped: false, cursor: null };
+  const result: ThreadJoinHealResult = { groupsScanned: 0, merged: 0, messagesMoved: 0, skipped: 0, capped: false, cursor: null };
   const selfByAccount = new Map<string, Set<string>>();
   let cursor: ThreadJoinHealCursor | null = deps.cursor ?? null;
 
@@ -287,32 +271,8 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
         continue;
       }
 
-      const mergeOnce = (): Promise<number> => db.transaction(async (tx) => {
-          // ── THE SURVIVOR'S NEW STATE COMES FROM ROWS LOCKED IN THIS TRANSACTION, ──────────
-          // never from the facts the verdict was taken on. Between the facts read and this
-          // write — and especially between a first attempt and its retry — an ingest can land
-          // a fresh message on an absorbed thread and fold its sender into that thread's row;
-          // a union taken from the stale facts would move the message and drop its sender and
-          // timestamp from the surviving conversation. Locking the thread rows FIRST also
-          // puts this transaction on the one lock order every writer of a thread shares —
-          // thread rows, then message rows, then the seq lock: ingest's mergeThreadMessage
-          // and the user's own thread merge (whose ownership gate locks its thread rows)
-          // both take it, so concurrent writers queue instead of deadlocking.
-          const lockedRows = await tx.select({
-            id: threads.id, participants: threads.participants, lastMessageAt: threads.lastMessageAt,
-          }).from(threads)
-            .where(and(
-              inArray(threads.id, [target.id, ...absorb.map((s) => s.id)]),
-              eq(threads.accountId, group.account_id),
-            ))
-            // ORDER BY id: every taker of multi-row thread locks acquires them in one stable
-            // order, or two overlapping merges deadlock thread-to-thread.
-            .orderBy(asc(threads.id))
-            .for("update");
-          const lockedById = new Map(lockedRows.map((r) => [r.id, r]));
-          const lockedTarget = lockedById.get(target.id);
-          if (!lockedTarget) throw new Error("survivor thread vanished before the merge locked it");
-
+      try {
+        const moved = await db.transaction(async (tx) => {
           // EVERY message row moves — the FK demands the absorbed thread be empty before its
           // DELETE — but only LIVING rows are announced. A soft-deleted row's tombstone already
           // reached every mirror as an `op: "delete"`, and `getChanges` materializes an update
@@ -346,42 +306,24 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
             for (const r of d) repointedDrafts.push(r.id);
           }
 
-          // Fold the absorbed threads' participants into the survivor — from the LOCKED rows,
-          // the same union-by-lowercased-address `mergeThreadMessage` performs at ingest
-          // (ingest maintains a thread row's participants under this very row lock, so the
-          // locked rows are current even against the race the retry exists for).
-          const byAddress = new Map(
-            ((lockedTarget.participants as EmailAddress[] | null) ?? []).map((p) => [p.address.toLowerCase(), p]),
-          );
+          // Fold the absorbed threads' participants into the survivor, the same union-by-
+          // lowercased-address `mergeThreadMessage` performs at ingest.
+          const byAddress = new Map(target.participants.map((p) => [p.address.toLowerCase(), p]));
           for (const source of absorb) {
-            const locked = lockedById.get(source.id);
-            if (!locked) continue; // vanished (a user merge won); its move predicate matches nothing
-            for (const p of (locked.participants as EmailAddress[] | null) ?? []) {
+            for (const p of source.participants) {
               const key = p.address.toLowerCase();
               if (key && !byAddress.has(key)) byAddress.set(key, p);
             }
           }
-
-          // The conversation's newest moment comes from the MESSAGES now on the survivor —
-          // an aggregate inside this transaction, after the moves — not from any thread row:
-          // a row can trail its own messages (`mergeThreadMessage` only ever advances it),
-          // and the ordered lists must sort the merged conversation by what it actually holds.
-          const newestRow = await tx.select({ last: sql<Date | null>`max(${messages.date})` })
-            .from(messages)
-            .where(and(
-              eq(messages.threadId, target.id), eq(messages.accountId, group.account_id),
-              sql`${messages.deletedAt} is null`,
-            ));
-          const newest = newestRow[0]?.last ? new Date(newestRow[0].last) : lockedTarget.lastMessageAt;
-
           await tx.update(threads).set({
             participants: [...byAddress.values()],
-            // GREATEST as a second guard: a merge must never move a conversation backwards in
-            // the ordered lists. ISO text with an explicit cast, because a raw Date in an
-            // untyped sql-fragment param reaches postgres-js's Bind as-is, which wants
-            // string/Buffer (ERR_INVALID_ARG_TYPE) — the column encoder only runs for plain
-            // column values.
-            lastMessageAt: sql`greatest(coalesce(${threads.lastMessageAt}, 'epoch'::timestamptz), ${(newest ?? new Date(0)).toISOString()}::timestamptz)`,
+            // GREATEST, not assignment: `running.lastMessageAt` is exact as of the facts read,
+            // but an ingest committing between that read and this write may have advanced the
+            // survivor — a merge must never move a conversation backwards in the ordered lists.
+            // The Date goes over as ISO text with an explicit cast: a raw Date in an untyped
+            // sql-fragment param reaches postgres-js's Bind as-is, which wants string/Buffer
+            // (ERR_INVALID_ARG_TYPE) — the column encoder only runs for plain column values.
+            lastMessageAt: sql`greatest(coalesce(${threads.lastMessageAt}, 'epoch'::timestamptz), ${(running.lastMessageAt ?? new Date(0)).toISOString()}::timestamptz)`,
             updatedAt: now(),
           }).where(and(eq(threads.id, target.id), eq(threads.accountId, group.account_id)));
 
@@ -405,42 +347,19 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
           ]);
           return movedTotal;
         });
-
-      // ONE in-run retry before a group is declared failed. The usual failure is another
-      // writer racing this group — a user merge committing mid-flight, an ingest landing a
-      // fresh message or draft on a source thread between the repoint and the DELETE — and
-      // the transaction re-reads every row it touches, so an immediate second attempt sees
-      // the settled state and usually succeeds. A group that fails BOTH attempts is the
-      // persistent case: counted in `failed`, logged at error, and left for the next walk —
-      // which the callers' forward cursor guarantees comes back around, so a poison group can
-      // be seen in the log without ever pinning the walk to its page.
-      let moved = -1;
-      try {
-        if (deps.beforeMergeAttempt) await deps.beforeMergeAttempt();
-        moved = await mergeOnce();
-      } catch (err) {
-        log.warn("thread_join_heal_group_retrying", {
-          accountId: group.account_id, threadId: target.id, err,
-          reason: "nothing committed; one immediate retry against the re-read rows",
-        });
-        try {
-          moved = await mergeOnce();
-        } catch (err2) {
-          result.failed += 1;
-          log.error("thread_join_heal_group_failed", {
-            accountId: group.account_id, threadId: target.id, err: err2,
-            reason: "nothing of this group committed in either attempt; the forward cursor " +
-              "walks on, and the group is re-evaluated when the walk comes back around",
-          });
-        }
-      }
-      if (moved >= 0) {
         result.merged += absorb.length;
         result.messagesMoved += moved;
         log.info("thread_join_heal_merged", {
           accountId: group.account_id, threadId: target.id, merged: absorb.length,
           // The absorbed ids are on this run's "join" verdict lines.
           moved,
+        });
+      } catch (err) {
+        result.skipped += 1;
+        log.error("thread_join_heal_group_failed", {
+          accountId: group.account_id, threadId: target.id, err,
+          reason: "nothing of this group committed; the candidate set is re-read from reality " +
+            "next run, so a user merge or delete racing this pass simply wins",
         });
       }
 
@@ -453,7 +372,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
   log.info(apply ? "thread_join_heal_complete" : "thread_join_heal_dry_complete", {
     ...(deps.accountId ? { accountId: deps.accountId } : {}),
     scanned: result.groupsScanned, merged: result.merged, moved: result.messagesMoved,
-    skipped: result.skipped, failed: result.failed, capped: result.capped,
+    skipped: result.skipped, capped: result.capped,
   });
   return result;
 }
