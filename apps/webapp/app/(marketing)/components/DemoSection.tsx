@@ -555,24 +555,60 @@ export function DemoSection() {
     };
     doc.addEventListener("pointerup", enter, { capture: true, passive: true });
     /* Escape pressed INSIDE the app returns to the page ONLY when the app has nothing of
-       its own for Escape to mean. The app's own consumers — the Reader, the command
-       palette, the reply run (all `role="dialog"`; the Reader also marks `body.reading`),
-       and any focused field (search, compose, a rename) — handle Escape without stopping
-       propagation or preventing default, so "was it handled" cannot be read off the event.
-       It is read off the DOM instead, BEFORE the app's handlers change it: a dialog on
-       screen or an editable element focused means this Escape belongs to the app, and only
-       an Escape arriving with the demo idle leaves the full window. */
-    doc.addEventListener("keydown", (e) => {
-      if (e.key !== "Escape" || !fullRef.current) return;
-      const active = doc.activeElement;
-      const busy =
-        doc.querySelector('[role="dialog"]') !== null ||
-        (doc.body?.classList.contains("reading") ?? false) ||
-        (active !== null &&
-          (active.matches("input, textarea, select, [contenteditable]") ||
-            (active as HTMLElement).isContentEditable === true));
-      if (!busy) closeFull();
-    });
+       its own for Escape to mean. The app's own consumers handle Escape without stopping
+       propagation or preventing default, so "was it handled" cannot be read off the event —
+       it is read off the DOM, in two steps:
+
+       · A dialog on screen (the Reader, the palette, a reply run — all `role="dialog"`;
+         the Reader also marks `body.reading`) reliably owns the key: those surfaces always
+         close themselves on Escape, so the outer window simply yields.
+       · A focused field MIGHT own it — a search clears itself, some fields blur — or might
+         bind nothing at all, in which case Escape must still be a way out of the full
+         window rather than a dead key. So the decision waits one macrotask, until after
+         every in-app handler has run: if the Escape visibly did something (focus moved,
+         the field's text changed, a dialog appeared or the reading marker flipped), it was
+         the app's; if the demo looks exactly as it did, nothing consumed it and the full
+         window closes. */
+    /* Duck-typed, never instanceof: the demo document is another realm — its elements are
+       not instances of THIS window's Element/HTMLInputElement, in every real browser. */
+    const fieldValue = (el: Element | null): string | null =>
+      el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")
+        ? (el as HTMLInputElement).value
+        : null;
+    const surfaceOpen = () =>
+      doc.querySelector('[role="dialog"]') !== null ||
+      (doc.body?.classList.contains("reading") ?? false);
+    const isField = (el: unknown): el is Element =>
+      typeof (el as Element | null)?.matches === "function" &&
+      ((el as Element).matches("input, textarea, select, [contenteditable]") ||
+        (el as HTMLElement).isContentEditable === true);
+    /* CAPTURE phase, deliberately: the snapshot below must be taken before ANY of the
+       app's handlers run — a field's own keydown handler fires before a document-level
+       bubble listener ever would, and a snapshot taken after it sees the post-consumption
+       state and reads a consumed key as an idle one. */
+    doc.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.key !== "Escape" || !fullRef.current) return;
+        if (surfaceOpen()) return; // the dialog's Escape, not ours
+        /* the key is dispatched to the focused element, so the event target is the field —
+           and stays readable in environments whose activeElement never enters the frame */
+        const field = isField(e.target) ? e.target : isField(doc.activeElement) ? doc.activeElement : null;
+        if (!field) {
+          closeFull();
+          return;
+        }
+        const value = fieldValue(field);
+        const focusThen = doc.activeElement;
+        window.setTimeout(() => {
+          if (!fullRef.current) return;
+          const untouched =
+            doc.activeElement === focusThen && fieldValue(field) === value && !surfaceOpen();
+          if (untouched) closeFull();
+        }, 0);
+      },
+      { capture: true },
+    );
   }, [measure, openFull, closeFull]);
 
   return (
