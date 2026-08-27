@@ -918,6 +918,13 @@ export async function setMailboxSignature(
       `signature must be at most ${MAILBOX_SIGNATURE_MAX_CHARS} characters`,
     );
   }
+  // A NUL is legal in a JSON string and illegal in a PostgreSQL `text` value — unrejected, it
+  // reaches the driver as an encoding error, which surfaces as a 500 and rolls back the whole
+  // batch (review round 1). Refused HERE, before the transaction opens, in words: no signature
+  // anybody typed contains one, so the only senders are callers probing the wire.
+  if (signature !== null && signature.includes("\u0000")) {
+    throw new ServiceError("validation_failed", 400, "signature must not contain a NUL character");
+  }
   const stored = signature !== null && signature.trim().length > 0 ? signature : null;
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     const [mb] = await tx.select({ id: mailboxes.id })

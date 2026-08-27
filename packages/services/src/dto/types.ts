@@ -205,8 +205,6 @@ export interface SettingsDTO {
   foldersEnabledAt: ISODateTime | null;
   /** Per-mailbox "Use folders" EXCEPTIONS — `{ mailboxId: instant switched off }` (spec §17). */
   folderMailboxesOff: Record<string, ISODateTime>;
-  /** Per-mailbox SIGNATURES — `{ mailboxId: text }`, only the mailboxes that have one (mail 0075). */
-  signatures: Record<string, string>;
   /** The account's interface language, or null for "no preference stored". */
   locale: string | null;
   updatedAt: ISODateTime;
