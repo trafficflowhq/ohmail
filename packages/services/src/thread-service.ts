@@ -72,9 +72,17 @@ export class ThreadService {
     }
 
     const targetId = await asTx(ctx).transaction(async (tx) => {
-      // Ownership gate: EVERY id must belong to the caller's account, else 404.
+      // Ownership gate: EVERY id must belong to the caller's account, else 404 — and the
+      // gate LOCKS what it reads. Taking the thread rows first puts this transaction on the
+      // one lock order every writer of a thread shares (thread rows, then message rows, then
+      // the change-log seq): ingest's mergeThreadMessage locks the thread row before its
+      // message, and the worker's thread-join heal locks its group's thread rows before its
+      // moves for the same reason. A merge that locked messages first could hold them while
+      // waiting on a thread row the heal holds while waiting on those messages — a cycle
+      // Postgres resolves by aborting one side into a user-facing 500.
       const owned = await tx.select({ id: threads.id }).from(threads)
-        .where(and(eq(threads.accountId, ctx.accountId), inArray(threads.id, threadIds)));
+        .where(and(eq(threads.accountId, ctx.accountId), inArray(threads.id, threadIds)))
+        .for("update");
       if (owned.length !== new Set(threadIds).size) {
         throw new ServiceError("not_found", 404, "thread not found");
       }

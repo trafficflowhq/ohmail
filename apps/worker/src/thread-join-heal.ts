@@ -294,8 +294,10 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
           // a fresh message on an absorbed thread and fold its sender into that thread's row;
           // a union taken from the stale facts would move the message and drop its sender and
           // timestamp from the surviving conversation. Locking the thread rows FIRST also
-          // matches ingest's own order (thread row, then message rows, then the seq lock),
-          // so the two writers queue instead of deadlocking.
+          // puts this transaction on the one lock order every writer of a thread shares —
+          // thread rows, then message rows, then the seq lock: ingest's mergeThreadMessage
+          // and the user's own thread merge (whose ownership gate locks its thread rows)
+          // both take it, so concurrent writers queue instead of deadlocking.
           const lockedRows = await tx.select({
             id: threads.id, participants: threads.participants, lastMessageAt: threads.lastMessageAt,
           }).from(threads)
