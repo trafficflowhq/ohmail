@@ -64,6 +64,7 @@ import {
 import { makeClassifierCircuit, ClassifierFaultError, type ClassifierCircuit } from "./ai-circuit.js";
 import { workflowDrainPass, workflowTimeScanPass, unconfiguredDrafter } from "./workflow-cron.js";
 import { bubbleUpPass } from "./bubble-up-cron.js";
+import { threadJoinHealPass } from "./thread-join-heal.js";
 import { ruleRetroPass } from "./rule-retro.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerAutoApplyPass } from "./screener-auto.js";
@@ -112,6 +113,19 @@ export const MAINTENANCE_EVERY_MS = 60 * 60 * 1000;
  * `pollIntervalMs` is 60 s anyway, so a shorter period would buy nothing but extra queries.
  */
 export const BUBBLE_UP_EVERY_MS = 60_000;
+
+/**
+ * How often the leader runs the THREAD-JOIN HEAL, and NOT CONFIGURABLE — a `const` for the
+ * reason {@link BUBBLE_UP_EVERY_MS} is: an unset `?? something` would silently pick a period
+ * nobody chose.
+ *
+ * Six hours, not sixty seconds, because the pass repairs a presentation defect, not a promise:
+ * a conversation a forward split renders as two threads until the heal joins them, and the
+ * joining evidence (`conversationJoinVerdict`) needs the counterparty's REPLY to have arrived
+ * anyway — which takes hours to days in human mail. Every cycle would be a fleet-wide GROUP BY
+ * bought against no user-visible latency.
+ */
+export const THREAD_JOIN_HEAL_EVERY_MS = 6 * 60 * 60 * 1000;
 
 /**
  * ENFORCED SYNC — how often the worker scans for mailboxes the API has stamped `sync_requested_at`.
@@ -654,6 +668,14 @@ export async function startWorkerWithLock(
      * cycle, not one {@link BUBBLE_UP_EVERY_MS} after the takeover.
      */
     let lastBubbleUpAt = 0;
+    /**
+     * Time-gate for the thread-join heal. Starts "due" like `lastBubbleUpAt`, and here the
+     * reason is survival rather than latency: a deployment cadence shorter than
+     * {@link THREAD_JOIN_HEAL_EVERY_MS} would otherwise mean the pass NEVER runs — a
+     * scheduled pass that no schedule ever reaches, which this repo has paid for before.
+     * The first-cycle cost is one small GROUP BY per served account.
+     */
+    let lastThreadJoinHealAt = 0;
     /**
      * One-shot: the boot announcement and its heartbeat happen on the FIRST roster pass only.
      * Declared HERE with the rest of the closure state rather than beside `cycleQueued` — a
@@ -3712,6 +3734,42 @@ export async function startWorkerWithLock(
               "so the next cycle resumes from `ohbox_tidy_cursor`; mail already moved is desired " +
               "state the reconciler converges independently of this pass",
           });
+        }
+      }
+
+      // ── REJOIN THE CONVERSATIONS A FORWARD SPLIT ────────────────────────────────────────
+      //
+      // A forward re-entering the mailbox carries no References, so one human conversation
+      // becomes two header chains and renders as two threads — correctly, under the ingest
+      // rule, which is why no ingest change can close it. The heal merges them once the
+      // evidence completes (`conversationJoinVerdict` — same account, same base subject, the
+      // same non-self correspondent on BOTH chains, the later chain opening with a
+      // reply/forward prefix, inside a 14-day window), performing exactly the merge the user's
+      // own `POST /threads/merge` performs, change rows included.
+      //
+      // TIME-GATED like `bubbleUpPass` and unlike the retro/tidy passes, because nobody is
+      // waiting on it: the pass is a repair of presentation, its own budget bounds a run, and
+      // its pre-filter is a per-account GROUP BY that would buy nothing run per-cycle.
+      // Its OWN try/catch and loop: one account's failure must not skip the rest.
+      if (Date.now() - lastThreadJoinHealAt >= THREAD_JOIN_HEAL_EVERY_MS) {
+        lastThreadJoinHealAt = Date.now();
+        for (const accountId of passAccounts) {
+          if (stopped) return;
+          try {
+            const r = await asDatabaseFault("cycle.threadJoinHealPass",
+              () => threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId, log }));
+            if (r.merged > 0 || r.skipped > 0) {
+              log.info("thread_join_heal_pass", { accountId, ...r });
+            }
+          } catch (err) {
+            noteIfSharedDatabaseFault(err);
+            log.error("thread_join_heal_failed", {
+              accountId, err,
+              reason: "no group of this account committed partially — each is one transaction — " +
+                "and the candidate predicate is the rows' own state, so the next gated run " +
+                "re-reads reality and resumes",
+            });
+          }
         }
       }
 

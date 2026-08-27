@@ -375,3 +375,159 @@ export function baseSubject(subject: string): string {
     s = next;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE CONVERSATION-JOIN RULE — merge-time evidence, NOT ingest identity
+   ══════════════════════════════════════════════════════════════════════════════════════════
+
+   Everything above this line stands unchanged: at ingest, thread identity is the header chain
+   and only the header chain, and `threading.test.ts`'s "no subject fallback" guard keeps it so.
+
+   This section exists for the conversation the header chain STRUCTURALLY cannot join, observed
+   in production: the user mails a correspondent; the correspondent's reply lands in ANOTHER of
+   the user's mailboxes (an old provider, a second address); the user FORWARDS that reply to
+   themselves here. A forward is composed as a fresh message — no `In-Reply-To`, no
+   `References` — so the mailbox now holds two header chains that are disjoint by construction:
+   the original outbound message, and the forward plus everything that replies to it. Every
+   member of both chains was threaded CORRECTLY under the rule above, and one human conversation
+   still renders as two threads. No candidate lookup, no anchor choice and no arrival order can
+   close that gap, because the joining evidence never arrives in a header — it accumulates
+   across MESSAGES: same account, same base subject, the same non-self correspondent on both
+   sides, close together in time, and the later chain's first message announcing itself as a
+   reply or forward.
+
+   So the join is a DEFERRED MERGE DECISION, taken by the worker's thread-join heal
+   (`apps/worker/src/thread-join-heal.ts`) over settled rows — the same act as the user's own
+   `POST /threads/merge`, decided by evidence instead of a click. It is deliberately NOT an
+   ingest fallback: at the moment the forward arrives, the evidence is not yet complete (a
+   self-to-self forward names no counterparty), and the module header's lock-order and
+   false-merge arguments against subject matching INSIDE `resolveThread` all still hold.
+
+   ── WHY THESE GUARDS, AGAINST THE FALSE-MERGE MACHINE ──────────────────────────────────────
+
+   "Re: invoice" from two unrelated senders is the canonical false merge. It fails guard 4:
+   the only address the two threads share is the account's own, and the account's own addresses
+   are subtracted before the overlap is tested. Two unprefixed "Weekly report" mails from the
+   same sender fail guard 3: neither thread's first message CLAIMS to continue anything. A
+   reply to a genuinely old conversation fails guard 5's window. Every guard must pass; any
+   failure keeps the threads apart, and an unmerged split remains the recoverable direction —
+   the heal re-evaluates, while a false merge has no split to undo it.
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The subset of {@link SUBJECT_PREFIX_TOKENS} precise enough to be MERGE EVIDENCE.
+ *
+ * Two tables, deliberately, because the two consumers price a false positive differently.
+ * The NAMING table above is tuned for recall and says so: "WG:" is genuinely ambiguous in
+ * German (Wohngemeinschaft) and stays in it because the worst case there is a flat-share ad
+ * losing two letters — never a merge. This table is the other side of that sentence: here a
+ * false positive IS a merge, irreversible, so every token that reads as an ordinary word or
+ * abbreviation with a colon after it ("WG: Zimmer", "VS: proposal", "RES: table for two",
+ * "TR: …", the one-letter Italian pair) is excluded. What stays is unmistakably mail-client
+ * output. The recall this gives up is the recoverable direction: a Finnish or Portuguese
+ * continuation stays split until a header or an unambiguous prefix joins it.
+ */
+const CONTINUATION_PREFIX_TOKENS = [
+  "doorst",           // nl forward
+  "antw",             // nl reply
+  "fwd", "fw",        // en forward
+  "odp",              // pl reply
+  "ynt",              // tr reply
+  "re",               // reply, international
+  "aw",               // de reply
+  "sv",               // sv/da/no/is reply
+  "vá",               // hu reply
+  "回复", "回覆",      // zh-Hans / zh-Hant reply
+  "转发", "轉寄",      // zh-Hans / zh-Hant forward
+] as const;
+
+const CONTINUATION_PREFIX_RE = new RegExp(
+  `^(?:${CONTINUATION_PREFIX_TOKENS.join("|")})\\.?\\s*(?:\\[\\d+\\])?\\s*[:：]`, "i",
+);
+
+/** True when the subject, as the sender wrote it, opens with an UNAMBIGUOUS reply/forward
+ * prefix — the only kind {@link conversationJoinVerdict} accepts as a continuation claim. */
+export function claimsContinuation(subject: string): boolean {
+  return CONTINUATION_PREFIX_RE.test(subject.trim());
+}
+
+/**
+ * Guard 5's window: the later chain's first message must land within this of the earlier
+ * chain's latest activity. The observed production split was 1.8 days; Gmail's subject-join
+ * window is 7. Fourteen days admits a slow correspondent without leaving the door open for a
+ * subject line coincidentally reused a season later.
+ */
+export const CONVERSATION_JOIN_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** The per-thread facts the join verdict is decided on — derived from MESSAGES, not thread rows,
+ * because a user rename changes a thread's NAME and must neither force nor forge identity. */
+export interface ConversationJoinFacts {
+  /** Earliest message's `Date`, the thread's position in time. `null` ⇒ ineligible (guard 1). */
+  firstMessageAt: Date | null;
+  /** Latest message's `Date` — what guard 5 measures the gap from. */
+  lastMessageAt: Date | null;
+  /** Earliest message's subject AS SENT — prefixes intact, they are guard 3's evidence. */
+  firstMessageSubject: string;
+  /** Every address seen on the thread's messages (from ∪ to ∪ cc), lowercased, self included. */
+  correspondents: ReadonlySet<string>;
+}
+
+export type ConversationJoinVerdict =
+  | { join: true; /** The non-self addresses both threads share — the evidence, for the log. */ overlap: string[] }
+  | { join: false; reason: "undated" | "order" | "no-base-subject" | "subject-differs" | "later-not-a-continuation" | "outside-window" | "no-counterparty-overlap" };
+
+/**
+ * Decide whether two threads of ONE account are the same conversation. Pure — the heal derives
+ * the facts, this decides. `earlier`/`later` are by first-message date; a caller that passes
+ * them reversed gets `"order"`, not a silently inverted decision.
+ *
+ * `selfAddresses` are the account's own addresses (lowercased): subtracting them is what turns
+ * "both threads mention the account holder" — true of every pair of threads in the account —
+ * into "both threads involve the same OTHER party", which is the evidence. The caller decides
+ * what "own" means, and the heal deliberately passes MORE than the mailbox rows: an imported
+ * history carries the account holder's former identities, so it also subtracts every address
+ * measured as a ubiquitous author in the account (see the heal's ubiquity constants). Widening
+ * this set only ever starves a join — the recoverable direction — never forges one.
+ */
+export function conversationJoinVerdict(
+  earlier: ConversationJoinFacts,
+  later: ConversationJoinFacts,
+  selfAddresses: ReadonlySet<string>,
+): ConversationJoinVerdict {
+  // 1 — both threads must be dated: the window is load-bearing, so no date means no verdict.
+  if (!earlier.firstMessageAt || !later.firstMessageAt || !earlier.lastMessageAt) {
+    return { join: false, reason: "undated" };
+  }
+  if (earlier.firstMessageAt.getTime() > later.firstMessageAt.getTime()) {
+    return { join: false, reason: "order" };
+  }
+
+  // 2 — identical, non-empty base subject, case-folded the way subjects are humanly compared.
+  //     A bare "Re:" reduces to "" and must anchor nothing.
+  const base = baseSubject(earlier.firstMessageSubject).toLowerCase();
+  if (base === "") return { join: false, reason: "no-base-subject" };
+  if (baseSubject(later.firstMessageSubject).toLowerCase() !== base) {
+    return { join: false, reason: "subject-differs" };
+  }
+
+  // 3 — the later chain's FIRST message must claim continuation ("Fwd:", "AW:", …) through a
+  //     prefix precise enough to bet a merge on — see CONTINUATION_PREFIX_TOKENS. Two
+  //     conversation-starters sharing a subject are two conversations, full stop.
+  if (!claimsContinuation(later.firstMessageSubject)) {
+    return { join: false, reason: "later-not-a-continuation" };
+  }
+
+  // 5 — proximity. Interleaved threads (earlier still active past the later one's start) gap 0.
+  const gap = later.firstMessageAt.getTime() - earlier.lastMessageAt.getTime();
+  if (gap > CONVERSATION_JOIN_WINDOW_MS) return { join: false, reason: "outside-window" };
+
+  // 4 — the same non-self correspondent on both sides. Tested LAST only because it is the one
+  //     guard with output worth logging; the numbering above matches the module comment.
+  const overlap: string[] = [];
+  for (const addr of earlier.correspondents) {
+    if (later.correspondents.has(addr) && !selfAddresses.has(addr)) overlap.push(addr);
+  }
+  if (overlap.length === 0) return { join: false, reason: "no-counterparty-overlap" };
+
+  return { join: true, overlap: overlap.sort() };
+}

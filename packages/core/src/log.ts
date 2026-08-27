@@ -158,6 +158,17 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // those lines exist to name could not be named. A row-scoped test drives the REAL logger for this
   // name, so it cannot silently go missing again.
   "messageId",
+  // `threadId`/`candidateThreadId` are `threads.id` ROW UUIDs, the same non-secret shape and the
+  // same justification as `messageId` one entry up: the thread-join heal's verdict line names
+  // WHICH two threads it judged (survivor, examined sibling) or the fix cannot be audited —
+  // its first prod dry run read `droppedFields=["target","candidate",…]` and said nothing.
+  // What that line deliberately does NOT carry: the threads' subject (deny-listed content) and
+  // the counterparty overlap (mail addresses); both stay in the database the ids point into.
+  // `merged` is the heal's `++` counter of absorbed threads — the `flipped`/`drained` class.
+  // `moved` is its messages-moved counter, and was ALREADY being handed over and refused by two
+  // standing worker lines (`rule_retro_pass`, `ohbox_tidy_pass`) — this entry lets all three say
+  // the number they exist to report.
+  "threadId", "candidateThreadId", "merged", "moved",
   // ── The attach-phase durations, added AFTER the first live run refused them ──
   //
   // The six landed in `mailbox_attached` without landing here, so the first live line read
