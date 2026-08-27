@@ -3057,14 +3057,23 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         // for an oversight, and because the fix is a schema change, not a line in this function.
         //
         // THE SIGNATURE BLOCK'S STATE survives exactly as far as this device knows it (review
-        // round 1). The `drafts` row stores the message's prose and no block state, so a draft
-        // reopened from ANOTHER device re-offers the block in its resting `following` state —
-        // visibly, below the editor, strikeable again; never silently inside the prose. On THIS
-        // device the state is still in hand whenever the row being reopened is the one autosave
-        // is holding (or the form's local buffer names the same message), so it carries over and
-        // a struck block stays struck. The full cross-device fix is a drafts column — a schema
+        // rounds 1–2). The `drafts` row stores the message's prose and no block state, so a
+        // draft reopened from ANOTHER device re-offers the block in its resting `following`
+        // state — visibly, below the editor, strikeable again; never silently inside the prose.
+        // On THIS device the state carries over when the row being reopened is the one autosave
+        // holds, OR — after a reload, when autosave starts empty — when the form (hydrated from
+        // the local buffer) holds EXACTLY this row's message: same prose, same audience, so the
+        // buffer's block state is this message's. Content-addressed rather than an id in the
+        // buffer, because contents that differ mean the row moved on elsewhere and the resting
+        // state is then the honest one. The full cross-device fix is a drafts column — a schema
         // change, recorded rather than smuggled.
-        ...(autosave.draftId === d.id && compose.sig ? { sig: compose.sig } : {}),
+        ...(compose.sig
+          && (autosave.draftId === d.id
+            || (compose.subject === d.subject
+              && compose.body === d.body
+              && compose.to === formatRecipientChips(d.to)))
+          ? { sig: compose.sig }
+          : {}),
       };
       setCompose(seeded);
       writeComposeDraft(seeded);
@@ -3084,7 +3093,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       }
       go("compose");
     },
-    [draftRepliesHere, autosave, go, reader, version, compose.sig],
+    [draftRepliesHere, autosave, go, reader, version, compose],
   );
   const discardDraft = useCallback(
     (draftId: string) => {

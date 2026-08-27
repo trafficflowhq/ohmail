@@ -257,7 +257,7 @@ export function htmlToPlainText(html: string): string {
    * by {@link blankLine} at the closing tag.
    */
   const flush = (): void => {
-    const body = line.replace(/[ \t]+/g, " ").trim();
+    const body = line.replace(/[ \t]+/g, " ").replace(/^[ \t]+|[ \t]+$/g, "");
     const marker = lead;
     line = "";
     lead = "";
@@ -297,7 +297,7 @@ export function htmlToPlainText(html: string): string {
    * capped by the final collapse, so `<br><br><br>` is one gap and not three.
    */
   const hardBreak = (): void => {
-    const body = line.replace(/[ \t]+/g, " ").trim();
+    const body = line.replace(/[ \t]+/g, " ").replace(/^[ \t]+|[ \t]+$/g, "");
     const marker = lead;
     line = "";
     lead = "";
@@ -396,7 +396,11 @@ export function htmlToPlainText(html: string): string {
           preText += text;
           return;
         }
-        emit(text.replace(/\s+/g, " "));
+        // The collapse deliberately steps around U+00A0: a no-break space is CONTENT — it is
+        // the one character an author (or the compose surface's signature serializer, which
+        // encodes indentation with it precisely because ordinary spaces collapse) uses to say
+        // "this width is meant". `\s` includes it, so the class is spelled out.
+        emit(text.replace(/[^\S\u00a0]+/g, " "));
       },
 
       onclosetag(name) {
@@ -468,7 +472,9 @@ export function htmlToPlainText(html: string): string {
     cursor = end;
   }
   result += collapse(out.slice(cursor));
-  return result.replace(/\n+$/, "");
+  // The no-break spaces carried this far exist to SURVIVE the collapse above, not to reach a
+  // recipient: the delivered text/plain says the same width in ordinary spaces.
+  return result.replace(/\n+$/, "").replace(/\u00a0/g, " ");
 }
 
 /**

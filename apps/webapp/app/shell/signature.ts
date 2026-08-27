@@ -91,25 +91,39 @@ function escapeHtml(s: string): string {
  * does not have; a blank line in the stored text becomes two `<br>`s, which is the same
  * vertical gap the plain half's newlines carry.
  *
- * ── WHY THE NO-BREAK SPACES (review round 1) ─────────────────────────────────────────────
+ * ── WHY THE NO-BREAK SPACES AND THE TAB STOPS (review rounds 1–2) ────────────────────────
  *
  * Ordinary paragraph text collapses leading and repeated spaces, and the server's html→text
- * derivation collapses them the same way — so a signature using indentation or aligned
+ * derivation used to collapse them the same way — so a signature using indentation or aligned
  * columns would ship narrower than the block and the Settings preview showed it. A `style`
  * attribute cannot carry the fix: the outbound sanitizer strips every style. So the width is
- * preserved at the character level — each leading space, the second of every space pair, and
- * each tab (as four columns) becomes a no-break space — leaving single interior spaces as
- * real spaces so long lines still wrap.
+ * preserved at the character level — each leading space and the second of every space pair
+ * becomes a no-break space, leaving single interior spaces real so long lines still wrap —
+ * and the server's converter now carries no-break spaces through to the delivered plaintext
+ * as ordinary spaces at the same width (`outbound-html.ts`).
+ *
+ * TABS EXPAND TO 4-COLUMN STOPS — column-aware, next multiple of four, not a fixed run —
+ * and the three surfaces that show the text (`.sig-text`, the Settings editor and its
+ * preview) declare `tab-size: 4`, so the markup's columns and the block's columns are the
+ * same columns by construction. The PLAIN body half ships the user's raw text untransformed
+ * (their tab is their character); only markup, which needs encoding anyway, expands.
  */
 const NBSP = "\u00a0";
+function expandTabs(line: string): string {
+  let out = "";
+  for (const ch of line) {
+    if (ch === "\t") out += " ".repeat(4 - (out.length % 4));
+    else out += ch;
+  }
+  return out;
+}
 function preserveWhitespace(escapedLine: string): string {
   return escapedLine
-    .replace(/\t/g, NBSP.repeat(4))
     .replace(/ {2}/g, ` ${NBSP}`)
     .replace(/^ /, NBSP);
 }
 export function signatureHtml(sig: string): string {
-  return `<p>${sig.split("\n").map((l) => preserveWhitespace(escapeHtml(l))).join("<br>")}</p>`;
+  return `<p>${sig.split("\n").map((l) => preserveWhitespace(escapeHtml(expandTabs(l)))).join("<br>")}</p>`;
 }
 
 /**

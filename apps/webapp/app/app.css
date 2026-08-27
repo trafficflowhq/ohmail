@@ -5345,6 +5345,10 @@ body.dnd-active * { cursor: grabbing !important; }
   color: var(--ink2);
   padding: 2px 0 0;
   outline: none;
+  /* The serialized markup expands tabs to 4-column stops (`signature.ts`); the block declares
+     the same stops so what is shown and what ships are the same columns. */
+  -moz-tab-size: 4;
+  tab-size: 4;
 }
 
 /* ── the reply's subject line — plain text until pressed (item: subject editable in place) ──
@@ -5410,6 +5414,9 @@ body.dnd-active * { cursor: grabbing !important; }
   font: inherit;
   font-size: 13px;
   line-height: 1.45;
+  /* The same 4-column tab stops the compose block and the markup use — one width everywhere. */
+  -moz-tab-size: 4;
+  tab-size: 4;
 }
 .sig-settings-preview {
   margin-top: 8px;
@@ -5422,6 +5429,8 @@ body.dnd-active * { cursor: grabbing !important; }
   line-height: 1.45;
   color: var(--ink2);
   white-space: pre-wrap;
+  -moz-tab-size: 4;
+  tab-size: 4;
 }
 .sig-settings-actions {
   display: flex;
