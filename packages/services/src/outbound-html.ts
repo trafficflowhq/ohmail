@@ -469,10 +469,14 @@ export function htmlToPlainText(html: string): string {
           // reads `line` as empty at this item's close though it plainly is not (round 7),
           // and simply treating ANY open anchor as "non-empty" over-corrected: an anchor that
           // is itself empty, `<a><ol><li></li></ol></a><p>after</p>`, then kept a marker that
-          // belongs to nothing (round 8 — `open.anchor !== null` is not evidence of content,
-          // only `open.anchor.text` is). Both buffers are checked; the item is empty only
-          // when neither holds anything.
-          const stillEmpty = line === "" && (open.anchor === null || open.anchor.text === "");
+          // belongs to nothing (round 8 — `open.anchor !== null` is not evidence of content).
+          // And "what the anchor holds" is not its text alone (round 9): the anchor-close
+          // branch emits the HREF when the link has no text, so an href-only anchor still
+          // produces a line — the item is empty only when the line, the anchor's text AND its
+          // pending href all hold nothing.
+          const stillEmpty = line === ""
+            && (open.anchor === null
+              || (open.anchor.text === "" && open.anchor.href.trim() === ""));
           if (stillEmpty) lead = "";
           return;
         }
