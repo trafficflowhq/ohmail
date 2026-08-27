@@ -1850,11 +1850,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             db: db as unknown as Tx, apply: true, accountId: world.accountId, log: undefined,
             cursor: joinHealCursor,
           });
-          // Persist the resume point only for a failure-free capped walk: a failed group is
-          // transient (nothing committed), and resuming past it would postpone its retry by a
-          // whole walk of the remaining cursor space — a failure restarts from the top instead.
-          joinHealCursor = r.capped && r.cursor && r.failed === 0 ? r.cursor : undefined;
-          if (r.merged > 0 || r.failed > 0) log("thread_join_heal", { merged: r.merged, moved: r.messagesMoved, skipped: r.skipped, failed: r.failed });
+          // Persist the resume point for every capped walk — resetting on failure was tried
+          // and reviewed away (a deterministically failing group would pin the walk to its
+          // own page and starve the tail; the pass already retries a failure once in-run, so
+          // what remains is persistent and waits for the wrap-around).
+          joinHealCursor = r.capped && r.cursor ? r.cursor : undefined;
+          if (r.merged > 0) log("thread_join_heal", { merged: r.merged, moved: r.messagesMoved, skipped: r.skipped });
+          // A `_failed` suffix, or the sidecar's log filter files it as informational and the
+          // only diagnostic of a caught merge failure is lost (`createSidecarLog` classifies
+          // by name; see apps/sidecar/src/log.ts).
+          if (r.failed > 0) log("thread_join_heal_failed", { failed: r.failed, merged: r.merged, skipped: r.skipped });
         } catch (err) {
           log("thread_join_heal_failed", {
             err,

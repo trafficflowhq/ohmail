@@ -117,11 +117,15 @@ export interface ThreadJoinHealResult {
   /** Groups permanently declined this run: over the per-group thread bound. */
   skipped: number;
   /**
-   * Groups whose merge TRANSACTION failed — transient by construction (a user merge or delete
-   * racing the pass; nothing committed). Counted APART from `skipped` because the two demand
-   * opposite cursor behavior: an over-bound group is refused every run, so a caller may resume
-   * PAST it, while a failed group deserves a retry sooner than a full walk of the remaining
-   * cursor space — so callers persist a capped run's cursor only when this is zero.
+   * Groups whose merge TRANSACTION failed TWICE — once, and once more on the in-run retry
+   * below. A single failure is usually a user merge or delete racing the pass (nothing
+   * committed either way), and the immediate re-read-and-retry resolves it inside the same
+   * run, so this counter names the persistent case: a group that failed both attempts, left
+   * for the NEXT walk. Counted APART from `skipped` (an over-bound group is a permanent
+   * refusal, not a failure), and deliberately NOT a reason for a caller to reset its forward
+   * cursor: a deterministic poison group that reset the walk would pin every future run to
+   * the same leading page and starve the tail for ever — the reviewed trade is that the
+   * in-run retry covers transients and the wrap-around retries the rest.
    */
   failed: number;
   /** True ⇒ the group budget ran out before the candidate set did; resume from `cursor`. */
@@ -279,8 +283,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
         continue;
       }
 
-      try {
-        const moved = await db.transaction(async (tx) => {
+      const mergeOnce = (): Promise<number> => db.transaction(async (tx) => {
           // EVERY message row moves — the FK demands the absorbed thread be empty before its
           // DELETE — but only LIVING rows are announced. A soft-deleted row's tombstone already
           // reached every mirror as an `op: "delete"`, and `getChanges` materializes an update
@@ -355,19 +358,41 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
           ]);
           return movedTotal;
         });
+
+      // ONE in-run retry before a group is declared failed. The usual failure is another
+      // writer racing this group — a user merge committing mid-flight, an ingest landing a
+      // fresh message or draft on a source thread between the repoint and the DELETE — and
+      // the transaction re-reads every row it touches, so an immediate second attempt sees
+      // the settled state and usually succeeds. A group that fails BOTH attempts is the
+      // persistent case: counted in `failed`, logged at error, and left for the next walk —
+      // which the callers' forward cursor guarantees comes back around, so a poison group can
+      // be seen in the log without ever pinning the walk to its page.
+      let moved = -1;
+      try {
+        moved = await mergeOnce();
+      } catch (err) {
+        log.warn("thread_join_heal_group_retrying", {
+          accountId: group.account_id, threadId: target.id, err,
+          reason: "nothing committed; one immediate retry against the re-read rows",
+        });
+        try {
+          moved = await mergeOnce();
+        } catch (err2) {
+          result.failed += 1;
+          log.error("thread_join_heal_group_failed", {
+            accountId: group.account_id, threadId: target.id, err: err2,
+            reason: "nothing of this group committed in either attempt; the forward cursor " +
+              "walks on, and the group is re-evaluated when the walk comes back around",
+          });
+        }
+      }
+      if (moved >= 0) {
         result.merged += absorb.length;
         result.messagesMoved += moved;
         log.info("thread_join_heal_merged", {
           accountId: group.account_id, threadId: target.id, merged: absorb.length,
           // The absorbed ids are on this run's "join" verdict lines.
           moved,
-        });
-      } catch (err) {
-        result.failed += 1;
-        log.error("thread_join_heal_group_failed", {
-          accountId: group.account_id, threadId: target.id, err,
-          reason: "nothing of this group committed; the candidate set is re-read from reality " +
-            "next run, so a user merge or delete racing this pass simply wins",
         });
       }
 

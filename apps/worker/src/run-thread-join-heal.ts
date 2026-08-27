@@ -40,4 +40,7 @@ console.log(`${apply ? "merged" : "DRY RUN — would merge"} ${merged} split thr
   `(${moved} messages moved, ${groups} duplicate-name groups examined, ${skipped} skipped, ` +
   `${failed} failed${failed > 0 ? " — re-run to retry them" : ""})`);
 if (!apply) console.log("Re-run with --apply to write.");
+// A partial apply must not report success — the repository has measured what a failure that
+// exits 0 costs. The summary above already said what to do about it.
+if (failed > 0) process.exitCode = 1;
 await owned.close();

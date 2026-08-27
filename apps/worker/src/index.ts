@@ -3770,12 +3770,14 @@ export async function startWorkerWithLock(
                 db: db as unknown as Tx, apply: true, accountId, log,
                 cursor: threadJoinHealCursors.get(accountId),
               }));
-            // Carry the resume point ONLY while the budget (not the candidate set) ended the
-            // walk AND nothing failed: a failed group is transient (nothing committed) and
-            // resuming past it would postpone its retry by a whole walk of the remaining
-            // cursor space, so a failure restarts the next gated run from the top instead.
-            // An uncapped pass has seen everything, so the next one starts fresh either way.
-            if (r.capped && r.cursor && r.failed === 0) threadJoinHealCursors.set(accountId, r.cursor);
+            // Carry the resume point while the budget (not the candidate set) ended the walk
+            // — UNCONDITIONALLY. Resetting on failure was tried and reviewed away: a group
+            // that fails deterministically would pin every run to its own page and starve the
+            // tail for ever, which is strictly worse than a failed group waiting for the walk
+            // to wrap. Transients are already retried once INSIDE the run (see the pass), so
+            // `failed` here means the persistent case. An uncapped pass has seen everything
+            // and starts the next walk fresh.
+            if (r.capped && r.cursor) threadJoinHealCursors.set(accountId, r.cursor);
             else threadJoinHealCursors.delete(accountId);
             if (r.merged > 0 || r.skipped > 0 || r.failed > 0) {
               // Named fields, not a spread: `r.cursor` carries a thread SUBJECT (user content
