@@ -1094,8 +1094,12 @@ export interface MailboxAdapter {
    * `/`-joined paths throughout; the adapter owns the delimiter translation. */
   /** The mailbox's real hierarchy delimiter, discovered at connect — the folder-op pass's last name check. */
   hierarchyDelimiter?(): string;
-  /** IMAP CREATE. Idempotent: "already exists" is the asked-for state. */
-  createFolder?(canonical: string): Promise<void>;
+  /**
+   * IMAP CREATE, answering the canonical path that now EXISTS — a personal-namespace server
+   * files a root-named CREATE under INBOX, and the caller must record where it landed.
+   * Idempotent: "already exists" is the asked-for state.
+   */
+  createFolder?(canonical: string): Promise<string>;
   /**
    * IMAP RENAME with the idempotent-completion arm: `"already"` when the source is gone AND the
    * target exists (a crash between the RENAME and the database swap, or the user's own client

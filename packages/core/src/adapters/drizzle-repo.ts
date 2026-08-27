@@ -213,8 +213,12 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * records commands; these apply their database consequences beside the IMAP writes. */
   /** Pending commands of one mailbox, FIFO by request time — failed rows wait for dismissal. */
   listFolderOps(mailboxId: string): Promise<FolderOpRow[]>;
-  /** A create landed on the server: retire the command, emit the settled entity. One tx. */
-  completeFolderCreate(op: Pick<FolderOpRow, "id" | "accountId" | "folderId">): Promise<void>;
+  /**
+   * A create landed on the server: retire the command, emit the settled entity — re-spelt to
+   * `landed` when a personal-namespace server filed it elsewhere, or retired in favour of the
+   * row discovery already adopted there. One tx.
+   */
+  completeFolderCreate(op: Pick<FolderOpRow, "id" | "accountId" | "mailboxId" | "folder" | "folderId">, landed: string): Promise<void>;
   /**
    * THE RENAME SWAP — everything that spells the old path, re-spelt under the new one, in ONE
    * transaction beside the IMAP RENAME it mirrors: the inventory subtree (cursors intact —
@@ -1877,8 +1881,41 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return rows.map((r) => ({ ...r, op: r.op as FolderOpRow["op"] }));
   }
 
-  async completeFolderCreate(op: Pick<FolderOpRow, "id" | "accountId" | "folderId">): Promise<void> {
+  async completeFolderCreate(
+    op: Pick<FolderOpRow, "id" | "accountId" | "mailboxId" | "folder" | "folderId">,
+    /**
+     * Where the CREATE actually LANDED (the adapter's answer) — a personal-namespace server
+     * files a root-named create under INBOX, so the commanded row must be re-spelt to the real
+     * path or it stands as a phantom whose rename/delete answer "gone" for ever (measured
+     * live). Three shapes: landed = commanded (the ordinary case — touch and settle); landed
+     * elsewhere with no row there yet (re-spell the row); landed where DISCOVERY already
+     * adopted a row (the discovered row IS the folder — the commanded row retires with a
+     * tombstone, and the entity the rail keeps is the one every join already works against).
+     */
+    landed: string,
+  ): Promise<void> {
     await this.db.delete(folderOps).where(eq(folderOps.id, op.id));
+    if (landed !== op.folder) {
+      const [existing] = await this.db.select({ id: mailboxFolders.id }).from(mailboxFolders)
+        .where(and(eq(mailboxFolders.mailboxId, op.mailboxId), eq(mailboxFolders.folder, landed)))
+        .limit(1);
+      if (existing) {
+        await this.db.delete(mailboxFolders).where(eq(mailboxFolders.id, op.folderId));
+        await this.recordChange({
+          accountId: op.accountId, entityType: "folder", entityId: op.folderId, op: "delete", meta: null,
+        });
+        await this.recordChange({
+          accountId: op.accountId, entityType: "folder", entityId: existing.id, op: "update", meta: null,
+        });
+        return;
+      }
+      await this.db.update(mailboxFolders).set({ folder: landed, updatedAt: new Date() })
+        .where(eq(mailboxFolders.id, op.folderId));
+      await this.recordChange({
+        accountId: op.accountId, entityType: "folder", entityId: op.folderId, op: "update", meta: null,
+      });
+      return;
+    }
     await this.db.update(mailboxFolders).set({ updatedAt: new Date() })
       .where(eq(mailboxFolders.id, op.folderId));
     await this.recordChange({

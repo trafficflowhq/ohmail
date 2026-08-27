@@ -155,9 +155,14 @@ async function runCreate(deps: FolderOpsDeps, op: FolderOpRow): Promise<"done" |
     return "failed";
   }
   await deps.guard?.();
-  await deps.adapter.createFolder!(op.folder);
-  await deps.write((r) => r.completeFolderCreate(op));
-  deps.log?.info("folder_created", { mailboxId: deps.mailboxId, accountId: deps.accountId, folderId: op.folderId });
+  // Where the create LANDED — a personal-namespace server files a root-named create under
+  // INBOX, and the completion records the real path (or defers to the row discovery already
+  // adopted there) so the commanded row can never stand as a phantom.
+  const landed = await deps.adapter.createFolder!(op.folder);
+  await deps.write((r) => r.completeFolderCreate(op, landed));
+  deps.log?.info("folder_created", {
+    mailboxId: deps.mailboxId, accountId: deps.accountId, folderId: op.folderId, landed,
+  });
   return "done";
 }
 

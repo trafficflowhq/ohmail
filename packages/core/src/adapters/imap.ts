@@ -1105,15 +1105,31 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     return this.delimiter;
   }
 
-  /** CREATE. Idempotent: a folder that already exists is the asked-for state, not a failure. */
-  async createFolder(canonical: string): Promise<void> {
+  /**
+   * CREATE, answering the canonical path of the folder that now EXISTS — which is not always
+   * the one asked for: a server with a personal-namespace prefix files a root-named CREATE
+   * under INBOX (measured live: canonical "X" landed as "INBOX/X" and discovery adopted the
+   * prefixed row while the commanded row went stale). The server's own answer is the truth
+   * where it gives one; on "already exists" the LIST is asked — the exact name first, then
+   * the INBOX-prefixed form. Idempotent either way: a folder that already exists is the
+   * asked-for state, not a failure.
+   */
+  async createFolder(canonical: string): Promise<string> {
     const path = this.toServerPath(canonical);
     try {
-      await this.client.mailboxCreate(path);
+      const info = await this.client.mailboxCreate(path);
+      const landed = (info as { path?: string } | undefined)?.path;
+      if (typeof landed === "string" && landed.length > 0) return this.toCanonical(landed);
     } catch (err) {
       // `ensureFolders`' own idiom: "already exists" is success for a CREATE.
       if (!/already ?exists/i.test(String((err as Error).message))) throw err;
     }
+    const list = await this.client.list();
+    const paths = new Set(list.map((f) => this.toCanonical(f.path)));
+    if (paths.has(canonical)) return canonical;
+    const prefixed = `INBOX/${canonical}`;
+    if (paths.has(prefixed)) return prefixed;
+    return canonical;
   }
 
   /**
