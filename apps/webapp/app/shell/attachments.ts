@@ -244,6 +244,17 @@ function useEngineNotice(engine: OhmailEngine): number {
 }
 
 /**
+ * How many sibling LIST reads may be in the air at once. The same width as the engine's own
+ * body-hydration cap (`hydrateThread` departs four bodies at a time), and for the same reason:
+ * a thread's length must not translate into a burst the browser queues and the deadline then
+ * eats. One indexed read each, so the crew drains a long thread in a few rounds.
+ */
+const SIBLING_LIST_CONCURRENCY = 4;
+
+/** The at-rest value for the download-all set — one frozen instance, so idle renders share it. */
+const EMPTY_IDS: ReadonlySet<string> = new Set();
+
+/**
  * Wire the selected message's attachments — and its whole CONVERSATION's — to the shell.
  *
  * Returns `undefined` when this client cannot open attachments at all — the demo (`?demo=1`
@@ -266,7 +277,13 @@ export function useMessageAttachments(
 ): AttachmentsChrome | undefined {
   const available = engine.attachmentsAvailable();
   useEngineNotice(engine);
-  const [downloadingAll, setDownloadingAll] = useState<string | null>(null);
+  /**
+   * Which messages have a download-all IN FLIGHT — a SET, because sibling panels each carry
+   * the group verb now. The scalar this replaces held only the LAST press: starting B while A
+   * still ran re-labelled A idle mid-flight, and a second press of A then saved its files
+   * twice (review finding).
+   */
+  const [downloadingAll, setDownloadingAll] = useState<ReadonlySet<string>>(EMPTY_IDS);
 
   /**
    * The failure callback through a ref: `AppShell` supplies it inline (it closes over
@@ -287,7 +304,7 @@ export function useMessageAttachments(
 
   /** The one ask, with everything an ask entails — the probe escalation and the calendar pass. */
   const ask = useCallback(
-    (id: string): void => {
+    (id: string): Promise<void> => {
       // Metadata only: `cost: "read"`, one indexed row read, nothing reaches IMAP. The bytes
       // are a separate, deliberate act — never speculative, never per row, because a paid fetch
       // needs a person behind it.
@@ -297,7 +314,22 @@ export function useMessageAttachments(
       // probe exists to settle — one single-flight `POST /auth/refresh` whose answer either heals
       // the session silently (and the revival below re-asks this list) or confirms the death that
       // puts the real re-auth prompt on screen. A no-op wherever no probe is registered.
-      void engine.loadAttachments(id).then((outcome) => {
+      return engine.loadAttachments(id).then((outcome) => {
+        /*
+         * A COMPLETION THAT OUTLIVED ITS SELECTION IS RE-RELEASED, NOT ACTED ON. The engine
+         * does not cancel a list read on release — the late outcome is written back to its
+         * held map regardless — so a reader who left the thread before a slow response landed
+         * would keep that list (and the calendar pass below would then fetch BYTES) with no
+         * cleanup left to sweep it: the release already ran. The release set is the truth
+         * about what the CURRENT selection wants; an id no longer in it answers to nobody.
+         * The within-thread move survives this exactly: its cleanup clears the set and the
+         * re-run re-adds the id before any completion can land, so the (single-flighted,
+         * shared) outcome finds the id wanted and stands (review finding).
+         */
+        if (!loaded.current.has(id)) {
+          engine.releaseAttachments(id);
+          return;
+        }
         if (outcome.state === "failed" && isAuthListFailure(outcome.code)) probeSessionNow();
         // A meeting invitation should be readable, not merely saveable: fetch the message's
         // calendar parts (tiny, budgeted, single-flight — the engine owns all three bounds) so
@@ -311,7 +343,7 @@ export function useMessageAttachments(
   useEffect(() => {
     if (!available || !messageId) return;
     loaded.current.add(messageId);
-    ask(messageId);
+    void ask(messageId);
     return () => {
       // The whole selection's worth — the focused message AND every sibling the effect below
       // asked for. `releaseAttachments` itself declines to drop a live sent-copy seed, so
@@ -351,11 +383,39 @@ export function useMessageAttachments(
       : "";
   useEffect(() => {
     if (!available || !messageId || conversationKey === "") return;
+    /*
+     * BOUNDED, NOT A BURST. The engine's single-flight is per message, so a naive loop here
+     * would put one deadline-bound GET in the air per thread member at once — a long thread
+     * as one volley, repeated on every within-thread selection move, with the queued tail
+     * able to age out against `ATTACHMENT_LIST_TIMEOUT_MS` behind browser connection limits
+     * (review finding). So the sweep runs a fixed crew of workers over one queue — the same
+     * shape, and the same width, as the engine's own body-hydration cap. Ids join the release
+     * set at ENQUEUE, so the cleanup owns even the not-yet-asked tail; a cancelled worker
+     * simply stops taking, and the re-run re-queues whatever still matters.
+     */
+    const queue: string[] = [];
     for (const id of conversationKey.split(",")) {
       if (loaded.current.has(id)) continue;
       loaded.current.add(id);
-      ask(id);
+      queue.push(id);
     }
+    if (queue.length === 0) return;
+    let cancelled = false;
+    const worker = async (): Promise<void> => {
+      while (!cancelled) {
+        const id = queue.shift();
+        if (id === undefined) return;
+        await ask(id);
+      }
+    };
+    // The crew size is FIXED before the first worker runs: a worker takes its first id
+    // synchronously, so reading `queue.length` inside the loop condition would count the
+    // shrinking queue and under-spawn — two siblings got one worker (watched happen).
+    const crew = Math.min(SIBLING_LIST_CONCURRENCY, queue.length);
+    for (let i = 0; i < crew; i++) void worker();
+    return () => {
+      cancelled = true;
+    };
   }, [engine, messageId, available, conversationKey, ask]);
 
   /**
@@ -533,7 +593,11 @@ export function useMessageAttachments(
   const downloadAll = useCallback(
     (id: string, opts: { includeInlineImages?: boolean } = {}): void => {
       void (async () => {
-        setDownloadingAll(id);
+        setDownloadingAll((prev) => {
+          const next = new Set(prev);
+          next.add(id);
+          return next;
+        });
         try {
           const held = engine.attachmentsOf(id, opts);
           if (held.state !== "ready" || held.items.length === 0) {
@@ -577,16 +641,21 @@ export function useMessageAttachments(
           // which is more than a toast could say and is attached to the file it is about.
           if (saved.length === 0) onFailed.current();
         } finally {
-          // Guarded: a second message's download may have started while this one was in
-          // flight, and clearing unconditionally would take its spinner away.
-          setDownloadingAll((cur) => (cur === id ? null : cur));
+          // Remove THIS id alone: another panel's download-all may still be in flight, and its
+          // membership — its spinner — is its own.
+          setDownloadingAll((prev) => {
+            if (!prev.has(id)) return prev;
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
         }
       })();
     },
     [engine],
   );
 
-  const downloadingAllOf = useCallback((id: string): boolean => downloadingAll === id, [downloadingAll]);
+  const downloadingAllOf = useCallback((id: string): boolean => downloadingAll.has(id), [downloadingAll]);
 
   /**
    * ONE OBJECT, not a fresh literal per render.

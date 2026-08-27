@@ -1971,7 +1971,23 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * the selection rather than remembered at every call site that can change it.
    */
   useEffect(() => {
-    if (previewFor && previewFor.messageId !== selectedOhbox?.id) setPreviewFor(null);
+    if (!previewFor) return;
+    /*
+     * Members of the ACTIVE conversation keep their previews. Sibling panels render attachment
+     * strips now, and the seam holds lists and bytes for the WHOLE conversation
+     * (`useMessageAttachments` — released together when the selection moves), so the revoke
+     * argument above binds to the selection, not to the focused id alone. Before this widening,
+     * a press on a sibling tile's eye recorded the sibling's id here and this effect closed the
+     * overlay in the same breath — the primary action on every previewable sibling file was a
+     * flash or a no-op (review finding). Anything OUTSIDE the open conversation still
+     * derive-closes exactly as before.
+     */
+    const held =
+      selectedOhbox != null &&
+      (previewFor.messageId === selectedOhbox.id ||
+        threadOf(reader, selectedOhbox.id).some((m) => m.id === previewFor.messageId));
+    if (!held) setPreviewFor(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewFor, selectedOhbox?.id]);
 
   /**
