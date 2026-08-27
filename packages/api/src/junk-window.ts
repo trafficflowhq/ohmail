@@ -690,6 +690,15 @@ export async function rescueJunk(
   const allowed = args.allow !== undefined ? await allowSender(deps, ctx, args.allow.sender) : undefined;
 
   /**
+   * EVERYTHING AFTER THE ALLOW SPEAKS THE PARTIAL-OUTCOME LANGUAGE. The move's own catch below
+   * translates its two failures; this boundary covers the steps BEFORE it — the husk lookup and
+   * the dial itself (a busy mailbox, an unreadable credential, a refused LOGIN) — which used to
+   * rethrow raw and read as "nothing happened" while the sender's rules had already changed
+   * (review round 2 on the client). An inner ServiceError passes through untouched.
+   */
+  try {
+
+  /**
    * THE HUSK, if this is our own verdict coming back: the filing completion parked the row's
    * locator at exactly this junk ref, and the verdict dropped the body. Identified BEFORE the
    * move (the raw must be fetched while the message is still in Junk, on the same connection);
@@ -803,6 +812,18 @@ export async function rescueJunk(
     } catch (err) {
       deps.logger?.warn?.("junk_rescue_unhusk_failed", { mailboxId: args.mailboxId, err: String(err) });
     }
+  }
+
+  } catch (err) {
+    if (err instanceof ServiceError) throw err;
+    if (allowed !== undefined) {
+      throw new ServiceError(
+        "junk_rescue_move_failed", 502,
+        "the move could not be made just now — the sender is allowed from now on regardless",
+        { allowed },
+      );
+    }
+    throw err;
   }
 
   // Ring the doorbell (`sync_requested_at`, mail 0049): the worker's ~3 s kick pass ingests the

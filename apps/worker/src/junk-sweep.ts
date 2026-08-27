@@ -30,6 +30,40 @@ import type { NativeLocator } from "@trafficflow/core";
 import type { WorkerRepo, PendingFolderState } from "@trafficflow/core/adapters/drizzle-repo";
 import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "./junk-filing.js";
 
+/**
+ * THE SCAN'S STATE ACROSS CYCLES — a pure decision, extracted so it can be pinned by test
+ * (review round 4: a fully refused pile larger than one window never reported `examinedAll`,
+ * because the tail window had not "started at the top"; the stamp then stood for ever and the
+ * mailbox re-kicked the same refusals every cycle).
+ *
+ * One window per cycle. The cursor advances while a scan is unfinished — a window that landed
+ * moves keeps advancing too (its refusals shrink on their own as later scans revisit them) —
+ * and resets to the top when the scan runs off the end. `examinedAll` is true precisely when a
+ * WHOLE scan — top to end, however many cycles it took — moved nothing: that is the one reading
+ * that licenses the cycle to retire the command over a non-empty pile.
+ */
+export interface SweepScanState {
+  /** The last examined id, or null for "the next window starts at the top". */
+  after: string | null;
+  /** Whether the scan IN PROGRESS (since the last top) has moved anything. */
+  movedSinceTop: boolean;
+}
+
+export function adoptSweepWindow(
+  state: SweepScanState,
+  window: { movedCount: number; candidates: number; lastId: string | null; junkFolder: string | null },
+  limit: number,
+): { state: SweepScanState; examinedAll: boolean } {
+  const startedAtTop = state.after === null;
+  const movedSinceTop = (startedAtTop ? false : state.movedSinceTop) || window.movedCount > 0;
+  const ranOffTheEnd = window.junkFolder === null || window.candidates < limit;
+  const examinedAll = window.junkFolder === null || (ranOffTheEnd && !movedSinceTop);
+  const next: SweepScanState = ranOffTheEnd
+    ? { after: null, movedSinceTop: false }
+    : { after: window.lastId, movedSinceTop };
+  return { state: next, examinedAll };
+}
+
 export interface JunkSweepCandidate { messageId: string; subject: string; ref: string }
 
 export interface JunkSweepResult {

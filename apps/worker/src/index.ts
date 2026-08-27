@@ -56,7 +56,7 @@ import {
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
 import { runSyncCycle, LeaderFencedError, type SyncDeps } from "./sync.js";
-import { junkSweepPass } from "./junk-sweep.js";
+import { adoptSweepWindow, junkSweepPass, type SweepScanState } from "./junk-sweep.js";
 
 /**
  * How many Quarantine members one cycle's sweep slice may move — the filing budget's argument
@@ -1793,8 +1793,8 @@ export async function startWorkerWithLock(
         // The narrowed handle the sweep port's closures capture — `adapter` is a `let` above,
         // and TypeScript does not carry a `let`'s narrowing into a callback that runs later.
         const attachedAdapter: MailboxAdapter = adapter;
-        /** The sweep's scan cursor for THIS attachment — see the `junkSweep.run` note below. */
-        let sweepScanAfter: string | null = null;
+        /** The sweep's scan state for THIS attachment — see the `junkSweep.run` note below. */
+        let sweepScan: SweepScanState = { after: null, movedSinceTop: false };
         const deps: SyncDeps = {
           repo, adapter, accountId: mb.accountId, mailboxId: mb.mailboxId,
           // ── THE LEADER FENCE OVER THIS MAILBOX'S MAIL-BEARING WRITES ─────────────────────
@@ -1900,35 +1900,30 @@ export async function startWorkerWithLock(
                   key === "transaction" ? hooks.write : Reflect.get(target, key, receiver),
               }) as typeof repo & { transaction: typeof hooks.write };
               /**
-               * ONE BOUNDED WINDOW PER CYCLE, WITH A SCAN CURSOR CARRIED ACROSS CYCLES. A window
-               * is `limit` candidates in id order from `sweepScanAfter` (keyset — an OFFSET over a
-               * set that shrinks between windows skips a row). A window that moved nothing but was
-               * cut by the limit says nothing about the members after it, so the cursor advances
-               * to its last id and the NEXT cycle looks at the next window — never a loop that
-               * walks a whole refused pile inside one cycle (review round 3: the per-cycle bound
-               * has to hold for IMAP attempts, not only for moves). `examinedAll` is true only
-               * when a scan that STARTED at the top ran off the end with nothing moved — which is
-               * the one reading that licenses the cycle to call the pile stuck. A window that ran
-               * off the end from a mid-pile cursor wraps to the top for the next cycle instead.
+               * ONE BOUNDED WINDOW PER CYCLE on a KEYSET cursor, with the scan's state carried
+               * across cycles in the attachment ({@link adoptSweepWindow} is the whole decision,
+               * pinned by test): the cursor advances until the scan runs off the end, and
+               * `examinedAll` is true precisely when a WHOLE scan — top to end, however many
+               * cycles it took — moved nothing. That is what lets `sync.ts` retire the command
+               * over a pile the server refuses outright, without ever walking more than one
+               * window inside one cycle (review rounds 3 and 4).
                */
-              const startedAtTop = sweepScanAfter === null;
               const res = await junkSweepPass({
                 db: db as unknown as Tx, repo: fencedRepo, adapter: attachedAdapter,
                 accountId: mb.accountId, mailboxId: mb.mailboxId, execute: true, guard: hooks.guard,
                 limit: JUNK_SWEEP_PER_CYCLE,
-                ...(sweepScanAfter !== null ? { afterId: sweepScanAfter } : {}),
+                ...(sweepScan.after !== null ? { afterId: sweepScan.after } : {}),
               });
-              const ranOffTheEnd = res.candidates.length < JUNK_SWEEP_PER_CYCLE;
-              const last = res.candidates.at(-1)?.messageId ?? null;
-              if (res.moved.length > 0 || ranOffTheEnd || res.junkFolder === null) {
-                // Progress landed, or the scan is over: the next cycle starts from the top.
-                sweepScanAfter = null;
-              } else {
-                sweepScanAfter = last;
-              }
+              const adopted = adoptSweepWindow(sweepScan, {
+                movedCount: res.moved.length,
+                candidates: res.candidates.length,
+                lastId: res.candidates.at(-1)?.messageId ?? null,
+                junkFolder: res.junkFolder,
+              }, JUNK_SWEEP_PER_CYCLE);
+              sweepScan = adopted.state;
               return {
                 moved: res.moved, skipped: res.skipped, junkFolder: res.junkFolder,
-                examinedAll: res.junkFolder === null || (startedAtTop && ranOffTheEnd),
+                examinedAll: adopted.examinedAll,
               };
             },
             remaining: async () => {

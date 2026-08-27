@@ -376,6 +376,13 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
    */
   const answers = useRef(new Map<string, { items: JunkItemWire[]; mailboxes: JunkMailboxWire[]; truncated: boolean }>());
   /**
+   * Terms with an ask IN FLIGHT. Without this, leaving a pending term and typing it again finds
+   * no cached answer and kicks a SECOND provider search — and whichever finishes last would
+   * write the cache (review round 2). One ask per term at a time; the cache is written by the
+   * ask that ran, whatever generation is current on screen.
+   */
+  const pendingTerms = useRef(new Set<string>());
+  /**
    * Rows this session RESCUED. A server answer that fetched a row before its move landed must
    * not put it back on screen — the filter runs at every place rows enter (search answers,
    * older pages).
@@ -390,11 +397,13 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
 
   const searchServer = useCallback((q?: string) => {
     const term = (q ?? query).trim();
-    if (term.length === 0) return;
+    if (term.length === 0 || pendingTerms.current.has(term)) return;
+    pendingTerms.current.add(term);
     const gen = ++searchGen.current;
     setSearchPhase("searching");
     void wire.search(term).then(
       (page) => {
+        pendingTerms.current.delete(term);
         const answer = { items: notDropped(page.items), mailboxes: page.mailboxes, truncated: page.truncated };
         answers.current.set(term, answer);
         if (searchGen.current !== gen) return;
@@ -404,6 +413,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
         setSearchPhase("done");
       },
       () => {
+        pendingTerms.current.delete(term);
         if (searchGen.current !== gen) return;
         setHits([]);
         setSearchBoxes([]);
@@ -441,7 +451,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     // segment cancels a pending kick (review round: a dial for a pane no longer visible).
     const term = query.trim();
     if (!active || term.length === 0 || phase !== "ready" || searchPhase !== "local") return;
-    if (localKept.length > 0 || answers.current.has(term)) return;
+    if (localKept.length > 0 || answers.current.has(term) || pendingTerms.current.has(term)) return;
     const timer = setTimeout(() => searchServer(term), JUNK_SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [active, query, phase, searchPhase, localKept.length, searchServer]);
