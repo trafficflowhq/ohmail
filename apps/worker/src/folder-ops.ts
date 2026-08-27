@@ -207,13 +207,18 @@ async function runDelete(
     return "failed";
   }
 
+  // The RESOLVED Sent path, read once per delete: the stale-residue guard compares the exact
+  // folder the adapter watermarks, not a spelling — a mailbox whose \\Sent resolved to a
+  // custom path would otherwise lose the last evidence of old sent copies.
+  const sentFolder = (await adapter.capabilities()).watchedSentFolder ?? null;
+
   /** One folder's mirror consequences, within the cycle's budget. False ⇒ budget ran out. */
   const tombstoneWithin = async (folder: string): Promise<boolean> => {
     for (;;) {
       if (budget.chunks <= 0) return false;
       budget.chunks -= 1;
       const took = await deps.write((r) =>
-        r.tombstoneFolderMessages(accountId, mailboxId, folder, FOLDER_DELETE_TOMBSTONE_CHUNK));
+        r.tombstoneFolderMessages(accountId, mailboxId, folder, FOLDER_DELETE_TOMBSTONE_CHUNK, sentFolder));
       if (took < FOLDER_DELETE_TOMBSTONE_CHUNK) return true;
     }
   };

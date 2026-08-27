@@ -239,7 +239,7 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * so a crash between chunks re-enters. Returns how many it took; 0 ⇒ the folder's mirror side
    * is clean and the row itself may go.
    */
-  tombstoneFolderMessages(accountId: string, mailboxId: string, folder: string, limit: number): Promise<number>;
+  tombstoneFolderMessages(accountId: string, mailboxId: string, folder: string, limit: number, sentFolder?: string | null): Promise<number>;
   /** The folder left the server: drop its inventory row (CASCADE takes a subject op) + tombstone. */
   removeFolderRow(accountId: string, folderId: string): Promise<void>;
   /** The honest refusal: `status='failed'` + the closed code, carried on the entity until dismissed. */
@@ -1986,7 +1986,17 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return rows.sort((a, b) => (b.folder.length - a.folder.length) || (a.folder < b.folder ? -1 : 1));
   }
 
-  async tombstoneFolderMessages(accountId: string, mailboxId: string, folder: string, limit: number): Promise<number> {
+  async tombstoneFolderMessages(
+    accountId: string, mailboxId: string, folder: string, limit: number,
+    /**
+     * The mailbox's RESOLVED Sent path (`capabilities().watchedSentFolder`), when the caller
+     * holds a live adapter — the stale-residue guard's primary comparison. The shape belt
+     * below stays as the fallback (and the belt for UNRESOLVED Sent-shaped siblings an old
+     * mailbox can carry): both err toward PRESERVING, because lost Sent evidence never heals
+     * while a lingering stale row is re-taught by the next end-to-end enumeration.
+     */
+    sentFolder?: string | null,
+  ): Promise<number> {
     const now = new Date();
     const changes: ChangeInput[] = [];
 
@@ -2183,7 +2193,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
               eq(messageInstances.messageId, st.messageId),
               sql`${mailboxFolders.uidvalidity} is not null and ${mailboxFolders.uidvalidity} not in (0, ${messageInstances.uidvalidity})`,
             ));
-          const removable = staleRows.filter((r) => !SENT_SHAPED_CANONICAL.test(r.folder)).map((r) => r.id);
+          const removable = staleRows
+            .filter((r) => r.folder !== (sentFolder ?? null) && !SENT_SHAPED_CANONICAL.test(r.folder))
+            .map((r) => r.id);
           if (removable.length > 0) {
             await this.db.delete(messageInstances).where(inArray(messageInstances.id, removable));
           }
