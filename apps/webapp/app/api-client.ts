@@ -1551,13 +1551,60 @@ export const screener = {
    * "Not junk": ONE server-side move out of \Junk back to the inbox — the un-training gesture —
    * after which the message re-enters through the NORMAL pipeline (a first-time sender waits in
    * the Screener; an allowed one lands in the Ohbox). 410 when the provider removed it first.
+   *
+   * `allow: { sender }` is the SECOND verb — "Not junk, always allow": the server disables the
+   * sender's spam-promoting rule and mints their allow BEFORE the move, in one transaction, so
+   * the rescued message and every later one skip the gate. Same route; the server never forks a
+   * parallel rescue path. On a 410 the allow still stands — the press was about the sender.
    */
-  junkRescue: (mailboxId: string, uid: number, uidValidity: string) =>
-    api<{ status: "rescued" }>("/screener/junk/rescue", {
+  junkRescue: (mailboxId: string, uid: number, uidValidity: string, opts: { allow?: { sender: string } } = {}) =>
+    api<JunkRescueWire>("/screener/junk/rescue", {
       method: "POST",
-      body: { mailboxId, uid, uidValidity },
+      body: { mailboxId, uid, uidValidity, ...(opts.allow ? { allow: opts.allow } : {}) },
     }),
+
+  /**
+   * The search-append (§16.2's table): one server-side SEARCH per junk folder behind the same
+   * read budget as the list, the newest hits merged. A mailbox that did not answer in time is
+   * stated `unreachable` — "Junk could not be searched" — never an empty answer pretending.
+   */
+  junkSearch: (q: string) =>
+    api<JunkSearchWire>(`/screener/junk/search?q=${encodeURIComponent(q)}`),
+
+  /** The one-time sweep offer's DRY RUN (§16.1): what still sits in ohmail/Quarantine. */
+  junkSweepPreview: () => api<JunkSweepWire>("/screener/junk/sweep"),
+
+  /** The PRESS: records the sweep for the worker to execute; answers the preview it leaves. */
+  junkSweepRequest: () => api<JunkSweepWire>("/screener/junk/sweep", { method: "POST" }),
 };
+
+export interface JunkRescueWire {
+  status: "rescued";
+  /** Present only for the second verb: what the allow half did. */
+  allowed?: { disabledRuleIds: string[]; createdRuleId: string | null };
+}
+
+export interface JunkSearchWire {
+  mailboxes: JunkMailboxWire[];
+  items: JunkItemWire[];
+  /** Some mailbox matched more than the page carried — the rows are the newest hits only. */
+  truncated: boolean;
+}
+
+export interface JunkSweepMailboxWire {
+  id: string;
+  address: string;
+  candidates: number;
+  hasJunkFolder: boolean;
+  pending: boolean;
+}
+
+export interface JunkSweepWire {
+  mailboxes: JunkSweepMailboxWire[];
+  /** Candidates across the mailboxes that CAN move — the offer's number. */
+  movable: number;
+  pending: boolean;
+}
 
 /** One row of the live Junk window — a header fact, never a mirror entity. */
 export interface JunkItemWire {

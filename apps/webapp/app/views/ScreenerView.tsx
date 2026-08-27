@@ -721,7 +721,9 @@ export function ScreenerView({
    * through `ids` alone. Without it, `state.spam` exactly as before the window existed.
    */
   const junkActive = segment === "spam" && junk !== undefined;
-  const junkItems: JunkItemWire[] = junkActive ? junk!.items : [];
+  // `visible`, not `items`: with a search typed this is the locally-kept rows plus the server's
+  // appended hits, and selection / body-on-open / the rescue all address rows from it.
+  const junkItems: JunkItemWire[] = junkActive ? junk!.visible : [];
   const items: Array<ScreenerSenderDTO | SpamRow> =
     segment === "waiting"
       ? activeFilter === null
@@ -804,7 +806,7 @@ export function ScreenerView({
     // provider read for a pane that is not on screen (§16.2's bound; review finding). Opening
     // the preview — or the viewport widening — re-runs this and fetches then.
     if (!full && narrow) return;
-    const item = junk!.items.find((i) => junkKeyOf(i) === activeId);
+    const item = junk!.visible.find((i) => junkKeyOf(i) === activeId);
     if (item) junk!.openBody(item);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [junkActive, activeId, full, narrow]);
@@ -2141,27 +2143,54 @@ function JunkRows({
   }
   const absent = junk.mailboxes.filter((m) => m.window !== "ok");
   const now = new Date();
+  const { search, sweep } = junk;
+  const query = search.query.trim();
+  /** Where the server's appended hits begin in `visible` — the divider's position. */
+  const localCount = query.length > 0 ? search.localCount : junk.visible.length;
+  const row = (i: JunkItemWire) => (
+    <MessageRow
+      key={junkKeyOf(i)}
+      id={junkKeyOf(i)}
+      from={displayAddressee(i.from.name, i.from.address)}
+      address={displayAddressUnder(i.from.name, i.from.address)}
+      time={i.date ? displayTime({ date: i.date }, now) : undefined}
+      subject={i.subject}
+      avatarInitial={(i.from.name ?? i.from.address).trim().charAt(0).toUpperCase() || "?"}
+      avatarHue={avatarHue(i.from.address)}
+      /* THE ORIGIN MARKER (§16.2): who filed this into Junk. The same badge slot the
+         mirror's spam rows use for their detection label. */
+      detection={t(i.origin === "verdict" ? "junkOriginVerdict" : "junkOriginProvider")}
+      dull
+      selected={junkKeyOf(i) === activeKey}
+      onClick={() => onSelect(junkKeyOf(i))}
+    />
+  );
   return (
     <>
-      {junk.items.map((i) => (
-        <MessageRow
-          key={junkKeyOf(i)}
-          id={junkKeyOf(i)}
-          from={displayAddressee(i.from.name, i.from.address)}
-          address={displayAddressUnder(i.from.name, i.from.address)}
-          time={i.date ? displayTime({ date: i.date }, now) : undefined}
-          subject={i.subject}
-          avatarInitial={(i.from.name ?? i.from.address).trim().charAt(0).toUpperCase() || "?"}
-          avatarHue={avatarHue(i.from.address)}
-          /* THE ORIGIN MARKER (§16.2): who filed this into Junk. The same badge slot the
-             mirror's spam rows use for their detection label. */
-          detection={t(i.origin === "verdict" ? "junkOriginVerdict" : "junkOriginProvider")}
-          dull
-          selected={junkKeyOf(i) === activeKey}
-          onClick={() => onSelect(junkKeyOf(i))}
+      <JunkSweepOffer sweep={sweep} />
+      {/* THE SEARCH (§16.2's table): filters the loaded window as you type; the server's Junk
+          folders are asked only when that finds nothing (or on the press below), and their
+          hits are APPENDED under the kept rows — never a spinner over the first paint. */}
+      <div className="scn-junk-search">
+        <input
+          type="search"
+          value={search.query}
+          onChange={(e) => search.setQuery(e.currentTarget.value)}
+          placeholder={t("junkSearchPlaceholder")}
+          aria-label={t("junkSearchLabel")}
+          autoComplete="off"
         />
-      ))}
-      {junk.items.length === 0
+      </div>
+      {junk.visible.slice(0, localCount).map(row)}
+      {query.length > 0 && search.phase === "done" && search.hits.length > 0 ? (
+        <p className="scn-junk-note">{t("junkSearchAppended")}</p>
+      ) : null}
+      {junk.visible.slice(localCount).map(row)}
+      {query.length > 0 ? (
+        <JunkSearchState search={search} localCount={localCount} />
+      ) : null}
+      {query.length === 0
+        && junk.items.length === 0
         && junk.mailboxes.length > 0
         && junk.mailboxes.every((m) => m.window === "ok") ? (
         /* "Junk is empty." is a claim about every window this account has — it renders only
@@ -2181,7 +2210,7 @@ function JunkRows({
           {t(m.window === "no_junk_folder" ? "junkNoFolder" : "junkUnreachable", { address: m.address })}
         </p>
       ))}
-      {junk.nextCursor !== null ? (
+      {junk.nextCursor !== null && query.length === 0 ? (
         <div className="scn-junk-older">
           <Button variant="ghost" onClick={junk.loadOlder} disabled={junk.olderLoading}>
             {junk.olderLoading ? t("junkOlderLoading") : t("junkOlder")}
@@ -2192,6 +2221,114 @@ function JunkRows({
           would be a claim about somebody else's cleanup job); pinned by test. */}
       <p className="scn-junk-note scn-junk-retention">{t("junkRetention")}</p>
     </>
+  );
+}
+
+/**
+ * The search's own sentence under the rows — one per state, none of them a silent spinner:
+ * the local filter kept nothing and the server is being asked; the server answered (with the
+ * per-mailbox "could not be searched in time" stated beside whatever DID answer); the request
+ * failed and a retry is offered; or local rows match and the server can be asked on a press.
+ */
+function JunkSearchState({ search, localCount }: { search: JunkWindowControl["search"]; localCount: number }) {
+  const t = useTranslations("screener");
+  const q = search.query.trim();
+  const unreachable = search.mailboxes.filter((m) => m.window === "unreachable");
+  return (
+    <>
+      {search.phase === "local" && localCount === 0 ? (
+        <p className="scn-junk-note">{t("junkSearchLocalNone", { q })}</p>
+      ) : null}
+      {search.phase === "local" ? (
+        <div className="scn-junk-older">
+          <Button variant="ghost" onClick={search.searchServer}>{t("junkSearchServer")}</Button>
+        </div>
+      ) : null}
+      {search.phase === "searching" ? (
+        <p className="scn-junk-note" role="status" aria-busy="true">
+          <span className="mbx-wait">
+            <span className="mbx-spin" aria-hidden="true" />
+            <span>{t("junkSearching", { q })}</span>
+          </span>
+        </p>
+      ) : null}
+      {search.phase === "done" && search.hits.length === 0 && localCount === 0 ? (
+        <p className="scn-junk-note" role="status">{t("junkSearchNone", { q })}</p>
+      ) : null}
+      {search.phase === "done" && search.truncated ? (
+        <p className="scn-junk-note">{t("junkSearchTruncated")}</p>
+      ) : null}
+      {search.phase === "done"
+        ? unreachable.map((m) => (
+          <p key={m.id} className="scn-junk-note">{t("junkSearchUnreachable", { address: m.address })}</p>
+        ))
+        : null}
+      {search.phase === "failed" ? (
+        <p className="scn-junk-note" role="status">
+          {t("junkSearchFailed")}{" "}
+          <Button variant="ghost" onClick={search.searchServer}>{t("junkSearchRetry")}</Button>
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * THE ONE-TIME SWEEP OFFER (§16.1) at the head of the segment: how much mail from earlier
+ * verdicts still sits in `ohmail/Quarantine` — invisible from a segment that now reads native
+ * Junk — and the one press that moves it there. The number IS the dry run; the press asks once
+ * more before it records the command; "queued" and "done" are the worker's progress, read back.
+ * Nothing renders while the preview is unknown — no offer is made on a guess.
+ */
+function JunkSweepOffer({ sweep }: { sweep: JunkWindowControl["sweep"] }) {
+  const t = useTranslations("screener");
+  const [confirming, setConfirming] = useState(false);
+  if (sweep.phase === "unknown" || sweep.phase === "none" || sweep.preview === null) return null;
+  const pv = sweep.preview;
+  const stranded = pv.mailboxes.filter((m) => !m.hasJunkFolder && m.candidates > 0);
+  return (
+    <div className="scn-junk-sweep" role="status">
+      {sweep.phase === "done" ? (
+        <b>{t("junkSweepDone")}</b>
+      ) : sweep.phase === "stranded" ? (
+        /* Candidates remain and none can move — nothing to press, nothing to call empty; the
+           per-mailbox lines below say exactly what stays and why. */
+        null
+      ) : sweep.phase === "pending" ? (
+        <>
+          <b>{t("junkSweepTitle", { count: pv.movable })}</b>
+          {t("junkSweepQueued")}
+        </>
+      ) : (
+        <>
+          <b>{t("junkSweepTitle", { count: pv.movable })}</b>
+          {t("junkSweepHint")}
+          {sweep.phase === "failed" ? <p className="scn-junk-note" style={{ margin: "6px 0 0" }}>{t("junkSweepFailed")}</p> : null}
+          <div className="scn-junk-sweep-actions">
+            {confirming ? (
+              <>
+                <Button onClick={sweep.request} disabled={sweep.requesting}>
+                  {t("junkSweepConfirm", { count: pv.movable })}
+                </Button>
+                <Button variant="ghost" onClick={() => setConfirming(false)} disabled={sweep.requesting}>
+                  {t("junkSweepCancel")}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button onClick={() => setConfirming(true)}>{t("junkSweepAction")}</Button>
+                <Button variant="ghost" onClick={sweep.dismiss}>{t("junkSweepDismiss")}</Button>
+              </>
+            )}
+          </div>
+        </>
+      )}
+      {stranded.map((m) => (
+        <p key={m.id} className="scn-junk-note" style={{ margin: "8px 0 0" }}>
+          {t("junkSweepNoFolder", { address: m.address, count: m.candidates })}
+        </p>
+      ))}
+    </div>
   );
 }
 
@@ -2225,9 +2362,16 @@ function JunkPreview({
           <Button onClick={() => junk.rescue(item)} disabled={busy}>
             {t("junkNotJunk")}
           </Button>
+          {/* THE SECOND VERB (§16.2): the same move, plus one statement about the SENDER — their
+              spam rule off and their allow minted before the move, so this and every later
+              message from them skips the gate. A second button, not a modifier on the first:
+              the two are different statements and each press should say which one it made. */}
+          <Button variant="ghost" onClick={() => junk.rescue(item, { allow: true })} disabled={busy}>
+            {t("junkAllow")}
+          </Button>
         </div>
         <div className="d-sub">
-          <span className="d-note">{t("junkNotJunkNote")}</span>
+          <span className="d-note">{t("junkNotJunkNote")} {t("junkAllowNote")}</span>
         </div>
       </div>
       <div className="scn-mails">

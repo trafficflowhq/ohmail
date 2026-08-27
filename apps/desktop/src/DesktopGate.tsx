@@ -69,6 +69,7 @@ import { awayOverBridge } from "./local-away.js";
 import { profileImportOverBridge } from "./local-profile-import.js";
 import { consentOverBridge } from "./local-consent.js";
 import { olderBodyOverBridge } from "./local-older-body.js";
+import { junkOverBridge } from "./local-junk.js";
 import { cloudSuggestWire } from "./cloud-suggest.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
 import { LocalSuggest } from "./local-suggest.js";
@@ -621,6 +622,16 @@ export function DesktopGate() {
            store on this machine. Gating this on the account door was review-caught: it left the
            standalone reader with exactly the stalled Retry the wire exists to remove. */
         {...{ olderBodyWire: olderBodyOverBridge }}
+        /* THE JUNK WINDOW'S WIRE — BOTH doors, the same transport-not-a-control rule. The
+           segment, its states, its two rescue verbs, the search-append and the sweep offer are
+           the shared shell's (`shell/junk-window.ts`); this hands in the pipe. On the HOSTED door
+           the engine has no junk routes of its own — Junk is never mirrored — so every ask falls
+           through to the write-through proxy and is answered by the hosted account. On the
+           STANDALONE door the engine serves them itself (its organizer knows the mailbox's native
+           \Junk), but the segment stays withheld there by the flag in front of it: "Use folders"
+           has no consent row on that door (§17), and the shell gates the control on the flag.
+           `local-junk.ts` carries the argument. */
+        {...{ junkWire: junkOverBridge }}
         /* SETTINGS → SUBSCRIPTION, SECURITY AND ACCOUNT — the three panes the web client has on a
            hosted account and this window did not, so its Settings nav was simply shorter with
            nothing on screen saying why. An absent entry does not read as "this is done elsewhere";

@@ -583,10 +583,38 @@ export const screener: {
         subject: string;
         text: string;
     }>;
-    junkRescue: (mailboxId: string, uid: number, uidValidity: string) => Promise<{
-        status: "rescued";
-    }>;
+    junkRescue: (mailboxId: string, uid: number, uidValidity: string, opts?: {
+        allow?: { sender: string };
+    }) => Promise<JunkRescueWire>;
+    junkSearch: (q: string) => Promise<JunkSearchWire>;
+    junkSweepPreview: () => Promise<JunkSweepWire>;
+    junkSweepRequest: () => Promise<JunkSweepWire>;
 } = absent;
+
+export interface JunkRescueWire {
+    status: "rescued";
+    allowed?: { disabledRuleIds: string[]; createdRuleId: string | null };
+}
+
+export interface JunkSearchWire {
+    mailboxes: JunkMailboxWire[];
+    items: JunkItemWire[];
+    truncated: boolean;
+}
+
+export interface JunkSweepMailboxWire {
+    id: string;
+    address: string;
+    candidates: number;
+    hasJunkFolder: boolean;
+    pending: boolean;
+}
+
+export interface JunkSweepWire {
+    mailboxes: JunkSweepMailboxWire[];
+    movable: number;
+    pending: boolean;
+}
 
 export interface JunkItemWire {
     mailboxId: string;

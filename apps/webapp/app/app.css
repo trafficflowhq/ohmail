@@ -1461,6 +1461,48 @@ body.reading .shell {
   justify-content: center;
   margin: 10px 0 2px;
 }
+/* The Junk window's search — one quiet field above the rows, the list pane's own gutter. It
+   filters what is loaded as you type; the server is asked only when that finds nothing. */
+.scn-junk-search {
+  margin: 4px 14px 8px;
+}
+.scn-junk-search input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--float);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 10px;
+}
+.scn-junk-search input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The one-time sweep offer — a card at the head of the segment, the empty-state's voice, with
+   its number, its one press, and the way to say "not now". */
+.scn-junk-sweep {
+  margin: 6px 14px 12px;
+  padding: 12px 14px;
+  background: var(--float);
+  border-radius: 14px;
+  box-shadow: var(--lift-1);
+  font-size: 12.5px;
+  color: var(--ink2);
+}
+.scn-junk-sweep b {
+  display: block;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+.scn-junk-sweep .scn-junk-sweep-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
 .hmail {
   background: var(--float);
   border-radius: 20px;

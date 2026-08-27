@@ -93,7 +93,7 @@ import { readBootCache, writeBootCache } from "./boot-cache";
 import { readOwner } from "./owner-cookie";
 import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
-import { useJunkWindow } from "./junk-window";
+import { useJunkWindow, type JunkWire } from "./junk-window";
 import { useOlderBody, type OlderBodyWire } from "./older-body";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
@@ -621,6 +621,7 @@ export function AppShell({
   profileImportTransport,
   consentTransport,
   olderBodyWire,
+  junkWire,
   suggestWire,
   aiCredits,
   mailtoDraft,
@@ -883,6 +884,20 @@ export function AppShell({
    */
   olderBodyWire?: OlderBodyWire;
   /**
+   * THE JUNK WINDOW'S WIRE, when the host has its own — the desktop, on BOTH doors. The shared
+   * shell's default is the browser's Cloud client (decided inside `junk-window.ts`, which owns
+   * the api-client import and answers `supported` with `apiConfigured()`); the desktop aliases
+   * that client to a refusing stub, so without this wire the Screener's third segment stayed the
+   * flag-off Spam pile there even with "Use folders" on. Same transport-not-a-control rule as
+   * {@link olderBodyWire}: the segment, its states, its two rescue verbs, the search-append and
+   * the sweep offer are `junk-window.ts`'s; only the bytes' route is injected. On the desktop's
+   * hosted door the engine forwards these routes to the account (Junk is never mirrored, so the
+   * mirror has nothing to answer them from); on its standalone door the flag in front of the
+   * segment has no consent row to live in (§17), so the control stays withheld by the same gate
+   * that withholds it in a browser with the flag off.
+   */
+  junkWire?: JunkWire;
+  /**
    * THE SCREENER'S TWO SPEND CALLS, WHEN THE HOST HAS ITS OWN WIRE — the desktop on its HOSTED
    * door, and nobody else.
    *
@@ -975,6 +990,7 @@ export function AppShell({
             profileImportTransport={profileImportTransport}
             consentTransport={consentTransport}
             olderBodyWire={olderBodyWire}
+            junkWire={junkWire}
             suggestWire={suggestWire}
             aiCredits={aiCredits}
             mailtoDraft={mailtoDraft}
@@ -1023,7 +1039,7 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
   );
 }
 
-function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, olderBodyWire, suggestWire, aiCredits, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
@@ -1046,6 +1062,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   consentTransport?: ConsentTransport;
   /** The reach-past body wire — see the outer prop of the same name. */
   olderBodyWire?: OlderBodyWire;
+  /** The Junk window's wire — see the outer prop of the same name. */
+  junkWire?: JunkWire;
   suggestWire?: SuggestWire;
   aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
   mailtoDraft?: ComposePrefill | null;
@@ -1616,6 +1634,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     !demo && consent.foldersEnabled && !seedOwed
       && route.view === "screener" && route.screenerSegment === "spam",
     toast,
+    junkWire,
   );
   /**
    * IS THERE ANYWHERE FOR THE AWAY RESPONDER TO BE STORED — the one gate the control, its Ohbox
