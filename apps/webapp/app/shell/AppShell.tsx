@@ -2740,6 +2740,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     if (seeded) {
       replySeedDrafts.current.delete(key);
       void engine.mutate({ kind: "draft_discard", draftId: seeded });
+      writeReplyMeta(`draft:${seeded}`, {}); // the phantom row's block state dies with it (review round 5)
     }
     // A reply settled. `key` is the answered message's id (`sendKeyOf`), which is exactly the row
     // that should move from "New for you" to "Earlier" — so hand it to the Ohbox for the gesture.
@@ -3088,8 +3089,13 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         // (review round 4).
         ...((): Partial<ComposeFields> => {
           if (d.status !== "draft") return {};
-          const sig = readReplyMeta(`draft:${d.id}`).sig
-            ?? (autosave.draftId === d.id ? compose.sig : undefined);
+          // LIVE STATE IS AUTHORITATIVE for the row the composer still holds (review round 5):
+          // storage can hold an OLDER value than what is on screen right now if a later write
+          // was refused (quota exhaustion is the measured case), and `??` would prefer that
+          // stale stored value over the newer in-memory edit. Only for a row autosave does NOT
+          // hold — a different device's draft, or a stranded row this session never opened —
+          // does the stored meta speak at all.
+          const sig = autosave.draftId === d.id ? compose.sig : readReplyMeta(`draft:${d.id}`).sig;
           return sig && sig.kind !== "following" ? { sig } : {};
         })(),
       };

@@ -263,10 +263,15 @@ export function htmlToPlainText(html: string): string {
     // space-only line AND the blank line.
     const kept = line.replace(/[ \t]+/g, " ").replace(/^[ \t]+|[ \t]+$/g, "");
     const body = kept.replace(/\u00a0/g, "").trim() === "" ? "" : kept;
-    const marker = lead;
     line = "";
-    lead = "";
+    // AN EMPTY FLUSH DOES NOT CONSUME `lead` (review round 5). `<li><p>…</p></li>` — TipTap's
+    // own markup, not a hypothetical — opens the LI (sets `lead`) and then the `<p>` fires an
+    // empty flush on its way in (nothing has been written to `line` yet), and the marker used
+    // to be cleared right there, before the paragraph's own content had a chance to use it. A
+    // marker only leaves once something actually flushes with it.
     if (body === "") return;
+    const marker = lead;
+    lead = "";
     out += `${prefix()}${marker}${body}\n`;
   };
 
