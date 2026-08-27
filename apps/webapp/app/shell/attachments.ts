@@ -303,11 +303,14 @@ export function useMessageAttachments(
   const loaded = useRef<Set<string>>(new Set());
 
   /**
-   * The engine THIS render serves — read by completions and by the standing crew, because both
-   * can outlive the render (and the engine) they were minted under. See `ask` and `pump`.
+   * The engine THIS COMMIT serves — read by completions and by the standing crew, because both
+   * can outlive the commit (and the engine) they were minted under. See `ask` and `pump`.
+   * Published in an effect below, never during render: a concurrent render can be abandoned
+   * after running, and a render-time assignment would point live workers at an engine no
+   * commit ever produced — or let an abandoned render's completion release state the
+   * committed tree still renders (review finding).
    */
   const engineRef = useRef(engine);
-  engineRef.current = engine;
 
   /** The one ask, with everything an ask entails — the probe escalation and the calendar pass. */
   const ask = useCallback(
@@ -416,7 +419,18 @@ export function useMessageAttachments(
    * on live→demo an off-limits network request from inside the demo (review finding).
    */
   const askRef = useRef(ask);
-  askRef.current = ask;
+  /*
+   * THE COMMIT-PHASE PUBLICATION — declared ABOVE the sweep that fills the queue and pumps,
+   * because effects run in declaration order within a commit: by the time a worker exists to
+   * dereference these refs, they already name this commit's engine. The selected-id effect is
+   * declared earlier and does not consult the refs at ask time — it calls its own commit's
+   * `ask` directly — and its completion guard reads them only in a microtask, which cannot
+   * run until the whole passive-effect flush (this publication included) has finished.
+   */
+  useEffect(() => {
+    engineRef.current = engine;
+    askRef.current = ask;
+  }, [engine, ask]);
   const pump = useCallback((): void => {
     while (listWorkers.current < SIBLING_LIST_CONCURRENCY && pendingLists.current.length > 0) {
       listWorkers.current += 1;
