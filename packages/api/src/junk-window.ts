@@ -1,7 +1,6 @@
 import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import {
-  contacts, folderState, junkSweepCandidateWhere, mailboxes, messageBodies, messages, recordChange,
-  rules as rulesTbl, type Tx,
+  contacts, mailboxes, messageBodies, messages, recordChange, rules as rulesTbl, type Tx,
 } from "@trafficflow/db";
 import {
   FOLDER_PAGE_MAX, MessageGoneError, makeRef,
@@ -422,38 +421,27 @@ export interface JunkSearchPage {
  * a mirror row parked at this mailbox's junk path was filed by US on the user's order. Bounded:
  * at most one IN() over the rows' mids. Mutates `origin` in place.
  */
-/**
- * A Message-ID as a comparable key: trimmed, angle brackets off. The live envelope (imapflow)
- * carries `<id@host>`; the mirror stores the id the parser kept, which is bare — so the two
- * sides of the attribution join never met for a sweep-filed row until this normalisation (the
- * first live proof of the sweep showed its own rows marked "filed by your mail server").
- */
-const midKey = (raw: string): string => raw.trim().replace(/^<|>$/g, "");
-
 async function attributeOrigin(
   deps: ApiDeps, accountId: string, items: JunkItem[],
   boxes: Array<{ id: string; junkFolder: string | null }>,
 ): Promise<void> {
-  const keys = [...new Set(items.map((i) => i.messageIdHeader).filter((m): m is string => m !== null).map(midKey))];
-  if (keys.length === 0) return;
+  const mids = [...new Set(items.map((i) => i.messageIdHeader).filter((m): m is string => m !== null))];
+  if (mids.length === 0) return;
   const junkPathOf = new Map(boxes.map((b) => [b.id, b.junkFolder]));
-  // Both spellings are asked for, so a mirror row stored either way is found; the comparison
-  // below is on the normalised key regardless.
-  const wanted = [...new Set(keys.flatMap((k) => [k, `<${k}>`]))];
   const rows = await deps.db
     .select({ messageIdHeader: messages.messageIdHeader, mailboxId: messages.mailboxId, nativeLocator: messages.nativeLocator })
     .from(messages)
-    .where(and(eq(messages.accountId, accountId), inArray(messages.messageIdHeader, wanted)));
+    .where(and(eq(messages.accountId, accountId), inArray(messages.messageIdHeader, mids)));
   const filedByUs = new Set(
     rows
       .filter((r) => {
         const loc = r.nativeLocator as { folder?: string } | null;
-        return r.messageIdHeader !== null && loc?.folder !== undefined && loc.folder === junkPathOf.get(r.mailboxId);
+        return loc?.folder !== undefined && loc.folder === junkPathOf.get(r.mailboxId);
       })
-      .map((r) => `${r.mailboxId} ${midKey(r.messageIdHeader!)}`),
+      .map((r) => `${r.mailboxId} ${r.messageIdHeader}`),
   );
   for (const it of items) {
-    if (it.messageIdHeader !== null && filedByUs.has(`${it.mailboxId} ${midKey(it.messageIdHeader)}`)) {
+    if (it.messageIdHeader !== null && filedByUs.has(`${it.mailboxId} ${it.messageIdHeader}`)) {
       it.origin = "verdict";
     }
   }
@@ -690,15 +678,6 @@ export async function rescueJunk(
   const allowed = args.allow !== undefined ? await allowSender(deps, ctx, args.allow.sender) : undefined;
 
   /**
-   * EVERYTHING AFTER THE ALLOW SPEAKS THE PARTIAL-OUTCOME LANGUAGE. The move's own catch below
-   * translates its two failures; this boundary covers the steps BEFORE it — the husk lookup and
-   * the dial itself (a busy mailbox, an unreadable credential, a refused LOGIN) — which used to
-   * rethrow raw and read as "nothing happened" while the sender's rules had already changed
-   * (review round 2 on the client). An inner ServiceError passes through untouched.
-   */
-  try {
-
-  /**
    * THE HUSK, if this is our own verdict coming back: the filing completion parked the row's
    * locator at exactly this junk ref, and the verdict dropped the body. Identified BEFORE the
    * move (the raw must be fetched while the message is still in Junk, on the same connection);
@@ -751,24 +730,8 @@ export async function rescueJunk(
     if (err instanceof MessageGoneError) {
       // The provider (or another client) took it first — or the folder was renumbered. The
       // rescue fails honestly: never a phantom arrival, never a claim of a move that did not
-      // happen, and never a different message moved in this one's name. With the second verb
-      // the allow was written BEFORE this, and stands — carried in `details` so the client can
-      // say both halves.
-      throw new ServiceError(
-        "junk_message_gone", 410, "this message is no longer in the Junk folder — it may have been deleted there",
-        allowed !== undefined ? { allowed } : undefined,
-      );
-    }
-    if (allowed !== undefined) {
-      // A move that failed for any OTHER reason (a timeout, a provider refusal) after the allow
-      // committed is a PARTIAL outcome, and the client must be able to report it as one: the
-      // message is still in Junk, but the sender's rules changed. A bare rethrow would read as
-      // "nothing happened" (review round on the client).
-      throw new ServiceError(
-        "junk_rescue_move_failed", 502,
-        "the move could not be made just now — the sender is allowed from now on regardless",
-        { allowed },
-      );
+      // happen, and never a different message moved in this one's name.
+      throw new ServiceError("junk_message_gone", 410, "this message is no longer in the Junk folder — it may have been deleted there");
     }
     throw err;
   } finally {
@@ -814,25 +777,6 @@ export async function rescueJunk(
     }
   }
 
-  } catch (err) {
-    // Only the rescue's OWN answers pass through: `junk_message_gone` (which already carries the
-    // allow) and an inner `junk_rescue_move_failed`. Every other failure — a typed dial refusal
-    // (`mailbox_busy`, unreadable credentials) as much as a raw transport throw — happened AFTER
-    // the allow committed, and must say so (review round 5: the blanket ServiceError passthrough
-    // hid the partial outcome behind the dial's own vocabulary).
-    const rescueOwn = err instanceof ServiceError
-      && (err.code === "junk_message_gone" || err.code === "junk_rescue_move_failed");
-    if (rescueOwn) throw err;
-    if (allowed !== undefined) {
-      throw new ServiceError(
-        "junk_rescue_move_failed", 502,
-        "the move could not be made just now — the sender is allowed from now on regardless",
-        { allowed, ...(err instanceof ServiceError ? { cause: err.code } : {}) },
-      );
-    }
-    throw err;
-  }
-
   // Ring the doorbell (`sync_requested_at`, mail 0049): the worker's ~3 s kick pass ingests the
   // rescued message's new INBOX UID without waiting for the poll. Best-effort — the poll is the
   // floor beneath it either way.
@@ -850,6 +794,9 @@ export async function rescueJunk(
    THE ONE-TIME SWEEP OFFER (FOLDERS-SPEC.md §16.1) — preview and press. Database only.
    The worker executes; see the module header and `apps/worker/src/junk-sweep.ts`.
    ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** The pile the sweep empties — the pre-§16 spam destination, still every flag-off verdict's. */
+const QUARANTINE_PILE = "ohmail/Quarantine";
 
 export interface JunkSweepMailbox {
   id: string;
@@ -871,12 +818,8 @@ export interface JunkSweepPreview {
 }
 
 /**
- * The dry run the offer shows — per connected, PARTICIPATING mailbox, the pile's size and whether
- * it can move. One count per mailbox over the sweep's own predicate (`junkSweepCandidateWhere`,
- * shared with the worker's pass so the number offered is the number moved), one mailbox read; no
- * dial, no write. A mailbox switched off under "Use folders" (§17, `folders_disabled_at`) is
- * absent from the answer and can therefore never be stamped: an opted-out mailbox performs no
- * move and no IMAP write on the feature's account.
+ * The dry run the offer shows — per connected mailbox, the pile's size and whether it can move.
+ * One GROUP BY over `messages.native_locator`, one mailbox read; no dial, no write.
  */
 export async function junkSweepPreview(deps: ApiDeps, accountId: string): Promise<JunkSweepPreview> {
   await requireFolders(deps, accountId);
@@ -886,21 +829,19 @@ export async function junkSweepPreview(deps: ApiDeps, accountId: string): Promis
       requestedAt: mailboxes.junkSweepRequestedAt,
     })
     .from(mailboxes)
-    .where(and(
-      eq(mailboxes.accountId, accountId),
-      ne(mailboxes.status, "disabled"),
-      isNull(mailboxes.foldersDisabledAt),
-    ));
+    .where(and(eq(mailboxes.accountId, accountId), ne(mailboxes.status, "disabled")));
   if (boxes.length === 0) return { mailboxes: [], movable: 0, pending: false };
-  const countOf = new Map<string, number>();
-  for (const b of boxes) {
-    const [row] = await deps.db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(messages)
-      .innerJoin(folderState, eq(folderState.messageId, messages.id))
-      .where(junkSweepCandidateWhere(accountId, b.id));
-    countOf.set(b.id, Number(row?.n ?? 0));
-  }
+  const counts = await deps.db
+    .select({ mailboxId: messages.mailboxId, n: sql<number>`count(*)::int` })
+    .from(messages)
+    .where(and(
+      eq(messages.accountId, accountId),
+      inArray(messages.mailboxId, boxes.map((b) => b.id)),
+      isNull(messages.deletedAt),
+      sql`${messages.nativeLocator} ->> 'folder' = ${QUARANTINE_PILE}`,
+    ))
+    .groupBy(messages.mailboxId);
+  const countOf = new Map(counts.map((c) => [c.mailboxId, Number(c.n)]));
   const out: JunkSweepMailbox[] = boxes.map((b) => ({
     id: b.id, address: b.address,
     candidates: countOf.get(b.id) ?? 0,

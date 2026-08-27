@@ -95,8 +95,6 @@ export interface JunkWire {
    * browser's client throws `ApiError` with the status, a host wire answers this predicate.
    */
   isGone(err: unknown): boolean;
-  /** The server's error CODE, when the wire carried one — `junk_rescue_move_failed` is read above the seam. */
-  codeOf(err: unknown): string | null;
 }
 
 /** The browser's wire: the Cloud client, verbatim. */
@@ -108,7 +106,6 @@ const cloudWire: JunkWire = {
   sweepPreview: () => screenerApi.junkSweepPreview(),
   sweepRequest: () => screenerApi.junkSweepRequest(),
   isGone: (err) => err instanceof ApiError && err.status === 410,
-  codeOf: (err) => (err instanceof ApiError ? err.code : null),
 };
 
 export type JunkBodyPhase =
@@ -151,11 +148,9 @@ export interface JunkSweepControl {
    * `unknown` — not read yet (or the read failed: no offer is made on a guess); `none` — nothing
    * to offer (empty pile, or dismissed at this size); `offer` — the pile is shown with its
    * number; `pending` — pressed, the worker has not emptied it yet; `done` — emptied after a
-   * press this session; `stranded` — candidates remain but NONE can move (every mailbox that
-   * holds them has no Junk folder), so there is nothing to press and "empty" would be a lie;
-   * `failed` — the press itself could not be recorded.
+   * press this session; `failed` — the press itself could not be recorded.
    */
-  phase: "unknown" | "none" | "offer" | "pending" | "done" | "stranded" | "failed";
+  phase: "unknown" | "none" | "offer" | "pending" | "done" | "failed";
   preview: JunkSweepWire | null;
   requesting: boolean;
   request: () => void;
@@ -219,19 +214,12 @@ export const JUNK_SEARCH_DEBOUNCE_MS = 450;
 /** How often the queued sweep re-reads its preview, and for how long, before it stops asking. */
 export const JUNK_SWEEP_POLL_MS = 5_000;
 export const JUNK_SWEEP_POLL_MAX = 36;
-/**
- * The per-browser memory of a dismissed offer: the candidate count it was dismissed at, keyed
- * by the ACCOUNT — a shared browser that signs out of one account and into another must not
- * carry the first account's dismissal over. The hook knows no account id, so the key is
- * derived from what the preview itself names: the account's mailbox ids, sorted.
- */
+/** The per-browser memory of a dismissed offer: the candidate count it was dismissed at. */
 export const JUNK_SWEEP_DISMISSED_KEY = "ohmail.junkSweepDismissedAt";
-export const dismissKeyOf = (pv: JunkSweepWire): string =>
-  `${JUNK_SWEEP_DISMISSED_KEY}:${pv.mailboxes.map((m) => m.id).sort().join(",")}`;
 
-function readDismissed(key: string): number {
+function readDismissed(): number {
   try {
-    const raw = window.localStorage.getItem(key);
+    const raw = window.localStorage.getItem(JUNK_SWEEP_DISMISSED_KEY);
     const n = raw === null ? NaN : Number(raw);
     return Number.isFinite(n) && n >= 0 ? n : 0;
   } catch {
@@ -319,10 +307,9 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
           return;
         }
         setItems((cur) => {
-          // Appended, never re-sorted: the reader asked for OLDER, below what they have — and
-          // never a row this session already rescued.
+          // Appended, never re-sorted: the reader asked for OLDER, below what they have.
           const have = new Set(cur.map(junkKeyOf));
-          return [...cur, ...page.items.filter((i) => !have.has(junkKeyOf(i)) && !dropped.current.has(junkKeyOf(i)))];
+          return [...cur, ...page.items.filter((i) => !have.has(junkKeyOf(i)))];
         });
         setNextCursor(page.nextCursor);
       },
@@ -367,28 +354,10 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
   const [hits, setHits] = useState<JunkItemWire[]>([]);
   const [searchBoxes, setSearchBoxes] = useState<JunkMailboxWire[]>([]);
   const [truncated, setTruncated] = useState(false);
-  /** What is typed RIGHT NOW — a settling answer applies to the screen only if its term is this. */
-  const queryRef = useRef("");
-  /**
-   * The server's answer PER SETTLED TERM, for this session: one ask per term, and a term typed
-   * again shows the answer it already earned instead of an empty `local` that the debounce
-   * refuses to fill (review round: the answer was discarded while the term stayed marked asked).
-   */
-  const answers = useRef(new Map<string, { items: JunkItemWire[]; mailboxes: JunkMailboxWire[]; truncated: boolean }>());
-  /**
-   * Terms with an ask IN FLIGHT. Without this, leaving a pending term and typing it again finds
-   * no cached answer and kicks a SECOND provider search — and whichever finishes last would
-   * write the cache (review round 2). One ask per term at a time; the cache is written by the
-   * ask that ran, whatever generation is current on screen.
-   */
-  const pendingTerms = useRef(new Set<string>());
-  /**
-   * Rows this session RESCUED. A server answer that fetched a row before its move landed must
-   * not put it back on screen — the filter runs at every place rows enter (search answers,
-   * older pages).
-   */
-  const dropped = useRef(new Set<string>());
-  const notDropped = useCallback((rows: JunkItemWire[]) => rows.filter((r) => !dropped.current.has(junkKeyOf(r))), []);
+  /** The query a server answer belongs to — a late answer for an older query is dropped. */
+  const searchGen = useRef(0);
+  /** The queries this session already asked the server about — one ask per settled query. */
+  const askedServer = useRef(new Set<string>());
 
   const localKept = useMemo(
     () => (query.trim().length === 0 ? items : items.filter((i) => junkRowMatches(i, query))),
@@ -397,68 +366,49 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
 
   const searchServer = useCallback((q?: string) => {
     const term = (q ?? query).trim();
-    if (term.length === 0 || pendingTerms.current.has(term)) return;
-    pendingTerms.current.add(term);
+    if (term.length === 0) return;
+    askedServer.current.add(term);
+    const gen = ++searchGen.current;
     setSearchPhase("searching");
     void wire.search(term).then(
       (page) => {
-        pendingTerms.current.delete(term);
-        const answer = { items: notDropped(page.items), mailboxes: page.mailboxes, truncated: page.truncated };
-        answers.current.set(term, answer);
-        // The answer reaches the SCREEN iff its term is what is typed right now — a person who
-        // left the term and came back mid-flight sees it settle (review round 5: a generation
-        // counter stranded exactly that return in `searching`), and an answer for an abandoned
-        // term goes only to the cache it came for.
-        if (queryRef.current.trim() !== term) return;
-        setHits(answer.items);
-        setSearchBoxes(answer.mailboxes);
-        setTruncated(answer.truncated);
+        if (searchGen.current !== gen) return;
+        setHits(page.items);
+        setSearchBoxes(page.mailboxes);
+        setTruncated(page.truncated);
         setSearchPhase("done");
       },
       () => {
-        pendingTerms.current.delete(term);
-        if (queryRef.current.trim() !== term) return;
+        if (searchGen.current !== gen) return;
         setHits([]);
         setSearchBoxes([]);
         setTruncated(false);
         setSearchPhase("failed");
       },
     );
-  }, [query, wire, notDropped]);
+  }, [query, wire]);
 
   const setQuery = useCallback((q: string) => {
     setQueryState(q);
-    queryRef.current = q;
-    // A NEW query clears the screen's answer (hits for the old words under the new filter would
-    // be the window claiming a match it never checked). A term the server ALREADY answered this
-    // session shows that answer again (minus anything rescued since); a term whose ask is still
-    // IN FLIGHT shows `searching` and is settled by that ask's own completion.
-    const term = q.trim();
-    const held = term.length > 0 ? answers.current.get(term) : undefined;
-    if (held !== undefined) {
-      setHits(notDropped(held.items));
-      setSearchBoxes(held.mailboxes);
-      setTruncated(held.truncated);
-      setSearchPhase("done");
-      return;
-    }
+    // A NEW query voids the last answer: hits for the old words under the new filter would be
+    // the window claiming a match it never checked.
+    searchGen.current += 1;
     setHits([]);
     setSearchBoxes([]);
     setTruncated(false);
-    setSearchPhase(term.length === 0 ? "idle" : pendingTerms.current.has(term) ? "searching" : "local");
-  }, [notDropped]);
+    setSearchPhase(q.trim().length === 0 ? "idle" : "local");
+  }, []);
 
   useEffect(() => {
-    // The automatic kick — ONLY while the segment is on screen, ONLY from `local` (a failed ask
-    // waits for the human retry), ONLY when the local filter found nothing, ONLY once the typing
-    // has rested, and ONLY for a term the server has not answered this session. Leaving the
-    // segment cancels a pending kick (review round: a dial for a pane no longer visible).
+    // The automatic kick — ONLY when the local filter found nothing, ONLY once the typing has
+    // rested, and ONLY once per query this session. A human press (`searchServer`) is the way
+    // to ask again, or to ask while local rows do match.
     const term = query.trim();
-    if (!active || term.length === 0 || phase !== "ready" || searchPhase !== "local") return;
-    if (localKept.length > 0 || answers.current.has(term) || pendingTerms.current.has(term)) return;
+    if (term.length === 0 || phase !== "ready") return;
+    if (localKept.length > 0 || askedServer.current.has(term)) return;
     const timer = setTimeout(() => searchServer(term), JUNK_SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [active, query, phase, searchPhase, localKept.length, searchServer]);
+  }, [query, phase, localKept.length, searchServer]);
 
   const visible = useMemo(() => {
     if (query.trim().length === 0) return items;
@@ -468,7 +418,6 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
 
   /* ── THE RESCUE (both verbs) ───────────────────────────────────────────────────────────── */
   const dropRow = useCallback((key: string) => {
-    dropped.current.add(key);
     setItems((cur) => cur.filter((i) => junkKeyOf(i) !== key));
     setHits((cur) => cur.filter((i) => junkKeyOf(i) !== key));
   }, []);
@@ -494,13 +443,6 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
           toast(t(allow ? "junkRescueGoneAllowed" : "junkRescueGone"));
           return;
         }
-        // The PARTIAL outcome: the server committed the allow, then the move failed for another
-        // reason (a timeout, a refusal). The row stays — it IS still in Junk — and the sentence
-        // says the rules changed anyway, so the person is not left believing nothing happened.
-        if (allow && wire.codeOf(err) === "junk_rescue_move_failed") {
-          toast(t("junkRescueFailedAllowed"));
-          return;
-        }
         toast(t("junkRescueFailed"));
       },
     );
@@ -518,19 +460,13 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
 
   const absorbPreview = useCallback((pv: JunkSweepWire) => {
     setSweepPreview(pv);
-    const total = pv.mailboxes.reduce((n, m) => n + m.candidates, 0);
-    if (total === 0) {
-      // Genuinely empty — "done" only after a press THIS session, else nothing to say.
+    if (pv.movable === 0) {
       setSweepPhase(pressed.current ? "done" : "none");
-    } else if (pv.movable === 0) {
-      // Candidates remain and none can move: every mailbox holding them has no Junk folder.
-      // Not "empty", not an offer — the stranded rows are named and nothing is pressable.
-      setSweepPhase("stranded");
     } else if (pv.pending) {
       setSweepPhase("pending");
     } else {
-      // Offered only when the pile has GROWN past the size it was dismissed at — per account.
-      setSweepPhase(pv.movable > readDismissed(dismissKeyOf(pv)) ? "offer" : "none");
+      // Offered only when the pile has GROWN past the size it was dismissed at.
+      setSweepPhase(pv.movable > readDismissed() ? "offer" : "none");
     }
   }, []);
 
@@ -546,8 +482,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
   // While a press is outstanding, re-read the preview on a slow beat until the pile is empty
   // (or the beat runs out — the offer then keeps saying "queued", which is still true).
   useEffect(() => {
-    // Only while the segment is on screen: leaving pauses the beat, returning resumes it.
-    if (!active || sweepPhase !== "pending") return;
+    if (sweepPhase !== "pending") return;
     let polls = 0;
     const timer = setInterval(() => {
       polls += 1;
@@ -555,7 +490,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
       void wire.sweepPreview().then(absorbPreview, () => { /* keep the last known state */ });
     }, JUNK_SWEEP_POLL_MS);
     return () => clearInterval(timer);
-  }, [active, sweepPhase, wire, absorbPreview]);
+  }, [sweepPhase, wire, absorbPreview]);
 
   const request = useCallback(() => {
     if (requesting) return;
@@ -569,7 +504,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
 
   const dismiss = useCallback(() => {
     try {
-      if (sweepPreview) window.localStorage.setItem(dismissKeyOf(sweepPreview), String(sweepPreview.movable));
+      window.localStorage.setItem(JUNK_SWEEP_DISMISSED_KEY, String(sweepPreview?.movable ?? 0));
     } catch { /* storage blocked — the dismissal lasts the session */ }
     setSweepPhase("none");
   }, [sweepPreview]);
