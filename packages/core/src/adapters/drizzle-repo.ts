@@ -2017,21 +2017,30 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         .orderBy(sql`${messageInstances.isPrimary} desc`, asc(messageInstances.firstSeenAt))
         .limit(1);
       if (confirmed) return confirmed;
-      // TIER 2 — an UNCONFIRMED copy: an instance whose folder has no cursor row (ingest
-      // commits per message and the cursor lands after the batch, so a crash window leaves
-      // real copies cursor-less) or whose epoch the inventory cannot vouch for. A missing
-      // cursor is UNKNOWN, never evidence of deletion — tombstoning here would hide a message
-      // the server still shows, permanently (the known-set keeps its UID known). A stale
-      // promotion is the self-healing direction instead: a locator that turns out dead answers
-      // MessageGoneError and the next enumeration adopts the real copy.
-      const [any] = await this.db.select({
+      // TIER 2 — a MISSING-CURSOR copy ONLY: an instance whose folder has no cursor row at all
+      // (ingest commits per message and the cursor lands after the batch, so a crash window
+      // leaves real copies cursor-less). A missing cursor is UNKNOWN, never evidence of
+      // deletion — tombstoning would hide a message the server still shows, permanently — and
+      // a stale promotion self-heals (a dead locator answers MessageGoneError; enumeration
+      // adopts the real copy). A cursor that EXISTS with a different epoch is the opposite
+      // case and stays rejected: that row is KNOWN dead (old-epoch deletes are deliberately
+      // ignored after a UIDVALIDITY reset, so the residue lingers), and promoting it would
+      // pin a locator the server can never resolve.
+      const [cursorless] = await this.db.select({
         id: messageInstances.id, folder: messageInstances.folder,
         uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid,
       }).from(messageInstances)
-        .where(eq(messageInstances.messageId, messageId))
+        .leftJoin(mailboxFolders, and(
+          eq(mailboxFolders.mailboxId, messageInstances.mailboxId),
+          eq(mailboxFolders.folder, messageInstances.folder),
+        ))
+        .where(and(
+          eq(messageInstances.messageId, messageId),
+          sql`${mailboxFolders.id} is null`,
+        ))
         .orderBy(sql`${messageInstances.isPrimary} desc`, asc(messageInstances.firstSeenAt))
         .limit(1);
-      return any ?? null;
+      return cursorless ?? null;
     };
 
     /** Promote one survivor row: primary flag + the message's locator, an update on the wire. */
@@ -2134,9 +2143,26 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
           changes.push({ accountId, entityType: "message", entityId: st.messageId, op: "update", meta: null });
           continue;
         }
-        // No copy anywhere watched: the user's folder delete swept this message's only copy to
-        // Trash, so it takes the delete verb's own tombstone — never a retired state that
-        // would rematerialize it in the Imbox, and never a pending row left to hang.
+        // No admissible survivor. TWO sub-cases, split on whether a move was IN FLIGHT:
+        const [pending] = await this.db.select({ desiredFolder: folderState.desiredFolder })
+          .from(folderState).where(eq(folderState.messageId, st.messageId)).limit(1);
+        if (pending && pending.desiredFolder !== folder) {
+          // A pending move OUT whose IMAP half may already have SUCCEEDED, its completion
+          // transaction lost (this pass runs before changesSince, so the destination's create
+          // is not yet ingested and no survivor row exists to find). Tombstoning here would
+          // hide real server mail for ever. DEFER instead, preserving the exact adoption
+          // evidence `primaryInstanceVanished` reads — locator kept, primary instance rows
+          // gone: if the move landed, the destination copy is adopted as the move's own
+          // completion on ingest; if the sweep truly trashed the copy first, the pending row
+          // parks under the reconciler's bounded retry — a message shown at its destination
+          // while its copy sits in Trash, stated here as the residual this deferral accepts
+          // (the opposite error, hiding real mail, does not heal).
+          changes.push({ accountId, entityType: "message", entityId: st.messageId, op: "update", meta: null });
+          continue;
+        }
+        // No move in flight: the user's folder delete swept this message's only copy to Trash,
+        // so it takes the delete verb's own tombstone — never a retired state that would
+        // rematerialize it in the Imbox.
         await this.db.update(messages).set({ deletedAt: now, updatedAt: now, nativeLocator: null })
           .where(eq(messages.id, st.messageId));
         await this.huskBody(accountId, st.messageId, "expunged");
