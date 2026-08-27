@@ -43,6 +43,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields } from "./compose";
+import { writeReplyMeta } from "./mail-send";
 import { parseRecipients } from "./compose";
 
 /** How long the form must be still before it is written to the account. */
@@ -181,6 +182,10 @@ export function useComposeAutosave(opts: {
     release();
     if (!id) return;
     await engine.mutate({ kind: "draft_discard", draftId: id });
+    // The row's life ends here for every caller — the compose cancel, and `settled`'s
+    // phantom-copy branch — so the editor meta keyed to it (the signature block's state,
+    // `mail-send.ts`) dies with it rather than accumulating in storage (review round 4).
+    writeReplyMeta(`draft:${id}`, {});
   }, [draftId, engine, release]);
 
   const settled = useCallback(

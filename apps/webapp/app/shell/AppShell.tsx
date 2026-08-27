@@ -2681,6 +2681,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       if (seeded && seeded !== m.draftId) {
         recoverySeed.current = null;
         void engine.mutate({ kind: "draft_discard", draftId: seeded });
+        writeReplyMeta(`draft:${seeded}`, {}); // the phantom row's block state dies with it
       }
       /* RELEASED WHEN THE SEND USED THE ROW, DISCARDED WHEN IT DID NOT — `autosave.settled`
          judges by the settled mutation's own `draftId`. A send that carried the row turned it
@@ -3081,9 +3082,16 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         // both weaker keys, the in-memory autosave id (empty after reload) and a content key
         // (a rich draft's local text and server-derived text legitimately differ). The full
         // cross-device fix is a drafts column — a schema change, recorded rather than smuggled.
-        ...(d.status === "draft" && readReplyMeta(`draft:${d.id}`).sig
-          ? { sig: readReplyMeta(`draft:${d.id}`).sig }
-          : {}),
+        // The meta lane leads (it survives a reload); the in-memory state is the fallback for
+        // the row autosave still holds, because storage can refuse (a private window) and a
+        // same-session reopen must not resurrect a struck block over a working editor
+        // (review round 4).
+        ...((): Partial<ComposeFields> => {
+          if (d.status !== "draft") return {};
+          const sig = readReplyMeta(`draft:${d.id}`).sig
+            ?? (autosave.draftId === d.id ? compose.sig : undefined);
+          return sig && sig.kind !== "following" ? { sig } : {};
+        })(),
       };
       setCompose(seeded);
       writeComposeDraft(seeded);
@@ -3103,7 +3111,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       }
       go("compose");
     },
-    [draftRepliesHere, autosave, go, reader, version],
+    [draftRepliesHere, autosave, go, reader, version, compose.sig],
   );
   const discardDraft = useCallback(
     (draftId: string) => {

@@ -302,12 +302,13 @@ export function htmlToPlainText(html: string): string {
    * capped by the final collapse, so `<br><br><br>` is one gap and not three.
    */
   const hardBreak = (): void => {
-    // NBSP-only is EMPTY: `<p>&nbsp;</p>` is the common empty-paragraph placeholder, and a
-    // body of preserved-width characters with nothing beside them is a gap, not a line — the
-    // paragraph-close check reads it as blank, and this must agree or the output carries a
-    // space-only line AND the blank line.
-    const kept = line.replace(/[ \t]+/g, " ").replace(/^[ \t]+|[ \t]+$/g, "");
-    const body = kept.replace(/\u00a0/g, "").trim() === "" ? "" : kept;
+    // An NBSP-only SEGMENT between hard breaks is KEPT, unlike the paragraph flush's
+    // placeholder collapse one function up: `<li>&nbsp;<br>visible</li>` opens with the
+    // author's explicit break structure, and reading the placeholder as empty here cleared
+    // the pending list marker with it — the visible text then shipped without its number and
+    // renumbered every item after it (review round 4). A space-width line inside a break run
+    // is what the html half shows; the text half says the same.
+    const body = line.replace(/[ \t]+/g, " ").replace(/^[ \t]+|[ \t]+$/g, "");
     const marker = lead;
     line = "";
     lead = "";
