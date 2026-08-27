@@ -2157,6 +2157,18 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
           // parks under the reconciler's bounded retry — a message shown at its destination
           // while its copy sits in Trash, stated here as the residual this deferral accepts
           // (the opposite error, hiding real mail, does not heal).
+          //
+          // KNOWN-STALE residue goes first: a dead-epoch instance row — the exact candidate
+          // the survivor tiers reject — would otherwise keep this message out of every
+          // terminal check for ever (`tombstoneInstanceless` skips messages with any instance
+          // row), turning the bounded-retry residual into a permanent phantom.
+          await this.db.execute(sql`
+            delete from ${messageInstances} using ${mailboxFolders}
+             where ${messageInstances.messageId} = ${st.messageId}
+               and ${mailboxFolders.mailboxId} = ${messageInstances.mailboxId}
+               and ${mailboxFolders.folder} = ${messageInstances.folder}
+               and ${mailboxFolders.uidvalidity} is not null
+               and ${mailboxFolders.uidvalidity} not in (0, ${messageInstances.uidvalidity})`);
           changes.push({ accountId, entityType: "message", entityId: st.messageId, op: "update", meta: null });
           continue;
         }
