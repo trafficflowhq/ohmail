@@ -1850,10 +1850,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             db: db as unknown as Tx, apply: true, accountId: world.accountId, log: undefined,
             cursor: joinHealCursor,
           });
-          // Persist the resume point for every capped walk — resetting on failure was tried
-          // and reviewed away (a deterministically failing group would pin the walk to its
-          // own page and starve the tail; the pass already retries a failure once in-run, so
-          // what remains is persistent and waits for the wrap-around).
+          // Persist the resume point for every capped walk — never reset it on a failure: a
+          // deterministically failing group would pin the walk to its own page and starve the
+          // tail. The pass already retries a failure once in-run, so what remains is
+          // persistent and waits for the wrap-around.
           joinHealCursor = r.capped && r.cursor ? r.cursor : undefined;
           if (r.merged > 0) log("thread_join_heal", { merged: r.merged, moved: r.messagesMoved, skipped: r.skipped });
           // A `_failed` suffix, or the sidecar's log filter files it as informational and the

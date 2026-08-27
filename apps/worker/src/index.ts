@@ -3771,7 +3771,7 @@ export async function startWorkerWithLock(
                 cursor: threadJoinHealCursors.get(accountId),
               }));
             // Carry the resume point while the budget (not the candidate set) ended the walk
-            // — UNCONDITIONALLY. Resetting on failure was tried and reviewed away: a group
+            // — UNCONDITIONALLY. Resetting on failure is the tempting wrong move: a group
             // that fails deterministically would pin every run to its own page and starve the
             // tail for ever, which is strictly worse than a failed group waiting for the walk
             // to wrap. Transients are already retried once INSIDE the run (see the pass), so

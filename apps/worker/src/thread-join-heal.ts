@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { drafts, mailboxes, messages, recordChanges, threadNotes, threads, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
   conversationJoinVerdict, silentLogger,
@@ -97,6 +97,10 @@ export interface ThreadJoinHealDeps {
   log?: Logger;
   maxGroups?: number;
   now?: () => Date;
+  /** TEST SEAM: awaited before each merge attempt, so a test can commit a competing write in
+   * the window between the facts read and the transaction — the race the locked-row reads
+   * exist for. Production callers never pass it. */
+  beforeMergeAttempt?: () => Promise<void> | void;
   /**
    * Resume AFTER this group. Without it a capped run's successor rescans from the top, and a
    * group whose verdict is "no" never leaves the candidate predicate — so a caller looping on
@@ -124,7 +128,7 @@ export interface ThreadJoinHealResult {
    * for the NEXT walk. Counted APART from `skipped` (an over-bound group is a permanent
    * refusal, not a failure), and deliberately NOT a reason for a caller to reset its forward
    * cursor: a deterministic poison group that reset the walk would pin every future run to
-   * the same leading page and starve the tail for ever — the reviewed trade is that the
+   * the same leading page and starve the tail for ever. The trade is deliberate: the
    * in-run retry covers transients and the wrap-around retries the rest.
    */
   failed: number;
@@ -284,6 +288,26 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
       }
 
       const mergeOnce = (): Promise<number> => db.transaction(async (tx) => {
+          // ── THE SURVIVOR'S NEW STATE COMES FROM ROWS LOCKED IN THIS TRANSACTION, ──────────
+          // never from the facts the verdict was taken on. Between the facts read and this
+          // write — and especially between a first attempt and its retry — an ingest can land
+          // a fresh message on an absorbed thread and fold its sender into that thread's row;
+          // a union taken from the stale facts would move the message and drop its sender and
+          // timestamp from the surviving conversation. Locking the thread rows FIRST also
+          // matches ingest's own order (thread row, then message rows, then the seq lock),
+          // so the two writers queue instead of deadlocking.
+          const lockedRows = await tx.select({
+            id: threads.id, participants: threads.participants, lastMessageAt: threads.lastMessageAt,
+          }).from(threads)
+            .where(and(
+              inArray(threads.id, [target.id, ...absorb.map((s) => s.id)]),
+              eq(threads.accountId, group.account_id),
+            ))
+            .for("update");
+          const lockedById = new Map(lockedRows.map((r) => [r.id, r]));
+          const lockedTarget = lockedById.get(target.id);
+          if (!lockedTarget) throw new Error("survivor thread vanished before the merge locked it");
+
           // EVERY message row moves — the FK demands the absorbed thread be empty before its
           // DELETE — but only LIVING rows are announced. A soft-deleted row's tombstone already
           // reached every mirror as an `op: "delete"`, and `getChanges` materializes an update
@@ -317,24 +341,42 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
             for (const r of d) repointedDrafts.push(r.id);
           }
 
-          // Fold the absorbed threads' participants into the survivor, the same union-by-
-          // lowercased-address `mergeThreadMessage` performs at ingest.
-          const byAddress = new Map(target.participants.map((p) => [p.address.toLowerCase(), p]));
+          // Fold the absorbed threads' participants into the survivor — from the LOCKED rows,
+          // the same union-by-lowercased-address `mergeThreadMessage` performs at ingest
+          // (ingest maintains a thread row's participants under this very row lock, so the
+          // locked rows are current even against the race the retry exists for).
+          const byAddress = new Map(
+            ((lockedTarget.participants as EmailAddress[] | null) ?? []).map((p) => [p.address.toLowerCase(), p]),
+          );
           for (const source of absorb) {
-            for (const p of source.participants) {
+            const locked = lockedById.get(source.id);
+            if (!locked) continue; // vanished (a user merge won); its move predicate matches nothing
+            for (const p of (locked.participants as EmailAddress[] | null) ?? []) {
               const key = p.address.toLowerCase();
               if (key && !byAddress.has(key)) byAddress.set(key, p);
             }
           }
+
+          // The conversation's newest moment comes from the MESSAGES now on the survivor —
+          // an aggregate inside this transaction, after the moves — not from any thread row:
+          // a row can trail its own messages (`mergeThreadMessage` only ever advances it),
+          // and the ordered lists must sort the merged conversation by what it actually holds.
+          const newestRow = await tx.select({ last: sql<Date | null>`max(${messages.date})` })
+            .from(messages)
+            .where(and(
+              eq(messages.threadId, target.id), eq(messages.accountId, group.account_id),
+              sql`${messages.deletedAt} is null`,
+            ));
+          const newest = newestRow[0]?.last ? new Date(newestRow[0].last) : lockedTarget.lastMessageAt;
+
           await tx.update(threads).set({
             participants: [...byAddress.values()],
-            // GREATEST, not assignment: `running.lastMessageAt` is exact as of the facts read,
-            // but an ingest committing between that read and this write may have advanced the
-            // survivor — a merge must never move a conversation backwards in the ordered lists.
-            // The Date goes over as ISO text with an explicit cast: a raw Date in an untyped
-            // sql-fragment param reaches postgres-js's Bind as-is, which wants string/Buffer
-            // (ERR_INVALID_ARG_TYPE) — the column encoder only runs for plain column values.
-            lastMessageAt: sql`greatest(coalesce(${threads.lastMessageAt}, 'epoch'::timestamptz), ${(running.lastMessageAt ?? new Date(0)).toISOString()}::timestamptz)`,
+            // GREATEST as a second guard: a merge must never move a conversation backwards in
+            // the ordered lists. ISO text with an explicit cast, because a raw Date in an
+            // untyped sql-fragment param reaches postgres-js's Bind as-is, which wants
+            // string/Buffer (ERR_INVALID_ARG_TYPE) — the column encoder only runs for plain
+            // column values.
+            lastMessageAt: sql`greatest(coalesce(${threads.lastMessageAt}, 'epoch'::timestamptz), ${(newest ?? new Date(0)).toISOString()}::timestamptz)`,
             updatedAt: now(),
           }).where(and(eq(threads.id, target.id), eq(threads.accountId, group.account_id)));
 
@@ -369,6 +411,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
       // be seen in the log without ever pinning the walk to its page.
       let moved = -1;
       try {
+        if (deps.beforeMergeAttempt) await deps.beforeMergeAttempt();
         moved = await mergeOnce();
       } catch (err) {
         log.warn("thread_join_heal_group_retrying", {
