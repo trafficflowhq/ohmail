@@ -62,6 +62,7 @@ import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client
 import type { ToastFn } from "@ohmail/ui";
 import { clearComposeDraft, type MailSend } from "./compose";
 import { EMPTY_RICH, parseRichValue, serializeRichValue, type RichValue } from "./rich-text";
+import type { SignatureState } from "./signature";
 
 export type SendPhase = "idle" | "sending" | "queued" | "unverified" | "failed";
 
@@ -163,6 +164,61 @@ export function writeReplyDraft(messageId: string, value: RichValue): void {
     else window.localStorage.setItem(replyDraftKey(messageId), raw);
   } catch {
     /* private mode refuses writes; the draft lives in React state only */
+  }
+}
+
+/**
+ * THE PER-MESSAGE EDITOR META — the subject as edited and the signature block's state, beside
+ * the body scratch and on its lifecycle (review round 1: closing the editor kept the body and
+ * silently dropped these two, so a struck signature came back and a retitled reply lost its
+ * title on reopen).
+ *
+ * Its own key rather than a field inside the body scratch, because the body's value is
+ * shape-based (`parseRichValue`: a bare string or the rich envelope) and growing it a third
+ * shape would complicate every reader for two small fields. The LANE is the key, exactly as
+ * the body scratch's is: a reply's meta lives under the message id, an inline forward's under
+ * `fwd:<id>` — a half-written reply and a forward note on the same message are different
+ * messages with different signatures. Cleared where the body scratch clears: in `settle`,
+ * because "the send landed" means the whole per-message state is spent.
+ *
+ * `subject` is absent while the derived `Re:` one stands; `sig` is absent while `following`
+ * stands — absence IS the resting state, and a meta with neither field stores nothing.
+ */
+export interface ReplyEditorMeta {
+  subject?: string;
+  sig?: SignatureState;
+}
+
+export const replyMetaKey = (lane: string): string => `ohmail.ui.replymeta:${lane}`;
+
+export function readReplyMeta(lane: string): ReplyEditorMeta {
+  try {
+    const raw = window.localStorage.getItem(replyMetaKey(lane));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Partial<ReplyEditorMeta>;
+    // Field-wise, like every scratch reader: only the shapes the model names restore.
+    const sig = parsed.sig;
+    return {
+      ...(typeof parsed.subject === "string" ? { subject: parsed.subject } : {}),
+      ...(sig?.kind === "removed" ? { sig: { kind: "removed" as const } }
+        : sig?.kind === "edited" && typeof sig.text === "string"
+          ? { sig: { kind: "edited" as const, text: sig.text } }
+          : {}),
+    };
+  } catch {
+    return {}; // storage blocked — the editor still works for this session
+  }
+}
+
+export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
+  try {
+    if (meta.subject === undefined && meta.sig === undefined) {
+      window.localStorage.removeItem(replyMetaKey(lane));
+      return;
+    }
+    window.localStorage.setItem(replyMetaKey(lane), JSON.stringify(meta));
+  } catch {
+    /* private mode refuses writes; the meta lives in React state only */
   }
 }
 
@@ -314,6 +370,7 @@ export function useMailSend(
           // must survive somebody forwarding a message mid-sentence.
           try {
             window.localStorage.removeItem(replyDraftKey(key));
+            window.localStorage.removeItem(replyMetaKey(key));
           } catch {
             /* private mode refuses writes and therefore holds nothing to remove */
           }
@@ -321,6 +378,7 @@ export function useMailSend(
       } else {
         try {
           window.localStorage.removeItem(replyDraftKey(m.inReplyTo));
+          window.localStorage.removeItem(replyMetaKey(m.inReplyTo));
         } catch {
           /* private mode refuses writes and therefore holds nothing to remove */
         }

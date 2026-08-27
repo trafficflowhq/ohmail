@@ -83,15 +83,33 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * The signature as markup — ONE paragraph, lines joined with `<br>`, every character escaped.
+ * The signature as markup — ONE paragraph, lines joined with `<br>`, every character escaped,
+ * and the WHITESPACE the block showed preserved.
  *
  * `<br>` rather than a paragraph per line because a signature's lines are one block (name,
  * role, address) and paragraph spacing between them would render a shape the block on screen
  * does not have; a blank line in the stored text becomes two `<br>`s, which is the same
  * vertical gap the plain half's newlines carry.
+ *
+ * ── WHY THE NO-BREAK SPACES (review round 1) ─────────────────────────────────────────────
+ *
+ * Ordinary paragraph text collapses leading and repeated spaces, and the server's html→text
+ * derivation collapses them the same way — so a signature using indentation or aligned
+ * columns would ship narrower than the block and the Settings preview showed it. A `style`
+ * attribute cannot carry the fix: the outbound sanitizer strips every style. So the width is
+ * preserved at the character level — each leading space, the second of every space pair, and
+ * each tab (as four columns) becomes a no-break space — leaving single interior spaces as
+ * real spaces so long lines still wrap.
  */
+const NBSP = "\u00a0";
+function preserveWhitespace(escapedLine: string): string {
+  return escapedLine
+    .replace(/\t/g, NBSP.repeat(4))
+    .replace(/ {2}/g, ` ${NBSP}`)
+    .replace(/^ /, NBSP);
+}
 export function signatureHtml(sig: string): string {
-  return `<p>${sig.split("\n").map(escapeHtml).join("<br>")}</p>`;
+  return `<p>${sig.split("\n").map((l) => preserveWhitespace(escapeHtml(l))).join("<br>")}</p>`;
 }
 
 /**

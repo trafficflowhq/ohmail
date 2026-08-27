@@ -111,7 +111,10 @@ import { folderTailVerdict, folderUnreadCounts } from "./folders";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from "./ProfileImportCard";
-import { COMPOSE_SEND_KEY, inlineForwardKey, useMailSend, readReplyDraft, writeReplyDraft } from "./mail-send";
+import {
+  COMPOSE_SEND_KEY, inlineForwardKey, useMailSend, readReplyDraft, writeReplyDraft,
+  readReplyMeta, writeReplyMeta,
+} from "./mail-send";
 import {
   clearComposeDraft,
   composePlan,
@@ -1788,11 +1791,42 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    */
   const [replySig, setReplySig] = useState<SignatureState>(SIG_FOLLOWING);
   const [replySubjectEdit, setReplySubjectEdit] = useState<string | null>(null);
+  /**
+   * RETARGETING HYDRATES RATHER THAN BLIND-RESETS (review round 1): closing a half-written
+   * reply nulls `replyTo`, and a reset that forgot the per-message meta made Escape drop the
+   * retitled subject and resurrect a struck signature while the body survived. The meta lives
+   * beside the body scratch under the same lane key (`replyMetaKey`), written by the two
+   * setters below and cleared by `settle` — so close-and-reopen restores all three halves of
+   * the editor or none, and a settled send spends them together.
+   */
   useEffect(() => {
     setReplyFromId(null);
     setReplyAttachments([]);
-    setReplySig(SIG_FOLLOWING);
-    setReplySubjectEdit(null);
+    if (replyTo !== null) {
+      const meta = readReplyMeta(replyMode === "forward" ? inlineForwardKey(replyTo) : replyTo);
+      setReplySig(meta.sig ?? SIG_FOLLOWING);
+      // The subject edit is the REPLY's; a forward carries its own `Fwd:` subject.
+      setReplySubjectEdit(replyMode === "reply" ? meta.subject ?? null : null);
+    } else {
+      setReplySig(SIG_FOLLOWING);
+      setReplySubjectEdit(null);
+    }
+  }, [replyTo, replyMode]);
+  /** The two persisting setters — state and scratch move together, or a reopen lies. */
+  const onReplySig = useCallback((next: SignatureState) => {
+    setReplySig(next);
+    if (replyTo === null) return;
+    const lane = replyMode === "forward" ? inlineForwardKey(replyTo) : replyTo;
+    writeReplyMeta(lane, {
+      ...readReplyMeta(lane),
+      ...(next.kind === "following" ? { sig: undefined } : { sig: next }),
+    });
+  }, [replyTo, replyMode]);
+  const onReplySubject = useCallback((subject: string) => {
+    setReplySubjectEdit(subject);
+    if (replyTo === null) return;
+    const lane = replyMode === "forward" ? inlineForwardKey(replyTo) : replyTo;
+    writeReplyMeta(lane, { ...readReplyMeta(lane), subject });
   }, [replyTo, replyMode]);
   /**
    * THE COMPOSE FORM, and why it lives up here rather than in `ComposeView`.
@@ -3021,6 +3055,16 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         // possibly a redacted sensitive one — into a stored row, which is the exact thing the
         // server-side quote exists to prevent. Recorded here because a reader will otherwise take it
         // for an oversight, and because the fix is a schema change, not a line in this function.
+        //
+        // THE SIGNATURE BLOCK'S STATE survives exactly as far as this device knows it (review
+        // round 1). The `drafts` row stores the message's prose and no block state, so a draft
+        // reopened from ANOTHER device re-offers the block in its resting `following` state —
+        // visibly, below the editor, strikeable again; never silently inside the prose. On THIS
+        // device the state is still in hand whenever the row being reopened is the one autosave
+        // is holding (or the form's local buffer names the same message), so it carries over and
+        // a struck block stays struck. The full cross-device fix is a drafts column — a schema
+        // change, recorded rather than smuggled.
+        ...(autosave.draftId === d.id && compose.sig ? { sig: compose.sig } : {}),
       };
       setCompose(seeded);
       writeComposeDraft(seeded);
@@ -3040,7 +3084,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       }
       go("compose");
     },
-    [draftRepliesHere, autosave, go, reader, version],
+    [draftRepliesHere, autosave, go, reader, version, compose.sig],
   );
   const discardDraft = useCallback(
     (draftId: string) => {
@@ -5107,11 +5151,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       // block renders. The map travels only once server-confirmed, so a block can never be
       // drawn (or serialized) from a guess.
       replySig,
-      onReplySig: setReplySig,
+      onReplySig,
       signatures: consent.signaturesKnown ? consent.signatures : undefined,
       // The subject as edited — `null` keeps the untouched reply's wire byte-identical.
       replySubjectEdit,
-      onReplySubject: setReplySubjectEdit,
+      onReplySubject,
       // The host's surface declaration rides beside the reply's files because it is the other
       // half of the same ceiling: `InlineReply` states and refuses against
       // `composeAttachCap(from.maxMessageBytes, THIS)`, the exact pair the send will enforce.
@@ -5158,6 +5202,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     }),
     [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       replyEnvelope, replyFromId, replyAttachments, replySig, replySubjectEdit,
+      onReplySig, onReplySubject,
       consent.signatures, consent.signaturesKnown, sendSurfaceMaxTotalBytes, replyBook,
       openSenderMenu, ownNameOf, writeTo, openReply, openForward, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
