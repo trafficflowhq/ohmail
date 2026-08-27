@@ -15,10 +15,16 @@ import { Reveal } from "./Reveal";
  * pane over its name and its one-sentence job — the Everyday list's typographic
  * register (terms over hairlines, no tiles) with a picture on top.
  */
+/* Each pile has a light and a dark capture of the same pane, and the page shows the one
+   that matches its theme. The swap is CSS on the page's own theme mechanics (`data-theme`
+   first, `prefers-color-scheme` while no explicit choice is stamped — the same three-state
+   rule the wash tokens follow), so a `<picture>` media query, which cannot see the
+   attribute, was not an option. The hidden capture is `loading="lazy"` and `display:
+   none`, so a browser never fetches the theme it is not showing. */
 const PILES = [
-  { id: "ohbox", img: "/landing/pile-ohbox.webp" },
-  { id: "reads", img: "/landing/pile-reads.webp" },
-  { id: "receipts", img: "/landing/pile-receipts.webp" },
+  { id: "ohbox", img: "/landing/pile-ohbox.webp", dark: "/landing/pile-ohbox-dark.webp" },
+  { id: "reads", img: "/landing/pile-reads.webp", dark: "/landing/pile-reads-dark.webp" },
+  { id: "receipts", img: "/landing/pile-receipts.webp", dark: "/landing/pile-receipts-dark.webp" },
 ] as const;
 
 /* The captures' intrinsic size: list-pane crops at 2× device pixels (760×1120),
@@ -43,8 +49,17 @@ export function Views() {
           {PILES.map((p) => (
             <div className="l-views-item" key={p.id}>
               <img
-                className="l-views-still"
+                className="l-views-still is-light"
                 src={p.img}
+                width={PILE_STILL.width}
+                height={PILE_STILL.height}
+                alt={t(`${p.id}Alt`)}
+                loading="lazy"
+                decoding="async"
+              />
+              <img
+                className="l-views-still is-dark"
+                src={p.dark}
                 width={PILE_STILL.width}
                 height={PILE_STILL.height}
                 alt={t(`${p.id}Alt`)}

@@ -30,6 +30,10 @@ const ITEMS = [
   "unsub",
   "write",
   "tags",
+  // Beside "Tags" on purpose: tags reach across mailboxes, folders are the ones you already
+  // keep — real IMAP folders, opt-in, per mailbox, with create/rename/delete. The sentence
+  // names the one surface that does not have them yet (the standalone desktop app).
+  "folders",
 ] as const;
 
 export function Everyday() {

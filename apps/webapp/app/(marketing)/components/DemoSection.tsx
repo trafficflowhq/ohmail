@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { useTranslations } from "next-intl";
 import { Kbd, useTheme } from "@ohmail/ui";
@@ -49,15 +50,25 @@ interface Anno {
 
 const ANNOS: Anno[] = [
   {
-    id: "reads",
+    id: "ohbox",
     side: "left",
     // The rail entries carry `data-rail-id` (RailNav); the two reading-pane chips carry
     // `data-chip` (the Chip primitive). Both are stable hooks on the SHIPPED UI, so the
     // leaders anchor to the real elements rather than to a guessed spot.
-    sel: '.rail [data-rail-id="reads"]',
-    fallback: [0.13, 0.28],
-    title: "calloutReadsTitle",
-    body: "calloutReads",
+    //
+    // THE FOUR CARDS ARE THE PRODUCT'S FOUR CLAIMS, anchored to the part of the app each
+    // is about: the Ohbox (only mail you said yes to — the hero's own lead, repeated
+    // verbatim), the
+    // Screener (one press decides; spam to the provider's native Junk, the sender rule
+    // remembers, the unsubscribe goes out where the list offers one click), the rationale
+    // chip (every mail says why, and that rule is stored IN the mailbox as open JSON — the
+    // leave-anytime half), and the tracker chip (nothing on faith: open source, a real
+    // desktop client, the blocked pixel as the visible proof). Each sentence is judged
+    // against the code by `landing-mailbox-truth.test.ts`.
+    sel: '.rail [data-rail-id="ohbox"]',
+    fallback: [0.13, 0.2],
+    title: "calloutOhboxTitle",
+    body: "calloutOhbox",
   },
   {
     id: "screener",
@@ -181,6 +192,18 @@ export function DemoSection() {
   const [overlay, setOverlay] = useState(true); //    build-up still present
   const [touched, setTouched] = useState(false); //   user has used the app
   const [geo, setGeo] = useState<Geo>(ROW);
+  /* ── full-window ────────────────────────────────────────────────────
+     The frame can take the whole viewport: the green dot opens it, the
+     first press INTO the demo opens it, Escape / the red dot / the close
+     control / the backdrop return to the page — at the scroll position
+     the visitor left, with focus back on whatever opened it. The iframe
+     is the SAME element throughout (only attributes change around it), so
+     the app's state survives the move in both directions. */
+  const [full, setFull] = useState(false);
+  const fullRef = useRef(false);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const savedScroll = useRef(0);
+  const closeRef = useRef<HTMLButtonElement>(null);
 
   const sectionRef = useRef<HTMLElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -268,6 +291,77 @@ export function DemoSection() {
     const id = window.setTimeout(() => setOverlay(false), reduced.current ? 20 : 480);
     return () => window.clearTimeout(id);
   }, [phase]);
+
+  const openFull = useCallback((trigger: HTMLElement | null) => {
+    if (fullRef.current) return;
+    fullRef.current = true;
+    returnFocus.current = trigger;
+    savedScroll.current = window.scrollY;
+    /* the frame leaves the flow, so the stage keeps its height — no jump behind the overlay */
+    const wrap = wrapRef.current;
+    if (wrap) wrap.parentElement?.style.setProperty("--wrap-h", `${wrap.offsetHeight}px`);
+    setFull(true);
+  }, []);
+
+  const closeFull = useCallback(() => {
+    if (!fullRef.current) return;
+    fullRef.current = false;
+    setFull(false);
+  }, []);
+
+  /* scroll lock + focus, keyed on the state so the DOM the effect sees is the DOM the
+     state describes. Escape is listened for on the window: it must work with focus on the
+     close control, on a dot, or nowhere in particular. */
+  useEffect(() => {
+    const root = document.documentElement;
+    if (full) {
+      root.dataset.demoFull = "on";
+      closeRef.current?.focus();
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === "Escape") closeFull();
+      };
+      window.addEventListener("keydown", onKey);
+      return () => window.removeEventListener("keydown", onKey);
+    }
+    delete root.dataset.demoFull;
+    return undefined;
+  }, [full, closeFull]);
+
+  /* the return trip: only after a real open, never on mount */
+  const wasFull = useRef(false);
+  useEffect(() => {
+    if (full) {
+      wasFull.current = true;
+      return;
+    }
+    if (!wasFull.current) return;
+    wasFull.current = false;
+    window.scrollTo({ top: savedScroll.current });
+    const back = returnFocus.current;
+    returnFocus.current = null;
+    if (back && typeof back.focus === "function" && document.contains(back)) back.focus();
+  }, [full]);
+
+  /* the focus trap: Tab cycles inside the dialog. The iframe is one stop — once focus is
+     inside the app, the app's own Tab order runs until it leaves the document again. */
+  const onDialogKey = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!fullRef.current || e.key !== "Tab") return;
+    const root = e.currentTarget;
+    const stops = Array.from(
+      root.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], iframe'),
+    );
+    if (stops.length === 0) return;
+    const first = stops[0]!;
+    const last = stops[stops.length - 1]!;
+    const active = document.activeElement as HTMLElement | null;
+    if (e.shiftKey && (active === first || !root.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }, []);
 
   /* ── annotation geometry ──────────────────────────────────────────
      One imperative pass: decide the mode from the page's real content
@@ -432,7 +526,21 @@ export function DemoSection() {
     doc.addEventListener("pointerdown", go, opts);
     doc.addEventListener("keydown", go, { capture: true, once: true });
     doc.addEventListener("scroll", go, opts);
-  }, [measure]);
+    /* Using the demo IS entering it: the first press inside the frame opens the full
+       window, and the press itself still lands in the app (nothing here prevents it).
+       Persistent, not `once` — after a return to the page the next press opens it again,
+       so the frame behaves the same way every time it is touched. */
+    const enter = () => {
+      if (!fullRef.current) openFull(frameRef.current);
+    };
+    doc.addEventListener("pointerdown", enter, { capture: true, passive: true });
+    /* Escape pressed INSIDE the app also returns to the page — in the bubble phase, so an
+       app surface that handles Escape itself (the palette, a sheet) and stops propagation
+       keeps its meaning, and only an unhandled Escape leaves the full window. */
+    doc.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && fullRef.current) closeFull();
+    });
+  }, [measure, openFull, closeFull]);
 
   return (
     <section className="l-demo" id="demo" aria-labelledby="demo-title" ref={sectionRef}>
@@ -443,20 +551,51 @@ export function DemoSection() {
         <p className="l-lede">{t("sub")}</p>
       </Reveal>
 
-      <div className="l-demo-stage">
+      <div className="l-demo-stage" data-full={full ? "" : undefined}>
+        {/* the backdrop is a control, not decoration: a press on it returns to the page */}
+        {full ? (
+          <button
+            type="button"
+            className="l-demo-backdrop"
+            aria-label={t("closeFull")}
+            tabIndex={-1}
+            onClick={closeFull}
+          />
+        ) : null}
         <div
           className="l-frame-wrap"
           ref={wrapRef}
           data-mode="row"
           data-anno={phase === "live" ? "on" : undefined}
           data-touched={touched ? "" : undefined}
+          data-full={full ? "" : undefined}
+          role={full ? "dialog" : undefined}
+          aria-modal={full ? true : undefined}
+          aria-label={full ? t("iframeTitle") : undefined}
+          onKeyDown={onDialogKey}
         >
           <figure className="l-frame">
             <figcaption className="l-chrome">
-              <span className="l-dots" aria-hidden="true">
-                <i />
-                <i />
-                <i />
+              {/* the window dots are the window's controls. Red closes the full window
+                  (inert on the page — there is nothing to close there), yellow is the
+                  one honest no-op and stays chrome, green opens the full window and,
+                  open, brings the page back. */}
+              <span className="l-dots">
+                <button
+                  type="button"
+                  className="l-dot is-close"
+                  aria-label={t("dotClose")}
+                  disabled={!full}
+                  onClick={closeFull}
+                />
+                <i className="l-dot is-inert" aria-hidden="true" />
+                <button
+                  type="button"
+                  className="l-dot is-expand"
+                  aria-label={full ? t("dotRestore") : t("dotExpand")}
+                  aria-pressed={full}
+                  onClick={(e) => (full ? closeFull() : openFull(e.currentTarget))}
+                />
               </span>
               <span className="l-urlbar">
                 <svg className="ic" viewBox="0 0 16 16" aria-hidden="true">
@@ -465,10 +604,17 @@ export function DemoSection() {
                 </svg>
                 {t("urlbar")}
               </span>
-              <span className="l-live-badge" aria-hidden="true">
-                <i className="l-live-dot" />
-                {t("badge")}
-              </span>
+              {full ? (
+                <button type="button" className="l-frame-close" ref={closeRef} onClick={closeFull}>
+                  {t("closeFull")}
+                  <Kbd>esc</Kbd>
+                </button>
+              ) : (
+                <span className="l-live-badge" aria-hidden="true">
+                  <i className="l-live-dot" />
+                  {t("badge")}
+                </span>
+              )}
             </figcaption>
 
             <div className="l-frame-body" ref={bodyRef}>

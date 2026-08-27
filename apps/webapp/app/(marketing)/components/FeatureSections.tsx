@@ -49,6 +49,13 @@ export function Screener() {
             <Check />
             {t("pointC")}
           </li>
+          {/* four points, not three: the spam press earned its own line when the verdict
+              started filing to the provider's native Junk (the sender rule is what
+              remembers) — a claim the body makes at the strength the code supports */}
+          <li>
+            <Check />
+            {t("pointD")}
+          </li>
         </ul>
       </Reveal>
       <Reveal className="l-feat-vig" delay={120}>
@@ -97,7 +104,10 @@ export function InPlace() {
           {t("title")}
         </h2>
         <p className="l-feat-body">{t("body")}</p>
-        <p className="l-compare">{t("compare")}</p>
+        {/* `l-inplace-note`, not `l-compare`: that name belongs to the comparison SECTION
+            further down, and while this paragraph carried it too, the section's own
+            max-width/margin/padding rules leaked in here (two rules, one name, later wins). */}
+        <p className="l-inplace-note">{t("compare")}</p>
         <p className="l-promise">{t("promise")}</p>
       </Reveal>
       <Reveal className="l-feat-vig" delay={120}>

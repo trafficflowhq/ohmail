@@ -745,11 +745,52 @@ const configured = withNextIntl(nextConfig);
  * a supplied value can do is show a wrong star count, and `starLabel` refuses anything
  * that does not parse as a number.
  */
+/**
+ * THE NEWEST ANDROID RELEASE TAG, FETCHED ONCE PER BUILD — the star count's twin.
+ *
+ * The download section's Android button links a release PAGE, and the page has to be the
+ * newest `android-v*` tag rather than one pinned in source (a pinned tag is how the desktop
+ * card once went four releases stale). Android releases are GitHub pre-releases, so
+ * `/releases/latest` can never resolve to one; the list endpoint is read instead — GitHub
+ * returns it newest first — and the first tag in the Android family wins. Inlined as
+ * {@link ANDROID_TAG_VAR}; `app/(marketing)/downloads.ts` validates the shape and falls back
+ * to the filtered releases index for anything else.
+ *
+ * Same failure posture as {@link githubStars}: a GitHub hiccup yields the last-known tag,
+ * never a dead build and never a made-up version. Update the constant when it drifts.
+ */
+export const ANDROID_TAG_VAR = "NEXT_PUBLIC_ANDROID_RELEASE_TAG";
+
+/** Last-known Android tag, recorded by hand when the wiring landed (2026-08-27). */
+const LAST_KNOWN_ANDROID_TAG = "android-v0.11.2";
+
+/** @param {typeof fetch} fetcher injectable for the test next door */
+export async function androidReleaseTag(fetcher = fetch) {
+  try {
+    const res = await fetcher(`${GITHUB_REPO_API}/releases?per_page=30`, {
+      headers: { accept: "application/vnd.github+json", "user-agent": "ohmail-build" },
+      signal: AbortSignal.timeout(3500),
+    });
+    if (!res.ok) throw new Error(`github answered ${res.status}`);
+    const body = await res.json();
+    if (!Array.isArray(body)) throw new Error("no release list");
+    const hit = body.find(
+      (r) => r && typeof r.tag_name === "string" && /^android-v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/.test(r.tag_name) && !r.draft,
+    );
+    if (!hit) throw new Error("no android tag in the first page");
+    return hit.tag_name;
+  } catch {
+    return LAST_KNOWN_ANDROID_TAG;
+  }
+}
+
 export default async function config() {
   const provided = (process.env[GITHUB_STARS_VAR] ?? "").trim();
   const stars = provided !== "" ? provided : String(await githubStars());
+  const providedTag = (process.env[ANDROID_TAG_VAR] ?? "").trim();
+  const androidTag = providedTag !== "" ? providedTag : await androidReleaseTag();
   return {
     ...configured,
-    env: { ...configured.env, [GITHUB_STARS_VAR]: stars },
+    env: { ...configured.env, [GITHUB_STARS_VAR]: stars, [ANDROID_TAG_VAR]: androidTag },
   };
 }

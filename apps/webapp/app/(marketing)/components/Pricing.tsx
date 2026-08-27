@@ -4,10 +4,23 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Reveal } from "./Reveal";
 import { useSignup, type SignupTier } from "./Signup";
+import { SELF_HOST_GUIDE_URL } from "./GetOhmail";
 
 /**
- * Two honest tiers: Desktop free and complete, Cloud as one panel with three columns —
- * deliberately NOT four identical cards.
+ * The free ways on the left, the managed tiers on the right — deliberately NOT five
+ * identical cards.
+ *
+ * ── SELF-HOSTING IS ON THE PRICE LIST, AS A PRICE ────────────────────────────────────
+ *
+ * The left column holds BOTH things a person can run for nothing: the desktop app, and the
+ * same open server on a box they own. The self-host card states the fact the whole section
+ * turns on — the hosted tiers to its right are that server run by us, and the money buys
+ * the running — so a visitor reading the price grid cannot miss that "free" has two shapes
+ * and neither is a demo. Its one link goes to the public repository's self-host guide (the
+ * same URL the Get-ohmail block's server card uses, held there by `get-ohmail.test.ts`),
+ * and its bullets claim exactly what `deploy/selfhost` ships: one compose file, unmetered
+ * mailboxes, your own AI key or none. Never a prebuilt-image or `docker pull` claim while
+ * that guard stands.
  *
  * ── BOTH CTAs POINT AT REAL THINGS ────────────────────────────────────────────────────
  *
@@ -45,6 +58,8 @@ export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
       </Reveal>
 
       <div className="l-price-grid">
+        {/* the free column: two cards, one register — the app, then the server */}
+        <div className="l-price-free">
         <Reveal className="l-price-desktop">
           <h3 className="l-price-name">
             {t("desktopName")}
@@ -81,6 +96,33 @@ export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
             {t("desktopNotify")}
           </button>
         </Reveal>
+
+        <Reveal className="l-price-desktop l-price-self" delay={60}>
+          <h3 className="l-price-name">
+            {t("selfName")}
+            <em className="l-opt">{t("selfStatus")}</em>
+          </h3>
+          <p className="l-price-fig">
+            <b className="num">{t("selfPrice")}</b>
+            <span>{t("selfTerm")}</span>
+          </p>
+          <p className="l-price-status">{t("selfStatusNote")}</p>
+          <ul className="l-price-feats">
+            <li>{t("selfA")}</li>
+            <li>{t("selfB")}</li>
+            <li>{t("selfC")}</li>
+            <li>{t("selfD")}</li>
+          </ul>
+          <a className="btn l-btn-lg l-price-cta" href={SELF_HOST_GUIDE_URL} rel="noreferrer">
+            {t("selfCta")}
+          </a>
+          <p className="l-price-ctanote">
+            <a className="l-price-ctalink" href="#selfhost">
+              {t("selfCtaNote")}
+            </a>
+          </p>
+        </Reveal>
+        </div>
 
         <Reveal className="l-price-cloud" delay={110}>
           <header className="l-cloud-head">

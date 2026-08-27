@@ -1283,6 +1283,10 @@
     "urlbar": "app.ohmail.app",
     "iframeTitle": "ohmail — interaktive Produktdemo",
     "openNewTab": "Live-Demo öffnen →",
+    "dotExpand": "Demo im Vollfenster öffnen",
+    "dotRestore": "Zurück zur Seite",
+    "dotClose": "Vollfenster schließen",
+    "closeFull": "Schließen",
     "railA": "Ohbox",
     "railB": "Reads",
     "railC": "Belege",
@@ -1291,7 +1295,7 @@
     "calloutOhboxTitle": "Nur Post, zu der du Ja gesagt hast",
     "calloutOhbox": "Fremde warten draußen. Wenn es hier ruhig ist, ist es wirklich leer.",
     "calloutScreenerTitle": "Der Screener geht an die Tür",
-    "calloutScreener": "Drei Absender warten. Ein Klick entscheidet — Ohbox, Reads, Belege oder nie. Spam? In den Junk deines Mailservers, und dieser Absender fragt nie wieder.",
+    "calloutScreener": "Drei Absender warten. Ein Klick entscheidet: Ohbox, Reads, Belege — oder nie, was dich auch abmeldet, wo die Liste einen Klick dafür anbietet. Spam landet im Junk deines Mailservers, und keiner von beiden fragt nochmal.",
     "calloutWhyTitle": "Jede Mail sagt, warum",
     "calloutWhy": "Die Regel, die sie einsortiert hat, in klaren Worten — gespeichert in deinem eigenen Postfach, als offenes JSON. Geh, wann du willst; deine Regeln gehen mit.",
     "calloutTrackerTitle": "Nichts auf Treu und Glauben",
@@ -1301,9 +1305,7 @@
     "hintCmdk": "alles, beim Namen",
     "hintMove": "bewegen",
     "hintRead": "lesen",
-    "hintScreen": "einen Absender screenen",
-    "calloutReadsTitle": "Reads hat eine Wasserlinie",
-    "calloutReads": "Die Linie merkt sich, wo du aufgehört hast."
+    "hintScreen": "einen Absender screenen"
   },
   "views": {
     "title": "Drei Stapel statt eines Posteingangs.",
@@ -1432,7 +1434,7 @@
     "laterTerm": "Später",
     "laterBody": "Schick eine Nachricht auf morgen, auf nächste Woche oder auf ein Datum, das du wählst.",
     "unsubTerm": "Abmelden",
-    "unsubBody": "Sortier einen Newsletter aus, und ohmail schickt die Abmeldung für dich — überall, wo der Absender einen Klick anbietet.",
+    "unsubBody": "Screene einen Absender aus oder markiere ihn als Spam, und ohmail schickt auch die Ein-Klick-Abmeldung für dich — wo die Liste eine anbietet. Standardmäßig an; ein Schalter in den Einstellungen stellt es ab.",
     "writeTerm": "Schreiben",
     "writeBody": "Antworten und weiterleiten mit Kopie und Blindkopie, aus dem Postfach, das du dafür wählst.",
     "tagsTerm": "Tags",
@@ -1586,15 +1588,12 @@
     "desktopUs": "Ein echter Mail-Client mit der Engine drin: deine Post liegt auf deiner eigenen Festplatte, also öffnet, liest und sucht sie ohne Netz — und die eigenständige Installation organisiert dein Postfach von deinem Rechner aus",
     "desktopOthers": "Ein Desktop-Fenster um ihre Web-App — organisiert wird in ihrer Cloud, nicht auf deinem Rechner",
     "aiCrit": "KI",
-    "aiUs": "Optional und mit Bremse — jeder Vorschlag wartet auf dein Ja",
+    "aiUs": "Optional und mit Bremse — KI schlägt vor, du entscheidest; nur ein Muster, das du oft genug bestätigt hast, läuft von selbst",
     "aiOthers": "In ihre Cloud eingebaut — oder gar nicht vorhanden",
     "note": "Verglichen mit Stand August 2026, anhand der jeweils eigenen veröffentlichten Dokumentation.",
     "usLine": "Die Antwort von ohmail auf jede Zeile ist dieselbe: es ist dein Postfach. Genauer gesagt mehrere — ohmail organisiert zwei, fünf, zehn IMAP-Postfächer gleichzeitig, entwirft Antworten in deiner Stimme, macht aus deinen Entscheidungen Regeln, die du lesen und ändern kannst, und bittet dich nie, deine Adresse, deinen Anbieter oder deine anderen Mailprogramme zu wechseln.",
     "goodwill": "Das sind gute Produkte von Leuten, denen E-Mail wichtig ist. Das richtige Modell ist das, das zu deinem Leben passt, und es muss nicht unseres sein — das ist ein völlig gutes Ergebnis. Auf einem bestehen wir: die Wahl soll deine bleiben, und das Postfach auch.",
-    "goodwillTitle": "Nimm, was zu dir passt.",
-    "offlineCrit": "Offline & lokal",
-    "offlineUs": "Läuft vollständig auf deinem Rechner und liest mit ausgeschaltetem WLAN",
-    "offlineOthers": "Native Apps, aber der Dienst lebt in ihrer Cloud"
+    "goodwillTitle": "Nimm, was zu dir passt."
   },
   "data": {
     "title": "Wo deine Post liegt.",
@@ -1623,15 +1622,7 @@
     "cloudCost": "Ab 9 $ im Monat, 14 Tage gratis.",
     "same": "Die Cloud ist Selbst-Hosting, das wir für dich erledigen: derselbe offene Server, derselbe Organizer, dasselbe Postfach als Master. Was sich ändert, ist, wessen Maschine die Kopie hält — und dass wir fürs Betreiben Geld nehmen.",
     "honest": "Das Kleingedruckte zur Cloud: Sie ist nicht Ende-zu-Ende-verschlüsselt. Der Dienst liest Post, um sie abzulegen und zu durchsuchen, und sehr wenige Leute mit Zugang zur Produktionsdatenbank könnten sie technisch lesen. Nie verkauft, nie ausgewertet, nie für etwas anderes benutzt, als dir zu dienen.",
-    "aiNote": "KI in der Cloud geht unter kommerziellen API-Bedingungen an Anthropic: Deine Post wird nie zum Trainieren von Modellen verwendet, und Anfragen werden nur kurz aufbewahrt (derzeit bis zu 30 Tage); eine Vereinbarung über null Aufbewahrung gibt es noch nicht. Auf jeder Stufe wird ein Geheimnis in einer Mail — ein Code, ein Anmeldelink, ein Zurücksetzen-Token — entfernt, bevor eine Anfrage gebaut wird, und die automatische Einsortierung lässt solche Post ganz aus. Struktur, keine Einstellung.",
-    "desktopBody": "Desktop ist so gebaut, dass deine Post unsere Server nie berührt: Synchronisierung, Regeln und Suche laufen alle auf deinem Rechner. Die App ist ein echter Mail-Client — sie verbindet sich mit deinem eigenen IMAP-Server und organisiert dein Postfach lokal, ohne ohmail-Server dazwischen — auf macOS, Windows und Linux gleichermaßen. Deine Post liegt auf deiner eigenen Festplatte, du kannst sie also lesen, ob du Netz hast oder nicht.",
-    "desktopNote": "Nur Desktop soll ein vollständiger Weg sein, ohmail zu nutzen, dauerhaft — kein Konto, keine Cloud, nichts von dir auf unserer Seite, und keine Testversion von irgendwas. Wenn du lieber ein gehostetes Konto hättest, kann sich dieselbe App stattdessen bei der Cloud anmelden; das entscheidest du in der App, es ist kein anderer Download.",
-    "cloudOptional": "optional",
-    "cloudBody": "Die Cloud hält eine Kopie deiner Post — Inhalte bis zum Speicherplatz deines Tarifs, Header, Betreffzeilen und Absender, nicht nur Metadaten — auf EU-Servern, zu einem Zweck: Synchronisierung, Push und Suche auf deine Geräte zu bringen. Ist der Speicher voll, werden neue Nachrichteninhalte nicht mehr gespeichert. Post kommt weiter an und wird wie gewohnt einsortiert, und die ganze Nachricht bleibt in deinem Postfach auf deinem eigenen Server — dort in jedem Mailprogramm lesbar, während ohmail dir die Vorschau zeigt, bis du wieder Platz hast. Nichts Gespeichertes wird je für Platz gelöscht. Der Speicher ist im Ruhezustand verschlüsselt, die Verbindungen zwischen deinen Geräten und ohmail sind auf dem Transportweg verschlüsselt, und deine Postfach-Zugangsdaten sind zusätzlich auf Anwendungsebene verschlüsselt. Es ist keine Ende-zu-Ende-Verschlüsselung — der Dienst muss Post lesen, um sie einzusortieren und durchsuchbar zu machen, und eine kleine Zahl von Personen mit Zugang zur Produktionsdatenbank könnte sie technisch lesen. Sie wird nie verkauft, nie ausgewertet und für nichts anderes benutzt, als dich zu bedienen. Löschst du dein Konto, verschwinden diese Daten sofort aus den laufenden Systemen und innerhalb von 30 Tagen aus den Backups. Die vollständige Datenschutzerklärung, die genau benennt, wer worauf zugreifen kann, erscheint, bevor das erste echte Postfach verbunden wird; die im Fußbereich verlinkte Liste der Auftragsverarbeiter und Aufbewahrungsfristen ist heute schon online.",
-    "cloudNote": "Warum es überhaupt eine Cloud gibt: Dein Handy kann keine Verbindung zu deinem Postfach den ganzen Tag offen halten — Akku und Betriebssystem lassen das nicht zu. Irgendetwas muss wach bleiben, um neue Post zu bemerken und dir auf die Schulter zu tippen. Dafür ist die Cloud da — Push, die Web-App und die Mobil-Apps, wenn sie kommen — und weil das ihre Aufgabe ist, hält sie eine Kopie deiner Post und nicht nur deine Regeln.",
-    "aiTerm": "KI",
-    "aiOptional": "optional, in beiden Tarifen",
-    "aiBody": "KI-Anfragen gehen unter kommerziellen API-Bedingungen an Anthropic: deine Post wird nie zum Trainieren von Modellen verwendet, und Anthropic behält Anfragen nach seiner Standardregel nur kurz (derzeit bis zu 30 Tage). Eine Vereinbarung über null Aufbewahrung haben wir noch nicht verhandelt, und wenn wir sie haben, steht es hier. Trägt eine Mail ein Geheimnis — einen Bestätigungscode, einen Anmeldelink, ein Zurücksetzen-Token —, wird es entfernt, bevor die Anfrage gebaut wird, und die automatische Einsortierung im Hintergrund lässt diese Mail ganz aus. Das ist Struktur, keine Einstellung. Ein echtes Modell war genau einmal in der Produktion verbunden, gegen das eigene Postfach des Gründers; die verwaltete KI geht mit der Beta für alle an, und die Abrechnung und die Ausgabegrenzen dafür stehen schon."
+    "aiNote": "KI in der Cloud geht unter kommerziellen API-Bedingungen an Anthropic: Deine Post wird nie zum Trainieren von Modellen verwendet, und Anfragen werden nur kurz aufbewahrt (derzeit bis zu 30 Tage); eine Vereinbarung über null Aufbewahrung gibt es noch nicht. Auf jeder Stufe wird ein Geheimnis in einer Mail — ein Code, ein Anmeldelink, ein Zurücksetzen-Token — entfernt, bevor eine Anfrage gebaut wird, und die automatische Einsortierung lässt solche Post ganz aus. Struktur, keine Einstellung."
   },
   "folders": {
     "title": "So sieht dein IMAP aus.",
@@ -1738,7 +1729,7 @@
   },
   "siteScreener": {
     "title": "Du entscheidest, wer reinkommt.",
-    "body": "Wenn dir jemand zum ersten Mal schreibt, wartet er am Screener — nicht in deinem Posteingang. Ein Klick wählt die Tür, einmal, für jede Mail, die dieser Absender je schreibt: Ohbox für Menschen, Reads für Newsletter, Belege für den Papierkram. Oder nie wieder — und war es ein Newsletter, kann ohmail die Abmeldung in deinem Namen schicken. Spam ist auch ein Klick: die Mail wandert in den Junk-Ordner deines Mailservers, und dieser Absender fragt nie wieder. Du willst Hilfe beim Entscheiden? Schalte Vorschläge ein, und ohmail schlägt für jeden neuen Absender eine Tür vor, sobald seine Post ankommt, zu einem Preis, der vorher dasteht; schlichte Newsletter und Belege kann es selbst einsortieren, und ein Muster, das du oft genug bestätigt hast, läuft ohne Nachfrage — Spam eingeschlossen. Von sich aus löscht ohmail nichts.",
+    "body": "Wenn dir jemand zum ersten Mal schreibt, wartet er am Screener — nicht in deinem Posteingang. Ein Klick wählt die Tür, einmal, für jede Mail, die dieser Absender je schreibt: Ohbox für Menschen, Reads für Newsletter, Belege für den Papierkram. Oder nie wieder — was dich auch abmeldet, wo die Liste einen Klick dafür anbietet. Spam ist auch ein Klick: die Mail wandert in den Junk-Ordner deines Mailservers, und dieser Absender fragt nie wieder. Du willst Hilfe beim Entscheiden? Schalte Vorschläge ein, und ohmail schlägt für jeden neuen Absender eine Tür vor, sobald seine Post ankommt, zu einem Preis, der vorher dasteht; schlichte Newsletter und Belege kann es selbst einsortieren, und ein Muster, das du oft genug bestätigt hast, läuft ohne Nachfrage — Spam eingeschlossen. Von sich aus löscht ohmail nichts.",
     "pointA": "Erstabsender warten, bis du es sagst",
     "pointB": "Ein Klick wählt die Tür — dauerhaft",
     "pointC": "Spam ist ein Klick — in den Junk deines Mailservers, und der Absender fragt nie wieder",

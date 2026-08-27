@@ -955,11 +955,15 @@ a.btn {
 @keyframes l-co-in {
   from {
     opacity: 0;
-    transform: translateY(7px);
+    transform: translateY(10px) scale(0.96) rotate(var(--co-tilt, 0deg));
+  }
+  62% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.005) rotate(var(--co-tilt, 0deg));
   }
   to {
     opacity: 1;
-    transform: none;
+    transform: rotate(var(--co-tilt, 0deg));
   }
 }
 .l-frame-wrap[data-mode="float"][data-anno="on"] .l-callout {
@@ -1125,7 +1129,10 @@ a.btn {
   color: var(--accent-ink);
   translate: 0 1px;
 }
-.l-compare {
+/* renamed from `.l-compare` (2026-08-28): that selector also names the comparison
+   section below, and the section's later max-width/margin/padding rules were leaking
+   into this paragraph — two rules, one name, later one wins. */
+.l-inplace-note {
   font-size: 14.5px;
   line-height: 1.6;
   color: var(--ink3);
@@ -2043,59 +2050,6 @@ a.btn {
   max-width: 880px;
   margin: 0 auto;
   padding: 0 clamp(20px, 5vw, 32px) clamp(90px, 12vw, 150px);
-}
-.l-data-panel {
-  margin-top: clamp(28px, 4vw, 44px);
-  background: var(--panel);
-  border-radius: 20px;
-  box-shadow: var(--lift-1);
-  padding: clamp(6px, 1.5vw, 12px) clamp(22px, 4vw, 38px);
-}
-.l-data-list {
-  margin: 0;
-}
-.l-data-row {
-  display: grid;
-  grid-template-columns: minmax(150px, 210px) 1fr;
-  gap: clamp(16px, 3vw, 36px);
-  padding: clamp(18px, 3vw, 26px) 0;
-}
-.l-data-row + .l-data-row {
-  border-top: 1px solid var(--hair-soft);
-}
-.l-data-row dt {
-  font-size: 15px;
-  font-weight: 680;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-}
-.l-data-row dd {
-  margin: 0;
-  font-size: 14.5px;
-  line-height: 1.65;
-  color: var(--ink2);
-  max-width: 58ch;
-  text-wrap: pretty;
-}
-/* the plain-words footnote under a tier: dotted in, not walled off */
-.l-data-note {
-  display: block;
-  margin-top: 11px;
-  padding-left: 15px;
-  position: relative;
-  font-size: 13.5px;
-  line-height: 1.6;
-  color: var(--ink3);
-}
-.l-data-note::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0.6em;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
 }
 /* "(optional)" — the same tag on the Cloud tier wherever it appears */
 .l-opt {
@@ -3608,4 +3562,461 @@ a.btn {
   color: var(--ink2);
   max-width: 44ch;
   text-wrap: pretty;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   2026-08-27 — the mailbox-is-the-source-of-truth pass
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── compare: the two rows that carry a link (the code; the format) ── */
+.l-cmp-cell .l-cmp-link {
+  display: block;
+  margin-top: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+.l-cmp-cell .l-cmp-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ── leave anytime — three exits, type over hairlines, three-up ────── */
+.l-leave {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 5vw, 32px) clamp(80px, 11vw, 140px);
+}
+.l-leave-wrap {
+  margin-top: clamp(30px, 4vw, 46px);
+}
+.l-leave-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(22px, 3vw, 34px) clamp(28px, 4vw, 48px);
+}
+.l-leave-item dt {
+  font-size: 14.5px;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hair-soft);
+  text-wrap: balance;
+}
+.l-leave-item dd {
+  margin: 10px 0 0;
+  font-size: 13.5px;
+  line-height: 1.62;
+  color: var(--ink2);
+  text-wrap: pretty;
+}
+/* the edge of the promise, said in the same breath: what travels, what stays */
+.l-leave-foot {
+  margin: clamp(22px, 3vw, 32px) auto 0;
+  max-width: 72ch;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink3);
+  text-wrap: pretty;
+}
+@media (max-width: 760px) {
+  .l-leave-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── data ownership — three tiers, the same four rows, aligned across
+   cards with subgrid (a browser without it draws each card's rows at its
+   own heights — the old layout, not a broken one). The two free tiers
+   are lifted panels, the managed tier the flat tint band: the same
+   material split the Get-ohmail section draws. ─────────────────────── */
+.l-data {
+  max-width: 1060px;
+}
+.l-data-grid {
+  margin-top: clamp(28px, 4vw, 44px);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: auto auto auto auto auto;
+  gap: clamp(14px, 2vw, 22px);
+  align-items: stretch;
+}
+.l-data-card {
+  display: grid;
+  grid-row: span 5;
+  grid-template-rows: subgrid;
+  padding: clamp(18px, 2.4vw, 26px) clamp(18px, 2.4vw, 24px) clamp(10px, 1.6vw, 14px);
+  border-radius: 20px;
+  background: var(--panel);
+  box-shadow: var(--lift-1);
+}
+.l-data-card[data-tier="cloud"] {
+  background: var(--tint);
+  box-shadow: none;
+}
+.l-data-term {
+  font-size: 17px;
+  font-weight: 680;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  padding-bottom: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.l-data-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  align-content: start;
+  padding: 12px 0 14px;
+  border-top: 1px solid var(--hair-soft);
+}
+.l-data-k {
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--ink3);
+}
+.l-data-v {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink2);
+  text-wrap: pretty;
+}
+.l-data-card[data-tier="cloud"] .l-data-v {
+  color: var(--ink);
+}
+/* the sentence the layout exists to make visible, once, in words */
+.l-data-same {
+  margin: clamp(22px, 3vw, 30px) auto 0;
+  max-width: 76ch;
+  text-align: center;
+  font-size: 14.5px;
+  line-height: 1.7;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+.l-data-fine {
+  margin: 14px auto 0;
+  max-width: 76ch;
+  display: grid;
+  gap: 8px;
+}
+.l-data-fine p {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink3);
+  text-align: center;
+  text-wrap: pretty;
+}
+@media (max-width: 860px) {
+  .l-data-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+  .l-data-card {
+    grid-row: auto;
+    grid-template-rows: none;
+  }
+}
+
+/* ── trial band: the free ways, kept in view beside the offer ──────── */
+.l-trial-self {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--ink3);
+}
+.l-trial-self a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.l-trial-self a:hover {
+  color: var(--ink);
+}
+
+/* ── pricing: the free column holds two cards (the app, the server) ── */
+.l-price-free {
+  display: grid;
+  gap: clamp(16px, 2vw, 22px);
+  align-content: start;
+}
+.l-price-self {
+  box-shadow: var(--lift-1);
+}
+.l-price-ctalink {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.l-price-ctalink:hover {
+  color: var(--ink);
+}
+
+/* ── downloads: the phone row ──────────────────────────────────────── */
+.l-dl-lead {
+  margin: clamp(22px, 3vw, 30px) 0 14px;
+  padding-top: clamp(18px, 2.4vw, 24px);
+  border-top: 1px solid var(--hair-soft);
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--ink3);
+}
+.l-dl-mobile {
+  grid-template-columns: repeat(2, 1fr);
+  max-width: 680px;
+  margin: 0 auto;
+}
+.l-dl-glyph[data-glyph="android"] {
+  transform: scale(1.04);
+}
+/* the honest column: a name and a tag where the other column has a button */
+.l-dl-soon {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--ink2);
+}
+@media (max-width: 560px) {
+  .l-dl-mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── footer: the promise as the sign-off, the site fact underneath ── */
+.l-footer-promise {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  text-align: center;
+}
+.l-footer-usp {
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  max-width: 46ch;
+  text-wrap: balance;
+}
+.l-footer-quiet {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--ink3);
+}
+.l-footer-quiet .ic {
+  width: 12px;
+  height: 12px;
+}
+
+/* ── views: theme-aware captures. The page's three-state theme rule —
+   an explicit data-theme wins, the system preference decides while no
+   choice is stamped — is the same one the wash tokens follow above. ── */
+.l-views-still.is-dark {
+  display: none;
+}
+:root[data-theme="dark"] .l-views-still.is-light {
+  display: none;
+}
+:root[data-theme="dark"] .l-views-still.is-dark {
+  display: block;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .l-views-still.is-light {
+    display: none;
+  }
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .l-views-still.is-dark {
+    display: block;
+  }
+}
+
+/* ── callouts: a little life. A hair of tilt per card (alternating), the
+   page's own dot before each title, and a slow idle drift once they have
+   arrived — all of it off under reduced motion. ─────────────────────── */
+.l-callout-card b {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.l-callout-card b::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.l-frame-wrap[data-mode="float"] .l-callout:nth-child(odd) {
+  --co-tilt: -0.7deg;
+}
+.l-frame-wrap[data-mode="float"] .l-callout:nth-child(even) {
+  --co-tilt: 0.6deg;
+}
+@keyframes l-co-idle {
+  from {
+    translate: 0 0;
+  }
+  to {
+    translate: 0 -3px;
+  }
+}
+.l-frame-wrap[data-mode="float"][data-anno="on"]:not([data-touched]) .l-callout-card {
+  animation: l-co-idle 6s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i) * -1.6s);
+}
+@media (prefers-reduced-motion: reduce) {
+  .l-frame-wrap[data-mode="float"] .l-callout,
+  .l-frame-wrap[data-mode="float"] .l-callout-card {
+    animation: none;
+    --co-tilt: 0deg;
+    opacity: 1;
+  }
+}
+
+/* ── the demo, full window. The frame leaves the flow and fills the
+   viewport; the stage keeps the frame's height so nothing behind the
+   overlay jumps; the body stops scrolling; the annotation layer steps
+   aside (the app is the point there). The iframe is the same element
+   throughout — only the box around it moves. ─────────────────────────── */
+html[data-demo-full] {
+  overflow: hidden;
+}
+.l-demo-stage[data-full] {
+  min-height: var(--wrap-h, auto);
+}
+@keyframes l-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes l-full-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.l-demo-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: oklch(0.22 0.012 60 / 0.58);
+  cursor: default;
+  animation: l-fade-in 0.28s var(--swift) both;
+}
+.l-frame-wrap[data-full] {
+  position: fixed;
+  inset: clamp(10px, 2vw, 24px);
+  z-index: 81;
+  animation: l-full-in 0.32s var(--swift) both;
+}
+.l-frame-wrap[data-full] .l-frame {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.l-frame-wrap[data-full] .l-frame-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+.l-frame-wrap[data-full] .l-callouts,
+.l-frame-wrap[data-full] .l-anno {
+  display: none;
+}
+@media (max-width: 720px) {
+  .l-frame-wrap[data-full] {
+    inset: 0;
+  }
+  .l-frame-wrap[data-full] .l-frame {
+    border-radius: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .l-frame-wrap[data-full],
+  .l-demo-backdrop {
+    animation: none;
+  }
+}
+/* the window dots are the window's controls */
+.l-dot {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.18s var(--swift), opacity 0.18s var(--swift);
+}
+.l-dot.is-close {
+  background: oklch(0.66 0.15 27);
+}
+.l-dot.is-inert {
+  background: oklch(0.79 0.13 85);
+}
+.l-dot.is-expand {
+  background: oklch(0.72 0.13 148);
+}
+.l-dot:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.l-dot:not(:disabled):hover {
+  transform: scale(1.2);
+}
+.l-dot:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.l-frame-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 11px;
+  border-radius: 99px;
+  border: 0;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.l-frame-close:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.l-frame-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* the free column stacks two cards, so the row is tall; the cloud panel keeps its
+   natural height instead of stretching a hole into itself */
+.l-price-grid {
+  align-items: start;
 }

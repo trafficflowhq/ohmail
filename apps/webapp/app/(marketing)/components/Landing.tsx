@@ -9,6 +9,7 @@ import { GetOhmail } from "./GetOhmail";
 import { Compare } from "./Compare";
 import { DataOwnership } from "./DataOwnership";
 import { FolderShowcase } from "./FolderShowcase";
+import { LeaveAnytime } from "./LeaveAnytime";
 import { Providers } from "./Providers";
 import { Trial } from "./Trial";
 import { Pricing } from "./Pricing";
@@ -43,8 +44,9 @@ import { Footer } from "./Footer";
  *  2. Views — Ohbox / Reads / Receipts, the three-view model the promise lands in.
  *  3. Screener + AI — the mechanism: who gets in, and the gated help deciding.
  *  4. Providers — all your mailboxes: Gmail, Microsoft, iCloud, any IMAP.
- *  5. InPlace + FolderShowcase — your mail keeps living in your IMAP folders; then
- *     Compare and DataOwnership carry the same trust argument to its end.
+ *  5. InPlace + FolderShowcase — your mail keeps living in your IMAP folders; LeaveAnytime
+ *     states the consequence (switch how you run it, or leave — the mailbox is the source
+ *     of truth); then Compare and DataOwnership carry the same trust argument to its end.
  *  6. Fast — search.
  *  7. DarkMode — polish, last.
  *  8. GetOhmail — the four ways to run it, free ones first; it opens the acting
@@ -73,6 +75,9 @@ export function Landing({ publicSignup }: { publicSignup: boolean }) {
         {/* the concrete proof of "organize in place": the real folder tree a person
             finds in their own mailbox, in any mail app */}
         <FolderShowcase />
+        {/* the consequence of the two sections above, with a heading of its own: the
+            mailbox is the source of truth, so switching hosting or leaving costs nothing */}
+        <LeaveAnytime />
         <Compare />
         <DataOwnership />
         <div className="l-features is-cont">

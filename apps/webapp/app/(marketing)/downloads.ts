@@ -49,8 +49,50 @@ export const LATEST_RELEASE_URL = "https://github.com/trafficflowhq/ohmail/relea
 /** The releases index — every version, notes and checksums. Always resolves. */
 export const ALL_RELEASES_URL = "https://github.com/trafficflowhq/ohmail/releases";
 
-/** The three platforms, in the order the page presents them. */
+/** The three desktop platforms, in the order the page presents them. */
 export type PlatformId = "apple" | "linux" | "windows";
+
+/** The two phone platforms of the second row. */
+export type MobileId = "android" | "ios";
+
+/**
+ * ── THE ANDROID RELEASE — a page, not an asset, and it follows the newest tag ──────────
+ *
+ * Android ships from this same repository under its own tag family (`android-v*`), as a
+ * GitHub PRE-release with the APK attached. That rules out the desktop row's mechanism:
+ * `/releases/latest` resolves to the newest STABLE release, which is always a desktop
+ * `v*` tag, so there is no `latest/download/…` path that could ever hand out the APK. And
+ * a link pinned to one `android-vX.Y.Z` tag is the exact thing the desktop card once did
+ * and went four releases stale doing.
+ *
+ * So the tag is read ONCE PER BUILD in `next.config.mjs` — the same build-time fetch, the
+ * same failure posture as the nav's star count — and inlined as
+ * {@link ANDROID_RELEASE_TAG_VAR}. The button links the tag's own release page (notes,
+ * checksum, the APK), which is the honest destination for a sideloaded pre-release: a
+ * person should read what they are about to install. When the build had no usable tag,
+ * the link falls back to the releases index FILTERED to the Android family, which GitHub
+ * lists newest first — never to a hard-coded version.
+ */
+export const ANDROID_RELEASE_TAG_VAR = "NEXT_PUBLIC_ANDROID_RELEASE_TAG";
+
+/** The shape of an Android tag: `android-v` + a semver, optionally with a pre-release suffix. */
+const ANDROID_TAG = /^android-v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
+
+/** The releases index, filtered to the Android family — GitHub sorts it newest first. */
+export const ANDROID_RELEASES_INDEX_URL = "https://github.com/trafficflowhq/ohmail/releases?q=android-v&expanded=true";
+
+/** The release page for one tag. Refuses anything that is not an Android tag. */
+export function androidReleaseUrl(tag: string | undefined): string {
+  const t = (tag ?? "").trim();
+  if (!ANDROID_TAG.test(t)) return ANDROID_RELEASES_INDEX_URL;
+  return `${"https://github.com/trafficflowhq/ohmail/releases/tag/"}${t}`;
+}
+
+/**
+ * Read as the full literal so Next inlines it at build time — a dynamic lookup would ship
+ * `undefined` and silently send every visitor to the fallback index for ever.
+ */
+export const ANDROID_RELEASE_URL: string = androidReleaseUrl(process.env.NEXT_PUBLIC_ANDROID_RELEASE_TAG);
 
 export interface DownloadFormat {
   /** The published asset filename. The release MUST attach exactly this. */
@@ -166,8 +208,9 @@ export const HAS_PREVIEW_BUILDS: boolean = PREVIEW_PLATFORMS.length > 0;
  */
 export function guessPlatform(ua: string): PlatformId | null {
   const s = ua.toLowerCase();
-  // iOS and Android reach this page too. There is no build for them, so the honest answer
-  // is "no guess" — an emphasized desktop button on a phone is a promise of the wrong thing.
+  // iOS and Android reach this page too. The desktop row is not for them, so the honest
+  // answer here is "no guess" — an emphasized desktop button on a phone is a promise of the
+  // wrong thing. The mobile row underneath is where a phone finds its own release.
   if (/iphone|ipad|ipod|android/.test(s)) return null;
   if (/windows|win32|win64/.test(s)) return "windows";
   // Order matters: a Mac UA contains "mac os x", and Linux UAs contain neither.

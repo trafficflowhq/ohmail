@@ -58,6 +58,13 @@ export function Trial() {
         <p className="l-trial-when">{t("when")}</p>
         <p className="l-trial-lede">{t("lede")}</p>
         <p className="l-trial-terms">{t("terms")}</p>
+        {/* The band sells the managed tier's trial; this line keeps the free ways in
+            view at the same moment — the desktop app and the same server on your own
+            hardware need neither a trial nor a card. It points at the section that
+            owns those options rather than restating them. */}
+        <p className="l-trial-self">
+          <a href="#get">{t("selfhost")}</a>
+        </p>
       </Reveal>
     </section>
   );
