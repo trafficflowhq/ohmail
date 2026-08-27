@@ -239,7 +239,17 @@ export interface JunkSweepCommandPort {
   run(hooks: {
     guard: () => Promise<void>;
     write: <T>(fn: (repo: WorkerRepo) => Promise<T>) => Promise<T>;
-  }): Promise<{ moved: string[]; skipped: ReadonlyArray<unknown>; junkFolder: string | null }>;
+  }): Promise<{
+    moved: string[];
+    skipped: ReadonlyArray<unknown>;
+    junkFolder: string | null;
+    /**
+     * TRUE only when this run looked at EVERY remaining candidate (a scan from the top that ran
+     * off the end, or a mailbox with no Junk folder to move into). A run that moved nothing
+     * WITHOUT this is an unfinished scan — the stamp stands and the mailbox is re-kicked.
+     */
+    examinedAll: boolean;
+  }>;
   /** How many movable candidates the pile still holds AFTER the slice — what decides retirement. */
   remaining(): Promise<number>;
   /** Retire ONLY the observed stamp — a press that landed mid-sweep survives for the next cycle. */
@@ -595,10 +605,11 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // ONE BOUNDED SLICE PER CYCLE, RETIRED ONLY WHEN THE PILE IS DRAINED. The pass takes a
   // per-cycle limit (the port's), so a large pile rotates through the serial queue the way the
   // filing budget does instead of monopolizing it; after the slice the port re-counts what is
-  // still movable, and the stamp is retired ONLY when nothing is — or when the run moved
-  // NOTHING at all, which the port only reports after looking at EVERY remaining candidate
-  // (its slice loop continues past a refused prefix — index.ts): a pile the server refuses
-  // outright, which would otherwise be retried every cycle for ever. A retired-while-nonempty stamp is honest on
+  // still movable, and the stamp is retired ONLY when nothing is — or when a run that EXAMINED
+  // EVERY remaining candidate (`examinedAll`: a scan from the top that ran off the end; the port
+  // carries a keyset cursor across cycles, one bounded window per cycle — index.ts) moved
+  // NOTHING: a pile the server refuses outright, which would otherwise be retried every cycle
+  // for ever. A retired-while-nonempty stamp is honest on
   // screen: the preview reads `pending: false` with candidates left, so the offer returns with
   // the remaining number and the person can press again. While the pile drains, `owesFiling`
   // is raised so the caller re-kicks this mailbox rather than waiting out a poll interval.
@@ -619,7 +630,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
         });
         const left = await deps.junkSweep.remaining();
         const drained = left === 0;
-        const stuck = !drained && res.moved.length === 0;
+        const stuck = !drained && res.moved.length === 0 && res.examinedAll;
         if (drained || stuck) {
           await deps.junkSweep.clear(observed);
         } else {
@@ -632,8 +643,8 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
           reason: drained
             ? "the account's user pressed the one-time Quarantine→Junk offer; the pile is drained and the command retired"
             : stuck
-              ? "the slice moved nothing — the server refused every member — so the command is retired rather than retried every cycle; the offer returns with what is left"
-              : "one bounded slice landed; the command stands and the mailbox is re-kicked for the next slice",
+              ? "a full scan moved nothing — the server refused every member — so the command is retired rather than retried every cycle; the offer returns with what is left"
+              : "one bounded window ran; the command stands and the mailbox is re-kicked for the next window",
         });
       }
     } catch (err) {

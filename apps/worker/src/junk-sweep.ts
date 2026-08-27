@@ -23,7 +23,7 @@
  * for `changesSince` to adopt, and nothing is husked or marked that did not land in Junk.
  */
 
-import { eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { folderState, junkSweepCandidateWhere, messages, type Tx } from "@trafficflow/db";
 import { FILING_BATCH_MAX, type MailboxAdapter, type MoveManyResult } from "@trafficflow/core/adapters/imap";
 import type { NativeLocator } from "@trafficflow/core";
@@ -53,12 +53,13 @@ export async function junkSweepPass(opts: {
   execute: boolean;
   limit?: number;
   /**
-   * Skip the first `offset` candidates (in the pass's stable id order). The worker cycle's
-   * slice loop uses it to look PAST a refused prefix: a slice that moved nothing but was cut by
-   * `limit` says nothing about the members after it, so the loop asks for the next window
-   * before it may call the pile stuck. Zero (the default) is the pass as the CLI runs it.
+   * KEYSET cursor: only candidates whose id sorts AFTER this one (the pass's stable id order).
+   * The worker cycle carries the last id it examined across cycles, so a refused prefix is
+   * walked past one bounded window per cycle and a candidate is never skipped when the set
+   * shrinks between windows (an OFFSET over a mutable set would — review round 3). Absent (the
+   * default) is the pass as the CLI runs it: from the top.
    */
-  offset?: number;
+  afterId?: string;
   /**
    * Called before EVERY chunk's IMAP mutation. The worker cycle hands in its fresh leadership
    * read (`fenceImapMutation`) so a stale leader cannot move mail another worker has taken over;
@@ -67,7 +68,7 @@ export async function junkSweepPass(opts: {
    */
   guard?: () => Promise<void>;
 }): Promise<JunkSweepResult> {
-  const { db, repo, adapter, accountId, mailboxId, execute, limit, offset, guard } = opts;
+  const { db, repo, adapter, accountId, mailboxId, execute, limit, afterId, guard } = opts;
 
   // Physically in the pile, still alive in the mirror, still DESIRED there — the ONE predicate
   // the API's preview counts by too (`junkSweepCandidateWhere`, packages/db). `native_locator`
@@ -78,10 +79,11 @@ export async function junkSweepPass(opts: {
     locator: messages.nativeLocator,
   }).from(messages)
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
-    .where(junkSweepCandidateWhere(accountId, mailboxId))
+    .where(afterId !== undefined
+      ? and(junkSweepCandidateWhere(accountId, mailboxId), gt(messages.id, afterId))
+      : junkSweepCandidateWhere(accountId, mailboxId))
     .orderBy(messages.id)
-    .limit(limit ?? 10_000)
-    .offset(offset ?? 0);
+    .limit(limit ?? 10_000);
 
   const candidates: JunkSweepCandidate[] = rows.map((r) => ({
     messageId: r.messageId, subject: r.subject,
