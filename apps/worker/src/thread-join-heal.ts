@@ -3,7 +3,7 @@ import { drafts, mailboxes, messages, recordChanges, threadNotes, threads, type 
 import {
   conversationJoinVerdict, silentLogger,
   type ConversationJoinFacts, type EmailAddress, type Logger,
-} from "@trafficflow/core";
+} from "@trafficflow/core/mail";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    THE THREAD-JOIN HEAL — the deferred merge for conversations a forward split

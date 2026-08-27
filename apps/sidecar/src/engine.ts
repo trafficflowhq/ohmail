@@ -76,7 +76,7 @@ import { OrganizerProfileSync } from "@trafficflow/worker/profile";
 // second answer to "when is a resurface due", which is the one thing that must not differ.
 import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
 import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
-import { threadJoinHealPass } from "@trafficflow/worker/thread-join-heal";
+import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/worker/thread-join-heal";
 // The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
 // argument. The values it writes have to be the ones ingest would have written from the same
 // headers; a second parse here would leave two populations of rows decided by different rules, and
@@ -1647,6 +1647,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * pays its GROUP BY. Zero so a launch's first drain takes one look (splits accumulated
      * while the app was closed), exactly the worker's gate seeding. */
     let lastJoinHealAt = 0;
+    /** Where the last gated heal walk stopped, kept only while it stopped on its BUDGET — a
+     * refused group never leaves the candidate predicate, so restarting from the top every six
+     * hours would rescan the same refusals for ever and never reach the groups past the cap.
+     * Cleared after an uncapped walk, exactly as the hosted caller keeps its per-account map. */
+    let joinHealCursor: ThreadJoinHealCursor | undefined;
 
     /**
      * FILL IN THE SENDER NAMES AND RECIPIENTS OF MESSAGES STORED BEFORE THERE WAS ANYWHERE TO PUT
@@ -1843,7 +1848,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         try {
           const r = await threadJoinHealPass({
             db: db as unknown as Tx, apply: true, accountId: world.accountId, log: undefined,
+            cursor: joinHealCursor,
           });
+          joinHealCursor = r.capped && r.cursor ? r.cursor : undefined;
           if (r.merged > 0) log("thread_join_heal", { merged: r.merged, moved: r.messagesMoved, skipped: r.skipped });
         } catch (err) {
           log("thread_join_heal_failed", {

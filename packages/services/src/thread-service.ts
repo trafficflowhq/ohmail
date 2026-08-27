@@ -82,6 +82,15 @@ export class ThreadService {
       const target = threadIds[0]!;
       const others = threadIds.slice(1).filter((t) => t !== target);
 
+      // ── ALL DATA LOCKS FIRST, THE SEQ LOCK LAST — the order `ThreadResolution.changes`
+      // documents (packages/core). `recordChange` → `allocateSeq` takes the account's
+      // `account_sync_state` row lock and holds it to COMMIT, while `DraftsService` locks a
+      // draft row FIRST and then allocates. A merge that allocated between its data writes and
+      // then reached for a draft row would face a concurrent autosave the other way round —
+      // a genuine cycle Postgres resolves with 40P01. So the changes are collected and
+      // appended at the very end, in the same order they were owed.
+      const changes: Array<{ entityType: "message" | "thread" | "draft"; entityId: string; op: "update" | "delete" }> = [];
+
       for (const other of others) {
         // Reassign the merged thread's messages onto the target BEFORE deleting it
         // (messages.thread_id FKs threads.id → the source must be empty to drop). A
@@ -93,7 +102,7 @@ export class ThreadService {
           .returning({ id: messages.id, deletedAt: messages.deletedAt });
         for (const m of moved) {
           if (m.deletedAt !== null) continue;
-          await recordChange(tx, { accountId: ctx.accountId, entityType: "message", entityId: m.id, op: "update", meta: null });
+          changes.push({ entityType: "message", entityId: m.id, op: "update" });
         }
         // The OTHER two tables that FK a thread, or the DELETE below is refused with 23503 and
         // the whole merge 500s (measured in production by the worker's thread-join heal, which
@@ -105,20 +114,25 @@ export class ThreadService {
           .where(and(eq(drafts.threadId, other), eq(drafts.accountId, ctx.accountId)))
           .returning({ id: drafts.id });
         for (const d of repointed) {
-          await recordChange(tx, { accountId: ctx.accountId, entityType: "draft", entityId: d.id, op: "update", meta: null });
+          changes.push({ entityType: "draft", entityId: d.id, op: "update" });
         }
       }
 
-      // Optionally retitle the target, then emit its update + delete-tombstone the rest.
+      // Optionally retitle the target, then delete-tombstone the rest — still data writes.
       const targetSet: Record<string, unknown> = { updatedAt: ctx.now() };
       if (body.subject !== undefined) targetSet.subject = body.subject;
       await tx.update(threads).set(targetSet)
         .where(and(eq(threads.id, target), eq(threads.accountId, ctx.accountId)));
-      await recordChange(tx, { accountId: ctx.accountId, entityType: "thread", entityId: target, op: "update", meta: null });
+      changes.push({ entityType: "thread", entityId: target, op: "update" });
 
       for (const other of others) {
         await tx.delete(threads).where(and(eq(threads.id, other), eq(threads.accountId, ctx.accountId)));
-        await recordChange(tx, { accountId: ctx.accountId, entityType: "thread", entityId: other, op: "delete", meta: null });
+        changes.push({ entityType: "thread", entityId: other, op: "delete" });
+      }
+
+      // Every data lock is held; only now the account's seq lock, once, to commit.
+      for (const c of changes) {
+        await recordChange(tx, { accountId: ctx.accountId, ...c, meta: null });
       }
 
       return target;
