@@ -16,6 +16,9 @@ import {
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
 import { effectForDestination } from "../rules.js";
+// The Sent shape's single source — the stale-residue cleanup must never take a Sent row (its
+// export in imap-types.ts carries the watermark argument).
+import { SENT_SHAPED_CANONICAL } from "./imap-types.js";
 import { providerAuthservIds } from "../authserv-ids.js";
 
 export interface PersistedFolderCursor { uidValidity: string; uidNext: number; highestModseq: string; }
@@ -2162,13 +2165,28 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
           // the survivor tiers reject — would otherwise keep this message out of every
           // terminal check for ever (`tombstoneInstanceless` skips messages with any instance
           // row), turning the bounded-retry residual into a permanent phantom.
-          await this.db.execute(sql`
-            delete from ${messageInstances} using ${mailboxFolders}
-             where ${messageInstances.messageId} = ${st.messageId}
-               and ${mailboxFolders.mailboxId} = ${messageInstances.mailboxId}
-               and ${mailboxFolders.folder} = ${messageInstances.folder}
-               and ${mailboxFolders.uidvalidity} is not null
-               and ${mailboxFolders.uidvalidity} not in (0, ${messageInstances.uidvalidity})`);
+          //
+          // EXCEPT the Sent folder's rows. Sent is scanned by UID WATERMARK, never enumerated
+          // end to end, so after a UIDVALIDITY reset the renumbered copy of a message older
+          // than the watermark window is never re-learned: a "stale" Sent row is the LAST
+          // evidence that copy exists, and deleting it would let the phantom reaper tombstone
+          // real mail no scan will ever re-emit. Every other folder is enumerated whole and
+          // re-teaches its epoch, which is what makes its stale rows safely removable.
+          const staleRows = await this.db.select({
+            id: messageInstances.id, folder: messageInstances.folder,
+          }).from(messageInstances)
+            .innerJoin(mailboxFolders, and(
+              eq(mailboxFolders.mailboxId, messageInstances.mailboxId),
+              eq(mailboxFolders.folder, messageInstances.folder),
+            ))
+            .where(and(
+              eq(messageInstances.messageId, st.messageId),
+              sql`${mailboxFolders.uidvalidity} is not null and ${mailboxFolders.uidvalidity} not in (0, ${messageInstances.uidvalidity})`,
+            ));
+          const removable = staleRows.filter((r) => !SENT_SHAPED_CANONICAL.test(r.folder)).map((r) => r.id);
+          if (removable.length > 0) {
+            await this.db.delete(messageInstances).where(inArray(messageInstances.id, removable));
+          }
           changes.push({ accountId, entityType: "message", entityId: st.messageId, op: "update", meta: null });
           continue;
         }

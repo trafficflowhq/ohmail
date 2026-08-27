@@ -148,6 +148,19 @@ export const PASSIVE_EXCLUDED_SPECIAL_USE: ReadonlySet<string> = new Set([
 export const PASSIVE_EXCLUDED_LEAF = RESERVED_FOLDER_LEAF;
 
 /**
+ * Sent-shaped CANONICAL paths — top level or under the INBOX prefix: the English resolver
+ * family plus the localized German one the SPECIAL-USE resolver can surface. The single source
+ * for two readers with two different stakes: the folders inventory (`packages/services/
+ * src/folders.ts`) excludes these from the user-folder class, and the folder delete's
+ * stale-residue cleanup (`drizzle-repo.ts#tombstoneFolderMessages`) must NEVER take a
+ * Sent-folder instance row — Sent is scanned by UID WATERMARK, not enumerated end to end, so
+ * after a UIDVALIDITY reset an old message's renumbered copy is never re-learned and a deleted
+ * "stale" Sent row is the last evidence that copy exists.
+ */
+export const SENT_SHAPED_CANONICAL =
+  /^(inbox\/)?(sent([ -](items|messages|mail))?|gesendet(e[ -](objekte|elemente|nachrichten))?)$/i;
+
+/**
  * Leaf names that mean the provider's Junk folder on a server that names no SPECIAL-USE — the
  * WRITE-side belt for the three user-commanded writes (see the product rule above).
  *

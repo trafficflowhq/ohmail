@@ -5,6 +5,8 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 // engine's private-input gate refuses outright (`scripts/engine-bundle.mjs`). The mail barrel
 // is the vocabulary half, exactly what imap-types.ts does internally for the same reason.
 import { DESTINATIONS } from "@trafficflow/core/mail";
+// The Sent shape's single source — see its export for the two readers and their stakes.
+import { SENT_SHAPED_CANONICAL } from "@trafficflow/core/adapters/imap-types";
 import { accountSettings, folderOps, mailboxFolders, mailboxes } from "@trafficflow/db";
 import type { Db } from "./context.js";
 
@@ -53,8 +55,7 @@ import type { Db } from "./context.js";
  * NOT matching nested forms (`Alternativen/Sent Messages` is a folder the user keeps, and the
  * resolver would never pick it): the anchor covers exactly the places a resolved Sent can live.
  */
-const SENT_SHAPED =
-  /^(inbox\/)?(sent([ -](items|messages|mail))?|gesendet(e[ -](objekte|elemente|nachrichten))?)$/i;
+const SENT_SHAPED = SENT_SHAPED_CANONICAL;
 
 /** The `ohmail` namespace, in canonical form, at any depth — imap-types' spelling. */
 const OHMAIL_SEGMENT = /(?:^|\/)ohmail(?:\/|$)/i;
