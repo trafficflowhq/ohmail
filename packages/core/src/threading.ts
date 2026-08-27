@@ -414,41 +414,9 @@ export function baseSubject(subject: string): string {
    the heal re-evaluates, while a false merge has no split to undo it.
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
-/**
- * The subset of {@link SUBJECT_PREFIX_TOKENS} precise enough to be MERGE EVIDENCE.
- *
- * Two tables, deliberately, because the two consumers price a false positive differently.
- * The NAMING table above is tuned for recall and says so: "WG:" is genuinely ambiguous in
- * German (Wohngemeinschaft) and stays in it because the worst case there is a flat-share ad
- * losing two letters — never a merge. This table is the other side of that sentence: here a
- * false positive IS a merge, irreversible, so every token that reads as an ordinary word or
- * abbreviation with a colon after it ("WG: Zimmer", "VS: proposal", "RES: table for two",
- * "TR: …", the one-letter Italian pair) is excluded. What stays is unmistakably mail-client
- * output. The recall this gives up is the recoverable direction: a Finnish or Portuguese
- * continuation stays split until a header or an unambiguous prefix joins it.
- */
-const CONTINUATION_PREFIX_TOKENS = [
-  "doorst",           // nl forward
-  "antw",             // nl reply
-  "fwd", "fw",        // en forward
-  "odp",              // pl reply
-  "ynt",              // tr reply
-  "re",               // reply, international
-  "aw",               // de reply
-  "sv",               // sv/da/no/is reply
-  "vá",               // hu reply
-  "回复", "回覆",      // zh-Hans / zh-Hant reply
-  "转发", "轉寄",      // zh-Hans / zh-Hant forward
-] as const;
-
-const CONTINUATION_PREFIX_RE = new RegExp(
-  `^(?:${CONTINUATION_PREFIX_TOKENS.join("|")})\\.?\\s*(?:\\[\\d+\\])?\\s*[:：]`, "i",
-);
-
-/** True when the subject, as the sender wrote it, opens with an UNAMBIGUOUS reply/forward
- * prefix — the only kind {@link conversationJoinVerdict} accepts as a continuation claim. */
-export function claimsContinuation(subject: string): boolean {
-  return CONTINUATION_PREFIX_RE.test(subject.trim());
+/** True when the subject, as the sender wrote it, opens with a reply/forward prefix. */
+export function hasReplyOrForwardPrefix(subject: string): boolean {
+  return SUBJECT_PREFIX_RE.test(subject.trim());
 }
 
 /**
@@ -510,10 +478,9 @@ export function conversationJoinVerdict(
     return { join: false, reason: "subject-differs" };
   }
 
-  // 3 — the later chain's FIRST message must claim continuation ("Fwd:", "AW:", …) through a
-  //     prefix precise enough to bet a merge on — see CONTINUATION_PREFIX_TOKENS. Two
+  // 3 — the later chain's FIRST message must claim continuation ("Fwd:", "AW:", …). Two
   //     conversation-starters sharing a subject are two conversations, full stop.
-  if (!claimsContinuation(later.firstMessageSubject)) {
+  if (!hasReplyOrForwardPrefix(later.firstMessageSubject)) {
     return { join: false, reason: "later-not-a-continuation" };
   }
 
