@@ -462,7 +462,15 @@ export function htmlToPlainText(html: string): string {
           // marker would already have escaped onto whatever prose follows the list, and the
           // NEXT item must not inherit a marker that was never this item's to give away
           // (review round 6: `<ol><li><p></p></li></ol><p>after</p>` read "1. after").
-          lead = "";
+          //
+          // GUARDED ON `open.anchor === null` (review round 7): the sanitizer permits — and
+          // does not itself normalise — an anchor that WRAPS the list, `<a href="…"><ol>
+          // <li>one</li></ol></a>`. Text inside an open anchor accumulates in
+          // `open.anchor.text`, never in `line` (`emit`'s whole rule), so `line` reads empty
+          // here for an item that is very much not — clearing unconditionally threw the
+          // marker away before the anchor's own close ever appended its text to `line`. An
+          // open anchor means "still buffering", not "empty", so the clear waits.
+          if (open.anchor === null) lead = "";
           return;
         }
         if (BLOCKS.has(name)) flush();
