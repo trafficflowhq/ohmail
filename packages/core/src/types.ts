@@ -124,9 +124,13 @@ export function folderNameError(path: string): FolderNameError | null {
     if (/[\u0000-\u001f\u007f]/.test(seg)) return "control";
     if (/[%*]/.test(seg)) return "wildcard";
     if (RESERVED_FOLDER_LEAF.test(seg)) return "reserved";
-    if (/^inbox$/i.test(seg)) return "reserved";
     if (/^ohmail$/i.test(seg)) return "reserved";
   }
+  // The Imbox itself — as the WHOLE path only. `INBOX/<name>` is deliberately admitted: a
+  // personal-namespace server files every user folder under the INBOX prefix (measured live —
+  // a root-named create lands as `INBOX/<name>` and its rename must re-spell that full path),
+  // so refusing the segment would ban renaming anything such a mailbox holds.
+  if (/^inbox$/i.test(path)) return "reserved";
   if ((DESTINATIONS as readonly string[]).includes(path)) return "reserved";
   return null;
 }
