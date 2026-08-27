@@ -1998,13 +1998,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
      * epochs would otherwise match two and trip the primary uniqueness mid-transaction.
      */
     const survivorOf = async (messageId: string) => {
-      const [survivor] = await this.db.select({
+      // TIER 1 — a CONFIRMED survivor: a folder the inventory knows, in that folder's current
+      // epoch (an epochless cursor — the "0"/null cold sentinel — vetoes nothing). Reset
+      // residue of a dead epoch can coexist with the live row, and promoting it would write a
+      // locator the server no longer has while the real copy stays known.
+      const [confirmed] = await this.db.select({
         id: messageInstances.id, folder: messageInstances.folder,
         uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid,
       }).from(messageInstances)
-        // INNER join — a survivor must live in a folder the inventory still KNOWS: an orphan
-        // instance whose folder row is gone (an interrupted earlier delete) would otherwise
-        // read as "epochless folder" and win a promotion into a deleted place.
         .innerJoin(mailboxFolders, and(
           eq(mailboxFolders.mailboxId, messageInstances.mailboxId),
           eq(mailboxFolders.folder, messageInstances.folder),
@@ -2015,7 +2016,22 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         ))
         .orderBy(sql`${messageInstances.isPrimary} desc`, asc(messageInstances.firstSeenAt))
         .limit(1);
-      return survivor ?? null;
+      if (confirmed) return confirmed;
+      // TIER 2 — an UNCONFIRMED copy: an instance whose folder has no cursor row (ingest
+      // commits per message and the cursor lands after the batch, so a crash window leaves
+      // real copies cursor-less) or whose epoch the inventory cannot vouch for. A missing
+      // cursor is UNKNOWN, never evidence of deletion — tombstoning here would hide a message
+      // the server still shows, permanently (the known-set keeps its UID known). A stale
+      // promotion is the self-healing direction instead: a locator that turns out dead answers
+      // MessageGoneError and the next enumeration adopts the real copy.
+      const [any] = await this.db.select({
+        id: messageInstances.id, folder: messageInstances.folder,
+        uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid,
+      }).from(messageInstances)
+        .where(eq(messageInstances.messageId, messageId))
+        .orderBy(sql`${messageInstances.isPrimary} desc`, asc(messageInstances.firstSeenAt))
+        .limit(1);
+      return any ?? null;
     };
 
     /** Promote one survivor row: primary flag + the message's locator, an update on the wire. */
@@ -2099,19 +2115,33 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         const survivor = await survivorOf(st.messageId);
         if (survivor) {
           await promote(st.messageId, survivor);
-        } else {
-          // The primary went to Trash with the sweep and nothing watched remains; the message
-          // still RENDERS elsewhere. A locator into the deleted folder would be a permanent
-          // lie; null states "no server copy known" and adoption heals a return.
-          await this.db.update(messages).set({ nativeLocator: null, updatedAt: now })
-            .where(eq(messages.id, st.messageId));
+          const [fs] = await this.db.select({ desiredFolder: folderState.desiredFolder })
+            .from(folderState).where(eq(folderState.messageId, st.messageId)).limit(1);
+          if (fs && fs.desiredFolder !== survivor.folder) {
+            // The user's pending move STANDS — its subject copy is gone, but the message lives
+            // on at the survivor, so reconciliation continues from there: observed moves to
+            // the survivor's folder, desired stays the user's own word (pending user moves are
+            // never discarded — the folder_state contract).
+            await this.db.update(folderState)
+              .set({ observedFolder: survivor.folder, updatedAt: now })
+              .where(eq(folderState.messageId, st.messageId));
+          } else if (fs) {
+            // The survivor IS the destination — the move is done in effect. Kept, the row
+            // would drive a same-folder move whose destination precheck expunges the "old"
+            // copy: the survivor itself.
+            await this.db.delete(folderState).where(eq(folderState.messageId, st.messageId));
+          }
+          changes.push({ accountId, entityType: "message", entityId: st.messageId, op: "update", meta: null });
+          continue;
         }
-        // The pending row is RETIRED with the copy it was about: its move's subject is in
-        // Trash. Kept, it would drive a same-folder move against the promoted survivor (whose
-        // destination precheck expunges the "old" copy — the survivor itself), or hang for
-        // ever in the null arm, where a pending row with no locator is never picked up.
+        // No copy anywhere watched: the user's folder delete swept this message's only copy to
+        // Trash, so it takes the delete verb's own tombstone — never a retired state that
+        // would rematerialize it in the Imbox, and never a pending row left to hang.
+        await this.db.update(messages).set({ deletedAt: now, updatedAt: now, nativeLocator: null })
+          .where(eq(messages.id, st.messageId));
+        await this.huskBody(accountId, st.messageId, "expunged");
         await this.db.delete(folderState).where(eq(folderState.messageId, st.messageId));
-        changes.push({ accountId, entityType: "message", entityId: st.messageId, op: "update", meta: null });
+        changes.push({ accountId, entityType: "message", entityId: st.messageId, op: "delete", meta: null });
       }
     }
 
