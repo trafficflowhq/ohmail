@@ -56,7 +56,9 @@ import {
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
 import { runSyncCycle, LeaderFencedError, type SyncDeps } from "./sync.js";
-import { junkSweepPass } from "./junk-sweep.js";
+import { junkSweepPass, type JunkSweepResult } from "./junk-sweep.js";
+
+type JunkSweepResultSkipped = JunkSweepResult["skipped"][number];
 
 /**
  * How many Quarantine members one cycle's sweep slice may move — the filing budget's argument
@@ -1892,16 +1894,36 @@ export async function startWorkerWithLock(
               }
               return row.at;
             },
-            run: (hooks) => {
+            run: async (hooks) => {
               const fencedRepo = new Proxy(repo, {
                 get: (target, key, receiver) =>
                   key === "transaction" ? hooks.write : Reflect.get(target, key, receiver),
               }) as typeof repo & { transaction: typeof hooks.write };
-              return junkSweepPass({
-                db: db as unknown as Tx, repo: fencedRepo, adapter: attachedAdapter,
-                accountId: mb.accountId, mailboxId: mb.mailboxId, execute: true, guard: hooks.guard,
-                limit: JUNK_SWEEP_PER_CYCLE,
-              });
+              /**
+               * ONE SLICE THAT MOVES SOMETHING, OR THE WHOLE PILE EXAMINED. A slice is `limit`
+               * candidates in id order; a slice that moved NOTHING but was cut by the limit says
+               * nothing about the members after it (a refused prefix in front of movable mail),
+               * so the loop looks at the next window before returning — and returns the moment a
+               * slice lands, so the per-cycle move budget still holds. What comes back with
+               * `moved: []` has therefore looked at EVERY remaining candidate, which is what lets
+               * the cycle call the pile stuck (review round 2).
+               */
+              const moved: string[] = [];
+              const skipped: JunkSweepResultSkipped[] = [];
+              let junkFolder: string | null = null;
+              for (let offset = 0; ; offset += JUNK_SWEEP_PER_CYCLE) {
+                const res = await junkSweepPass({
+                  db: db as unknown as Tx, repo: fencedRepo, adapter: attachedAdapter,
+                  accountId: mb.accountId, mailboxId: mb.mailboxId, execute: true, guard: hooks.guard,
+                  limit: JUNK_SWEEP_PER_CYCLE, offset,
+                });
+                junkFolder = res.junkFolder;
+                moved.push(...res.moved);
+                skipped.push(...res.skipped);
+                const exhausted = res.candidates.length < JUNK_SWEEP_PER_CYCLE || res.junkFolder === null;
+                if (moved.length > 0 || exhausted) break;
+              }
+              return { moved, skipped, junkFolder };
             },
             remaining: async () => {
               const [row] = await db

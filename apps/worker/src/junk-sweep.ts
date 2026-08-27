@@ -53,6 +53,13 @@ export async function junkSweepPass(opts: {
   execute: boolean;
   limit?: number;
   /**
+   * Skip the first `offset` candidates (in the pass's stable id order). The worker cycle's
+   * slice loop uses it to look PAST a refused prefix: a slice that moved nothing but was cut by
+   * `limit` says nothing about the members after it, so the loop asks for the next window
+   * before it may call the pile stuck. Zero (the default) is the pass as the CLI runs it.
+   */
+  offset?: number;
+  /**
    * Called before EVERY chunk's IMAP mutation. The worker cycle hands in its fresh leadership
    * read (`fenceImapMutation`) so a stale leader cannot move mail another worker has taken over;
    * the operator runner passes none. A throw here aborts the sweep — the members not yet moved
@@ -60,7 +67,7 @@ export async function junkSweepPass(opts: {
    */
   guard?: () => Promise<void>;
 }): Promise<JunkSweepResult> {
-  const { db, repo, adapter, accountId, mailboxId, execute, limit, guard } = opts;
+  const { db, repo, adapter, accountId, mailboxId, execute, limit, offset, guard } = opts;
 
   // Physically in the pile, still alive in the mirror, still DESIRED there — the ONE predicate
   // the API's preview counts by too (`junkSweepCandidateWhere`, packages/db). `native_locator`
@@ -73,7 +80,8 @@ export async function junkSweepPass(opts: {
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
     .where(junkSweepCandidateWhere(accountId, mailboxId))
     .orderBy(messages.id)
-    .limit(limit ?? 10_000);
+    .limit(limit ?? 10_000)
+    .offset(offset ?? 0);
 
   const candidates: JunkSweepCandidate[] = rows.map((r) => ({
     messageId: r.messageId, subject: r.subject,

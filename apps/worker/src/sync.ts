@@ -595,9 +595,10 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // ONE BOUNDED SLICE PER CYCLE, RETIRED ONLY WHEN THE PILE IS DRAINED. The pass takes a
   // per-cycle limit (the port's), so a large pile rotates through the serial queue the way the
   // filing budget does instead of monopolizing it; after the slice the port re-counts what is
-  // still movable, and the stamp is retired ONLY when nothing is — or when the slice moved
-  // NOTHING at all, which is a pile the server refuses (every member skipped) and would
-  // otherwise be retried every cycle for ever. A retired-while-nonempty stamp is honest on
+  // still movable, and the stamp is retired ONLY when nothing is — or when the run moved
+  // NOTHING at all, which the port only reports after looking at EVERY remaining candidate
+  // (its slice loop continues past a refused prefix — index.ts): a pile the server refuses
+  // outright, which would otherwise be retried every cycle for ever. A retired-while-nonempty stamp is honest on
   // screen: the preview reads `pending: false` with candidates left, so the offer returns with
   // the remaining number and the person can press again. While the pile drains, `owesFiling`
   // is raised so the caller re-kicks this mailbox rather than waiting out a poll interval.
