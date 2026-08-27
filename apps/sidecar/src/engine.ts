@@ -1850,8 +1850,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             db: db as unknown as Tx, apply: true, accountId: world.accountId, log: undefined,
             cursor: joinHealCursor,
           });
-          joinHealCursor = r.capped && r.cursor ? r.cursor : undefined;
-          if (r.merged > 0) log("thread_join_heal", { merged: r.merged, moved: r.messagesMoved, skipped: r.skipped });
+          // Persist the resume point only for a failure-free capped walk: a failed group is
+          // transient (nothing committed), and resuming past it would postpone its retry by a
+          // whole walk of the remaining cursor space — a failure restarts from the top instead.
+          joinHealCursor = r.capped && r.cursor && r.failed === 0 ? r.cursor : undefined;
+          if (r.merged > 0 || r.failed > 0) log("thread_join_heal", { merged: r.merged, moved: r.messagesMoved, skipped: r.skipped, failed: r.failed });
         } catch (err) {
           log("thread_join_heal_failed", {
             err,

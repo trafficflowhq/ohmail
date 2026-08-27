@@ -26,16 +26,18 @@ const log = createLogger({ service: "thread-join-heal" });
 // The pass caps one invocation; loop, RESUMING FROM ITS CURSOR, until the candidate set —
 // not the budget — is what ends the walk. Without the cursor a group whose verdict is "no"
 // would be rescanned by every iteration, and this loop would never terminate.
-let merged = 0, moved = 0, groups = 0, skipped = 0;
+let merged = 0, moved = 0, groups = 0, skipped = 0, failed = 0;
 let cursor: import("./thread-join-heal.js").ThreadJoinHealCursor | undefined;
 for (;;) {
   const r = await threadJoinHealPass({ db: owned.db as unknown as Tx, apply, log, cursor });
-  merged += r.merged; moved += r.messagesMoved; groups += r.groupsScanned; skipped += r.skipped;
+  merged += r.merged; moved += r.messagesMoved; groups += r.groupsScanned;
+  skipped += r.skipped; failed += r.failed;
   if (!r.capped || !r.cursor) break;
   cursor = r.cursor;
 }
 
 console.log(`${apply ? "merged" : "DRY RUN — would merge"} ${merged} split threads ` +
-  `(${moved} messages moved, ${groups} duplicate-name groups examined, ${skipped} skipped)`);
+  `(${moved} messages moved, ${groups} duplicate-name groups examined, ${skipped} skipped, ` +
+  `${failed} failed${failed > 0 ? " — re-run to retry them" : ""})`);
 if (!apply) console.log("Re-run with --apply to write.");
 await owned.close();

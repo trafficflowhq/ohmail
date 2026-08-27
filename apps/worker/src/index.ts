@@ -3771,15 +3771,18 @@ export async function startWorkerWithLock(
                 cursor: threadJoinHealCursors.get(accountId),
               }));
             // Carry the resume point ONLY while the budget (not the candidate set) ended the
-            // walk; an uncapped pass has seen everything, so the next one starts fresh.
-            if (r.capped && r.cursor) threadJoinHealCursors.set(accountId, r.cursor);
+            // walk AND nothing failed: a failed group is transient (nothing committed) and
+            // resuming past it would postpone its retry by a whole walk of the remaining
+            // cursor space, so a failure restarts the next gated run from the top instead.
+            // An uncapped pass has seen everything, so the next one starts fresh either way.
+            if (r.capped && r.cursor && r.failed === 0) threadJoinHealCursors.set(accountId, r.cursor);
             else threadJoinHealCursors.delete(accountId);
-            if (r.merged > 0 || r.skipped > 0) {
+            if (r.merged > 0 || r.skipped > 0 || r.failed > 0) {
               // Named fields, not a spread: `r.cursor` carries a thread SUBJECT (user content
               // the census deny-lists), and the counters must land on registered names.
               log.info("thread_join_heal_pass", {
                 accountId, scanned: r.groupsScanned, merged: r.merged,
-                moved: r.messagesMoved, skipped: r.skipped, capped: r.capped,
+                moved: r.messagesMoved, skipped: r.skipped, failed: r.failed, capped: r.capped,
               });
             }
           } catch (err) {

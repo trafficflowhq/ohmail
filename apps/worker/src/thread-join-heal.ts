@@ -114,8 +114,16 @@ export interface ThreadJoinHealResult {
   merged: number;
   /** Messages moved onto a surviving thread (dry run: would be). */
   messagesMoved: number;
-  /** Groups skipped: over the per-group bound, or failed mid-transaction and left for next run. */
+  /** Groups permanently declined this run: over the per-group thread bound. */
   skipped: number;
+  /**
+   * Groups whose merge TRANSACTION failed — transient by construction (a user merge or delete
+   * racing the pass; nothing committed). Counted APART from `skipped` because the two demand
+   * opposite cursor behavior: an over-bound group is refused every run, so a caller may resume
+   * PAST it, while a failed group deserves a retry sooner than a full walk of the remaining
+   * cursor space — so callers persist a capped run's cursor only when this is zero.
+   */
+  failed: number;
   /** True ⇒ the group budget ran out before the candidate set did; resume from `cursor`. */
   capped: boolean;
   /** The last group examined — the resume point for a follow-on invocation. */
@@ -133,7 +141,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
   const now = deps.now ?? (() => new Date());
   const maxGroups = Math.min(deps.maxGroups ?? THREAD_JOIN_HEAL_MAX_GROUPS, THREAD_JOIN_HEAL_MAX_GROUPS);
 
-  const result: ThreadJoinHealResult = { groupsScanned: 0, merged: 0, messagesMoved: 0, skipped: 0, capped: false, cursor: null };
+  const result: ThreadJoinHealResult = { groupsScanned: 0, merged: 0, messagesMoved: 0, skipped: 0, failed: 0, capped: false, cursor: null };
   const selfByAccount = new Map<string, Set<string>>();
   let cursor: ThreadJoinHealCursor | null = deps.cursor ?? null;
 
@@ -355,7 +363,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
           moved,
         });
       } catch (err) {
-        result.skipped += 1;
+        result.failed += 1;
         log.error("thread_join_heal_group_failed", {
           accountId: group.account_id, threadId: target.id, err,
           reason: "nothing of this group committed; the candidate set is re-read from reality " +
@@ -372,7 +380,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
   log.info(apply ? "thread_join_heal_complete" : "thread_join_heal_dry_complete", {
     ...(deps.accountId ? { accountId: deps.accountId } : {}),
     scanned: result.groupsScanned, merged: result.merged, moved: result.messagesMoved,
-    skipped: result.skipped, capped: result.capped,
+    skipped: result.skipped, failed: result.failed, capped: result.capped,
   });
   return result;
 }
