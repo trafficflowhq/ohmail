@@ -367,8 +367,8 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
   const [hits, setHits] = useState<JunkItemWire[]>([]);
   const [searchBoxes, setSearchBoxes] = useState<JunkMailboxWire[]>([]);
   const [truncated, setTruncated] = useState(false);
-  /** The query a server answer belongs to — a late answer for an older query is dropped. */
-  const searchGen = useRef(0);
+  /** What is typed RIGHT NOW — a settling answer applies to the screen only if its term is this. */
+  const queryRef = useRef("");
   /**
    * The server's answer PER SETTLED TERM, for this session: one ask per term, and a term typed
    * again shows the answer it already earned instead of an empty `local` that the debounce
@@ -399,14 +399,17 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     const term = (q ?? query).trim();
     if (term.length === 0 || pendingTerms.current.has(term)) return;
     pendingTerms.current.add(term);
-    const gen = ++searchGen.current;
     setSearchPhase("searching");
     void wire.search(term).then(
       (page) => {
         pendingTerms.current.delete(term);
         const answer = { items: notDropped(page.items), mailboxes: page.mailboxes, truncated: page.truncated };
         answers.current.set(term, answer);
-        if (searchGen.current !== gen) return;
+        // The answer reaches the SCREEN iff its term is what is typed right now — a person who
+        // left the term and came back mid-flight sees it settle (review round 5: a generation
+        // counter stranded exactly that return in `searching`), and an answer for an abandoned
+        // term goes only to the cache it came for.
+        if (queryRef.current.trim() !== term) return;
         setHits(answer.items);
         setSearchBoxes(answer.mailboxes);
         setTruncated(answer.truncated);
@@ -414,7 +417,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
       },
       () => {
         pendingTerms.current.delete(term);
-        if (searchGen.current !== gen) return;
+        if (queryRef.current.trim() !== term) return;
         setHits([]);
         setSearchBoxes([]);
         setTruncated(false);
@@ -425,10 +428,11 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
 
   const setQuery = useCallback((q: string) => {
     setQueryState(q);
-    // A NEW query voids the last in-flight answer: hits for the old words under the new filter
-    // would be the window claiming a match it never checked. A term the server ALREADY answered
-    // this session shows that answer again (minus anything rescued since).
-    searchGen.current += 1;
+    queryRef.current = q;
+    // A NEW query clears the screen's answer (hits for the old words under the new filter would
+    // be the window claiming a match it never checked). A term the server ALREADY answered this
+    // session shows that answer again (minus anything rescued since); a term whose ask is still
+    // IN FLIGHT shows `searching` and is settled by that ask's own completion.
     const term = q.trim();
     const held = term.length > 0 ? answers.current.get(term) : undefined;
     if (held !== undefined) {
@@ -441,7 +445,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     setHits([]);
     setSearchBoxes([]);
     setTruncated(false);
-    setSearchPhase(term.length === 0 ? "idle" : "local");
+    setSearchPhase(term.length === 0 ? "idle" : pendingTerms.current.has(term) ? "searching" : "local");
   }, [notDropped]);
 
   useEffect(() => {

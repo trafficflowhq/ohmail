@@ -815,12 +815,19 @@ export async function rescueJunk(
   }
 
   } catch (err) {
-    if (err instanceof ServiceError) throw err;
+    // Only the rescue's OWN answers pass through: `junk_message_gone` (which already carries the
+    // allow) and an inner `junk_rescue_move_failed`. Every other failure — a typed dial refusal
+    // (`mailbox_busy`, unreadable credentials) as much as a raw transport throw — happened AFTER
+    // the allow committed, and must say so (review round 5: the blanket ServiceError passthrough
+    // hid the partial outcome behind the dial's own vocabulary).
+    const rescueOwn = err instanceof ServiceError
+      && (err.code === "junk_message_gone" || err.code === "junk_rescue_move_failed");
+    if (rescueOwn) throw err;
     if (allowed !== undefined) {
       throw new ServiceError(
         "junk_rescue_move_failed", 502,
         "the move could not be made just now — the sender is allowed from now on regardless",
-        { allowed },
+        { allowed, ...(err instanceof ServiceError ? { cause: err.code } : {}) },
       );
     }
     throw err;
