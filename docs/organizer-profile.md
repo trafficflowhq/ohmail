@@ -77,6 +77,162 @@ One RFC822 message in `ohmail/_meta`:
 }
 ```
 
+## Field by field
+
+The envelope:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `v` | integer ≥ 1 | Format version. Required. This page documents version 1. |
+| `updatedAt` | ISO 8601 string | When this copy was written, by the writer's clock. Readers coalesce duplicate messages by it — newest wins. |
+| `producer` | object | Provenance, never identity: `kind` is an open set (`"local"`, `"cloud"`, a future value — readers must tolerate unknown kinds), `version` is the writer's build label. |
+
+**`screener`** — an array of senders this mailbox has screened **in**:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `address` | string | The sender's email address, lowercased. The natural key. |
+| `name` | string, optional | The display name, when one was kept. Omitted rather than null. |
+
+**`rules`** — an array of filing rules, where mail from matched senders goes:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `kind` | `"sender"` \| `"domain"` \| `"header"` | What `match` is matched against. |
+| `match` | string | The address, the domain, or the header spec. |
+| `destination` | string | The canonical folder **name** (`ohmail/Reads`, `ohmail/Screened`, …) — never an internal id. |
+| `priority` | number | Higher wins between overlapping rules; `0` is the default. |
+| `enabled` | boolean | A disabled rule is kept, not deleted — re-enabling restores it exactly. |
+| `provenance` | `"manual"` \| `"migrated"` \| `"promoted"` | How the rule came to be: written by hand, imported from another tool, or promoted from a screening decision (a screen-out and a spam verdict both leave one of these). |
+| `subjectContains` | string, optional | Narrows the rule to subjects containing this term. |
+| `bodyContains` | string, optional | Narrows the rule to bodies containing this term. |
+
+**`notifyRules`** — an array of senders or threads opted back **into** notifications:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `kind` | string | The target's kind; `"sender"` today, an open set. |
+| `target` | string | The spec the kind interprets. |
+
+**`awayResponder`** — the single per-mailbox autoresponder, or `null`:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `enabled` | boolean | Whether it answers at all — a drafted-but-off responder travels too. |
+| `subject` | string or null | The reply's subject. |
+| `body` | string or null | The reply's body. |
+| `startsAt` | ISO 8601 or null | When it starts answering. |
+| `endsAt` | ISO 8601 or null | When it stops. |
+| `audience` | `"screened_in"` \| `"everyone"` | Who gets an answer. |
+
+**`tagNames`** — an array of this mailbox's tag names, as plain strings.
+
+## A complete example
+
+One profile message exactly as ohmail writes it — regenerated from the writer
+by the test suite, so it cannot drift from the code. Every address in it is
+invented. Line endings on the wire are CRLF, as in any RFC822 message.
+
+```text
+X-Ohmail-Profile: 1
+X-Ohmail-Install-Id: 0f4c7d1e-2b6a-4a51-9c3e-7d8f1a2b3c4d
+Subject: ohmail settings for this mailbox
+Date: Thu, 27 Aug 2026 09:30:00 GMT
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+This message stores your ohmail settings for this mailbox: which senders
+you have screened in, your filing rules, notification choices, away reply
+and tag names. Keeping them here means they live in YOUR mailbox — they
+travel with it to any computer or service you connect it from, and they
+remain yours, readable, even if you stop using ohmail.
+
+Deleting this message is safe. It only resets ohmail's settings for this
+mailbox — your mail is not touched. ohmail writes a fresh copy when its
+settings next change.
+
+The format: versioned JSON, documented in ohmail's published source
+(packages/core/src/adapters/organizer-profile.ts).
+
+{
+  "v": 1,
+  "updatedAt": "2026-08-27T09:30:00.000Z",
+  "producer": {
+    "kind": "local",
+    "version": "0.11.1"
+  },
+  "screener": [
+    {
+      "address": "ines.aebersold@example.ch",
+      "name": "Ines Aebersold"
+    },
+    {
+      "address": "orders@ninefold-press.example"
+    }
+  ],
+  "rules": [
+    {
+      "kind": "domain",
+      "match": "billing.example",
+      "destination": "ohmail/Receipts",
+      "priority": 0,
+      "enabled": true,
+      "provenance": "manual",
+      "subjectContains": "invoice"
+    },
+    {
+      "kind": "sender",
+      "match": "deals@loudmail.example",
+      "destination": "ohmail/Quarantine",
+      "priority": 0,
+      "enabled": true,
+      "provenance": "promoted"
+    },
+    {
+      "kind": "sender",
+      "match": "newsletter@ninefold-press.example",
+      "destination": "ohmail/Reads",
+      "priority": 0,
+      "enabled": true,
+      "provenance": "promoted"
+    },
+    {
+      "kind": "sender",
+      "match": "noreply@roundabout.example",
+      "destination": "ohmail/Screened",
+      "priority": 0,
+      "enabled": false,
+      "provenance": "manual"
+    }
+  ],
+  "notifyRules": [
+    {
+      "kind": "sender",
+      "target": "ines.aebersold@example.ch"
+    }
+  ],
+  "awayResponder": {
+    "enabled": false,
+    "subject": "Out of the studio until 2 September",
+    "body": "Thanks for writing — I read mail again on 2 September.",
+    "startsAt": "2026-08-24T00:00:00.000Z",
+    "endsAt": "2026-09-02T00:00:00.000Z",
+    "audience": "screened_in"
+  },
+  "tagNames": [
+    "kiln",
+    "pottery-fair"
+  ]
+}
+```
+
+Things to notice: every list is sorted by its natural key (the document is
+canonicalized before writing, so identical configuration is byte-identical
+and cheap to compare); the second rule is a spam verdict (a promoted rule to
+`ohmail/Quarantine`), the last a screen-out (`ohmail/Screened`) that was later
+disabled and kept; and the JSON sits after the human preamble, so the substring
+from the body's first `{` to its last `}` is the document.
+
 ## Natural keys only — a rule, not a style
 
 Every entry is keyed by what it *means* — a sender address, a folder name, a
@@ -112,6 +268,20 @@ named above, and the test suite pins the document's exact key census so a new
 field is a reviewed decision, not a drive-by. The document also carries no
 adaptive state (learning signals, graduations) — v1 is the human-made
 configuration and nothing inferred.
+
+## What does not travel
+
+Version 1 carries the human-made configuration and nothing inferred or
+device-bound. Deliberately absent, so nobody discovers it at a switch:
+
+- triage piles and Resurface timers — decisions about individual messages,
+  with no IMAP representation yet;
+- learned patterns and their graduation state — inferred, and re-learnable;
+- notes, snippets and contact annotations;
+- device pairings, sessions, billing — deployment-specific by nature;
+- credentials of any kind (see above).
+
+The mail itself needs no line here: it never left the mailbox.
 
 ## Update = append new + expunge old
 

@@ -52,8 +52,20 @@ row. Each is backed by a real folder on your own mail server.
 With AI on — your own Anthropic key or a local model through
 [Ollama](https://ollama.com), and off until you turn it on — the Screener
 proposes a door for each waiting sender, with a confidence and a reason, and
-one press accepts. Nothing applies itself, and mail carrying a one-time code is
-structurally kept out of anything AI reads.
+one press accepts. Switch on auto-suggest and the proposal is already waiting
+as the mail arrives. Nothing applies itself until you have confirmed a pattern
+often enough for it to graduate; from then on that one pattern files itself,
+spam included, every move recorded and reversible. A one-time code inside a
+message is stripped before any model sees it, and automatic routing leaves
+that mail alone entirely.
+
+Spam needs no AI at all: one press files the message into your mailbox's own
+Junk folder — where the mailbox has one — and the sender rule remembers, so
+the next mail from that sender never reaches the gate. Screening out or
+marking spam also sends the list's one-click unsubscribe on your behalf, where
+one is offered (on by default; a switch turns it off). Plain newsletters and
+receipts can be filed out of the Screener by deterministic rules alone, once
+you switch that on. ohmail deletes nothing on its own.
 
 <img src="docs/assets/feature-wall/03-screener.gif" alt="The Screener: a suggested destination on each waiting sender, one press to accept, the sender files and the rule is saved" width="100%">
 
@@ -103,6 +115,32 @@ including the HEIC a modern iPhone writes, are sent exactly as they are.
 fictional people, fictional brands, zero network. It is the same demo you can
 open at [ohmail.app/demo](https://ohmail.app/demo); the app itself carries no
 demo mail and opens empty until you connect a mailbox.</sub>
+
+## Your existing mailbox remains the source of truth
+
+Not a slogan — the architecture. ohmail's desktop app, the hosted service and
+a server you run never share a database; the only medium they all read is the
+mailbox itself, so that is where everything durable lives:
+
+- **Your mail and its organization** are real IMAP folders on your own server —
+  the `ohmail/*` tree plus any folders of your own — moved by ordinary IMAP
+  commands, readable by any client, kept when you leave.
+- **Your settings, rules and screening structure** are one small versioned-JSON
+  message in the hidden `ohmail/_meta` folder — the portable organizer profile,
+  specified in [docs/organizer-profile.md](docs/organizer-profile.md).
+- **Which ohmail organizes the mailbox** is decided in the mailbox too: a lease
+  message in the same `_meta` folder names the one active organizer, so a
+  desktop install, a self-hosted server and the hosted service can hand a
+  mailbox to one another without ever talking to one another.
+
+So switching between hosting types is reconnecting a mailbox. Connect the same
+mailbox from a desktop install, from a server you run, or from
+[ohmail Cloud](https://ohmail.app), and ohmail finds the settings stored in it
+and asks before using them. What a deployment keeps to itself is only the
+working copy — the local mirror, cached bodies, device pairings, billing —
+reconstructible from the mailbox or irrelevant to it. The honest edge, stated:
+triage piles, Resurface timers and learned patterns have no IMAP representation
+yet, so they stay with the deployment they were made on.
 
 ## Your settings live in your mailbox, and move with it
 
@@ -255,33 +293,9 @@ than behind your login password — a real reduction, stated here rather than
 buried — and the local mail mirror beside it is an ordinary unencrypted
 database.
 
-The folders ohmail creates are a small, frozen set:
-
-```
-Inbox                    mail from people you've said yes to
-Junk                     your provider's own — ohmail never reads or writes it
-Sent                     your replies, left where your provider already keeps them
-ohmail/
-├── Screener             new senders wait here until you decide where they go
-├── Reads                newsletters and things you read when you have a minute
-├── Receipts             receipts, confirmations, orders
-├── Screened             senders you keep, but out of the Inbox
-├── Quarantine           junk-grade mail, set aside
-└── _meta                a tiny bookkeeping folder, hidden in your other mail apps
-```
-
-`_meta` also holds your ohmail settings for this mailbox — the senders you've
-screened in, your rules, notification choices, away reply and tag names — as a
-small versioned-JSON message, so they live in your mailbox rather than in any
-ohmail database and move with it (see "Your settings live in your mailbox"
-above). The format is specified in
-[docs/organizer-profile.md](docs/organizer-profile.md) and implemented in
-`packages/core/src/adapters/organizer-profile.ts`; deleting the message only
-resets ohmail's settings, never your mail.
-
-There is no folder called "Spam" — the pile ohmail sets junk-grade mail aside
-in is `ohmail/Quarantine`; "Spam" is only ever a friendly label the app shows
-over it.
+The folder set ohmail creates, and the bookkeeping behind it, are in
+[How ohmail organizes inside your mailbox](#how-ohmail-organizes-inside-your-mailbox)
+below.
 
 **Cloud mode** — optional: the same app can instead sign in to
 [ohmail Cloud](https://ohmail.app), the hosted service, and act as a viewer of
@@ -296,6 +310,70 @@ commercial service built from the server source in this repository (see
 the desktop app neither asks for it nor needs it, and the choice is made in
 the app, not by a different download. Prices and the full comparison are at
 [ohmail.app](https://ohmail.app).
+
+
+## How ohmail organizes inside your mailbox
+
+For the reader who wants the mechanism. Everything below is ordinary IMAP,
+inspectable from any other mail client — which is the point: the mailbox is
+the source of truth, and everything ohmail adds to it is plain IMAP a
+stranger's client can read.
+
+The folders ohmail creates are a small, frozen set:
+
+```
+Inbox                    mail from people you've said yes to
+Junk                     your provider's own — your spam verdicts file into it
+Sent                     your replies, left where your provider already keeps them
+ohmail/
+├── Screener             new senders wait here until you decide where they go
+├── Reads                newsletters and things you read when you have a minute
+├── Receipts             receipts, confirmations, orders
+├── Screened             senders you keep, but out of the Inbox
+├── Quarantine           spam the automatic patterns set aside, held for review
+└── _meta                a tiny bookkeeping folder, hidden in your other mail apps
+```
+
+`_meta` also holds your ohmail settings for this mailbox — the senders you've
+screened in, your rules, notification choices, away reply and tag names — as a
+small versioned-JSON message, so they live in your mailbox rather than in any
+ohmail database and move with it (see "Your settings live in your mailbox"
+above). The format is specified in
+[docs/organizer-profile.md](docs/organizer-profile.md) and implemented in
+`packages/core/src/adapters/organizer-profile.ts`; deleting the message only
+resets ohmail's settings, never your mail.
+
+There is no folder called "Spam". Your own spam verdicts ride to the
+provider's native Junk folder; what ohmail's automatic patterns set aside on
+their own lands in `ohmail/Quarantine`, held for review — "Spam" is only ever
+a friendly label the app shows.
+
+**Real moves, crash-safe.** Filing a message is a real IMAP move into one of
+those folders. ohmail first records where the message should be, then the one
+active organizer performs the move on the server and confirms what it
+observed — so a crash mid-move leaves a pending intention, never a half-moved
+mailbox, and nothing else races it.
+
+**One organizer per mailbox, agreed inside the mailbox.** Beside the settings
+message, `ohmail/_meta` holds the organizer **lease**: which single install or
+service currently organizes this mailbox, renewed as it works — so a desktop
+install and a server, which can never query each other, still cannot fight
+over one mailbox.
+
+**Your own folders, if you want them.** Off by default, and per mailbox:
+switch "Use folders" on and the folders you already keep appear in the menu,
+each as its own list — the real folders on your server, never a copy. Create,
+rename and delete them from ohmail and the same IMAP operations happen in your
+mailbox; deleting a folder files its mail to your provider's Trash first,
+never an expunge. (Not yet in the standalone desktop app.)
+
+**Spam and deletion use your provider's own folders.** A spam verdict files
+the message into the mailbox's native Junk folder — where its filter and your
+other clients expect spam — and "Not junk" moves it back out; the sender rule,
+stored with your settings, is the durable memory either way. Delete moves to
+native Trash, never expunges. Beyond those user-commanded acts, ohmail never
+acts in Junk or Trash on its own — no rule, no automatic pass and no AI
+proposal may name them.
 
 ## Verify it yourself
 
