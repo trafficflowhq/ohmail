@@ -210,7 +210,10 @@ async function runDelete(
   // The RESOLVED Sent path, read once per delete: the stale-residue guard compares the exact
   // folder the adapter watermarks, not a spelling — a mailbox whose \\Sent resolved to a
   // custom path would otherwise lose the last evidence of old sent copies.
-  const sentFolder = (await adapter.capabilities()).watchedSentFolder ?? null;
+  // `watchedSentFolder ?? sentFolder` — the same precedence `sentFolderOf` uses: an adapter
+  // that resolved \\Sent but names no separate watch path reports it in `sentFolder` alone.
+  const caps = await adapter.capabilities();
+  const sentFolder = caps.watchedSentFolder ?? caps.sentFolder ?? null;
 
   /** One folder's mirror consequences, within the cycle's budget. False ⇒ budget ran out. */
   const tombstoneWithin = async (folder: string): Promise<boolean> => {
