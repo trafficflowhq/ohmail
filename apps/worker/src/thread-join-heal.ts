@@ -305,6 +305,9 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
               inArray(threads.id, [target.id, ...absorb.map((s) => s.id)]),
               eq(threads.accountId, group.account_id),
             ))
+            // ORDER BY id: every taker of multi-row thread locks acquires them in one stable
+            // order, or two overlapping merges deadlock thread-to-thread.
+            .orderBy(asc(threads.id))
             .for("update");
           const lockedById = new Map(lockedRows.map((r) => [r.id, r]));
           const lockedTarget = lockedById.get(target.id);

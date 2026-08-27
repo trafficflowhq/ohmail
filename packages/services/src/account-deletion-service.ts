@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
 import {
   accountSettings,
   accountStorage,
@@ -214,6 +214,20 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     const mailboxRows = await tx.select({ id: mailboxes.id })
       .from(mailboxes).where(eq(mailboxes.accountId, accountId));
     const mailboxIds = mailboxRows.map((m) => m.id);
+
+    // ── 0. THE THREAD-FIRST FENCE. Every live writer of a thread takes thread rows before
+    // message or draft rows (ingest's mergeThreadMessage, both merge paths, the drafts
+    // service's reply-target lock). Erasure's DELETE order is forced the other way by the
+    // FKs — children before parents, so messages before threads — which would make it the
+    // one transaction acquiring locks against the shared order and a deadlock partner for
+    // any concurrent merge. Locking every thread row up front, in the shared stable order,
+    // puts erasure's ACQUISITION on the same order as everyone else; the deletes below then
+    // touch rows nobody else can be holding the other half of. The rows all die in this
+    // transaction anyway, so the locks cost nothing extra.
+    await tx.select({ id: threads.id }).from(threads)
+      .where(eq(threads.accountId, accountId))
+      .orderBy(asc(threads.id))
+      .for("update");
 
     // ── 1. Sends and drafts (drafts reference mailboxes, threads AND messages) ──
     await drop("outbound_sends", tx.delete(outboundSends).where(eq(outboundSends.accountId, accountId)));

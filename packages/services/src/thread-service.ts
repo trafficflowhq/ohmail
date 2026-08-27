@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { drafts, messages, threadNotes, threads, recordChange, type Tx } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -80,8 +80,11 @@ export class ThreadService {
       // moves for the same reason. A merge that locked messages first could hold them while
       // waiting on a thread row the heal holds while waiting on those messages — a cycle
       // Postgres resolves by aborting one side into a user-facing 500.
+      // ORDER BY id under FOR UPDATE: two merges overlapping in two threads would otherwise
+      // lock them in whatever order their plans scan, and deadlock each other thread-to-thread.
       const owned = await tx.select({ id: threads.id }).from(threads)
         .where(and(eq(threads.accountId, ctx.accountId), inArray(threads.id, threadIds)))
+        .orderBy(asc(threads.id))
         .for("update");
       if (owned.length !== new Set(threadIds).size) {
         throw new ServiceError("not_found", 404, "thread not found");

@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { claimIdempotencyKey, drafts, mailboxes, recordChange, type Tx } from "@trafficflow/db";
+import { claimIdempotencyKey, drafts, mailboxes, recordChange, threads, type Tx } from "@trafficflow/db";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
@@ -108,6 +108,14 @@ export class DraftsService {
     const now = ctx.now();
 
     const { id, seq } = await asTx(ctx).transaction(async (tx) => {
+      // Same order and same ownership rule as `update`: the reply-target thread is read
+      // (key-share) BEFORE the draft row exists, and another account's thread id is a 404.
+      if (body.threadId) {
+        const t = await tx.select({ id: threads.id }).from(threads)
+          .where(and(eq(threads.id, body.threadId), eq(threads.accountId, ctx.accountId)))
+          .for("key share");
+        if (t.length === 0) throw new ServiceError("not_found", 404, "thread not found");
+      }
       const [row] = await tx.insert(drafts).values({
         accountId: ctx.accountId,
         mailboxId,
@@ -176,6 +184,18 @@ export class DraftsService {
     if (patch.inReplyToMessageId !== undefined) set.inReplyToMessageId = patch.inReplyToMessageId ?? null;
 
     const seq = await asTx(ctx).transaction(async (tx) => {
+      // A reply target moves FIRST, before the draft row is written: the FK check on the new
+      // `thread_id` takes a key-share on the thread row, and every writer of a thread takes
+      // thread rows before draft rows (the merge paths hold a thread FOR UPDATE while
+      // repointing drafts) — the reversed order is a deadlock both sides pay as a 500. The
+      // read is also the OWNERSHIP check the column never had: account isolation is absolute,
+      // so another account's thread id is a 404, not a stored reference.
+      if (patch.threadId) {
+        const t = await tx.select({ id: threads.id }).from(threads)
+          .where(and(eq(threads.id, patch.threadId), eq(threads.accountId, ctx.accountId)))
+          .for("key share");
+        if (t.length === 0) throw new ServiceError("not_found", 404, "thread not found");
+      }
       // Scope the UPDATE to the account: a cross-account id matches 0 rows. A mailbox move
       // additionally requires `status = 'draft'` IN THE PREDICATE — not in a prior read —
       // because the send path flips the row to `sending` in its own transaction, and a check
