@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { messages, threads, recordChange, type Tx } from "@trafficflow/db";
+import { drafts, messages, threadNotes, threads, recordChange, type Tx } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { materializeThread } from "./dto/materialize.js";
@@ -84,12 +84,28 @@ export class ThreadService {
 
       for (const other of others) {
         // Reassign the merged thread's messages onto the target BEFORE deleting it
-        // (messages.thread_id FKs threads.id → the source must be empty to drop).
+        // (messages.thread_id FKs threads.id → the source must be empty to drop). A
+        // soft-deleted row moves too — the FK does not care — but is NOT announced: its
+        // tombstone already reached every mirror, and `getChanges` materializes an update
+        // without consulting `deleted_at`, so announcing it would resurrect deleted mail.
         const moved = await tx.update(messages).set({ threadId: target, updatedAt: ctx.now() })
           .where(and(eq(messages.threadId, other), eq(messages.accountId, ctx.accountId)))
-          .returning({ id: messages.id });
+          .returning({ id: messages.id, deletedAt: messages.deletedAt });
         for (const m of moved) {
+          if (m.deletedAt !== null) continue;
           await recordChange(tx, { accountId: ctx.accountId, entityType: "message", entityId: m.id, op: "update", meta: null });
+        }
+        // The OTHER two tables that FK a thread, or the DELETE below is refused with 23503 and
+        // the whole merge 500s (measured in production by the worker's thread-join heal, which
+        // shares this transaction shape). Notes are fetch-on-demand — no change_log entity, so
+        // the repoint is silent; drafts are mirrored, so each repointed draft is announced.
+        await tx.update(threadNotes).set({ threadId: target, updatedAt: ctx.now() })
+          .where(and(eq(threadNotes.threadId, other), eq(threadNotes.accountId, ctx.accountId)));
+        const repointed = await tx.update(drafts).set({ threadId: target, updatedAt: ctx.now() })
+          .where(and(eq(drafts.threadId, other), eq(drafts.accountId, ctx.accountId)))
+          .returning({ id: drafts.id });
+        for (const d of repointed) {
+          await recordChange(tx, { accountId: ctx.accountId, entityType: "draft", entityId: d.id, op: "update", meta: null });
         }
       }
 

@@ -64,7 +64,7 @@ import {
 import { makeClassifierCircuit, ClassifierFaultError, type ClassifierCircuit } from "./ai-circuit.js";
 import { workflowDrainPass, workflowTimeScanPass, unconfiguredDrafter } from "./workflow-cron.js";
 import { bubbleUpPass } from "./bubble-up-cron.js";
-import { threadJoinHealPass } from "./thread-join-heal.js";
+import { threadJoinHealPass, type ThreadJoinHealCursor } from "./thread-join-heal.js";
 import { ruleRetroPass } from "./rule-retro.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerAutoApplyPass } from "./screener-auto.js";
@@ -676,6 +676,15 @@ export async function startWorkerWithLock(
      * The first-cycle cost is one small GROUP BY per served account.
      */
     let lastThreadJoinHealAt = 0;
+    /**
+     * Where each account's LAST gated heal run stopped, kept only while it stopped on its
+     * BUDGET. An account holding more duplicate-name groups than one run's cap would otherwise
+     * rescan the same leading refusals every six hours for ever — a refused group never leaves
+     * the candidate predicate — and the splits past the cap would never be examined. Cleared on
+     * an uncapped pass so the next run takes a fresh full look. In-memory on purpose: a leader
+     * handover restarts from the top, which costs one rescan and needs no schema.
+     */
+    const threadJoinHealCursors = new Map<string, ThreadJoinHealCursor>();
     /**
      * One-shot: the boot announcement and its heartbeat happen on the FIRST roster pass only.
      * Declared HERE with the rest of the closure state rather than beside `cycleQueued` — a
@@ -3757,9 +3766,21 @@ export async function startWorkerWithLock(
           if (stopped) return;
           try {
             const r = await asDatabaseFault("cycle.threadJoinHealPass",
-              () => threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId, log }));
+              () => threadJoinHealPass({
+                db: db as unknown as Tx, apply: true, accountId, log,
+                cursor: threadJoinHealCursors.get(accountId),
+              }));
+            // Carry the resume point ONLY while the budget (not the candidate set) ended the
+            // walk; an uncapped pass has seen everything, so the next one starts fresh.
+            if (r.capped && r.cursor) threadJoinHealCursors.set(accountId, r.cursor);
+            else threadJoinHealCursors.delete(accountId);
             if (r.merged > 0 || r.skipped > 0) {
-              log.info("thread_join_heal_pass", { accountId, ...r });
+              // Named fields, not a spread: `r.cursor` carries a thread SUBJECT (user content
+              // the census deny-lists), and the counters must land on registered names.
+              log.info("thread_join_heal_pass", {
+                accountId, scanned: r.groupsScanned, merged: r.merged,
+                moved: r.messagesMoved, skipped: r.skipped, capped: r.capped,
+              });
             }
           } catch (err) {
             noteIfSharedDatabaseFault(err);

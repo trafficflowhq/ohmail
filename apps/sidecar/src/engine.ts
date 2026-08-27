@@ -76,6 +76,7 @@ import { OrganizerProfileSync } from "@trafficflow/worker/profile";
 // second answer to "when is a resurface due", which is the one thing that must not differ.
 import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
 import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
+import { threadJoinHealPass } from "@trafficflow/worker/thread-join-heal";
 // The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
 // argument. The values it writes have to be the ones ingest would have written from the same
 // headers; a second parse here would leave two populations of rows decided by different rules, and
@@ -667,6 +668,15 @@ export const DEFAULT_POLL_INTERVAL_MS = 15_000;
  */
 export const LOCAL_NAME_BACKFILL_BATCH = 100;
 export const LOCAL_NAME_BACKFILL_PAGES = 2;
+
+/**
+ * How often a launch runs the THREAD-JOIN HEAL (`@trafficflow/worker/thread-join-heal`) at the
+ * tail of a drain. Six hours — the hosted worker's own gate — because it repairs presentation
+ * (a conversation a forward split into two threads), nothing user-promised rides on a run, and
+ * its candidate pre-filter is a GROUP BY over the store's threads that per-drain polling would
+ * pay for nothing. A `const`, not an env var, for the reason every gate here is.
+ */
+export const LOCAL_JOIN_HEAL_EVERY_MS = 6 * 60 * 60 * 1000;
 
 /**
  * A DRAIN'S WALL-CLOCK SHAPE, from the per-cycle durations it measured.
@@ -1632,6 +1642,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      */
     let namesCursor: string | undefined;
     let namesDone = false;
+    /** When the thread-join heal last ran in THIS launch — it repairs presentation, not a
+     * promise, so once per {@link LOCAL_JOIN_HEAL_EVERY_MS} is plenty and a busy drain never
+     * pays its GROUP BY. Zero so a launch's first drain takes one look (splits accumulated
+     * while the app was closed), exactly the worker's gate seeding. */
+    let lastJoinHealAt = 0;
 
     /**
      * FILL IN THE SENDER NAMES AND RECIPIENTS OF MESSAGES STORED BEFORE THERE WAS ANYWHERE TO PUT
@@ -1813,6 +1828,31 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          been reading past for months. Before the checkpoint below for `suggestNew`'s reason: the
          rows it writes belong in the same fold. */
       await backfillStoredNames();
+      /* REJOIN THE CONVERSATIONS A FORWARD SPLIT, the same pass the hosted worker runs
+         (`@trafficflow/worker/thread-join-heal`) for the reason every pass above is the
+         worker's: on this door the store under the user's home IS the authority, no worker
+         anywhere else will ever visit it, and a second implementation of the join evidence
+         would be a second population of merges decided by different rules. Time-gated
+         in-launch (six hours, like the hosted gate) because it repairs presentation — a
+         conversation reading as two threads — and its pre-filter is a GROUP BY nobody should
+         pay per drain. After the name repair, before the stamp, so its change rows fold into
+         the same checkpoint. A failure is CONTAINED like every pass above: threads stay
+         split, mail keeps arriving, the next gated drain asks again. */
+      if (Date.now() - lastJoinHealAt >= LOCAL_JOIN_HEAL_EVERY_MS) {
+        lastJoinHealAt = Date.now();
+        try {
+          const r = await threadJoinHealPass({
+            db: db as unknown as Tx, apply: true, accountId: world.accountId, log: undefined,
+          });
+          if (r.merged > 0) log("thread_join_heal", { merged: r.merged, moved: r.messagesMoved, skipped: r.skipped });
+        } catch (err) {
+          log("thread_join_heal_failed", {
+            err,
+            reason: "no group committed partially — each is one transaction; split threads " +
+              "stay split and the next gated drain re-reads reality",
+          });
+        }
+      }
       /* HOW FAR THIS MAILBOX HAS GOT, WRITTEN DOWN. On a hosted account these two columns are the
          worker's; here this process IS the worker, and the window's sync line reads them to tell a
          first import apart from a settled mailbox. `inboundDrained` is the distinction that
