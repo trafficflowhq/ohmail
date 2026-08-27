@@ -29,11 +29,14 @@
  *    very same {@link MessageBody} the focused message uses. One `<article class="pm">` per
  *    message — the panel treatment every message on the thread wears, the focused one included.
  */
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Avatar, Button, Icon } from "@ohmail/ui";
-import { type EngineMessage } from "@ohmail/client-engine";
+import { isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
+import { isPreviewable } from "../components/AttachmentPreview";
+import { AttachmentStrip } from "../components/AttachmentStrip";
 import { MessageBody } from "../components/MessageBody";
+import { opensInSystemViewer } from "./open-attachment";
 import { replyAllRecipients } from "./compose-from";
 import { ContactPopover, type ContactPopoverState } from "./ContactPopover";
 import {
@@ -381,6 +384,47 @@ export function MessageCard({
   const waiting = body.state === "loading" || body.state === "snippet";
   const stalled = useBodyStalled(message.id, waiting);
 
+  /**
+   * ── WHICH RENDERING IS ON SCREEN — the sibling asks the same question the focused pane does ──
+   *
+   * `MessagePane` carries the full argument: mail drawn in the app's own typography paints no
+   * images, so the strip lists the message's pictures exactly when nothing else is drawing them.
+   * The mechanism is a verbatim mirror — one string keyed by message so a re-pointed card cannot
+   * inherit the last message's answer, a primitive so the per-render report hits React's bail-out,
+   * and unknown reads as FRAMED so the widened list is something a positive signal turns on.
+   */
+  const [bodyRendering, setBodyRendering] = useState("");
+  const onRenderMode = useCallback(
+    (mode: "prose" | "framed") => setBodyRendering(`${message.id}:${mode}`),
+    [message.id],
+  );
+  const nativeBody = bodyRendering === `${message.id}:prose`;
+
+  /**
+   * The framed rendering's unresolved `cid:` images — the same forwarding `MessagePane` does,
+   * because a sibling panel draws its html through the same `MessageBody` and a photo pasted
+   * into an older reply is no less blank there. Absent chrome (demo, the desktop shell without
+   * the service) hands `MessageBody` neither half, exactly as the focused pane does.
+   */
+  const onCidImages = useCallback(
+    (contentIds: string[]) => chrome.attachments?.needCidImages(message.id, contentIds),
+    [chrome.attachments, message.id],
+  );
+
+  /*
+   * ── THE SIBLING'S FILES — the found defect this block closes ──────────────────────────────
+   *
+   * A conversation panel rendered header and body and NOTHING said the message carried files:
+   * the strip lived only on the focused panel, so a reader's own sent reply — ingested from the
+   * Sent folder with its attachments extracted and stamped — showed none of them anywhere on the
+   * open thread. The strip below is the same `AttachmentStrip` over the same chrome reads the
+   * focused pane uses (`itemsOf` / `open` / `downloadAll` — the metadata ask lives in
+   * `useMessageAttachments`, which loads the whole conversation's lists); `isProtectedMessage`
+   * gates it for the reason the focused pane's does: a protected message renders no content, and
+   * a file a sender attached is content.
+   */
+  const attachments = isProtectedMessage(message) ? undefined : chrome.attachments;
+
   const loadingNote: ReactNode = !stalled && waiting ? <p className="hm-state">{tb("loading")}</p> : null;
   /**
    * ── WITHHELD IS ANSWERED, NOT FAILED — the same rule the focused pane follows ──────────────
@@ -434,8 +478,28 @@ export function MessageCard({
                 : undefined
             }
             loadTrackingPixels={chrome.remoteImages?.loadPixels ?? false}
+            cidImages={chrome.attachments ? chrome.attachments.cidImagesOf(message.id) : undefined}
+            onCidImages={chrome.attachments ? onCidImages : undefined}
+            onRenderMode={onRenderMode}
           />
         </div>
+        {attachments ? (
+          <AttachmentStrip
+            /* Same list discipline as the focused pane: pictures join the list exactly where the
+               frameless rendering draws none, and `onDownloadAll` enumerates the same set the
+               head just counted. */
+            items={attachments.itemsOf(message.id, { includeInlineImages: nativeBody })}
+            onOpen={(attachmentId) => attachments.open(message.id, attachmentId)}
+            /* The same preview judgement with the same owner — `isPreviewable` minus the desktop's
+               system-viewer types — dispatching THIS panel's message id, so pressing a file on an
+               older message never requires first making it the focused one. */
+            onPreview={(attachmentId) => chrome.openAttachmentPreview(message.id, attachmentId)}
+            canPreview={(item) => isPreviewable(item.mimeType) && !opensInSystemViewer(item.mimeType)}
+            onDownloadAll={() => attachments.downloadAll(message.id, { includeInlineImages: nativeBody })}
+            downloadingAll={attachments.downloadingAll(message.id)}
+            calendarTextOf={(attachmentId) => attachments.calendarTextsOf(message.id).get(attachmentId)}
+          />
+        ) : null}
         {loadingNote}
         {withheldNote}
         {failedNote}

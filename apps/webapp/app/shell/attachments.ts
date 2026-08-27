@@ -43,8 +43,8 @@
  * than reading a version that cannot change.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { OhmailEngine } from "@ohmail/client-engine";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { threadOf, type OhmailEngine } from "@ohmail/client-engine";
 import { isAuthListFailure, type AttachmentItem, type AttachmentsView } from "../components/AttachmentStrip";
 import { desktopAttachmentsEnabled, openAttachmentWithSystemViewer } from "./open-attachment";
 import { probeSessionNow, subscribeSessionRevival } from "./session-truth";
@@ -244,7 +244,28 @@ function useEngineNotice(engine: OhmailEngine): number {
 }
 
 /**
- * Wire one selected message's attachments to the shell.
+ * `useLayoutEffect` in a browser; `useEffect` where there is nothing to lay out — the same
+ * module-scope choice `older-mail.ts` makes, for the same two reasons: hooks must be the same
+ * hook on every render, and a bare `useLayoutEffect` in a server render is a `console.error`
+ * (Next pre-renders client components). On the server there is no commit and no microtask
+ * racing a completion, so the passive fallback loses nothing there; in the browser the layout
+ * phase is the point — see the ref publication in `useMessageAttachments`.
+ */
+const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+/**
+ * How many sibling LIST reads may be in the air at once. The same width as the engine's own
+ * body-hydration cap (`hydrateThread` departs four bodies at a time), and for the same reason:
+ * a thread's length must not translate into a burst the browser queues and the deadline then
+ * eats. One indexed read each, so the crew drains a long thread in a few rounds.
+ */
+const SIBLING_LIST_CONCURRENCY = 4;
+
+/** The at-rest value for the download-all set — one frozen instance, so idle renders share it. */
+const EMPTY_IDS: ReadonlySet<string> = new Set();
+
+/**
+ * Wire the selected message's attachments — and its whole CONVERSATION's — to the shell.
  *
  * Returns `undefined` when this client cannot open attachments at all — the demo (`?demo=1`
  * is fixtures and zero network) and any host whose adapter lacks the capability. `undefined`
@@ -253,10 +274,11 @@ function useEngineNotice(engine: OhmailEngine): number {
  *
  * ── THE CLEANUP IS NOT OPTIONAL ───────────────────────────────────────────────────────────
  *
- * `releaseAttachments` revokes every object URL held for the message. A `blob:` URL pins its
+ * `releaseAttachments` revokes every object URL held for a message. A `blob:` URL pins its
  * bytes until it is revoked or the document dies, so without this a session spent opening
  * PDFs in a long-lived tab accumulates every one of them — the exact cost "ohmail stores no
  * attachment bytes" exists to avoid, reintroduced in the browser instead of the database.
+ * The release set is the selection's whole ask — focused message and thread siblings alike.
  */
 export function useMessageAttachments(
   engine: OhmailEngine,
@@ -265,7 +287,13 @@ export function useMessageAttachments(
 ): AttachmentsChrome | undefined {
   const available = engine.attachmentsAvailable();
   useEngineNotice(engine);
-  const [downloadingAll, setDownloadingAll] = useState<string | null>(null);
+  /**
+   * Which messages have a download-all IN FLIGHT — a SET, because sibling panels each carry
+   * the group verb now. The scalar this replaces held only the LAST press: starting B while A
+   * still ran re-labelled A idle mid-flight, and a second press of A then saved its files
+   * twice (review finding).
+   */
+  const [downloadingAll, setDownloadingAll] = useState<ReadonlySet<string>>(EMPTY_IDS);
 
   /**
    * The failure callback through a ref: `AppShell` supplies it inline (it closes over
@@ -275,26 +303,196 @@ export function useMessageAttachments(
   const onFailed = useRef(opts.onDownloadAllFailed);
   onFailed.current = opts.onDownloadAllFailed;
 
+  /**
+   * Every id whose list THIS selection asked for — the RELEASE SET. The selected message and
+   * its conversation siblings all land here, and the selected-id effect's cleanup releases the
+   * whole set: one owner for the lifecycle, however many panels asked. A ref rather than state
+   * because it is bookkeeping the render must never see — reading it in render would make the
+   * release set a render input, which it is not.
+   */
+  const loaded = useRef<Set<string>>(new Set());
+
+  /**
+   * The engine THIS COMMIT serves — read by completions and by the standing crew, because both
+   * can outlive the commit (and the engine) they were minted under. See `ask` and `pump`.
+   * Published in an effect below, never during render: a concurrent render can be abandoned
+   * after running, and a render-time assignment would point live workers at an engine no
+   * commit ever produced — or let an abandoned render's completion release state the
+   * committed tree still renders (review finding).
+   */
+  const engineRef = useRef(engine);
+
+  /** The one ask, with everything an ask entails — the probe escalation and the calendar pass. */
+  const ask = useCallback(
+    (id: string): Promise<void> => {
+      // Metadata only: `cost: "read"`, one indexed row read, nothing reaches IMAP. The bytes
+      // are a separate, deliberate act — never speculative, never per row, because a paid fetch
+      // needs a person behind it.
+      //
+      // An AUTH-shaped failure is escalated to the session probe: the reader is looking at this
+      // message right now, and "unauthorized" from our own envelope is exactly the evidence the
+      // probe exists to settle — one single-flight `POST /auth/refresh` whose answer either heals
+      // the session silently (and the revival below re-asks this list) or confirms the death that
+      // puts the real re-auth prompt on screen. A no-op wherever no probe is registered.
+      return engine.loadAttachments(id).then((outcome) => {
+        /*
+         * A COMPLETION THAT OUTLIVED ITS SELECTION IS RE-RELEASED, NOT ACTED ON. The engine
+         * does not cancel a list read on release — the late outcome is written back to its
+         * held map regardless — so a reader who left the thread before a slow response landed
+         * would keep that list (and the calendar pass below would then fetch BYTES) with no
+         * cleanup left to sweep it: the release already ran. The release set is the truth
+         * about what the CURRENT selection wants; an id no longer in it answers to nobody.
+         * The within-thread move survives this exactly: its cleanup clears the set and the
+         * re-run re-adds the id before any completion can land, so the (single-flighted,
+         * shared) outcome finds the id wanted and stands (review finding).
+         */
+        /*
+         * TWO ways a completion can be stale, and both answer with a release against the
+         * engine THAT WAS ASKED: the selection moved on (the id left the release set), or the
+         * whole ENGINE was replaced under the hook (desktop mailbox switch, live→demo) — in
+         * which case even a matching id belongs to a different mirror and acting on it would
+         * write the old world's answer into the new one's bookkeeping (review finding).
+         */
+        if (engineRef.current !== engine || !loaded.current.has(id)) {
+          engine.releaseAttachments(id);
+          return;
+        }
+        if (outcome.state === "failed" && isAuthListFailure(outcome.code)) probeSessionNow();
+        // A meeting invitation should be readable, not merely saveable: fetch the message's
+        // calendar parts (tiny, budgeted, single-flight — the engine owns all three bounds) so
+        // the strip can draw the event card. Fire-and-forget for the reason needCidImages is.
+        if (outcome.state === "ready" && outcome.items.length > 0) void engine.loadCalendarTexts(id);
+      });
+    },
+    [engine],
+  );
+
   useEffect(() => {
     if (!available || !messageId) return;
-    // Metadata only: `cost: "read"`, one indexed row read, nothing reaches IMAP. The bytes
-    // are a separate, deliberate act — never speculative, never per row, because a paid fetch
-    // needs a person behind it.
-    //
-    // An AUTH-shaped failure is escalated to the session probe: the reader is looking at this
-    // message right now, and "unauthorized" from our own envelope is exactly the evidence the
-    // probe exists to settle — one single-flight `POST /auth/refresh` whose answer either heals
-    // the session silently (and the revival below re-asks this list) or confirms the death that
-    // puts the real re-auth prompt on screen. A no-op wherever no probe is registered.
-    void engine.loadAttachments(messageId).then((outcome) => {
-      if (outcome.state === "failed" && isAuthListFailure(outcome.code)) probeSessionNow();
-      // A meeting invitation should be readable, not merely saveable: fetch the message's
-      // calendar parts (tiny, budgeted, single-flight — the engine owns all three bounds) so
-      // the strip can draw the event card. Fire-and-forget for the reason needCidImages is.
-      if (outcome.state === "ready" && outcome.items.length > 0) void engine.loadCalendarTexts(messageId);
-    });
-    return () => engine.releaseAttachments(messageId);
-  }, [engine, messageId, available]);
+    loaded.current.add(messageId);
+    void ask(messageId);
+    return () => {
+      // The whole selection's worth — the focused message AND every sibling the effect below
+      // asked for. `releaseAttachments` itself declines to drop a live sent-copy seed, so
+      // sweeping the set is safe against the optimistic-copy lifecycle.
+      for (const id of loaded.current) engine.releaseAttachments(id);
+      loaded.current.clear();
+    };
+  }, [engine, messageId, available, ask]);
+
+  /**
+   * ── THE SIBLINGS' LISTS — a thread's panels all show their files, not only the focused one ──
+   *
+   * Every message on an open conversation renders as a full panel with its own attachment strip
+   * (`MessageCard` — a reader's own SENT reply inside a thread was the found case: ingested from
+   * the Sent folder with two files on the row, rendered as a sibling panel with no strip and no
+   * ask). The strip reads `itemsOf(id)`, which is engine STATE — so somebody has to ask, and the
+   * asker is here rather than in the card because the card is mounted twice while the reader is
+   * open (the mounted-twice rule the whole chrome exists for) and an unmount-time release from
+   * one mount would revoke URLs the other mount is still showing. One owner, this hook, mounted
+   * once in `AppShell`.
+   *
+   * Keyed on `messageId` AND the conversation's id list: the id list alone would skip the re-ask
+   * after a WITHIN-thread selection move (same conversation, so same key, while the cleanup above
+   * has already released everything), and `messageId` alone would miss a sibling ARRIVING on the
+   * open thread mid-read (a drain landing the counterpart of a reply). The `loaded` guard makes
+   * the overlap of those two triggers idempotent, and the engine's own single-flight makes even a
+   * double ask one request.
+   *
+   * `threadOf` is read per render against the live mirror — fresh by the same argument as
+   * `conversationOf` in `AppShell` — and joined to a primitive so the effect compares by value.
+   */
+  const conversationKey =
+    available && messageId
+      ? threadOf(engine.read(), messageId)
+          .map((m) => m.id)
+          .join(",")
+      : "";
+  /**
+   * THE ONE QUEUE AND THE ONE CREW — shared across effect generations, and that sharing IS
+   * the concurrency bound. A crew spawned per effect run kept its budget only within its own
+   * generation: a drain re-keying the sweep mid-load spawned a replacement crew BESIDE the
+   * four workers still awaiting their reads, so the exact scenario the requeue exists for ran
+   * nine lists at once, and repeated re-keys could stack a whole long thread (review finding).
+   * Workers here outlive the effect run that pumped them: they take from whatever array the
+   * ref CURRENTLY holds, so replacing the queue retargets the standing crew instead of
+   * spawning a second one, and `listWorkers` never exceeds the cap for the hook's lifetime.
+   */
+  const pendingLists = useRef<string[]>([]);
+  const listWorkers = useRef(0);
+  /**
+   * A worker asks through THIS ref, never through a captured `ask`: the crew outlives effect
+   * generations by design (that is the concurrency bound), so it also outlives the render —
+   * and the ENGINE — its pump ran under. A captured closure kept asking the discarded engine
+   * after a mailbox switch or a live→demo swap: the new queue's ids were dequeued, marked
+   * owned, and sent to a world that no longer backs any strip — stranded loading forever, and
+   * on live→demo an off-limits network request from inside the demo (review finding).
+   */
+  const askRef = useRef(ask);
+  /*
+   * THE COMMIT-SCOPE PUBLICATION — a LAYOUT effect, not a passive one, and that is the whole
+   * point: passive effects flush after paint, and an already-queued promise continuation can
+   * run in the gap between the commit and that flush. A completion landing in the gap under a
+   * passive publication read the OLD refs — an obsolete result accepted, a calendar pass
+   * started, the crew's next take sent to a live engine from inside the demo (review finding,
+   * the round after render-time assignment was ruled out for abandoned-render reasons). The
+   * layout phase runs synchronously inside the commit, before any microtask, so by the time
+   * ANY continuation or worker can observe these refs they name the committed engine.
+   */
+  useCommitEffect(() => {
+    engineRef.current = engine;
+    askRef.current = ask;
+    // The old world's QUEUE retires with its engine, in the same synchronous phase: a worker
+    // resuming in the commit-to-passive gap must find nothing stale to take. The passive sweep
+    // refills it with the committed conversation when the flush arrives.
+    pendingLists.current = [];
+  }, [engine, ask]);
+  const pump = useCallback((): void => {
+    while (listWorkers.current < SIBLING_LIST_CONCURRENCY && pendingLists.current.length > 0) {
+      listWorkers.current += 1;
+      void (async () => {
+        try {
+          for (;;) {
+            const id = pendingLists.current.shift();
+            if (id === undefined) return;
+            /*
+             * The release set is joined at DEQUEUE, not at enqueue. An unstarted id holds no
+             * engine state to release, and membership is also the replacement run's skip test
+             * — so an id enqueued-but-never-asked when the conversation changed mid-drain
+             * must NOT look already-owned: it would never be asked again and its strip would
+             * sit on the silent loading default until the selection moved (review finding).
+             * The recheck here keeps overlapping pumps idempotent.
+             */
+            if (loaded.current.has(id)) continue;
+            loaded.current.add(id);
+            await askRef.current(id);
+          }
+        } finally {
+          listWorkers.current -= 1;
+        }
+      })();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!available || !messageId || conversationKey === "") return;
+    /*
+     * BOUNDED, NOT A BURST. The engine's single-flight is per message, so a naive loop here
+     * would put one deadline-bound GET in the air per thread member at once — a long thread
+     * as one volley, repeated on every within-thread selection move, with the queued tail
+     * able to age out against `ATTACHMENT_LIST_TIMEOUT_MS` behind browser connection limits
+     * (review finding). The queue is REPLACED, never appended: whatever an earlier generation
+     * still had waiting either reappears in this conversation's own list or has stopped
+     * mattering, and the standing crew drains the new array from its next take.
+     */
+    const wanted = conversationKey.split(",").filter((id) => !loaded.current.has(id));
+    if (wanted.length === 0) return;
+    pendingLists.current = wanted;
+    pump();
+    return () => {
+      pendingLists.current = [];
+    };
+  }, [engine, messageId, available, conversationKey, pump]);
 
   /**
    * ── A SESSION FAILURE MUST NOT OUTLIVE THE SESSION IT FAILED IN ──────────────────────────
@@ -316,10 +514,15 @@ export function useMessageAttachments(
   useEffect(() => {
     if (!available || !messageId) return;
     return subscribeSessionRevival(() => {
-      const held = engine.attachmentsOf(messageId);
-      if (held.state !== "failed" || !isAuthListFailure(held.code)) return;
-      engine.releaseAttachments(messageId);
-      void engine.loadAttachments(messageId);
+      // The whole release set, not the focused id alone: a sibling panel's list 401s the same
+      // way the focused one does, and a revival that healed one strip while its neighbour kept
+      // "Your session ended" would be the original defect kept on the panels added since.
+      for (const id of loaded.current) {
+        const held = engine.attachmentsOf(id);
+        if (held.state !== "failed" || !isAuthListFailure(held.code)) continue;
+        engine.releaseAttachments(id);
+        void engine.loadAttachments(id);
+      }
     });
   }, [engine, messageId, available]);
 
@@ -466,7 +669,11 @@ export function useMessageAttachments(
   const downloadAll = useCallback(
     (id: string, opts: { includeInlineImages?: boolean } = {}): void => {
       void (async () => {
-        setDownloadingAll(id);
+        setDownloadingAll((prev) => {
+          const next = new Set(prev);
+          next.add(id);
+          return next;
+        });
         try {
           const held = engine.attachmentsOf(id, opts);
           if (held.state !== "ready" || held.items.length === 0) {
@@ -510,16 +717,21 @@ export function useMessageAttachments(
           // which is more than a toast could say and is attached to the file it is about.
           if (saved.length === 0) onFailed.current();
         } finally {
-          // Guarded: a second message's download may have started while this one was in
-          // flight, and clearing unconditionally would take its spinner away.
-          setDownloadingAll((cur) => (cur === id ? null : cur));
+          // Remove THIS id alone: another panel's download-all may still be in flight, and its
+          // membership — its spinner — is its own.
+          setDownloadingAll((prev) => {
+            if (!prev.has(id)) return prev;
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
         }
       })();
     },
     [engine],
   );
 
-  const downloadingAllOf = useCallback((id: string): boolean => downloadingAll === id, [downloadingAll]);
+  const downloadingAllOf = useCallback((id: string): boolean => downloadingAll.has(id), [downloadingAll]);
 
   /**
    * ONE OBJECT, not a fresh literal per render.
