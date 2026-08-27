@@ -302,6 +302,13 @@ export function useMessageAttachments(
    */
   const loaded = useRef<Set<string>>(new Set());
 
+  /**
+   * The engine THIS render serves — read by completions and by the standing crew, because both
+   * can outlive the render (and the engine) they were minted under. See `ask` and `pump`.
+   */
+  const engineRef = useRef(engine);
+  engineRef.current = engine;
+
   /** The one ask, with everything an ask entails — the probe escalation and the calendar pass. */
   const ask = useCallback(
     (id: string): Promise<void> => {
@@ -326,7 +333,14 @@ export function useMessageAttachments(
          * re-run re-adds the id before any completion can land, so the (single-flighted,
          * shared) outcome finds the id wanted and stands (review finding).
          */
-        if (!loaded.current.has(id)) {
+        /*
+         * TWO ways a completion can be stale, and both answer with a release against the
+         * engine THAT WAS ASKED: the selection moved on (the id left the release set), or the
+         * whole ENGINE was replaced under the hook (desktop mailbox switch, live→demo) — in
+         * which case even a matching id belongs to a different mirror and acting on it would
+         * write the old world's answer into the new one's bookkeeping (review finding).
+         */
+        if (engineRef.current !== engine || !loaded.current.has(id)) {
           engine.releaseAttachments(id);
           return;
         }
@@ -393,6 +407,16 @@ export function useMessageAttachments(
    */
   const pendingLists = useRef<string[]>([]);
   const listWorkers = useRef(0);
+  /**
+   * A worker asks through THIS ref, never through a captured `ask`: the crew outlives effect
+   * generations by design (that is the concurrency bound), so it also outlives the render —
+   * and the ENGINE — its pump ran under. A captured closure kept asking the discarded engine
+   * after a mailbox switch or a live→demo swap: the new queue's ids were dequeued, marked
+   * owned, and sent to a world that no longer backs any strip — stranded loading forever, and
+   * on live→demo an off-limits network request from inside the demo (review finding).
+   */
+  const askRef = useRef(ask);
+  askRef.current = ask;
   const pump = useCallback((): void => {
     while (listWorkers.current < SIBLING_LIST_CONCURRENCY && pendingLists.current.length > 0) {
       listWorkers.current += 1;
@@ -411,14 +435,14 @@ export function useMessageAttachments(
              */
             if (loaded.current.has(id)) continue;
             loaded.current.add(id);
-            await ask(id);
+            await askRef.current(id);
           }
         } finally {
           listWorkers.current -= 1;
         }
       })();
     }
-  }, [ask]);
+  }, []);
 
   useEffect(() => {
     if (!available || !messageId || conversationKey === "") return;
